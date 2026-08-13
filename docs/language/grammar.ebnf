@@ -1045,10 +1045,13 @@ pack-expansion         = IDENTIFIER "..." ;
    assignment reinitializes that place. Different constant elements remain
    disjoint, but a dynamic index may alias every element and is not movable. A
    method cannot return with a moved receiver place. References, globals,
-   lambda captures, temporaries, and dynamic indexed places are not movable
-   through the current operation. Moving a copyable value is valid but still
-   consumes the source, avoiding C++'s observable unspecified moved-from
-   state. *)
+   already-created lambda capture fields, temporaries, and dynamic indexed
+   places are not movable through the current operation. A lambda capture
+   initializer may use the separately defined
+   `[name = std::move(local)]` form to move an enclosing local or by-value
+   parameter into a new closure field. Moving a copyable value is valid but
+   still consumes the source, avoiding C++'s observable unspecified
+   moved-from state. *)
 
 member-suffix          = ( "." | "->" ) IDENTIFIER ;
 
@@ -1068,12 +1071,19 @@ primary-expression     = literal
 
 lambda-expression      = lambda-capture-list parameter-clause "->" type block ;
 
-lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
+lambda-capture-list    = "[" [ lambda-capture { "," lambda-capture } ] "]" ;
+
+lambda-capture         = IDENTIFIER
+                       | IDENTIFIER "=" "std" "::" "move"
+                         "(" IDENTIFIER ")" ;
 
 (* Lambda parameters and returns are explicit and calls use exact type
-   matching. Every listed capture is an immutable value snapshot of a copyable
-   local binding. Capture defaults, reference and init captures, implicit
-   capture, `this`, and mutable lambdas are rejected. Lambda values are lexical.
+   matching. A bare listed capture is an immutable value snapshot of a
+   copyable local binding. `[owned = std::move(source)]` is the only init
+   capture: it moves one available movable local or by-value parameter into an
+   immutable environment field and immediately leaves `source` moved.
+   Capture defaults, reference and other init captures, implicit capture,
+   `this`, and mutable lambdas are rejected. Lambda values are lexical.
    They may be copied into another local `auto` binding or passed to a direct
    by-value generic parameter whose visible body uses it as a confined
    callable. Calls may require exact `void`, exact `bool`, or an exact

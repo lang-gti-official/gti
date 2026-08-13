@@ -4047,7 +4047,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v7\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v8\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -18803,7 +18803,7 @@ int main() {
          "calls through captured lambda values should resolve in typed HIR");
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "MIR should verify concrete closure capture signatures without "
-         "requiring executable capture operands");
+         "reconstructing closure-environment initialization");
 
   lang::MirProgram wrongLambdaCaptureSize = frontend.mir;
   auto &wrongSizeLambdas = const_cast<std::vector<lang::MirLambdaInstance> &>(
@@ -19126,12 +19126,409 @@ int main() {
          "move-only values should not enter closures without explicit "
          "ownership-transfer capture syntax");
 
+  const lang::FrontendResult ownedMoveCapture = lang::Frontend().analyze(
+      "owned-move-capture.gti", R"(
+#include <std/memory>
+
+class Owner {
+  int value = 5;
+
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+
+  int read() { return this.value; }
+};
+
+int main() {
+  int offset = 2;
+  Owner source{};
+  auto operation = [offset, owned = std::move(source)]() -> int {
+    return offset + owned.read();
+  };
+  auto relocated = std::move(operation);
+  return relocated() - 7;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!ownedMoveCapture.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : ownedMoveCapture.diagnostics) {
+      std::cerr << "Unexpected owned-move-capture diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  const lang::FunctionDecl *moveMain =
+      findTopLevelFunction(ownedMoveCapture.program, "main");
+  const auto *operationDecl =
+      moveMain == nullptr || moveMain->body()->statements().size() < 3
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                moveMain->body()->statements()[2].get());
+  const auto *moveLambda = operationDecl == nullptr
+                               ? nullptr
+                               : dynamic_cast<const lang::Lambda *>(
+                                     operationDecl->initializer().get());
+  const lang::HirLambda *moveHirLambda =
+      ownedMoveCapture.hir.lambdaInstances().empty()
+          ? nullptr
+          : &ownedMoveCapture.hir.lambdaInstances().front();
+  const lang::HirFunctionInstance *moveMainInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       ownedMoveCapture.hir.functionInstances()) {
+    if (instance.source == moveMain) {
+      moveMainInstance = &instance;
+      break;
+    }
+  }
+  const lang::HirValue *closureValue = nullptr;
+  if (moveMainInstance != nullptr) {
+    const auto closure = std::find_if(
+        moveMainInstance->body.values.begin(),
+        moveMainInstance->body.values.end(), [](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::Lambda;
+        });
+    if (closure != moveMainInstance->body.values.end()) {
+      closureValue = &*closure;
+    }
+  }
+  const lang::HirValue *moveCaptureOperand =
+      closureValue == nullptr || closureValue->operands.size() != 2
+          ? nullptr
+          : moveMainInstance->body.findValue(closureValue->operands[1]);
+  expect(ownedMoveCapture.canGenerateCode() && moveLambda != nullptr &&
+             moveLambda->captures().size() == 2 &&
+             !moveLambda->captures()[0].explicitInitializer() &&
+             moveLambda->captures()[1].explicitInitializer() &&
+             moveHirLambda != nullptr && moveHirLambda->captures.size() == 2 &&
+             moveHirLambda->captures[0].mode == lang::LambdaCaptureMode::Copy &&
+             moveHirLambda->captures[1].mode == lang::LambdaCaptureMode::Move &&
+             moveHirLambda->captures[0].bindingSymbol != 0 &&
+             moveHirLambda->captures[1].bindingSymbol != 0 &&
+             closureValue != nullptr && closureValue->operands.size() == 2 &&
+             moveCaptureOperand != nullptr && moveCaptureOperand->ownership &&
+             moveCaptureOperand->ownership->kind ==
+                 lang::OwnershipEventKind::Move,
+         "AST, semantics, and HIR should retain ordered copy and owned-move "
+         "closure-environment initialization");
+
+  const lang::MirFunctionInstance *moveMirMain =
+      moveMainInstance == nullptr
+          ? nullptr
+          : ownedMoveCapture.mir.findFunctionInstance(moveMainInstance->id);
+  const lang::MirInstruction *closureInstruction = nullptr;
+  if (moveMirMain != nullptr) {
+    for (const lang::MirBlock &block : moveMirMain->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.operation == lang::MirOperation::Closure) {
+          closureInstruction = &instruction;
+          break;
+        }
+      }
+      if (closureInstruction != nullptr) {
+        break;
+      }
+    }
+  }
+  const lang::MirLambdaInstance *moveMirLambda =
+      closureInstruction == nullptr || !closureInstruction->lambdaTarget
+          ? nullptr
+          : ownedMoveCapture.mir.findLambda(*closureInstruction->lambdaTarget);
+  const bool exactCapturePlaces =
+      moveMirLambda != nullptr &&
+      std::all_of(
+          moveMirLambda->body.places.begin(), moveMirLambda->body.places.end(),
+          [&](const lang::MirPlace &place) {
+            return place.capture == 0 ||
+                   (place.capture <= moveMirLambda->captureSymbols.size() &&
+                    place.symbol ==
+                        moveMirLambda->captureSymbols[place.capture - 1] &&
+                    place.type ==
+                        moveMirLambda->captureTypes[place.capture - 1]);
+          });
+  expect(
+      closureInstruction != nullptr && moveMirLambda != nullptr &&
+          closureInstruction->operands.size() == 2 &&
+          closureInstruction->closureCaptureModes ==
+              std::vector<lang::LambdaCaptureMode>{
+                  lang::LambdaCaptureMode::Copy,
+                  lang::LambdaCaptureMode::Move} &&
+          closureInstruction->operands[0].kind == lang::MirOperandKind::Copy &&
+          closureInstruction->operands[1].kind == lang::MirOperandKind::Value &&
+          moveMirLambda->captureModes ==
+              closureInstruction->closureCaptureModes &&
+          moveMirLambda->captureSymbols.size() == 2 && exactCapturePlaces &&
+          lang::verifyMirProgram(ownedMoveCapture.mir).valid(),
+      "MIR should prove each closure field's exact copy/move initializer, "
+      "symbol identity, projection, and cleanup-bearing lambda type");
+
+  lang::MirProgram forgedCaptureMode = ownedMoveCapture.mir;
+  bool changedCaptureMode = false;
+  for (lang::MirFunctionInstance &function :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           forgedCaptureMode.functionInstances())) {
+    for (lang::MirBlock &block : function.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.operation == lang::MirOperation::Closure &&
+            !instruction.closureCaptureModes.empty()) {
+          instruction.closureCaptureModes.front() =
+              lang::LambdaCaptureMode::Move;
+          changedCaptureMode = true;
+          break;
+        }
+      }
+      if (changedCaptureMode) {
+        break;
+      }
+    }
+    if (changedCaptureMode) {
+      break;
+    }
+  }
+  expect(changedCaptureMode &&
+             !lang::verifyMirProgram(forgedCaptureMode).valid(),
+         "MIR verification should reject a forged closure capture mode");
+
+  lang::MirProgram invalidCaptureMode = ownedMoveCapture.mir;
+  auto &invalidModeLambdas = const_cast<std::vector<lang::MirLambdaInstance> &>(
+      invalidCaptureMode.lambdaInstances());
+  bool changedInvalidCaptureMode = false;
+  if (!invalidModeLambdas.empty() &&
+      !invalidModeLambdas.front().captureModes.empty()) {
+    const auto invalidMode = static_cast<lang::LambdaCaptureMode>(255);
+    invalidModeLambdas.front().captureModes.front() = invalidMode;
+    for (lang::MirFunctionInstance &function :
+         const_cast<std::vector<lang::MirFunctionInstance> &>(
+             invalidCaptureMode.functionInstances())) {
+      for (lang::MirBlock &block : function.body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.operation == lang::MirOperation::Closure &&
+              !instruction.closureCaptureModes.empty()) {
+            instruction.closureCaptureModes.front() = invalidMode;
+            changedInvalidCaptureMode = true;
+          }
+        }
+      }
+    }
+  }
+  expect(changedInvalidCaptureMode &&
+             !lang::verifyMirProgram(invalidCaptureMode).valid(),
+         "MIR verification should reject an invalid capture mode even when "
+         "closure construction and instance metadata agree");
+
+  lang::MirProgram missingCaptureMove = ownedMoveCapture.mir;
+  bool changedCaptureMove = false;
+  for (lang::MirFunctionInstance &function :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           missingCaptureMove.functionInstances())) {
+    std::optional<lang::MirValueId> movedCaptureValue;
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.operation == lang::MirOperation::Closure &&
+            instruction.operands.size() == 2 &&
+            instruction.operands[1].kind == lang::MirOperandKind::Value) {
+          movedCaptureValue = instruction.operands[1].value;
+        }
+      }
+    }
+    if (!movedCaptureValue) {
+      continue;
+    }
+    for (lang::MirBlock &block : function.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.result == movedCaptureValue &&
+            instruction.kind == lang::MirInstructionKind::Move) {
+          instruction.ownership.reset();
+          changedCaptureMove = true;
+          break;
+        }
+      }
+      if (changedCaptureMove) {
+        break;
+      }
+    }
+    if (changedCaptureMove) {
+      break;
+    }
+  }
+  expect(changedCaptureMove &&
+             !lang::verifyMirProgram(missingCaptureMove).valid(),
+         "MIR verification should reject an owned capture whose ordinary "
+         "move-state proof was removed");
+
+  lang::MirProgram aliasedCaptureMove = ownedMoveCapture.mir;
+  bool changedCaptureAlias = false;
+  for (lang::MirFunctionInstance &function :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           aliasedCaptureMove.functionInstances())) {
+    std::optional<lang::MirValueId> movedCaptureValue;
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.operation == lang::MirOperation::Closure &&
+            instruction.operands.size() == 2 &&
+            instruction.operands[1].kind == lang::MirOperandKind::Value) {
+          movedCaptureValue = instruction.operands[1].value;
+        }
+      }
+    }
+    if (!movedCaptureValue) {
+      continue;
+    }
+    const auto root =
+        std::find_if(function.body.places.begin(), function.body.places.end(),
+                     [&](const lang::MirPlace &place) {
+                       return place.root == lang::MirPlaceRootKind::Value &&
+                              place.value == *movedCaptureValue;
+                     });
+    if (root == function.body.places.end()) {
+      continue;
+    }
+    lang::MirPlace alias = *root;
+    alias.id = function.body.places.size() + 1;
+    function.body.places.push_back(std::move(alias));
+    changedCaptureAlias = lang::rebuildMirValueUses(function.body);
+    break;
+  }
+  expect(changedCaptureAlias &&
+             !lang::verifyMirProgram(aliasedCaptureMove).valid(),
+         "MIR verification should reject a second value-root path to an "
+         "owned capture's moved initializer");
+
+  lang::MirProgram forgedCapturePlace = ownedMoveCapture.mir;
+  auto &forgedCaptureLambdas =
+      const_cast<std::vector<lang::MirLambdaInstance> &>(
+          forgedCapturePlace.lambdaInstances());
+  bool changedCapturePlace = false;
+  if (!forgedCaptureLambdas.empty()) {
+    for (lang::MirPlace &place : forgedCaptureLambdas.front().body.places) {
+      if (place.capture != 0) {
+        place.capture = forgedCaptureLambdas.front().captureTypes.size() + 1;
+        changedCapturePlace = true;
+        break;
+      }
+    }
+  }
+  expect(changedCapturePlace &&
+             !lang::verifyMirProgram(forgedCapturePlace).valid(),
+         "MIR verification should reject a capture projection retargeted "
+         "outside the exact closure environment");
+
+  lang::MirProgram missingCapturePlace = ownedMoveCapture.mir;
+  auto &missingCaptureLambdas =
+      const_cast<std::vector<lang::MirLambdaInstance> &>(
+          missingCapturePlace.lambdaInstances());
+  bool removedCapturePlace = false;
+  if (!missingCaptureLambdas.empty()) {
+    for (lang::MirPlace &place : missingCaptureLambdas.front().body.places) {
+      if (place.capture != 0) {
+        place.capture = 0;
+        removedCapturePlace = true;
+        break;
+      }
+    }
+  }
+  expect(removedCapturePlace &&
+             !lang::verifyMirProgram(missingCapturePlace).valid(),
+         "MIR verification should reject an environment field whose exact "
+         "capture projection was erased");
+
+  const lang::FrontendResult parameterMoveCapture = lang::Frontend().analyze(
+      "parameter-move-capture.gti", R"(
+#include <std/memory>
+
+class Owner {
+  int value = 3;
+
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  int read() { return this.value; }
+};
+
+int capture_parameter(Owner source) {
+  auto action = [owned = std::move(source)]() -> int {
+    return owned.read();
+  };
+  return action();
+}
+
+int main() { return capture_parameter(Owner()) - 3; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(parameterMoveCapture.canGenerateCode() &&
+             parameterMoveCapture.hir.lambdaInstances().size() == 1 &&
+             parameterMoveCapture.hir.lambdaInstances()
+                     .front()
+                     .captures.front()
+                     .mode == lang::LambdaCaptureMode::Move &&
+             lang::verifyMirProgram(parameterMoveCapture.mir).valid(),
+         "a by-value parameter should be an exact owned move-capture source");
+
+  const lang::FrontendResult invalidOwnedMoveCapture = lang::Frontend().analyze(
+      "invalid-owned-move-capture.gti", R"(
+#include <std/memory>
+
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+};
+
+class Immobile {
+public:
+  Immobile() {}
+  Immobile(Immobile& other) = delete;
+  Immobile(Immobile&& other) = delete;
+};
+
+class BorrowView {
+  int& value;
+
+public:
+  BorrowView(int& value) : value(value) {}
+};
+
+int main() {
+  Owner first{};
+  auto moved = [owned = std::move(first)]() -> int { return 1; };
+  auto use_after_move = [first]() -> int { return 2; };
+  Owner second{};
+  auto once = [owned = std::move(second)]() -> int { return 3; };
+  auto twice = [again = std::move(second)]() -> int { return 4; };
+  int value = 1;
+  auto general = [renamed = value]() -> int { return renamed; };
+  Immobile fixed{};
+  auto immobile = [owned = std::move(fixed)]() -> int { return 5; };
+  mut int number = 1;
+  int& alias = number;
+  BorrowView view{alias};
+  auto borrowed = [owned = std::move(view)]() -> int { return 6; };
+  return moved() + use_after_move() + once() + twice() + general() +
+         immobile() + borrowed();
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidOwnedMoveCapture.canGenerateCode() &&
+             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
+                           "already been moved") &&
+             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
+                           "limited to the explicit owned-move form") &&
+             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
+                           "is not movable") &&
+             hasDiagnostic(invalidOwnedMoveCapture.diagnostics,
+                           "cannot contain tracked borrowed state"),
+         "owned move capture should update source availability and reject "
+         "general, non-movable, or borrowed-state init captures");
+
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(R"(
 int main() {
   auto bad_default = [=]() -> int { return 0; };
   auto bad_reference = [&value]() -> int { return value; };
-  auto bad_init = [value = 1]() -> int { return value; };
+  auto valid_syntax = [value = std::move(value)]() -> int { return 1; };
   int recovered = 1;
   return recovered;
 }
@@ -19139,10 +19536,9 @@ int main() {
   const lang::Program recovered = parser.parse();
   expect(parser.hadError() && !recovered.declarations().empty() &&
              hasDiagnostic(parser.errors(), "capture defaults") &&
-             hasDiagnostic(parser.errors(), "reference captures") &&
-             hasDiagnostic(parser.errors(), "init captures"),
+             hasDiagnostic(parser.errors(), "reference captures"),
          "the parser should reject C++ capture defaults and references while "
-         "recovering");
+         "recovering around the supported move-capture syntax");
 
   const std::string formatted = lang::Formatter().format(
       "int main(){int offset=1;auto add=[offset](int value)->int{return "
@@ -19151,6 +19547,14 @@ int main() {
                  std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "lambda syntax should receive stable C++-style formatting");
+  const std::string moveCaptureFormatted = lang::Formatter().format(
+      "int main(){Owner owner{};auto action=[owned=std::move(owner)]()->int{"
+      "return owned.read();};return action();}");
+  expect(moveCaptureFormatted.find("[owned = std::move(owner)]() -> int {\n") !=
+                 std::string::npos &&
+             lang::Formatter().format(moveCaptureFormatted) ==
+                 moveCaptureFormatted,
+         "owned move captures should receive stable C++-familiar formatting");
 }
 
 void testConfinedCallableParameters() {

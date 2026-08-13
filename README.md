@@ -82,7 +82,9 @@ int main() {
   concepts, bounded validity-only trailing `requires`, confined variadic
   forwarding, confined read/mut-callable parameters with exact contextual
   results, and cleanup-free consuming `operator() &&` callables with
-  path-checked at-most-once invocation.
+  path-checked at-most-once invocation. Typed lambdas support immutable copy
+  captures and explicit `[target = std::move(source)]` owned captures with
+  checked closure movement and cleanup.
 - Independent source units, load-once `#include`, namespaces, aliases, and
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width

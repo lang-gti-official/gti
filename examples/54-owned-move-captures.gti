@@ -1,0 +1,25 @@
+#include <std/memory>
+
+class resource {
+  int value;
+
+public:
+  resource(int value) : value(value) {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+
+  int read() { return this.value; }
+};
+
+int main() {
+  resource source = resource(42);
+  auto reader = [owned = std::move(source)]() -> int {
+    return owned.read();
+  };
+
+  auto relocated = std::move(reader);
+  int result = relocated();
+  std::println("owned move capture completed");
+  return result - 42;
+}

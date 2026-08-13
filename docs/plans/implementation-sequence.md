@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.124.0
+Checkpoint: 0.125.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,7 +134,7 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.124.0 |
+| Foundation | Evidence at 0.125.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -151,7 +151,7 @@ start a later phase:
 | Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
 | Target/layout queries | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian scalar layout. Type-only `sizeof`/`alignof` expose exact unsigned-64 frontend constants for supported scalars, pointers, aliases, and positive concrete arrays; installed probes check the host facts against each native build target. |
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
-| Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
+| Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move closure environments now implement its bounded capture lifecycle. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. |
 
@@ -1066,11 +1066,11 @@ or MIR prerequisite.
   record exactly-one invocation and task-entry metadata in HIR/MIR, and define
   return/failure behavior without adding a second callable representation. The
   first shape may be bounded to consumed `void()` task objects supported by the
-  existing callable foundation; general callable storage and move-capture
+  existing callable foundation; general callable storage and broader capture
   ergonomics do not block it.
-- **Non-goals:** general callable storage, capture syntax, type erasure,
-  implicit reference capture, coroutine frames, or native callback ABI; those
-  remain owned by `L-CALL-01` or `S-CALL-01`.
+- **Non-goals:** general callable storage, additional capture syntax, type
+  erasure, implicit reference capture, coroutine frames, or native callback
+  ABI; those remain owned by `L-CALL-01` or `S-CALL-01`.
 - **Exit gate:** accepted task values transfer and drop exactly once; borrowed
   or non-transferable captures cannot enter a task; generic invocation retains
   exact calls and conservative effects.
@@ -1202,10 +1202,11 @@ name recognition.
 ### L-CALL-01: Foundational Owned Callables And Captures
 
 - **State/role:** in progress; `D-CALL-01`, `M-LIFE-01`, explicit confined
-  boundary records, exact context-supplied value results, and repeatable
-  read/mut invocation capability plus consuming once-callable cardinality are
-  done; owned environment work remains systems-readiness implementation shared
-  by algorithms, tasks, and callbacks.
+  boundary records, exact context-supplied value results, repeatable read/mut
+  invocation, consuming once-callable cardinality, and ordered local
+  copy/move closure environments are done. Exact generic owned return/field
+  transport remains systems-readiness implementation shared by algorithms,
+  tasks, and callbacks.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
   one independently tested sub-slice at a time. Keep callable identity,
@@ -1615,7 +1616,7 @@ owned by the rows and domain plans above.
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | systems-readiness library critical path | `L-RANGE-01` -> `L-RANGE-03` |
 | Native C records/handles/callbacks | records, adapter, and pointer-only opaque identity complete; callback work remains systems-readiness | `S-ABI-01/02/03` + first `S-FFI-02` sub-slice done; callable lifetime/failure/executable authority -> `S-CALL-01` |
-| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, and consuming once-callable cardinality slices implemented; environments, move capture, and owned escape remain systems-readiness work shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> remaining `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
+| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v8 environments, and explicit owned move capture implemented; exact generic owned return/field escape remains systems-readiness work shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> remaining `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **systems-readiness language work** | `L-SUM-01` after partial initialization, drop, and layout |

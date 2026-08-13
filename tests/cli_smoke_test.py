@@ -2009,6 +2009,39 @@ def main():
             )
             run([str(exact_callable_dispatch_executable)])
 
+        owned_move_capture_source = root / "owned-move-capture.gti"
+        owned_move_capture_source.write_text(
+            "#include <std/memory>\n"
+            "class DropTracer { public: DropTracer() {} "
+            "DropTracer(DropTracer& other) = delete; "
+            "DropTracer(DropTracer&& other) = default; "
+            "~DropTracer() { std::println(\"drop\"); } "
+            "int read() { return 7; } };\n"
+            "int main() { DropTracer source{}; "
+            "auto operation = [owned = std::move(source)]() -> int { "
+            "return owned.read(); }; "
+            "auto relocated = std::move(operation); "
+            "return relocated() - 7; }\n",
+            encoding="utf-8",
+        )
+        for standard in ("c++20", "c++23"):
+            for optimization in ("-O0", "-O3"):
+                owned_move_capture_executable = root / (
+                    f"owned-move-capture-{standard}-{optimization[1:]}"
+                )
+                run(
+                    [
+                        gti,
+                        str(owned_move_capture_source),
+                        "--std",
+                        standard,
+                        optimization,
+                        "-o",
+                        str(owned_move_capture_executable),
+                    ]
+                )
+                assert run([str(owned_move_capture_executable)]).stdout == "drop\n"
+
         dependent_callable_source = root / "dependent-callable-dispatch.gti"
         dependent_callable_executable = root / "dependent-callable-dispatch"
         dependent_callable_source.write_text(

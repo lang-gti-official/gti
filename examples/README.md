@@ -59,6 +59,7 @@ own `main` function.
 | `51-callable-value-results.gti` | exact contextual value results from confined generic lambdas and function objects |
 | `52-stateful-callables.gti` | reusable stateful call operators in source-defined algorithms |
 | `53-consuming-callables.gti` | one-shot `operator() &&` objects and path-checked generic consumption |
+| `54-owned-move-captures.gti` | explicit ownership transfer into an immutable closure environment and closure movement |
 
 Build and run an example from the repository root:
 

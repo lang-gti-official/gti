@@ -53,11 +53,16 @@ callable/borrow summaries. Each `HirLambda` retains its exact concrete semantic
 type, including the lexical declaration, physical signature/captures, and
 enclosing generic identity. Function-instance indexing and callable-target
 selection compare this full type; matching only a lexical lambda ID or closure
-shape would merge distinct generic bodies. Callable parameters and call values
+shape would merge distinct generic bodies. Capture records retain the source
+and environment-binding symbols, copy/move mode, type, traits, and initializer.
+Each closure-producing `HirValue` carries its initializer operands in written
+left-to-right order; an owned capture is an ordinary HIR `Move` with the same
+place/ownership event used elsewhere. Callable parameters and call values
 use an explicit boundary enum rather than a generic "non-escaping" boolean. The
 only boundary
 HIR currently produces is `Confined`; `Owned` is reserved vocabulary for a
-later slice that must also carry environment movement and cleanup. Confined
+later transport/escape slice that can consume the now-explicit environment
+movement and cleanup facts. Confined
 signatures retain exact `void`, `bool`, or context-supplied non-reference value
 results without tracked borrowed state or lambda identity after concrete
 generic substitution. Every signature carries its required read/mut/once

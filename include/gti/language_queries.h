@@ -524,6 +524,12 @@ public:
       appendCallableContractNotes(result, semantics, *hoveredFunction,
                                   hoveredCall, types);
     }
+    if (const std::optional<LambdaCaptureMode> captureMode =
+            semantics.lambdaCaptureMode(occurrence->symbol)) {
+      result.notes.emplace_back(*captureMode == LambdaCaptureMode::Move
+                                    ? "owned move capture"
+                                    : "immutable copy-snapshot capture");
+    }
     if (occurrence->kind == SemanticOccurrenceKind::ClassType &&
         occurrence->classType != nullptr) {
       const ClassTypeInfo *type =

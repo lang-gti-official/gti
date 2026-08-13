@@ -749,8 +749,25 @@ private:
   ExprPtr value_;
 };
 
+enum class LambdaCaptureMode : std::uint8_t {
+  Copy,
+  Move,
+};
+
 struct LambdaCapture {
+  LambdaCapture(Token name, std::optional<Token> equal, ExprPtr initializer)
+      : name(std::move(name)), equal(std::move(equal)),
+        initializer(std::move(initializer)) {}
+  LambdaCapture(LambdaCapture &&) = default;
+  LambdaCapture(const LambdaCapture &) = delete;
+  LambdaCapture &operator=(LambdaCapture &&) = default;
+  LambdaCapture &operator=(const LambdaCapture &) = delete;
+
+  [[nodiscard]] bool explicitInitializer() const { return equal.has_value(); }
+
   Token name;
+  std::optional<Token> equal;
+  ExprPtr initializer;
 };
 
 class Lambda final : public Expr {

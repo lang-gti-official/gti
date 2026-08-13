@@ -85,8 +85,9 @@ GTI already has a substantial single-threaded memory-safety foundation:
 - globals and static fields exist, including mutable scalar storage, while
   unique owners and borrowed-state values are already rejected in global or
   static storage;
-- lambdas currently take immutable copy snapshots of explicitly named local
-  values, reject reference and move-only captures, and are non-escaping; and
+- lambdas currently take immutable copy snapshots or explicit owned
+  `[target = std::move(source)]` captures of local values, reject reference and
+  stored-borrowed-state captures, and are non-escaping; and
 - MIR has conservative reads/writes, calls, moves, loans, drops, raw-memory
   effects, and `maySynchronize`, but no atomic order, thread operation, or
   cross-thread edge. The C++ backend still emits bodies from AST/HIR facts.
@@ -292,12 +293,11 @@ lifetime:
 - a capture or wrapper lacking the required transfer capability.
 
 An owned capture follows the same rule as an explicit argument. Current
-copy-snapshot lambdas remain non-escaping and cannot serve as thread tasks
+copy/move-capture lambdas remain non-escaping and cannot serve as thread tasks
 until C-CALL-01 implements the consumed-task adapter over D-CALL-01's accepted
-[callable contract](callable-ownership-and-escape.md). Future explicit owned
-move capture consumes the source and derives the closure's lifecycle and
-transfer facts from the captured value. No implicit reference capture is
-introduced.
+[callable contract](callable-ownership-and-escape.md). Explicit owned move
+capture consumes the source and derives the closure's lifecycle and transfer
+facts from the captured value. No implicit reference capture is introduced.
 
 An exclusively owned callable may mutate its own captured state during its one
 task invocation without being share-capable. Sharing one callable for

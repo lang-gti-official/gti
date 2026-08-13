@@ -2828,6 +2828,198 @@ def test_integer_arithmetic_tooling(executable, root):
         session.close()
 
 
+def test_owned_move_capture_tooling(executable, root):
+    source = (
+        "#include <std/memory>\n"
+        "class Owner { public: Owner() {} Owner(Owner& other) = delete; "
+        "Owner(Owner&& other) = default; int read() { return 7; } };\n"
+        "int main() { Owner source{}; "
+        "auto action = [owned = std::move(source)]() -> int { "
+        "return owned.read(); }; return action() - 7; }\n"
+    )
+    path = root / "owned-move-capture-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "publishDiagnostics": {"dataSupport": True},
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"]["semanticTokensProvider"][
+            "legend"
+        ]["tokenTypes"]
+        variable_type = token_types.index("variable")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        assert publication["params"]["diagnostics"] == [], publication
+
+        capture_target = source.index("owned = std::move")
+        capture_source = source.index("source)", capture_target)
+        capture_body = source.index("owned.read")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, capture_body + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert hover and "```gti\\nOwner\\n```" in json.dumps(hover), hover
+        assert "owned move capture" in json.dumps(hover), hover
+        assert hover["range"] == {
+            "start": lsp_position(source, capture_body),
+            "end": lsp_position(source, capture_body + len("owned")),
+        }, hover
+
+        for request_id, query_offset, expected_offset, spelling in (
+            (3, capture_source, source.index("source{}"), "source"),
+            (4, capture_body, capture_target, "owned"),
+        ):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, query_offset + 1),
+                    },
+                }
+            )
+            definition = session.receive_until(
+                lambda message, request_id=request_id: message.get("id")
+                == request_id
+            )["result"]
+            assert definition and definition["uri"] == uri, definition
+            assert definition["range"] == {
+                "start": lsp_position(source, expected_offset),
+                "end": lsp_position(source, expected_offset + len(spelling)),
+            }, definition
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 5)[
+                "result"
+            ]["data"]
+        )
+        target_position = lsp_position(source, capture_target)
+        source_position = lsp_position(source, capture_source)
+        body_position = lsp_position(source, capture_body)
+        assert tokens[
+            (target_position["line"], target_position["character"])
+        ]["type"] == variable_type
+        assert tokens[
+            (target_position["line"], target_position["character"])
+        ]["modifiers"] & 4
+        assert tokens[
+            (source_position["line"], source_position["character"])
+        ]["type"] == variable_type
+        assert tokens[(body_position["line"], body_position["character"])][
+            "type"
+        ] == variable_type
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 4, "insertSpaces": True},
+                },
+            }
+        )
+        formatting = session.receive_until(lambda message: message.get("id") == 6)[
+            "result"
+        ]
+        assert formatting and (
+            "[owned = std::move(source)]() -> int {"
+            in formatting[0]["newText"]
+        ), formatting
+
+        invalid_source = (
+            "int main() { int source = 1; "
+            "auto invalid = [owned = source]() -> int { return owned; }; "
+            "int recovered = 2; return recovered; }\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        init_diagnostic = next(
+            diagnostic
+            for diagnostic in invalid["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2027"
+            and "explicit owned-move form" in diagnostic["message"]
+        )
+        equal = invalid_source.index("= source", invalid_source.index("[owned"))
+        assert init_diagnostic["range"] == {
+            "start": lsp_position(invalid_source, equal),
+            "end": lsp_position(invalid_source, equal + 1),
+        }, init_diagnostic
+    finally:
+        session.close()
+
+
 def test_native_record_tooling(executable, root):
     source = (
         "[[c_opaque]] struct NativeHandle;\n"
@@ -3606,6 +3798,7 @@ def main():
     test_layout_query_tooling(sys.argv[1], root)
     test_native_record_tooling(sys.argv[1], root)
     test_integer_arithmetic_tooling(sys.argv[1], root)
+    test_owned_move_capture_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"

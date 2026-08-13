@@ -43,10 +43,21 @@ callableCapabilityName(CallableInvocationCapability capability) {
   return "invalid";
 }
 
+[[nodiscard]] constexpr std::string_view
+lambdaCaptureModeName(LambdaCaptureMode mode) {
+  switch (mode) {
+  case LambdaCaptureMode::Copy:
+    return "copy";
+  case LambdaCaptureMode::Move:
+    return "move";
+  }
+  return "invalid";
+}
+
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v7 valid=" << program.valid() << '\n';
+    output << "mir-v8 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -225,7 +236,15 @@ public:
         separator(index);
         output << "{type=";
         type(instance.captureTypes[index]);
-        output << ",active-cleanup="
+        output << ",mode="
+               << (index < instance.captureModes.size()
+                       ? lambdaCaptureModeName(instance.captureModes[index])
+                       : "invalid")
+               << ",symbol="
+               << (index < instance.captureSymbols.size()
+                       ? instance.captureSymbols[index]
+                       : 0)
+               << ",active-cleanup="
                << (index < instance.captureRequiresActiveCleanup.size()
                        ? instance.captureRequiresActiveCleanup[index]
                        : false)
@@ -238,7 +257,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v7\n";
+    output << "mir-body-v8\n";
     body(value, 0);
     return output.str();
   }
@@ -509,8 +528,9 @@ private:
   void place(const MirPlace &value) {
     output << "  p" << value.id << " root=" << number(value.root)
            << " binding=" << value.binding << " symbol=" << value.symbol
-           << " temporary=" << value.temporary << " value=" << value.value
-           << " loan=" << value.loan << " projections=[";
+           << " capture=" << value.capture << " temporary=" << value.temporary
+           << " value=" << value.value << " loan=" << value.loan
+           << " projections=[";
     for (std::size_t index = 0; index < value.projections.size(); ++index) {
       separator(index);
       projection(value.projections[index]);
@@ -579,6 +599,12 @@ private:
          ++index) {
       separator(index);
       type(value.closureCaptureTypes[index]);
+    }
+    output << "] closure-capture-modes=[";
+    for (std::size_t index = 0; index < value.closureCaptureModes.size();
+         ++index) {
+      separator(index);
+      output << lambdaCaptureModeName(value.closureCaptureModes[index]);
     }
     output << "] loan=";
     optional(value.loan);

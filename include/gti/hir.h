@@ -2239,6 +2239,9 @@ private:
       if (target != 0) {
         lambdaTarget = target;
       }
+      for (const LambdaCapture &capture : lambda->captures()) {
+        lowerOperand(capture.initializer);
+      }
     } else if (dynamic_cast<const LayoutQuery *>(raw) != nullptr) {
       kind = HirValueKind::LayoutQuery;
       if (const std::optional<ConstantValue> constant =

@@ -975,7 +975,14 @@ module.exports = grammar({
     lambda_capture_list: ($) =>
       seq("[", optional(commaSep1($.lambda_capture)), "]"),
 
-    lambda_capture: ($) => field("name", $.identifier),
+    lambda_capture: ($) =>
+      prec(
+        1,
+        seq(
+          field("name", $.identifier),
+          optional(seq("=", field("initializer", $._expression_not_comma))),
+        ),
+      ),
 
     generic_function: ($) =>
       seq(

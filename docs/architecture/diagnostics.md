@@ -145,6 +145,14 @@ spelling; lambda captures retain the canonical declaration identity they
 captured. Return escape and unproven forwarding retain their more specific
 messages instead of cascading into a second ordinary-use diagnostic.
 
+`GTI-S2027` owns lambda capture-shape and ownership failures. The parser keeps
+`[target = expression]` recoverable; semantics accepts only
+`[target = std::move(local)]`, rejects non-local or stored-borrowed-state
+sources, and points at the capture target or `=` token. A bare noncopyable
+capture suggests the exact owned spelling. The ordinary `GTI-S2018` move-state
+diagnostic owns an unavailable move-capture source and later source use, so a
+correctly spelled second move does not receive a misleading init-capture error.
+
 `GTI-S2065` owns the opaque-native-handle boundary. It points at the invalid
 attribute, declaration name, native-facing name conflict, direct type use, or
 operation that would require the hidden pointee representation. It explains

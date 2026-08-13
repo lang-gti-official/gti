@@ -49,6 +49,11 @@ The emitter is responsible for choices such as:
   address or reference;
 - emitting already-selected mangled calls, C-linkage symbols, dispatch, and
   lifecycle operations;
+- representing a validated lexical closure as a C++ lambda while preserving
+  the frontend's ordered bare-copy or explicit
+  `[target = std::move(source)]` capture spelling. C++ closure traits are not
+  authority: semantic capture records and HIR/MIR move/drop facts decide source
+  validity and lifecycle before emission;
 - representing fixed arrays, unique ownership, storage, classes, and virtual
   dispatch in C++;
 - realizing checked arithmetic, conversion, indexing, pointer, and runtime

@@ -87,7 +87,9 @@ operand, then the operation. This includes built-in and source-defined
 operators; lowering a selected operator to a method or helper does not change
 the source operand order. Numeric conversions evaluate their operand first.
 `unexpected(error)` evaluates `error` first. Lambda captures are initialized
-from left to right in capture-list order.
+from left to right in capture-list order. A bare capture copies its named
+source. `[owned = std::move(source)]` evaluates and moves `source` at that exact
+position, so later captures and the enclosing expression observe it as moved.
 
 The comma operator evaluates its left operand and then its right operand. It
 does not end the enclosing full-expression: a temporary or transient loan
@@ -144,8 +146,11 @@ declaration order and then the state-bearing base.
 
 A closure's captures are initialized left to right and destroyed in reverse
 successful-initialization order. The closure lifetime begins only after every
-capture succeeds. A structured-binding initializer directly creates its one
-hidden owner before its projected bindings become usable.
+capture succeeds. Copy and owned-move capture modes participate in the same
+ordered construction; moving a completed closure transfers the active
+environment and invalidates the source closure. A structured-binding
+initializer directly creates its one hidden owner before its projected
+bindings become usable.
 
 A return operand directly initializes the caller-provided result destination.
 After that initialization, the return full-expression discharges its remaining

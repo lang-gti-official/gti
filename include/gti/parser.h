@@ -1873,12 +1873,18 @@ private:
         Token name =
             consume(TokenKind::IDENTIFIER,
                     "Expect a local binding name in lambda capture list.");
-        if (check(TokenKind::EQUAL)) {
-          throw error(peek(),
-                      "Lambda init captures are not supported; capture an "
-                      "existing local binding by name.");
+        std::optional<Token> equal;
+        ExprPtr initializer;
+        if (match({TokenKind::EQUAL})) {
+          equal = previous();
+          initializer = assignment();
+        } else {
+          Token source =
+              generatedToken(TokenKind::IDENTIFIER, name.lexeme, name);
+          initializer = generatedVariable(source);
         }
-        captures.push_back({std::move(name)});
+        captures.emplace_back(std::move(name), std::move(equal),
+                              std::move(initializer));
       } while (match({TokenKind::COMMA}));
     }
     consume(TokenKind::RIGHT_BRACKET, "Expect ']' after lambda capture list.");

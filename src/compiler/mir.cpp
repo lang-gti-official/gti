@@ -1914,6 +1914,92 @@ namespace {
                                   definition->id, 0, depth + 1);
 }
 
+[[nodiscard]] bool
+movedValueIntoInstruction(const MirBody &body, const MirOperand &operand,
+                          MirInstructionId expectedInstruction,
+                          std::size_t expectedOperandIndex) {
+  if (operand.kind != MirOperandKind::Value) {
+    return false;
+  }
+  const MirInstruction *definition = linearValueDefinition(body, operand.value);
+  if (definition == nullptr || definition->kind != MirInstructionKind::Move ||
+      definition->operands.size() != 1 ||
+      definition->operands.front().kind != MirOperandKind::Move ||
+      !definition->ownership ||
+      definition->ownership->kind != OwnershipEventKind::Move ||
+      definition->ownership->before != OwnershipStateSet::Available ||
+      definition->ownership->after != OwnershipStateSet::Moved) {
+    return false;
+  }
+
+  std::size_t executableUses = 0;
+  bool matched = false;
+  std::optional<MirPlaceId> bookkeepingPlace;
+  for (const MirPlace &place : body.places) {
+    if (place.root == MirPlaceRootKind::Value && place.value == operand.value) {
+      const bool exactObligation = std::any_of(
+          body.dropObligations.begin(), body.dropObligations.end(),
+          [&](const MirDropObligation &obligation) {
+            return obligation.kind == MirDropObligationKind::Value &&
+                   obligation.place == place.id &&
+                   obligation.value == definition->hirValue;
+          });
+      if (bookkeepingPlace || !place.projections.empty() ||
+          place.sourceValue != definition->hirValue || !exactObligation) {
+        return false;
+      }
+      bookkeepingPlace = place.id;
+    }
+    for (const MirPlaceProjection &projection : place.projections) {
+      if ((projection.kind == MirProjectionKind::Index ||
+           projection.kind == MirProjectionKind::RawIndex) &&
+          projection.index == operand.value) {
+        return false;
+      }
+    }
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (bookkeepingPlace &&
+          ((instruction.destination &&
+            *instruction.destination == *bookkeepingPlace) ||
+           (instruction.receiver &&
+            instruction.receiver->place == *bookkeepingPlace) ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       [&](const MirOperand &candidate) {
+                         return candidate.place == *bookkeepingPlace;
+                       }))) {
+        return false;
+      }
+      if (instruction.receiver &&
+          instruction.receiver->kind == MirOperandKind::Value &&
+          instruction.receiver->value == operand.value) {
+        ++executableUses;
+      }
+      for (std::size_t index = 0; index < instruction.operands.size();
+           ++index) {
+        if (instruction.operands[index].kind != MirOperandKind::Value ||
+            instruction.operands[index].value != operand.value) {
+          continue;
+        }
+        ++executableUses;
+        matched = matched || (instruction.id == expectedInstruction &&
+                              index == expectedOperandIndex);
+      }
+    }
+    if (block.terminator.value &&
+        block.terminator.value->kind == MirOperandKind::Value &&
+        block.terminator.value->value == operand.value) {
+      ++executableUses;
+    }
+    if (bookkeepingPlace && block.terminator.value &&
+        block.terminator.value->place == *bookkeepingPlace) {
+      return false;
+    }
+  }
+  return executableUses == 1 && matched;
+}
+
 } // namespace
 
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
@@ -2171,7 +2257,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return true;
     case MirOperation::Closure:
       return instruction.lambdaTarget && *instruction.lambdaTarget != 0 &&
-             instruction.operands.empty();
+             instruction.closureCaptureTypes.size() ==
+                 instruction.operands.size() &&
+             instruction.closureCaptureModes.size() ==
+                 instruction.operands.size();
     case MirOperation::PackExpansion:
       return instruction.operands.empty();
     default:
@@ -2195,7 +2284,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          (instruction.callableInvocation || instruction.callableBoundary ||
           !instruction.callableArguments.empty())) ||
         (instruction.operation != MirOperation::Closure &&
-         !instruction.closureCaptureTypes.empty())) {
+         (!instruction.closureCaptureTypes.empty() ||
+          !instruction.closureCaptureModes.empty()))) {
       return false;
     }
     const auto validCallableInvocation = [&]() {
@@ -2344,6 +2434,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (place.id != index + 1 ||
         (place.root == MirPlaceRootKind::Binding && place.binding == 0) ||
         (place.root == MirPlaceRootKind::Symbol && place.symbol == 0) ||
+        (place.capture != 0 && (place.root != MirPlaceRootKind::Symbol ||
+                                body.kind != MirBodyKind::Lambda)) ||
         (place.root == MirPlaceRootKind::Temporary && place.temporary == 0) ||
         (place.root == MirPlaceRootKind::Value && !validValue(place.value)) ||
         (place.root == MirPlaceRootKind::Loan && !validLoan(place.loan))) {
@@ -2572,6 +2664,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             case MirInstructionKind::Compute:
               consuming = instruction.operation == MirOperation::Aggregate ||
                           instruction.operation == MirOperation::Unexpected ||
+                          (instruction.operation == MirOperation::Closure &&
+                           index < instruction.closureCaptureModes.size() &&
+                           instruction.closureCaptureModes[index] ==
+                               LambdaCaptureMode::Move) ||
                           ((instruction.operation == MirOperation::Identity ||
                             instruction.operation == MirOperation::Convert ||
                             instruction.operation == MirOperation::Comma) &&
@@ -3793,13 +3889,31 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
               lambda != nullptr &&
               instruction.info.type.kind == SemanticType::Lambda &&
               lambda->type == instruction.info.type &&
-              instruction.operands.empty() &&
-              instruction.closureCaptureTypes == lambda->captureTypes;
+              instruction.closureCaptureTypes == lambda->captureTypes &&
+              instruction.closureCaptureModes == lambda->captureModes &&
+              instruction.operands.size() == lambda->captureTypes.size();
           if (!exactCaptures) {
             return failure(body, owner,
                            "closure construction does not match its exact "
                            "concrete lambda instance",
                            block.id, instruction.id);
+          }
+          for (std::size_t index = 0;
+               lambda != nullptr && index < instruction.operands.size();
+               ++index) {
+            const MirOperand &capture = instruction.operands[index];
+            const bool exactType = capture.type == lambda->captureTypes[index];
+            const bool exactMode =
+                lambda->captureModes[index] == LambdaCaptureMode::Copy
+                    ? capture.kind == MirOperandKind::Copy && capture.place != 0
+                    : movedValueIntoInstruction(body, capture, instruction.id,
+                                                index);
+            if (!exactType || !exactMode) {
+              return failure(body, owner,
+                             "closure capture initialization does not match "
+                             "its exact ownership mode",
+                             block.id, instruction.id);
+            }
           }
         }
         if (instruction.borrowOrigin != BorrowOriginKind::None) {
@@ -4867,15 +4981,29 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
            .message = "lambda instance type does not match its declaration, "
                       "signature, or captures"});
     }
-    if (instance.captureTypes.size() !=
-        instance.captureRequiresActiveCleanup.size()) {
+    if (instance.captureTypes.size() != instance.captureModes.size() ||
+        instance.captureTypes.size() != instance.captureSymbols.size() ||
+        instance.captureTypes.size() !=
+            instance.captureRequiresActiveCleanup.size()) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::Lambda,
            .owner = instance.id,
-           .message = "lambda capture cleanup metadata has the wrong size"});
+           .message = "lambda capture ownership metadata has the wrong size"});
     } else {
+      std::unordered_set<SymbolId> exactCaptureSymbols;
       for (std::size_t capture = 0; capture < instance.captureTypes.size();
            ++capture) {
+        if ((instance.captureModes[capture] != LambdaCaptureMode::Copy &&
+             instance.captureModes[capture] != LambdaCaptureMode::Move) ||
+            instance.captureSymbols[capture] == 0 ||
+            !exactCaptureSymbols.insert(instance.captureSymbols[capture])
+                 .second) {
+          result.errors.push_back(
+              {.bodyKind = MirBodyKind::Lambda,
+               .owner = instance.id,
+               .message = "lambda capture mode or symbol identity is "
+                          "invalid or duplicated"});
+        }
         const std::optional<bool> exactActiveCleanup =
             typeRequiresActiveCleanup(instance.captureTypes[capture],
                                       typeRequiresActiveCleanup);
@@ -4887,6 +5015,28 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                .owner = instance.id,
                .message =
                    "lambda capture cleanup metadata does not match its type"});
+        }
+      }
+      for (const MirPlace &place : instance.body.places) {
+        const auto capture =
+            std::find(instance.captureSymbols.begin(),
+                      instance.captureSymbols.end(), place.symbol);
+        const std::size_t exactCapture =
+            capture == instance.captureSymbols.end()
+                ? 0
+                : static_cast<std::size_t>(
+                      std::distance(instance.captureSymbols.begin(), capture)) +
+                      1;
+        if (place.capture != exactCapture ||
+            (exactCapture != 0 &&
+             (place.root != MirPlaceRootKind::Symbol ||
+              place.type != instance.captureTypes[exactCapture - 1] ||
+              place.access != AccessMode::ReadOnly))) {
+          result.errors.push_back(
+              {.bodyKind = MirBodyKind::Lambda,
+               .owner = instance.id,
+               .message = "lambda capture place does not match its exact "
+                          "environment field"});
         }
       }
     }

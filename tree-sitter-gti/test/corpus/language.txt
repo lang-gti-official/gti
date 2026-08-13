@@ -1540,12 +1540,15 @@ public:
         (special_member_specifier)))))
 
 ==================
-Explicit value-capture lambdas
+Explicit copy and owned-move capture lambdas
 ==================
 
 int main() {
   int offset = 1;
-  auto add = [offset](int value) -> int { return offset + value; };
+  int owner = 2;
+  auto add = [offset, owned = std::move(owner)](int value) -> int {
+    return offset + owned + value;
+  };
   return add(1);
 }
 
@@ -1567,6 +1570,14 @@ int main() {
             (literal
               (integer_literal)))))
       (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (variable_declaration
         (type)
         (identifier)
         (initializer_expression
@@ -1574,7 +1585,17 @@ int main() {
             (lambda_expression
               (lambda_capture_list
                 (lambda_capture
-                  (identifier)))
+                  (identifier))
+                (lambda_capture
+                  (identifier)
+                  (call_expression
+                    (primary_expression
+                      (scoped_identifier
+                        (identifier)
+                        (identifier)))
+                    (argument_list
+                      (primary_expression
+                        (identifier))))))
               (parameter_clause
                 (parameter
                   (type
@@ -1586,8 +1607,11 @@ int main() {
                 (return_statement
                   (initializer_expression
                     (binary_expression
-                      (primary_expression
-                        (identifier))
+                      (binary_expression
+                        (primary_expression
+                          (identifier))
+                        (primary_expression
+                          (identifier)))
                       (primary_expression
                         (identifier))))))))))
       (return_statement

@@ -1878,7 +1878,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       if (index > 0) {
         output << ", ";
       }
-      output << expr.captures()[index].name.lexeme;
+      const LambdaCapture &capture = expr.captures()[index];
+      output << capture.name.lexeme;
+      if (capture.explicitInitializer()) {
+        output << " = ";
+        emitExpression(capture.initializer);
+      }
     }
     output << "](";
     emitParameters(expr.parameters());

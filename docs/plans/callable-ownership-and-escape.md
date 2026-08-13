@@ -4,15 +4,16 @@
 > implemented through explicit confined-boundary records and exact
 > context-supplied confined-safe value results. Repeated read-callable and
 > mut-callable selection plus consuming once-callable cardinality are
-> implemented for confined generic parameters; callable environments, move
-> capture, and owned escape remain planned.
+> implemented for confined generic parameters. Ordered copy/move closure
+> environments and one explicit owned move-capture mode are implemented;
+> exact generic owned return/field escape remains planned.
 
 Baseline: GTI 0.94.0.
 
 This document defines the callable identity, invocation, ownership, capture,
 movement, destruction, and escape model that later algorithm, thread-task, and
-native-callback work must share. It does not change current lambda syntax or
-authorize escaping closures by itself. Current behavior remains defined by
+native-callback work must share. This decision does not authorize escaping
+closures by itself; implemented syntax and behavior remain defined by
 [`docs/language/`](../language/), and implementation order remains owned by
 [`implementation-sequence.md`](implementation-sequence.md).
 
@@ -73,16 +74,17 @@ keywords.
 
 ## Current Baseline Preserved
 
-As of GTI 0.124.0, the deliberately confined layer implements:
+As of GTI 0.125.0, the deliberately confined layer plus local closure
+environment implements:
 
 - every lambda has explicit parameter and result types and one lexical
   `SemanticType::Lambda` identity;
-- capture lists name existing local bindings explicitly;
-- captures are immutable copy snapshots, must be copyable and available, and
-  cannot be references;
-- capture defaults, init capture, move capture, reference capture, variadic
-  lambda parameters, inferred result types, reference/borrowed results, and
-  arbitrary escape are rejected;
+- capture lists use immutable copy snapshots for `[value]` and the exact
+  `[target = std::move(source)]` owned form for an enclosing local or by-value
+  parameter; the owned form consumes the source immediately;
+- capture defaults, general init capture, reference capture, variadic lambda
+  parameters, inferred result types, reference/borrowed results, and arbitrary
+  escape are rejected;
 - a lambda may be copied to another local binding and invoked directly;
 - a direct by-value generic parameter may receive a lambda or callable object
   only when concrete reanalysis proves every direct invocation or forwarding
@@ -110,9 +112,12 @@ As of GTI 0.124.0, the deliberately confined layer implements:
 - the C++ backend emits a closure or exact `operator()` bridge only after the
   frontend has selected the callable.
 
-`auto` result inference, reference or borrowed-state results, and owned
-callable escape remain rejected. D-CALL-01 does not make any other previously
-rejected lambda valid.
+Semantic, HIR, and MIR records retain capture source/field identity, ordered
+copy/move initialization, move provenance, and cleanup; moving a local closure
+transfers that environment and cleanup executes exactly once. `auto` result
+inference, reference or borrowed-state results, and owned callable return/field
+escape remain rejected. D-CALL-01 does not make any other previously rejected
+lambda valid.
 
 ## One Callable Model
 
@@ -244,9 +249,9 @@ The accepted bounded-first semantic modes are:
    the source becomes moved immediately after closure construction.
 
 Both are explicit per capture. Capture defaults remain excluded. The existing
-`[value]` syntax remains copy snapshot. L-CALL-01 may select one explicit
-C++-familiar spelling for owned move, but this decision does not require a
-particular token sequence.
+`[value]` syntax remains copy snapshot. The implemented bounded owned spelling
+is `[target = std::move(source)]`; other C++ init-capture expressions remain
+invalid.
 
 Reference capture, implicit `this`, stored borrowed-state capture, raw-pointer
 capture in a safe escaping callable, and capture of a global alias remain
@@ -274,9 +279,10 @@ The environment is an ordinary aggregate for lifecycle purposes:
 - assignment follows ordinary GTI copy/move assignment availability and may
   not reseat a hidden borrowed dependency.
 
-M-LIFE-01 now supplies the normal-exit temporary and active-drop prerequisite;
-L-CALL-01 must still model the capture environment before general owned escape
-is implemented. The C++ closure object's special-member behavior is not the
+M-LIFE-01 supplies the normal-exit temporary and active-drop prerequisite, and
+L-CALL-01 now models local capture initialization, closure movement, exact
+environment places, and cleanup. General owned return/field escape remains a
+separate boundary. The C++ closure object's special-member behavior is not the
 proof.
 
 ## Confinement, Ownership, And Escape
@@ -311,7 +317,7 @@ problem does not justify type erasure.
 
 | Destination | Decision | Evidence required |
 | --- | --- | --- |
-| local binding in defining scope | current copy-snapshot baseline | existing lexical identity and traits |
+| local binding in defining scope | current local copy/move baseline | existing lexical identity, capture mode, and traits |
 | direct by-value generic parameter, confined | current bounded baseline | visible invocation/forwarding summary |
 | exact generic parameter/result transport | accepted bounded owned slice | move state plus M-LIFE cleanup proof |
 | field of a concrete generic owner | accepted bounded owned slice | exact substituted type and owner drop proof |
@@ -430,9 +436,9 @@ MIR materializes:
 
 MIR verifies semantic decisions and predecessor agreement. It does not infer a
 capture's ownership mode or rescue an escaping borrow. M-LIFE-01 makes
-temporary and active-drop state authoritative; general owned escape still
-waits for L-CALL-01 to add exact capture places and environment lifecycle
-before the backend consumes MIR.
+temporary and active-drop state authoritative; MIR v8 now carries exact
+capture places and environment initialization/move/drop. General owned escape
+still waits for the next L-CALL-01 transport boundary.
 
 ### Backend And Runtime
 
@@ -485,8 +491,9 @@ With M-LIFE-01 complete, implement bounded sub-slices in this order:
 4. **Done in 0.124.0:** classify consuming once-callables, require explicit
    move syntax, and verify invocation cardinality/path joins plus MIR move
    provenance;
-5. represent closure environment initialize/move/drop in HIR/MIR and add one
-   explicit owned move-capture mode;
+5. **Done in 0.125.0:** represent closure environment initialize/move/drop in
+   HIR/MIR and add `[target = std::move(source)]` as the explicit owned
+   move-capture mode;
 6. permit exact generic owned transport and one concrete generic field owner;
 7. add public unary callable/predicate concepts using those same semantic
    requirements; and

@@ -424,7 +424,8 @@ current implementation:
   capability families plus any general expression-requirement model;
 - complete lifetime relationships for borrowed aggregate values;
 - general place movement, partial initialization, and reinitialization;
-- escaping callable types and captures;
+- owned callable return/field escape beyond the implemented local closure
+  movement and explicit owned move-capture slice;
 - generic and aggregate constexpr evaluation plus compile-time assertions;
 - audited expansion beyond the bounded scalar, counted-text-input,
   `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, and one-level

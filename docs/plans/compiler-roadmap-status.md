@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.124.0
+Checkpoint version: 0.125.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -46,6 +46,16 @@ structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
 
+The 0.125.0 callable checkpoint implements the first owned closure environment
+without opening general callable escape. `[target = std::move(source)]` moves
+one enclosing local or by-value parameter into an immutable capture field;
+semantics updates availability left to right, HIR records ordered copy/move
+initializers, and MIR v8 verifies exact environment symbols, capture places,
+move provenance, and drop state. Moving the completed local closure transfers
+that environment, and C++20/C++23 runtime coverage proves a cleanup-owning
+capture is destroyed exactly once. General init/reference capture and exact
+generic callable return/field escape remain closed.
+
 The 0.124.0 callable checkpoint implements confined once invocation without
 opening callable escape. `operator() &&` is the bounded consuming nominal form;
 `std::move(operation)()` records an exact once-callable generic requirement and
@@ -55,15 +65,15 @@ receiver's ownership-move provenance and exact target, and the C++ bridge
 preserves frontend selection across read, mutable, and consuming overloads.
 The current consuming receiver must be structurally cleanup-free until the
 backend has a full-expression-owned receiver representation. General
-rvalue-reference types, move capture, callable environments, and owned escape
-remain closed.
+rvalue-reference types and owned escape remain closed; the 0.125.0 checkpoint
+above completes the bounded local move-capture environment.
 
 The 0.123.0 callable checkpoint implements repeatable invocation capability
 without opening callable escape. An immutable confined parameter requires a
 read-callable target; a `mut` confined parameter accepts either a read-callable
 target or an exact class `operator() mut`. Semantics records the requirement and
 selected capability, HIR/MIR preserve it with the exact target and receiver,
-MIR v7 verifies the contract, and the backend prevents C++ overload resolution
+MIR preserves and verifies the contract, and the backend prevents C++ overload resolution
 from changing frontend-selected receiver access. Source-defined predicate and
 numeric algorithms now accept stateful mutable function objects. Consuming
 once-callable invocation is completed by the checkpoint above; environment
@@ -72,7 +82,7 @@ lifecycle, capture movement, and owned escape remain closed.
 The 0.122.0 callable checkpoint completed the first two L-CALL-01
 implementation slices. Semantic, HIR, and MIR callable sites now carry
 explicit `Confined` boundary records instead of phase-spanning booleans, and
-MIR v7 verifies ordered, unique, in-range confined argument descriptors.
+MIR verifies ordered, unique, in-range confined argument descriptors.
 Generic callable calls may return exact non-reference values without tracked
 borrowed state or lambda identity when an explicit binding, assignment,
 condition, or enclosing return supplies the result type; concrete reanalysis
@@ -387,9 +397,9 @@ contract defines immutable-copy and explicit-owned-move capture, confined
 versus exact generic owned transport, lifecycle/escape diagnostics, and one
 cross-phase vocabulary for algorithms, consumed tasks, and native callbacks.
 L-CALL-01 now implements that vocabulary for confined boundaries, exact
-context-supplied confined-safe value results, and repeatable read/mut
-invocation plus consuming once-callable cardinality. Callable environment
-movement/lifecycle and owned escape remain behind the executable critical
+context-supplied confined-safe value results, repeatable read/mut invocation,
+consuming once-callable cardinality, and local copy/move closure environments.
+Exact generic owned return/field escape remains behind the executable critical
 path, while C-CALL-01 and S-CALL-01 keep their failure, concurrency, and ABI
 gates.
 
@@ -708,9 +718,13 @@ targets for zero-or-more invocation; the implemented algorithms use this form.
 An explicitly moved confined parameter requires once-callable invocation,
 accepts reusable or consuming nominal targets, and is checked by ordinary
 path-sensitive availability plus MIR move provenance.
+Local lambda environments now retain ordered copy/move capture initialization,
+exact capture places, closure movement, and cleanup. The bounded
+`[target = std::move(source)]` form admits move-only owned captures without
+opening general callable escape.
 Bounded scalar constexpr bindings, free functions, static methods, recursion,
 structured control flow, and frontend-selected `if constexpr` are also
-implemented. Callable result inference, capture ownership, owned escape,
+implemented. Callable result inference, owned return/field escape,
 complete-range/callable/hash capabilities,
 heterogeneous accumulation, and generic or aggregate constexpr evaluation
 remain.

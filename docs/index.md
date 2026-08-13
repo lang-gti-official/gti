@@ -85,7 +85,8 @@ description of the implementation.
 - [Concurrency and memory-model proposal](plans/concurrency-memory-model.md)
   — D-MEM-01 design evidence superseded normatively by accepted ADR 008
 - [Callable ownership and escape contract](plans/callable-ownership-and-escape.md)
-  — the completed D-CALL-01 identity, capability, capture, and client boundary
+  — the completed D-CALL-01 identity/capability contract, implemented local
+  move-capture environment, and remaining owned-escape boundary
 - [Place identity and ownership-state authority](plans/place-and-ownership-state.md)
   — the completed M-OWN-01 key, relation, phase-ownership, and invalidation
   contract that precedes indexed-place implementation

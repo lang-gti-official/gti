@@ -109,7 +109,11 @@ public:
       if (index != 0) {
         stream << ",";
       }
-      stream << expr.captures()[index].name.lexeme;
+      const LambdaCapture &capture = expr.captures()[index];
+      stream << capture.name.lexeme;
+      if (capture.explicitInitializer()) {
+        stream << "=" << printPtr(capture.initializer);
+      }
     }
     stream << "] -> " << typeToString(expr.returnType()) << ")";
     result = stream.str();

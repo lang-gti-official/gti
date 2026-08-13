@@ -194,3 +194,8 @@ class ConsumingCallable {
 public:
   int operator()() && { return 1; }
 };
+
+int capture_owned(int value) {
+  auto operation = [owned = std::move(value)]() -> int { return owned; };
+  return operation();
+}

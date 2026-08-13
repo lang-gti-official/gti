@@ -556,8 +556,12 @@ possibly moved constant element. This is a safety fallback, not a backend
 array limitation.
 
 References are borrows and cannot be consumed. Globals require interprocedural
-state, dynamic indexes lack an exact element identity, and lambda captures
-require explicit move-capture semantics, so those places remain rejected.
+state, dynamic indexes lack an exact element identity, and an already-created
+lambda capture is an immutable environment field, so those places remain
+rejected as direct `std::move` sources. The explicit
+`[owned = std::move(source)]` initializer instead moves one enclosing local or
+by-value parameter while constructing the closure; it is not movement from a
+capture field.
 Fields reached through a borrowed reference are also rejected because the
 owner state cannot be updated. Passing a temporary to `std::move` is rejected
 because the temporary is already a value.
@@ -615,7 +619,9 @@ initialized left to right and destroyed right to left after body locals.
 Arrays destroy live elements in decreasing index order. A live class or struct
 runs its cleanup body, destroys fields in reverse field declaration order, and
 then destroys its state-bearing base. Closure captures are destroyed in reverse
-capture-initialization order.
+capture-initialization order. An owned move capture transfers the source's
+active cleanup obligation into its environment field; moving the closure
+reparents that environment obligation and cleanup runs exactly once.
 
 Temporaries and transient loans use the full-expression obligation stack in
 [Execution Section 4.2.3](execution.md#423-full-expressions-and-cleanup). An

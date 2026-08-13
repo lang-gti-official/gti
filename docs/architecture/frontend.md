@@ -100,6 +100,13 @@ than treating `&&` as a general reference type, and rejects that qualifier on
 free functions, ordinary methods, other operators, and conflicting receiver
 qualifiers before semantics.
 
+`LambdaCapture` retains the capture target plus an owned initializer subtree.
+A bare `[value]` capture uses a generated source-variable initializer so copy
+and move forms share ordered lowering. The parser accepts the C++-familiar
+`[target = expression]` shape for recovery, but semantics admits only the exact
+`[target = std::move(local)]` owned form; arbitrary init-capture meaning is not
+implemented in syntax handling.
+
 `Parser::parse()` recovers at declaration/statement boundaries and retains later
 valid declarations. `Frontend::analyze()` parses each source unit independently
 in dependency order, appends declarations to the transitional `Program`, and

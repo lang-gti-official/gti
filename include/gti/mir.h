@@ -75,6 +75,7 @@ struct MirPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
   HirBindingId binding = 0;
   SymbolId symbol = 0;
+  std::size_t capture = 0;
   MirTemporaryId temporary = 0;
   MirValueId value = 0;
   MirLoanId loan = 0;
@@ -256,6 +257,7 @@ struct MirInstruction {
   std::vector<MirOperand> operands;
   std::vector<SemanticType> parameterTypes;
   std::vector<SemanticType> closureCaptureTypes;
+  std::vector<LambdaCaptureMode> closureCaptureModes;
   std::optional<MirLoanId> loan;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -530,6 +532,8 @@ struct MirLambdaInstance {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<SemanticType> captureTypes;
+  std::vector<LambdaCaptureMode> captureModes;
+  std::vector<SymbolId> captureSymbols;
   std::vector<bool> captureRequiresActiveCleanup;
   MirBody body;
 };
@@ -638,7 +642,8 @@ public:
   MirBodyLowerer(const HirProgram &program, const HirBody &source,
                  MirBodyKind kind, SemanticType returnType,
                  bool implicitZeroReturn = false,
-                 const HirFunctionInstance *function = nullptr)
+                 const HirFunctionInstance *function = nullptr,
+                 const HirLambda *lambda = nullptr)
       : program(program), source(source),
         implicitZeroReturn(implicitZeroReturn), function(function) {
     output.kind = kind;
@@ -654,6 +659,14 @@ public:
       bindings.emplace(binding.id, &binding);
       if (binding.info.symbol != 0) {
         localSymbols.insert_or_assign(binding.info.symbol, binding.id);
+      }
+    }
+    if (lambda != nullptr) {
+      for (std::size_t index = 0; index < lambda->captures.size(); ++index) {
+        if (lambda->captures[index].bindingSymbol != 0) {
+          lambdaCaptures.insert_or_assign(lambda->captures[index].bindingSymbol,
+                                          index + 1);
+        }
       }
     }
   }
@@ -1590,12 +1603,15 @@ private:
               {.kind = MirProjectionKind::Dereference});
         }
       } else {
-        place = appendPlace({.root = MirPlaceRootKind::Symbol,
-                             .symbol = value->symbol,
-                             .type = value->info.type,
-                             .access = value->info.access,
-                             .traits = value->info.traits,
-                             .sourceValue = value->id});
+        const auto capture = lambdaCaptures.find(value->symbol);
+        place = appendPlace(
+            {.root = MirPlaceRootKind::Symbol,
+             .symbol = value->symbol,
+             .capture = capture == lambdaCaptures.end() ? 0 : capture->second,
+             .type = value->info.type,
+             .access = value->info.access,
+             .traits = value->info.traits,
+             .sourceValue = value->id});
       }
       break;
     }
@@ -3216,25 +3232,47 @@ private:
         valid = false;
       } else {
         instruction.closureCaptureTypes.reserve(lambda->captures.size());
+        instruction.closureCaptureModes.reserve(lambda->captures.size());
         for (const LambdaCaptureInfo &capture : lambda->captures) {
           instruction.closureCaptureTypes.push_back(capture.type);
+          instruction.closureCaptureModes.push_back(capture.mode);
         }
       }
     }
     if (instruction.operation == MirOperation::None) {
       valid = false;
     }
-    for (const HirValueId operand : value->operands) {
-      instruction.operands.push_back(
-          instruction.operation == MirOperation::LogicalNot
-              ? conditionOperand(operand)
-          : instruction.operation == MirOperation::AddressOf
-              ? addressOperand(operand)
-              : valueOperand(operand));
+    for (std::size_t index = 0; index < value->operands.size(); ++index) {
+      const HirValueId operand = value->operands[index];
+      if (instruction.operation == MirOperation::Closure &&
+          index < instruction.closureCaptureModes.size() &&
+          instruction.closureCaptureModes[index] == LambdaCaptureMode::Copy) {
+        emitPlaceDependencies(operand);
+        const HirValue *sourceValue = findValue(operand);
+        instruction.operands.push_back({.kind = MirOperandKind::Copy,
+                                        .place = placeForValue(operand),
+                                        .type = sourceValue == nullptr
+                                                    ? SemanticType::Unknown
+                                                    : sourceValue->info.type});
+      } else {
+        instruction.operands.push_back(
+            instruction.operation == MirOperation::LogicalNot
+                ? conditionOperand(operand)
+            : instruction.operation == MirOperation::AddressOf
+                ? addressOperand(operand)
+                : valueOperand(operand));
+      }
     }
     if (value->kind == HirValueKind::ArrayInitializer ||
-        value->kind == HirValueKind::Unexpected) {
-      for (const HirValueId operand : value->operands) {
+        value->kind == HirValueKind::Unexpected ||
+        value->kind == HirValueKind::Lambda) {
+      for (std::size_t index = 0; index < value->operands.size(); ++index) {
+        if (value->kind == HirValueKind::Lambda &&
+            index < instruction.closureCaptureModes.size() &&
+            instruction.closureCaptureModes[index] == LambdaCaptureMode::Copy) {
+          continue;
+        }
+        const HirValueId operand = value->operands[index];
         transferTemporaryOut(instruction, operand);
       }
     }
@@ -4445,6 +4483,7 @@ private:
   std::unordered_map<HirStatementId, const HirStatement *> statements;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
+  std::unordered_map<SymbolId, std::size_t> lambdaCaptures;
   std::unordered_map<HirBindingId, MirPlaceId> bindingPlaces;
   std::unordered_map<HirDropObligationId, MirDropObligationId> dropObligations;
   std::unordered_map<HirFullExpressionId, HirFullExpressionId>
@@ -4638,17 +4677,23 @@ public:
                                 .returnType = instance.returnType,
                                 .parameterTypes = instance.parameterTypes};
       lowered.captureTypes.reserve(instance.captures.size());
+      lowered.captureModes.reserve(instance.captures.size());
+      lowered.captureSymbols.reserve(instance.captures.size());
       lowered.captureRequiresActiveCleanup.reserve(instance.captures.size());
       for (std::size_t capture = 0; capture < instance.captures.size();
            ++capture) {
         lowered.captureTypes.push_back(instance.captures[capture].type);
+        lowered.captureModes.push_back(instance.captures[capture].mode);
+        lowered.captureSymbols.push_back(
+            instance.captures[capture].bindingSymbol);
         lowered.captureRequiresActiveCleanup.push_back(
             capture < instance.captureRequiresActiveCleanup.size()
                 ? instance.captureRequiresActiveCleanup[capture]
                 : false);
       }
       lowered.body = lowerBody(source, instance.body, MirBodyKind::Lambda,
-                               instance.returnType, {}, valid);
+                               instance.returnType, {}, valid, false, nullptr,
+                               nullptr, &instance);
       result.program.lambdas.push_back(std::move(lowered));
     }
     result.program.valid_ = valid;
@@ -4661,9 +4706,10 @@ private:
       SemanticType returnType, const std::vector<HirValueId> &prologueValues,
       bool &valid, bool implicitZeroReturn = false,
       const std::vector<HirConstructorInitializer> *initializers = nullptr,
-      const HirFunctionInstance *function = nullptr) {
+      const HirFunctionInstance *function = nullptr,
+      const HirLambda *lambda = nullptr) {
     MirBodyLowerer lowerer(program, body, kind, std::move(returnType),
-                           implicitZeroReturn, function);
+                           implicitZeroReturn, function, lambda);
     MirBody result = lowerer.lower(prologueValues, initializers);
     valid = valid && lowerer.isValid();
     return result;

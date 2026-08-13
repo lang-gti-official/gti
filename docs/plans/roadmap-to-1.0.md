@@ -520,11 +520,12 @@ confined until the lifecycle and owned-callable rows below land.
 - Keep `auto`-deduced, reference, tracked borrowed-state, and lambda-identity
   results and callable references rejected, and do not allow lambdas to escape
   until L-CALL-01 implements exact owned transport.
-- Permit move capture with explicit C++-familiar init-capture spelling only
-  after capture ownership and closure moves are represented.
+- Explicit `[target = std::move(source)]` move capture is implemented now that
+  semantic/HIR/MIR capture ownership and local closure moves/drop are
+  represented. Keep other init-capture expressions unavailable.
 - Keep implicit capture defaults and untracked reference capture unavailable.
 - Keep consuming invocation confined to named source places and direct generic
-  parameters until callable environments and owned transport are represented.
+  parameters until exact owned transport is represented.
 - Defer a general owning `std::function`-style type erasure facility until a
   demonstrated client justifies a separate design; the accepted bounded
   contract deliberately preserves exact concrete callable types.

@@ -281,6 +281,19 @@ requireLocalCapture(175, "Left", "local.definition.type");
 requireLocalCapture(175, "Right", "local.definition.type");
 requireLocalCapture(177, "constrain", "local.definition.function");
 
+const highlightLines = fs.readFileSync(fixture, "utf8").split("\n");
+const moveCaptureRow = highlightLines.indexOf(
+  "  auto operation = [owned = std::move(value)]() -> int { return owned; };",
+);
+if (moveCaptureRow < 0) {
+  throw new Error("Missing owned move-capture fixture line");
+}
+requireCapture(moveCaptureRow, "owned", "variable");
+requireCapture(moveCaptureRow, "move", "function.call");
+requireLocalCapture(moveCaptureRow, "owned", "local.definition.var");
+requireLocalCapture(moveCaptureRow, "value", "local.reference");
+requireLocalCapture(moveCaptureRow, "owned", "local.reference");
+
 const rainbowCaptures = queryCaptures("rainbow-delimiters");
 
 function requireRainbowDelimiter(lineText, token, occurrence = 1) {

@@ -144,6 +144,11 @@ formatter's recovery-oriented lexer does not assign compiler token kinds. A
 non-clause occurrence is therefore formatted without clause indentation while
 the compiler remains responsible for rejecting it as an identifier.
 
+Lambda capture lists use ordinary comma and assignment spacing. The supported
+owned form is written `[target = std::move(source)]`; formatting preserves the
+initializer expression and is idempotent, while semantic analysis—not the
+formatter—decides whether it is the exact permitted move capture.
+
 ## Deliberate next phases
 
 The next low-risk style controls can build on the current structural state:

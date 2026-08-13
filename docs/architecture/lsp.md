@@ -59,6 +59,14 @@ protocol adapter only serializes these notes. Hovering the parameter binding
 itself remains ordinary binding hover until semantic occurrences retain its
 owning function and parameter contract directly.
 
+Lambda capture targets and sources remain separate semantic symbols. Hover on
+an environment binding appends the compiler-owned `immutable copy-snapshot
+capture` or `owned move capture` note; definition from the initializer source
+returns the enclosing declaration, while definition from the lambda body
+returns the capture target. Semantic tokens and formatting consume those same
+frontend records and written syntax rather than inferring capture mode from
+punctuation in the protocol layer.
+
 The checked integer functions are ordinary `<std/numeric>` declarations.
 Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer

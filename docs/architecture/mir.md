@@ -19,10 +19,12 @@ it from host/backend flags. The current profile fact constrains frontend
 global/static validity; future synchronization and task operations will
 consume it only in their owning rows.
 
-The deterministic serialization is currently `mir-v7`/`mir-body-v7`. Version
-7 adds consuming callable capabilities and the full concrete semantic type on
-lambda-instance records, so deterministic output exposes enclosing generic
-identity as well as physical closure shape. It retains the version-6 exact
+The deterministic serialization is currently `mir-v8`/`mir-body-v8`. Version
+8 adds ordered closure capture operands, copy/move modes, exact environment
+symbols and capture-place projections. It retains version 7's consuming
+callable capabilities and full concrete semantic type on lambda-instance
+records, so deterministic output exposes enclosing generic identity as well as
+physical closure shape. It also retains the version-6 exact
 read/mutable invocation requirements, selected and call-site capabilities,
 and concrete function receiver mutability; the version-5 explicit callable
 boundaries; and the version-4 body-local full-expression identities, exact
@@ -50,7 +52,8 @@ A `MirBody` owns:
   concrete target contract; and requires a confined invocation boundary if
   and only if the receiver traces to the matching enclosing callable-parameter
   binding. `Owned` remains representational vocabulary only and is rejected
-  until environment movement, cleanup, and escape invariants land;
+  until exact generic transport and escape invariants land. Local environment
+  movement and cleanup are represented independently;
 - read-, mut-, or once-callable invocation on each concrete callable call,
   plus the required and selected capability for each exact generic signature.
   Mutable invocation requires an exclusive or owned receiver. Once invocation
@@ -155,7 +158,7 @@ state-set union. A mismatched domain, forged move key, missing restoration, or
 unavailable operand makes the MIR candidate invalid rather than producing a
 late source diagnostic or relying on generated C++ behavior.
 
-`MirPrinter` version 6 includes each body domain, carried place key, constant
+`MirPrinter` version 8 includes each body domain, carried place key, constant
 or dynamic index metadata, ownership event, complete cleanup-relevant class
 lifecycle shape,
 exact class/lambda cleanup descriptor, typed drop obligation, call parameter
@@ -204,9 +207,17 @@ parameter binding and target contract. When that contract requires `Once`
 directly or through another forwarding edge, every matching concrete edge must
 be rooted in an ordinary MIR ownership move; a copied source value cannot
 satisfy the cardinality proof. Closure construction names one concrete lambda
-instance and retains its exact capture-type projection for lifecycle
-verification; executable capture operand materialization remains M-EXEC-01
-work. Class lifecycle metadata contains every lexically dropped field in
+instance and retains one ordered operand, capture mode, exact type, and
+environment symbol for every capture. A copy operand must name an exact
+readable place; an owned-move operand must be the single use of an ordinary MIR
+`Move` with matching ownership state. A cleanup-bearing moved value may retain
+one non-executable value-root place only when that place is the exact value-drop
+obligation; an alias place or executable use through it invalidates the move
+proof. Lambda-body symbol places identify their exact capture index, and
+program verification ties that projection to the concrete instance. Closure
+movement and drop use the ordinary lambda lifecycle obligation, including
+recursively cleanup-owning captured values. Class
+lifecycle metadata contains every lexically dropped field in
 declaration order; its independently retained drop projection must be the exact
 reverse order. Trivial fields remain structural HIR/layout facts rather than
 lifecycle-verifier authority.

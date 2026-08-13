@@ -167,6 +167,15 @@ generic instances may give the same source body different compile-time meaning.
 Function value-generic identity has reserved representation but no source
 producer while GTI continues to reject function value generics.
 
+Each lambda capture records its new binding symbol, original source symbol,
+exact type and traits, initialization mode, and initializer expression. Bare
+captures are immutable copy snapshots. The only owned initializer is
+`[target = std::move(source)]`, where `source` resolves in the enclosing scope
+to an available local or by-value parameter. Semantics invokes the ordinary
+move intrinsic and place-state authority before introducing the new immutable
+target binding, so later captures observe the source as moved. Reference,
+stored-borrowed-state, global/field, and general init captures remain rejected.
+
 ## Confined Callable Contracts
 
 A direct by-value generic parameter may acquire a `Confined` callable
@@ -215,15 +224,17 @@ non-escaping booleans in semantics. Concrete generic reanalysis substitutes
 symbolic result and parameter types before validating the selected target, so
 a symbolic `T` requirement cannot leak into a concrete `int32_t` instance.
 `Owned` is reserved cross-phase vocabulary only; no source construct produces
-that boundary until callable environment movement, cleanup, and escape are
-implemented.
+that boundary until exact generic callable transport and escape are
+implemented. Local closure environment movement and cleanup are already
+represented independently of that boundary.
 
 Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter
 requires read-callable invocation. A `mut` by-value parameter permits mutable
 invocation and accepts either a read-callable or mut-callable target; concrete
 reanalysis records which one was selected. Lambdas are read-callable because
-their current capture snapshots are immutable. A class `operator() ... mut`
+their capture fields remain immutable, whether initialized by copy or owned
+move. A class `operator() ... mut`
 is mut-callable. A direct `std::move(operation)()` on a by-value generic
 parameter requires `Once`, consumes that parameter place, and may select an
 exact read-callable, mut-callable, or trailing-`&&` once-callable target.

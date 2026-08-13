@@ -1084,8 +1084,12 @@ struct FunctionInfo {
 struct LambdaCaptureInfo {
   Token capture;
   Token declaration;
+  const Expr *initializer = nullptr;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits{};
+  LambdaCaptureMode mode = LambdaCaptureMode::Copy;
+  SymbolId sourceSymbol = 0;
+  SymbolId bindingSymbol = 0;
 };
 
 struct LambdaInfo {
@@ -1867,6 +1871,15 @@ public:
     return base == nullptr ? nullptr : base->findOwnershipEvent(expression);
   }
 
+  [[nodiscard]] std::optional<LambdaCaptureMode>
+  lambdaCaptureMode(SymbolId symbol) const {
+    const auto found = lambdaCaptureModes.find(symbol);
+    if (found != lambdaCaptureModes.end()) {
+      return found->second;
+    }
+    return base == nullptr ? std::nullopt : base->lambdaCaptureMode(symbol);
+  }
+
   [[nodiscard]] std::size_t placeSelection(const Expr &expression) const {
     const auto found = placeSelections.find(&expression);
     if (found != placeSelections.end()) {
@@ -2573,6 +2586,12 @@ private:
     ownershipEvents.insert_or_assign(&expression, std::move(event));
   }
 
+  void recordLambdaCaptureMode(SymbolId symbol, LambdaCaptureMode mode) {
+    if (symbol != 0) {
+      lambdaCaptureModes.insert_or_assign(symbol, mode);
+    }
+  }
+
   void markOwnershipEventsUnreachableFrom(std::size_t first) {
     for (std::size_t index = first; index < ownershipEventOrder.size();
          ++index) {
@@ -3041,6 +3060,7 @@ private:
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
   std::unordered_map<const Expr *, PlaceKey> places;
   std::unordered_map<const Expr *, OwnershipEvent> ownershipEvents;
+  std::unordered_map<SymbolId, LambdaCaptureMode> lambdaCaptureModes;
   std::vector<const Expr *> ownershipEventOrder;
   std::unordered_map<const Expr *, std::size_t> placeSelections;
   std::unordered_map<const TypeRef *, CompilerCapabilityTypeKind>
@@ -7056,20 +7076,6 @@ public:
       parameterTypes.push_back(parameterType);
     }
 
-    // Lambda analysis is isolated, so transfer the enclosing stack instead of
-    // deep-copying every local symbol before restoring it unchanged.
-    ScopeStack enclosingScopes = std::move(scopes);
-    const auto findLocal = [&](const Token &name) -> const Symbol * {
-      for (auto scope = enclosingScopes.rbegin();
-           scope != enclosingScopes.rend(); ++scope) {
-        if (const auto found = scope->find(name.lexeme);
-            found != scope->end()) {
-          return &found->second;
-        }
-      }
-      return nullptr;
-    };
-
     std::unordered_set<std::string> capturedNames;
     std::vector<LambdaCaptureInfo> captures;
     Scope captureScope;
@@ -7083,36 +7089,112 @@ public:
                "GTI-S2027");
         continue;
       }
-      const Symbol *source = findLocal(capture.name);
-      if (source == nullptr || source->type == SemanticType::Function ||
+      const Call *moveCall = capture.explicitInitializer()
+                                 ? directCall(capture.initializer)
+                                 : nullptr;
+      const auto *moveName =
+          moveCall == nullptr
+              ? nullptr
+              : dynamic_cast<const QualifiedName *>(moveCall->callee().get());
+      const auto *sourceExpression =
+          moveCall == nullptr || moveCall->arguments().size() != 1
+              ? nullptr
+              : dynamic_cast<const Variable *>(
+                    moveCall->arguments().front().get());
+      const bool explicitMoveSyntax =
+          capture.explicitInitializer() && moveCall != nullptr &&
+          moveCall->typeArguments().empty() && moveName != nullptr &&
+          moveName->name().segments.size() == 2 &&
+          moveName->name().segments[0].lexeme == "std" &&
+          moveName->name().segments[1].lexeme == "move" &&
+          sourceExpression != nullptr;
+      if (capture.explicitInitializer() && !explicitMoveSyntax) {
+        report(capture.equal ? *capture.equal : capture.name,
+               "Lambda init captures are limited to the explicit owned-move "
+               "form '[name = std::move(local)]'.",
+               "GTI-S2027");
+        const SymbolId recoverySymbol =
+            recordBindingOccurrence(capture.name, SemanticType::Unknown, false,
+                                    SemanticBindingKind::LambdaCapture);
+        captureScope.emplace(
+            capture.name.lexeme,
+            Symbol{.type = SemanticType::Unknown,
+                   .sourceUnit = currentSourceUnit,
+                   .assignable = false,
+                   .declaration = capture.name,
+                   .lambdaCapture = true,
+                   .bindingKind = SemanticBindingKind::LambdaCapture,
+                   .toolingSymbol = recoverySymbol});
+        continue;
+      }
+
+      const auto *copySource =
+          capture.explicitInitializer()
+              ? nullptr
+              : dynamic_cast<const Variable *>(capture.initializer.get());
+      const Variable *sourceExpressionForCapture =
+          capture.explicitInitializer() ? sourceExpression : copySource;
+      const Token &sourceName = sourceExpressionForCapture == nullptr
+                                    ? capture.name
+                                    : sourceExpressionForCapture->name();
+      const Symbol *source = resolve(sourceName);
+      if (source == nullptr ||
+          (source->bindingKind != SemanticBindingKind::LocalVariable &&
+           source->bindingKind != SemanticBindingKind::Parameter) ||
+          source->type == SemanticType::Function ||
           source->type.kind == SemanticType::TypeName ||
           source->ownerClass != 0) {
         report(capture.name,
                "Lambda captures must name a local value binding; '" +
-                   capture.name.lexeme + "' is not capturable.",
+                   sourceName.lexeme + "' is not capturable.",
                "GTI-S2027");
         continue;
       }
 
+      Symbol sourceBinding = *source;
+      const LambdaCaptureMode mode = capture.explicitInitializer()
+                                         ? LambdaCaptureMode::Move
+                                         : LambdaCaptureMode::Copy;
       const SemanticTypeTraits traits = typeTraits(source->type);
-      if (source->type.kind == SemanticType::Reference) {
+      if (mode == LambdaCaptureMode::Copy &&
+          source->type.kind == SemanticType::Reference) {
         report(capture.name,
                "Lambda capture '" + capture.name.lexeme +
                    "' is a reference; reference captures are not supported.",
                "GTI-S2027");
       }
-      if (!traits.copyable) {
+      if (mode == LambdaCaptureMode::Copy && !traits.copyable) {
         report(capture.name,
                "Lambda capture '" + capture.name.lexeme +
-                   "' is not copyable; move captures require explicit "
-                   "ownership-transfer syntax that is not available yet.",
+                   "' is not copyable; use '[" + capture.name.lexeme +
+                   " = std::move(" + sourceName.lexeme +
+                   ")]' to transfer ownership explicitly.",
                "GTI-S2027");
       }
-      if (source->valueState != ValueState::Available) {
-        report(capture.name,
-               "Lambda capture '" + capture.name.lexeme +
-                   "' is not available because it has been moved.",
-               "GTI-S2018");
+      if (mode == LambdaCaptureMode::Move && traits.containsBorrowedState) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2027", DiagnosticPhase::Semantics, capture.name,
+            "Owned lambda move capture cannot contain tracked borrowed "
+            "state.");
+        diagnostic.related.push_back({tokenSpan(sourceBinding.declaration),
+                                      "Borrowed-state source declared here."});
+        diagnostic.hints.emplace_back(
+            "Capture the owning value or keep this callable confined to a "
+            "scope whose lifetime is already proven.");
+        diagnostics.push_back(std::move(diagnostic));
+        continue;
+      }
+
+      const std::size_t diagnosticsBeforeInitializer = diagnostics.size();
+      const SemanticType initializerType = analyze(capture.initializer);
+      if (mode == LambdaCaptureMode::Move &&
+          diagnostics.size() == diagnosticsBeforeInitializer &&
+          (moveCall == nullptr ||
+           resolvedIntrinsicKind(*moveCall) != IntrinsicKind::Move)) {
+        report(capture.equal ? *capture.equal : capture.name,
+               "Owned lambda capture must use GTI's exact std::move "
+               "intrinsic.",
+               "GTI-S2027");
       }
 
       if (traits.ownership == OwnershipKind::Shared) {
@@ -7127,21 +7209,35 @@ public:
           lambdaTraits.transferCapable && traits.transferCapable;
       lambdaTraits.shareCapable =
           lambdaTraits.shareCapable && traits.shareCapable;
+      const SymbolId sourceSymbol = toolingSymbolFor(sourceBinding);
+      const SymbolId bindingSymbol =
+          recordBindingOccurrence(capture.name, sourceBinding.type, false,
+                                  SemanticBindingKind::LambdaCapture);
+      semanticModel.recordLambdaCaptureMode(bindingSymbol, mode);
       captures.push_back({.capture = capture.name,
-                          .declaration = source->declaration,
-                          .type = source->type,
-                          .traits = traits});
-      recordBindingOccurrence(capture.name, source->type, false,
-                              SemanticBindingKind::LambdaCapture);
+                          .declaration = sourceBinding.declaration,
+                          .initializer = capture.initializer.get(),
+                          .type = initializerType == SemanticType::Unknown
+                                      ? sourceBinding.type
+                                      : initializerType,
+                          .traits = traits,
+                          .mode = mode,
+                          .sourceSymbol = sourceSymbol,
+                          .bindingSymbol = bindingSymbol});
       captureScope.emplace(
           capture.name.lexeme,
-          Symbol{.type = source->type,
-                 .sourceUnit = source->sourceUnit,
+          Symbol{.type = sourceBinding.type,
+                 .sourceUnit = sourceBinding.sourceUnit,
                  .assignable = false,
                  .declaration = capture.name,
                  .lambdaCapture = true,
-                 .bindingKind = SemanticBindingKind::LambdaCapture});
+                 .bindingKind = SemanticBindingKind::LambdaCapture,
+                 .toolingSymbol = bindingSymbol});
     }
+
+    // Lambda body analysis is isolated, so transfer the enclosing stack
+    // after capture initializers have executed left-to-right in that stack.
+    ScopeStack enclosingScopes = std::move(scopes);
 
     std::unordered_map<std::string, Token> unavailableLocals;
     for (auto scope = enclosingScopes.rbegin(); scope != enclosingScopes.rend();
@@ -15781,6 +15877,37 @@ private:
           if (permitted != nullptr &&
               semanticModel.findResolvedSymbol(*permitted) == binding->symbol) {
             permittedUses.insert(permitted);
+          }
+        }
+
+        // Capture initialization is diagnosed once at the capture target
+        // below. Its generated copy source or explicit move source is an
+        // implementation constituent, not a second ordinary-value escape.
+        for (const auto &[_, lambda] : semanticModel.lambdas) {
+          for (const LambdaCaptureInfo &capture : lambda.captures) {
+            if (capture.sourceSymbol != binding->symbol ||
+                capture.initializer == nullptr) {
+              continue;
+            }
+            permittedUses.insert(capture.initializer);
+            if (capture.mode == LambdaCaptureMode::Move) {
+              const Lambda *declaration = lambda.declaration;
+              if (declaration == nullptr) {
+                continue;
+              }
+              const auto syntax = std::find_if(
+                  declaration->captures().begin(),
+                  declaration->captures().end(),
+                  [&](const LambdaCapture &candidate) {
+                    return candidate.initializer.get() == capture.initializer;
+                  });
+              if (syntax != declaration->captures().end()) {
+                if (const ExprPtr *source =
+                        explicitMoveSource(syntax->initializer)) {
+                  permittedUses.insert(source->get());
+                }
+              }
+            }
           }
         }
 
