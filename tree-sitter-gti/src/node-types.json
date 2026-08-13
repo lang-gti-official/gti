@@ -916,11 +916,21 @@
       },
       "body": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "class_body",
             "named": true
+          }
+        ]
+      },
+      "forward_declaration": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": ";",
+            "named": false
           }
         ]
       },

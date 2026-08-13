@@ -170,13 +170,15 @@ The intended pattern is a small unsafe implementation boundary beneath an
 ordinary move-only RAII class:
 
 ```gti
+[[c_opaque]] struct NativeWidget;
+
 extern "C" {
-  void* widget_create();
-  void widget_destroy(void* widget);
+  NativeWidget* widget_create();
+  void widget_destroy(NativeWidget* widget);
 }
 
 class Widget {
-  mut void* handle = nullptr;
+  mut NativeWidget* handle = nullptr;
 
 public:
   Widget() {
@@ -198,10 +200,12 @@ public:
 };
 ```
 
-The wrapper, not `void*`, owns the native resource. A production wrapper must
-also define creation failure, prevent accidental duplicate destruction,
-preserve exactly-once cleanup across movement, and keep the raw handle out of
-safe APIs unless exposing it has a separately documented contract.
+The wrapper, not `NativeWidget*`, owns the native resource. `[[c_opaque]]`
+preserves nominal C/C++ adapter identity without giving the pointee a GTI
+layout or ownership rule. A production wrapper must also define creation
+failure, prevent accidental duplicate destruction, preserve exactly-once
+cleanup across movement, and keep the raw handle out of safe APIs unless
+exposing it has a separately documented contract.
 
 ## Deliberate Omissions
 
@@ -210,7 +214,8 @@ This feature does not add:
 - pointer-to-pointer types or callbacks;
 - implicit fixed-array decay;
 - typed-pointer/`void*` conversions or raw casts;
-- C struct, union, bit-field, or platform-layout declarations;
+- general C arrays, unions, bit-fields, packing, or platform-layout imports;
+- direct C++ class ABI calls or exception passage;
 - source-level `new`, `delete`, placement construction, or manual object
   lifetime;
 - ownership inference or automatic destruction for raw pointers; or

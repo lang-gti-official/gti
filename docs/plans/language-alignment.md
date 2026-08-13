@@ -71,7 +71,7 @@ therefore fixes these current priority and design questions:
 4. The accepted range, mutable-iteration, single-owner view, owned-callable,
    shared/weak-owner, optional, text, container, and hosted-service minimums
    remain systems-readiness library work.
-5. Bounded native records/callbacks, a public arena/pool allocation path,
+5. Bounded native records, opaque handles, callbacks, a public arena/pool allocation path,
    payload enums, cleanup-correct propagation, exact domain operator families,
    and one associative container are systems-readiness work. Freestanding
    execution and generalized borrow graphs remain later breadth unless a
@@ -158,7 +158,7 @@ boundary, so that closed gap no longer remains a ledger row.
 | `R-LAYOUT-CONTROL` | `alignas`, packed records, bit-fields, unions, and stable layout for ordinary classes are absent. | safety/simplicity | **bounded-first** | `S-ABI-01/02` completed the layout-stable passive native-record subset needed by real C bindings. General `alignas`, MMIO, packing, bit-fields, and unions remain later breadth with separate access semantics. |
 | `R-NATIVE-RECORDS` | **Closed in the bounded native-record release:** `[[c_abi]] struct` opts a passive, non-owning fixed-width/nested-record/one-level-pointer field family into compiler-owned source-order layout and by-value or one-level-pointer `extern "C"` passage. Ordinary records, arrays, enums, bool/char, owners, references, and cleanup-owning values remain excluded. | choice | **closed** | `S-ABI-01/02` and ADR 013 are complete. A native C oracle proves size, alignment, offsets, nested records, by-value return/passage, and pointer mutation at O0/O3 and C++20/C++23. |
 | `R-C-CALLBACKS` | GTI cannot expose function pointers/callback thunks, retained userdata, or native-thread entry. | lowering | **systems-ready** | D-CALL-01's accepted [callable contract](callable-ownership-and-escape.md) supplies exact function-item/callable identity without defining an ABI. `S-CALL-01` owns the same-thread adapter and lifetime proof. Foreign-thread entry additionally requires the adopted concurrency capability/runtime rows. |
-| `R-C-ABI-FAMILIES` | Pointer-to-pointer out parameters, opaque ownership transfer, arrays, casts, varargs, native variables, alternate calling conventions, and C++ linkage are absent. | choice | **bounded-first** | `S-ABI-03` now generates one checked C17/C++20/C++23 adapter header for the existing C ABI; this deliberately does not add C++ linkage, object ABI, or exception passage. `S-FFI-02` adds the opaque-handle and selected out-parameter families required by a real binding. Varargs, unions, bit-fields, packing, and general C++ linkage remain later breadth. |
+| `R-C-ABI-FAMILIES` | **Partially closed:** `[[c_opaque]] struct Name;` now supplies nominal pointer-only handle identity, including deterministic generated C and exact namespaced C++ declarations. Pointer-to-pointer out parameters, annotated ownership transfer, arrays, casts, varargs, native variables, alternate calling conventions, and C++ linkage remain absent. | choice | **bounded-first** | `S-ABI-03` generates one checked C17/C++20/C++23 adapter header; the first `S-FFI-02` sub-slice lets C structs or C++ wrapper types complete an opaque pointee privately without adding C++ linkage, object ABI, inferred ownership, or exception passage. A demonstrated binding must select each remaining out/transfer family. Varargs, unions, bit-fields, packing, and general C++ linkage remain later breadth. |
 | `R-FREESTANDING` | The language/runtime assumes hosted allocation and output; no freestanding prelude or required-service profile exists. | choice | **later-breadth** | `S-FREE-01`; enumerate every required service and prove one installed smoke or an early target-capability diagnostic before claiming a profile. |
 | `R-STABLE-ABI` | Whole-program compilation, counter-shaped generated names, no stable GTI ABI, and no binary modules prevent separately distributed GTI objects. | choice | **later-breadth** | `E-SYM-01`, `E-INST-01`, then `E-ABI-01` after layout, package identity, concrete emission, and compatibility. C++ ABI artifacts never become the GTI ABI. |
 
@@ -183,9 +183,9 @@ now exist, so audit §4.12 maps to the remaining capability and general
 expression-requirement gaps rather than to “no user concepts.” Binary32
 semantics were already closed by the audited baseline; the remaining float gap
 is binary64. Audit §4.2's missing-query observation is likewise historical:
-the bounded `R-LAYOUT-QUERIES` surface and passive native records are
-implemented, while general layout control and broader C ABI families remain
-open under their separate rows.
+the bounded `R-LAYOUT-QUERIES` surface, passive native records, and
+pointer-only opaque handles are implemented, while general layout control and
+broader C ABI families remain open under their separate rows.
 
 | External language-audit finding | Ledger coverage |
 | --- | --- |

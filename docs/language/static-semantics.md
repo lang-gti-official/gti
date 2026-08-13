@@ -278,6 +278,15 @@ permitted only in the exact move constructor policy. A custom copy or move
 constructor body is ill-formed until field places, partial movement, and
 partial initialization have complete language semantics.
 
+`[[c_opaque]] struct Name;` is the only incomplete nominal type declaration.
+It is nongeneric, baseless, has no body, layout, members, lifecycle, or
+concurrency capability, and cannot be combined with `[[c_abi]]`. Its resolved
+type may occur only behind one raw pointer, including in an admitted
+`[[c_abi]]` record field or `extern "C"` signature. The pointer remains
+nullable, non-owning, and subject to lexical unsafe rules. Direct values,
+construction, inheritance, generic arguments, pointee layout queries, and
+ordinary forward declarations are rejected with `GTI-S2065` before lowering.
+
 ## 3.9 Operators And Contextual Conversion
 
 The overloadable operator set and arity rules are defined by the incorporated
@@ -326,12 +335,14 @@ For a fixed array, `sizeof(T[N])` is the checked product of `N` and
 to multidimensional arrays. A zero or symbolic extent, or a product that does
 not fit `uint64_t`, is ill-formed.
 
-Bare `void`, `nullptr_t`, references, ordinary classes/structs, interfaces,
+Bare `void`, `nullptr_t`, references, ordinary classes/structs, opaque-handle
+pointees, interfaces,
 scoped enums, `expected`, compiler-private types, and symbolic type parameters
 have no source-queryable layout when queried directly. `[[c_abi]]` is the only
-source nominal layout opt-in. Unsupported operands are rejected as `GTI-S2063`
-before HIR lowering; an unresolved name retains its ordinary type-resolution
-diagnostic without a duplicate layout diagnostic.
+source nominal layout opt-in. Unsupported complete operands are rejected as
+`GTI-S2063` before HIR lowering; a direct opaque-handle operand retains its
+focused incomplete-type `GTI-S2065`, and an unresolved name retains its
+ordinary type-resolution diagnostic without a duplicate layout diagnostic.
 
 The query itself is not an `array-extent-expression`. Its computed value may
 still feed that restricted grammar through an earlier non-negative
@@ -394,8 +405,9 @@ current implementation:
 - escaping callable types and captures;
 - generic and aggregate constexpr evaluation plus compile-time assertions;
 - audited expansion beyond the bounded scalar, counted-text-input,
-  `[[c_abi]]` record, and one-level raw-pointer C call surface, including
-  callbacks, opaque handles/out parameters, casts, and ownership transfer; and
+  `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, and one-level
+  raw-pointer C call surface, including callbacks, out parameters, casts, and
+  annotated ownership transfer; and
 - native record field families beyond the closed scalar, nested-record, and
   one-level-pointer set, including fixed arrays, unions, packing, and
   bit-fields; record initialization policy remains in safe wrappers or native

@@ -1124,11 +1124,13 @@ class ClassDecl final : public Stmt {
 public:
   ClassDecl(std::vector<Token> attributes, Token keyword, ClassKind kind,
             Token name, std::vector<GenericParameter> genericParameters,
-            std::vector<BaseSpecifier> bases, StmtList members)
+            std::vector<BaseSpecifier> bases, StmtList members,
+            bool forwardDeclaration = false)
       : attributes_(std::move(attributes)), keyword_(std::move(keyword)),
         kind_(kind), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
-        bases_(std::move(bases)), members_(std::move(members)) {}
+        bases_(std::move(bases)), members_(std::move(members)),
+        forwardDeclaration_(forwardDeclaration) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitClassDecl(*this);
@@ -1147,6 +1149,9 @@ public:
     return bases_;
   }
   [[nodiscard]] const StmtList &members() const { return members_; }
+  [[nodiscard]] bool isForwardDeclaration() const {
+    return forwardDeclaration_;
+  }
 
 private:
   std::vector<Token> attributes_;
@@ -1156,6 +1161,7 @@ private:
   std::vector<GenericParameter> genericParameters_;
   std::vector<BaseSpecifier> bases_;
   StmtList members_;
+  bool forwardDeclaration_ = false;
 };
 
 struct EnumeratorDecl {

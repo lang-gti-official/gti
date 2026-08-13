@@ -600,10 +600,14 @@ linkage blocks without promising a C++ or GTI binary ABI:
 - `[[c_abi]] struct` opts a closed passive field family into compiler-owned
   source-order layout; valid records may cross by value or one-level pointer,
   while initialization policy remains in safe wrappers/native factories;
+- `[[c_opaque]] struct Name;` opts one incomplete nominal handle into
+  pointer-only passage. The generated C branch emits an incomplete typedef and
+  the C++ branch preserves its exact namespace, so either language can complete
+  private implementation state without exposing object layout;
 - one-level raw pointers may cross when their pointee is `void`, an allowed
-  scalar, or a valid native record; pointer-bearing calls, including records
-  containing pointers, require lexical `unsafe`, while pointer-free record,
-  scalar-only, and counted-text calls remain safe;
+  scalar, a valid native record, or an opaque handle; pointer-bearing calls,
+  including records containing pointers, require lexical `unsafe`, while
+  pointer-free record, scalar-only, and counted-text calls remain safe;
 - ordinary GTI classes/structs, enums, generics, ownership wrappers,
   `expected`, references, arrays, bool, char, variadics, pointer-to-pointer and
   function-pointer types, callbacks, and backend C++ types do not cross the
@@ -621,12 +625,13 @@ linkage blocks without promising a C++ or GTI binary ABI:
   compiler-owned `@runtime` allowlist remains accepted as a compatibility
   mechanism, not the only native path and not a general FFI.
 
-The exact implemented rules live in
+Opaque pointers remain nullable and non-owning; ordinary GTI RAII wrappers own
+factory/null/destroy policy. The exact implemented rules live in
 [`docs/language/native-c-interop.md`](../language/native-c-interop.md) and
 [`docs/language/raw-pointers.md`](../language/raw-pointers.md). Remaining work
-includes pointer-to-pointer and callback types, opaque-handle ownership
-transfer, casts, arrays/enums at the boundary, and manual lifetime. Those
-additions need explicit semantic, lifetime, ABI, build, and diagnostic design
+includes pointer-to-pointer and callback types, annotated opaque-handle
+ownership transfer, casts, arrays/enums at the boundary, and manual lifetime.
+Those additions need explicit semantic, lifetime, ABI, build, and diagnostic design
 rather than widening the current allowlist by accident.
 
 Other conveniences enter when they unlock a real program or remove significant

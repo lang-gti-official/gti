@@ -55,6 +55,7 @@ own `main` function.
 | `47-binary64.gti` | exact IEEE-754 binary64 values, mixed-precision promotion, explicit narrowing, and generic numeric code |
 | `48-native-c-records.gti` | layout-stable passive records for bounded by-value and pointer C APIs |
 | `49-native-bridge-header.gti` | one compiler-generated ABI header shared by C17 and C++20/C++23 shims |
+| `50-opaque-native-handles.gti` | nominal pointer-only handles for safe wrappers over C or C++ library state |
 
 Build and run an example from the repository root:
 
@@ -128,6 +129,15 @@ with `--emit-native-header` produces one checked header that C17 and
 C++20/C++23 adapter sources can both include. The C++ branch preserves GTI
 namespaces while every function still crosses C linkage; arbitrary C++ classes
 and exceptions do not become GTI ABI types.
+
+`50-opaque-native-handles.gti` declares incomplete `[[c_opaque]]` structs and
+uses them only behind one raw pointer. The generated C branch exposes ordinary
+incomplete C structs; the C++ branch preserves exact namespaces so an adapter
+can complete the type around private classes and RAII state. The pointer owns
+nothing in GTI. A production binding puts it behind an ordinary move-only GTI
+class whose destructor calls the declared native destroy function exactly once.
+Callbacks, pointer-to-pointer output, and annotated ownership transfer remain
+separate capability slices.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

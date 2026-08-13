@@ -91,6 +91,17 @@ branch with deterministic flattened names and a C++20/C++23 branch with exact
 source namespaces, plus layout assertions and the external C prototypes. It
 does not infer or import a foreign declaration.
 
+### Follow-on: opaque handle identity
+
+GTI 0.119.0 adds the independent `[[c_opaque]] struct Name;` declaration for a
+nominal incomplete C handle. This does not widen ordinary record layout or make
+an opaque pointee ABI-stable. It allows only one-level raw pointers to that
+identity, including pointer fields inside an admitted `[[c_abi]]` record. The
+generated bridge header emits an incomplete C typedef and an exact namespaced
+C++ forward declaration, allowing either language to complete its private
+implementation while the exported functions retain C linkage. GTI infers no
+ownership or cleanup from such a pointer.
+
 ## Consequences
 
 - GTI can now express a substantial class of real C struct APIs without making
@@ -99,7 +110,7 @@ does not infer or import a foreign declaration.
   expose ordinary GTI ownership and invariants above it.
 - Native records are trivially copyable non-owning values. A pointer copied in
   a record is still only an address.
-- Opaque ownership transfer, pointer-to-pointer out parameters, callbacks,
+- Annotated opaque ownership transfer, pointer-to-pointer out parameters, callbacks,
   retained userdata, arrays, unions, bit-fields, packing, varargs, C++ ABI,
   and automatic foreign-header import remain separate capability slices.
 - C++ libraries are supported through a generated-header C adapter: ordinary

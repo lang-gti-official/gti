@@ -53,6 +53,11 @@ The emitter is responsible for choices such as:
   deterministic flattened names where namespaces cannot be represented. Both
   consume semantic field types/layouts and never reconstruct ABI facts from
   generated C++;
+- preserving `[[c_opaque]]` types as declarations only: generated GTI C++ and
+  the bridge header's C++ branch emit the exact namespaced forward declaration,
+  while the C branch emits a deterministic incomplete `typedef struct`. The
+  native implementation may complete that type privately in C or C++, but the
+  backend never asks for its layout or emits a GTI definition;
 - selecting C++20 versus C++23 expected support.
 
 GTI constant evaluation remains authoritative for checked-result constants.

@@ -125,7 +125,9 @@ public:
     const ClassKind kind = info.declaration == nullptr
                                ? ClassKind::Class
                                : info.declaration->kind();
-    std::string result = info.cAbiRecord ? "[[c_abi]]\n" : "";
+    std::string result = info.cAbiRecord      ? "[[c_abi]]\n"
+                         : info.cOpaqueHandle ? "[[c_opaque]]\n"
+                                              : "";
     switch (kind) {
     case ClassKind::Class:
       result += "class ";
@@ -142,6 +144,9 @@ public:
       result += '<';
       appendGenericParameters(result, info.genericParameters);
       result += '>';
+    }
+    if (info.cOpaqueHandle) {
+      result += ';';
     }
     return result;
   }

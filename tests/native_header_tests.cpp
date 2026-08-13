@@ -32,24 +32,33 @@ void testCAndCppHeaderSurface() {
       lang::Frontend().analyze("native-header.gti", R"(
 using NativeInt = int32_t;
 
+[[c_opaque]] struct RootHandle;
+
 [[c_abi]]
 struct RootRecord {
   mut NativeInt value;
 };
 
 namespace graphics {
+[[c_opaque]] struct Context;
+
 [[c_abi]]
 struct Pair {
   mut RootRecord root;
   mut const uint8_t* bytes;
+  mut Context* context;
 };
 
 extern "C" {
+  Context* cpp_context_create();
+  void cpp_context_destroy(Context* context);
   Pair cpp_pair_scale(Pair value, float scale);
 }
 }
 
 extern "C" {
+  RootHandle* c_root_open(int32_t initial);
+  void c_root_close(RootHandle* handle);
   RootRecord c_root_roundtrip(RootRecord value);
   int32_t c_no_arguments();
 }
@@ -78,13 +87,21 @@ int main() { return 0; }
          "native-header generation should be a deterministic source artifact");
   expect(header.find("#ifdef __cplusplus") != std::string::npos &&
              header.find("namespace graphics {") != std::string::npos &&
+             header.find("struct RootHandle;") != std::string::npos &&
+             header.find("struct Context;") != std::string::npos &&
              header.find("struct Pair {") != std::string::npos &&
+             header.find("::graphics::Context* cpp_context_create(") !=
+                 std::string::npos &&
              header.find("::graphics::Pair cpp_pair_scale(") !=
                  std::string::npos &&
              header.find("extern \"C\"") != std::string::npos,
          "the C++ branch should preserve source namespaces, exact record "
          "identity, and C linkage");
   expect(header.find("typedef struct RootRecord RootRecord;") !=
+                 std::string::npos &&
+             header.find("typedef struct RootHandle RootHandle;") !=
+                 std::string::npos &&
+             header.find("graphics::Context (opaque handle)") !=
                  std::string::npos &&
              header.find("/* graphics::Pair */") != std::string::npos &&
              header.find("c_root_roundtrip(RootRecord value)") !=
@@ -108,6 +125,12 @@ int main() { return 0; }
              recordBody.find("NativeInt") == std::string::npos,
          "emitted native records should use the same canonical, policy-free "
          "C++ definition as the generated header");
+  expect(cpp.contents.find("struct RootHandle;") != std::string::npos &&
+             cpp.contents.find("struct RootHandle {") == std::string::npos &&
+             cpp.contents.find("struct Context;") != std::string::npos &&
+             cpp.contents.find("struct Context {") == std::string::npos,
+         "opaque native handles should remain forward declarations in the "
+         "generated GTI C++ translation unit");
 }
 
 } // namespace

@@ -85,9 +85,11 @@ int main() {
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
   integer and floating scalars, layout-stable `[[c_abi]]` records by value,
-  one-level scalar/record/`void` pointers, and non-retained counted text inputs,
-  plus a compiler-generated bridge header usable unchanged from C17 or
-  C++20/C++23 adapter sources.
+  nominal pointer-only `[[c_opaque]]` handles, one-level
+  scalar/record/`void` pointers, and non-retained counted text inputs, plus a
+  compiler-generated bridge header usable unchanged from C17 or C++20/C++23
+  adapter sources. Native C++ classes and RAII may stay behind that C-linkage
+  adapter without becoming GTI ABI types.
 - A hosted `main(int, std::vector<std::string>)` form that copies native
   command-line arguments into GTI-owned strings instead of exposing `char**`.
 - Structured, target-selected native inputs—including automatically compiled C
@@ -129,6 +131,10 @@ cmake --build build
 # Emit declarations for a C or C++ native shim.
 ./build/gti examples/49-native-bridge-header.gti \
   --emit-native-header -o /tmp/gti_native.h
+
+# See the nominal opaque-handle wrapper boundary.
+./build/gti examples/50-opaque-native-handles.gti \
+  -o /tmp/gti-opaque-handles
 ```
 
 Run the test suite with:

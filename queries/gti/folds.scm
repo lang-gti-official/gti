@@ -1,7 +1,8 @@
 [
   (namespace_declaration)
   (extern_c_declaration)
-  (class_declaration)
+  (class_declaration
+    body: (class_body))
   (enum_declaration)
   (function_declaration)
   (method_declaration)

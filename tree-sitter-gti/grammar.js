@@ -324,8 +324,10 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         optional(field("bases", $.base_clause)),
-        field("body", $.class_body),
-        ";",
+        choice(
+          seq(field("body", $.class_body), ";"),
+          field("forward_declaration", ";"),
+        ),
       ),
 
     class_attribute_list: ($) =>

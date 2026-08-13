@@ -3200,6 +3200,38 @@ namespace {
 borrowSourceForValue(const MirBody &body, MirValueId valueId,
                      std::size_t depth);
 
+void appendCanonicalParameterRoles(const SemanticType &type,
+                                   std::vector<SemanticType> &roles) {
+  if (type.kind != SemanticType::TypePack) {
+    roles.push_back(type);
+    return;
+  }
+  if (!type.concretePack) {
+    // An empty pack instance currently retains its declaration-level symbolic
+    // pack identity. Preserve that single role so equal empty/symbolic pack
+    // groupings remain exact while unrelated pack identities still differ.
+    roles.push_back(type);
+    return;
+  }
+  for (const SemanticType &element : type.arguments) {
+    appendCanonicalParameterRoles(element, roles);
+  }
+}
+
+[[nodiscard]] bool
+exactParameterRoles(const std::vector<SemanticType> &call,
+                    const std::vector<SemanticType> &target) {
+  std::vector<SemanticType> callRoles;
+  std::vector<SemanticType> targetRoles;
+  for (const SemanticType &type : call) {
+    appendCanonicalParameterRoles(type, callRoles);
+  }
+  for (const SemanticType &type : target) {
+    appendCanonicalParameterRoles(type, targetRoles);
+  }
+  return callRoles == targetRoles;
+}
+
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForPlace(const MirBody &body, MirPlaceId placeId,
                      std::size_t depth) {
@@ -3375,7 +3407,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          "function summary",
                          block.id, instruction.id);
         }
-        if (instruction.parameterTypes != target->parameterTypes) {
+        if (!exactParameterRoles(instruction.parameterTypes,
+                                 target->parameterTypes)) {
           return failure(body, owner,
                          "call parameter roles do not match the exact target "
                          "signature",
@@ -3402,7 +3435,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          block.id, instruction.id);
         }
         if (instruction.kind == MirInstructionKind::Construct &&
-            instruction.parameterTypes != constructorTarget->parameterTypes) {
+            !exactParameterRoles(instruction.parameterTypes,
+                                 constructorTarget->parameterTypes)) {
           return failure(body, owner,
                          "construct parameter roles do not match the exact "
                          "target signature",
@@ -3413,7 +3447,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         const MirLambdaInstance *lambda =
             program.findLambda(*instruction.lambdaTarget);
         if (lambda == nullptr ||
-            instruction.parameterTypes != lambda->parameterTypes) {
+            !exactParameterRoles(instruction.parameterTypes,
+                                 lambda->parameterTypes)) {
           return failure(body, owner,
                          "lambda-call parameter roles do not match the exact "
                          "target signature",

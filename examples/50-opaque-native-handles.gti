@@ -1,0 +1,40 @@
+// The native implementation completes these declarations privately. C may
+// define a struct; C++ may wrap arbitrary class and RAII state behind it.
+[[c_opaque]] struct NativeEngine;
+
+namespace graphics {
+[[c_opaque]] struct Renderer;
+
+extern "C" {
+  Renderer* renderer_create(int32_t width, int32_t height);
+  void renderer_destroy(Renderer* renderer);
+}
+}
+
+[[c_abi]]
+struct NativeJob {
+  mut NativeEngine* engine;
+  mut int32_t opcode;
+};
+
+extern "C" {
+  NativeEngine* engine_create(int32_t mode);
+  void engine_destroy(NativeEngine* engine);
+  int32_t engine_submit(NativeEngine* engine, NativeJob job);
+}
+
+int main() {
+  // Opaque pointees have no public layout. Their pointers and records that
+  // contain those pointers do have frontend-owned ABI facts.
+  constexpr uint64_t handle_size = sizeof(NativeEngine*);
+  constexpr uint64_t handle_alignment = alignof(NativeEngine*);
+
+  if (handle_size != sizeof(void*) ||
+      handle_alignment != alignof(void*) ||
+      sizeof(NativeJob) < handle_size) {
+    return 1;
+  }
+
+  std::println("opaque native handles are ready for a safe wrapper");
+  return 0;
+}

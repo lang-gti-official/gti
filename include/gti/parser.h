@@ -334,6 +334,11 @@ private:
         bases.push_back({.access = std::move(access), .type = parseBaseType()});
       } while (match({TokenKind::COMMA}));
     }
+    if (match({TokenKind::SEMICOLON})) {
+      return std::make_unique<ClassDecl>(
+          std::move(attributes), std::move(keyword), kind, std::move(name),
+          std::move(genericParameters), std::move(bases), StmtList{}, true);
+    }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before type body.");
 
     StmtList members;
@@ -358,7 +363,8 @@ private:
 
     return std::make_unique<ClassDecl>(
         std::move(attributes), std::move(keyword), kind, name,
-        std::move(genericParameters), std::move(bases), std::move(members));
+        std::move(genericParameters), std::move(bases), std::move(members),
+        false);
   }
 
   StmtPtr enumDeclaration(Token keyword) {

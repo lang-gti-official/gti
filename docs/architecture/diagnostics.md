@@ -85,6 +85,14 @@ diagnostics or letting a backend message choose either identity.
 - Reserve `GTI-B0001` for internal MIR/backend integrity failure, not ordinary
   invalid source.
 
+`GTI-S2065` owns the opaque-native-handle boundary. It points at the invalid
+attribute, declaration name, or direct type use; explains that the only valid
+declaration is `[[c_opaque]] struct Name;`; relates a direct use to the owning
+attribute when available; and recommends a one-level raw pointer plus an
+ordinary safe wrapper. It has no automatic fix because choosing native identity
+and ownership policy is not mechanical. Parser errors continue to own malformed
+declaration structure.
+
 The LSP publishes diagnostics from the same versioned `FrontendResult` used by
 semantic queries. It always preserves the stable code, severity, source, and
 plain-text message. Related information and structured diagnostic data are

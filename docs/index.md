@@ -72,7 +72,8 @@ for the current implementation when a document is stale or ambiguous.
   revisable full-systems-readiness goal rather than a scheduling cutoff.
 - [013: Bounded native C records](decisions/013-bounded-native-c-records.md)
   — defines the passive `[[c_abi]]` record family, compiler-owned layout,
-  by-value/pointer passage, and ownership exclusions.
+  by-value/pointer passage, ownership exclusions, and the follow-on
+  pointer-only `[[c_opaque]]` identity used by C/C++ adapters.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

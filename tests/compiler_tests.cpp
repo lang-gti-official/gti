@@ -17093,8 +17093,9 @@ int main() {
                 << '\n';
     }
   }
-  expect(valid.canGenerateCode(),
-         "final function type packs should infer and forward exactly");
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "final function type packs should infer, forward, and preserve exact "
+         "concrete MIR parameter roles across equivalent pack groupings");
 
   lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                            nullptr, &valid.semantics);

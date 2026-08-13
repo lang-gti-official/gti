@@ -242,10 +242,11 @@ or read beyond `length`. This compiler-private record does not opt into source
 `[[c_abi]]` record rules or make its private pointer source-accessible.
 
 Calling a C-linkage function whose return type or any parameter type contains a
-raw pointer, including one nested in a `[[c_abi]]` record, requires lexical
-unsafe context. The caller shall meet the pointer validity conditions and the
-native function's nullability, bounds, retention, aliasing, initialization,
-and ownership contract. A declaration itself is not unsafe. A call whose
+raw pointer, including an opaque-handle pointer or one nested in a `[[c_abi]]`
+record, requires lexical unsafe context. The caller shall meet the pointer
+validity conditions and the native function's nullability, bounds, retention,
+aliasing, initialization, and ownership contract. A declaration itself is not
+unsafe. A call whose
 source signature contains only the scalar allowlist, pointer-free `[[c_abi]]`
 records, or the special counted string-view parameter remains valid in safe
 code.
@@ -267,9 +268,9 @@ claim that current artifacts can be safely embedded and resumed. E-EMBED-01
 owns the first explicit wrapper, context-validity/poisoning rule, descriptor
 lifetime, and same-process re-entry evidence.
 
-**Specification gap:** Pointer-to-pointer out parameters, opaque handle
-ownership transfer, callbacks and function-pointer types, arrays at the C
-boundary, C enums, alternate calling conventions, casts, native error
+**Specification gap:** Pointer-to-pointer out parameters, annotated opaque
+handle ownership transfer, callbacks and function-pointer types, arrays at the
+C boundary, C enums, alternate calling conventions, casts, native error
 conventions, allocation, packing, unions, bit-fields, and manual lifetime
 remain to be designed.
 

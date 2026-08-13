@@ -905,6 +905,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           classInfo->compilerCapability != CompilerCapabilityTypeKind::None) {
         return;
       }
+      if (classInfo != nullptr && classInfo->cOpaqueHandle) {
+        return;
+      }
     }
     const ClassLifecycleInfo *enclosingLifecycle = currentClassLifecycle;
     const ClassDecl *enclosingClass = currentClass;

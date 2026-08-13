@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.117.0
+Checkpoint: 0.119.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -117,7 +117,7 @@ infrastructure project.
 
 | Outcome lane | First dependency path | Acceptance signal |
 | --- | --- | --- |
-| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02/03` -> `S-CALL-01` -> selected `S-FFI-02` | Layout-stable records and exact symbols already share one generated C/C++ adapter header; opaque handles and callbacks then extend it without public compiler-private types. |
+| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02/03` -> opaque-handle sub-slice of `S-FFI-02`; independently `M-LIFE/M-FAIL/M-BACK` -> `S-CALL-01` | Layout-stable records, exact symbols, and nominal pointer-only handles share one generated C/C++ adapter header. A wrapper can now hide C structs or C++ classes behind ordinary GTI RAII; callbacks retain their executable-lifetime prerequisites. |
 | Arena or pool allocator | `M-LIFE-01` + failure/layout facts -> `S-ALLOC-01/02` -> one `S-ALLOC-03` client | Application GTI owns allocation policy and one container/value family proves initialization, failure, and cleanup. |
 | Multithreaded work queue | `M-LIFE/M-EXEC/M-FAIL` -> `C-MIR/RUNTIME/CALL` -> `C-ATOM/THREAD/SYNC` -> `C-CONFORM` | Owned tasks, SC atomics, mutex-guard access, join, and worker failure work through public GTI. |
 | Renderer/game update loop | mutable ranges/views + completed vector/string + exact domain operators + time/files/allocation | A frame/update workload mutates collections and domain values without raw-pointer escape hatches. |
@@ -134,7 +134,7 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.117.0 |
+| Foundation | Evidence at 0.119.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -821,8 +821,9 @@ do not expose C++ object layout as GTI semantics.
   uses a private C++ class behind the adapter, and executes all four
   O0/O3-by-C++20/C++23 combinations. `GTI-S2064` rejects representation-field
   initializers before backend entry.
-- **Unlocks:** checked adapter authoring for existing C and C++ libraries while
-  callback and opaque-ownership families remain gated.
+- **Unlocks:** checked adapter authoring for existing C and C++ libraries and
+  the independent pointer-only opaque-handle sub-slice. Callback and annotated
+  ownership-transfer families remain gated.
 
 ### S-CALL-01: Function Items And C Callback Boundary
 
@@ -846,17 +847,27 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-FFI-02: Additional C ABI Families
 
-- **State/role:** blocked; select a demonstrated C-library API client after the
-  bounded record/callback foundations; the opaque-handle/out-parameter slice is
-  bounded-first systems-readiness work.
-- **Scope:** Add pointer-to-pointer out parameters, opaque handles, arrays, and
+- **State/role:** in progress; the independent pointer-only opaque-handle
+  family is complete in 0.119.0. Select a demonstrated C-library API before
+  adding one out-parameter or ownership-transfer family; callbacks remain
+  owned by `S-CALL-01` rather than blocking handle identity.
+- **Implemented sub-slice:** `[[c_opaque]] struct Name;` creates one nominal,
+  incomplete, nongeneric, baseless handle usable only behind a one-level raw
+  pointer. `[[c_abi]]` records and `extern "C"` signatures admit those pointers;
+  the generated C17 branch emits an incomplete typedef and the C++20/C++23
+  branch an exact namespaced forward declaration. C or C++ may complete the
+  private representation, while GTI infers no layout, ownership, nullability,
+  transfer, or cleanup. `GTI-S2065`, formatter, Tree-sitter, LSP, compiler
+  library tests, and the mixed C/C++ native oracle cover the boundary.
+- **Remaining scope:** Add pointer-to-pointer out parameters, arrays, and
   ownership-transfer annotations one family at a time. Each family must state
   initialization, retention, aliasing, nullability, cleanup, and unsafe
-  obligations.
+  obligations. A selected ownership family must build on the opaque identity
+  rather than retroactively making raw handle pointers owners.
 - **Later breadth:** C varargs, unions, bit-fields, and packed records remain
   separate proposals. `printf` alone is not sufficient justification for
   importing C's least checkable call surface.
-- **Exit gate:** the selected family passes a real C oracle across supported
+- **Exit gate for each remaining family:** the selected family passes a real C oracle across supported
   targets, has explicit initialization/retention/cleanup diagnostics, and adds
   no backend-derived type or ownership authority.
 
@@ -1595,7 +1606,7 @@ owned by the rows and domain plans above.
 | Temporary/active-drop authority | **complete normal-exit lifecycle substrate** | `M-LIFE-01` done; failure rollback and full ordered materialization remain downstream |
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | systems-readiness library critical path | `L-RANGE-01` -> `L-RANGE-03` |
-| Native C records/callbacks | **systems-readiness C-library work** | layout, generated adapter surface, callable lifetime, `S-ABI-01/02/03`, `S-CALL-01` |
+| Native C records/handles/callbacks | records, adapter, and pointer-only opaque identity complete; callback work remains systems-readiness | `S-ABI-01/02/03` + first `S-FFI-02` sub-slice done; callable lifetime/failure/executable authority -> `S-CALL-01` |
 | Owned callables and capture | contract complete; systems-readiness implementation shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |

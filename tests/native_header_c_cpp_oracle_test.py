@@ -36,6 +36,8 @@ def main():
     cpp_compiler = os.environ.get("CXX", "c++")
 
     gti_source = r'''
+[[c_opaque]] struct NativeCounter;
+
 [[c_abi]]
 struct NativePoint {
   mut float x;
@@ -45,6 +47,8 @@ struct NativePoint {
 namespace bridge_cpp {
 using NativeScalar = float;
 
+[[c_opaque]] struct Engine;
+
 [[c_abi]]
 struct Offset {
   mut NativeScalar dx;
@@ -52,12 +56,18 @@ struct Offset {
 };
 
 extern "C" {
+  Engine* cpp_engine_create(float factor);
+  void cpp_engine_destroy(Engine* engine);
+  NativePoint cpp_engine_apply(const Engine* engine, NativePoint value);
   Offset cpp_offset_make(float dx, float dy);
   NativePoint cpp_apply_offset(NativePoint value, Offset offset);
 }
 }
 
 extern "C" {
+  NativeCounter* c_counter_create(int32_t initial);
+  void c_counter_destroy(NativeCounter* counter);
+  int32_t c_counter_read(const NativeCounter* counter);
   NativePoint c_point_make(float x, float y);
   uint32_t c_boundary_version();
   NativePoint cpp_point_scale(NativePoint value, float factor);
@@ -66,11 +76,20 @@ extern "C" {
 
 int main() {
   mut NativePoint point = c_point_make(3.0, 4.0);
-  point = cpp_point_scale(point, 2.0);
-  point = bridge_cpp::cpp_apply_offset(
-      point, bridge_cpp::cpp_offset_make(1.0, -1.0));
+  mut int32_t counter_value = 0;
+  unsafe {
+    NativeCounter* counter = c_counter_create(17);
+    bridge_cpp::Engine* engine = bridge_cpp::cpp_engine_create(2.0);
+    point = bridge_cpp::cpp_engine_apply(engine, point);
+    point = cpp_point_scale(point, 1.0);
+    point = bridge_cpp::cpp_apply_offset(
+        point, bridge_cpp::cpp_offset_make(1.0, -1.0));
+    counter_value = c_counter_read(counter);
+    bridge_cpp::cpp_engine_destroy(engine);
+    c_counter_destroy(counter);
+  }
   if (point.x != 7.0 || point.y != 7.0 ||
-      c_boundary_version() != uint32_t(17) ||
+      counter_value != 17 || c_boundary_version() != uint32_t(17) ||
       cpp_text_length("bridge") != 6) {
     return 1;
   }
@@ -81,6 +100,26 @@ int main() {
 
     c_source = r'''
 #include "native_bridge.h"
+
+#include <stdlib.h>
+
+struct NativeCounter {
+  int32_t value;
+};
+
+NativeCounter* c_counter_create(int32_t initial) {
+  NativeCounter* counter = (NativeCounter*)malloc(sizeof(NativeCounter));
+  if (counter != NULL) {
+    counter->value = initial;
+  }
+  return counter;
+}
+
+void c_counter_destroy(NativeCounter* counter) { free(counter); }
+
+int32_t c_counter_read(const NativeCounter* counter) {
+  return counter == NULL ? -1 : counter->value;
+}
 
 NativePoint c_point_make(float x, float y) {
   NativePoint result = {.x = x, .y = y};
@@ -125,6 +164,31 @@ extern "C" int32_t cpp_text_length(gti_c_string_view value) {
 
 namespace bridge_cpp {
 
+struct Engine {
+  explicit Engine(float factor) : implementation(factor) {}
+  ScaleEngine implementation;
+};
+
+extern "C" Engine* cpp_engine_create(float factor) {
+  try {
+    return new Engine(factor);
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+extern "C" void cpp_engine_destroy(Engine* engine) { delete engine; }
+
+extern "C" NativePoint cpp_engine_apply(const Engine* engine,
+                                         NativePoint value) {
+  try {
+    return engine == nullptr ? NativePoint{0.0F, 0.0F}
+                             : engine->implementation.apply(value);
+  } catch (...) {
+    return NativePoint{0.0F, 0.0F};
+  }
+}
+
 extern "C" Offset cpp_offset_make(float dx, float dy) {
   return Offset{dx, dy};
 }
@@ -167,6 +231,15 @@ extern "C" NativePoint cpp_apply_offset(NativePoint value, Offset offset) {
         header = header_path.read_text(encoding="utf-8")
         if "#ifdef __cplusplus" not in header or "extern \"C\"" not in header:
             raise RuntimeError("generated native header lacks its dual C/C++ surface")
+        if (
+            "typedef struct NativeCounter NativeCounter;" not in header
+            or "bridge_cpp::Engine (opaque handle)" not in header
+            or "namespace bridge_cpp" not in header
+            or "struct Engine;" not in header
+        ):
+            raise RuntimeError(
+                "generated native header lacks its C/C++ opaque-handle surface"
+            )
 
         include_arguments = ["-I", temp, "-I", root / "runtime" / "include"]
         run(

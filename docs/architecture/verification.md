@@ -92,6 +92,11 @@ program crosses the real C ABI by value and through one-level pointers.
 compiles one implementation as C17 and one as C++20/C++23, links both into GTI
 at O0/O3, and exercises a private C++ class behind the C adapter. A namespaced
 record proves that C++ identity is preserved while the C branch remains valid.
+The same oracle privately completes a root opaque C struct and a namespaced
+opaque C++ struct wrapping RAII/class state, exercises their create/use/destroy
+functions, and proves that neither public header branch needs the pointee
+layout. `native_record_pipeline` owns `GTI-S2065`, pointer-only semantic
+identity, formatter shape, and the absence of an emitted GTI body.
 The installed-library smoke compiles `NativeHeaderBackend` from the exported
 compiler package.
 

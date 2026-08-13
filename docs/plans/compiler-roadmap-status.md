@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.118.0
+Checkpoint version: 0.119.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -32,8 +32,8 @@ not a boundary for postponing essential capabilities. The former version
 horizon has been replaced in the maintained ledger by durable-rule,
 systems-ready, bounded-first, design-first, and later-breadth roles.
 
-This promoted bounded native records (now complete), the remaining callback
-boundary, an application-visible allocator and arena/pool client, payload
+This promoted bounded native records and pointer-only opaque handles (now
+complete), the remaining callback boundary, an application-visible allocator and arena/pool client, payload
 enums and exhaustive matching,
 cleanup-correct error propagation, exact domain operators, one associative
 container, and the minimal public concurrency profile into systems-readiness
@@ -278,7 +278,8 @@ carry and verify those facts; the backend audits its representation with
 standard-layout, trivial-copy, size, alignment, and offset assertions. A C
 translation-unit oracle proves nested records, by-value arguments/returns, and
 pointer mutation at O0/O3 and C++20/C++23. Callbacks, pointer-to-pointer out
-parameters, and opaque ownership transfer remain separate capability rows.
+parameters, and annotated opaque ownership transfer remain separate capability
+rows.
 The same checkpoint also supplies the previously declared mutable
 `std::array::at` bodies, restoring the shipped array example without adding a
 compiler special case.
@@ -295,6 +296,18 @@ rejected, and emitted GTI C++ uses the same canonical policy-free definition as
 the public header. General C++ ABI, foreign-header import, callbacks,
 pointer-to-pointer out parameters, and ownership transfer remain separate
 capability rows.
+
+The 0.119.0 checkpoint completes the pointer-only opaque-handle sub-slice of
+S-FFI-02. `[[c_opaque]] struct Name;` creates one incomplete nominal identity
+that may cross only behind a one-level raw pointer; it has no GTI layout,
+lifecycle, ownership, or concurrency policy. Native records may contain such
+pointers. The generated header emits an incomplete C typedef or exact
+namespaced C++ forward declaration, and the mixed native oracle privately
+completes one handle in C and another around C++ class/RAII state. Source
+wrappers remain responsible for null handling and exactly-once destroy calls.
+Callbacks still wait for M-LIFE-01, M-FAIL-01, and matching M-BACK-02 execution;
+pointer-to-pointer output and annotated ownership transfer remain client-gated
+S-FFI-02 sub-slices.
 
 M-OWN-01 and the bounded M-OWN-02 implementation are complete in
 [`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one
@@ -466,7 +479,7 @@ semantic publication prevent application access to the surrounding namespace.
 | Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values including frontend-computed constants, layout-query provenance and values, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, classified unsafe expressions, semantic-root-mapped full-expression identities, and typed lexical/value drop obligations with exact concrete cleanup descriptors. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. Program-entry instances retain the semantic entry kind and exact startup append callable. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. Exclusive reborrows retain child/parent identity, stable source place, access, and the semantic endpoint plan selected for reactivation. HIR remains immutable. Named ordered child roles, destination materialization, one merged program-init plan, and explicit ADR-007 failure outcome/site records are not implemented. |
 | MIR | Structural and normal-exit lifecycle foundation | Owns body CFG, values, places, calls, moves, loans, typed drop obligations, lifecycle events, lexical/full-expression cleanup edges, raw address/arithmetic operations, raw memory projections, frontend-computed layout literals, selected C linkage/external symbols, and program-entry adapter metadata. It has no target-layout query operation. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. Borrowed-returning functions retain the selected receiver or formal-parameter summary; entry, call-result, carrier, and escaping return loans preserve the same source identity across calls. One loan can carry multiple unique read-only bindings while retaining one producer and one path-sensitive state. Exclusive child loans preserve their mutable parent and drive verified suspended/reactivated transitions. Proven endpoints lower after statements, nested `if` merges, conditional branch entries, or normalized loop, switch, and break predecessors. Verification checks program-entry identity, loan production, carrier and parent identity, selected call/return sources, lifecycle availability and exact cleanup descriptors, path-sensitive active/suspended state, and predecessor agreement in addition to structural identities, reachability, and use indexes. Ordered parameter/result materialization, one-time effectful target places, merged program initialization, partial-constructor failure rollback, ADR-007 failure propagation/containment, and a general ABI model remain missing. |
 | Optimizer | Stage A complete; Stage B started | Backend-neutral checked-integer and exact binary32/binary64 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. One atomic controlled editor client folds primitive grouping identities in verified shadow MIR and reports HIR agreement plus repair/invalidation. General pass management, cached analyses, broader folds, and MIR-controlled emission remain outstanding. |
-| C++ backend | Transitional with documented evaluation/failure gaps | Consumes semantic and HIR decisions, including compiler-capability type identity, emits exact binary32/binary64 and layout-query constants, never delegates a GTI layout query to native C++, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. Inline native argument/helper lists, temporary behavior, and static initialization do not implement Execution Section 4.2; emitter-local abort helpers and native expected observers do not implement Section 4.10's category/site, cleanup, embedding, or status contract. It is not evidence that MIR is ready for LLVM. |
+| C++ backend | Transitional with documented evaluation/failure gaps | Consumes semantic and HIR decisions, including compiler-capability and opaque native-handle type identity, emits exact binary32/binary64 and layout-query constants, preserves opaque types as declarations only, never delegates a GTI layout query to native C++, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. Inline native argument/helper lists, temporary behavior, and static initialization do not implement Execution Section 4.2; emitter-local abort helpers and native expected observers do not implement Section 4.10's category/site, cleanup, embedding, or status contract. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
 | Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `test`, `clean`, and schema-7 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Test targets build and execute independently in deterministic order. Project build/run/test requests use a verified content-addressed whole-program cache. Canonical workspaces and source-only path dependencies now provide deterministic package selection, direct package aliases, graph diagnostics, shared outputs, and cache provenance without network access. Git/registry dependencies, lockfiles, native dependency composition, and LSP project-fact consumption remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
 
@@ -640,11 +653,12 @@ accumulation, and generic or aggregate constexpr evaluation remain.
 Several safe C++-familiar additions are complete, including owned conditional
 expressions, arithmetic compound assignments, `do`/`while`, and the bounded
 `extern "C"` call layer. The latter owns exact C symbols, a fixed-width scalar
-allowlist, passive layout-stable records, non-retained counted text inputs, and
-one-level scalar/record/`void` pointers whose calls are lexically unsafe when
-the signature contains a pointer. Bounded opaque/out-parameter families,
-callbacks, and ownership transfer are unimplemented systems-readiness lanes;
-unrestricted casts and ABI breadth remain later.
+allowlist, passive layout-stable records, nominal pointer-only opaque handles,
+non-retained counted text inputs, and one-level scalar/record/handle/`void`
+pointers whose calls are lexically unsafe when the signature contains a
+pointer. Out-parameter families, callbacks, and annotated ownership transfer
+remain unimplemented systems-readiness lanes; unrestricted casts and ABI
+breadth remain later.
 Project manifests can now provide structured target-aware native link inputs
 and automatically compile declared package-contained C and C++ sources. The
 public standard library has initial utility, ownership, array, string, vector,

@@ -187,3 +187,5 @@ constexpr double precise_decimal = 0.1d;
   float x;
   float y;
 };
+
+[[c_opaque]] struct NativeHandle;

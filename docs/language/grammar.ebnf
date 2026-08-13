@@ -167,13 +167,15 @@ extern-c-function-declaration
    type outside the bounded native ABI.
 
    Returns are limited to `void`, the fixed-width signed and unsigned integer
-   types, `float`, `double`, and one-level raw pointers whose pointee is `void`
-   or one of those scalar types. Parameters are immutable by-value instances
-   of the same scalar and pointer types, plus `std::string_view` as a
-   non-retained counted input buffer. A raw-pointer pointee may be qualified
-   with `const`. `int`,
+   types, `float`, `double`, valid `[[c_abi]]` records, and one-level raw
+   pointers whose pointee is `void`, one of those scalar types, a valid native
+   record, or a `[[c_opaque]]` handle. Parameters are immutable by-value
+   instances of the same scalar and native-record types, the admitted pointer
+   types, plus `std::string_view` as a non-retained counted input buffer. A
+   raw-pointer pointee may be qualified with `const`. `int`,
    `uint`, suffix-less fixed-width spellings, and transparent aliases follow
-   their resolved fixed-width type. Bool, char, enums, classes, expected,
+   their resolved fixed-width type. Bool, char, enums, ordinary complete
+   classes, expected,
    references, arrays, packs, string-view returns, native variables,
    pointer-to-pointer types, and function pointers are not part of this
    contract. Calling a pointer-bearing C declaration requires an `unsafe`
@@ -193,7 +195,7 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 class-declaration      = [ class-attributes ]
                          class-key IDENTIFIER [ generic-parameter-clause ]
                          [ base-clause ]
-                         "{" { class-member } "}" ";" ;
+                         ( "{" { class-member } "}" ";" | ";" ) ;
 
 class-attributes       = "[[" class-attribute
                          { "," class-attribute } "]]" ;
@@ -250,10 +252,15 @@ access-specifier       = ( "public" | "private" ) ":" ;
    native-record family, with no field initializers, bases, access sections,
    methods, static fields, constructors, cleanup, or copy/move policies.
    Initialization belongs in a safe wrapper or native factory. `c_abi` cannot be
-   combined with a concurrency capability attribute. Identifier syntax is
+   combined with a concurrency capability attribute. The alternative
+   declaration-only class form is accepted solely for
+   `[[c_opaque]] struct Name;`: it is nongeneric, baseless, has no layout or
+   members, and may appear only behind one raw pointer. Other incomplete type
+   declarations are rejected with `GTI-S2065`. Identifier syntax is
    deliberately broader so unknown, misplaced, duplicate, and conflicting
    attributes receive a recoverable semantic diagnostic rather than a parser
-   cascade (`GTI-S2059` for capability policy, `GTI-S2064` for C ABI records).
+   cascade (`GTI-S2059` for capability policy, `GTI-S2064` for C ABI records,
+   and `GTI-S2065` for opaque handles).
 
    A class or struct may contain one direct read-only reference field. Every
    constructor must initialize it directly from one exact read-only reference

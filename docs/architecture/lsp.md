@@ -64,6 +64,12 @@ decorator token, and invalid declarations publish the shared `GTI-S2064`
 diagnostic; the protocol layer neither computes layout nor keeps a second field
 allowlist.
 
+For `[[c_opaque]] struct Name;`, hover renders the incomplete declaration and
+semantic tokens classify the attribute as a decorator. Invalid bodies, kinds,
+and direct values publish compiler-owned `GTI-S2065` ranges without an LSP
+ownership model or generated fix-it. Definitions treat the bodyless form as a
+declaration, not as a source definition.
+
 ## Document State
 
 `LanguageServer` currently owns protocol handling and document lifecycle in one

@@ -2623,12 +2623,15 @@ def test_checked_integer_tooling(executable, root):
 
 def test_native_record_tooling(executable, root):
     source = (
+        "[[c_opaque]] struct NativeHandle;\n"
         "[[c_abi]]\n"
         "struct NativePoint {\n"
         "  mut float x;\n"
         "  mut float y;\n"
         "};\n"
-        "extern \"C\" { NativePoint point_roundtrip(NativePoint value); }\n"
+        "extern \"C\" { NativeHandle* native_open(); "
+        "void native_close(NativeHandle* handle); "
+        "NativePoint point_roundtrip(NativePoint value); }\n"
         "int main() { return int32_t(sizeof(NativePoint) - uint64_t(8)); }\n"
     )
     path = root / "native-record-tooling.gti"
@@ -2697,6 +2700,26 @@ def test_native_record_tooling(executable, root):
         session.send(
             {
                 "jsonrpc": "2.0",
+                "id": 20,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(
+                        source, source.index("NativeHandle") + 1
+                    ),
+                },
+            }
+        )
+        opaque_hover = session.receive_until(
+            lambda message: message.get("id") == 20
+        )["result"]
+        assert opaque_hover and "[[c_opaque]]" in json.dumps(opaque_hover), (
+            opaque_hover
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
                 "id": 3,
                 "method": "textDocument/semanticTokens/full",
                 "params": {"textDocument": {"uri": uri}},
@@ -2711,6 +2734,13 @@ def test_native_record_tooling(executable, root):
         assert tokens[(attribute_position["line"], attribute_position["character"])][
             "type"
         ] == attribute_type
+        opaque_attribute_position = lsp_position(source, source.index("c_opaque"))
+        assert tokens[
+            (
+                opaque_attribute_position["line"],
+                opaque_attribute_position["character"],
+            )
+        ]["type"] == attribute_type
 
         invalid_source = (
             "[[c_abi]] struct Bad { bool value; };\n"
@@ -2744,13 +2774,47 @@ def test_native_record_tooling(executable, root):
         }, diagnostic
         assert "fixes" not in diagnostic.get("data", {}), diagnostic
 
-        incomplete_source = "[[c_abi]] struct Incomplete {\n  int32_t value;\n"
+        invalid_opaque_source = (
+            "[[c_opaque]] struct Bad { int32_t value; };\n"
+            "int main() { return 0; }\n"
+        )
         session.send(
             {
                 "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": invalid_opaque_source}],
+                },
+            }
+        )
+        invalid_opaque = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        opaque_diagnostic = next(
+            item
+            for item in invalid_opaque["diagnostics"]
+            if item.get("code") == "GTI-S2065"
+        )
+        opaque_name = invalid_opaque_source.index("Bad")
+        assert opaque_diagnostic["range"] == {
+            "start": lsp_position(invalid_opaque_source, opaque_name),
+            "end": lsp_position(
+                invalid_opaque_source, opaque_name + len("Bad")
+            ),
+        }, opaque_diagnostic
+        assert "fixes" not in opaque_diagnostic.get("data", {}), opaque_diagnostic
+
+        incomplete_source = "[[c_abi]] struct Incomplete {\n  int32_t value;\n"
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 4},
                     "contentChanges": [{"text": incomplete_source}],
                 },
             }
@@ -2759,7 +2823,7 @@ def test_native_record_tooling(executable, root):
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 3
+            and message["params"].get("version") == 4
         )["params"]
         assert any(
             item.get("code") == "GTI-P0001"

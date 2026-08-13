@@ -1020,6 +1020,7 @@ struct ClassTypeInfo {
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;
+  bool cOpaqueHandle = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
   SemanticTypeTraits traits{};
   ConcurrencyCapabilityPolicy transferPolicy =
@@ -3547,23 +3548,27 @@ public:
         stmt.name(),
         stmt.kind() == ClassKind::Struct ? SymbolKind::Struct
                                          : SymbolKind::Class,
-        qualifiedName(info.namespaceScope, stmt.name().lexeme), type);
-    semanticModel.recordOccurrence(
-        {.sourceUnit = currentSourceUnit,
-         .span = tokenSpan(stmt.name()),
-         .kind = SemanticOccurrenceKind::ClassType,
-         .symbol = symbol,
-         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
-         .name = stmt.name().lexeme,
-         .type = type,
-         .traits = typeTraits(type),
-         .classType = &stmt});
+        qualifiedName(info.namespaceScope, stmt.name().lexeme), type, false,
+        !stmt.isForwardDeclaration());
+    OccurrenceRole roles = OccurrenceRole::Declaration;
+    if (!stmt.isForwardDeclaration()) {
+      roles |= OccurrenceRole::Definition;
+    }
+    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                    .span = tokenSpan(stmt.name()),
+                                    .kind = SemanticOccurrenceKind::ClassType,
+                                    .symbol = symbol,
+                                    .roles = roles,
+                                    .name = stmt.name().lexeme,
+                                    .type = type,
+                                    .traits = typeTraits(type),
+                                    .classType = &stmt});
     beginTypeParameterScope(info.genericParameters);
     for (const BaseSpecifier &base : stmt.bases()) {
       validateType(base.type);
       validateReferencePlacement(base.type, false, "base type");
     }
-    if (info.constructors.empty() && !info.cAbiRecord) {
+    if (info.constructors.empty() && !info.cAbiRecord && !info.cOpaqueHandle) {
       for (const FieldInfo &field : info.fields) {
         const auto member = info.members.find(field.declaration->name().lexeme);
         const bool storedReference =
@@ -8194,6 +8199,8 @@ private:
     bool polymorphic = false;
     bool cAbiRecord = false;
     std::optional<Token> cAbiAttribute;
+    bool cOpaqueHandle = false;
+    std::optional<Token> cOpaqueAttribute;
     std::optional<CAbiRecordLayout> cAbiLayout;
     ConcurrencyCapabilityPolicy transferPolicy =
         ConcurrencyCapabilityPolicy::Structural;
@@ -8214,6 +8221,8 @@ private:
     std::optional<Token> shareSource;
     bool cAbiRecord = false;
     std::optional<Token> cAbiSource;
+    bool cOpaqueHandle = false;
+    std::optional<Token> cOpaqueSource;
   };
 
   struct ShareCapabilityDenial {
@@ -17089,6 +17098,29 @@ private:
                "GTI-S2056");
       }
     }
+    if (!type.pointer) {
+      const SemanticType direct = baseTypeOf(type, currentNamespace);
+      if (direct.kind == SemanticType::Class && direct.classId != 0 &&
+          direct.classId <= classes.size() &&
+          classInfo(direct.classId).cOpaqueHandle) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2065", DiagnosticPhase::Semantics, type.name.last(),
+            "Opaque C handle type '" + typeSpelling(direct) +
+                "' is incomplete and may be used only behind one raw "
+                "pointer.");
+        const ClassInfo &owner = classInfo(direct.classId);
+        if (owner.cOpaqueAttribute) {
+          diagnostic.related.push_back(
+              {tokenSpan(*owner.cOpaqueAttribute),
+               "The pointer-only native handle is declared here."});
+        }
+        diagnostic.hints.emplace_back(
+            "Use '" + typeSpelling(direct) +
+            "*' at the native boundary and put ownership in an ordinary GTI "
+            "wrapper.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
     for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
       validateArrayExtent(extent);
     }
@@ -18826,12 +18858,21 @@ private:
     return record != nullptr && record->cAbiRecord && record->cAbiLayout;
   }
 
+  [[nodiscard]] bool isCOpaqueHandleType(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class) {
+      return false;
+    }
+    const ClassTypeInfo *handle = semanticModel.findClassType(type.classId);
+    return handle != nullptr && handle->cOpaqueHandle;
+  }
+
   [[nodiscard]] bool isCAbiRawPointer(const SemanticType &type) const {
     return type.kind == SemanticType::RawPointer &&
            type.arguments.size() == 1 &&
            (type.arguments.front() == SemanticType::Void ||
             isCAbiScalar(type.arguments.front()) ||
-            isCAbiRecordType(type.arguments.front()));
+            isCAbiRecordType(type.arguments.front()) ||
+            isCOpaqueHandleType(type.arguments.front()));
   }
 
   void validateExternCFunction(const FunctionDecl &function,
@@ -18879,7 +18920,7 @@ private:
       fail(function.returnType().name.last(),
            "extern \"C\" return types are limited to void, fixed-width "
            "integer or float scalars, valid [[c_abi]] records, and one-level "
-           "raw pointers to those types or void.");
+           "raw pointers to those types, opaque C handles, or void.");
     }
 
     for (const Parameter &parameter : function.parameters()) {
@@ -18897,7 +18938,7 @@ private:
              "extern \"C\" parameters are limited to immutable by-value "
              "fixed-width scalars, valid [[c_abi]] records, std::string_view "
              "counted buffers, and one-level raw pointers to those record or "
-             "scalar types or void.");
+             "scalar types, opaque C handles, or void.");
       }
     }
 
@@ -20046,7 +20087,8 @@ private:
                     : "Classes and structs may use [[no_transfer]], "
                       "[[no_share]], "
                       "[[unsafe_transfer]], and [[unsafe_share]]; a passive "
-                      "struct may instead opt into [[c_abi]].");
+                      "struct may instead opt into [[c_abi]], while an "
+                      "incomplete native handle uses [[c_opaque]].");
       diagnostics.emplace_back(std::move(diagnostic));
     };
     const auto setPolicy = [&](const Token &attribute, bool transfer,
@@ -20091,6 +20133,28 @@ private:
           diagnostic.hints.emplace_back(
               "Use 'struct' and keep ordinary classes and interfaces out of "
               "the C ABI.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+      } else if (attribute.lexeme == "c_opaque") {
+        if (result.cOpaqueSource) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2065", DiagnosticPhase::Semantics, attribute,
+              "The opaque C handle attribute is declared more than once.");
+          diagnostic.related.push_back(
+              {tokenSpan(*result.cOpaqueSource),
+               "The first [[c_opaque]] attribute is here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+        result.cOpaqueHandle = true;
+        result.cOpaqueSource = attribute;
+        if (declaration.kind() != ClassKind::Struct) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2065", DiagnosticPhase::Semantics, attribute,
+              "[[c_opaque]] applies only to an incomplete struct "
+              "declaration.");
+          diagnostic.hints.emplace_back(
+              "Declare the native handle as '[[c_opaque]] struct Name;'.");
           diagnostics.emplace_back(std::move(diagnostic));
         }
       } else if (attribute.lexeme == "transfer") {
@@ -20150,6 +20214,18 @@ private:
                                      attribute.lexeme + "'.");
       }
     }
+    if (result.cAbiSource && result.cOpaqueSource) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2065", DiagnosticPhase::Semantics, *result.cOpaqueSource,
+          "An opaque C handle cannot also be a layout-stable [[c_abi]] "
+          "record.");
+      diagnostic.related.push_back(
+          {tokenSpan(*result.cAbiSource), "Conflicting [[c_abi]] is here."});
+      diagnostic.hints.emplace_back(
+          "Use [[c_opaque]] for an incomplete pointer-only handle or "
+          "[[c_abi]] for a complete passive record.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
     if (result.cAbiSource && (result.transferSource || result.shareSource)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2064", DiagnosticPhase::Semantics, *result.cAbiSource,
@@ -20168,6 +20244,26 @@ private:
       diagnostic.hints.emplace_back(
           "Wrap the passive C record in an ordinary GTI type when a nominal "
           "concurrency policy is required.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+    if (result.cOpaqueSource && (result.transferSource || result.shareSource)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2065", DiagnosticPhase::Semantics, *result.cOpaqueSource,
+          "[[c_opaque]] cannot be combined with concurrency capability "
+          "attributes; the native handle pointer owns no GTI value.");
+      if (result.transferSource) {
+        diagnostic.related.push_back(
+            {tokenSpan(*result.transferSource),
+             "Conflicting capability policy is declared here."});
+      }
+      if (result.shareSource) {
+        diagnostic.related.push_back(
+            {tokenSpan(*result.shareSource),
+             "Conflicting capability policy is declared here."});
+      }
+      diagnostic.hints.emplace_back(
+          "Put ownership and concurrency policy on an ordinary GTI wrapper, "
+          "not on the opaque C declaration.");
       diagnostics.emplace_back(std::move(diagnostic));
     }
     return result;
@@ -20250,6 +20346,8 @@ private:
                       .genericParameters = std::move(genericParameters),
                       .cAbiRecord = capabilityPolicies.cAbiRecord,
                       .cAbiAttribute = capabilityPolicies.cAbiSource,
+                      .cOpaqueHandle = capabilityPolicies.cOpaqueHandle,
+                      .cOpaqueAttribute = capabilityPolicies.cOpaqueSource,
                       .transferPolicy = capabilityPolicies.transfer,
                       .sharePolicy = capabilityPolicies.share,
                       .transferPolicySource = capabilityPolicies.transferSource,
@@ -21002,6 +21100,52 @@ private:
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
+  void reportCOpaqueHandle(const Token &location, std::string message) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2065", DiagnosticPhase::Semantics, location, std::move(message));
+    diagnostic.hints.emplace_back(
+        "Declare an incomplete native handle as '[[c_opaque]] struct Name;' "
+        "and use it only through 'Name*' or 'const Name*'.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  void validateCOpaqueHandles() {
+    for (ClassInfo &owner : classes) {
+      if (owner.declaration == nullptr) {
+        continue;
+      }
+      if (owner.declaration->isForwardDeclaration() && !owner.cOpaqueHandle) {
+        reportCOpaqueHandle(
+            owner.name,
+            "Incomplete type declaration '" + owner.name.lexeme +
+                "' requires the [[c_opaque]] native-handle contract.");
+        continue;
+      }
+      if (!owner.cOpaqueHandle) {
+        continue;
+      }
+      if (owner.kind != ClassKind::Struct) {
+        continue;
+      }
+      if (!owner.declaration->isForwardDeclaration()) {
+        reportCOpaqueHandle(
+            owner.name,
+            "Opaque C handle '" + owner.name.lexeme +
+                "' must be incomplete and cannot define a GTI body.");
+      }
+      if (!owner.genericParameters.empty()) {
+        reportCOpaqueHandle(owner.genericParameters.front().name,
+                            "Opaque C handle '" + owner.name.lexeme +
+                                "' cannot declare generic parameters.");
+      }
+      if (!owner.declaration->bases().empty()) {
+        reportCOpaqueHandle(owner.declaration->bases().front().type.name.last(),
+                            "Opaque C handle '" + owner.name.lexeme +
+                                "' cannot declare base types.");
+      }
+    }
+  }
+
   void validateCAbiAccessSpecifiers(const StmtList &members,
                                     const ClassInfo &owner, bool &valid) {
     for (const StmtPtr &statement : members) {
@@ -21028,7 +21172,9 @@ private:
       return true;
     }
     return type.kind == SemanticType::Class && type.classId != 0 &&
-           type.classId <= classes.size() && classInfo(type.classId).cAbiRecord;
+           type.classId <= classes.size() &&
+           (classInfo(type.classId).cAbiRecord ||
+            classInfo(type.classId).cOpaqueHandle);
   }
 
   [[nodiscard]] bool cAbiFieldTypeAllowed(const SemanticType &type) const {
@@ -21282,6 +21428,7 @@ private:
   }
 
   void validateNativeRecords() {
+    validateCOpaqueHandles();
     std::vector<bool> shapeValid(classes.size(), false);
     for (ClassInfo &owner : classes) {
       if (owner.cAbiRecord) {
@@ -22088,6 +22235,7 @@ private:
                         .abstract = owner.abstract,
                         .polymorphic = owner.polymorphic,
                         .cAbiRecord = owner.cAbiRecord,
+                        .cOpaqueHandle = owner.cOpaqueHandle,
                         .cAbiLayout = owner.cAbiLayout,
                         .traits = typeTraits(openClassType(owner.id)),
                         .transferPolicy = owner.transferPolicy,

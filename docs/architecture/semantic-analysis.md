@@ -75,7 +75,11 @@ and backend generation all observe the same normalized facts. The semantic
 model does not query native C++ or LLVM layout. Ordinary class layout remains
 absent; a valid `[[c_abi]] struct` is the one bounded aggregate category whose
 source-order field offsets, size, and ABI alignment semantics compute and
-retain in `ClassTypeInfo`.
+retain in `ClassTypeInfo`. A `[[c_opaque]] struct Name;` instead records one
+incomplete nominal `ClassId` with no layout or lifecycle. Semantic type
+validation confines that identity to a one-level raw-pointer pointee; extern-C
+and native-record validation admit the pointer while continuing to reject the
+handle by value.
 
 Floating expression facts distinguish `SemanticType::Float` (binary32) from
 `SemanticType::Double` (binary64). Semantics owns literal width, common numeric

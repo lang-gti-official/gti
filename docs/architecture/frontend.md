@@ -80,7 +80,11 @@ semantics, not this syntax node.
 Class-declaration attributes are retained as written syntax before the class
 kind. The bounded native-record form is `[[c_abi]] struct`; the parser records
 the attribute and kind but does not decide whether the body is a valid passive
-C record or compute its layout.
+C record or compute its layout. `ClassDecl` also records whether the declaration
+used the bodyless `struct Name;` form. Semantics admits that syntax only with
+`[[c_opaque]]`; the parser keeps it recoverable so an ordinary or malformed
+forward declaration receives one source diagnostic rather than a brace
+cascade.
 
 `ConceptDecl` retains every written type parameter and concept application.
 `FunctionDecl` optionally retains a `RequiresClause` containing the `requires`

@@ -81,6 +81,7 @@ requireCapture(25, "default", "keyword.conditional");
 requireCapture(30, "no_transfer", "attribute");
 requireCapture(30, "unsafe_share", "attribute");
 requireCapture(185, "c_abi", "attribute");
+requireCapture(190, "c_opaque", "attribute");
 requireCapture(33, "this", "variable.builtin");
 requireCapture(33, "self", "variable");
 requireCapture(36, "Counter", "type");
@@ -334,6 +335,7 @@ requireRainbowDelimiter(
   "[[",
 );
 requireRainbowDelimiter("[[c_abi]] struct NativePoint {", "[[");
+requireRainbowDelimiter("[[c_opaque]] struct NativeHandle;", "[[");
 requireRainbowDelimiter(
   "constexpr uint64_t scalar_layout = sizeof(int32_t);",
   "(",

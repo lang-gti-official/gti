@@ -269,6 +269,22 @@ void expectNativeRecordFailure(std::string_view name, std::string source,
                       "' should fail in semantics with focused GTI-S2064");
 }
 
+void expectOpaqueHandleFailure(std::string_view name, std::string source,
+                               std::string_view messageFragment) {
+  const lang::FrontendResult result = analyze(name, std::move(source));
+  const lang::Diagnostic *diagnostic = findCode(result, "GTI-S2065");
+  const bool focused =
+      !result.canGenerateCode() && diagnostic != nullptr &&
+      diagnostic->message.find(messageFragment) != std::string::npos &&
+      !diagnostic->hints.empty() && diagnostic->fixes.empty() &&
+      countCode(result, "GTI-B0001") == 0;
+  if (!focused) {
+    printDiagnostics(result);
+  }
+  expect(focused, "invalid opaque handle '" + std::string(name) +
+                      "' should fail in semantics with focused GTI-S2065");
+}
+
 void testNativeRecordDiagnostics() {
   expectNativeRecordFailure(
       "wrong-kind.gti",
@@ -382,6 +398,117 @@ int main() { return 0; }
          "the unsafe C boundary");
 }
 
+void testOpaqueHandles() {
+  const lang::FrontendResult valid = analyze("opaque-handle-valid.gti", R"(
+[[c_opaque]] struct NativeEngine;
+[[c_abi]] struct NativeRequest { NativeEngine* engine; int32_t value; };
+extern "C" {
+  NativeEngine* engine_create(int32_t initial);
+  void engine_destroy(NativeEngine* engine);
+  int32_t engine_read(const NativeEngine* engine);
+  NativeRequest request_echo(NativeRequest request);
+}
+int main() {
+  uint64_t pointer_size = sizeof(NativeEngine*);
+  unsafe {
+    NativeEngine* engine = engine_create(int32_t(pointer_size));
+    int32_t value = engine_read(engine);
+    engine_destroy(engine);
+    return value - int32_t(pointer_size);
+  }
+}
+)");
+  if (!valid.canGenerateCode()) {
+    printDiagnostics(valid);
+  }
+  const lang::ClassDecl *handleSyntax =
+      findClass(valid.program, "NativeEngine");
+  const lang::ClassTypeInfo *handle =
+      handleSyntax == nullptr ? nullptr
+                              : valid.semantics.findClassType(*handleSyntax);
+  expect(valid.canGenerateCode() && valid.diagnostics.empty() &&
+             handleSyntax != nullptr && handleSyntax->isForwardDeclaration() &&
+             handle != nullptr && handle->cOpaqueHandle &&
+             !handle->cAbiRecord && !handle->cAbiLayout,
+         "an opaque native handle should retain one incomplete nominal "
+         "identity without acquiring a record layout");
+  if (valid.canGenerateCode()) {
+    const lang::OptimizationResult optimizations =
+        lang::OptimizationPipeline().run(valid.hir,
+                                         lang::OptimizationLevel::O1);
+    const lang::BackendArtifact cpp =
+        lang::CppBackend().generate({.program = valid.program,
+                                     .semantics = valid.semantics,
+                                     .hir = valid.hir,
+                                     .mir = valid.mir,
+                                     .optimizations = optimizations});
+    expect(cpp.contents.find("struct NativeEngine;") != std::string::npos &&
+               cpp.contents.find("struct NativeEngine {") ==
+                   std::string::npos &&
+               cpp.contents.find("::NativeEngine* engine_create") !=
+                   std::string::npos,
+           "the C++ backend should preserve the opaque handle as an "
+           "incomplete type used only by pointer");
+  }
+
+  expectOpaqueHandleFailure(
+      "opaque-body.gti",
+      "[[c_opaque]] struct Bad { int32_t value; }; int main() { return 0; }",
+      "must be incomplete");
+  expectOpaqueHandleFailure("ordinary-forward.gti",
+                            "struct Bad; int main() { return 0; }",
+                            "requires the [[c_opaque]]");
+  expectOpaqueHandleFailure("opaque-class.gti",
+                            "[[c_opaque]] class Bad; int main() { return 0; }",
+                            "only to an incomplete struct");
+  expectOpaqueHandleFailure(
+      "opaque-generic.gti",
+      "[[c_opaque]] struct Bad<T>; int main() { return 0; }",
+      "cannot declare generic");
+  expectOpaqueHandleFailure(
+      "opaque-base.gti",
+      "struct Base {}; [[c_opaque]] struct Bad : public Base; "
+      "int main() { return 0; }",
+      "cannot declare base");
+  expectOpaqueHandleFailure(
+      "opaque-by-value.gti",
+      "[[c_opaque]] struct Bad; Bad value; int main() { return 0; }",
+      "may be used only behind one raw pointer");
+  expectOpaqueHandleFailure(
+      "opaque-record-conflict.gti",
+      "[[c_abi, c_opaque]] struct Bad; int main() { return 0; }",
+      "cannot also be a layout-stable");
+  expectOpaqueHandleFailure(
+      "opaque-capability-conflict.gti",
+      "[[c_opaque, no_share]] struct Bad; int main() { return 0; }",
+      "cannot be combined with concurrency");
+
+  const lang::FrontendResult noPointeeLayout = analyze("opaque-layout.gti", R"(
+[[c_opaque]] struct NativeEngine;
+uint64_t invalid = sizeof(NativeEngine);
+int main() { return 0; }
+)");
+  expect(!noPointeeLayout.canGenerateCode() &&
+             countCode(noPointeeLayout, "GTI-S2065") == 1 &&
+             countCode(noPointeeLayout, "GTI-S2063") == 0 &&
+             countCode(noPointeeLayout, "GTI-B0001") == 0,
+         "an opaque pointee should have no source-queryable layout while its "
+         "pointer retains ordinary target layout");
+
+  const lang::FrontendResult unsafeRequired =
+      analyze("opaque-handle-unsafe.gti", R"(
+[[c_opaque]] struct NativeEngine;
+extern "C" { int32_t engine_read(const NativeEngine* engine); }
+int read(const NativeEngine* engine) { return engine_read(engine); }
+int main() { return 0; }
+)");
+  expect(!unsafeRequired.canGenerateCode() &&
+             countCode(unsafeRequired, "GTI-S2055") == 1 &&
+             countCode(unsafeRequired, "GTI-B0001") == 0,
+         "opaque-handle calls should retain the lexical raw-pointer unsafe "
+         "boundary");
+}
+
 void testFormatting() {
   const std::string formatted = lang::Formatter().format(
       "[[ c_abi ]]struct Point{mut float x;mut float y;};");
@@ -391,6 +518,14 @@ void testFormatting() {
              lang::Formatter().format(formatted) == formatted,
          "the formatter should preserve a canonical native-record attribute "
          "and remain idempotent");
+
+  const std::string opaque =
+      lang::Formatter().format("[[ c_opaque ]]struct NativeHandle;");
+  expect(opaque.find("[[c_opaque]]") != std::string::npos &&
+             opaque.find("struct NativeHandle;") != std::string::npos &&
+             lang::Formatter().format(opaque) == opaque,
+         "the formatter should preserve canonical opaque-handle syntax and "
+         "remain idempotent");
 }
 
 } // namespace
@@ -400,6 +535,7 @@ int main() {
   testTargetMatrix();
   testNativeRecordDiagnostics();
   testUnsafeBoundary();
+  testOpaqueHandles();
   testFormatting();
   if (failures != 0) {
     std::cerr << failures << " native-record test(s) failed\n";

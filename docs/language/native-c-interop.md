@@ -20,10 +20,11 @@ int main() {
 ```
 
 This is a bounded C ABI rather than a general foreign-definition facility. It
-supports fixed-width values, passive `[[c_abi]]` records, and bounded one-level
-raw pointers behind lexical `unsafe`. It does not expose native variables,
-callbacks, variadic calls, C++ linkage, ownership transfer, or a stable binary
-ABI for ordinary GTI-defined types.
+supports fixed-width values, passive `[[c_abi]]` records, nominal pointer-only
+`[[c_opaque]]` handles, and bounded one-level raw pointers behind lexical
+`unsafe`. It does not expose native variables, callbacks, variadic calls, C++
+linkage, annotated ownership transfer, or a stable binary ABI for ordinary
+GTI-defined types.
 
 The compiler can emit one native bridge header for this bounded surface. The
 header is valid C17 and C++20/C++23: C sees deterministic C record names, while
@@ -57,7 +58,7 @@ follows the same rule as its canonical allowed type:
 - returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
   `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, valid `[[c_abi]]`
   records, and one-level raw pointers whose pointee is `void`, one of those
-  scalar types, or a valid C ABI record;
+  scalar types, a valid C ABI record, or a `[[c_opaque]]` handle;
 - parameters: the same fixed-width scalar types, passed immutably by value,
   valid C ABI records passed immutably by value, one-level raw pointers with
   immutable bindings and the same permitted pointees, plus
@@ -73,11 +74,12 @@ local parameter binding, not the C ABI.
 
 `bool` and `char` are intentionally not C ABI scalars in this contract because
 their source meaning should not inherit platform C representation choices.
-Enums, ordinary classes/structs/interfaces, `expected`, owners, references,
-arrays, mutable parameters, packs, string-view returns, pointer-to-pointer
-types, function pointers, and pointers to non-ABI pointees are also rejected.
+Enums, ordinary complete classes/structs/interfaces, `expected`, owners,
+references, arrays, mutable parameters, packs, string-view returns,
+pointer-to-pointer types, function pointers, and pointers to non-ABI pointees
+are also rejected.
 The allowlist does not define array parameters, callbacks, opaque ownership
-transfer, or C++ interoperation.
+transfer, or direct C++ linkage.
 
 Every C ABI call is conservatively effectful. A successful declaration says
 only how GTI calls the symbol; it does not make the native implementation safe,
@@ -172,6 +174,66 @@ The header is compiler output and should be regenerated when the GTI boundary
 changes rather than edited. It does not import a foreign header, infer a C
 declaration, or make arbitrary native types layout-stable.
 
+## Opaque Native Handles
+
+An incomplete native identity uses the dedicated pointer-only declaration:
+
+```gti
+[[c_opaque]] struct NativeDatabase;
+
+namespace graphics {
+[[c_opaque]] struct Renderer;
+}
+
+extern "C" {
+  NativeDatabase* database_open(std::string_view path);
+  void database_close(NativeDatabase* database);
+  int32_t database_version(const NativeDatabase* database);
+}
+```
+
+`[[c_opaque]]` applies only to a nongeneric, baseless, incomplete `struct`
+declaration ending in `;`. Ordinary forward declarations are not a second
+incomplete-type system: omitting the attribute is `GTI-S2065`. An opaque
+handle has nominal type identity but no public fields, size, alignment,
+construction, destruction, inheritance, or concurrency policy. It may appear
+only as the pointee of one raw pointer. Passing it by value, defining a GTI
+body, using it as a base or generic argument, or querying the pointee layout is
+invalid. `sizeof(NativeDatabase*)` and `alignof(NativeDatabase*)` remain valid
+pointer queries.
+
+A `[[c_abi]]` field may contain `NativeDatabase*` or
+`const NativeDatabase*`. The record contains only the address; the opaque
+pointee contributes no record-layout fact. Pointer-to-pointer output remains a
+separate family and is not enabled by this declaration.
+
+The generated bridge header gives each handle a deterministic dual surface:
+
+```c
+/* C17 branch */
+typedef struct NativeDatabase NativeDatabase;
+```
+
+```cpp
+// C++20/C++23 branch
+struct NativeDatabase;
+```
+
+The C implementation may privately complete the C struct. The C++
+implementation may privately complete the exact namespaced struct around
+classes, templates, containers, and RAII state. Only pointers and the declared
+`extern "C"` functions cross the boundary; this is C++ adapter compatibility,
+not a promise to call the native C++ object ABI.
+
+Raw handle pointers own nothing in GTI. A factory returning `NativeDatabase*`
+does not automatically create an owner, a non-null guarantee, or a cleanup
+obligation. A safe binding places the pointer behind an ordinary GTI class,
+keeps its unsafe native operations private, rejects or represents a null
+factory result, deletes copy, and invokes the matching destroy function from
+its deterministic destructor. Until explicit native ownership-transfer
+annotations exist, those rules are wrapper policy rather than inferred FFI
+semantics.
+
 ## C++ Adapter Compatibility
 
 A C++ source may include the generated header and implement an exported
@@ -195,15 +257,17 @@ extern "C" NativePoint native_transform(NativePoint value) {
 ```
 
 The implementation may use classes, templates, overloads, and RAII behind the
-shim. Only the declared C ABI types cross into GTI. A C++ exception must never
-escape through an `extern "C"` function; the shim must catch it and translate
-it to a result allowed by the declared boundary. General C++ ABI calls remain
-outside the language contract.
+shim. Only the declared C ABI types cross into GTI. An opaque handle may retain
+the adapter's exact namespaced identity while hiding all of its
+representation. A C++ exception must never escape through an `extern "C"`
+function; the shim must catch it and translate it to a result allowed by the
+declared boundary. General C++ ABI calls remain outside the language contract.
 
 ## Pointer-Bearing Calls And Unsafe
 
 A declaration containing an allowed raw pointer is not itself unsafe. This
-includes a raw pointer nested inside a by-value `[[c_abi]]` record. Calling it
+includes an opaque-handle pointer and a raw pointer nested inside a by-value
+`[[c_abi]]` record. Calling it
 requires a lexical unsafe block because GTI cannot infer the function's
 nullability, bounds, retention, aliasing, initialization, or ownership rules:
 
