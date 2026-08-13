@@ -968,15 +968,214 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
   }
 }
 
+bool isImportAlias(std::string_view alias) {
+  const auto alphabetic = [](char character) {
+    return (character >= 'A' && character <= 'Z') ||
+           (character >= 'a' && character <= 'z') || character == '_';
+  };
+  const auto digit = [](char character) {
+    return character >= '0' && character <= '9';
+  };
+  return !alias.empty() && alphabetic(alias.front()) &&
+         std::all_of(alias.begin() + 1, alias.end(), [&](char character) {
+           return alphabetic(character) || digit(character);
+         });
+}
+
+std::optional<std::filesystem::path> resolvePackageDirectory(
+    std::string_view spelling, const std::filesystem::path &base,
+    const SourceSpan &declaration, bool contained, std::string_view kind,
+    std::vector<Diagnostic> &diagnostics) {
+  const std::filesystem::path declared(spelling);
+  if (declared.empty() || isAbsoluteOnSupportedHost(spelling, declared)) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1103", declaration,
+        std::string(kind) +
+            " must be a non-empty path relative to its gti.toml."));
+    return std::nullopt;
+  }
+
+  std::error_code error;
+  const std::filesystem::path resolved =
+      std::filesystem::weakly_canonical(base / declared, error);
+  if (error || !std::filesystem::is_directory(resolved, error)) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1103", declaration,
+        std::string(kind) + " does not name an existing directory: " +
+            pathString(declared) + "."));
+    return std::nullopt;
+  }
+  if (contained && !pathIsWithin(base, resolved)) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1104", declaration,
+        std::string(kind) +
+            " escapes the package directory: " + pathString(declared) + "."));
+    return std::nullopt;
+  }
+  return resolved;
+}
+
+std::vector<ProjectDependency>
+parseDependencies(const toml::table &document,
+                  const std::filesystem::path &packageRoot,
+                  std::string_view sourceName, std::string_view source,
+                  std::vector<Diagnostic> &diagnostics) {
+  std::vector<ProjectDependency> dependencies;
+  const toml::node *node = document.get("dependencies");
+  if (node == nullptr) {
+    return dependencies;
+  }
+  const toml::table *table = node->as_table();
+  if (table == nullptr) {
+    diagnostics.push_back(
+        buildDiagnostic("GTI-B1004", sourceSpan(sourceName, source, *node),
+                        "Manifest field 'dependencies' must be a table."));
+    return dependencies;
+  }
+
+  for (const auto &[key, dependencyNode] : *table) {
+    const std::string alias(key.str());
+    const SourceSpan aliasSpan = sourceSpan(sourceName, source, key);
+    if (!isImportAlias(alias) || alias == "std") {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", aliasSpan,
+          "Dependency aliases must match [A-Za-z_][A-Za-z0-9_]* and cannot "
+          "be 'std'."));
+    }
+    const toml::table *dependencyTable = dependencyNode.as_table();
+    if (dependencyTable == nullptr) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, dependencyNode),
+          "Dependency '" + alias +
+              "' must be an inline or ordinary table containing 'path'."));
+      continue;
+    }
+    validateFields(*dependencyTable, {"path"}, "dependency", sourceName, source,
+                   diagnostics);
+    const std::optional<std::string> path =
+        requiredString(*dependencyTable, "path", "dependency", sourceName,
+                       source, diagnostics);
+    if (!path) {
+      continue;
+    }
+    const toml::node &pathNode = *dependencyTable->get("path");
+    const SourceSpan pathSpan = sourceSpan(sourceName, source, pathNode);
+    const std::optional<std::filesystem::path> resolved =
+        resolvePackageDirectory(*path, packageRoot, pathSpan, false,
+                                "Dependency path", diagnostics);
+    if (!resolved) {
+      continue;
+    }
+    std::error_code error;
+    const std::filesystem::path manifest = *resolved / manifestFilename;
+    if (!std::filesystem::is_regular_file(manifest, error) || error) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1103", pathSpan,
+          "Dependency path does not contain a regular gti.toml: " +
+              pathString(std::filesystem::path(*path)) + "."));
+      continue;
+    }
+    dependencies.push_back({.alias = alias,
+                            .packageRoot = *resolved,
+                            .declaration = aliasSpan,
+                            .pathDeclaration = pathSpan});
+  }
+  std::sort(dependencies.begin(), dependencies.end(),
+            [](const ProjectDependency &left, const ProjectDependency &right) {
+              return left.alias < right.alias;
+            });
+  return dependencies;
+}
+
+std::optional<ProjectWorkspaceManifest>
+parseWorkspace(const toml::table &document,
+               const std::filesystem::path &packageRoot,
+               std::string_view sourceName, std::string_view source,
+               std::vector<Diagnostic> &diagnostics) {
+  const toml::node *node = document.get("workspace");
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  const toml::table *table = node->as_table();
+  if (table == nullptr) {
+    diagnostics.push_back(
+        buildDiagnostic("GTI-B1004", sourceSpan(sourceName, source, *node),
+                        "Manifest field 'workspace' must be a table."));
+    return std::nullopt;
+  }
+  validateFields(*table, {"members"}, "workspace", sourceName, source,
+                 diagnostics);
+  const toml::node *membersNode = requiredField(
+      *table, "members", "workspace", sourceName, source, diagnostics);
+  ProjectWorkspaceManifest workspace;
+  workspace.declaration = sourceSpan(sourceName, source, *node);
+  if (membersNode == nullptr) {
+    return workspace;
+  }
+  const toml::array *members = membersNode->as_array();
+  if (members == nullptr) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1004", sourceSpan(sourceName, source, *membersNode),
+        "Workspace field 'members' must be an array of package paths."));
+    return workspace;
+  }
+
+  for (const toml::node &memberNode : *members) {
+    const SourceSpan memberSpan = sourceSpan(sourceName, source, memberNode);
+    const std::optional<std::string> spelling = memberNode.value<std::string>();
+    if (!spelling) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", memberSpan,
+          "Workspace field 'members' must contain only strings."));
+      continue;
+    }
+    const std::optional<std::filesystem::path> resolved =
+        resolvePackageDirectory(*spelling, packageRoot, memberSpan, true,
+                                "Workspace member", diagnostics);
+    if (!resolved) {
+      continue;
+    }
+    if (*resolved == packageRoot) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1104", memberSpan,
+          "The workspace root package is implicit and cannot also be a "
+          "member."));
+      continue;
+    }
+    std::error_code error;
+    const std::filesystem::path manifest = *resolved / manifestFilename;
+    if (!std::filesystem::is_regular_file(manifest, error) || error) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1103", memberSpan,
+          "Workspace member does not contain a regular gti.toml: " +
+              pathString(std::filesystem::path(*spelling)) + "."));
+      continue;
+    }
+    if (std::find(workspace.members.begin(), workspace.members.end(),
+                  *resolved) != workspace.members.end()) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", memberSpan,
+          "Workspace member resolves to a package already listed."));
+      continue;
+    }
+    workspace.members.push_back(*resolved);
+    workspace.memberDeclarations.push_back(memberSpan);
+  }
+  return workspace;
+}
+
 } // namespace
 
-ProjectManifest::ProjectManifest(std::filesystem::path path,
-                                 ProjectPackage package,
-                                 std::vector<ProjectTarget> targets,
-                                 std::vector<ProjectProfile> profiles)
+ProjectManifest::ProjectManifest(
+    std::filesystem::path path, ProjectPackage package,
+    std::vector<ProjectTarget> targets, std::vector<ProjectProfile> profiles,
+    std::vector<ProjectDependency> dependencies,
+    std::optional<ProjectWorkspaceManifest> workspace)
     : manifestPath(std::move(path)), rootPath(manifestPath.parent_path()),
       packageIdentity(std::move(package)), projectTargets(std::move(targets)),
-      buildProfiles(std::move(profiles)) {}
+      buildProfiles(std::move(profiles)),
+      packageDependencies(std::move(dependencies)),
+      workspaceManifest(std::move(workspace)) {}
 
 std::string_view projectTargetKindName(ProjectTargetKind kind) {
   switch (kind) {
@@ -1006,6 +1205,15 @@ const std::vector<ProjectTarget> &ProjectManifest::targets() const {
 
 const std::vector<ProjectProfile> &ProjectManifest::profiles() const {
   return buildProfiles;
+}
+
+const std::vector<ProjectDependency> &ProjectManifest::dependencies() const {
+  return packageDependencies;
+}
+
+const std::optional<ProjectWorkspaceManifest> &
+ProjectManifest::workspace() const {
+  return workspaceManifest;
 }
 
 const ProjectTarget *ProjectManifest::findTarget(std::string_view name) const {
@@ -1147,7 +1355,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
 
   toml::table document = std::move(parsed).table();
   validateFields(document,
-                 {"manifest-version", "package", "targets", "profiles"},
+                 {"manifest-version", "package", "targets", "profiles",
+                  "dependencies", "workspace"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -1169,11 +1378,22 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
 
   const std::filesystem::path packageRoot = manifestPath.parent_path();
   ProjectPackage package;
+  package.sourceRoot = packageRoot / "src";
+  {
+    std::error_code sourceRootError;
+    const std::filesystem::path canonicalSourceRoot =
+        std::filesystem::weakly_canonical(package.sourceRoot, sourceRootError);
+    if (!sourceRootError) {
+      package.sourceRoot = canonicalSourceRoot;
+    }
+  }
   if (const toml::table *packageTable =
           requiredTable(document, "package", "top-level", sourceName, source,
                         result.diagnostics)) {
-    validateFields(*packageTable, {"name", "version", "native"}, "package",
-                   sourceName, source, result.diagnostics);
+    validateFields(*packageTable, {"name", "version", "source-root", "native"},
+                   "package", sourceName, source, result.diagnostics);
+    package.sourceRootDeclaration =
+        sourceSpan(sourceName, source, *packageTable);
     const std::optional<std::string> name =
         requiredString(*packageTable, "name", "package", sourceName, source,
                        result.diagnostics);
@@ -1198,103 +1418,125 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
             "Package version must be a Semantic Version such as '0.1.0'."));
       }
     }
+    if (const toml::node *sourceRootNode = packageTable->get("source-root")) {
+      package.sourceRootDeclaration =
+          sourceSpan(sourceName, source, *sourceRootNode);
+      const std::optional<std::string> spelling =
+          sourceRootNode->value<std::string>();
+      if (!spelling) {
+        result.diagnostics.push_back(
+            buildDiagnostic("GTI-B1004", package.sourceRootDeclaration,
+                            "Package field 'source-root' must be a string."));
+      } else if (const std::optional<std::filesystem::path> resolved =
+                     resolvePackageDirectory(
+                         *spelling, packageRoot, package.sourceRootDeclaration,
+                         true, "Package source root", result.diagnostics)) {
+        package.sourceRoot = *resolved;
+      }
+    }
     package.native =
         parseOptionalNative(*packageTable, packageRoot, "Package", sourceName,
                             source, result.diagnostics);
   }
 
+  std::vector<ProjectDependency> dependencies = parseDependencies(
+      document, packageRoot, sourceName, source, result.diagnostics);
+  std::optional<ProjectWorkspaceManifest> workspace = parseWorkspace(
+      document, packageRoot, sourceName, source, result.diagnostics);
+
   std::vector<ProjectTarget> targets;
-  if (const toml::table *targetsTable =
-          requiredTable(document, "targets", "top-level", sourceName, source,
-                        result.diagnostics)) {
-    if (targetsTable->empty()) {
+  if (const toml::node *targetsNode = document.get("targets")) {
+    const toml::table *targetsTable = targetsNode->as_table();
+    if (targetsTable == nullptr) {
       result.diagnostics.push_back(buildDiagnostic(
-          "GTI-B1002", sourceSpan(sourceName, source, *targetsTable),
-          "Manifest table 'targets' must declare at least one target."));
-    }
-    for (const auto &[targetKey, targetNode] : *targetsTable) {
-      const std::string targetName(targetKey.str());
-      if (!isPortableProjectName(targetName)) {
-        result.diagnostics.push_back(buildDiagnostic(
-            "GTI-B1005", sourceSpan(sourceName, source, targetKey),
-            "Target names must match [A-Za-z][A-Za-z0-9_-]*."));
-      }
-      const toml::table *targetTable = targetNode.as_table();
-      if (targetTable == nullptr) {
-        result.diagnostics.push_back(buildDiagnostic(
-            "GTI-B1004", sourceSpan(sourceName, source, targetNode),
-            "Target '" + targetName + "' must be a table."));
-        continue;
-      }
-      validateFields(*targetTable, {"kind", "root", "native"}, "target",
-                     sourceName, source, result.diagnostics);
-      const std::optional<std::string> kind =
-          requiredString(*targetTable, "kind", "target", sourceName, source,
-                         result.diagnostics);
-      const std::optional<std::string> root =
-          requiredString(*targetTable, "root", "target", sourceName, source,
-                         result.diagnostics);
-      ProjectTargetKind targetKind = ProjectTargetKind::Executable;
-      if (kind) {
-        if (*kind == "test") {
-          targetKind = ProjectTargetKind::Test;
-        } else if (*kind != "executable") {
+          "GTI-B1004", sourceSpan(sourceName, source, *targetsNode),
+          "Manifest field 'targets' must be a table."));
+    } else {
+      for (const auto &[targetKey, targetNode] : *targetsTable) {
+        const std::string targetName(targetKey.str());
+        if (!isPortableProjectName(targetName)) {
           result.diagnostics.push_back(buildDiagnostic(
-              "GTI-B1005",
-              sourceSpan(sourceName, source, *targetTable->get("kind")),
-              "Target kind must be 'executable' or 'test' in manifest "
-              "version 1."));
+              "GTI-B1005", sourceSpan(sourceName, source, targetKey),
+              "Target names must match [A-Za-z][A-Za-z0-9_-]*."));
         }
-      }
-      if (!root) {
-        continue;
-      }
+        const toml::table *targetTable = targetNode.as_table();
+        if (targetTable == nullptr) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1004", sourceSpan(sourceName, source, targetNode),
+              "Target '" + targetName + "' must be a table."));
+          continue;
+        }
+        validateFields(*targetTable, {"kind", "root", "native"}, "target",
+                       sourceName, source, result.diagnostics);
+        const std::optional<std::string> kind =
+            requiredString(*targetTable, "kind", "target", sourceName, source,
+                           result.diagnostics);
+        const std::optional<std::string> root =
+            requiredString(*targetTable, "root", "target", sourceName, source,
+                           result.diagnostics);
+        ProjectTargetKind targetKind = ProjectTargetKind::Executable;
+        if (kind) {
+          if (*kind == "test") {
+            targetKind = ProjectTargetKind::Test;
+          } else if (*kind != "executable") {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1005",
+                sourceSpan(sourceName, source, *targetTable->get("kind")),
+                "Target kind must be 'executable' or 'test' in manifest "
+                "version 1."));
+          }
+        }
+        if (!root) {
+          continue;
+        }
 
-      const toml::node &rootNode = *targetTable->get("root");
-      const std::filesystem::path declaredRoot(*root);
-      if (declaredRoot.empty() ||
-          isAbsoluteOnSupportedHost(*root, declaredRoot)) {
-        result.diagnostics.push_back(buildDiagnostic(
-            "GTI-B1103", sourceSpan(sourceName, source, rootNode),
-            "Target root must be a non-empty path relative to gti.toml."));
-        continue;
-      }
-      if (declaredRoot.extension() != ".gti") {
-        result.diagnostics.push_back(buildDiagnostic(
-            "GTI-B1103", sourceSpan(sourceName, source, rootNode),
-            "Target root must use the .gti extension."));
-        continue;
-      }
+        const toml::node &rootNode = *targetTable->get("root");
+        const std::filesystem::path declaredRoot(*root);
+        if (declaredRoot.empty() ||
+            isAbsoluteOnSupportedHost(*root, declaredRoot)) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1103", sourceSpan(sourceName, source, rootNode),
+              "Target root must be a non-empty path relative to gti.toml."));
+          continue;
+        }
+        if (declaredRoot.extension() != ".gti") {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1103", sourceSpan(sourceName, source, rootNode),
+              "Target root must use the .gti extension."));
+          continue;
+        }
 
-      const std::filesystem::path candidate = packageRoot / declaredRoot;
-      std::error_code pathError;
-      const std::filesystem::path resolvedRoot =
-          std::filesystem::canonical(candidate, pathError);
-      if (pathError ||
-          !std::filesystem::is_regular_file(resolvedRoot, pathError)) {
-        result.diagnostics.push_back(buildDiagnostic(
-            "GTI-B1103", sourceSpan(sourceName, source, rootNode),
-            "Target root does not name an existing regular file: " +
-                pathString(declaredRoot) + "."));
-        continue;
+        const std::filesystem::path candidate = packageRoot / declaredRoot;
+        std::error_code pathError;
+        const std::filesystem::path resolvedRoot =
+            std::filesystem::canonical(candidate, pathError);
+        if (pathError ||
+            !std::filesystem::is_regular_file(resolvedRoot, pathError)) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1103", sourceSpan(sourceName, source, rootNode),
+              "Target root does not name an existing regular file: " +
+                  pathString(declaredRoot) + "."));
+          continue;
+        }
+        if (!pathIsWithin(packageRoot, resolvedRoot)) {
+          Diagnostic diagnostic = buildDiagnostic(
+              "GTI-B1104", sourceSpan(sourceName, source, rootNode),
+              "Target root escapes the package directory.");
+          diagnostic.hints.push_back(
+              "Dependency source roots must be declared before they can be "
+              "used.");
+          result.diagnostics.push_back(std::move(diagnostic));
+          continue;
+        }
+        targets.push_back(
+            {.name = targetName,
+             .kind = targetKind,
+             .root = resolvedRoot,
+             .declaration = sourceSpan(sourceName, source, targetKey),
+             .native =
+                 parseOptionalNative(*targetTable, packageRoot, "Target",
+                                     sourceName, source, result.diagnostics)});
       }
-      if (!pathIsWithin(packageRoot, resolvedRoot)) {
-        Diagnostic diagnostic = buildDiagnostic(
-            "GTI-B1104", sourceSpan(sourceName, source, rootNode),
-            "Target root escapes the package directory.");
-        diagnostic.hints.push_back("Dependency source roots must be declared "
-                                   "before they can be used.");
-        result.diagnostics.push_back(std::move(diagnostic));
-        continue;
-      }
-      targets.push_back(
-          {.name = targetName,
-           .kind = targetKind,
-           .root = resolvedRoot,
-           .declaration = sourceSpan(sourceName, source, targetKey),
-           .native =
-               parseOptionalNative(*targetTable, packageRoot, "Target",
-                                   sourceName, source, result.diagnostics)});
     }
   }
 
@@ -1361,7 +1603,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
             });
   result.status = ManifestLoadStatus::Success;
   result.manifest.emplace(manifestPath, std::move(package), std::move(targets),
-                          std::move(profiles));
+                          std::move(profiles), std::move(dependencies),
+                          std::move(workspace));
   return result;
 }
 

@@ -365,6 +365,7 @@ struct CompletionInput {
   std::vector<std::filesystem::path> preludePaths;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::vector<std::filesystem::path> standardLibraryRoots;
+  std::vector<PackageSourceRoot> packageSourceRoots;
 };
 
 class LanguageQueries {
@@ -583,7 +584,8 @@ public:
     options.completionOffset = input.byteOffset;
     FrontendResult snapshot = Frontend(options).analyze(
         input.entryPath, input.source, input.preludePaths,
-        input.sourceOverrides, input.standardLibraryRoots);
+        input.sourceOverrides, input.standardLibraryRoots,
+        input.packageSourceRoots);
     const std::optional<SemanticCompletionContext> &context =
         snapshot.semantics.completionContext();
     if (!context) {

@@ -1057,6 +1057,179 @@ void testCleanSafety() {
   }
 }
 
+void testWorkspaceAndPathDependencies() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path root = temporary.root();
+  const std::filesystem::path app = root / "packages/app";
+  const std::filesystem::path math = root / "packages/math";
+  expect(
+      writeFile(root / "src/main.gti", "int main() { return 0; }\n") &&
+          writeFile(app / "src/main.gti",
+                    "#include <math/add>\nint main() { return 0; }\n") &&
+          writeFile(math / "lib/add.gti",
+                    "namespace math { int add(int a, int b) { return a + b; } "
+                    "}\n"),
+      "workspace source fixtures should be writable");
+
+  const std::string rootManifest = R"(manifest-version = 1
+
+[package]
+name = "workspace_root"
+version = "0.1.0"
+
+[targets.root]
+kind = "executable"
+root = "src/main.gti"
+
+[workspace]
+members = ["packages/math", "packages/app"]
+)";
+  const std::string appManifest = R"(manifest-version = 1
+
+[package]
+name = "app"
+version = "1.0.0"
+
+[dependencies]
+math = { path = "../math" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+)";
+  const std::string mathManifest = R"(manifest-version = 1
+
+[package]
+name = "math"
+version = "2.0.0"
+source-root = "lib"
+)";
+  expect(writeFile(root / "gti.toml", rootManifest) &&
+             writeFile(app / "gti.toml", appManifest) &&
+             writeFile(math / "gti.toml", mathManifest),
+         "workspace manifests should be writable");
+
+  lang::driver::WorkspaceResolutionResult workspace =
+      lang::driver::resolveProjectWorkspace(app / "src");
+  expect(workspace.succeeded() && workspace.workspace &&
+             workspace.workspace->declared() &&
+             workspace.workspace->root() == std::filesystem::canonical(root) &&
+             workspace.workspace->selectedPackage().manifest.package().name ==
+                 "app" &&
+             workspace.workspace->packages().size() == 3,
+         "workspace discovery should select the containing member and load a "
+         "deterministic package graph");
+  if (workspace.workspace) {
+    const std::vector<lang::PackageSourceRoot> roots =
+        workspace.workspace->packageSourceRoots();
+    const auto appRoot = std::find_if(
+        roots.begin(), roots.end(), [](const lang::PackageSourceRoot &source) {
+          return source.name == "app";
+        });
+    expect(appRoot != roots.end() && appRoot->dependencies.size() == 1 &&
+               appRoot->dependencies.front().alias == "math" &&
+               appRoot->dependencies.front().targetIdentity == "math@2.0.0",
+           "workspace source roots should retain direct aliases and stable "
+           "package identities");
+    const auto mathRoot = std::find_if(
+        roots.begin(), roots.end(), [](const lang::PackageSourceRoot &source) {
+          return source.name == "math";
+        });
+    expect(mathRoot != roots.end() &&
+               mathRoot->sourceRoot == std::filesystem::canonical(math / "lib"),
+           "an explicit package source-root should control angle-unit "
+           "resolution without requiring a build target");
+  }
+
+  lang::driver::ProjectResolutionResult build =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, std::nullopt, "dev", lang::TargetInfo::host(), {},
+          std::string("app")));
+  expect(build.succeeded() && build.plan &&
+             build.plan->packageName() == "app" &&
+             build.plan->workspaceRoot() == std::filesystem::canonical(root) &&
+             build.plan->output().string().find("build/gti/packages/app/dev") !=
+                 std::string::npos &&
+             build.plan->packageSources().size() == 3,
+         "explicit package selection should create an immutable plan under "
+         "the shared workspace output root");
+
+  workspace = lang::driver::resolveProjectWorkspace(
+      root, std::optional<std::string>("missing"));
+  expect(workspace.status ==
+                 lang::driver::WorkspaceResolutionStatus::SelectionFailure &&
+             findDiagnostic(workspace.diagnostics, "GTI-B1607") != nullptr,
+         "unknown workspace package selection should be diagnosed");
+
+  const std::string cyclicMathManifest = R"(manifest-version = 1
+
+[package]
+name = "math"
+version = "2.0.0"
+source-root = "lib"
+
+[dependencies]
+app = { path = "../app" }
+)";
+  expect(writeFile(math / "gti.toml", cyclicMathManifest),
+         "cyclic dependency fixture should be writable");
+  workspace = lang::driver::resolveProjectWorkspace(math / "lib");
+  expect(workspace.status ==
+                 lang::driver::WorkspaceResolutionStatus::GraphFailure &&
+             findDiagnostic(workspace.diagnostics, "GTI-B1603") != nullptr,
+         "package dependency cycles should fail before target selection");
+
+  const std::string duplicateAliasManifest = R"(manifest-version = 1
+
+[package]
+name = "app"
+version = "1.0.0"
+
+[dependencies]
+math = { path = "../math" }
+same_math = { path = "../math" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+)";
+  expect(writeFile(math / "gti.toml", mathManifest) &&
+             writeFile(app / "gti.toml", duplicateAliasManifest),
+         "duplicate dependency root fixture should be writable");
+  workspace = lang::driver::resolveProjectWorkspace(root);
+  expect(workspace.status ==
+                 lang::driver::WorkspaceResolutionStatus::GraphFailure &&
+             findDiagnostic(workspace.diagnostics, "GTI-B1602") != nullptr,
+         "one package should not bind two aliases to the same canonical "
+         "dependency root");
+
+  const std::string duplicateNameManifest = R"(manifest-version = 1
+
+[package]
+name = "app"
+version = "2.0.0"
+source-root = "lib"
+)";
+  expect(writeFile(app / "gti.toml", appManifest) &&
+             writeFile(math / "gti.toml", duplicateNameManifest),
+         "duplicate package name fixture should be writable");
+  workspace = lang::driver::resolveProjectWorkspace(root);
+  expect(workspace.status ==
+                 lang::driver::WorkspaceResolutionStatus::GraphFailure &&
+             findDiagnostic(workspace.diagnostics, "GTI-B1604") != nullptr,
+         "workspace package names should be unique across canonical roots");
+
+  const std::string nestedWorkspaceManifest = mathManifest + "\n[workspace]\n"
+                                                             "members = []\n";
+  expect(writeFile(math / "gti.toml", nestedWorkspaceManifest),
+         "nested workspace fixture should be writable");
+  workspace = lang::driver::resolveProjectWorkspace(math / "lib");
+  expect(workspace.status ==
+                 lang::driver::WorkspaceResolutionStatus::GraphFailure &&
+             findDiagnostic(workspace.diagnostics, "GTI-B1600") != nullptr,
+         "workspace members should not introduce nested workspace roots");
+}
+
 void testProjectScaffolding() {
   TemporaryDirectory temporary;
   const std::string expectedSource = R"(#include <std/string>
@@ -1188,6 +1361,7 @@ int main() {
   testNativeManifestResolution();
   testNativeManifestDiagnostics();
   testCleanSafety();
+  testWorkspaceAndPathDependencies();
   testProjectScaffolding();
 
   if (failures != 0) {

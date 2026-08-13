@@ -51,6 +51,7 @@ enum class ProjectCommand {
 
 struct ProjectOptions {
   ProjectCommand command = ProjectCommand::Build;
+  std::optional<std::string> package;
   std::optional<std::string> target;
   std::string profile = "dev";
   bool profileSelected = false;
@@ -70,6 +71,10 @@ struct ScaffoldOptions {
       lang::driver::ProjectScaffoldMode::NewPackage;
   std::filesystem::path destination;
   std::optional<std::string> packageName;
+};
+
+struct MetadataOptions {
+  std::optional<std::string> package;
 };
 
 enum class ArgumentResult {
@@ -98,7 +103,7 @@ void printUsage(std::ostream &stream) {
          "       gti new <path> [--name <name>]\n"
          "       gti init [path] [--name <name>]\n"
          "       gti clean\n"
-         "       gti metadata [--format json]\n"
+         "       gti metadata [--format json] [--package <name>]\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
@@ -120,6 +125,7 @@ void printUsage(std::ostream &stream) {
          "output.\n"
          "\n"
          "Project build options:\n"
+         "      --package <name> Select a package from the active workspace.\n"
          "      --profile <name> Select a manifest profile (default: dev).\n"
          "      --release        Shorthand for --profile release.\n"
          "      --cxx <path>     Override the native C++ compiler.\n"
@@ -148,7 +154,7 @@ void printUsage(std::ostream &stream) {
          "belong to the program.\n"
          "  test                 Build and run all test targets, or one named "
          "test target.\n"
-         "  clean                Remove only this package's build/gti "
+         "  clean                Remove the active workspace's build/gti "
          "subtree.\n"
          "  metadata             Print deterministic project metadata as "
          "JSON.\n"
@@ -401,6 +407,18 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.profileSelected = true;
       continue;
     }
+    if (argument == "--package") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing package name after --package\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.package) {
+        std::cerr << "gti: --package may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.package = argv[index];
+      continue;
+    }
     if (argument == "--release") {
       if (options.profileSelected) {
         std::cerr << "gti: --release cannot be combined with --profile or "
@@ -555,7 +573,8 @@ ArgumentResult parseCleanArguments(int argc, char *argv[]) {
   return ArgumentResult::Run;
 }
 
-ArgumentResult parseMetadataArguments(int argc, char *argv[]) {
+ArgumentResult parseMetadataArguments(int argc, char *argv[],
+                                      MetadataOptions &options) {
   for (int index = 2; index < argc; ++index) {
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
@@ -571,6 +590,18 @@ ArgumentResult parseMetadataArguments(int argc, char *argv[]) {
         std::cerr << "gti: metadata format must be json\n";
         return ArgumentResult::ExitFailure;
       }
+      continue;
+    }
+    if (argument == "--package") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing package name after --package\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.package) {
+        std::cerr << "gti: --package may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.package = argv[index];
       continue;
     }
     std::cerr << "gti: unknown metadata option '" << argument << "'\n";
@@ -980,8 +1011,10 @@ std::optional<std::filesystem::path> workingDirectory() {
 
 void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                        ProjectCommand command) {
-  std::cerr << "gti: target " << plan.targetName() << " [" << plan.profileName()
-            << ", " << lang::driver::targetTriple(plan.target()) << "]\n"
+  std::cerr << "gti: package " << plan.packageName() << "@"
+            << plan.packageVersion() << ", target " << plan.targetName() << " ["
+            << plan.profileName() << ", "
+            << lang::driver::targetTriple(plan.target()) << "]\n"
             << "gti: configuration -O"
             << lang::cli::optimizationNumber(plan.optimization()) << ", "
             << lang::cli::cppStandardName(plan.cppStandard())
@@ -1012,10 +1045,10 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
   std::optional<lang::driver::BuildCachePolicy> cache;
   if (options.useCache) {
     cache = lang::driver::BuildCachePolicy{
-        .root = plan.packageRoot() / "build" / "gti" / "cache",
-        .sourceRoot = plan.packageRoot(),
+        .root = plan.workspaceRoot() / "build" / "gti" / "cache",
+        .sourceRoot = plan.workspaceRoot(),
         .compilerIdentity = std::string(version),
-        .projectModelIdentity = "gti-manifest-v1",
+        .projectModelIdentity = plan.projectModelIdentity(),
     };
   } else if (options.verbose) {
     std::cerr << "gti: cache disabled by --no-cache\n";
@@ -1025,12 +1058,12 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
           lang::driver::CompilationRequest(
               plan.entry(), toolchain.standardLibrary, plan.target(),
-              plan.optimization(), plan.cppStandard()),
+              plan.optimization(), plan.cppStandard(), plan.packageSources()),
           toolchain, plan.generatedSource(), plan.output(),
           lang::driver::discoverNativeCompiler(options.cxx),
           plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
-          lang::driver::ManagedOutputPolicy{.trustedRoot = plan.packageRoot(),
-                                            .outputRoot = plan.packageRoot() /
+          lang::driver::ManagedOutputPolicy{.trustedRoot = plan.workspaceRoot(),
+                                            .outputRoot = plan.workspaceRoot() /
                                                           "build" / "gti"},
           std::move(cCompiler), std::move(cache)));
   return reportBuildResult(result, options.verbose);
@@ -1051,7 +1084,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectResolutionResult resolution =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
           *currentDirectory, options.target, options.profile,
-          lang::TargetInfo::host(), std::move(overrides)));
+          lang::TargetInfo::host(), std::move(overrides), options.package));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1075,7 +1108,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
     const lang::driver::CheckResult result =
         lang::driver::checkCompilation(lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
-            plan.optimization(), plan.cppStandard()));
+            plan.optimization(), plan.cppStandard(), plan.packageSources()));
     if (!result.succeeded()) {
       reportDiagnostics(result.diagnostics, result.sources);
       return exitCode(ExitStatus::Compilation);
@@ -1130,7 +1163,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectTestResolutionResult resolution =
       lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
           *currentDirectory, options.target, options.profile,
-          lang::TargetInfo::host(), std::move(overrides)));
+          lang::TargetInfo::host(), std::move(overrides), options.package));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1209,15 +1242,15 @@ int runClean() {
   return exitCode(ExitStatus::Success);
 }
 
-int runMetadata() {
+int runMetadata(const MetadataOptions &options) {
   const std::optional<std::filesystem::path> currentDirectory =
       workingDirectory();
   if (!currentDirectory) {
     return exitCode(ExitStatus::Io);
   }
   const lang::driver::ProjectMetadataResult result =
-      lang::driver::resolveProjectMetadata(*currentDirectory,
-                                           lang::TargetInfo::host());
+      lang::driver::resolveProjectMetadata(
+          *currentDirectory, lang::TargetInfo::host(), options.package);
   if (!result.succeeded()) {
     reportDiagnostics(result.diagnostics, result.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1288,14 +1321,16 @@ int main(int argc, char *argv[]) {
   }
 
   if (command == "metadata") {
-    const ArgumentResult argumentResult = parseMetadataArguments(argc, argv);
+    MetadataOptions options;
+    const ArgumentResult argumentResult =
+        parseMetadataArguments(argc, argv, options);
     if (argumentResult == ArgumentResult::ExitSuccess) {
       return exitCode(ExitStatus::Success);
     }
     if (argumentResult == ArgumentResult::ExitFailure) {
       return exitCode(ExitStatus::Usage);
     }
-    return runMetadata();
+    return runMetadata(options);
   }
 
   if (command == "new" || command == "init") {

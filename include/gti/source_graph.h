@@ -23,6 +23,7 @@ enum class SourceDependencyKind {
   Include,
   Prelude,
   StandardLibrary,
+  Package,
 };
 
 enum class SourceUnitRole {
@@ -45,9 +46,27 @@ struct SourceUnit {
   std::size_t declarationStart = 0;
   std::size_t declarationCount = 0;
   std::optional<std::string> standardLibraryName;
+  // Present for application units loaded through a manifest-owned package
+  // graph. Package provenance is never compiler trust; it supplies stable
+  // cache identity and direct package-include lookup only.
+  std::optional<std::string> packageIdentity;
+  std::optional<std::string> packageRelativePath;
   SourceUnitRole role = SourceUnitRole::Application;
   bool entry = false;
   bool prelude = false;
+};
+
+struct PackageSourceDependency {
+  std::string alias;
+  std::string targetIdentity;
+};
+
+struct PackageSourceRoot {
+  std::string identity;
+  std::string name;
+  std::filesystem::path packageRoot;
+  std::filesystem::path sourceRoot;
+  std::vector<PackageSourceDependency> dependencies;
 };
 
 class SourceGraph {
@@ -142,13 +161,17 @@ private:
   SourceUnitId
   addUnit(std::filesystem::path path, bool isEntry, bool isPrelude,
           std::optional<std::string> standardLibraryName = std::nullopt,
-          SourceUnitRole role = SourceUnitRole::Application) {
+          SourceUnitRole role = SourceUnitRole::Application,
+          std::optional<std::string> packageIdentity = std::nullopt,
+          std::optional<std::string> packageRelativePath = std::nullopt) {
     const SourceUnitId id = units.size() + 1;
     const std::string key = path.string();
     units.push_back(
         SourceUnit{.id = id,
                    .path = std::move(path),
                    .standardLibraryName = std::move(standardLibraryName),
+                   .packageIdentity = std::move(packageIdentity),
+                   .packageRelativePath = std::move(packageRelativePath),
                    .role = role,
                    .entry = isEntry,
                    .prelude = isPrelude});

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.117.0
+Checkpoint version: 0.118.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -46,6 +46,17 @@ structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
 
+The 0.118.0 checkpoint completes B-PROJECT-03. Manifest schema version 1 now
+resolves canonical workspace members and recursive source-only path
+dependencies without network access. Direct package aliases feed the
+compiler-owned source graph; transitive and quoted cross-package access is
+rejected; cycles, duplicate names/roots, nested workspaces, and missing source
+roots fail before compilation. `--package` provides deterministic selection,
+workspace artifacts are collision-free under one managed root, metadata schema
+7 publishes the package graph, and cache identity includes package provenance.
+Direct mode remains manifest-independent. Exact Git/lockfile work and a stable
+read-only driver project-facts API are now ready as separate next rows.
+
 The 0.117.0 checkpoint completes M-LIFE-01. Semantics selects exact AST
 full-expression roots and rejects cleanup-owning global/static storage with
 `GTI-S2061`; HIR retains typed lexical/value obligations and concrete cleanup
@@ -65,8 +76,7 @@ live under `build/gti/cache/v1`; hits skip parsing through native linking,
 corruption is diagnosed and rebuilt before replacement, and `--no-cache`
 provides a clean verification path. Pure-GTI checkout moves retain content
 identity while native/external path-semantic inputs remain explicit. Direct
-compilation and frontend-only `check` remain uncached. B-PROJECT-03 (workspaces
-and path dependencies) is now the next project-system row.
+compilation and frontend-only `check` remain uncached.
 
 The 0.113.0 checkpoint completes B-PROJECT-01. Manifest schema version 1 now
 accepts executable and test target kinds; the driver resolves all or one named
@@ -458,7 +468,7 @@ semantic publication prevent application access to the surrounding namespace.
 | Optimizer | Stage A complete; Stage B started | Backend-neutral checked-integer and exact binary32/binary64 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. One atomic controlled editor client folds primitive grouping identities in verified shadow MIR and reports HIR agreement plus repair/invalidation. General pass management, cached analyses, broader folds, and MIR-controlled emission remain outstanding. |
 | C++ backend | Transitional with documented evaluation/failure gaps | Consumes semantic and HIR decisions, including compiler-capability type identity, emits exact binary32/binary64 and layout-query constants, never delegates a GTI layout query to native C++, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. Inline native argument/helper lists, temporary behavior, and static initialization do not implement Execution Section 4.2; emitter-local abort helpers and native expected observers do not implement Section 4.10's category/site, cleanup, embedding, or status contract. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
-| Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `test`, `clean`, and schema-6 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Test targets build and execute independently in deterministic order. Project build/run/test requests use a verified content-addressed whole-program cache; dependencies, workspaces, and lockfiles remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
+| Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `test`, `clean`, and schema-7 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Test targets build and execute independently in deterministic order. Project build/run/test requests use a verified content-addressed whole-program cache. Canonical workspaces and source-only path dependencies now provide deterministic package selection, direct package aliases, graph diagnostics, shared outputs, and cache provenance without network access. Git/registry dependencies, lockfiles, native dependency composition, and LSP project-fact consumption remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
 
 ## Roadmap Milestones
 
@@ -655,8 +665,10 @@ lifetime work are incomplete.
 - **Build system:** immutable compiler/driver requests, executable/test
   manifest targets, and `build`, `check`, `run`, `test`, `clean`, and
   `metadata` are complete. Structured package/profile/target native inputs and
-  declared C/C++ source compilation are also complete. Deterministic caching
-  is next, before workspaces/path dependencies and Git lockfiles.
+  declared C/C++ source compilation, deterministic whole-program caching, and
+  canonical source-only workspace/path dependency graphs are also complete.
+  Exact Git resolution/lockfiles and the read-only project-facts bridge are
+  the next independent project-system rows.
 - **Quality/tooling:** deterministic diagnostics, formatting, Tree-sitter,
   semantic tokens, completion, hover, and definition have foundations.
   Shipped GTI sources are parsed by Tree-sitter in CI; interface/pack signature

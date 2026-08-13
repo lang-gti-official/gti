@@ -410,10 +410,12 @@ The compiled and installed `gti_driver` now owns `CompilationRequest`,
 `NativeCompileRequest`, toolchain resource discovery and validation, native
 process execution, temporary artifact lifetime, schema-versioned manifest
 parsing, project discovery, profile and target resolution, and the initial
-executable build plan. It also owns the project-local verified whole-program
+executable build plan. It also owns the workspace-local verified whole-program
 cache and compiler/toolchain/input identity; the CLI constructs requests and
-presents those results. Dependencies and workspaces remain later build-system
-milestones and must not be added to `gti_compiler`.
+presents those results. The driver now also resolves canonical workspaces and
+source-only path dependency graphs. `gti_compiler` consumes only the resulting
+immutable `PackageSourceRoot` values for include loading; TOML, workspace
+selection, acquisition, cache, and artifact policy remain outside it.
 
 ## Testing And Verification
 

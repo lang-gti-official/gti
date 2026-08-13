@@ -325,7 +325,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 6
+        assert metadata_document["schemaVersion"] == 7
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -397,7 +397,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 6
+        assert test_metadata["schemaVersion"] == 7
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -608,7 +608,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 6
+        assert native_document["schemaVersion"] == 7
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -850,6 +850,120 @@ def main():
         assert (project / "build/keep.txt").is_file()
         nothing = run([gti, "clean"], cwd=project)
         assert "Nothing to clean" in nothing.stdout
+
+        workspace = root / "workspace"
+        app_package = workspace / "packages/app"
+        math_package = workspace / "packages/math"
+        util_package = workspace / "shared/util"
+        (workspace / "src").mkdir(parents=True)
+        (app_package / "src").mkdir(parents=True)
+        (math_package / "src").mkdir(parents=True)
+        (util_package / "src").mkdir(parents=True)
+        (workspace / "src/main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        (app_package / "src/main.gti").write_text(
+            "#include <math/add>\n"
+            "int main() { return math::add(2, 3) == 5 ? 0 : 1; }\n",
+            encoding="utf-8",
+        )
+        (math_package / "src/add.gti").write_text(
+            "#include <util/value>\n"
+            "namespace math {\n"
+            "int add(int left, int right) { return left + right + util::zero(); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (util_package / "src/value.gti").write_text(
+            "namespace util { int zero() { return 0; } }\n",
+            encoding="utf-8",
+        )
+        (workspace / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "workspace_root"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.root]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[workspace]\n"
+            'members = ["packages/math", "packages/app"]\n',
+            encoding="utf-8",
+        )
+        (app_package / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "app"\n'
+            'version = "1.0.0"\n\n'
+            "[dependencies]\n"
+            'math = { path = "../math" }\n\n'
+            "[targets.app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (math_package / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "math"\n'
+            'version = "2.0.0"\n\n'
+            "[dependencies]\n"
+            'util = { path = "../../shared/util" }\n',
+            encoding="utf-8",
+        )
+        (util_package / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "util"\n'
+            'version = "3.0.0"\n',
+            encoding="utf-8",
+        )
+
+        run([gti, "check"], cwd=app_package)
+        run([gti, "build", "--package", "app"], cwd=workspace)
+        workspace_executable = executable_named(
+            workspace / "build/gti/packages/app/dev", "app"
+        )
+        run([str(workspace_executable)])
+        workspace_cached = run(
+            [gti, "build", "--package", "app", "--verbose"], cwd=workspace
+        )
+        assert "gti: cache hit " in workspace_cached.stderr
+        workspace_metadata = json.loads(
+            run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
+        )
+        assert workspace_metadata["schemaVersion"] == 7
+        assert workspace_metadata["workspace"]["declared"] is True
+        assert workspace_metadata["workspace"]["selectedPackage"] == "app"
+        assert [
+            package["name"] for package in workspace_metadata["workspace"]["packages"]
+        ] == ["app", "math", "util", "workspace_root"]
+        assert workspace_metadata["workspace"]["packages"][0]["dependencies"] == [
+            {"alias": "math", "package": "math@2.0.0"}
+        ]
+        assert workspace_metadata["workspace"]["packages"][1]["dependencies"] == [
+            {"alias": "util", "package": "util@3.0.0"}
+        ]
+        assert workspace_metadata["workspace"]["packages"][2]["membership"] == (
+            "dependency"
+        )
+        direct_package_include = run(
+            [gti, str(app_package / "src/main.gti"), "--emit-cpp"],
+            expected=65,
+            cwd=app_package,
+        )
+        assert "error[GTI-I0010]" in direct_package_include.stderr
+        unknown_package = run(
+            [gti, "build", "--package", "missing"], expected=65, cwd=workspace
+        )
+        assert "error[GTI-B1607]" in unknown_package.stderr
+        source_only_package = run(
+            [gti, "build", "--package", "math"], expected=65, cwd=workspace
+        )
+        assert "error[GTI-B1201]" in source_only_package.stderr
+        assert "source-only" in source_only_package.stderr
+        run([gti, "clean"], cwd=app_package)
+        assert not (workspace / "build/gti").exists()
 
         example_source = (
             pathlib.Path(__file__).resolve().parent.parent

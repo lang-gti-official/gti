@@ -66,15 +66,15 @@ CompilationResult compileWithBackend(const CompilationRequest &request,
 
 } // namespace
 
-CompilationRequest::CompilationRequest(std::filesystem::path entry,
-                                       StandardLibraryLayout standardLibrary,
-                                       TargetInfo target,
-                                       OptimizationLevel optimization,
-                                       CppStandard cppStandard)
+CompilationRequest::CompilationRequest(
+    std::filesystem::path entry, StandardLibraryLayout standardLibrary,
+    TargetInfo target, OptimizationLevel optimization, CppStandard cppStandard,
+    std::vector<PackageSourceRoot> packageSourceRoots)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
-      backendStandard(cppStandard) {}
+      backendStandard(cppStandard),
+      packageSourceRootSet(std::move(packageSourceRoots)) {}
 
 const std::filesystem::path &CompilationRequest::entry() const {
   return entryPath;
@@ -92,6 +92,11 @@ OptimizationLevel CompilationRequest::optimization() const {
 
 CppStandard CompilationRequest::cppStandard() const { return backendStandard; }
 
+const std::vector<PackageSourceRoot> &
+CompilationRequest::packageSources() const {
+  return packageSourceRootSet;
+}
+
 CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
   SourceLoader sourceLoader;
   CompilationInputs inputs;
@@ -99,7 +104,8 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
     const PhaseTimeScope timeScope("gti-source-load");
     inputs.sourceGraph = sourceLoader.load(
         request.entry(), std::nullopt, {request.standardLibrary().prelude}, {},
-        {request.standardLibrary().root});
+        {request.standardLibrary().root}, std::nullopt,
+        request.packageSources());
   }
   inputs.sources = sourceLoader.sources();
   inputs.diagnostics = sourceLoader.errors();

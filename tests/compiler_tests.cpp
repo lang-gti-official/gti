@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -2858,6 +2859,90 @@ void testStandardLibraryImports() {
                            "std/tcp currently exposes only the POSIX socket "
                            "ABI"),
          "std::tcp should reject Windows targets at import time");
+}
+
+void testPackageImports() {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "gti-package-imports";
+  const std::filesystem::path appRoot = root / "app";
+  const std::filesystem::path mathRoot = root / "math";
+  const std::filesystem::path hiddenRoot = root / "hidden";
+  const std::filesystem::path entry = appRoot / "src/main.gti";
+  const std::filesystem::path mathUnit = mathRoot / "src/add.gti";
+  const std::filesystem::path hiddenUnit = hiddenRoot / "src/value.gti";
+  std::filesystem::create_directories(entry.parent_path());
+  std::filesystem::create_directories(mathUnit.parent_path());
+  std::filesystem::create_directories(hiddenUnit.parent_path());
+  {
+    std::ofstream output(mathUnit);
+    output << "namespace math { int add(int left, int right) { return left + "
+              "right; } }\n";
+  }
+  {
+    std::ofstream output(hiddenUnit);
+    output << "namespace hidden { int value() { return 7; } }\n";
+  }
+
+  const std::vector<lang::PackageSourceRoot> packages{
+      {.identity = "app@1.0.0",
+       .name = "app",
+       .packageRoot = appRoot,
+       .sourceRoot = appRoot / "src",
+       .dependencies = {{.alias = "math", .targetIdentity = "math@2.0.0"}}},
+      {.identity = "hidden@1.0.0",
+       .name = "hidden",
+       .packageRoot = hiddenRoot,
+       .sourceRoot = hiddenRoot / "src"},
+      {.identity = "math@2.0.0",
+       .name = "math",
+       .packageRoot = mathRoot,
+       .sourceRoot = mathRoot / "src",
+       .dependencies = {
+           {.alias = "hidden", .targetIdentity = "hidden@1.0.0"}}}};
+
+  const lang::FrontendResult imported = lang::Frontend().analyze(
+      entry,
+      "#include <math/add>\n"
+      "int main() { return math::add(2, 3) == 5 ? 0 : 1; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()}, packages);
+  const lang::SourceUnitId mathId = imported.sourceGraph.sourceUnitForPath(
+      std::filesystem::weakly_canonical(mathUnit).string());
+  const lang::SourceUnit *mathSource = imported.sourceGraph.findUnit(mathId);
+  bool packageEdge = false;
+  for (const lang::SourceDependency &dependency :
+       imported.sourceGraph.dependencyEdges()) {
+    packageEdge =
+        packageEdge || dependency.kind == lang::SourceDependencyKind::Package;
+  }
+  expect(imported.canGenerateCode() && mathSource != nullptr && packageEdge &&
+             mathSource->packageIdentity == "math@2.0.0" &&
+             mathSource->packageRelativePath == "src/add.gti" &&
+             !imported.sourceGraph.isCompilerTrusted(mathId),
+         "declared package imports should load ordinary untrusted GTI source "
+         "with stable package provenance");
+
+  const lang::FrontendResult transitiveLeak = lang::Frontend().analyze(
+      entry,
+      "#include <hidden/value>\n"
+      "int main() { return hidden::value(); }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()}, packages);
+  expect(!transitiveLeak.sourceValid &&
+             hasDiagnosticCode(transitiveLeak.diagnostics, "GTI-I0010") &&
+             hasDiagnostic(transitiveLeak.diagnostics,
+                           "no direct dependency alias 'hidden'"),
+         "package imports should expose only the including package's direct "
+         "dependency aliases");
+
+  const lang::FrontendResult relativeEscape = lang::Frontend().analyze(
+      entry,
+      "#include \"../../math/src/add.gti\"\n"
+      "int main() { return math::add(2, 3); }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()}, packages);
+  expect(!relativeEscape.sourceValid &&
+             hasDiagnosticCode(relativeEscape.diagnostics, "GTI-I0010") &&
+             hasDiagnostic(relativeEscape.diagnostics,
+                           "cannot cross the owning package boundary"),
+         "quoted includes should not bypass declared package aliases");
 }
 
 void testContainerScaffoldSurfaces() {
@@ -20829,6 +20914,7 @@ int main() {
   testProgramArgumentsEntryPoint();
   testSourceUnitDependencyGraph();
   testStandardLibraryImports();
+  testPackageImports();
   testContainerScaffoldSurfaces();
   testOwnershipSemanticFoundation();
   testExplicitValueMoves();

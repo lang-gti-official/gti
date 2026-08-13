@@ -24,17 +24,21 @@
 source-file            = { include-directive | declaration } END_OF_FILE ;
 
 include-directive      = "#include"
-                         ( STRING_LITERAL | standard-library-path )
+                         ( STRING_LITERAL | angle-include-path )
                          [ ";" ] ;
 
-standard-library-path  = "<" "std" "/" PATH_COMPONENT
+angle-include-path     = "<" PATH_COMPONENT "/" PATH_COMPONENT
                          { "/" PATH_COMPONENT } ">" ;
 
 (* Source loading resolves include directives into a graph of independently
    parsed source units before assembling `program`. Quoted paths are relative
    .gti files. Paths such as `<std/array>` resolve to `std/array.gti` beneath
    the compiler-managed standard-library root and never search the project or
-   native C++ include paths. Both forms are loaded once and may only appear at
+   native C++ include paths. A non-`std` first component is a package alias and
+   resolves only through the direct dependency graph explicitly supplied by
+   project mode; direct compilation does not discover it from a manifest.
+   Quoted paths cannot cross package boundaries when that graph is active.
+   All forms are loaded once and may only appear at
    top level. A trailing semicolon is optional. Include cycles are invalid. A
    source unit sees its own declarations, direct includes, and the implicit
    standard prelude; an include's dependencies are not re-exported. This is

@@ -1,7 +1,8 @@
 # Build And Driver Architecture
 
-Status: Current implementation. Future dependencies, workspaces, package
-acquisition, and finer-grained incremental compilation remain plans.
+Status: Current implementation. Local path dependencies and deterministic
+workspaces are implemented; remote acquisition, lockfiles, and finer-grained
+incremental compilation remain plans.
 
 GTI has one language compilation pipeline and two user entry modes:
 
@@ -117,6 +118,60 @@ Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. A manifest describes package/target policy; it does
 not replace `SourceGraph` or flatten GTI visibility.
 
+### Workspaces And Local Source Dependencies
+
+Manifest schema version 1 accepts a bounded local package graph:
+
+```toml
+[package]
+name = "game"
+version = "0.1.0"
+# source-root = "src" # optional; this is the default
+
+[dependencies]
+math = { path = "../math" }
+
+[workspace]
+members = ["packages/game", "packages/math"]
+```
+
+`[targets]` is optional so a source-only dependency package does not need a
+dummy executable or test. Selecting such a package for `build`, `check`,
+`run`, or `test` produces a focused no-target diagnostic; it remains valid as
+a dependency.
+
+A workspace root is itself a package and lists canonical member roots.
+Commands run inside a member select that member; commands at the root select
+the root package; `--package <name>` selects any root/member package
+explicitly for build/check/run/test/metadata. Package names are unique across
+the graph. The resolver loads
+members and recursively declared local dependencies, rejects nested workspace
+declarations, duplicate canonical dependency roots, duplicate names, missing
+source roots, and package cycles before target selection or compilation. It
+never performs network access.
+
+Workspace builds share `<workspace>/build/gti`; member artifacts live below
+`packages/<package>/...` so equal target names cannot collide. The cache is
+shared but its model and source identities include the complete sorted package
+graph, dependency aliases, package versions, and package-relative unit paths.
+Standalone package layout remains unchanged. `clean` resolves the workspace
+when possible and removes that shared managed subtree; if a manifest is broken,
+it preserves the older recovery behavior and cleans only the nearest literal
+package subtree.
+
+`CompilationRequest` carries immutable `PackageSourceRoot` values produced by
+`gti_driver`. `SourceLoader` remains the only include resolver. In a project
+compilation, `#include <math/add>` resolves `math` only through the including
+package's direct dependency aliases and loads `<math-source-root>/add.gti` as
+ordinary untrusted GTI source. Transitive aliases do not leak, and quoted
+includes cannot cross an owning package boundary to bypass the manifest edge.
+Direct mode receives no package graph and therefore rejects package angle
+includes without consulting nearby manifests.
+
+This slice composes GTI source only. A dependency package with package-level
+native inputs is rejected because silently dropping or reordering its native
+contract would be unsound. Native dependency composition remains future work.
+
 Direct mode also exposes `--emit-native-header`. It runs the same complete
 frontend, optimization compatibility check, and MIR verification as C++
 emission, then selects `NativeHeaderBackend` instead of `CppBackend`. The mode
@@ -130,7 +185,8 @@ existing native include settings.
 
 ## Whole-Program Project Cache
 
-`gti build`, `gti run`, and `gti test` use a project-local, content-addressed
+`gti build`, `gti run`, and `gti test` use a workspace-local,
+content-addressed
 whole-program cache by default. Direct `gti source.gti` mode and `gti check`
 remain uncached. `--no-cache` disables both lookup and publication for one
 project build/run/test command; under `--verbose`, the CLI reports the cache
@@ -160,13 +216,14 @@ The current key includes:
 - the bounded native-toolchain environment variables that can change compiler
   or linker selection/search behavior.
 
-Application GTI paths inside the package are represented relative to the
-package root, standard-library units use logical import names, and toolchain
-resources use content identity. A pure-GTI package can therefore move together
-with its `build/gti` subtree without invalidating an otherwise identical
-entry. Includes outside the package and native paths retain canonical path
-identity because native `__FILE__`, search order, and external ownership make
-those paths semantically observable.
+Application GTI paths in a resolved package graph use package
+`name@version` plus the package-relative unit path; standalone application
+paths remain relative to the selected source root. Standard-library units use
+logical import names, and toolchain resources use content identity. A pure-GTI
+workspace can therefore move together with its `build/gti` subtree without
+invalidating an otherwise identical entry. Explicit external/native paths
+retain canonical path identity because native `__FILE__`, search order, and
+external ownership make those paths semantically observable.
 
 Entries live beneath `build/gti/cache/v1/<sha256>/` and contain generated C++,
 the executable, and strict metadata recording the digest and size of both.
@@ -196,8 +253,9 @@ a shell. The display contract does not claim compatibility with Windows
 Each manifest `[profiles.<name>]` table may set
 `execution-profile = "single-threaded"|"concurrent"`; the selected value is
 resolved into the plan's `TargetInfo`, and the command-line option is an
-explicit project override. Metadata schema 6 publishes the declared value for
-every profile. This build profile field selects static language policy only;
+explicit project override. Metadata schema 7 publishes the declared value for
+every profile plus the selected workspace and sorted package/dependency graph.
+This build profile field selects static language policy only;
 the later target/runtime `threads` capability remains independent.
 
 Arguments after `gti run --` are passed as exact program arguments and become
@@ -209,10 +267,10 @@ rule is driver policy, while the typed `main` contract is compiler semantics.
 
 ## Current Limits
 
-The cache is whole-program and project-local. It does not yet cache individual
+The cache is whole-program and workspace-local. It does not yet cache individual
 parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
-External dependencies, lockfiles, workspaces, `fetch`, arbitrary native build
-scripts, and a package registry are not implemented.
+Git/registry dependencies, lockfiles, `fetch`, native dependency composition,
+arbitrary native build scripts, and a package registry are not implemented.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP must consume reusable resolved project facts rather than parse manifest

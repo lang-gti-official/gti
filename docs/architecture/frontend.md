@@ -10,9 +10,14 @@ syntax-preserving `Program`, then hands that owned tree to semantic analysis.
 `SourceLoader` in `include/gti/source_loader.h` canonicalizes source identity,
 lexes each unit, resolves `#include` directives, and builds `SourceGraph`.
 Quoted paths are relative GTI files; `<std/name>` resolves only beneath the
-configured GTI standard-library roots. Includes are load-once dependency edges,
-not textual substitution. The implicit prelude is an edge to every ordinary
-unit.
+configured GTI standard-library roots. When the driver supplies an immutable
+package graph, `<alias/name>` resolves only through the including package's
+direct dependency aliases and declared source root. These package units retain
+stable package identity/path provenance but remain ordinary untrusted GTI
+source. A quoted include cannot cross an owning package boundary. Direct mode
+does not discover manifests or synthesize package roots. Includes are
+load-once dependency edges, not textual substitution. The implicit prelude is
+an edge to every ordinary unit.
 
 Ordinary `Frontend::analyze()` performs this load itself. The compiled driver
 also exposes `loadCompilationInputs` for project-cache orchestration. It still

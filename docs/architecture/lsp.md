@@ -155,8 +155,10 @@ meaning from punctuation.
   signature help, and a project symbol index are not implemented.
 - `SymbolId` is snapshot-local. There is no durable cross-analysis identity.
 - Document/scheduling state is not yet extracted from the protocol class.
-- Project manifest/source-root configuration is not yet a shared resolved LSP
-  input. Consequently, editor analysis currently uses the default
+- `Frontend`/`LanguageQueries` can consume the same explicit
+  `PackageSourceRoot` graph as compilation, but the LSP does not yet obtain
+  driver-owned workspace facts. Consequently, package angle includes are not
+  resolved in editor snapshots yet, and editor analysis currently uses the default
   single-threaded execution profile; project-selected concurrent-global
   diagnostics remain a project CLI/build check until that configuration is
   shared.

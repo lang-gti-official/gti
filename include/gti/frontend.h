@@ -68,15 +68,15 @@ public:
       std::optional<std::string> entrySource = std::nullopt,
       const std::vector<std::filesystem::path> &preludePaths = {},
       const std::unordered_map<std::string, std::string> &sourceOverrides = {},
-      const std::vector<std::filesystem::path> &standardLibraryRoots = {})
-      const {
+      const std::vector<std::filesystem::path> &standardLibraryRoots = {},
+      const std::vector<PackageSourceRoot> &packageSourceRoots = {}) const {
     FrontendResult result;
     SourceLoader sourceLoader;
     {
       const PhaseTimeScope timeScope("gti-source-load");
       result.sourceGraph = sourceLoader.load(
           entryPath, std::move(entrySource), preludePaths, sourceOverrides,
-          standardLibraryRoots, options.completionOffset);
+          standardLibraryRoots, options.completionOffset, packageSourceRoots);
     }
     result.sources = sourceLoader.sources();
     append(result.diagnostics, sourceLoader.errors());

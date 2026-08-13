@@ -190,6 +190,14 @@ CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI) manual page
 documents direct options, project profiles, outputs, and current project-mode
 boundaries.
 
+Local multi-package development is available without a registry or network.
+A workspace root declares `[workspace].members`; packages declare source-only
+dependencies such as `math = { path = "../math" }` under `[dependencies]`, and
+source uses `#include <math/add>`. Run a command inside a member to select it or
+use `--package <name>` from the workspace root. Only direct aliases are visible,
+and dependency cycles or duplicate package identities fail before compilation.
+Git dependencies and `gti.lock` remain the next package-system phase.
+
 Project `build`, `run`, and `test` commands use a verified local whole-program
 cache under `build/gti/cache/v1`. An unchanged rebuild restores the executable
 without rerunning the frontend/backend or native compiler. Use `--verbose` to

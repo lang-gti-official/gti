@@ -4,13 +4,13 @@
 > behavior is summarized in
 > [`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md).
 
-Status: implementation in progress; Milestones 0 through 4 and the project-test
-portion of Milestone 5 are complete
+Status: implementation in progress; Milestones 0 through 6 are complete for
+source-only local packages
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). At the current
-checkpoint the completed project test targets and whole-program cache are
-followed by workspace/path dependencies, then locked Git dependencies; the
+checkpoint the completed project test targets, whole-program cache, and
+workspace/path dependencies are followed by locked Git dependencies; the
 milestone numbers below
 remain the detailed domain decomposition rather than a competing live queue.
 
@@ -48,13 +48,27 @@ CLI may override it. The default is single-threaded. This is C-GLOBAL-01
 language-policy selection, not a native thread flag or a public runtime
 capability.
 
+Manifest schema version 1 also accepts `[workspace].members`, optional
+`[package].source-root`, and source-only `[dependencies]` path tables.
+Workspace members share `build/gti`, with package artifacts under
+`build/gti/packages/<package>/...`; `--package` selects a root/member package.
+`#include <alias/unit>` resolves only through the including package's direct
+alias map. Cycles, duplicate canonical roots/names, nested workspaces, and
+missing source roots fail before compilation. No command in this phase performs
+network access.
+
+`[targets]` is optional for a source-only dependency package. Selecting that
+package as a command target is diagnosed; depending on and including its source
+does not require a dummy executable/test declaration.
+
 Project mode supports `gti build`, `gti check`, `gti run`, `gti test`,
 `gti clean`, and `gti metadata`. It discovers `gti.toml` upward from the
 working directory,
 parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 1 with exact source spans, resolves executable/test targets and named profiles,
 and writes artifacts beneath
-`build/gti/<profile>/<arch>-<vendor>-<os>/`, with verified whole-program cache
+`build/gti/<profile>/<arch>-<vendor>-<os>/` for standalone packages (and the
+package-qualified workspace layout above), with verified whole-program cache
 entries beneath `build/gti/cache/v1/`. Plain project commands select the
 `dev` profile; `--release` is an exact alias for `--profile release`. Only the
 selected profile directory is created, existing symbolic-link components below
@@ -68,10 +82,11 @@ then invokes the executable with inherited standard streams and the exact
 arguments after `--`. `test` selects every test target in deterministic name
 order, or one named test, and builds each root as an independent whole program.
 Runtime failures do not prevent later tests from running; the command reports a
-summary and propagates the first failing status. `clean` discovers a manifest
-without parsing it, removes
-only the validated literal `<package>/build/gti` subtree, and refuses symbolic
-link or filesystem-root escapes. `metadata` enumerates all manifest targets,
+summary and propagates the first failing status. `clean` resolves a valid
+workspace and removes its shared validated `build/gti` subtree; if project
+resolution fails, it falls back to the nearest literal package subtree so a
+broken manifest can still be cleaned. Both paths refuse symbolic-link or
+filesystem-root escapes. `metadata` enumerates all manifest targets,
 profiles, and planned output paths as deterministic schema-versioned JSON
 without compiling or creating build directories.
 
@@ -94,8 +109,9 @@ compiled with a separately resolved C compiler; declared `.cpp`, `.cc`, and
 become managed link objects. Structured paths are validated within the package;
 exact argument arrays use the documented trusted escape-hatch policy. Project
 build/run/test requests use the whole-program cache unless `--no-cache` is
-selected. Dependencies and `fetch` are not implemented and are rejected rather
-than silently ignored.
+selected. Git/registry dependencies, lockfiles, and `fetch` are not implemented
+and are rejected rather than silently ignored. Package-level native inputs on
+a dependency are rejected until native dependency composition is defined.
 
 ## Decision Summary
 
@@ -286,26 +302,26 @@ their broad intent.
 
 ### Workspace
 
-A workspace groups packages developed together, shares a lockfile and build
-directory, and permits local package replacement without publishing. Workspace
-support is staged after single-package manifests so it does not distort the
-first implementation.
+A workspace groups packages developed together and shares a build directory.
+The root package declares canonical member paths; a shared lockfile follows in
+the Git-dependency phase. Local members and path dependencies do not require
+publishing or network access.
 
 ### Source dependency
 
 A source dependency is still an edge in `SourceGraph`. Existing quoted includes
 remain relative to their declaring unit, and `<std/name>` remains rooted in the
-installed standard library. A later package-dependency phase may generalize
-angle includes to manifest dependency aliases, for example:
+installed standard library. Project compilation generalizes angle includes to
+manifest dependency aliases, for example:
 
 ```cpp
 #include <graphics/window>
 ```
 
-Here `graphics` would be a dependency alias resolved to a declared package
-source root. `std` remains reserved. This feature requires explicit source
-loader and visibility design; a manifest alone must not put every dependency
-declaration into global scope.
+Here `graphics` is a direct dependency alias resolved to a declared package
+source root. `std` remains reserved. Aliases are supplied to `SourceLoader` as
+an immutable graph; a manifest does not put dependency declarations into global
+scope, and aliases are not transitive.
 
 ## Manifest Schema Version 1
 
@@ -361,6 +377,8 @@ Rules for version 1:
 - package, target, and profile names use `[A-Za-z][A-Za-z0-9_-]*`;
 - package versions use Semantic Versioning;
 - paths are relative to the manifest directory unless explicitly documented;
+- `[targets]` is optional for source-only packages; project build commands
+  require the selected package to declare an applicable target;
 - roots must exist, be regular files, use `.gti`, and remain beneath the
   package root unless a declared dependency grants another root;
 - `build`, `check`, and `run` infer the sole target, or the sole executable when
@@ -399,11 +417,25 @@ transitive packages must not inject them without a separate trust policy.
 Response files and options that override output, phase, a language standard, or
 optimization policy remain rejected.
 
-Dependencies should be added in a later schema-compatible phase:
+Source-only local dependencies are implemented in the schema-compatible form:
 
 ```toml
 [dependencies]
 graphics = { path = "../graphics" }
+```
+
+The dependency alias matches `[A-Za-z_][A-Za-z0-9_]*`, with `std` reserved.
+Paths resolve canonically relative to the declaring manifest, must contain
+`gti.toml`, and may be outside the package. A package may optionally set a
+contained existing `[package].source-root`; omission means `src`. Workspace
+roots use `[workspace].members = ["packages/a", "packages/b"]`; members are
+canonical contained directories and cannot declare nested workspaces.
+
+Exact Git syntax is deliberately not accepted yet. Its next phase will use a
+full immutable revision and lock entry rather than an unlocked branch:
+
+```toml
+# planned, not implemented
 math = { git = "https://example.invalid/math.git", rev = "<full commit>" }
 ```
 
@@ -552,7 +584,7 @@ include/gti/driver/
   native_toolchain.h     # implemented
   project.h              # implemented
   invocation.h
-  workspace.h
+  workspace.h           # implemented
   build_plan.h
   artifact_store.h
 
@@ -563,7 +595,7 @@ src/driver/
   manifest.cpp           # implemented
   native_toolchain.cpp   # implemented
   project.cpp            # implemented
-  workspace.cpp
+  workspace.cpp         # implemented
   build_plan.cpp
   artifact_store.cpp
 ```
@@ -584,14 +616,15 @@ CompilationRequest(
     lang::StandardLibraryLayout standardLibrary,
     lang::TargetInfo target,
     lang::OptimizationLevel optimization,
-    lang::CppStandard cppStandard);
+    lang::CppStandard cppStandard,
+    std::vector<lang::PackageSourceRoot> packageSourceRoots = {});
 ```
 
-The fields are private and exposed through const accessors. Package source-root
-mappings will be added only with path dependencies, once their alias and
-visibility semantics exist; an unused roots vector would imply unsupported
-behavior. Cache identity is now serialized field-by-field from the effective
-request and loaded source graph; it never hashes C++ object layout.
+The fields are private and exposed through const accessors. Project mode now
+supplies the resolved package roots and direct alias graph; direct mode leaves
+that value empty and does not discover manifests. Cache identity is serialized
+field-by-field from the effective request and loaded source graph; it never
+hashes C++ object layout.
 
 ### Build graph
 
@@ -780,9 +813,10 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable/test targets with their kinds, and each
-target/profile output and generated-C++ path. Metadata schema version 6 also
-reports every declared execution profile plus every effective native category,
-C source, C++ source, C standard, C argument, and ordered link operand. It is
+target/profile output and generated-C++ path. Metadata schema version 7 reports
+every declared execution profile plus every effective native category, C
+source, C++ source, C standard, C argument, and ordered link operand, and the
+resolved workspace/package/dependency graph. It is
 deterministic, works for multi-target manifests without selecting one target,
 performs no compilation, and creates no output directories.
 
@@ -795,6 +829,8 @@ standard-library imports. This proves the project model without coupling it to
 package identity.
 
 ### Stage 2: path dependencies
+
+Status: complete for source-only local packages.
 
 Add declared local dependencies and package-root resolution. Define package
 include spelling, direct visibility, duplicate package names, cycles, and
@@ -968,7 +1004,7 @@ Status: complete
 - Compile each selected source to an atomically published managed intermediate
   object, then place C objects followed by C++ objects before runtime and
   manifest libraries in the existing final C++ link.
-- Report the resolved C and C++ inputs through metadata schema version 6 while
+- Report the resolved C and C++ inputs through metadata schema version 7 while
   keeping `check` compiler-free and output-free.
 
 Acceptance criteria:
@@ -1009,29 +1045,38 @@ Acceptance criteria:
 - **Complete:** accept manifest `test` targets, build each selected root as an
   independent whole program, execute them in deterministic target-name order,
   continue after runtime failures, and propagate the first failing status.
-- Add workspace membership, shared output, and shared lockfile foundations.
-- Permit explicit local package overrides.
+- **Complete:** add workspace membership, shared collision-free output, and
+  explicit package selection. Lockfile state begins with Milestone 7.
+- **Complete:** treat canonical workspace members as local packages without
+  publishing or network access.
 
 Acceptance criteria:
 
 - **Passed:** tests execute independently and report their target names;
-- workspace commands have deterministic package selection;
-- package cycles and duplicate identities are rejected before compilation.
+- **Passed:** workspace commands have deterministic package selection;
+- **Passed:** package cycles and duplicate identities are rejected before
+  compilation.
 
 ### Milestone 6: path package dependencies
 
-- Define dependency package identity and package include syntax.
-- Extend `SourceLoader` with declared package roots without weakening direct
+Status: complete for source-only local packages.
+
+- **Complete:** define dependency package identity and package include syntax.
+- **Complete:** extend `SourceLoader` with declared package roots without weakening direct
   include visibility.
-- Test missing direct dependencies, dependency cycles, duplicate loads, LSP
-  overlays, and diagnostics in dependency units.
+- **Complete:** test missing direct dependencies, dependency cycles, duplicate
+  roots/loads, cache identity, CLI selection, and diagnostics in dependency
+  units. The compiler query API accepts the same graph; wiring driver-owned
+  project facts into LSP snapshots remains B-PROJECT-05/T-LSP-04.
 
 Acceptance criteria:
 
-- undeclared filesystem access is rejected;
-- transitive and sibling package declarations do not leak;
-- CLI and LSP resolve the same package source graph;
-- direct mode can receive explicit package-root mappings when needed without a
+- **Passed:** undeclared filesystem access is rejected;
+- **Passed:** transitive and sibling package declarations do not leak;
+- **Pending B-PROJECT-05/T-LSP-04:** CLI and LSP resolve the same package
+  source graph;
+- **Passed at the compiler-library boundary:** direct compilation requests can
+  receive explicit package-root mappings when needed without a
   manifest.
 
 ### Milestone 7: Git resolution and lockfile
@@ -1121,13 +1166,15 @@ need them.
    optimization, C++ emission, and native compilation.
 4. `run` inherits standard input, output, and error and returns the program's
    exit status. Its arguments are passed directly without a shell.
-5. `clean` intentionally does not parse or resolve the manifest, so a broken
-   project can still be cleaned. It validates and removes only
-   `<package>/build/gti` and refuses symbolic-link boundaries.
-6. Metadata JSON schema version 6 is a read-only enumeration of every current
+5. `clean` resolves a valid workspace so a member cleans the shared managed
+   root. If resolution fails, it retains the recovery path for a broken
+   manifest and validates/removes only the nearest literal
+   `<package>/build/gti`. Both paths refuse symbolic-link boundaries.
+6. Metadata JSON schema version 7 is a read-only enumeration of every current
    target/profile plan, including target kinds, declared execution profiles,
    resolved native C and C++ sources, C policy, other native inputs, and
-   ordered link operands. Platform selection and precedence use the resolved
+   ordered link operands. It also publishes the selected workspace and sorted
+   source-package graph. Platform selection and precedence use the resolved
    target.
 
 ## Recommended First Pull Requests

@@ -562,6 +562,9 @@ logicalSourceName(const SourceUnit &unit,
   if (unit.prelude || unit.role == SourceUnitRole::Prelude) {
     return "prelude";
   }
+  if (unit.packageIdentity && unit.packageRelativePath) {
+    return "package:" + *unit.packageIdentity + ":" + *unit.packageRelativePath;
+  }
 
   const std::filesystem::path root = normalizedAbsolute(sourceRoot);
   const std::filesystem::path source = normalizedAbsolute(unit.path);

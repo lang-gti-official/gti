@@ -293,7 +293,8 @@ const ProjectProfile *selectProfile(const ProjectManifest &manifest,
   return nullptr;
 }
 
-ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
+ProjectBuildPlan makeBuildPlan(const ProjectWorkspace &workspace,
+                               const ProjectManifest &manifest,
                                const ProjectTarget &selectedTarget,
                                const ProjectProfile &selectedProfile,
                                const TargetInfo &target,
@@ -307,9 +308,13 @@ ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
   resolvedTarget.executionProfile =
       overrides.executionProfile.value_or(selectedProfile.executionProfile);
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
-  const std::filesystem::path outputDirectory =
-      manifest.packageRoot() / "build" / "gti" / selectedProfile.name /
-      targetTriple(resolvedTarget);
+  std::filesystem::path outputDirectory = workspace.root() / "build" / "gti";
+  if (workspace.declared()) {
+    outputDirectory /= "packages";
+    outputDirectory /= manifest.package().name;
+  }
+  outputDirectory /= selectedProfile.name;
+  outputDirectory /= targetTriple(resolvedTarget);
   std::string executableName = selectedTarget.name;
 #if defined(_WIN32)
   executableName += ".exe";
@@ -318,10 +323,12 @@ ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
   const std::filesystem::path generatedSource =
       outputDirectory / "intermediate" / (selectedTarget.name + ".gti.cpp");
   return ProjectBuildPlan(
-      manifest.path(), manifest.packageRoot(), manifest.package().name,
-      selectedTarget.name, selectedTarget.kind, selectedProfile.name,
-      selectedTarget.root, output, generatedSource, std::move(resolvedTarget),
-      optimization, cppStandard, keepCpp, std::move(nativeInputs));
+      manifest.path(), manifest.packageRoot(), workspace.root(),
+      manifest.package().name, manifest.package().version, selectedTarget.name,
+      selectedTarget.kind, selectedProfile.name, selectedTarget.root, output,
+      generatedSource, std::move(resolvedTarget), optimization, cppStandard,
+      keepCpp, std::move(nativeInputs), workspace.packageSourceRoots(),
+      workspace.modelIdentity());
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -408,11 +415,13 @@ ProjectBuildRequest::ProjectBuildRequest(std::filesystem::path startDirectory,
                                          std::optional<std::string> targetName,
                                          std::string profileName,
                                          TargetInfo target,
-                                         ProjectBuildOverrides overrides)
+                                         ProjectBuildOverrides overrides,
+                                         std::optional<std::string> packageName)
     : discoveryStart(std::move(startDirectory)),
       selectedTarget(std::move(targetName)),
       selectedProfile(std::move(profileName)), targetInfo(std::move(target)),
-      cliOverrides(std::move(overrides)) {}
+      cliOverrides(std::move(overrides)),
+      selectedPackage(std::move(packageName)) {}
 
 const std::filesystem::path &ProjectBuildRequest::startDirectory() const {
   return discoveryStart;
@@ -432,24 +441,35 @@ const ProjectBuildOverrides &ProjectBuildRequest::overrides() const {
   return cliOverrides;
 }
 
+const std::optional<std::string> &ProjectBuildRequest::packageName() const {
+  return selectedPackage;
+}
+
 ProjectBuildPlan::ProjectBuildPlan(
     std::filesystem::path manifestPath, std::filesystem::path packageRoot,
-    std::string packageName, std::string targetName,
+    std::filesystem::path workspaceRoot, std::string packageName,
+    std::string packageVersion, std::string targetName,
     ProjectTargetKind targetKind, std::string profileName,
     std::filesystem::path entry, std::filesystem::path output,
     std::filesystem::path generatedSource, TargetInfo target,
     OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
-    NativeInputs nativeInputs)
+    NativeInputs nativeInputs,
+    std::vector<PackageSourceRoot> packageSourceRoots,
+    std::string projectModelIdentity)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
+      projectWorkspaceRoot(std::move(workspaceRoot)),
       projectPackageName(std::move(packageName)),
+      projectPackageVersion(std::move(packageVersion)),
       projectTargetName(std::move(targetName)), projectTargetKind(targetKind),
       buildProfileName(std::move(profileName)), entryPath(std::move(entry)),
       outputPath(std::move(output)),
       generatedSourcePath(std::move(generatedSource)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
       backendStandard(cppStandard), retainGeneratedSource(keepCpp),
-      resolvedNativeInputs(std::move(nativeInputs)) {}
+      resolvedNativeInputs(std::move(nativeInputs)),
+      resolvedPackageSources(std::move(packageSourceRoots)),
+      resolvedProjectModelIdentity(std::move(projectModelIdentity)) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -459,8 +479,16 @@ const std::filesystem::path &ProjectBuildPlan::packageRoot() const {
   return projectRoot;
 }
 
+const std::filesystem::path &ProjectBuildPlan::workspaceRoot() const {
+  return projectWorkspaceRoot;
+}
+
 const std::string &ProjectBuildPlan::packageName() const {
   return projectPackageName;
+}
+
+const std::string &ProjectBuildPlan::packageVersion() const {
+  return projectPackageVersion;
 }
 
 const std::string &ProjectBuildPlan::targetName() const {
@@ -501,13 +529,25 @@ const NativeInputs &ProjectBuildPlan::nativeInputs() const {
   return resolvedNativeInputs;
 }
 
-ProjectMetadata::ProjectMetadata(ProjectManifest manifest, TargetInfo target,
+const std::vector<PackageSourceRoot> &ProjectBuildPlan::packageSources() const {
+  return resolvedPackageSources;
+}
+
+const std::string &ProjectBuildPlan::projectModelIdentity() const {
+  return resolvedProjectModelIdentity;
+}
+
+ProjectMetadata::ProjectMetadata(ProjectWorkspace workspace, TargetInfo target,
                                  std::vector<ProjectBuildPlan> plans)
-    : projectManifest(std::move(manifest)), targetInfo(std::move(target)),
+    : projectWorkspace(std::move(workspace)), targetInfo(std::move(target)),
       buildPlans(std::move(plans)) {}
 
 const ProjectManifest &ProjectMetadata::manifest() const {
-  return projectManifest;
+  return projectWorkspace.selectedPackage().manifest;
+}
+
+const ProjectWorkspace &ProjectMetadata::workspace() const {
+  return projectWorkspace;
 }
 
 const TargetInfo &ProjectMetadata::target() const { return targetInfo; }
@@ -542,23 +582,33 @@ std::string targetTriple(const TargetInfo &target) {
 ProjectResolutionResult
 resolveProjectBuild(const ProjectBuildRequest &request) {
   ProjectResolutionResult result;
-  ManifestDiscoveryResult discovery =
-      discoverProjectManifest(request.startDirectory());
-  if (!discovery.succeeded()) {
-    result.status = ProjectResolutionStatus::DiscoveryFailure;
-    result.diagnostics = std::move(discovery.diagnostics);
+  WorkspaceResolutionResult resolvedWorkspace =
+      resolveProjectWorkspace(request.startDirectory(), request.packageName());
+  result.sources = std::move(resolvedWorkspace.sources);
+  if (!resolvedWorkspace.succeeded()) {
+    switch (resolvedWorkspace.status) {
+    case WorkspaceResolutionStatus::DiscoveryFailure:
+      result.status = ProjectResolutionStatus::DiscoveryFailure;
+      break;
+    case WorkspaceResolutionStatus::ManifestFailure:
+      result.status = ProjectResolutionStatus::ManifestFailure;
+      break;
+    case WorkspaceResolutionStatus::GraphFailure:
+      result.status = ProjectResolutionStatus::GraphFailure;
+      break;
+    case WorkspaceResolutionStatus::SelectionFailure:
+      result.status = ProjectResolutionStatus::SelectionFailure;
+      break;
+    case WorkspaceResolutionStatus::Success:
+      result.status = ProjectResolutionStatus::GraphFailure;
+      break;
+    }
+    result.diagnostics = std::move(resolvedWorkspace.diagnostics);
     return result;
   }
 
-  ManifestLoadResult loaded = loadProjectManifest(*discovery.path);
-  result.sources = std::move(loaded.sources);
-  if (!loaded.succeeded()) {
-    result.status = ProjectResolutionStatus::ManifestFailure;
-    result.diagnostics = std::move(loaded.diagnostics);
-    return result;
-  }
-
-  const ProjectManifest &manifest = *loaded.manifest;
+  const ProjectWorkspace &workspace = *resolvedWorkspace.workspace;
+  const ProjectManifest &manifest = workspace.selectedPackage().manifest;
   const ProjectTarget *selectedTarget = nullptr;
   if (request.targetName()) {
     selectedTarget = manifest.findTarget(*request.targetName());
@@ -584,6 +634,15 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
     }
   } else if (manifest.targets().size() == 1) {
     selectedTarget = &manifest.targets().front();
+  } else if (manifest.targets().empty()) {
+    Diagnostic diagnostic = projectDiagnostic(
+        "GTI-B1201", manifestSpan(manifest),
+        "Package '" + manifest.package().name +
+            "' is source-only and declares no build targets.");
+    diagnostic.hints.push_back(
+        "Select a workspace package with a target using --package, or declare "
+        "a [targets.<name>] table.");
+    result.diagnostics.push_back(std::move(diagnostic));
   } else {
     for (const ProjectTarget &target : manifest.targets()) {
       if (target.kind != ProjectTargetKind::Executable) {
@@ -629,32 +688,42 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
   }
 
   result.status = ProjectResolutionStatus::Success;
-  result.plan = makeBuildPlan(manifest, *selectedTarget, *selectedProfile,
-                              request.target(), std::move(*nativeInputs),
-                              request.overrides());
+  result.plan = makeBuildPlan(workspace, manifest, *selectedTarget,
+                              *selectedProfile, request.target(),
+                              std::move(*nativeInputs), request.overrides());
   return result;
 }
 
 ProjectTestResolutionResult
 resolveProjectTests(const ProjectBuildRequest &request) {
   ProjectTestResolutionResult result;
-  ManifestDiscoveryResult discovery =
-      discoverProjectManifest(request.startDirectory());
-  if (!discovery.succeeded()) {
-    result.status = ProjectResolutionStatus::DiscoveryFailure;
-    result.diagnostics = std::move(discovery.diagnostics);
+  WorkspaceResolutionResult resolvedWorkspace =
+      resolveProjectWorkspace(request.startDirectory(), request.packageName());
+  result.sources = std::move(resolvedWorkspace.sources);
+  if (!resolvedWorkspace.succeeded()) {
+    switch (resolvedWorkspace.status) {
+    case WorkspaceResolutionStatus::DiscoveryFailure:
+      result.status = ProjectResolutionStatus::DiscoveryFailure;
+      break;
+    case WorkspaceResolutionStatus::ManifestFailure:
+      result.status = ProjectResolutionStatus::ManifestFailure;
+      break;
+    case WorkspaceResolutionStatus::GraphFailure:
+      result.status = ProjectResolutionStatus::GraphFailure;
+      break;
+    case WorkspaceResolutionStatus::SelectionFailure:
+      result.status = ProjectResolutionStatus::SelectionFailure;
+      break;
+    case WorkspaceResolutionStatus::Success:
+      result.status = ProjectResolutionStatus::GraphFailure;
+      break;
+    }
+    result.diagnostics = std::move(resolvedWorkspace.diagnostics);
     return result;
   }
 
-  ManifestLoadResult loaded = loadProjectManifest(*discovery.path);
-  result.sources = std::move(loaded.sources);
-  if (!loaded.succeeded()) {
-    result.status = ProjectResolutionStatus::ManifestFailure;
-    result.diagnostics = std::move(loaded.diagnostics);
-    return result;
-  }
-
-  const ProjectManifest &manifest = *loaded.manifest;
+  const ProjectWorkspace &workspace = *resolvedWorkspace.workspace;
+  const ProjectManifest &manifest = workspace.selectedPackage().manifest;
   std::vector<const ProjectTarget *> selectedTargets;
   if (request.targetName()) {
     const ProjectTarget *selected = manifest.findTarget(*request.targetName());
@@ -722,8 +791,8 @@ resolveProjectTests(const ProjectBuildRequest &request) {
       return result;
     }
     result.plans.push_back(makeBuildPlan(
-        manifest, *selectedTarget, *selectedProfile, request.target(),
-        std::move(*nativeInputs), request.overrides()));
+        workspace, manifest, *selectedTarget, *selectedProfile,
+        request.target(), std::move(*nativeInputs), request.overrides()));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -732,25 +801,37 @@ resolveProjectTests(const ProjectBuildRequest &request) {
 
 ProjectMetadataResult
 resolveProjectMetadata(const std::filesystem::path &startDirectory,
-                       TargetInfo target) {
+                       TargetInfo target,
+                       std::optional<std::string> packageName) {
   ProjectMetadataResult result;
-  ManifestDiscoveryResult discovery = discoverProjectManifest(startDirectory);
-  if (!discovery.succeeded()) {
-    result.status = ProjectMetadataStatus::DiscoveryFailure;
-    result.diagnostics = std::move(discovery.diagnostics);
-    return result;
-  }
-
-  ManifestLoadResult loaded = loadProjectManifest(*discovery.path);
-  result.sources = std::move(loaded.sources);
-  if (!loaded.succeeded()) {
-    result.status = ProjectMetadataStatus::ManifestFailure;
-    result.diagnostics = std::move(loaded.diagnostics);
+  WorkspaceResolutionResult resolvedWorkspace =
+      resolveProjectWorkspace(startDirectory, packageName);
+  result.sources = std::move(resolvedWorkspace.sources);
+  if (!resolvedWorkspace.succeeded()) {
+    switch (resolvedWorkspace.status) {
+    case WorkspaceResolutionStatus::DiscoveryFailure:
+      result.status = ProjectMetadataStatus::DiscoveryFailure;
+      break;
+    case WorkspaceResolutionStatus::ManifestFailure:
+      result.status = ProjectMetadataStatus::ManifestFailure;
+      break;
+    case WorkspaceResolutionStatus::GraphFailure:
+      result.status = ProjectMetadataStatus::GraphFailure;
+      break;
+    case WorkspaceResolutionStatus::SelectionFailure:
+      result.status = ProjectMetadataStatus::SelectionFailure;
+      break;
+    case WorkspaceResolutionStatus::Success:
+      result.status = ProjectMetadataStatus::GraphFailure;
+      break;
+    }
+    result.diagnostics = std::move(resolvedWorkspace.diagnostics);
     return result;
   }
 
   std::vector<ProjectBuildPlan> plans;
-  const ProjectManifest &manifest = *loaded.manifest;
+  ProjectWorkspace &workspace = *resolvedWorkspace.workspace;
+  const ProjectManifest &manifest = workspace.selectedPackage().manifest;
   plans.reserve(manifest.targets().size() * manifest.profiles().size());
   for (const ProjectTarget &projectTarget : manifest.targets()) {
     for (const ProjectProfile &profile : manifest.profiles()) {
@@ -760,13 +841,13 @@ resolveProjectMetadata(const std::filesystem::path &startDirectory,
         result.status = ProjectMetadataStatus::ManifestFailure;
         return result;
       }
-      plans.push_back(makeBuildPlan(manifest, projectTarget, profile, target,
-                                    std::move(*nativeInputs)));
+      plans.push_back(makeBuildPlan(workspace, manifest, projectTarget, profile,
+                                    target, std::move(*nativeInputs)));
     }
   }
 
   result.status = ProjectMetadataStatus::Success;
-  result.metadata.emplace(std::move(*loaded.manifest), std::move(target),
+  result.metadata.emplace(std::move(workspace), std::move(target),
                           std::move(plans));
   return result;
 }
@@ -780,8 +861,14 @@ ProjectCleanResult cleanProject(const std::filesystem::path &startDirectory) {
     return result;
   }
 
-  const std::filesystem::path manifest = *discovery.path;
-  const std::filesystem::path packageRoot = manifest.parent_path();
+  std::filesystem::path manifest = *discovery.path;
+  std::filesystem::path packageRoot = manifest.parent_path();
+  WorkspaceResolutionResult resolvedWorkspace =
+      resolveProjectWorkspace(startDirectory);
+  if (resolvedWorkspace.succeeded()) {
+    packageRoot = resolvedWorkspace.workspace->root();
+    manifest = packageRoot / "gti.toml";
+  }
   const std::filesystem::path buildParent = packageRoot / "build";
   result.buildRoot = buildParent / "gti";
 

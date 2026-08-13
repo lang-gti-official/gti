@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gti/driver/manifest.h"
+#include "gti/driver/workspace.h"
 #include "gti/target.h"
 
 #include <cstdint>
@@ -23,13 +23,15 @@ public:
   ProjectBuildRequest(std::filesystem::path startDirectory,
                       std::optional<std::string> targetName,
                       std::string profileName, TargetInfo target,
-                      ProjectBuildOverrides overrides = {});
+                      ProjectBuildOverrides overrides = {},
+                      std::optional<std::string> packageName = std::nullopt);
 
   [[nodiscard]] const std::filesystem::path &startDirectory() const;
   [[nodiscard]] const std::optional<std::string> &targetName() const;
   [[nodiscard]] const std::string &profileName() const;
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] const ProjectBuildOverrides &overrides() const;
+  [[nodiscard]] const std::optional<std::string> &packageName() const;
 
 private:
   std::filesystem::path discoveryStart;
@@ -37,22 +39,28 @@ private:
   std::string selectedProfile;
   TargetInfo targetInfo;
   ProjectBuildOverrides cliOverrides;
+  std::optional<std::string> selectedPackage;
 };
 
 class ProjectBuildPlan final {
 public:
   ProjectBuildPlan(std::filesystem::path manifestPath,
-                   std::filesystem::path packageRoot, std::string packageName,
-                   std::string targetName, ProjectTargetKind targetKind,
-                   std::string profileName, std::filesystem::path entry,
-                   std::filesystem::path output,
+                   std::filesystem::path packageRoot,
+                   std::filesystem::path workspaceRoot, std::string packageName,
+                   std::string packageVersion, std::string targetName,
+                   ProjectTargetKind targetKind, std::string profileName,
+                   std::filesystem::path entry, std::filesystem::path output,
                    std::filesystem::path generatedSource, TargetInfo target,
                    OptimizationLevel optimization, CppStandard cppStandard,
-                   bool keepCpp, NativeInputs nativeInputs);
+                   bool keepCpp, NativeInputs nativeInputs,
+                   std::vector<PackageSourceRoot> packageSourceRoots,
+                   std::string projectModelIdentity);
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
+  [[nodiscard]] const std::filesystem::path &workspaceRoot() const;
   [[nodiscard]] const std::string &packageName() const;
+  [[nodiscard]] const std::string &packageVersion() const;
   [[nodiscard]] const std::string &targetName() const;
   [[nodiscard]] ProjectTargetKind targetKind() const;
   [[nodiscard]] const std::string &profileName() const;
@@ -64,11 +72,15 @@ public:
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] bool keepCpp() const;
   [[nodiscard]] const NativeInputs &nativeInputs() const;
+  [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
+  [[nodiscard]] const std::string &projectModelIdentity() const;
 
 private:
   std::filesystem::path projectManifestPath;
   std::filesystem::path projectRoot;
+  std::filesystem::path projectWorkspaceRoot;
   std::string projectPackageName;
+  std::string projectPackageVersion;
   std::string projectTargetName;
   ProjectTargetKind projectTargetKind;
   std::string buildProfileName;
@@ -80,19 +92,22 @@ private:
   CppStandard backendStandard;
   bool retainGeneratedSource;
   NativeInputs resolvedNativeInputs;
+  std::vector<PackageSourceRoot> resolvedPackageSources;
+  std::string resolvedProjectModelIdentity;
 };
 
 class ProjectMetadata final {
 public:
-  ProjectMetadata(ProjectManifest manifest, TargetInfo target,
+  ProjectMetadata(ProjectWorkspace workspace, TargetInfo target,
                   std::vector<ProjectBuildPlan> plans);
 
   [[nodiscard]] const ProjectManifest &manifest() const;
+  [[nodiscard]] const ProjectWorkspace &workspace() const;
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] const std::vector<ProjectBuildPlan> &plans() const;
 
 private:
-  ProjectManifest projectManifest;
+  ProjectWorkspace projectWorkspace;
   TargetInfo targetInfo;
   std::vector<ProjectBuildPlan> buildPlans;
 };
@@ -101,6 +116,7 @@ enum class ProjectResolutionStatus {
   Success,
   DiscoveryFailure,
   ManifestFailure,
+  GraphFailure,
   SelectionFailure,
 };
 
@@ -130,6 +146,8 @@ enum class ProjectMetadataStatus {
   Success,
   DiscoveryFailure,
   ManifestFailure,
+  GraphFailure,
+  SelectionFailure,
 };
 
 struct ProjectMetadataResult {
@@ -211,7 +229,8 @@ resolveProjectTests(const ProjectBuildRequest &request);
 
 [[nodiscard]] ProjectMetadataResult
 resolveProjectMetadata(const std::filesystem::path &startDirectory,
-                       TargetInfo target);
+                       TargetInfo target,
+                       std::optional<std::string> packageName = std::nullopt);
 
 [[nodiscard]] ProjectCleanResult
 cleanProject(const std::filesystem::path &startDirectory);

@@ -19,13 +19,15 @@ class CompilationRequest final {
 public:
   CompilationRequest(std::filesystem::path entry,
                      StandardLibraryLayout standardLibrary, TargetInfo target,
-                     OptimizationLevel optimization, CppStandard cppStandard);
+                     OptimizationLevel optimization, CppStandard cppStandard,
+                     std::vector<PackageSourceRoot> packageSourceRoots = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
+  [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
 
 private:
   std::filesystem::path entryPath;
@@ -33,6 +35,7 @@ private:
   TargetInfo targetInfo;
   OptimizationLevel optimizationLevel;
   CppStandard backendStandard;
+  std::vector<PackageSourceRoot> packageSourceRootSet;
 };
 
 enum class CompilationStatus {

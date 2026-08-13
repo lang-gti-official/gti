@@ -99,10 +99,13 @@ the LSP.
 
 ## 2.6 Source Units And Includes
 
-An `include` directive appears only at source-unit top level and names either a
-quoted `.gti` dependency or a compiler-managed `<std/name>` unit. Loading is
-canonicalized, load-once, and cycle-checked. It is not textual substitution and
-does not introduce macros or include guards.
+An `include` directive appears only at source-unit top level and names a quoted
+`.gti` dependency, a compiler-managed `<std/name>` unit, or a project-provided
+`<alias/name>` package unit. A package alias resolves only when the compilation
+request supplies the including package's direct dependency graph; the compiler
+does not search nearby manifests. Loading is canonicalized, load-once, and
+cycle-checked. It is not textual substitution and does not introduce macros or
+include guards.
 
 A source unit can name declarations from:
 
@@ -112,6 +115,10 @@ A source unit can name declarations from:
 
 An included unit does not re-export its own dependencies. Only the entry source
 unit may define `main`.
+
+When package roots are active, a quoted include must remain within the
+including unit's owning package. Cross-package access uses a declared angle
+alias. Package provenance does not make source compiler-trusted.
 
 ## 2.7 Grammar Presentation
 

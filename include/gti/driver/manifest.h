@@ -47,7 +47,22 @@ struct ProjectNativeSettings {
 struct ProjectPackage {
   std::string name;
   std::string version;
+  std::filesystem::path sourceRoot;
+  SourceSpan sourceRootDeclaration;
   ProjectNativeSettings native;
+};
+
+struct ProjectDependency {
+  std::string alias;
+  std::filesystem::path packageRoot;
+  SourceSpan declaration;
+  SourceSpan pathDeclaration;
+};
+
+struct ProjectWorkspaceManifest {
+  std::vector<std::filesystem::path> members;
+  std::vector<SourceSpan> memberDeclarations;
+  SourceSpan declaration;
 };
 
 enum class ProjectTargetKind {
@@ -77,15 +92,20 @@ struct ProjectProfile {
 
 class ProjectManifest final {
 public:
-  ProjectManifest(std::filesystem::path path, ProjectPackage package,
-                  std::vector<ProjectTarget> targets,
-                  std::vector<ProjectProfile> profiles);
+  ProjectManifest(
+      std::filesystem::path path, ProjectPackage package,
+      std::vector<ProjectTarget> targets, std::vector<ProjectProfile> profiles,
+      std::vector<ProjectDependency> dependencies = {},
+      std::optional<ProjectWorkspaceManifest> workspace = std::nullopt);
 
   [[nodiscard]] const std::filesystem::path &path() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
   [[nodiscard]] const ProjectPackage &package() const;
   [[nodiscard]] const std::vector<ProjectTarget> &targets() const;
   [[nodiscard]] const std::vector<ProjectProfile> &profiles() const;
+  [[nodiscard]] const std::vector<ProjectDependency> &dependencies() const;
+  [[nodiscard]] const std::optional<ProjectWorkspaceManifest> &
+  workspace() const;
   [[nodiscard]] const ProjectTarget *findTarget(std::string_view name) const;
   [[nodiscard]] const ProjectProfile *findProfile(std::string_view name) const;
 
@@ -95,6 +115,8 @@ private:
   ProjectPackage packageIdentity;
   std::vector<ProjectTarget> projectTargets;
   std::vector<ProjectProfile> buildProfiles;
+  std::vector<ProjectDependency> packageDependencies;
+  std::optional<ProjectWorkspaceManifest> workspaceManifest;
 };
 
 enum class ManifestDiscoveryStatus {

@@ -738,7 +738,7 @@ Add the staged project workflow from the build-system proposal:
    and `metadata` are complete; structured native manifest inputs and test
    targets are complete;
 4. add deterministic whole-program caching — complete;
-5. add workspaces and path dependencies — next;
+5. add workspaces and source-only path dependencies — complete;
 6. add exact Git dependency resolution, `gti.lock`, `fetch`, `--locked`, and
    `--offline`;
 7. make LSP project discovery read-only and use the same target/source-root
@@ -758,8 +758,11 @@ project build/run/test requests, with exact source-graph, effective policy,
 runtime/toolchain, structured native-input, argument, and admitted-environment
 identity. Cache hits skip parsing through native linking; corruption rebuilds
 before replacement; `--no-cache` bypasses lookup/publication; and direct mode
-remains uncached. Workspaces and path dependencies are now the next
-project-system milestone.
+remains uncached. Step 5 now adds canonical workspace membership, recursive
+source-only path dependency graphs, direct package include aliases,
+deterministic package selection/shared outputs, schema-7 metadata, and package
+cache provenance without network access. Exact Git/lockfile resolution and the
+read-only driver project-facts bridge are the next independent milestones.
 
 The systems-ready build workflow does not need a registry, package build
 scripts, binary GTI libraries, source globbing, or CMake replacement for

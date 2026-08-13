@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -28,7 +29,8 @@ public:
        const std::vector<std::filesystem::path> &preludePaths = {},
        const std::unordered_map<std::string, std::string> &sourceOverrides = {},
        const std::vector<std::filesystem::path> &standardLibraryRoots = {},
-       std::optional<std::size_t> completionOffset = std::nullopt) {
+       std::optional<std::size_t> completionOffset = std::nullopt,
+       const std::vector<PackageSourceRoot> &packageSourceRoots = {}) {
     diagnostics.clear();
     states.clear();
     graph.clear();
@@ -40,6 +42,16 @@ public:
     this->standardLibraryRoots.reserve(standardLibraryRoots.size());
     for (const std::filesystem::path &root : standardLibraryRoots) {
       this->standardLibraryRoots.emplace_back(canonicalPath(root));
+    }
+    this->packageSourceRoots = packageSourceRoots;
+    for (PackageSourceRoot &package : this->packageSourceRoots) {
+      package.packageRoot = canonicalPath(package.packageRoot);
+      package.sourceRoot = canonicalPath(package.sourceRoot);
+      std::sort(package.dependencies.begin(), package.dependencies.end(),
+                [](const PackageSourceDependency &left,
+                   const PackageSourceDependency &right) {
+                  return left.alias < right.alias;
+                });
     }
     entrySourceConsumed = false;
     std::vector<SourceUnitId> preludes;
@@ -118,7 +130,7 @@ private:
     return error ? absolute.lexically_normal() : canonical;
   }
 
-  static bool isStandardLibraryPathSegment(std::string_view segment) {
+  static bool isImportPathSegment(std::string_view segment) {
     if (segment.empty()) {
       return false;
     }
@@ -134,8 +146,49 @@ private:
            std::all_of(segment.begin() + 1, segment.end(), validPart);
   }
 
-  static bool isStandardLibraryPathSegment(const Token &token) {
-    return isStandardLibraryPathSegment(token.lexeme);
+  static bool isImportPathSegment(const Token &token) {
+    return isImportPathSegment(token.lexeme);
+  }
+
+  static bool pathIsWithin(const std::filesystem::path &root,
+                           const std::filesystem::path &candidate) {
+    auto rootPart = root.begin();
+    auto candidatePart = candidate.begin();
+    for (; rootPart != root.end() && candidatePart != candidate.end();
+         ++rootPart, ++candidatePart) {
+      if (*rootPart != *candidatePart) {
+        return false;
+      }
+    }
+    return rootPart == root.end();
+  }
+
+  [[nodiscard]] const PackageSourceRoot *
+  packageForPath(const std::filesystem::path &path) const {
+    const PackageSourceRoot *selected = nullptr;
+    std::size_t selectedDepth = 0;
+    for (const PackageSourceRoot &package : packageSourceRoots) {
+      if (!pathIsWithin(package.packageRoot, path)) {
+        continue;
+      }
+      const std::size_t depth = static_cast<std::size_t>(std::distance(
+          package.packageRoot.begin(), package.packageRoot.end()));
+      if (selected == nullptr || depth > selectedDepth) {
+        selected = &package;
+        selectedDepth = depth;
+      }
+    }
+    return selected;
+  }
+
+  [[nodiscard]] const PackageSourceRoot *
+  packageByIdentity(std::string_view identity) const {
+    const auto found =
+        std::find_if(packageSourceRoots.begin(), packageSourceRoots.end(),
+                     [identity](const PackageSourceRoot &package) {
+                       return package.identity == identity;
+                     });
+    return found == packageSourceRoots.end() ? nullptr : &*found;
   }
 
   [[nodiscard]] std::optional<std::string>
@@ -180,7 +233,7 @@ private:
       segments.back() = leaf.stem().string();
       if (std::any_of(segments.begin(), segments.end(),
                       [](const std::string &segment) {
-                        return !isStandardLibraryPathSegment(segment);
+                        return !isImportPathSegment(segment);
                       })) {
         continue;
       }
@@ -226,8 +279,18 @@ private:
       }
       return state->second.unit;
     }
+    std::optional<std::string> packageIdentity;
+    std::optional<std::string> packageRelativePath;
+    if (role == SourceUnitRole::Application) {
+      if (const PackageSourceRoot *package = packageForPath(path)) {
+        packageIdentity = package->identity;
+        packageRelativePath =
+            path.lexically_relative(package->packageRoot).generic_string();
+      }
+    }
     const SourceUnitId unitId = graph.addUnit(
-        path, isEntry, isPrelude, std::move(standardLibraryName), role);
+        path, isEntry, isPrelude, std::move(standardLibraryName), role,
+        std::move(packageIdentity), std::move(packageRelativePath));
     states.emplace(key,
                    FileState{.state = LoadState::Visiting, .unit = unitId});
 
@@ -371,13 +434,14 @@ private:
     }
     if (!hasPath) {
       report(includeToken,
-             "Expect a quoted .gti path or <std/name> after '#include'.",
+             "Expect a quoted .gti path, <std/name>, or a declared "
+             "<dependency/name> after '#include'.",
              "GTI-I0005");
       return {.directiveEnd = directiveEnd};
     }
 
     if (hasStandardPath) {
-      return resolveStandardLibraryInclude(tokens, index, includeToken);
+      return resolveAngleInclude(tokens, index, includeToken, includingFile);
     }
 
     const Token &pathToken = tokens[index + 1];
@@ -401,6 +465,19 @@ private:
 
     const std::filesystem::path resolved =
         canonicalPath(includingFile.parent_path() / requestedPath);
+    if (!packageSourceRoots.empty()) {
+      const PackageSourceRoot *includingPackage =
+          packageForPath(canonicalPath(includingFile));
+      const PackageSourceRoot *targetPackage = packageForPath(resolved);
+      if (includingPackage != nullptr && targetPackage != includingPackage) {
+        report(pathToken,
+               "A quoted include cannot cross the owning package boundary; "
+               "declare the package dependency and use its angle-include "
+               "alias.",
+               "GTI-I0010");
+        return {.directiveEnd = directiveEnd};
+      }
+    }
     std::error_code error;
     if (!std::filesystem::is_regular_file(resolved, error) &&
         !sourceOverrides->contains(resolved.string())) {
@@ -419,13 +496,13 @@ private:
                                        : SourceUnitRole::Application)};
   }
 
-  ResolvedInclude resolveStandardLibraryInclude(std::vector<Token> &tokens,
-                                                std::size_t index,
-                                                const Token &includeToken) {
+  ResolvedInclude
+  resolveAngleInclude(std::vector<Token> &tokens, std::size_t index,
+                      const Token &includeToken,
+                      const std::filesystem::path &includingFile) {
     std::size_t current = index + 2;
     std::vector<std::string> segments;
-    while (current < tokens.size() &&
-           isStandardLibraryPathSegment(tokens[current])) {
+    while (current < tokens.size() && isImportPathSegment(tokens[current])) {
       segments.emplace_back(tokens[current].lexeme);
       ++current;
       if (current >= tokens.size() ||
@@ -443,13 +520,18 @@ private:
       directiveEnd = current + 1;
     }
 
-    if (!closed || segments.size() < 2 || segments.front() != "std") {
+    if (!closed || segments.size() < 2) {
       report(includeToken,
-             "Standard-library includes use syntax such as "
-             "'#include <std/array>'.",
+             "Angle includes use a standard-library or declared package path "
+             "such as '#include <std/array>' or '#include <math/vector>'.",
              "GTI-I0007");
       return {.directiveEnd = directiveEnd,
               .kind = SourceDependencyKind::StandardLibrary};
+    }
+
+    if (segments.front() != "std") {
+      return resolvePackageInclude(segments, directiveEnd, includeToken,
+                                   includingFile);
     }
     if (standardLibraryRoots.empty()) {
       report(includeToken,
@@ -494,6 +576,100 @@ private:
             .kind = SourceDependencyKind::StandardLibrary};
   }
 
+  ResolvedInclude
+  resolvePackageInclude(const std::vector<std::string> &segments,
+                        std::size_t directiveEnd, const Token &includeToken,
+                        const std::filesystem::path &includingFile) {
+    const PackageSourceRoot *includingPackage =
+        packageForPath(canonicalPath(includingFile));
+    if (includingPackage == nullptr) {
+      report(includeToken,
+             "Package include '<" + segments.front() +
+                 "/...>' is unavailable because this compilation has no "
+                 "owning package graph.",
+             "GTI-I0010");
+      return {.directiveEnd = directiveEnd,
+              .kind = SourceDependencyKind::Package};
+    }
+
+    const auto dependency =
+        std::find_if(includingPackage->dependencies.begin(),
+                     includingPackage->dependencies.end(),
+                     [&segments](const PackageSourceDependency &candidate) {
+                       return candidate.alias == segments.front();
+                     });
+    if (dependency == includingPackage->dependencies.end()) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-I0010", DiagnosticPhase::SourceLoading, includeToken,
+          "Package '" + includingPackage->name +
+              "' has no direct dependency alias '" + segments.front() + "'.");
+      if (!includingPackage->dependencies.empty()) {
+        std::string aliases;
+        for (const PackageSourceDependency &candidate :
+             includingPackage->dependencies) {
+          if (!aliases.empty()) {
+            aliases += ", ";
+          }
+          aliases += candidate.alias;
+        }
+        diagnostic.hints.push_back(
+            "Declared direct dependency aliases: " + aliases + ".");
+      }
+      diagnostics.push_back(std::move(diagnostic));
+      return {.directiveEnd = directiveEnd,
+              .kind = SourceDependencyKind::Package};
+    }
+
+    const PackageSourceRoot *target =
+        packageByIdentity(dependency->targetIdentity);
+    if (target == nullptr) {
+      report(includeToken,
+             "Dependency alias '" + dependency->alias +
+                 "' refers to a package that is absent from the resolved "
+                 "package graph.",
+             "GTI-I0010");
+      return {.directiveEnd = directiveEnd,
+              .kind = SourceDependencyKind::Package};
+    }
+
+    std::filesystem::path relative;
+    for (std::size_t index = 1; index < segments.size(); ++index) {
+      relative /= segments[index];
+    }
+    relative += ".gti";
+    const std::filesystem::path candidate =
+        canonicalPath(target->sourceRoot / relative);
+    if (!pathIsWithin(target->sourceRoot, candidate)) {
+      report(includeToken,
+             "Package include escapes dependency source root for alias '" +
+                 dependency->alias + "'.",
+             "GTI-I0010");
+      return {.directiveEnd = directiveEnd,
+              .kind = SourceDependencyKind::Package};
+    }
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(candidate, error) &&
+        !sourceOverrides->contains(candidate.string())) {
+      std::string importName;
+      for (const std::string &segment : segments) {
+        if (!importName.empty()) {
+          importName += '/';
+        }
+        importName += segment;
+      }
+      report(includeToken,
+             "Package unit '<" + importName + ">' was not found beneath '" +
+                 target->sourceRoot.string() + "'.",
+             "GTI-I0010");
+      return {.directiveEnd = directiveEnd,
+              .kind = SourceDependencyKind::Package};
+    }
+
+    return {.directiveEnd = directiveEnd,
+            .dependency = loadFile(candidate, false, false, &includeToken),
+            .kind = SourceDependencyKind::Package};
+  }
+
   void report(const Token &token, std::string message,
               std::string code = "GTI-I0000") {
     diagnostics.push_back(makeDiagnostic(std::move(code),
@@ -508,6 +684,7 @@ private:
   std::optional<std::string> entrySource;
   const std::unordered_map<std::string, std::string> *sourceOverrides = nullptr;
   std::vector<std::filesystem::path> standardLibraryRoots;
+  std::vector<PackageSourceRoot> packageSourceRoots;
   bool entrySourceConsumed = false;
   std::optional<std::size_t> completionOffset;
 };

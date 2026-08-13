@@ -89,6 +89,19 @@ std::string_view nativeLinkOperandKindName(driver::NativeLinkOperandKind kind) {
   return "file";
 }
 
+std::string_view
+packageMembershipName(driver::ProjectPackageMembership membership) {
+  switch (membership) {
+  case driver::ProjectPackageMembership::Root:
+    return "root";
+  case driver::ProjectPackageMembership::Member:
+    return "member";
+  case driver::ProjectPackageMembership::Dependency:
+    return "dependency";
+  }
+  return "dependency";
+}
+
 void writeOrderedLinkOperands(
     std::ostream &stream,
     const std::vector<driver::NativeLinkOperand> &operands) {
@@ -183,7 +196,54 @@ void writeProjectMetadata(std::ostream &stream,
   writeJsonString(stream, manifest.package().version);
   stream << ",\n    \"root\": ";
   writeJsonString(stream, manifest.packageRoot().string());
-  stream << "\n  },\n  \"target\": {\n    \"triple\": ";
+  stream << ",\n    \"sourceRoot\": ";
+  writeJsonString(stream, manifest.package().sourceRoot.string());
+  stream << "\n  },\n  \"workspace\": {\n    \"root\": ";
+  writeJsonString(stream, metadata.workspace().root().string());
+  stream << ",\n    \"declared\": "
+         << (metadata.workspace().declared() ? "true" : "false")
+         << ",\n    \"selectedPackage\": ";
+  writeJsonString(stream, manifest.package().name);
+  stream << ",\n    \"packages\": [";
+  const std::vector<driver::ResolvedProjectPackage> &packages =
+      metadata.workspace().packages();
+  for (std::size_t packageIndex = 0; packageIndex < packages.size();
+       ++packageIndex) {
+    const driver::ResolvedProjectPackage &package = packages[packageIndex];
+    stream << (packageIndex == 0 ? "\n" : ",\n") << "      {\"name\": ";
+    writeJsonString(stream, package.manifest.package().name);
+    stream << ", \"version\": ";
+    writeJsonString(stream, package.manifest.package().version);
+    stream << ", \"identity\": ";
+    writeJsonString(stream, package.identity());
+    stream << ", \"membership\": ";
+    writeJsonString(stream, packageMembershipName(package.membership));
+    stream << ", \"root\": ";
+    writeJsonString(stream, package.manifest.packageRoot().string());
+    stream << ", \"manifest\": ";
+    writeJsonString(stream, package.manifest.path().string());
+    stream << ", \"sourceRoot\": ";
+    writeJsonString(stream, package.manifest.package().sourceRoot.string());
+    stream << ", \"dependencies\": [";
+    for (std::size_t dependencyIndex = 0;
+         dependencyIndex < package.dependencies.size(); ++dependencyIndex) {
+      const driver::ResolvedProjectDependency &dependency =
+          package.dependencies[dependencyIndex];
+      if (dependencyIndex != 0) {
+        stream << ", ";
+      }
+      stream << "{\"alias\": ";
+      writeJsonString(stream, dependency.alias);
+      stream << ", \"package\": ";
+      writeJsonString(stream, dependency.targetIdentity);
+      stream << '}';
+    }
+    stream << "]}";
+  }
+  if (!packages.empty()) {
+    stream << '\n';
+  }
+  stream << "    ]\n  },\n  \"target\": {\n    \"triple\": ";
   writeJsonString(stream, driver::targetTriple(target));
   stream << ",\n    \"arch\": ";
   writeJsonString(stream, target.arch);
