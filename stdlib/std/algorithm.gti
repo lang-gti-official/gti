@@ -1,7 +1,7 @@
 // Algorithms that need only ordering, input iteration, or a confined predicate
-// are implemented here. The remaining declarations require callable result,
-// output-iterator, or bidirectional/random-access contracts that GTI cannot yet
-// express honestly.
+// are implemented here. The remaining declarations require owned callable
+// return, writable-output, or bidirectional/random-access contracts that GTI
+// cannot yet express honestly.
 
 #include <std/iterator>
 

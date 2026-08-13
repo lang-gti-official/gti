@@ -1927,6 +1927,112 @@ def main():
             )
             run([str(callable_dispatch_executable)])
 
+        exact_callable_dispatch_source = root / "exact-callable-dispatch.gti"
+        exact_callable_dispatch_source.write_text(
+            "class Exact { mut int value; public: "
+            "Exact(int initial) : value(initial) {} "
+            "int operator()(int amount) { return this.value + amount; } "
+            "int operator()(bool amount) { return this.value + 90; } "
+            "int operator()(int amount) mut { this.value += amount; "
+            "return this.value; } "
+            "int operator()(bool amount) mut { this.value += 90; "
+            "return this.value; } "
+            "int operator()(int amount) && { return this.value + amount + 100; } "
+            "int operator()(bool amount) && { return this.value + 900; } };\n"
+            "class MutableFallback { mut int value; public: "
+            "MutableFallback(int initial) : value(initial) {} "
+            "int operator()(int amount) mut { this.value += amount; "
+            "return this.value; } "
+            "int operator()(bool amount) && { return this.value + 900; } };\n"
+            "class ValueReference { public: "
+            "int operator()(int value) { return value + 1; } "
+            "int operator()(int& value) { return value + 20; } };\n"
+            "class ReferenceOnly { public: "
+            "int operator()(mut int& value) { value++; return value; } };\n"
+            "class PointerFallback { public: "
+            "int operator()(int* pointer) mut { "
+            "return pointer == nullptr ? 6 : 60; } "
+            "int operator()(bool value) && { return value ? 90 : 91; } };\n"
+            "class ReadPointerFallback { public: "
+            "int operator()(const int* pointer) mut { "
+            "return pointer == nullptr ? 8 : 80; } "
+            "int operator()(bool value) && { return value ? 92 : 93; } };\n"
+            "int call_read<Operation>(Operation operation) { "
+            "return operation(2); }\n"
+            "int call_mut<Operation>(mut Operation operation) { "
+            "return operation(3); }\n"
+            "int call_once<Operation>(Operation operation) { "
+            "return std::move(operation)(4); }\n"
+            "int call_literal<Operation>(Operation operation) { "
+            "return operation(3); }\n"
+            "int call_reference<Operation>(Operation operation, "
+            "mut int& value) { return operation(value); }\n"
+            "int call_null_once<Operation>(Operation operation) { "
+            "return std::move(operation)(nullptr); }\n"
+            "int call_pointer_once<Operation>(Operation operation, "
+            "int* pointer) { return std::move(operation)(pointer); }\n"
+            "int main() { Exact read = Exact(1); Exact changed = Exact(1); "
+            "Exact consumed = Exact(1); "
+            "MutableFallback fallback = MutableFallback(1); "
+            "ValueReference value_reference = ValueReference(); "
+            "ReferenceOnly reference_only = ReferenceOnly(); "
+            "PointerFallback pointer_fallback = PointerFallback(); "
+            "ReadPointerFallback read_pointer_fallback = "
+            "ReadPointerFallback(); int* pointer = nullptr; "
+            "mut int referenced = 3; "
+            "int first = call_read(read); int second = call_mut(changed); "
+            "int third = call_once(consumed); "
+            "int fourth = call_once(fallback); "
+            "int fifth = call_literal(value_reference); "
+            "int sixth = call_reference(reference_only, referenced); "
+            "int seventh = call_null_once(pointer_fallback); "
+            "int eighth = call_pointer_once(read_pointer_fallback, pointer); "
+            "if (first == 3 and second == 4 and third == 105 and "
+            "fourth == 5 and fifth == 4 and sixth == 4 and "
+            "seventh == 6 and eighth == 8) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        for standard in ("c++20", "c++23"):
+            exact_callable_dispatch_executable = root / (
+                f"exact-callable-dispatch-{standard}"
+            )
+            run(
+                [
+                    gti,
+                    str(exact_callable_dispatch_source),
+                    "-o",
+                    str(exact_callable_dispatch_executable),
+                    "--std",
+                    standard,
+                ]
+            )
+            run([str(exact_callable_dispatch_executable)])
+
+        dependent_callable_source = root / "dependent-callable-dispatch.gti"
+        dependent_callable_executable = root / "dependent-callable-dispatch"
+        dependent_callable_source.write_text(
+            "#include <std/algorithm>\n"
+            "#include <std/vector>\n"
+            "class PositivePredicate { public: "
+            "bool operator()(int& value) mut { return value > 0; } };\n"
+            "int main() { mut std::vector<int> values{}; "
+            "values.push_back(1); "
+            "int selected = int(std::count_if(values.begin(), values.end(), "
+            "PositivePredicate())); "
+            "return selected == 1 ? 0 : 1; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(dependent_callable_source),
+                "-o",
+                str(dependent_callable_executable),
+            ]
+        )
+        run([str(dependent_callable_executable)])
+
         compound_source = root / "compound-assignments.gti"
         compound_executable = root / "compound-assignments"
         compound_source.write_text(

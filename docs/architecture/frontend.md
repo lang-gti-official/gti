@@ -93,6 +93,13 @@ bounded application grammar and rejects disjunction; concept identity, arity,
 visible type-parameter arguments, capability composition, and call viability
 belong to semantic analysis.
 
+`FunctionDecl` also retains one receiver mode. Ordinary members are read-only
+or use trailing `mut`; `operator()` alone may use trailing `&&` for the
+consuming mode. The parser recognizes `operator()() &&` structurally rather
+than treating `&&` as a general reference type, and rejects that qualifier on
+free functions, ordinary methods, other operators, and conflicting receiver
+qualifiers before semantics.
+
 `Parser::parse()` recovers at declaration/statement boundaries and retains later
 valid declarations. `Frontend::analyze()` parses each source unit independently
 in dependency order, appends declarations to the transitional `Program`, and

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.123.0
+Checkpoint version: 0.124.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -46,21 +46,33 @@ structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
 
+The 0.124.0 callable checkpoint implements confined once invocation without
+opening callable escape. `operator() &&` is the bounded consuming nominal form;
+`std::move(operation)()` records an exact once-callable generic requirement and
+uses ordinary path-sensitive move state for at-most-once invocation and
+forwarding. HIR retains required and selected capabilities, MIR verifies the
+receiver's ownership-move provenance and exact target, and the C++ bridge
+preserves frontend selection across read, mutable, and consuming overloads.
+The current consuming receiver must be structurally cleanup-free until the
+backend has a full-expression-owned receiver representation. General
+rvalue-reference types, move capture, callable environments, and owned escape
+remain closed.
+
 The 0.123.0 callable checkpoint implements repeatable invocation capability
 without opening callable escape. An immutable confined parameter requires a
 read-callable target; a `mut` confined parameter accepts either a read-callable
 target or an exact class `operator() mut`. Semantics records the requirement and
 selected capability, HIR/MIR preserve it with the exact target and receiver,
-MIR v6 verifies the contract, and the backend prevents C++ overload resolution
+MIR v7 verifies the contract, and the backend prevents C++ overload resolution
 from changing frontend-selected receiver access. Source-defined predicate and
 numeric algorithms now accept stateful mutable function objects. Consuming
-once-callable invocation, environment lifecycle, capture movement, and owned
-escape remain closed.
+once-callable invocation is completed by the checkpoint above; environment
+lifecycle, capture movement, and owned escape remain closed.
 
 The 0.122.0 callable checkpoint completed the first two L-CALL-01
 implementation slices. Semantic, HIR, and MIR callable sites now carry
 explicit `Confined` boundary records instead of phase-spanning booleans, and
-MIR v6 verifies ordered, unique, in-range confined argument descriptors.
+MIR v7 verifies ordered, unique, in-range confined argument descriptors.
 Generic callable calls may return exact non-reference values without tracked
 borrowed state or lambda identity when an explicit binding, assignment,
 condition, or enclosing return supplies the result type; concrete reanalysis
@@ -376,9 +388,10 @@ versus exact generic owned transport, lifecycle/escape diagnostics, and one
 cross-phase vocabulary for algorithms, consumed tasks, and native callbacks.
 L-CALL-01 now implements that vocabulary for confined boundaries, exact
 context-supplied confined-safe value results, and repeatable read/mut
-invocation. Once-callable cardinality, movement/lifecycle, and owned escape
-remain behind the executable critical path, while C-CALL-01 and S-CALL-01 keep
-their failure, concurrency, and ABI gates.
+invocation plus consuming once-callable cardinality. Callable environment
+movement/lifecycle and owned escape remain behind the executable critical
+path, while C-CALL-01 and S-CALL-01 keep their failure, concurrency, and ABI
+gates.
 
 Design-only D-FAIL-01 is complete in
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure), with
@@ -677,7 +690,7 @@ precise invalidation effects remain incomplete. Bounded local exclusive
 reborrows provide a prerequisite for mutable access, but they do not create the
 range-level or per-iteration loan protocol by themselves.
 
-### Milestone 3: callables and generic capabilities - repeatable invocation
+### Milestone 3: callables and generic capabilities - confined invocation
 
 Typed lexical lambdas, direct confined generic callable parameters,
 declaration-order-independent confined forwarding, named concepts, lifecycle
@@ -692,10 +705,13 @@ unary `std::transform_reduce` are implemented.
 Immutable confined parameters require read-callable targets. Mutable confined
 parameters retain one local callable and accept read-callable or mut-callable
 targets for zero-or-more invocation; the implemented algorithms use this form.
+An explicitly moved confined parameter requires once-callable invocation,
+accepts reusable or consuming nominal targets, and is checked by ordinary
+path-sensitive availability plus MIR move provenance.
 Bounded scalar constexpr bindings, free functions, static methods, recursion,
 structured control flow, and frontend-selected `if constexpr` are also
-implemented. Callable result inference, once-callable cardinality, capture
-ownership, owned escape, complete-range/callable/hash capabilities,
+implemented. Callable result inference, capture ownership, owned escape,
+complete-range/callable/hash capabilities,
 heterogeneous accumulation, and generic or aggregate constexpr evaluation
 remain.
 

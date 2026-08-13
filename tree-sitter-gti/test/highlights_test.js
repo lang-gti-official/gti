@@ -183,6 +183,8 @@ requireCapture(181, "int32_t", "type.builtin");
 requireCapture(182, "alignof", "keyword.operator");
 requireCapture(182, "const", "keyword.modifier");
 requireCapture(182, "*", "operator");
+requireCapture(194, "operator", "keyword.operator");
+requireCapture(194, "&&", "operator");
 
 const reservedFixture = path.join(__dirname, "reserved_identifiers.gti");
 const reservedCaptures = queryCaptures("highlights", reservedFixture);

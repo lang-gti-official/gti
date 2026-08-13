@@ -1298,8 +1298,8 @@ private:
   // declaration. The formatter tokenizes words independently from the
   // compiler lexer, so this still needs structural recognition. The grammar
   // places a requires-clause directly after the parameter clause, optionally
-  // separated by the receiver-mutability `mut`, and it is always followed by
-  // a concept application.
+  // separated by the receiver qualifier `mut` or `&&`, and it is always
+  // followed by a concept application.
   static bool isTrailingRequiresClause(const std::vector<Lexeme> &lexemes,
                                        std::size_t index) {
     const Lexeme &lexeme = lexemes[index];
@@ -1315,6 +1315,12 @@ private:
       return false;
     }
     if (previous->kind == Kind::Word && previous->text == "mut") {
+      previous = previousSyntaxLexeme(
+          lexemes, static_cast<std::size_t>(previous - lexemes.data()));
+      if (previous == nullptr) {
+        return false;
+      }
+    } else if (previous->kind == Kind::Operator && previous->text == "&&") {
       previous = previousSyntaxLexeme(
           lexemes, static_cast<std::size_t>(previous - lexemes.data()));
       if (previous == nullptr) {

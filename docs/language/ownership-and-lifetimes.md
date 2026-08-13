@@ -528,6 +528,23 @@ Immutable bindings may be consumed but cannot be reinitialized. Branches merge
 value and field state and report a later read when any reachable path consumed
 the place; loops conservatively account for zero or more iterations.
 
+The bounded consuming-call spelling is `std::move(value)(arguments)` when the
+selected nominal target is an exact `operator()(parameters) &&`. Trailing
+`&&` is a receiver capability only for
+`operator()`; it does not introduce a general `T&&` type. The receiver may
+mutate or move from its fields because the whole exact receiver place is being
+consumed, and it may finish with moved fields rather than restoring a value
+that is no longer available. It cannot return a reference or tracked
+borrowed-state carrier. Mutually exclusive control-flow paths may each consume
+the callable, but any path permitting a second invocation or later use is
+rejected by the same availability analysis as an ordinary explicit move.
+The receiver must currently be free of structural active-cleanup state. A
+native rvalue-qualified call does not transfer that state into a distinct
+full-expression-owned value, and materializing an ordinary helper parameter
+would clean up at the wrong boundary relative to sibling operands. GTI
+therefore rejects direct and concretely selected generic consuming calls for
+cleanup-owning receivers until that representation exists.
+
 Fixed-array ownership state is tracked per constant element. Moving element
 `i` leaves a different constant element `j` available, but makes the containing
 array partially unavailable. Plain assignment to the same element restores it;

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -3384,8 +3385,49 @@ int main() {
   lang::MirInstruction *onceInvocation = confinedInvocation(prematureOnce);
   onceInvocation->callableInvocation = lang::CallableInvocationCapability::Once;
   expect(!lang::verifyMirBody(prematureOnce).valid(),
-         "the MIR verifier should reject once-callable invocation until "
-         "consuming receiver state and joins are represented");
+         "the MIR verifier should reject once-callable invocation without an "
+         "exact consuming receiver move");
+
+  lang::MirBody strayNonCallBoundary = mirMain->body;
+  lang::MirInstruction *nonCallBoundary = nullptr;
+  for (lang::MirBlock &block : strayNonCallBoundary.blocks) {
+    const auto found = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind != lang::MirInstructionKind::Call;
+        });
+    if (found != block.instructions.end()) {
+      nonCallBoundary = &*found;
+      break;
+    }
+  }
+  if (nonCallBoundary != nullptr) {
+    nonCallBoundary->callableBoundary = lang::CallableBoundary::Confined;
+  }
+  expect(nonCallBoundary != nullptr &&
+             !lang::verifyMirBody(strayNonCallBoundary).valid(),
+         "only call instructions may carry a callable boundary");
+
+  lang::MirBody strayNonCallArguments = mirMain->body;
+  lang::MirInstruction *nonCallArguments = nullptr;
+  for (lang::MirBlock &block : strayNonCallArguments.blocks) {
+    const auto found = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind != lang::MirInstructionKind::Call;
+        });
+    if (found != block.instructions.end()) {
+      nonCallArguments = &*found;
+      break;
+    }
+  }
+  if (nonCallArguments != nullptr) {
+    nonCallArguments->callableArguments.push_back(
+        {.parameterIndex = 0, .boundary = lang::CallableBoundary::Confined});
+  }
+  expect(nonCallArguments != nullptr &&
+             !lang::verifyMirBody(strayNonCallArguments).valid(),
+         "only call instructions may carry callable argument descriptors");
 
   const auto mutableFunction =
       [](lang::MirProgram &program,
@@ -3410,6 +3452,22 @@ int main() {
              !lang::verifyMirProgram(missingTargetCapability).valid(),
          "a concrete lambda target must retain its selected invocation "
          "capability even if its confined marker is forged away");
+
+  lang::MirProgram missingInvocationBoundary = frontend.mir;
+  lang::MirFunctionInstance *missingBoundaryApply =
+      mutableFunction(missingInvocationBoundary, apply->id);
+  lang::MirInstruction *missingBoundaryInvocation =
+      missingBoundaryApply == nullptr
+          ? nullptr
+          : confinedInvocation(missingBoundaryApply->body);
+  if (missingBoundaryInvocation != nullptr) {
+    missingBoundaryInvocation->callableBoundary.reset();
+  }
+  expect(missingBoundaryInvocation != nullptr &&
+             lang::verifyMirBody(missingBoundaryApply->body).valid() &&
+             !lang::verifyMirProgram(missingInvocationBoundary).valid(),
+         "an invocation of an enclosing callable parameter must retain its "
+         "confined boundary independently from target capability");
 
   lang::MirProgram mismatchedRequiredCapability = frontend.mir;
   lang::MirFunctionInstance *requiredApply =
@@ -3599,7 +3657,214 @@ int main() {
                !lang::verifyMirProgram(missingForwardingCallDescriptor).valid(),
            "a forwarding record and its concrete call descriptor must remain "
            "consistent");
+
+    lang::MirProgram wrongForwardingOperand = forwarding.mir;
+    lang::MirFunctionInstance *wrongOperandOuter =
+        mutableFunction(wrongForwardingOperand, outer->id);
+    lang::MirInstruction *forwardingCall = nullptr;
+    if (wrongOperandOuter != nullptr) {
+      for (lang::MirBlock &block : wrongOperandOuter->body.blocks) {
+        const auto found = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [](const lang::MirInstruction &instruction) {
+              return instruction.kind == lang::MirInstructionKind::Call &&
+                     !instruction.callableArguments.empty();
+            });
+        if (found != block.instructions.end()) {
+          forwardingCall = &*found;
+          break;
+        }
+      }
+    }
+    if (forwardingCall != nullptr && !forwardingCall->operands.empty()) {
+      const lang::SemanticType type = forwardingCall->operands.front().type;
+      const lang::MirPlaceId forgedPlace =
+          wrongOperandOuter->body.places.size() + 1;
+      wrongOperandOuter->body.places.push_back(
+          {.id = forgedPlace,
+           .root = lang::MirPlaceRootKind::Binding,
+           .binding = wrongOperandOuter->parameterBindings.front() + 1000,
+           .type = type,
+           .traits = lang::semanticTraits(type),
+           .initiallyAvailable = true});
+      forwardingCall->operands.front() = {.kind = lang::MirOperandKind::Copy,
+                                          .place = forgedPlace,
+                                          .type = type};
+      (void)lang::rebuildMirValueUses(wrongOperandOuter->body);
+    }
+    expect(forwardingCall != nullptr &&
+               lang::verifyMirBody(wrongOperandOuter->body).valid() &&
+               !lang::verifyMirProgram(wrongForwardingOperand).valid(),
+           "a forwarding summary must prove that the descriptor operand is "
+           "the source callable parameter binding");
   }
+
+  const lang::FrontendResult onceForwarding = lang::Frontend().analyze(
+      "once-callable-forwarding-mir.gti", R"(
+class Once {
+public:
+  Once() {}
+  int operator()() && { return 1; }
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int relay_once<Operation>(Operation operation) {
+  return invoke_once(std::move(operation));
+}
+
+int outer_once<Operation>(Operation operation) {
+  return relay_once(std::move(operation));
+}
+
+int main() { return outer_once(Once()) - 1; }
+)",
+      {std::filesystem::path(__FILE__).parent_path().parent_path() /
+       "stdlib/prelude.gti"});
+  const lang::HirFunctionInstance *outerOnce =
+      findHirFunction(onceForwarding, "outer_once");
+  const lang::MirFunctionInstance *mirOuterOnce =
+      outerOnce == nullptr
+          ? nullptr
+          : onceForwarding.mir.findFunctionInstance(outerOnce->id);
+  expect(onceForwarding.canGenerateCode() && mirOuterOnce != nullptr &&
+             !mirOuterOnce->callableParameters.empty() &&
+             !mirOuterOnce->callableParameters.front().forwardings.empty() &&
+             lang::verifyMirProgram(onceForwarding.mir).valid(),
+         "the transitive once-forwarding MIR fixture should retain a valid "
+         "ownership move into its confined target");
+
+  lang::MirProgram copiedOnceForwarding = onceForwarding.mir;
+  lang::MirFunctionInstance *copiedOuterOnce =
+      outerOnce == nullptr
+          ? nullptr
+          : mutableFunction(copiedOnceForwarding, outerOnce->id);
+  bool replacedOnceMoveWithLoad = false;
+  if (copiedOuterOnce != nullptr) {
+    for (lang::MirBlock &block : copiedOuterOnce->body.blocks) {
+      for (lang::MirInstruction &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call ||
+            call.callableArguments.empty() || call.operands.empty() ||
+            call.operands.front().kind != lang::MirOperandKind::Value) {
+          continue;
+        }
+        const lang::MirValueId forwarded = call.operands.front().value;
+        for (lang::MirBlock &definitionBlock : copiedOuterOnce->body.blocks) {
+          for (lang::MirInstruction &definition :
+               definitionBlock.instructions) {
+            if (definition.result != forwarded ||
+                definition.kind != lang::MirInstructionKind::Move ||
+                definition.operands.size() != 1) {
+              continue;
+            }
+            definition.kind = lang::MirInstructionKind::Load;
+            definition.operands.front().kind = lang::MirOperandKind::Copy;
+            definition.intrinsic = lang::IntrinsicKind::None;
+            definition.ownership.reset();
+            definition.lifecycle.clear();
+            replacedOnceMoveWithLoad = true;
+          }
+        }
+      }
+    }
+    (void)lang::rebuildMirValueUses(copiedOuterOnce->body);
+  }
+  const lang::MirVerificationResult copiedOnceForwardingResult =
+      lang::verifyMirProgram(copiedOnceForwarding);
+  expect(replacedOnceMoveWithLoad && copiedOuterOnce != nullptr &&
+             lang::verifyMirBody(copiedOuterOnce->body).valid() &&
+             !copiedOnceForwardingResult.valid() &&
+             std::any_of(
+                 copiedOnceForwardingResult.errors.begin(),
+                 copiedOnceForwardingResult.errors.end(),
+                 [](const lang::MirVerificationError &error) {
+                   return error.message.find(
+                              "once-confined target is not rooted in an exact "
+                              "ownership move") != std::string::npos;
+                 }),
+         "program verification must reject a copied callable on a transitive "
+         "once-confined forwarding edge even when the body is locally valid");
+
+  const lang::FrontendResult linearOnce = lang::Frontend().analyze(
+      "linear-once-callable-mir.gti", R"(
+class Once {
+public:
+  Once() {}
+  void operator()() && {}
+};
+
+void invoke_once<Operation>(Operation operation) {
+  std::move(operation)();
+}
+
+int main() {
+  invoke_once(Once());
+  return 0;
+}
+)",
+      {std::filesystem::path(__FILE__).parent_path().parent_path() /
+       "stdlib/prelude.gti"});
+  const lang::HirFunctionInstance *linearInvoke =
+      findHirFunction(linearOnce, "invoke_once");
+  const lang::MirFunctionInstance *mirLinearInvoke =
+      linearInvoke == nullptr
+          ? nullptr
+          : linearOnce.mir.findFunctionInstance(linearInvoke->id);
+  expect(linearOnce.canGenerateCode() && mirLinearInvoke != nullptr &&
+             lang::verifyMirProgram(linearOnce.mir).valid(),
+         "a once-callable receiver should have one linear use of its exact "
+         "ownership move");
+
+  lang::MirProgram duplicatedOnceInvocation = linearOnce.mir;
+  lang::MirFunctionInstance *duplicatedLinearInvoke =
+      linearInvoke == nullptr
+          ? nullptr
+          : mutableFunction(duplicatedOnceInvocation, linearInvoke->id);
+  bool clonedOnceCall = false;
+  if (duplicatedLinearInvoke != nullptr) {
+    lang::MirInstructionId nextInstruction = 1;
+    for (const lang::MirBlock &block : duplicatedLinearInvoke->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        nextInstruction = std::max(nextInstruction, instruction.id + 1);
+      }
+    }
+    for (lang::MirBlock &block : duplicatedLinearInvoke->body.blocks) {
+      const auto call = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.callableInvocation ==
+                       lang::CallableInvocationCapability::Once;
+          });
+      if (call == block.instructions.end()) {
+        continue;
+      }
+      lang::MirInstruction duplicate = *call;
+      duplicate.id = nextInstruction;
+      block.instructions.insert(std::next(call), std::move(duplicate));
+      clonedOnceCall = true;
+      break;
+    }
+    (void)lang::rebuildMirValueUses(duplicatedLinearInvoke->body);
+  }
+  const lang::MirVerificationResult duplicatedOnceResult =
+      lang::verifyMirProgram(duplicatedOnceInvocation);
+  expect(
+      clonedOnceCall && duplicatedLinearInvoke != nullptr &&
+          !lang::verifyMirBody(duplicatedLinearInvoke->body).valid() &&
+          !duplicatedOnceResult.valid() &&
+          std::any_of(duplicatedOnceResult.errors.begin(),
+                      duplicatedOnceResult.errors.end(),
+                      [](const lang::MirVerificationError &error) {
+                        return error.message.find(
+                                   "once-callable invocation is not rooted in "
+                                   "an exact ownership move") !=
+                               std::string::npos;
+                      }),
+      "MIR verification must reject two consuming calls that reuse one moved "
+      "receiver value");
 }
 
 } // namespace

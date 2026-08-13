@@ -526,6 +526,7 @@ struct MirDestructorInstance {
 struct MirLambdaInstance {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
+  SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<SemanticType> captureTypes;
@@ -2090,8 +2091,7 @@ private:
     }
     const HirFunctionInstance *target = program.findFunctionInstance(targetId);
     return target != nullptr && target->source != nullptr &&
-                   target->source->receiverMutability() ==
-                       ReceiverMutability::Mutable
+                   receiverAllowsMutation(target->source->receiverMutability())
                ? AccessMode::Mutable
                : AccessMode::ReadOnly;
   }
@@ -4634,6 +4634,7 @@ public:
     for (const HirLambda &instance : source.lambdaInstances()) {
       MirLambdaInstance lowered{.id = instance.id,
                                 .declaration = instance.declaration,
+                                .type = instance.type,
                                 .returnType = instance.returnType,
                                 .parameterTypes = instance.parameterTypes};
       lowered.captureTypes.reserve(instance.captures.size());

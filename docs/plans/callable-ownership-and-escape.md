@@ -3,9 +3,9 @@
 > **Plan status:** D-CALL-01 decision complete. L-CALL-01 is partially
 > implemented through explicit confined-boundary records and exact
 > context-supplied confined-safe value results. Repeated read-callable and
-> mut-callable selection is implemented for confined generic parameters;
-> consuming once-callable cardinality, callable environments, and owned escape
-> remain planned.
+> mut-callable selection plus consuming once-callable cardinality are
+> implemented for confined generic parameters; callable environments, move
+> capture, and owned escape remain planned.
 
 Baseline: GTI 0.94.0.
 
@@ -73,7 +73,7 @@ keywords.
 
 ## Current Baseline Preserved
 
-GTI 0.94.0 already implements a deliberately confined first layer:
+As of GTI 0.124.0, the deliberately confined layer implements:
 
 - every lambda has explicit parameter and result types and one lexical
   `SemanticType::Lambda` identity;
@@ -98,8 +98,15 @@ GTI 0.94.0 already implements a deliberately confined first layer:
   `mut` confined parameter provides exclusive local access and accepts either
   a read-callable or mut-callable target; current lambdas are read-callable and
   a nominal `operator() mut` supplies the implemented mut-callable form;
-- source-defined predicate and numeric algorithms use that mutable local form
-  for zero-or-more invocation and reject the reserved once-callable form; and
+- a direct `std::move(operation)()` requires once-callable use, consumes the
+  generic parameter under ordinary path-sensitive move rules, and accepts an
+  exact reusable target or nominal `operator() &&`; confined forwarding
+  preserves that requirement through an explicit move; the consumed receiver
+  must currently be structurally cleanup-free until full-expression-owned
+  receiver storage is represented;
+- source-defined predicate and numeric algorithms use the repeatable local
+  forms for zero-or-more invocation, while one-call generic clients may use
+  the consuming form; and
 - the C++ backend emits a closure or exact `operator()` bridge only after the
   frontend has selected the callable.
 
@@ -475,7 +482,9 @@ With M-LIFE-01 complete, implement bounded sub-slices in this order:
 3. **Done in 0.123.0:** classify read-callable and mut-callable
    receiver access per concrete signature, preserve the required and selected
    capability through HIR/MIR, and serve repeated confined algorithm clients;
-4. classify consuming once-callables and verify call cardinality/path joins;
+4. **Done in 0.124.0:** classify consuming once-callables, require explicit
+   move syntax, and verify invocation cardinality/path joins plus MIR move
+   provenance;
 5. represent closure environment initialize/move/drop in HIR/MIR and add one
    explicit owned move-capture mode;
 6. permit exact generic owned transport and one concrete generic field owner;

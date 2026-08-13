@@ -1812,6 +1812,110 @@ bool rebuildMirValueUses(MirBody &body) {
   return valid;
 }
 
+namespace {
+
+[[nodiscard]] const MirInstruction *linearValueDefinition(const MirBody &body,
+                                                          MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirBlock *block =
+      value == nullptr ? nullptr : body.findBlock(value->definitionBlock);
+  if (block == nullptr) {
+    return nullptr;
+  }
+  const auto found =
+      std::find_if(block->instructions.begin(), block->instructions.end(),
+                   [&](const MirInstruction &instruction) {
+                     return instruction.id == value->definition &&
+                            instruction.result == valueId;
+                   });
+  return found == block->instructions.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] bool hasOneExactValueUse(const MirBody &body, MirValueId valueId,
+                                       MirValueUseKind expectedKind,
+                                       MirInstructionId expectedInstruction,
+                                       std::size_t expectedOperandIndex) {
+  std::size_t count = 0;
+  bool matched = false;
+  const auto record = [&](MirValueUseKind kind,
+                          MirInstructionId instruction = 0,
+                          std::size_t operandIndex = 0) {
+    ++count;
+    matched = matched ||
+              (kind == expectedKind && instruction == expectedInstruction &&
+               (kind != MirValueUseKind::InstructionOperand ||
+                operandIndex == expectedOperandIndex));
+  };
+
+  for (const MirPlace &place : body.places) {
+    if (place.root == MirPlaceRootKind::Value && place.value == valueId) {
+      record(MirValueUseKind::PlaceRoot);
+    }
+    for (const MirPlaceProjection &projection : place.projections) {
+      if ((projection.kind == MirProjectionKind::Index ||
+           projection.kind == MirProjectionKind::RawIndex) &&
+          projection.index == valueId) {
+        record(MirValueUseKind::PlaceIndex);
+      }
+    }
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.receiver &&
+          instruction.receiver->kind == MirOperandKind::Value &&
+          instruction.receiver->value == valueId) {
+        record(MirValueUseKind::InstructionReceiver, instruction.id);
+      }
+      for (std::size_t index = 0; index < instruction.operands.size();
+           ++index) {
+        if (instruction.operands[index].kind == MirOperandKind::Value &&
+            instruction.operands[index].value == valueId) {
+          record(MirValueUseKind::InstructionOperand, instruction.id, index);
+        }
+      }
+    }
+    if (block.terminator.value &&
+        block.terminator.value->kind == MirOperandKind::Value &&
+        block.terminator.value->value == valueId) {
+      record(MirValueUseKind::Terminator);
+    }
+  }
+  return count == 1 && matched;
+}
+
+[[nodiscard]] bool consumedCallableReceiver(
+    const MirBody &body, const MirOperand &operand,
+    MirValueUseKind expectedUseKind, MirInstructionId expectedUseInstruction,
+    std::size_t expectedOperandIndex = 0, std::size_t depth = 0) {
+  if (depth > body.values.size() + body.instructionCount() ||
+      operand.kind != MirOperandKind::Value) {
+    return false;
+  }
+  if (!hasOneExactValueUse(body, operand.value, expectedUseKind,
+                           expectedUseInstruction, expectedOperandIndex)) {
+    return false;
+  }
+
+  const MirInstruction *definition = linearValueDefinition(body, operand.value);
+  if (definition == nullptr || definition->operands.size() != 1) {
+    return false;
+  }
+  if (definition->kind == MirInstructionKind::Move) {
+    return definition->operands.front().kind == MirOperandKind::Move &&
+           definition->ownership &&
+           definition->ownership->kind == OwnershipEventKind::Move &&
+           definition->ownership->before == OwnershipStateSet::Available &&
+           definition->ownership->after == OwnershipStateSet::Moved;
+  }
+  return definition->kind == MirInstructionKind::Compute &&
+         definition->operation == MirOperation::Identity &&
+         consumedCallableReceiver(body, definition->operands.front(),
+                                  MirValueUseKind::InstructionOperand,
+                                  definition->id, 0, depth + 1);
+}
+
+} // namespace
+
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   if (body.entry == 0 || body.entry > body.blocks.size()) {
     return failure(body, owner, "entry block is outside the body");
@@ -2088,7 +2192,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
          instruction.parameterTypes.size() != instruction.operands.size()) ||
         (!callable && !instruction.parameterTypes.empty()) ||
         (instruction.kind != MirInstructionKind::Call &&
-         instruction.callableInvocation) ||
+         (instruction.callableInvocation || instruction.callableBoundary ||
+          !instruction.callableArguments.empty())) ||
         (instruction.operation != MirOperation::Closure &&
          !instruction.closureCaptureTypes.empty())) {
       return false;
@@ -2099,7 +2204,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       if (*instruction.callableInvocation ==
           CallableInvocationCapability::Once) {
-        return false;
+        return instruction.receiver &&
+               consumedCallableReceiver(body, *instruction.receiver,
+                                        MirValueUseKind::InstructionReceiver,
+                                        instruction.id);
       }
       if (!instruction.receiver) {
         return false;
@@ -3243,6 +3351,56 @@ namespace {
   return found == block->instructions.end() ? nullptr : &*found;
 }
 
+[[nodiscard]] bool callableContractRequiresOnce(
+    const MirProgram &program, HirFunctionInstanceId function,
+    std::size_t parameterIndex,
+    std::vector<std::pair<HirFunctionInstanceId, std::size_t>> &visiting) {
+  const MirFunctionInstance *target = program.findFunctionInstance(function);
+  if (target == nullptr) {
+    return false;
+  }
+  const auto contract = std::find_if(
+      target->callableParameters.begin(), target->callableParameters.end(),
+      [&](const MirCallableParameter &candidate) {
+        return candidate.parameterIndex == parameterIndex;
+      });
+  if (contract == target->callableParameters.end() ||
+      contract->boundary != CallableBoundary::Confined) {
+    return false;
+  }
+  if (std::any_of(contract->signatures.begin(), contract->signatures.end(),
+                  [](const MirCallableSignature &signature) {
+                    return signature.requiredCapability ==
+                           CallableInvocationCapability::Once;
+                  })) {
+    return true;
+  }
+
+  const std::pair key{function, parameterIndex};
+  if (std::find(visiting.begin(), visiting.end(), key) != visiting.end()) {
+    return false;
+  }
+  visiting.push_back(key);
+  const bool requiresOnce =
+      std::any_of(contract->forwardings.begin(), contract->forwardings.end(),
+                  [&](const MirCallableForwarding &forwarding) {
+                    return forwarding.functionTarget &&
+                           callableContractRequiresOnce(
+                               program, *forwarding.functionTarget,
+                               forwarding.parameterIndex, visiting);
+                  });
+  visiting.pop_back();
+  return requiresOnce;
+}
+
+[[nodiscard]] bool callableContractRequiresOnce(const MirProgram &program,
+                                                HirFunctionInstanceId function,
+                                                std::size_t parameterIndex) {
+  std::vector<std::pair<HirFunctionInstanceId, std::size_t>> visiting;
+  return callableContractRequiresOnce(program, function, parameterIndex,
+                                      visiting);
+}
+
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForValue(const MirBody &body, MirValueId valueId,
                      std::size_t depth);
@@ -3364,6 +3522,76 @@ borrowSourceForValue(const MirBody &body, MirValueId valueId,
   return std::nullopt;
 }
 
+[[nodiscard]] std::optional<HirBindingId>
+callableSourceBindingForValue(const MirBody &body, MirValueId valueId,
+                              std::size_t depth);
+
+[[nodiscard]] std::optional<HirBindingId>
+callableSourceBindingForPlace(const MirBody &body, MirPlaceId placeId,
+                              std::size_t depth) {
+  if (depth > body.places.size() + body.values.size() + body.loans.size() +
+                  body.instructionCount()) {
+    return std::nullopt;
+  }
+  const MirPlace *place = body.findPlace(placeId);
+  if (place == nullptr) {
+    return std::nullopt;
+  }
+  if (place->root == MirPlaceRootKind::Binding && place->projections.empty()) {
+    return place->binding == 0 ? std::nullopt
+                               : std::optional<HirBindingId>{place->binding};
+  }
+  if (place->root == MirPlaceRootKind::Value) {
+    return callableSourceBindingForValue(body, place->value, depth + 1);
+  }
+  if (place->root == MirPlaceRootKind::Loan) {
+    const MirLoan *loan = body.findLoan(place->loan);
+    return loan == nullptr
+               ? std::nullopt
+               : callableSourceBindingForPlace(body, loan->source, depth + 1);
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<HirBindingId>
+callableSourceBindingForOperand(const MirBody &body, const MirOperand &operand,
+                                std::size_t depth = 0) {
+  switch (operand.kind) {
+  case MirOperandKind::Loan: {
+    const MirLoan *loan = body.findLoan(operand.loan);
+    return loan == nullptr
+               ? std::nullopt
+               : callableSourceBindingForPlace(body, loan->source, depth + 1);
+  }
+  case MirOperandKind::Address:
+  case MirOperandKind::Copy:
+  case MirOperandKind::Move:
+  case MirOperandKind::BorrowRead:
+  case MirOperandKind::BorrowWrite:
+    return callableSourceBindingForPlace(body, operand.place, depth + 1);
+  case MirOperandKind::Value:
+    return callableSourceBindingForValue(body, operand.value, depth + 1);
+  case MirOperandKind::Constant:
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<HirBindingId>
+callableSourceBindingForValue(const MirBody &body, MirValueId valueId,
+                              std::size_t depth) {
+  if (depth > body.places.size() + body.values.size() + body.loans.size() +
+                  body.instructionCount()) {
+    return std::nullopt;
+  }
+  const MirInstruction *definition = definitionFor(body, valueId);
+  if (definition == nullptr || definition->operands.size() != 1) {
+    return std::nullopt;
+  }
+  return callableSourceBindingForOperand(body, definition->operands.front(),
+                                         depth + 1);
+}
+
 [[nodiscard]] bool isCallOperatorTarget(const MirFunctionInstance *target) {
   return target != nullptr &&
          target->overloadedOperator == OverloadedOperator::Call;
@@ -3447,28 +3675,57 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                        block.id, instruction.id);
       }
 
-      if (instruction.callableBoundary) {
-        const bool matchedContract =
-            caller != nullptr &&
-            std::any_of(
-                caller->callableParameters.begin(),
-                caller->callableParameters.end(),
-                [&](const MirCallableParameter &parameter) {
-                  return parameter.boundary == *instruction.callableBoundary &&
-                         std::any_of(
-                             parameter.signatures.begin(),
-                             parameter.signatures.end(),
-                             [&](const MirCallableSignature &signature) {
-                               return callableSignatureMatches(signature,
-                                                               instruction);
-                             });
-                });
-        if (!matchedContract) {
-          return failure(body, owner,
-                         "confined callable invocation does not match an "
-                         "enclosing parameter signature",
-                         block.id, instruction.id);
+      const std::optional<HirBindingId> receiverBinding =
+          instruction.receiver
+              ? callableSourceBindingForOperand(body, *instruction.receiver)
+              : std::nullopt;
+      const MirCallableParameter *matchedContract = nullptr;
+      const MirCallableSignature *matchedSignature = nullptr;
+      if (caller != nullptr && receiverBinding) {
+        for (const MirCallableParameter &parameter :
+             caller->callableParameters) {
+          if (parameter.parameterIndex >= caller->parameterBindings.size() ||
+              caller->parameterBindings[parameter.parameterIndex] !=
+                  *receiverBinding) {
+            continue;
+          }
+          const auto signature = std::find_if(
+              parameter.signatures.begin(), parameter.signatures.end(),
+              [&](const MirCallableSignature &candidate) {
+                return callableSignatureMatches(candidate, instruction);
+              });
+          if (signature != parameter.signatures.end()) {
+            matchedContract = &parameter;
+            matchedSignature = &*signature;
+            break;
+          }
         }
+      }
+      if (instruction.callableBoundary.has_value() !=
+          (matchedContract != nullptr)) {
+        return failure(body, owner,
+                       "callable invocation boundary does not match its "
+                       "enclosing parameter binding",
+                       block.id, instruction.id);
+      }
+      if (instruction.callableBoundary &&
+          *instruction.callableBoundary != matchedContract->boundary) {
+        return failure(body, owner,
+                       "confined callable invocation does not match an "
+                       "enclosing parameter signature",
+                       block.id, instruction.id);
+      }
+      if (matchedSignature != nullptr &&
+          matchedSignature->requiredCapability ==
+              CallableInvocationCapability::Once &&
+          (!instruction.receiver ||
+           !consumedCallableReceiver(body, *instruction.receiver,
+                                     MirValueUseKind::InstructionReceiver,
+                                     instruction.id))) {
+        return failure(body, owner,
+                       "once-callable invocation is not rooted in an exact "
+                       "ownership move",
+                       block.id, instruction.id);
       }
 
       if (!instruction.callableArguments.empty() && functionTarget == nullptr) {
@@ -3535,7 +3792,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           const bool exactCaptures =
               lambda != nullptr &&
               instruction.info.type.kind == SemanticType::Lambda &&
-              lambda->declaration == instruction.info.type.lambdaId &&
+              lambda->type == instruction.info.type &&
               instruction.operands.empty() &&
               instruction.closureCaptureTypes == lambda->captureTypes;
           if (!exactCaptures) {
@@ -3977,8 +4234,7 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
           obligation.dropType.lambdaInstance
               ? program.findLambda(*obligation.dropType.lambdaInstance)
               : nullptr;
-      if (lambda == nullptr ||
-          lambda->declaration != obligation.dropType.type.lambdaId ||
+      if (lambda == nullptr || lambda->type != obligation.dropType.type ||
           obligation.dropType.classInstance || obligation.dropType.destructor) {
         return failure(body, owner,
                        "lambda drop obligation does not name its exact "
@@ -4071,7 +4327,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
       {
         std::optional<bool> result;
         for (const MirLambdaInstance &lambda : program.lambdaInstances()) {
-          if (lambda.declaration != type.lambdaId) {
+          if (lambda.type != type) {
             continue;
           }
           if (lambda.captureTypes.size() !=
@@ -4336,19 +4592,14 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           rejectCallableContract(prefix +
                                  "does not name exactly one selected target");
         }
-        if (signature.requiredCapability != parameterCapability) {
+        if (signature.requiredCapability !=
+                CallableInvocationCapability::Once &&
+            signature.requiredCapability != parameterCapability) {
           rejectCallableContract(
               prefix + "does not match the callable parameter access");
         }
-        if (signature.requiredCapability ==
-            CallableInvocationCapability::Once) {
-          rejectCallableContract(prefix + "uses premature once capability");
-        }
         if (!signature.selectedCapability) {
           rejectCallableContract(prefix + "has no selected capability");
-        } else if (*signature.selectedCapability ==
-                   CallableInvocationCapability::Once) {
-          rejectCallableContract(prefix + "selects premature once capability");
         } else if (!callableCapabilitySatisfies(*signature.selectedCapability,
                                                 signature.requiredCapability)) {
           rejectCallableContract(prefix +
@@ -4380,7 +4631,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           const MirLambdaInstance *target =
               program.findLambda(*signature.lambdaTarget);
           if (target == nullptr || target->returnType != signature.returnType ||
-              target->parameterTypes != signature.parameterTypes) {
+              target->parameterTypes != signature.parameterTypes ||
+              target->type != parameter.callableType) {
             rejectCallableContract(prefix +
                                    "does not match an exact lambda target");
           }
@@ -4430,29 +4682,57 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                                  "does not match a confined target parameter");
         }
 
-        const bool exactCallEdge = std::any_of(
-            instance.body.blocks.begin(), instance.body.blocks.end(),
-            [&](const MirBlock &block) {
-              return std::any_of(
-                  block.instructions.begin(), block.instructions.end(),
-                  [&](const MirInstruction &instruction) {
-                    return instruction.kind == MirInstructionKind::Call &&
-                           instruction.functionTarget ==
-                               forwarding.functionTarget &&
-                           std::any_of(
-                               instruction.callableArguments.begin(),
-                               instruction.callableArguments.end(),
-                               [&](const CallableArgumentBoundary &argument) {
-                                 return argument.parameterIndex ==
-                                            forwarding.parameterIndex &&
-                                        argument.boundary ==
-                                            CallableBoundary::Confined;
-                               });
-                  });
-            });
+        const std::optional<HirBindingId> sourceBinding =
+            parameter.parameterIndex < instance.parameterBindings.size()
+                ? std::optional<HirBindingId>{instance.parameterBindings
+                                                  [parameter.parameterIndex]}
+                : std::nullopt;
+        const bool targetRequiresOnce = callableContractRequiresOnce(
+            program, *forwarding.functionTarget, forwarding.parameterIndex);
+        bool exactCallEdge = false;
+        bool exactOnceMoveProof = true;
+        if (sourceBinding) {
+          for (const MirBlock &block : instance.body.blocks) {
+            for (const MirInstruction &instruction : block.instructions) {
+              if (instruction.kind != MirInstructionKind::Call ||
+                  instruction.functionTarget != forwarding.functionTarget ||
+                  forwarding.parameterIndex >= instruction.operands.size()) {
+                continue;
+              }
+              const MirOperand &operand =
+                  instruction.operands[forwarding.parameterIndex];
+              const bool matchingEdge =
+                  callableSourceBindingForOperand(instance.body, operand) ==
+                      sourceBinding &&
+                  std::any_of(instruction.callableArguments.begin(),
+                              instruction.callableArguments.end(),
+                              [&](const CallableArgumentBoundary &argument) {
+                                return argument.parameterIndex ==
+                                           forwarding.parameterIndex &&
+                                       argument.boundary ==
+                                           CallableBoundary::Confined;
+                              });
+              if (!matchingEdge) {
+                continue;
+              }
+              exactCallEdge = true;
+              exactOnceMoveProof =
+                  exactOnceMoveProof &&
+                  (!targetRequiresOnce ||
+                   consumedCallableReceiver(instance.body, operand,
+                                            MirValueUseKind::InstructionOperand,
+                                            instruction.id,
+                                            forwarding.parameterIndex));
+            }
+          }
+        }
         if (!exactCallEdge) {
           rejectCallableContract(prefix +
                                  "does not match a concrete call edge");
+        } else if (!exactOnceMoveProof) {
+          rejectCallableContract(
+              prefix + "into a once-confined target is not rooted in an "
+                       "exact ownership move");
         }
       }
     }
@@ -4565,6 +4845,27 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           {.bodyKind = MirBodyKind::Lambda,
            .owner = instance.id,
            .message = "lambda instance identity or declaration is invalid"});
+    }
+    const std::span<const SemanticType> exactParameters =
+        instance.type.lambdaParameterTypes();
+    const std::span<const SemanticType> exactCaptures =
+        instance.type.lambdaCaptureTypes();
+    const SemanticType *exactReturn = instance.type.lambdaReturnType();
+    if (instance.type.kind != SemanticType::Lambda ||
+        instance.type.lambdaId != instance.declaration ||
+        !instance.type.hasLambdaShape() || exactReturn == nullptr ||
+        *exactReturn != instance.returnType ||
+        exactParameters.size() != instance.parameterTypes.size() ||
+        !std::equal(exactParameters.begin(), exactParameters.end(),
+                    instance.parameterTypes.begin()) ||
+        exactCaptures.size() != instance.captureTypes.size() ||
+        !std::equal(exactCaptures.begin(), exactCaptures.end(),
+                    instance.captureTypes.begin())) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Lambda,
+           .owner = instance.id,
+           .message = "lambda instance type does not match its declaration, "
+                      "signature, or captures"});
     }
     if (instance.captureTypes.size() !=
         instance.captureRequiresActiveCleanup.size()) {

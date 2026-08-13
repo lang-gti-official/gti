@@ -56,8 +56,9 @@ own `main` function.
 | `48-native-c-records.gti` | layout-stable passive records for bounded by-value and pointer C APIs |
 | `49-native-bridge-header.gti` | one compiler-generated ABI header shared by C17 and C++20/C++23 shims |
 | `50-opaque-native-handles.gti` | nominal pointer-only handles for safe wrappers over C or C++ library state |
-| `51-callable-value-results.gti` | exact owned value results from confined generic lambdas and function objects |
+| `51-callable-value-results.gti` | exact contextual value results from confined generic lambdas and function objects |
 | `52-stateful-callables.gti` | reusable stateful call operators in source-defined algorithms |
+| `53-consuming-callables.gti` | one-shot `operator() &&` objects and path-checked generic consumption |
 
 Build and run an example from the repository root:
 

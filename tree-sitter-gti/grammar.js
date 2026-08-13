@@ -447,30 +447,43 @@ module.exports = grammar({
       ),
 
     _operator_declaration_body: ($) =>
-      seq(
-        field("return_type", $.type),
-        "operator",
-        field(
+      choice(
+        seq(
+          field("return_type", $.type),
           "operator",
-          choice(
-            "*",
-            "->",
-            "++",
-            seq("[", "]"),
-            seq("(", ")"),
-            "==",
-            "!=",
-            "<",
-            "<=",
-            ">",
-            ">=",
+          field("operator", seq("(", ")")),
+          field("parameters", $.parameter_clause),
+          optional(
+            choice(field("mutable", "mut"), field("consuming", "&&")),
           ),
+          optional(field("constraints", $.requires_clause)),
+          optional(field("override", "override")),
+          choice(field("body", $.block), $.pure_specifier, ";"),
         ),
-        field("parameters", $.parameter_clause),
-        optional(field("mutable", "mut")),
-        optional(field("constraints", $.requires_clause)),
-        optional(field("override", "override")),
-        choice(field("body", $.block), $.pure_specifier, ";"),
+        seq(
+          field("return_type", $.type),
+          "operator",
+          field(
+            "operator",
+            choice(
+              "*",
+              "->",
+              "++",
+              seq("[", "]"),
+              "==",
+              "!=",
+              "<",
+              "<=",
+              ">",
+              ">=",
+            ),
+          ),
+          field("parameters", $.parameter_clause),
+          optional(field("mutable", "mut")),
+          optional(field("constraints", $.requires_clause)),
+          optional(field("override", "override")),
+          choice(field("body", $.block), $.pure_specifier, ";"),
+        ),
       ),
 
     pure_specifier: ($) => seq("=", field("value", $.integer_literal), ";"),

@@ -527,6 +527,31 @@ private:
             "Only class and struct methods can have a mutable receiver.");
       }
       receiverMutability = ReceiverMutability::Mutable;
+      if (check(TokenKind::AND) && peek().lexeme == "&&") {
+        throw error(peek(), "A receiver cannot combine trailing 'mut' and '&&' "
+                            "qualifiers.");
+      }
+    } else if (check(TokenKind::AND) && peek().lexeme == "&&") {
+      Token qualifier = advance();
+      if (staticKeyword) {
+        throw error(qualifier,
+                    "Static methods do not have a receiver and cannot use a "
+                    "trailing '&&' qualifier.");
+      }
+      if (!allowMutableReceiver) {
+        throw error(
+            qualifier,
+            "Only class and struct methods can have a consuming receiver.");
+      }
+      if (!operatorName || operatorName->kind != OverloadedOperator::Call) {
+        throw error(qualifier, "Trailing '&&' is currently supported only on "
+                               "operator() declarations.");
+      }
+      receiverMutability = ReceiverMutability::Consuming;
+      if (check(TokenKind::MUT)) {
+        throw error(peek(), "A receiver cannot combine trailing '&&' and 'mut' "
+                            "qualifiers.");
+      }
     }
 
     std::optional<RequiresClause> requiresClause;

@@ -110,6 +110,33 @@ suggests `mut` on the by-value generic parameter. This remains a callable
 contract error rather than the ordinary direct-call `GTI-S2022` mutable
 receiver diagnostic.
 
+A provisional lexical-lambda argument is checked again after confined
+forwarding reaches its fixed point. If the selected generic parameter did not
+acquire a confined contract, `GTI-S2046` points at that argument and relates the
+selected parameter declaration. This is a source-level confinement failure,
+not an internal MIR contract error.
+
+A confined forwarding edge into a directly or transitively once-callable
+target also uses `GTI-S2046` when the source is not explicitly moved. It points
+at the argument, relates both source and target parameters, and suggests
+`std::move(source)`. After that explicit transfer, ordinary `GTI-S2018`
+path-state diagnostics own repeated or maybe-repeated forwarding; malformed
+cardinality must not survive to an internal MIR error.
+
+`GTI-S2022` owns direct consuming-receiver selection. Calling a
+consuming-only `operator() &&` through an ordinary lvalue points at the call
+and suggests the exact `std::move(value)()` spelling. Once the receiver is
+explicitly moved, ordinary `GTI-S2018` availability diagnostics own later or
+possibly repeated use. A consuming call that overlaps a live borrow is
+reported as consuming access rather than being mislabeled read-only.
+The same code rejects a direct consuming receiver that requires active cleanup
+because the backend cannot yet retain that owned value until the enclosing
+full-expression boundary. Relate the first concrete cleanup-owning field,
+base, or declared cleanup when available and suggest a reusable callable or a
+cleanup-free receiver. When the same structural failure is discovered only by
+concrete generic reanalysis, `GTI-S2046` owns it so the instantiation context
+and confined boundary remain visible; it must still stop before HIR/MIR.
+
 Once a parameter has an invoked confined contract, an ordinary value use also
 reports `GTI-S2046`: only direct invocation or proven confined forwarding is
 permitted, and assignment, storage, or other transport requires an owned

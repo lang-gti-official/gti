@@ -4047,7 +4047,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v6\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v7\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -14759,6 +14759,468 @@ int main() {
          "checks");
 }
 
+void testConsumingCallableOperators() {
+  const std::string source = R"(
+class OnceValue {
+  mut int value;
+
+public:
+  OnceValue(int initial) : value(initial) {}
+
+  int operator()() && {
+    return std::move(this.value);
+  }
+};
+
+class ReadValue {
+  int value;
+
+public:
+  ReadValue(int initial) : value(initial) {}
+  int operator()() { return this.value; }
+};
+
+class MutableValue {
+  mut int value;
+
+public:
+  MutableValue(int initial) : value(initial) {}
+  int operator()() mut {
+    this.value++;
+    return this.value;
+  }
+};
+
+class DualValue {
+  mut int value;
+
+public:
+  DualValue(int initial) : value(initial) {}
+  int operator()() { return this.value; }
+  int operator()() && { return std::move(this.value); }
+};
+
+class MutableFallback {
+  mut int value;
+
+public:
+  MutableFallback(int initial) : value(initial) {}
+  int operator()(int amount) { return this.value - amount; }
+  int operator()(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+  int operator()() && { return std::move(this.value); }
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int invoke_once_with<Operation>(Operation operation, int amount) {
+  return std::move(operation)(amount);
+}
+
+int relay_once<Operation>(Operation operation) {
+  return invoke_once(std::move(operation));
+}
+
+int choose_relay_once<Operation>(Operation operation, bool first) {
+  if (first) {
+    return invoke_once(std::move(operation));
+  }
+  return invoke_once(std::move(operation));
+}
+
+int choose_once<Operation>(Operation operation, bool first) {
+  if (first) {
+    return std::move(operation)();
+  }
+  return std::move(operation)();
+}
+
+int main() {
+  OnceValue once = OnceValue(7);
+  ReadValue read = ReadValue(3);
+  MutableValue mutate = MutableValue(4);
+  DualValue dual = DualValue(6);
+  MutableFallback fallback = MutableFallback(4);
+  MutableFallback generic_fallback = MutableFallback(8);
+  int consumed = invoke_once(once);
+  int observed = invoke_once(read);
+  int changed = invoke_once(mutate);
+  int selected = choose_once(OnceValue(2), false);
+  int relayed = relay_once(OnceValue(5));
+  int branch_relayed = choose_relay_once(OnceValue(6), true);
+  int peeked = dual();
+  int taken = std::move(dual)();
+  int changed_after_move = std::move(fallback)(3);
+  int generic_changed_after_move = invoke_once_with(generic_fallback, 2);
+  return consumed + observed + changed + selected + relayed + branch_relayed +
+             peeked + taken + changed_after_move + generic_changed_after_move -
+         57;
+}
+)";
+
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "consuming-callables.gti", source, {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected consuming-callable diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "operator() && and confined once-callable clients should lower");
+
+  const lang::LanguageQueries queries;
+  const lang::SourceUnitId unit = frontend.sourceGraph.entryUnit();
+  const std::size_t consumingOperator = source.find("operator()() &&");
+  const std::optional<lang::HoverInfo> consumingHover = queries.hover(
+      frontend, unit, consumingOperator + std::string("operator").size());
+  expect(consumingHover && consumingHover->signature.find("operator()() &&") !=
+                               std::string::npos,
+         "hover should preserve the selected consuming receiver qualifier");
+
+  const std::size_t invokeDeclaration = source.find("invoke_once<");
+  const std::optional<lang::HoverInfo> invokeHover =
+      queries.hover(frontend, unit, invokeDeclaration + 1);
+  expect(invokeHover &&
+             std::any_of(invokeHover->notes.begin(), invokeHover->notes.end(),
+                         [](const std::string &note) {
+                           return note.find("once-callable") !=
+                                  std::string::npos;
+                         }),
+         "hover should expose the once-callable generic contract");
+
+  const lang::FunctionDecl *invoke =
+      findTopLevelFunction(frontend.program, "invoke_once");
+  const lang::FunctionInfo *invokeInfo =
+      invoke == nullptr ? nullptr : frontend.semantics.findFunction(*invoke);
+  expect(invokeInfo != nullptr && invokeInfo->callableParameters.size() == 1 &&
+             invokeInfo->callableParameters.front().signatures.size() == 1 &&
+             invokeInfo->callableParameters.front()
+                     .signatures.front()
+                     .capability == lang::CallableInvocationCapability::Once,
+         "semantic callable contracts should classify explicit consumption "
+         "as once-callable use");
+
+  bool selectedOnce = false;
+  bool selectedRead = false;
+  bool selectedMutable = false;
+  bool mirOnceReceiverMoved = false;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "invoke_once" ||
+        instance.callableParameters.size() != 1 ||
+        instance.callableParameters.front().signatures.size() != 1) {
+      continue;
+    }
+    const lang::HirCallableSignature &signature =
+        instance.callableParameters.front().signatures.front();
+    selectedOnce = selectedOnce || signature.selectedCapability ==
+                                       lang::CallableInvocationCapability::Once;
+    selectedRead = selectedRead || signature.selectedCapability ==
+                                       lang::CallableInvocationCapability::Read;
+    selectedMutable =
+        selectedMutable || signature.selectedCapability ==
+                               lang::CallableInvocationCapability::Mutable;
+    const lang::MirFunctionInstance *mir =
+        frontend.mir.findFunctionInstance(instance.id);
+    if (mir == nullptr) {
+      continue;
+    }
+    for (const lang::MirBlock &block : mir->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.callableBoundary == lang::CallableBoundary::Confined &&
+            instruction.receiver &&
+            instruction.receiver->kind == lang::MirOperandKind::Value) {
+          const lang::MirValue *receiver =
+              mir->body.findValue(instruction.receiver->value);
+          const lang::MirBlock *definitionBlock =
+              receiver == nullptr
+                  ? nullptr
+                  : mir->body.findBlock(receiver->definitionBlock);
+          const lang::MirInstruction *definition =
+              definitionBlock == nullptr
+                  ? nullptr
+                  : [&]() -> const lang::MirInstruction * {
+            const auto found =
+                std::find_if(definitionBlock->instructions.begin(),
+                             definitionBlock->instructions.end(),
+                             [&](const lang::MirInstruction &candidate) {
+                               return candidate.id == receiver->definition;
+                             });
+            return found == definitionBlock->instructions.end() ? nullptr
+                                                                : &*found;
+          }();
+          mirOnceReceiverMoved =
+              mirOnceReceiverMoved ||
+              (definition != nullptr &&
+               definition->kind == lang::MirInstructionKind::Move &&
+               definition->ownership &&
+               definition->ownership->kind == lang::OwnershipEventKind::Move);
+        }
+      }
+    }
+  }
+  expect(selectedOnce && selectedRead && selectedMutable &&
+             mirOnceReceiverMoved,
+         "concrete HIR/MIR should retain once requirements, compatible "
+         "selected capabilities, and the proving ownership move");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  expect(
+      artifact.contents.find("___gti_operator_call() &&") !=
+              std::string::npos &&
+          artifact.contents.find("___gti_operator_call() const &") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "::gti_internal::backend::invoke_once(std::move(operation), ") !=
+              std::string::npos &&
+          artifact.contents.find("::gti_internal::backend::invoke_selected(std:"
+                                 ":move(fallback), ") != std::string::npos &&
+          artifact.contents.find(
+              "::gti_internal::backend::callable_capability::once_call, "
+              "::gti_internal::backend::call_argument<") != std::string::npos &&
+          artifact.contents.find(
+              "::gti_internal::backend::call_argument<3, std::int32_t>>{}, "
+              "amount)") != std::string::npos &&
+          artifact.contents.find("callable_capability::once_call") !=
+              std::string::npos &&
+          artifact.contents.find("callable_capability::mutable_call") !=
+              std::string::npos,
+      "the C++ backend should preserve consuming member qualification and "
+      "the exact frontend-selected callable capability");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Once{public:int operator()()&&{return 1;}};");
+  expect(formatted.find("int operator()() && {") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "operator() && should format with stable C++-style spacing");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-consuming-callables.gti", R"(
+class Once {
+public:
+  int operator()() && { return 1; }
+};
+
+int invoke_twice<Operation>(Operation operation) {
+  int first = std::move(operation)();
+  return std::move(operation)();
+}
+
+int main() {
+  Once operation = Once();
+  int direct = operation();
+  return invoke_twice(operation) + direct;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "requires an explicitly consumed receiver") &&
+             (hasDiagnostic(invalid.diagnostics, "has already been moved") ||
+              hasDiagnostic(invalid.diagnostics,
+                            "may have been moved on another")),
+         "once-callable lvalue and repeated invocation should fail through "
+         "receiver and path-sensitive move diagnostics");
+
+  const lang::FrontendResult implicitForwarding =
+      lang::Frontend().analyze("implicit-once-forwarding.gti", R"(
+class Once {
+public:
+  int operator()() && { return 1; }
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int middle<Operation>(Operation operation) {
+  return invoke_once(std::move(operation));
+}
+
+int outer<Operation>(Operation operation) {
+  return middle(operation);
+}
+
+int main() { return outer(Once()); }
+)",
+                               {standardLibraryPrelude()});
+  expect(!implicitForwarding.canGenerateCode() &&
+             countDiagnosticCode(implicitForwarding.diagnostics, "GTI-S2046") ==
+                 1 &&
+             hasDiagnostic(implicitForwarding.diagnostics,
+                           "requires explicit ownership transfer") &&
+             hasRelatedDiagnostic(
+                 implicitForwarding.diagnostics,
+                 "selected confined target consumes this callable") &&
+             !hasDiagnosticCode(implicitForwarding.diagnostics, "GTI-B0001"),
+         "a transitive once-confined forwarding edge should require an "
+         "explicit source move before HIR");
+
+  const lang::FrontendResult repeatedForwarding =
+      lang::Frontend().analyze("repeated-once-forwarding.gti", R"(
+class Once {
+public:
+  int operator()() && { return 1; }
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int forward_twice<Operation>(Operation operation) {
+  int first = invoke_once(std::move(operation));
+  return first + invoke_once(std::move(operation));
+}
+
+int main() { return forward_twice(Once()); }
+)",
+                               {standardLibraryPrelude()});
+  expect(!repeatedForwarding.canGenerateCode() &&
+             hasDiagnosticCode(repeatedForwarding.diagnostics, "GTI-S2018") &&
+             hasDiagnostic(repeatedForwarding.diagnostics,
+                           "has already been moved") &&
+             !hasDiagnosticCode(repeatedForwarding.diagnostics, "GTI-B0001"),
+         "two reachable once-confined forwardings should fail through the "
+         "ordinary path-sensitive move state before HIR");
+
+  const lang::FrontendResult cleanupReceiver =
+      lang::Frontend().analyze("cleanup-consuming-callables.gti", R"(
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() {}
+};
+
+class DirectCleanupCallable {
+public:
+  DirectCleanupCallable() {}
+  ~DirectCleanupCallable() {}
+  int operator()() && { return 1; }
+};
+
+class NestedCleanupCallable<T> {
+  T value;
+public:
+  NestedCleanupCallable(T initial) : value(initial) {}
+  int operator()() && { return 2; }
+};
+
+class CleanupMutableFallback {
+  Cleanup cleanup = Cleanup();
+public:
+  int operator()(int amount) mut { return amount; }
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int main() {
+  DirectCleanupCallable direct{};
+  int first = std::move(direct)();
+  NestedCleanupCallable<Cleanup> nested =
+      NestedCleanupCallable<Cleanup>(Cleanup());
+  int second = std::move(nested)();
+  CleanupMutableFallback fallback{};
+  int third = std::move(fallback)(3);
+  return first + second + third;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (countDiagnosticCode(cleanupReceiver.diagnostics, "GTI-S2022") != 3) {
+    for (const lang::Diagnostic &diagnostic : cleanupReceiver.diagnostics) {
+      std::cerr << "Unexpected cleanup-consuming diagnostic ["
+                << diagnostic.code << "]: " << diagnostic.message << '\n';
+    }
+  }
+  expect(
+      !cleanupReceiver.canGenerateCode() &&
+          countDiagnosticCode(cleanupReceiver.diagnostics, "GTI-S2022") == 3 &&
+          countDiagnosticCode(cleanupReceiver.diagnostics, "GTI-S2046") == 0 &&
+          countDiagnosticCode(cleanupReceiver.diagnostics, "GTI-B0001") == 0 &&
+          hasDiagnostic(
+              cleanupReceiver.diagnostics,
+              "requires active cleanup and GTI cannot yet guarantee") &&
+          hasRelatedDiagnostic(cleanupReceiver.diagnostics,
+                               "Declared cleanup makes this type require") &&
+          hasRelatedDiagnostic(cleanupReceiver.diagnostics,
+                               "cleanup-owning type") &&
+          hasDiagnosticHint(cleanupReceiver.diagnostics,
+                            "consuming full-expression storage"),
+      "direct, nested, and reusable-fallback consuming calls should reject "
+      "cleanup-owning receivers before HIR/MIR");
+
+  const lang::FrontendResult genericCleanupReceiver =
+      lang::Frontend().analyze("generic-cleanup-consuming-callable.gti", R"(
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() {}
+};
+
+class CleanupCallable {
+  Cleanup cleanup = Cleanup();
+public:
+  int operator()() && { return 1; }
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int main() {
+  CleanupCallable generic{};
+  return invoke_once(std::move(generic));
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !genericCleanupReceiver.canGenerateCode() &&
+          countDiagnosticCode(genericCleanupReceiver.diagnostics,
+                              "GTI-S2046") == 1 &&
+          !hasDiagnosticCode(genericCleanupReceiver.diagnostics, "GTI-B0001") &&
+          hasDiagnostic(
+              genericCleanupReceiver.diagnostics,
+              "requires active cleanup and GTI cannot yet guarantee") &&
+          hasRelatedDiagnostic(genericCleanupReceiver.diagnostics,
+                               "cleanup-owning type"),
+      "a concrete generic once-call selection should reject its "
+      "cleanup-owning receiver before HIR/MIR");
+
+  lang::Lexer lexer;
+  lang::Parser invalidParser(lexer.scan(R"(
+class Invalid {
+public:
+  void method() && {}
+  void operator()() mut && {}
+};
+int main() { return 0; }
+)"));
+  invalidParser.parse();
+  expect(invalidParser.hadError() &&
+             hasDiagnostic(invalidParser.errors(),
+                           "supported only on operator()") &&
+             hasDiagnostic(invalidParser.errors(),
+                           "cannot combine trailing 'mut' and '&&'"),
+         "the parser should confine trailing && to an unambiguous consuming "
+         "call operator");
+}
+
 void testRangeBasedForAndIteratorProtocol() {
   const std::string source = R"(
 interface IteratorContract<T> {
@@ -15622,7 +16084,7 @@ T transfer_value<std::transferable T>(T value) {
 }
 
 void share_value<std::shareable T>(T& value) {}
-void inspect_transfer<std::transferable T>(T value) {}
+int inspect_transfer<std::transferable T>(T value) { return value(); }
 T relay_transfer<std::transferable T>(T value) {
   return transfer_value(std::move(value));
 }
@@ -15642,11 +16104,11 @@ int main() {
   int values[2] = {};
   int* addresses[2] = {nullptr, nullptr};
   auto callable = [scalar]() -> int { return 1; };
-  inspect_transfer(callable);
+  int callable_result = inspect_transfer(callable);
   ConcurrentScalar concurrent = ConcurrentScalar();
   share_value(concurrent);
   AuditedCleanup cleanup = transfer_value(AuditedCleanup());
-  return 0;
+  return callable_result - 1;
 }
 )";
 
@@ -16634,6 +17096,11 @@ int main() {
       lang::Frontend().analyze("rejected-constrained-operator.gti", R"(
 class ConstrainedOperator<T> {
 public:
+  bool operator()(T value)
+    requires std::numeric<T> {
+    return true;
+  }
+
   bool operator!=(ConstrainedOperator<T>& other)
     requires std::numeric<T> {
     return false;
@@ -16648,6 +17115,15 @@ public:
                            "not supported on operator declarations"),
          "bounded trailing requirements should reject operator declarations "
          "instead of creating recursively constrained operator proof");
+  lang::CppEmitter rejectedOperatorEmitter(
+      lang::CppStandard::Cpp23, lang::TargetInfo::host(), nullptr,
+      &rejectedConstrainedOperator.semantics, &rejectedConstrainedOperator.hir);
+  const std::string rejectedOperatorGenerated =
+      rejectedOperatorEmitter.emit(rejectedConstrainedOperator.program);
+  expect(rejectedOperatorGenerated.find("friend bool __gti_invoke(") ==
+             std::string::npos,
+         "operators excluded by bounded trailing requirements should not "
+         "expose callable backend adapters");
 
   const lang::FrontendResult rejectedPolymorphicRequirements =
       lang::Frontend().analyze("rejected-polymorphic-requires.gti", R"(
@@ -18360,6 +18836,24 @@ int main() {
          "MIR verification should reject a forged zero lambda declaration "
          "identity");
 
+  lang::MirProgram wrongLambdaType = frontend.mir;
+  auto &wrongTypeLambdas = const_cast<std::vector<lang::MirLambdaInstance> &>(
+      wrongLambdaType.lambdaInstances());
+  if (!wrongTypeLambdas.empty()) {
+    wrongTypeLambdas.front().type = lang::SemanticType::Int32;
+  }
+  const lang::MirVerificationResult wrongLambdaTypeResult =
+      lang::verifyMirProgram(wrongLambdaType);
+  expect(!wrongTypeLambdas.empty() && !wrongLambdaTypeResult.valid() &&
+             std::any_of(wrongLambdaTypeResult.errors.begin(),
+                         wrongLambdaTypeResult.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find("lambda instance type") !=
+                                  std::string::npos;
+                         }),
+         "MIR verification should reject lambda-instance type metadata that "
+         "does not reproduce its exact declaration and physical shape");
+
   lang::MirProgram wrongLambdaCaptureFlag = frontend.mir;
   auto &wrongFlagLambdas = const_cast<std::vector<lang::MirLambdaInstance> &>(
       wrongLambdaCaptureFlag.lambdaInstances());
@@ -18897,9 +19391,10 @@ int main() {
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
-             "::gti_internal::backend::invoke("
-             "::gti_internal::backend::read_only_receiver(operation), "
-             "value)") != std::string::npos &&
+             "::gti_internal::backend::invoke_read(operation, ") !=
+                 std::string::npos &&
+             artifact.contents.find("callable_capability::read_call") !=
+                 std::string::npos &&
              artifact.contents.find("friend void __gti_invoke(") !=
                  std::string::npos &&
              artifact.contents.find("___gti_operator_call") !=
@@ -19119,6 +19614,224 @@ int main() {
   expect(ordinaryObjectTransport.canGenerateCode(),
          "a nominal callable object that is never invoked through a generic "
          "parameter should retain ordinary value transport semantics");
+
+  const lang::FrontendResult unprovenLambdaTransport =
+      lang::Frontend().analyze("unproven-lambda-transport.gti", R"(
+void store_locally<Operation>(Operation operation) {
+  Operation copy = operation;
+}
+
+int main() {
+  int captured = 1;
+  auto operation = [captured]() -> int { return captured; };
+  store_locally(operation);
+  return 0;
+}
+)");
+  expect(
+      !unprovenLambdaTransport.canGenerateCode() &&
+          countDiagnosticCode(unprovenLambdaTransport.diagnostics,
+                              "GTI-S2046") == 1 &&
+          hasDiagnostic(unprovenLambdaTransport.diagnostics,
+                        "selected target parameter is not proven confined") &&
+          hasRelatedDiagnostic(unprovenLambdaTransport.diagnostics,
+                               "Selected generic parameter declared here") &&
+          !hasDiagnosticCode(unprovenLambdaTransport.diagnostics, "GTI-B0001"),
+      "a provisional lexical-lambda boundary should be rejected after "
+      "callable contracts reach their fixed point instead of reaching MIR");
+
+  const lang::FrontendResult genericCapturedCallables =
+      lang::Frontend().analyze("generic-captured-callables.gti", R"(
+#include <std/memory>
+
+int invoke<Operation>(Operation operation) { return operation(); }
+
+int capture_and_invoke<T>(T value) {
+  auto operation = [value]() -> int { return 1; };
+  return invoke(operation);
+}
+
+int main() {
+  int first = capture_and_invoke(1);
+  int second = capture_and_invoke(std::shared_ptr<int>());
+  return first + second - 2;
+}
+)",
+                               {standardLibraryPrelude()}, {},
+                               {standardLibraryRoot()});
+  std::vector<const lang::HirLambda *> producedLambdas;
+  for (const lang::HirLambda &lambda :
+       genericCapturedCallables.hir.lambdaInstances()) {
+    if (lambda.captures.size() == 1) {
+      producedLambdas.push_back(&lambda);
+    }
+  }
+  bool foundIntCapture = false;
+  bool foundDistinctCapture = false;
+  for (const lang::HirLambda *lambda : producedLambdas) {
+    foundIntCapture = foundIntCapture || lambda->captures.front().type ==
+                                             lang::SemanticType::Int32;
+    foundDistinctCapture =
+        foundDistinctCapture ||
+        lambda->captures.front().type != lang::SemanticType::Int32;
+  }
+  std::size_t invokeInstances = 0;
+  bool exactInvokeTargets = true;
+  std::vector<lang::SemanticType> concreteLambdaTypes;
+  for (const lang::HirFunctionInstance &instance :
+       genericCapturedCallables.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "invoke") {
+      continue;
+    }
+    ++invokeInstances;
+    if (instance.typeArguments.size() != 1 ||
+        instance.typeArguments.front().kind != lang::SemanticType::Lambda ||
+        !instance.typeArguments.front().hasLambdaShape() ||
+        instance.callableParameters.size() != 1 ||
+        instance.callableParameters.front().signatures.size() != 1 ||
+        !instance.callableParameters.front().signatures.front().lambdaTarget) {
+      exactInvokeTargets = false;
+      continue;
+    }
+    const lang::SemanticType &lambdaType = instance.typeArguments.front();
+    concreteLambdaTypes.push_back(lambdaType);
+    const lang::HirLambda *target = genericCapturedCallables.hir.findLambda(
+        *instance.callableParameters.front().signatures.front().lambdaTarget);
+    exactInvokeTargets = exactInvokeTargets && target != nullptr &&
+                         target->type == lambdaType &&
+                         target->declaration == lambdaType.lambdaId &&
+                         lambdaType.lambdaCaptureTypes().size() == 1 &&
+                         target->captures.size() == 1 &&
+                         target->captures.front().type ==
+                             lambdaType.lambdaCaptureTypes().front();
+  }
+  expect(
+      genericCapturedCallables.canGenerateCode() &&
+          producedLambdas.size() == 2 &&
+          producedLambdas.front()->declaration ==
+              producedLambdas.back()->declaration &&
+          foundIntCapture && foundDistinctCapture && invokeInstances == 2 &&
+          concreteLambdaTypes.size() == 2 &&
+          concreteLambdaTypes.front() != concreteLambdaTypes.back() &&
+          concreteLambdaTypes.front().lambdaId ==
+              concreteLambdaTypes.back().lambdaId &&
+          exactInvokeTargets &&
+          lang::verifyMirProgram(genericCapturedCallables.mir).valid(),
+      "a lambda declared in a generic body should retain one lexical identity "
+      "while concrete capture layouts produce distinct callable instances");
+
+  const lang::FrontendResult sameShapeGenericCallables =
+      lang::Frontend().analyze("same-shape-generic-callables.gti", R"(
+uint64_t invoke_value<Operation>(Operation operation) {
+  return operation();
+}
+
+class ValueThroughLambda<uint64_t N> {
+public:
+  uint64_t get() {
+    auto operation = []() -> uint64_t { return N; };
+    return invoke_value(operation);
+  }
+};
+
+int main() {
+  ValueThroughLambda<4> four{};
+  ValueThroughLambda<8> eight{};
+  uint64_t total = four.get() + eight.get();
+  return int(total) - 12;
+}
+)");
+  std::vector<const lang::HirLambda *> sameShapeLambdas;
+  for (const lang::HirLambda &lambda :
+       sameShapeGenericCallables.hir.lambdaInstances()) {
+    if (lambda.captures.empty()) {
+      sameShapeLambdas.push_back(&lambda);
+    }
+  }
+  bool foundFourLambda = false;
+  bool foundEightLambda = false;
+  for (const lang::HirLambda *lambda : sameShapeLambdas) {
+    const std::span<const lang::CompileTimeValue> values =
+        lambda->type.lambdaClassValueArguments();
+    if (values.size() != 1 ||
+        values.front().kind != lang::CompileTimeValue::UInt64) {
+      continue;
+    }
+    foundFourLambda = foundFourLambda || values.front().value == 4;
+    foundEightLambda = foundEightLambda || values.front().value == 8;
+  }
+  std::size_t invokeValueInstances = 0;
+  bool exactSameShapeTargets = true;
+  for (const lang::HirFunctionInstance &instance :
+       sameShapeGenericCallables.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "invoke_value") {
+      continue;
+    }
+    ++invokeValueInstances;
+    if (instance.typeArguments.size() != 1 ||
+        instance.callableParameters.size() != 1 ||
+        instance.callableParameters.front().signatures.size() != 1 ||
+        !instance.callableParameters.front().signatures.front().lambdaTarget) {
+      exactSameShapeTargets = false;
+      continue;
+    }
+    const lang::SemanticType &lambdaType = instance.typeArguments.front();
+    const lang::HirLambda *target = sameShapeGenericCallables.hir.findLambda(
+        *instance.callableParameters.front().signatures.front().lambdaTarget);
+    exactSameShapeTargets = exactSameShapeTargets && target != nullptr &&
+                            target->type == lambdaType &&
+                            lambdaType.hasLambdaShape() &&
+                            lambdaType.lambdaCaptureTypes().empty() &&
+                            lambdaType.lambdaClassValueArguments().size() == 1;
+  }
+  expect(sameShapeGenericCallables.canGenerateCode() &&
+             sameShapeLambdas.size() == 2 &&
+             sameShapeLambdas.front()->declaration ==
+                 sameShapeLambdas.back()->declaration &&
+             sameShapeLambdas.front()->returnType ==
+                 sameShapeLambdas.back()->returnType &&
+             sameShapeLambdas.front()->parameterTypes ==
+                 sameShapeLambdas.back()->parameterTypes &&
+             sameShapeLambdas.front()->type != sameShapeLambdas.back()->type &&
+             foundFourLambda && foundEightLambda && invokeValueInstances == 2 &&
+             exactSameShapeTargets &&
+             lang::verifyMirProgram(sameShapeGenericCallables.mir).valid(),
+         "same-shaped lambdas from distinct enclosing value-generic instances "
+         "should retain exact concrete identities and callable targets");
+
+  lang::MirProgram swappedSameShapeTarget = sameShapeGenericCallables.mir;
+  auto &swappedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      swappedSameShapeTarget.functionInstances());
+  bool swappedTarget = false;
+  if (swappedSameShapeTarget.lambdaInstances().size() >= 2) {
+    for (lang::MirFunctionInstance &instance : swappedFunctions) {
+      if (instance.callableParameters.size() != 1 ||
+          instance.callableParameters.front().signatures.size() != 1) {
+        continue;
+      }
+      lang::MirCallableSignature &signature =
+          instance.callableParameters.front().signatures.front();
+      if (!signature.lambdaTarget) {
+        continue;
+      }
+      const lang::HirLambdaId alternate =
+          *signature.lambdaTarget ==
+                  swappedSameShapeTarget.lambdaInstances().front().id
+              ? swappedSameShapeTarget.lambdaInstances().back().id
+              : swappedSameShapeTarget.lambdaInstances().front().id;
+      if (alternate != *signature.lambdaTarget) {
+        signature.lambdaTarget = alternate;
+        swappedTarget = true;
+        break;
+      }
+    }
+  }
+  expect(swappedTarget &&
+             !lang::verifyMirProgram(swappedSameShapeTarget).valid(),
+         "MIR verification should reject a callable contract retargeted to a "
+         "same-shaped lambda from another enclosing generic instance");
 
   const lang::FrontendResult forwarding =
       lang::Frontend().analyze("callable-forwarding.gti", R"(
@@ -19377,9 +20090,10 @@ int main() {
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
-             "return ::gti_internal::backend::invoke("
-             "::gti_internal::backend::read_only_receiver(predicate), "
-             "value)") != std::string::npos &&
+             "return ::gti_internal::backend::invoke_read(predicate, ") !=
+                 std::string::npos &&
+             artifact.contents.find("callable_capability::read_call") !=
+                 std::string::npos &&
              artifact.contents.find("friend bool __gti_invoke(") !=
                  std::string::npos,
          "C++ lowering should preserve predicate values through the exact "
@@ -21546,6 +22260,7 @@ int main() {
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();
   testCallableMemberOperators();
+  testConsumingCallableOperators();
   testRangeBasedForAndIteratorProtocol();
   testNamedGenerics();
   testConstrainedGenerics();

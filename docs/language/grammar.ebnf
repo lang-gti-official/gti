@@ -304,8 +304,13 @@ method-declaration     = [ "virtual" ] [ "static" ] [ "constexpr" ]
                          method-terminator ;
 
 operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
-                         overloadable-operator parameter-clause [ "mut" ]
-                         [ requires-clause ] [ "override" ] method-terminator
+                         call-operator parameter-clause
+                         [ call-receiver-qualifier ] [ requires-clause ]
+                         [ "override" ] method-terminator
+                       | [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
+                         non-call-overloadable-operator parameter-clause
+                         [ "mut" ] [ requires-clause ] [ "override" ]
+                         method-terminator
                        | [ "virtual" ] "operator" "bool" parameter-clause
                          [ "mut" ] [ requires-clause ] [ "override" ]
                          method-terminator ;
@@ -314,7 +319,13 @@ method-terminator      = block | ";" | pure-specifier ;
 
 pure-specifier         = "=" INT_LITERAL ";" ;
 
-overloadable-operator  = "*" | "->" | "++" | "[" "]" | "(" ")"
+call-operator          = "(" ")" ;
+
+call-receiver-qualifier
+                       = "mut" | "&&" ;
+
+non-call-overloadable-operator
+                       = "*" | "->" | "++" | "[" "]"
                        | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 
 function-declaration   = [ "static" ] [ "constexpr" ] [ "mut" ] type IDENTIFIER
@@ -382,11 +393,14 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    delegated to the C++ representation.
 
    Methods have read-only receivers by default. A trailing `mut` permits writes
-   to mutable fields and requires a mutable object at the call site. A leading
-   `mut` is valid only for a reference return from a mutable method. It makes
-   the returned receiver-derived place writable. Inside a method or destructor,
-   `this` names the current non-null object and uses ordinary `.` member access;
-   it is not a source-level raw pointer. `self` remains an IDENTIFIER. *)
+   to mutable fields and requires a mutable object at the call site. The exact
+   trailing `&&` receiver qualifier is reserved for `operator()` and consumes
+   its receiver; it is not a general rvalue-reference type or a qualifier for
+   ordinary methods. A leading `mut` is valid only for a reference return from
+   a mutable method. It makes the returned receiver-derived place writable.
+   Inside a method or destructor, `this` names the current non-null object and
+   uses ordinary `.` member access; it is not a source-level raw pointer. `self`
+   remains an IDENTIFIER. *)
 
 (* A class or struct method becomes a virtual root with `virtual`; a pure root
    ends with the exact spelling `= 0;`. Interface signatures instead end with
@@ -419,22 +433,33 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    parameter. Prefix `operator++` takes no parameters, returns void, and
    requires a mutable receiver; postfix overloading is not provided.
    `operator()` takes any number of exact-match parameters and may return any
-   otherwise-valid function return type. Comparisons and contextual
-   `operator bool` return bool and use a read-only receiver.
+   otherwise-valid function return type. In addition to the
+   ordinary read-only and trailing-`mut` forms, it may use trailing `&&` to
+   declare a consuming once-callable receiver. That form is invoked only from
+   an explicitly moved named local, by-value parameter, supported writable
+   field, or constant-index fixed-array element. A consuming form cannot return
+   a reference or tracked borrowed state and cannot be virtual, pure,
+   overriding, or an interface requirement.
+   Comparisons and contextual `operator bool` return bool and use a read-only
+   receiver.
    `operator->`
    performs one checked reference step; recursive proxy lookup is not provided.
    `operator bool` participates only in conditions, logical `and`/`or`
    (`&&`/`||`), and `!`. No free operators, implicit conversions,
    argument-dependent lookup, or synthesized equality candidates are provided.
-   Read-only and mutable receiver overloads may coexist when the operator's
-   own contract permits both access modes. *)
+   Read-only, mutable, and consuming `operator()` overloads may coexist when
+   their exact signatures and receiver qualifiers distinguish them. Other
+   operators retain only their admitted read-only or mutable forms. *)
 
 (* Functions and methods may share a name when their normalized parameter type
    lists differ. Return types, parameter names, and by-value parameter
    mutability do not distinguish overloads. An ordinary method may pair
    read-only and trailing-`mut` overloads with the same parameter types. A
    read-only receiver can select only the read-only member; a mutable receiver
-   prefers the mutable member when both match. Calls require one unique exact
+   prefers the mutable member when both match. For `operator()`, an explicit
+   `std::move(value)()` receiver prefers an otherwise exact consuming overload;
+   invoking that overload consumes the source under ordinary path-sensitive
+   move-state rules. Calls require one unique exact
    parameter match after generic substitution, apart from the bounded raw-
    pointer `nullptr` and added-pointee-`const` compatibility. GTI performs no
    other implicit argument conversions and has no general conversion-ranking
@@ -1059,7 +1084,11 @@ lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
    parameter declared without `mut` permits only repeatable read-callable
    invocation. `mut Operation operation` permits repeatable mutable invocation
    and accepts either a read-callable target or a class target whose selected
-   `operator()` is `mut`. Once-callable invocation is not yet available. A
+   `operator()` is `mut`. Writing `std::move(operation)()` on a direct by-value
+   generic parameter instead declares a confined once-callable use. It accepts
+   an exact reusable read- or mut-callable target as well as a class target with
+   an exact trailing-`&&` `operator()`, consumes the parameter place, and is
+   rejected when any reachable path could use or invoke that place again. A
    callable parameter may pass through another direct by-value generic
    parameter only
    when that selected parameter has a visible, proven confined contract;

@@ -144,6 +144,7 @@ public:
   int& operator[](uint64_t index) { return this.value; }
   mut int& operator[](uint64_t index) mut { return this.value; }
   int operator()(int value) { return value; }
+  int operator()() && { return this.value; }
   Handle& operator->() { return this; }
   bool operator==(nullptr_t other) { return false; }
   bool operator!=(nullptr_t other) { return true; }
@@ -233,6 +234,17 @@ public:
           (return_statement
             (initializer_expression
               (primary_expression
+                (identifier))))))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (this_expression))
                 (identifier))))))
       (operator_declaration
         (type
@@ -2249,3 +2261,38 @@ float legacy = 0.5;
       (primary_expression
         (literal
           (float_literal))))))
+
+==================
+Consuming qualifier recovery outside operator()
+==================
+
+class Invalid {
+public:
+  void method() && {}
+  int operator*() && { return 1; }
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (method_declaration
+        (type)
+        (identifier)
+        (parameter_clause)
+        (ERROR)
+        (block))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause)
+        (ERROR)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal))))))))))

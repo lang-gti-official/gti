@@ -189,3 +189,8 @@ constexpr double precise_decimal = 0.1d;
 };
 
 [[c_opaque]] struct NativeHandle;
+
+class ConsumingCallable {
+public:
+  int operator()() && { return 1; }
+};

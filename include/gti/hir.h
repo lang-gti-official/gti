@@ -249,6 +249,7 @@ struct HirLambda {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
   const Lambda *source = nullptr;
+  SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<LambdaCaptureInfo> captures;
@@ -581,6 +582,12 @@ private:
     for (SemanticType &argument : result.arguments) {
       argument = substitute(argument, substitution);
     }
+    for (SemanticType &argument : result.lambdaEnclosingClassTypes) {
+      argument = substitute(argument, substitution);
+    }
+    for (SemanticType &argument : result.lambdaEnclosingFunctionTypes) {
+      argument = substitute(argument, substitution);
+    }
     for (CompileTimeValue &argument : result.valueArguments) {
       if (argument.kind != CompileTimeValue::Parameter) {
         continue;
@@ -590,6 +597,19 @@ private:
         argument = found->second;
       }
     }
+    const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
+      for (CompileTimeValue &argument : values) {
+        if (argument.kind != CompileTimeValue::Parameter) {
+          continue;
+        }
+        const auto found = substitution.values.find(argument.parameterId);
+        if (found != substitution.values.end()) {
+          argument = found->second;
+        }
+      }
+    };
+    substituteValues(result.lambdaEnclosingClassValues);
+    substituteValues(result.lambdaEnclosingFunctionValues);
     if (result.arrayLengthParameterId != 0) {
       const auto found =
           substitution.values.find(result.arrayLengthParameterId);
@@ -912,6 +932,33 @@ private:
     }
   }
 
+  [[nodiscard]] static bool lambdaMatchesType(const HirLambda &lambda,
+                                              const SemanticType &type) {
+    return type.kind == SemanticType::Lambda && lambda.type == type;
+  }
+
+  void seedLambdaTarget(const SemanticType &type) {
+    if (type.kind == SemanticType::Lambda) {
+      const auto existing = std::find_if(
+          output.program.lambdas.begin(), output.program.lambdas.end(),
+          [&](const HirLambda &candidate) {
+            return lambdaMatchesType(candidate, type);
+          });
+      if (existing != output.program.lambdas.end()) {
+        lambdaTargets.insert_or_assign(type.lambdaId, existing->id);
+      }
+    }
+    for (const SemanticType &argument : type.arguments) {
+      seedLambdaTarget(argument);
+    }
+  }
+
+  void seedLambdaTargets(const std::vector<SemanticType> &types) {
+    for (const SemanticType &type : types) {
+      seedLambdaTarget(type);
+    }
+  }
+
   void processClass(std::size_t index) {
     lambdaTargets.clear();
     const HirClassInstance snapshot = output.program.classes[index];
@@ -1073,10 +1120,10 @@ private:
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
     if (snapshot.owner) {
       currentReceiverType = output.program.classes[*snapshot.owner - 1].type;
-      currentReceiverAccess = declaration->declaration->receiverMutability() ==
-                                      ReceiverMutability::Mutable
-                                  ? AccessMode::Mutable
-                                  : AccessMode::ReadOnly;
+      currentReceiverAccess =
+          receiverAllowsMutation(declaration->declaration->receiverMutability())
+              ? AccessMode::Mutable
+              : AccessMode::ReadOnly;
     }
 
     const bool concreteInstance = !classArguments.empty() ||
@@ -1094,6 +1141,7 @@ private:
     }
 
     lambdaTargets.clear();
+    seedLambdaTargets(snapshot.typeArguments);
     HirBody body;
     std::vector<HirBindingId> parameterBindings;
     parameterBindings.reserve(declaration->declaration->parameters().size());
@@ -1167,7 +1215,15 @@ private:
             concrete.functionTarget = value->functionTarget;
           }
         }
-        lowered.forwardings.emplace_back(std::move(concrete));
+        const bool duplicate = std::any_of(
+            lowered.forwardings.begin(), lowered.forwardings.end(),
+            [&](const HirCallableForwarding &existing) {
+              return existing.parameterIndex == concrete.parameterIndex &&
+                     existing.functionTarget == concrete.functionTarget;
+            });
+        if (!duplicate) {
+          lowered.forwardings.emplace_back(std::move(concrete));
+        }
       }
       callableParameters.emplace_back(std::move(lowered));
     }
@@ -2071,6 +2127,7 @@ private:
         .id = id,
         .declaration = info->id,
         .source = &lambda,
+        .type = model.typeOf(lambda),
         .returnType = info->returnType,
         .parameterTypes = info->parameterTypes,
         .captures = info->captures,
@@ -2297,9 +2354,10 @@ private:
           const auto existing = std::find_if(
               output.program.lambdas.begin(), output.program.lambdas.end(),
               [&](const HirLambda &candidate) {
-                return candidate.declaration == resolved->lambda &&
-                       candidate.returnType == resolved->returnType &&
-                       candidate.parameterTypes == resolved->parameterTypes;
+                const SemanticType calleeType = model.typeOf(*call->callee());
+                return candidate.returnType == resolved->returnType &&
+                       candidate.parameterTypes == resolved->parameterTypes &&
+                       lambdaMatchesType(candidate, calleeType);
               });
           if (existing != output.program.lambdas.end()) {
             value.lambdaTarget = existing->id;

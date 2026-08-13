@@ -63,6 +63,12 @@ std::uint64_t hashSemanticType(const SemanticType &type, std::uint64_t seed) {
   result = combine(result, type.enumId);
   result = combine(result, type.genericParameterId);
   result = combine(result, type.lambdaId);
+  result = combine(result, type.lambdaParameterCount);
+  result = combine(result, type.lambdaCaptureCount);
+  result = hashSemanticTypes(type.lambdaEnclosingClassTypes, result);
+  result = hashSemanticTypes(type.lambdaEnclosingFunctionTypes, result);
+  result = hashCompileTimeValues(type.lambdaEnclosingClassValues, result);
+  result = hashCompileTimeValues(type.lambdaEnclosingFunctionValues, result);
   result = combine(result, type.arrayLength);
   result = combine(result, type.arrayLengthParameterId);
   result = combine(result, static_cast<std::uint64_t>(type.referenceAccess));

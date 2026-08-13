@@ -19,12 +19,15 @@ it from host/backend flags. The current profile fact constrains frontend
 global/static validity; future synchronization and task operations will
 consume it only in their owning rows.
 
-The deterministic serialization is currently `mir-v6`/`mir-body-v6`. Version
-6 adds exact callable invocation requirements, selected capabilities,
-call-site capabilities, and concrete function receiver mutability. It retains
-the version-5 explicit callable boundaries and the version-4 body-local
-full-expression identities, exact ordered cleanup membership, standalone
-boundary markers, and active-cleanup metadata.
+The deterministic serialization is currently `mir-v7`/`mir-body-v7`. Version
+7 adds consuming callable capabilities and the full concrete semantic type on
+lambda-instance records, so deterministic output exposes enclosing generic
+identity as well as physical closure shape. It retains the version-6 exact
+read/mutable invocation requirements, selected and call-site capabilities,
+and concrete function receiver mutability; the version-5 explicit callable
+boundaries; and the version-4 body-local full-expression identities, exact
+ordered cleanup membership, standalone boundary markers, and active-cleanup
+metadata.
 
 A `MirBody` owns:
 
@@ -42,19 +45,26 @@ A `MirBody` owns:
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
 - exact confined-callable invocation and argument-boundary records. The
-  verifier requires descriptors to be ordered, unique, within the call's
-  operand list, and identical to the concrete target contract. `Owned` remains
-  representational vocabulary only and is rejected until environment
-  movement, cleanup, and escape invariants land;
-- read- or mut-callable invocation on each concrete callable call, plus the
-  required and selected capability for each exact generic signature. Mutable
-  invocation requires an exclusive or owned receiver. Program verification
-  checks the required capability against formal parameter access, binds the
-  selected capability and full parameter/result signature to an exact lambda
-  or `operator()` target, and validates each forwarding target, parameter
-  index, and concrete call edge. `Once`
-  remains representational vocabulary only and is rejected until consuming
-  receiver state and CFG cardinality joins land;
+  verifier permits this metadata only on calls; requires descriptors to be
+  ordered, unique, within the call's operand list, and identical to the
+  concrete target contract; and requires a confined invocation boundary if
+  and only if the receiver traces to the matching enclosing callable-parameter
+  binding. `Owned` remains representational vocabulary only and is rejected
+  until environment movement, cleanup, and escape invariants land;
+- read-, mut-, or once-callable invocation on each concrete callable call,
+  plus the required and selected capability for each exact generic signature.
+  Mutable invocation requires an exclusive or owned receiver. Once invocation
+  requires the receiver value to trace to an exact MIR `Move` carrying the
+  matching available-to-moved ownership event. Every SSA value in that move
+  and optional identity chain has exactly one use, ending at the verified call
+  receiver or forwarding operand, so one move proof cannot authorize two
+  consuming calls. Program verification checks the required capability against
+  formal parameter access, binds the selected capability and full
+  parameter/result signature to an exact lambda or `operator()` target, and
+  validates each forwarding target, parameter index, concrete call edge,
+  operand provenance, and consuming move back to the recorded source
+  callable-parameter binding. Source move-state CFG analysis remains
+  authoritative for path cardinality;
 - the program-entry kind and exact concrete startup-append target for the owned
   command-line argument form;
 - after M-FAIL-01, an explicit compiler-generated hosted-startup operation/body
@@ -101,7 +111,10 @@ function name.
 `verifyMirProgram` checks identity ranges, definitions and uses, terminators,
 call/constructor metadata, native-linkage invariants, program-entry adapter
 metadata, value availability, reachable loan state, and lifecycle state. It
-rejects an adapter
+also requires each lambda instance's exact type to reproduce its declaration,
+result, parameters, and captures, and requires callable targets to match that
+full type. Same-shaped closures from distinct enclosing generic instances are
+therefore not interchangeable. It rejects an adapter
 identity on an ordinary or no-argument function, a malformed owned-argument
 entry shape, and multiple MIR entry points. A value use in its defining block
 must follow its defining instruction. A reachable cross-block use must be
@@ -186,13 +199,17 @@ instructions retain their exact parameter types; only a non-reference input
 role can justify an ownership-consuming lifecycle event, and program
 verification cross-checks those roles against the concrete target signature.
 Ownership-consuming ordinary calls and construction retain that exact target
-identity. Closure construction names one concrete lambda instance and retains
-its exact capture-type projection for lifecycle verification; executable
-capture operand materialization remains M-EXEC-01 work. Class lifecycle
-metadata contains every lexically dropped field in declaration order; its
-independently retained drop projection must be the exact reverse order. Trivial
-fields remain structural HIR/layout facts rather than lifecycle-verifier
-authority.
+identity. A confined callable forwarding edge retains the exact source
+parameter binding and target contract. When that contract requires `Once`
+directly or through another forwarding edge, every matching concrete edge must
+be rooted in an ordinary MIR ownership move; a copied source value cannot
+satisfy the cardinality proof. Closure construction names one concrete lambda
+instance and retains its exact capture-type projection for lifecycle
+verification; executable capture operand materialization remains M-EXEC-01
+work. Class lifecycle metadata contains every lexically dropped field in
+declaration order; its independently retained drop projection must be the exact
+reverse order. Trivial fields remain structural HIR/layout facts rather than
+lifecycle-verifier authority.
 
 ## Controlled Optimization Edits
 

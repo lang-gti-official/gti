@@ -46,7 +46,7 @@ callableCapabilityName(CallableInvocationCapability capability) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v6 valid=" << program.valid() << '\n';
+    output << "mir-v7 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -209,7 +209,9 @@ public:
     }
 
     for (const MirLambdaInstance &instance : program.lambdaInstances()) {
-      output << "lambda @" << instance.id << " returns=";
+      output << "lambda @" << instance.id << " type=";
+      type(instance.type);
+      output << " returns=";
       type(instance.returnType);
       output << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
@@ -236,7 +238,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v6\n";
+    output << "mir-body-v7\n";
     body(value, 0);
     return output.str();
   }
@@ -307,7 +309,10 @@ private:
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
            << ";parameter=" << value.genericParameterId
-           << ";lambda=" << value.lambdaId << ";length=" << value.arrayLength
+           << ";lambda=" << value.lambdaId
+           << ";lambda-parameters=" << value.lambdaParameterCount
+           << ";lambda-captures=" << value.lambdaCaptureCount
+           << ";length=" << value.arrayLength
            << ";length-parameter=" << value.arrayLengthParameterId
            << ";access=" << number(value.referenceAccess)
            << ";pointer-access=" << number(value.pointerAccess)
@@ -320,6 +325,36 @@ private:
     for (std::size_t index = 0; index < value.valueArguments.size(); ++index) {
       separator(index);
       const CompileTimeValue &argument = value.valueArguments[index];
+      output << '{' << number(argument.kind) << ':' << argument.value << ':'
+             << argument.parameterId << '}';
+    }
+    output << "];lambda-class-types=[";
+    for (std::size_t index = 0; index < value.lambdaEnclosingClassTypes.size();
+         ++index) {
+      separator(index);
+      type(value.lambdaEnclosingClassTypes[index]);
+    }
+    output << "];lambda-function-types=[";
+    for (std::size_t index = 0;
+         index < value.lambdaEnclosingFunctionTypes.size(); ++index) {
+      separator(index);
+      type(value.lambdaEnclosingFunctionTypes[index]);
+    }
+    output << "];lambda-class-values=[";
+    for (std::size_t index = 0; index < value.lambdaEnclosingClassValues.size();
+         ++index) {
+      separator(index);
+      const CompileTimeValue &argument =
+          value.lambdaEnclosingClassValues[index];
+      output << '{' << number(argument.kind) << ':' << argument.value << ':'
+             << argument.parameterId << '}';
+    }
+    output << "];lambda-function-values=[";
+    for (std::size_t index = 0;
+         index < value.lambdaEnclosingFunctionValues.size(); ++index) {
+      separator(index);
+      const CompileTimeValue &argument =
+          value.lambdaEnclosingFunctionValues[index];
       output << '{' << number(argument.kind) << ':' << argument.value << ':'
              << argument.parameterId << '}';
     }

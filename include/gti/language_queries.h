@@ -51,6 +51,10 @@ public:
     if (declaration != nullptr && !declaration->isStatic() &&
         declaration->receiverMutability() == ReceiverMutability::Mutable) {
       result += " mut";
+    } else if (declaration != nullptr && !declaration->isStatic() &&
+               declaration->receiverMutability() ==
+                   ReceiverMutability::Consuming) {
+      result += " &&";
     }
     appendRequirements(result, info, selected);
     return result;

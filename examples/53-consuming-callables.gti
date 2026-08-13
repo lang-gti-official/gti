@@ -1,0 +1,54 @@
+class one_shot_score {
+  mut int score;
+
+public:
+  one_shot_score(int initial) : score(initial) {}
+
+  int operator()() { return this.score; }
+
+  int operator()() && {
+    return std::move(this.score);
+  }
+};
+
+class mixed_score {
+  mut int score;
+
+public:
+  mixed_score(int initial) : score(initial) {}
+
+  int operator()(int bonus) { return this.score - bonus; }
+
+  int operator()(int bonus) mut {
+    this.score += bonus;
+    return this.score;
+  }
+
+  int operator()() && {
+    return std::move(this.score);
+  }
+};
+
+int run_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int run_once_with<Operation>(Operation operation, int bonus) {
+  return std::move(operation)(bonus);
+}
+
+int main() {
+  one_shot_score operation = one_shot_score(42);
+  mixed_score mixed = mixed_score(40);
+  mixed_score generic_mixed = mixed_score(50);
+  int preview = operation();
+  int result = run_once(operation);
+  int mutable_fallback = std::move(mixed)(2);
+  int generic_mutable_fallback = run_once_with(generic_mixed, 2);
+  std::println("consuming callable completed");
+  if (preview == 42 && result == 42 && mutable_fallback == 42 &&
+      generic_mutable_fallback == 52) {
+    return 0;
+  }
+  return 1;
+}

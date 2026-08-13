@@ -506,6 +506,13 @@ confined until the lifecycle and owned-callable rows below land.
   parameter declared `mut` accepts read-callable or mut-callable targets for
   repeatable invocation and retains the exact selected receiver capability
   through MIR and backend emission.
+- `std::move(operation)()` on a direct by-value generic parameter requires
+  once-callable invocation. It accepts an exact reusable target or nominal
+  `operator() &&`, consumes the source under ordinary path-sensitive move
+  rules, and retains the proving move and selected capability through MIR.
+  This checkpoint permits consuming invocation only for receivers that do not
+  structurally require active cleanup; cleanup-bearing callables need the
+  future owned full-expression receiver representation.
 - Proven nested forwarding is implemented only through another direct by-value
   generic parameter whose selected callee contract is confined. Semantic
   analysis resolves chains independent of declaration order, and HIR/MIR retain
@@ -516,8 +523,8 @@ confined until the lifecycle and owned-callable rows below land.
 - Permit move capture with explicit C++-familiar init-capture spelling only
   after capture ownership and closure moves are represented.
 - Keep implicit capture defaults and untracked reference capture unavailable.
-- Keep consuming once-callables unavailable until MIR can prove invocation
-  cardinality across control-flow joins.
+- Keep consuming invocation confined to named source places and direct generic
+  parameters until callable environments and owned transport are represented.
 - Defer a general owning `std::function`-style type erasure facility until a
   demonstrated client justifies a separate design; the accepted bounded
   contract deliberately preserves exact concrete callable types.

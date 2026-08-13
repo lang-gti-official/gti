@@ -47,7 +47,7 @@ Function-declaration and selected-call hover also append compiler-owned
 callable-parameter contracts from `FunctionInfo`. Each note identifies the
 callable boundary (currently confined), read-only or mutable access, and the
 deduplicated exact invocation signatures with their read-callable,
-mut-callable, or reserved once-callable requirement using the canonical
+mut-callable, or once-callable requirement using the canonical
 semantic type printer. Declaration hover retains the symbolic generic
 contract, while
 selected-call hover applies the compiler-recorded generic type arguments so

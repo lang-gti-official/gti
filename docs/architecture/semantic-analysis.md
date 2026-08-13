@@ -157,6 +157,16 @@ updating it. This keeps per-instance cost proportional to the instance body
 instead of the whole program, with observable identities and emitted output
 unchanged from the previous whole-model-copy design.
 
+A lambda type separates physical closure shape from concrete identity. Its
+ordinary type arguments hold the result, parameters, and captures; dedicated
+identity fields retain the lexical declaration plus the enclosing
+class/function type arguments and class value arguments. Concrete reanalysis
+reuses the lexical declaration and substitutes both parts. This distinction is
+required even for captureless lambdas with identical signatures: two enclosing
+generic instances may give the same source body different compile-time meaning.
+Function value-generic identity has reserved representation but no source
+producer while GTI continues to reject function value generics.
+
 ## Confined Callable Contracts
 
 A direct by-value generic parameter may acquire a `Confined` callable
@@ -181,16 +191,24 @@ and forwarding edges are rejected before HIR, so later phases never receive a
 false confined fact.
 
 After forwarding contracts reach their declaration-order-independent fixed
-point, semantics audits every resolved use of an invoked parameter by parameter
-symbol identity. The callable expression of each recorded direct invocation and
-the exact argument of each proven confined forwarding edge are permitted;
-assignment, local copying, field storage, capture, and any other ordinary value
-transport are rejected. Expression uses carry their resolved symbol, while a
-lambda capture retains the canonical declaration symbol it captured. Pending
-unproven forwarding and callable return shapes keep their dedicated
-diagnostics, so this audit does not produce a second error for the same invalid
-edge. Same-spelling shadowed locals have distinct symbols and are not part of
-the callable contract.
+point, semantics first resolves every provisional lexical-lambda argument
+boundary against the selected target parameter. If the target did not acquire
+a `Confined` contract, the call is rejected before HIR rather than retaining a
+false boundary fact. A forwarding edge whose target directly or transitively
+requires `Once` must pass the source parameter as `std::move(source)`. The
+ordinary path-sensitive value-state analysis then owns cardinality: sequential
+or possibly repeated forwarding is rejected, while mutually exclusive
+returning branches may each contain one explicit move. Semantics then audits
+every resolved use of an invoked
+parameter by parameter symbol identity. The callable expression of each
+recorded direct invocation and the exact argument of each proven confined
+forwarding edge are permitted; assignment, local copying, field storage,
+capture, and any other ordinary value transport are rejected. Expression uses
+carry their resolved symbol, while a lambda capture retains the canonical
+declaration symbol it captured. Pending unproven forwarding and callable return
+shapes keep their dedicated diagnostics, so this audit does not produce a
+second error for the same invalid edge. Same-spelling shadowed locals have
+distinct symbols and are not part of the callable contract.
 
 `CallableBoundary` and per-argument boundary records replace the former
 non-escaping booleans in semantics. Concrete generic reanalysis substitutes
@@ -206,9 +224,21 @@ requires read-callable invocation. A `mut` by-value parameter permits mutable
 invocation and accepts either a read-callable or mut-callable target; concrete
 reanalysis records which one was selected. Lambdas are read-callable because
 their current capture snapshots are immutable. A class `operator() ... mut`
-is mut-callable. `Once` is reserved vocabulary and is rejected until consuming
-receiver effects and path joins are represented. `GTI-S2046` reports a mutable
-target passed to an immutable callable parameter before HIR lowering.
+is mut-callable. A direct `std::move(operation)()` on a by-value generic
+parameter requires `Once`, consumes that parameter place, and may select an
+exact read-callable, mut-callable, or trailing-`&&` once-callable target.
+Ordinary move-state analysis proves at-most-once use across branches and loops;
+confined forwarding into a once-callable parameter must likewise move the
+source. A consuming-only target cannot satisfy a reusable read or mutable
+client. `GTI-S2046` reports capability and confined-forwarding mismatches
+before HIR lowering, while ordinary move diagnostics own repeated use.
+
+After exact target selection, an explicit consuming invocation also queries
+the concrete receiver's recursive active-cleanup property. Cleanup-owning
+direct calls use the ordinary operator boundary; cleanup discovered while
+reanalyzing a concrete confined generic instance remains a confined-callable
+error. Both stop before HIR because the compatibility backend cannot yet own a
+moved receiver through the enclosing full-expression cleanup boundary.
 
 ## Concepts And Requirement Contracts
 

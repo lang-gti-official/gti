@@ -442,10 +442,73 @@ struct SemanticType {
     return type;
   }
 
-  [[nodiscard]] static SemanticType lambdaType(LambdaId id) {
+  [[nodiscard]] static SemanticType
+  lambdaType(LambdaId id, SemanticType returnType,
+             std::span<const SemanticType> parameterTypes,
+             std::span<const SemanticType> captureTypes,
+             std::span<const SemanticType> classTypeArguments = {},
+             std::span<const SemanticType> functionTypeArguments = {},
+             std::span<const CompileTimeValue> classValueArguments = {},
+             std::span<const CompileTimeValue> functionValueArguments = {}) {
     SemanticType type(Lambda);
     type.lambdaId = id;
+    type.lambdaParameterCount = parameterTypes.size();
+    type.lambdaCaptureCount = captureTypes.size();
+    type.arguments.reserve(1 + parameterTypes.size() + captureTypes.size());
+    type.arguments.emplace_back(std::move(returnType));
+    type.arguments.insert(type.arguments.end(), parameterTypes.begin(),
+                          parameterTypes.end());
+    type.arguments.insert(type.arguments.end(), captureTypes.begin(),
+                          captureTypes.end());
+    type.lambdaEnclosingClassTypes.assign(classTypeArguments.begin(),
+                                          classTypeArguments.end());
+    type.lambdaEnclosingFunctionTypes.assign(functionTypeArguments.begin(),
+                                             functionTypeArguments.end());
+    type.lambdaEnclosingClassValues.assign(classValueArguments.begin(),
+                                           classValueArguments.end());
+    type.lambdaEnclosingFunctionValues.assign(functionValueArguments.begin(),
+                                              functionValueArguments.end());
     return type;
+  }
+
+  [[nodiscard]] bool hasLambdaShape() const {
+    return kind == Lambda && !arguments.empty() &&
+           lambdaParameterCount + lambdaCaptureCount == arguments.size() - 1;
+  }
+
+  [[nodiscard]] const SemanticType *lambdaReturnType() const {
+    return hasLambdaShape() ? &arguments.front() : nullptr;
+  }
+
+  [[nodiscard]] std::span<const SemanticType> lambdaParameterTypes() const {
+    return hasLambdaShape() ? std::span<const SemanticType>(arguments).subspan(
+                                  1, lambdaParameterCount)
+                            : std::span<const SemanticType>{};
+  }
+
+  [[nodiscard]] std::span<const SemanticType> lambdaCaptureTypes() const {
+    return hasLambdaShape() ? std::span<const SemanticType>(arguments).subspan(
+                                  1 + lambdaParameterCount, lambdaCaptureCount)
+                            : std::span<const SemanticType>{};
+  }
+
+  [[nodiscard]] std::span<const SemanticType> lambdaClassTypeArguments() const {
+    return lambdaEnclosingClassTypes;
+  }
+
+  [[nodiscard]] std::span<const SemanticType>
+  lambdaFunctionTypeArguments() const {
+    return lambdaEnclosingFunctionTypes;
+  }
+
+  [[nodiscard]] std::span<const CompileTimeValue>
+  lambdaClassValueArguments() const {
+    return lambdaEnclosingClassValues;
+  }
+
+  [[nodiscard]] std::span<const CompileTimeValue>
+  lambdaFunctionValueArguments() const {
+    return lambdaEnclosingFunctionValues;
   }
 
   [[nodiscard]] static SemanticType arrayOf(SemanticType element,
@@ -501,6 +564,12 @@ struct SemanticType {
   EnumId enumId = 0;
   GenericParameterId genericParameterId = 0;
   LambdaId lambdaId = 0;
+  std::uint64_t lambdaParameterCount = 0;
+  std::uint64_t lambdaCaptureCount = 0;
+  std::vector<SemanticType> lambdaEnclosingClassTypes;
+  std::vector<SemanticType> lambdaEnclosingFunctionTypes;
+  std::vector<CompileTimeValue> lambdaEnclosingClassValues;
+  std::vector<CompileTimeValue> lambdaEnclosingFunctionValues;
   std::uint64_t arrayLength = 0;
   GenericParameterId arrayLengthParameterId = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
@@ -829,9 +898,15 @@ callableInvocationCapability(AccessMode access) {
 
 [[nodiscard]] constexpr CallableInvocationCapability
 callableInvocationCapability(ReceiverMutability mutability) {
-  return mutability == ReceiverMutability::Mutable
-             ? CallableInvocationCapability::Mutable
-             : CallableInvocationCapability::Read;
+  switch (mutability) {
+  case ReceiverMutability::ReadOnly:
+    return CallableInvocationCapability::Read;
+  case ReceiverMutability::Mutable:
+    return CallableInvocationCapability::Mutable;
+  case ReceiverMutability::Consuming:
+    return CallableInvocationCapability::Once;
+  }
+  return CallableInvocationCapability::Read;
 }
 
 [[nodiscard]] constexpr bool
@@ -3295,6 +3370,8 @@ public:
     analyze(program.declarations());
     endScope();
     semanticModel.finalizeCallableForwardings();
+    validateOnceCallableForwardings();
+    validateProvisionalCallableArguments();
     validateConfinedCallableContracts();
     validateConfinedCallableUses();
     semanticModel.finalizeCallableArguments();
@@ -5514,7 +5591,7 @@ public:
                 "declaration if mutation is required.");
       diagnostics.emplace_back(std::move(diagnostic));
     } else if (symbol->ownerClass != 0 && !symbol->staticMember &&
-               currentReceiverMutability != ReceiverMutability::Mutable) {
+               !receiverAllowsMutation(currentReceiverMutability)) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     } else {
       reportLoanPlaceConflict(
@@ -6924,7 +7001,12 @@ public:
   }
 
   void visitLambdaExpr(const Lambda &expr) override {
-    const LambdaId id = nextLambdaId++;
+    const LambdaInfo *lexicalLambda =
+        instanceAnalysisActive && instanceBaseModel != nullptr
+            ? instanceBaseModel->findLambda(expr)
+            : nullptr;
+    const LambdaId id =
+        lexicalLambda == nullptr ? nextLambdaId++ : lexicalLambda->id;
     if (expr.returnType().name.last().kind == TokenKind::AUTO) {
       report(expr.returnType().name.last(),
              "Lambda return types must be explicit; 'auto' return deduction "
@@ -7145,6 +7227,35 @@ public:
     currentReturnType = enclosingReturnType;
     scopes = std::move(enclosingScopes);
 
+    std::vector<SemanticType> captureTypes;
+    captureTypes.reserve(captures.size());
+    for (const LambdaCaptureInfo &capture : captures) {
+      captureTypes.emplace_back(capture.type);
+    }
+    std::vector<SemanticType> classTypeArguments;
+    std::vector<CompileTimeValue> classValueArguments;
+    if (currentClass) {
+      const SemanticType owner = openClassType(*currentClass);
+      classTypeArguments = owner.arguments;
+      classValueArguments = owner.valueArguments;
+    }
+    std::vector<SemanticType> functionTypeArguments;
+    if (currentFunctionDeclaration != nullptr) {
+      for (const GenericParameterInfo &parameter :
+           genericParametersFor(*currentFunctionDeclaration)) {
+        if (parameter.value) {
+          continue;
+        }
+        const auto concrete = instanceTypeSubstitution.find(parameter.id);
+        functionTypeArguments.emplace_back(
+            concrete == instanceTypeSubstitution.end()
+                ? SemanticType::typeParameter(parameter.id)
+                : concrete->second);
+      }
+    }
+    currentType = SemanticType::lambdaType(
+        id, returnType, parameterTypes, captureTypes, classTypeArguments,
+        functionTypeArguments, classValueArguments);
     semanticModel.record(expr,
                          LambdaInfo{.id = id,
                                     .declaration = &expr,
@@ -7152,7 +7263,6 @@ public:
                                     .parameterTypes = std::move(parameterTypes),
                                     .captures = std::move(captures),
                                     .traits = lambdaTraits});
-    currentType = SemanticType::lambdaType(id);
   }
 
   enum class LayoutEvaluationError {
@@ -10059,6 +10169,27 @@ private:
     return result;
   }
 
+  [[nodiscard]] SemanticTypeTraits
+  lambdaTraitsForCaptures(std::span<const SemanticType> captureTypes) const {
+    SemanticTypeTraits result;
+    result.drop = DropKind::Trivial;
+    for (const SemanticType &captureType : captureTypes) {
+      const SemanticTypeTraits capture = typeTraits(captureType);
+      if (capture.ownership == OwnershipKind::Shared) {
+        result.ownership = OwnershipKind::Shared;
+      }
+      if (capture.drop == DropKind::Lexical) {
+        result.drop = DropKind::Lexical;
+      }
+      result.copyable = result.copyable && capture.copyable;
+      result.movable = result.movable && capture.movable;
+      result.transferCapable =
+          result.transferCapable && capture.transferCapable;
+      result.shareCapable = result.shareCapable && capture.shareCapable;
+    }
+    return result;
+  }
+
   [[nodiscard]] bool requiresActiveCleanup(const SemanticType &type,
                                            ActiveCleanupQuery &query) const {
     switch (type.kind) {
@@ -10131,12 +10262,21 @@ private:
                            });
       break;
     case SemanticType::Lambda: {
-      const LambdaInfo *lambda = semanticModel.findLambda(type.lambdaId);
-      result = lambda != nullptr &&
-               std::any_of(lambda->captures.begin(), lambda->captures.end(),
-                           [&](const LambdaCaptureInfo &capture) {
-                             return requiresActiveCleanup(capture.type, query);
-                           });
+      if (type.hasLambdaShape()) {
+        result = std::any_of(type.lambdaCaptureTypes().begin(),
+                             type.lambdaCaptureTypes().end(),
+                             [&](const SemanticType &capture) {
+                               return requiresActiveCleanup(capture, query);
+                             });
+      } else {
+        const LambdaInfo *lambda = semanticModel.findLambda(type.lambdaId);
+        result =
+            lambda != nullptr &&
+            std::any_of(lambda->captures.begin(), lambda->captures.end(),
+                        [&](const LambdaCaptureInfo &capture) {
+                          return requiresActiveCleanup(capture.type, query);
+                        });
+      }
       break;
     }
     case SemanticType::Class: {
@@ -10273,6 +10413,12 @@ private:
                   hasConstraint(constraints, GenericConstraintKind::Shareable)};
     }
     case SemanticType::Lambda: {
+      if (type.hasLambdaShape()) {
+        const SemanticTypeTraits traits =
+            lambdaTraitsForCaptures(type.lambdaCaptureTypes());
+        return {.transferCapable = traits.transferCapable,
+                .shareCapable = traits.shareCapable};
+      }
       const LambdaInfo *lambda = semanticModel.findLambda(type.lambdaId);
       return lambda == nullptr
                  ? ConcurrencyCapabilities{}
@@ -10384,6 +10530,9 @@ private:
     }
 
     if (type.kind == SemanticType::Lambda) {
+      if (type.hasLambdaShape()) {
+        return lambdaTraitsForCaptures(type.lambdaCaptureTypes());
+      }
       const LambdaInfo *lambda = semanticModel.findLambda(type.lambdaId);
       return lambda == nullptr ? semanticTraits(type) : lambda->traits;
     }
@@ -11600,8 +11749,7 @@ private:
     if (const ResolvedOperatorInfo *resolved =
             semanticModel.findOperator(*expression)) {
       if (resolved->declaration != nullptr &&
-          resolved->declaration->receiverMutability() ==
-              ReceiverMutability::Mutable) {
+          receiverAllowsMutation(resolved->declaration->receiverMutability())) {
         if (const ExprPtr *receiver = operatorReceiverExpression(expression)) {
           appendUniquePlace(places, transientLoanPlace(*receiver));
         }
@@ -13890,6 +14038,58 @@ private:
     return dynamic_cast<const Call *>(candidate);
   }
 
+  [[nodiscard]] const ExprPtr *
+  explicitMoveSource(const ExprPtr &expression) const {
+    const Call *call = directCall(expression);
+    if (call == nullptr ||
+        resolvedIntrinsicKind(*call) != IntrinsicKind::Move ||
+        call->arguments().size() != 1) {
+      return nullptr;
+    }
+    return &call->arguments().front();
+  }
+
+  [[nodiscard]] bool isExplicitMoveReceiver(const ExprPtr &expression) const {
+    return explicitMoveSource(expression) != nullptr;
+  }
+
+  [[nodiscard]] bool
+  rejectConsumingActiveCleanup(const Token &location,
+                               const SemanticType &receiverType,
+                               std::optional<CallableBoundary> boundary) {
+    if (!requiresActiveCleanupFor(receiverType)) {
+      return false;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        boundary ? "GTI-S2046" : "GTI-S2022", DiagnosticPhase::Semantics,
+        location,
+        "Cannot consume callable receiver of type '" +
+            typeSpelling(receiverType) +
+            "' because it requires active cleanup and GTI cannot yet "
+            "guarantee that cleanup at the enclosing full-expression "
+            "boundary.");
+    if (const std::optional<ActiveCleanupCause> cause =
+            activeCleanupCause(receiverType);
+        cause && cause->source != nullptr) {
+      diagnostic.related.push_back({tokenSpan(*cause->source), cause->message});
+    }
+    diagnostic.hints.emplace_back(
+        "Use a read-callable or mut-callable operation, or keep the callable "
+        "receiver free of cleanup-owning state until consuming "
+        "full-expression storage is supported.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return true;
+  }
+
+  [[nodiscard]] const Variable *
+  directCallableParameterVariable(const ExprPtr &expression) const {
+    const ExprPtr *candidate = &expression;
+    if (const ExprPtr *moved = explicitMoveSource(expression)) {
+      candidate = moved;
+    }
+    return movedVariable(*candidate);
+  }
+
   [[nodiscard]] const FunctionInfo *currentFunctionInfo() const {
     if (currentFunctionDeclaration == nullptr) {
       return nullptr;
@@ -13905,7 +14105,7 @@ private:
 
   [[nodiscard]] const CallableParameterContract *
   callableParameterContract(const ExprPtr &callee) const {
-    const auto *variable = dynamic_cast<const Variable *>(callee.get());
+    const Variable *variable = directCallableParameterVariable(callee);
     const Symbol *symbol =
         variable == nullptr ? nullptr : resolve(variable->name());
     const FunctionInfo *function = currentFunctionInfo();
@@ -13981,7 +14181,8 @@ private:
   void
   analyzeDeferredCallableCall(const Call &call, const SemanticType &calleeType,
                               const std::vector<SemanticType> &argumentTypes) {
-    const auto *variable = dynamic_cast<const Variable *>(call.callee().get());
+    const bool consuming = isExplicitMoveReceiver(call.callee());
+    const Variable *variable = directCallableParameterVariable(call.callee());
     const Symbol *symbol =
         variable == nullptr ? nullptr : resolve(variable->name());
     const Parameter *parameter =
@@ -14064,7 +14265,8 @@ private:
                                   ? AccessMode::Mutable
                                   : AccessMode::ReadOnly;
     const CallableInvocationCapability capability =
-        callableInvocationCapability(access);
+        consuming ? CallableInvocationCapability::Once
+                  : callableInvocationCapability(access);
     semanticModel.recordDeferredCallableCall(
         call, DeferredCallableCallInfo{.genericParameter =
                                            calleeType.genericParameterId,
@@ -14094,7 +14296,9 @@ private:
         returnType == SemanticType::Unknown) {
       return true;
     }
-    const Token location = expressionToken(call.callee());
+    const Variable *variable = directCallableParameterVariable(call.callee());
+    const Token location =
+        variable == nullptr ? expressionToken(call.callee()) : variable->name();
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2046", DiagnosticPhase::Semantics, location,
         "Callable parameter '" + location.lexeme + "' must return '" +
@@ -14102,8 +14306,7 @@ private:
             "' for this invocation, "
             "but the selected callable returns '" +
             typeSpelling(returnType) + "'.");
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(call.callee().get())) {
+    if (variable != nullptr) {
       if (const Symbol *symbol = resolve(variable->name());
           symbol != nullptr && symbol->parameterDeclaration != nullptr) {
         diagnostic.related.push_back(
@@ -14125,24 +14328,37 @@ private:
       return true;
     }
 
-    const Token location = expressionToken(call.callee());
+    const Variable *variable = directCallableParameterVariable(call.callee());
+    const Token location =
+        variable == nullptr ? expressionToken(call.callee()) : variable->name();
+    const std::string parameterName =
+        variable == nullptr ? location.lexeme : variable->name().lexeme;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2046", DiagnosticPhase::Semantics, location,
-        "Callable parameter '" + location.lexeme +
-            "' permits only read-callable invocation, but the selected "
-            "callable requires mutable invocation.");
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(call.callee().get())) {
+        provided == CallableInvocationCapability::Once
+            ? "Callable parameter '" + parameterName +
+                  "' is invoked repeatably by this function, but the "
+                  "selected operator() is once-callable."
+            : "Callable parameter '" + parameterName +
+                  "' permits only read-callable invocation, but the "
+                  "selected callable requires mutable invocation.");
+    if (variable != nullptr) {
       if (const Symbol *symbol = resolve(variable->name());
           symbol != nullptr && symbol->parameterDeclaration != nullptr) {
         diagnostic.related.push_back(
             {tokenSpan(symbol->parameterDeclaration->name),
-             "Read-only callable parameter declared here."});
+             provided == CallableInvocationCapability::Once
+                 ? "Repeatable callable parameter declared here."
+                 : "Read-only callable parameter declared here."});
       }
     }
     diagnostic.hints.emplace_back(
-        "Declare the generic callable parameter with 'mut' when the function "
-        "may invoke a stateful mutable call operator.");
+        provided == CallableInvocationCapability::Once
+            ? "A once-callable client must consume the parameter explicitly "
+              "with std::move(value)() and cannot invoke it on another "
+              "reachable path."
+            : "Declare the generic callable parameter with 'mut' when the "
+              "function may invoke a stateful mutable call operator.");
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }
@@ -14201,6 +14417,10 @@ private:
     valid =
         validateCallableCapability(call, CallableInvocationCapability::Read) &&
         valid;
+    if (valid && isExplicitMoveReceiver(call.callee()) &&
+        rejectConsumingActiveCleanup(call.paren(), calleeType, boundary)) {
+      valid = false;
+    }
     if (valid) {
       semanticModel.recordLambdaCall(
           call, ResolvedLambdaCallInfo{.lambda = lambda->id,
@@ -15177,6 +15397,71 @@ private:
                        });
   }
 
+  void validateProvisionalCallableArguments() {
+    std::vector<Diagnostic> argumentDiagnostics;
+    for (const auto &[call, resolved] : semanticModel.calls) {
+      if (call == nullptr || resolved.callableArguments.empty()) {
+        continue;
+      }
+      const FunctionInfo *target =
+          semanticModel.findFunction(resolved.function);
+      for (const CallableArgumentBoundary &argument :
+           resolved.callableArguments) {
+        const bool provenConfined =
+            target != nullptr &&
+            std::any_of(
+                target->callableParameters.begin(),
+                target->callableParameters.end(),
+                [&](const CallableParameterContract &contract) {
+                  return contract.parameterIndex == argument.parameterIndex &&
+                         contract.boundary == CallableBoundary::Confined;
+                });
+        if (provenConfined ||
+            argument.parameterIndex >= call->arguments().size()) {
+          continue;
+        }
+
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2046", DiagnosticPhase::Semantics,
+            expressionToken(call->arguments()[argument.parameterIndex]),
+            "Lambda argument " + std::to_string(argument.parameterIndex + 1) +
+                " cannot bind because the selected target parameter is not "
+                "proven confined.");
+        if (target != nullptr && target->declaration != nullptr &&
+            argument.parameterIndex <
+                target->declaration->parameters().size()) {
+          diagnostic.related.push_back(
+              {tokenSpan(
+                   target->declaration->parameters()[argument.parameterIndex]
+                       .name),
+               "Selected generic parameter declared here."});
+        }
+        diagnostic.hints.emplace_back(
+            "Pass a lambda only to a direct by-value generic parameter whose "
+            "visible body invokes it or forwards it through another proven "
+            "confined parameter.");
+        argumentDiagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+
+    std::sort(argumentDiagnostics.begin(), argumentDiagnostics.end(),
+              [](const Diagnostic &left, const Diagnostic &right) {
+                if (left.primary.source != right.primary.source) {
+                  return left.primary.source < right.primary.source;
+                }
+                if (left.primary.start != right.primary.start) {
+                  return left.primary.start < right.primary.start;
+                }
+                if (left.primary.end != right.primary.end) {
+                  return left.primary.end < right.primary.end;
+                }
+                return left.message < right.message;
+              });
+    for (Diagnostic &diagnostic : argumentDiagnostics) {
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+
   void validateConfinedCallableContracts() {
     std::vector<Diagnostic> contractDiagnostics;
     for (const auto &[_, function] : semanticModel.functions) {
@@ -15288,6 +15573,126 @@ private:
     }
   }
 
+  [[nodiscard]] bool callableContractRequiresOnce(
+      FunctionId function, std::size_t parameterIndex,
+      std::vector<std::pair<FunctionId, std::size_t>> &visiting) const {
+    const CallableParameterContract *contract =
+        callableParameterContract(function, parameterIndex);
+    if (contract == nullptr ||
+        contract->boundary != CallableBoundary::Confined) {
+      return false;
+    }
+    if (std::any_of(contract->signatures.begin(), contract->signatures.end(),
+                    [](const CallableSignatureRequirement &signature) {
+                      return signature.capability ==
+                             CallableInvocationCapability::Once;
+                    })) {
+      return true;
+    }
+
+    const std::pair key{function, parameterIndex};
+    if (std::find(visiting.begin(), visiting.end(), key) != visiting.end()) {
+      return false;
+    }
+    visiting.push_back(key);
+    const bool requiresOnce = std::any_of(
+        contract->forwardings.begin(), contract->forwardings.end(),
+        [&](const CallableForwardingRequirement &forwarding) {
+          return callableContractRequiresOnce(
+              forwarding.function, forwarding.parameterIndex, visiting);
+        });
+    visiting.pop_back();
+    return requiresOnce;
+  }
+
+  [[nodiscard]] bool
+  callableContractRequiresOnce(FunctionId function,
+                               std::size_t parameterIndex) const {
+    std::vector<std::pair<FunctionId, std::size_t>> visiting;
+    return callableContractRequiresOnce(function, parameterIndex, visiting);
+  }
+
+  void validateOnceCallableForwardings() {
+    std::vector<Diagnostic> forwardingDiagnostics;
+    for (const SemanticModel::PendingCallableForwarding &forwarding :
+         semanticModel.pendingCallableForwardings) {
+      if (forwarding.call == nullptr ||
+          !callableContractRequiresOnce(forwarding.target,
+                                        forwarding.targetParameterIndex) ||
+          forwarding.targetParameterIndex >=
+              forwarding.call->arguments().size()) {
+        continue;
+      }
+
+      const ExprPtr &argument =
+          forwarding.call->arguments()[forwarding.targetParameterIndex];
+      if (explicitMoveSource(argument) != nullptr) {
+        continue;
+      }
+
+      const FunctionInfo *source =
+          forwarding.source == nullptr
+              ? nullptr
+              : semanticModel.findFunction(*forwarding.source);
+      const Parameter *sourceParameter =
+          source != nullptr && source->declaration != nullptr &&
+                  forwarding.sourceParameterIndex <
+                      source->declaration->parameters().size()
+              ? &source->declaration
+                     ->parameters()[forwarding.sourceParameterIndex]
+              : nullptr;
+      const FunctionInfo *target =
+          semanticModel.findFunction(forwarding.target);
+      const Parameter *targetParameter =
+          target != nullptr && target->declaration != nullptr &&
+                  forwarding.targetParameterIndex <
+                      target->declaration->parameters().size()
+              ? &target->declaration
+                     ->parameters()[forwarding.targetParameterIndex]
+              : nullptr;
+      const std::string parameterName = sourceParameter == nullptr
+                                            ? std::string("callable")
+                                            : sourceParameter->name.lexeme;
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2046", DiagnosticPhase::Semantics, expressionToken(argument),
+          "Once-confined forwarding of callable parameter '" + parameterName +
+              "' requires explicit ownership transfer.");
+      if (sourceParameter != nullptr) {
+        diagnostic.related.push_back(
+            {tokenSpan(sourceParameter->name),
+             "Confined callable parameter declared here."});
+      }
+      if (targetParameter != nullptr) {
+        diagnostic.related.push_back(
+            {tokenSpan(targetParameter->name),
+             "The selected confined target consumes this callable directly "
+             "or through another forwarding edge."});
+      }
+      diagnostic.hints.emplace_back(
+          "Forward it as std::move(" + parameterName +
+          ") so ordinary path-sensitive move checking proves that no "
+          "reachable path forwards or invokes it again.");
+      forwardingDiagnostics.emplace_back(std::move(diagnostic));
+    }
+
+    std::sort(forwardingDiagnostics.begin(), forwardingDiagnostics.end(),
+              [](const Diagnostic &left, const Diagnostic &right) {
+                if (left.primary.source != right.primary.source) {
+                  return left.primary.source < right.primary.source;
+                }
+                if (left.primary.start != right.primary.start) {
+                  return left.primary.start < right.primary.start;
+                }
+                if (left.primary.end != right.primary.end) {
+                  return left.primary.end < right.primary.end;
+                }
+                return left.message < right.message;
+              });
+    for (Diagnostic &diagnostic : forwardingDiagnostics) {
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+
   void validateConfinedCallableUses() {
     std::vector<Diagnostic> useDiagnostics;
     for (const auto &[_, function] : semanticModel.functions) {
@@ -15323,7 +15728,11 @@ private:
           if (signature.source == nullptr || !signature.source->callee()) {
             continue;
           }
-          const Expr *callee = signature.source->callee().get();
+          const Variable *variable =
+              directCallableParameterVariable(signature.source->callee());
+          const Expr *callee = variable == nullptr
+                                   ? signature.source->callee().get()
+                                   : static_cast<const Expr *>(variable);
           if (semanticModel.findResolvedSymbol(*callee) == binding->symbol) {
             permittedUses.insert(callee);
           }
@@ -15337,9 +15746,14 @@ private:
           }
           const Expr *argument =
               forwarding.source->arguments()[forwarding.parameterIndex].get();
-          if (argument != nullptr &&
-              semanticModel.findResolvedSymbol(*argument) == binding->symbol) {
-            permittedUses.insert(argument);
+          const Variable *variable = directCallableParameterVariable(
+              forwarding.source->arguments()[forwarding.parameterIndex]);
+          const Expr *permitted = variable == nullptr
+                                      ? argument
+                                      : static_cast<const Expr *>(variable);
+          if (permitted != nullptr &&
+              semanticModel.findResolvedSymbol(*permitted) == binding->symbol) {
+            permittedUses.insert(permitted);
           }
         }
 
@@ -15359,9 +15773,14 @@ private:
           const Expr *argument =
               forwarding.call->arguments()[forwarding.targetParameterIndex]
                   .get();
-          if (argument != nullptr &&
-              semanticModel.findResolvedSymbol(*argument) == binding->symbol) {
-            permittedUses.insert(argument);
+          const Variable *variable = directCallableParameterVariable(
+              forwarding.call->arguments()[forwarding.targetParameterIndex]);
+          const Expr *permitted = variable == nullptr
+                                      ? argument
+                                      : static_cast<const Expr *>(variable);
+          if (permitted != nullptr &&
+              semanticModel.findResolvedSymbol(*permitted) == binding->symbol) {
+            permittedUses.insert(permitted);
           }
         }
 
@@ -15615,6 +16034,9 @@ private:
     result += ')';
     if (declaration.receiverMutability() == ReceiverMutability::Mutable) {
       result += " mut";
+    } else if (declaration.receiverMutability() ==
+               ReceiverMutability::Consuming) {
+      result += " &&";
     }
     return result;
   }
@@ -15667,7 +16089,7 @@ private:
     validateMutableCallArgumentLoans(function.parameterTypes, arguments, paren);
     const auto *member = dynamic_cast<const Get *>(callee.get());
     const AccessMode selectedReceiverAccess =
-        function.receiverMutability == ReceiverMutability::Mutable
+        receiverAllowsMutation(function.receiverMutability)
             ? AccessMode::Mutable
             : AccessMode::ReadOnly;
     AccessMode callReceiverAccess = selectedReceiverAccess;
@@ -15700,8 +16122,7 @@ private:
       return true;
     }
 
-    bool mutableReceiver =
-        currentReceiverMutability == ReceiverMutability::Mutable;
+    bool mutableReceiver = receiverAllowsMutation(currentReceiverMutability);
     if (member != nullptr) {
       mutableReceiver = memberReceiverIsMutable(*member);
     }
@@ -15727,7 +16148,7 @@ private:
           moveOnlyReceiver
               ? "Mutable method cannot use move-only storage while a "
                 "reference borrowed from it may still be live."
-          : function.receiverMutability == ReceiverMutability::Mutable
+          : receiverAllowsMutation(function.receiverMutability)
               ? "Mutable method receiver overlaps a borrow that may still be "
                 "live."
               : "Read-only method receiver overlaps a mutable borrow or "
@@ -16001,7 +16422,7 @@ private:
 
     const FunctionCandidate &selected = viable.front();
     const AccessMode receiverAccess =
-        selected.receiverMutability == ReceiverMutability::Mutable
+        receiverAllowsMutation(selected.receiverMutability)
             ? AccessMode::Mutable
             : AccessMode::ReadOnly;
     const SemanticLoanPlace receiverPlace = loanPlace(receiver);
@@ -16065,7 +16486,10 @@ private:
     const Symbol overloadSet =
         substituteSymbol(found->second.symbol, receiverType);
     const bool mutableReceiver = isMutableObject(receiver);
+    const bool consumingReceiver =
+        kind == OverloadedOperator::Call && isExplicitMoveReceiver(receiver);
     bool rejectedMutableReceiver = false;
+    bool rejectedConsumingReceiver = false;
     bool rejectedCompilerPrivate = false;
     bool rejectedRequirements = false;
     std::vector<FunctionCandidate> viable;
@@ -16091,8 +16515,13 @@ private:
         rejectedRequirements = true;
         continue;
       }
+      if (candidate.receiverMutability == ReceiverMutability::Consuming &&
+          !consumingReceiver) {
+        rejectedConsumingReceiver = true;
+        continue;
+      }
       if (candidate.receiverMutability == ReceiverMutability::Mutable &&
-          !mutableReceiver) {
+          !mutableReceiver && !consumingReceiver) {
         rejectedMutableReceiver = true;
         continue;
       }
@@ -16103,11 +16532,21 @@ private:
       viable.emplace_back(candidate);
     }
 
-    if (mutableReceiver && std::any_of(viable.begin(), viable.end(),
-                                       [](const FunctionCandidate &candidate) {
-                                         return candidate.receiverMutability ==
-                                                ReceiverMutability::Mutable;
-                                       })) {
+    if (consumingReceiver &&
+        std::any_of(viable.begin(), viable.end(),
+                    [](const FunctionCandidate &candidate) {
+                      return candidate.receiverMutability ==
+                             ReceiverMutability::Consuming;
+                    })) {
+      std::erase_if(viable, [](const FunctionCandidate &candidate) {
+        return candidate.receiverMutability != ReceiverMutability::Consuming;
+      });
+    } else if ((mutableReceiver || consumingReceiver) &&
+               std::any_of(viable.begin(), viable.end(),
+                           [](const FunctionCandidate &candidate) {
+                             return candidate.receiverMutability ==
+                                    ReceiverMutability::Mutable;
+                           })) {
       std::erase_if(viable, [](const FunctionCandidate &candidate) {
         return candidate.receiverMutability == ReceiverMutability::ReadOnly;
       });
@@ -16123,6 +16562,22 @@ private:
       if (viable.empty() && rejectedCompilerPrivate) {
         reportCompilerPrivateAccess(token,
                                     std::string(operatorSourceSpelling(kind)));
+      } else if (viable.empty() && rejectedConsumingReceiver) {
+        const auto *call = kind == OverloadedOperator::Call
+                               ? dynamic_cast<const Call *>(&site)
+                               : nullptr;
+        if (call != nullptr && boundary) {
+          (void)validateCallableCapability(*call,
+                                           CallableInvocationCapability::Once);
+        } else {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2022", DiagnosticPhase::Semantics, token,
+              "operator() && requires an explicitly consumed receiver.");
+          diagnostic.hints.emplace_back(
+              "Invoke a named local or by-value parameter with "
+              "std::move(value)().");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
       } else if (viable.empty() && rejectedMutableReceiver) {
         const auto *call = kind == OverloadedOperator::Call
                                ? dynamic_cast<const Call *>(&site)
@@ -16177,6 +16632,10 @@ private:
     }
 
     const FunctionCandidate &selected = viable.front();
+    if (consumingReceiver &&
+        rejectConsumingActiveCleanup(token, receiverType, boundary)) {
+      return std::nullopt;
+    }
     if (selected.access == AccessModifier::Private &&
         currentClass != selected.ownerClass) {
       Diagnostic diagnostic =
@@ -16189,7 +16648,7 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
     }
     const AccessMode selectedReceiverAccess =
-        selected.receiverMutability == ReceiverMutability::Mutable
+        receiverAllowsMutation(selected.receiverMutability)
             ? AccessMode::Mutable
             : AccessMode::ReadOnly;
     std::optional<TransientBorrowProduction> receiverProduction =
@@ -16203,9 +16662,12 @@ private:
             : selectedReceiverAccess;
     reportLoanPlaceConflict(
         token, receiverPlace, selectedReceiverAccess,
-        selected.receiverMutability == ReceiverMutability::Mutable
-            ? "Mutable operator receiver overlaps a borrow that may still be "
-              "live."
+        receiverAllowsMutation(selected.receiverMutability)
+            ? (selected.receiverMutability == ReceiverMutability::Consuming
+                   ? "Consuming operator receiver overlaps a borrow that may "
+                     "still be live."
+                   : "Mutable operator receiver overlaps a borrow that may "
+                     "still be live.")
             : "Read-only operator receiver overlaps a mutable borrow or "
               "child reborrow that may still be live.",
         accessLoan(receiver));
@@ -16303,8 +16765,8 @@ private:
         continue;
       }
 
-      const auto *variable =
-          dynamic_cast<const Variable *>(call.arguments()[index].get());
+      const Variable *variable =
+          directCallableParameterVariable(call.arguments()[index]);
       const Symbol *symbol =
           variable == nullptr ? nullptr : resolve(variable->name());
       if (symbol == nullptr || symbol->parameterDeclaration == nullptr) {
@@ -18670,6 +19132,12 @@ private:
     for (SemanticType &argument : result.arguments) {
       argument = substituteType(argument, substitution);
     }
+    for (SemanticType &argument : result.lambdaEnclosingClassTypes) {
+      argument = substituteType(argument, substitution);
+    }
+    for (SemanticType &argument : result.lambdaEnclosingFunctionTypes) {
+      argument = substituteType(argument, substitution);
+    }
     for (CompileTimeValue &argument : result.valueArguments) {
       if (argument.kind != CompileTimeValue::Parameter) {
         continue;
@@ -18679,6 +19147,19 @@ private:
         argument = found->second;
       }
     }
+    const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
+      for (CompileTimeValue &argument : values) {
+        if (argument.kind != CompileTimeValue::Parameter) {
+          continue;
+        }
+        const auto found = substitution.values.find(argument.parameterId);
+        if (found != substitution.values.end()) {
+          argument = found->second;
+        }
+      }
+    };
+    substituteValues(result.lambdaEnclosingClassValues);
+    substituteValues(result.lambdaEnclosingFunctionValues);
     if (result.arrayLengthParameterId != 0) {
       const auto found =
           substitution.values.find(result.arrayLengthParameterId);
@@ -18881,10 +19362,34 @@ private:
       if (type.kind == SemanticType::Lambda) {
         const LambdaInfo *lambda = sourceModel.findLambda(type.lambdaId);
         if (lambda != nullptr && lambda->declaration != nullptr) {
-          semanticModel.record(*lambda->declaration, *lambda);
+          LambdaInfo concrete = *lambda;
+          if (const SemanticType *returnType = type.lambdaReturnType();
+              returnType != nullptr &&
+              type.lambdaParameterTypes().size() ==
+                  concrete.parameterTypes.size() &&
+              type.lambdaCaptureTypes().size() == concrete.captures.size()) {
+            concrete.returnType = *returnType;
+            concrete.parameterTypes.assign(type.lambdaParameterTypes().begin(),
+                                           type.lambdaParameterTypes().end());
+            for (std::size_t index = 0; index < concrete.captures.size();
+                 ++index) {
+              concrete.captures[index].type = type.lambdaCaptureTypes()[index];
+              concrete.captures[index].traits =
+                  typeTraits(concrete.captures[index].type);
+            }
+            concrete.traits =
+                lambdaTraitsForCaptures(type.lambdaCaptureTypes());
+          }
+          semanticModel.record(*concrete.declaration, std::move(concrete));
         }
       }
       for (const SemanticType &argument : type.arguments) {
+        self(argument, self);
+      }
+      for (const SemanticType &argument : type.lambdaEnclosingClassTypes) {
+        self(argument, self);
+      }
+      for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
         self(argument, self);
       }
     };
@@ -19242,6 +19747,22 @@ private:
 
     const SemanticType returnType =
         typeOf(function.returnType(), function.returnMutability());
+    if (function.receiverMutability() == ReceiverMutability::Consuming) {
+      if (name.kind != OverloadedOperator::Call) {
+        fail("A consuming receiver is supported only by operator().");
+      }
+      if (function.isVirtual() || function.isOverride() || function.isPure() ||
+          (currentClass &&
+           classInfo(*currentClass).kind == ClassKind::Interface)) {
+        fail("operator() && cannot be virtual, pure, overriding, or an "
+             "interface requirement in the bounded consuming-call model.");
+      }
+      if (returnType.kind == SemanticType::Reference ||
+          typeTraits(returnType).containsBorrowedState) {
+        fail("operator() && cannot return borrowed state from its consumed "
+             "receiver.");
+      }
+    }
     if ((comparisonOperator ||
          name.kind == OverloadedOperator::ContextualBool) &&
         returnType != SemanticType::Bool) {
@@ -19268,7 +19789,7 @@ private:
     }
     if ((comparisonOperator ||
          name.kind == OverloadedOperator::ContextualBool) &&
-        function.receiverMutability() == ReceiverMutability::Mutable) {
+        function.receiverMutability() != ReceiverMutability::ReadOnly) {
       fail(std::string(operatorSourceSpelling(name.kind)) +
            " must use a read-only receiver.");
     }
@@ -23233,8 +23754,7 @@ private:
                ? symbol->type.referenceAccess == AccessMode::Mutable
                : symbol->assignable &&
                      (symbol->ownerClass == 0 || symbol->staticMember ||
-                      currentReceiverMutability ==
-                          ReceiverMutability::Mutable));
+                      receiverAllowsMutation(currentReceiverMutability)));
       return expressionInfo(std::move(type), ValueCategory::Place,
                             mutableAccess ? AccessMode::Mutable
                                           : AccessMode::ReadOnly);
@@ -23252,8 +23772,7 @@ private:
     }
     if (dynamic_cast<const This *>(&expr) != nullptr) {
       return expressionInfo(std::move(type), ValueCategory::Place,
-                            currentReceiverMutability ==
-                                    ReceiverMutability::Mutable
+                            receiverAllowsMutation(currentReceiverMutability)
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly);
     }
@@ -25339,7 +25858,7 @@ private:
       }
       return symbol->assignable &&
              (symbol->ownerClass == 0 || symbol->staticMember ||
-              currentReceiverMutability == ReceiverMutability::Mutable);
+              receiverAllowsMutation(currentReceiverMutability));
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
       const SemanticType memberObjectType = memberAccessObjectType(*get);
@@ -25377,8 +25896,7 @@ private:
 
   [[nodiscard]] std::optional<ResolvedFieldUse>
   receiverRestrictedField(const ExprPtr &expression) const {
-    if (!currentClass ||
-        currentReceiverMutability == ReceiverMutability::Mutable ||
+    if (!currentClass || receiverAllowsMutation(currentReceiverMutability) ||
         currentStaticMemberFunction || !expression) {
       return std::nullopt;
     }
@@ -25497,7 +26015,7 @@ private:
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
       return memberReceiverIsMutable(*member);
     }
-    return currentReceiverMutability == ReceiverMutability::Mutable;
+    return receiverAllowsMutation(currentReceiverMutability);
   }
 
   [[nodiscard]] const ClassInfo *classInfo(const SemanticType &type) const {
@@ -25624,11 +26142,10 @@ private:
     if (!currentClass || scopes.empty()) {
       return;
     }
-    scopes.back().insert_or_assign(
-        std::string(receiverStateName),
-        Symbol{.type = openClassType(*currentClass),
-               .assignable =
-                   currentReceiverMutability == ReceiverMutability::Mutable});
+    scopes.back().insert_or_assign(std::string(receiverStateName),
+                                   Symbol{.type = openClassType(*currentClass),
+                                          .assignable = receiverAllowsMutation(
+                                              currentReceiverMutability)});
   }
 
   [[nodiscard]] Symbol *receiverStateSymbol() {
@@ -26005,6 +26522,9 @@ private:
   }
 
   void requireInitializedReceiver(const Token &location) {
+    if (currentReceiverMutability == ReceiverMutability::Consuming) {
+      return;
+    }
     const Symbol *receiver = receiverStateSymbol();
     if (receiver == nullptr || receiver->projectedValueStates.empty()) {
       return;

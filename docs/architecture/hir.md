@@ -49,18 +49,28 @@ Concrete class instances retain substituted bases, fields, kind,
 abstract/polymorphic state, transfer/share facts and nominal policies, virtual
 roots, and structured base/field initializers. Function instances retain exact
 linkage, external symbol where applicable, resolved dispatch identities, and
-callable/borrow summaries. Callable parameters and call values use an explicit
-boundary enum rather than a generic "non-escaping" boolean. The only boundary
+callable/borrow summaries. Each `HirLambda` retains its exact concrete semantic
+type, including the lexical declaration, physical signature/captures, and
+enclosing generic identity. Function-instance indexing and callable-target
+selection compare this full type; matching only a lexical lambda ID or closure
+shape would merge distinct generic bodies. Callable parameters and call values
+use an explicit boundary enum rather than a generic "non-escaping" boolean. The
+only boundary
 HIR currently produces is `Confined`; `Owned` is reserved vocabulary for a
 later slice that must also carry environment movement and cleanup. Confined
 signatures retain exact `void`, `bool`, or context-supplied non-reference value
 results without tracked borrowed state or lambda identity after concrete
-generic substitution. Every signature carries its required read/mut
+generic substitution. Every signature carries its required read/mut/once
 invocation capability and the concrete selected lambda or class-operator
 capability. Callable call values carry the selected capability independently
 from their confined boundary. Callable parameter records are canonicalized by
-parameter index before crossing into MIR. `Once` remains absent from valid HIR
-until consuming callable state is implemented. A
+parameter index before crossing into MIR. Forwarding summaries are relations
+between a source parameter and a concrete target parameter, so branch-local
+source call sites that resolve to the same relation are collapsed after
+semantic move-state analysis has proved their mutual exclusivity. `Once`
+requirements reach HIR only after direct invocation or transitive forwarding
+has an explicit ownership move; a selected trailing-`&&` call operator remains
+distinct from reusable read and mutable targets. A
 program-entry function additionally retains its semantic entry kind. The
 owned-argument form turns the exact resolved source-defined append
 `FunctionId` into a concrete `HirFunctionInstanceId` for the canonical

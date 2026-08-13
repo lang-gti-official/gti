@@ -30,7 +30,10 @@ Aliases are transparent names and do not introduce new nominal types.
 
 Bindings and parameters are immutable unless declared `mut`. Fields are also
 immutable unless declared `mut`. Methods have read-only receivers unless their
-declaration has a trailing `mut` qualifier.
+declaration has a trailing `mut` qualifier. The bounded trailing `&&` receiver
+qualifier is available only on `operator()` and denotes consuming access, not a
+general rvalue-reference type. A consuming call operator may mutate its
+receiver while consuming it.
 
 `T&` denotes a non-null read-only borrow of `T`. `mut T&` denotes a non-null
 writable borrow. Reference binding and escape are subject to the ownership
@@ -192,7 +195,26 @@ concrete-over-generic preference.
 
 Receiver mutability may distinguish method overloads. A read-only receiver can
 select only a read-only method; a mutable receiver prefers the otherwise exact
-mutable overload when both exist.
+mutable overload when both exist. `operator()` additionally admits a consuming
+overload with trailing `&&`. It is available only through an explicitly moved
+receiver, and an otherwise exact consuming overload is preferred for that
+form. Read-only, mutable, and consuming call-operator overloads may coexist.
+
+A consuming call operator is non-virtual, has a body, and cannot implement an
+interface contract. Its result cannot be a reference or contain tracked
+borrowed state. Invocation consumes the exact source place under the ordinary
+move-state rules; a later possible read, move, or
+invocation is ill-formed. A confined generic call written as
+`std::move(operation)()` requires at-most-once invocation and may select an
+exact consuming target or a reusable read/mutable target. Reusable clients do
+not accept a consuming-only target.
+
+The consumed receiver must not structurally require active cleanup. This
+includes cleanup inherited through a base, field, fixed array, owner/storage
+component, concrete generic substitution, or callable capture. GTI does not
+yet have a full-expression-owned receiver representation that can transfer and
+clean up such state at the language-defined boundary, so both direct calls and
+concrete generic once-call selections are rejected before HIR.
 
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.

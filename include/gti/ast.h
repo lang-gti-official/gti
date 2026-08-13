@@ -83,7 +83,13 @@ enum class Mutability {
 enum class ReceiverMutability {
   ReadOnly,
   Mutable,
+  Consuming,
 };
+
+[[nodiscard]] constexpr bool
+receiverAllowsMutation(ReceiverMutability mutability) {
+  return mutability != ReceiverMutability::ReadOnly;
+}
 
 enum class LanguageLinkage {
   Gti,

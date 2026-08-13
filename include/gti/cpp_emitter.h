@@ -408,16 +408,170 @@ inline const std::remove_reference_t<T> &read_only_receiver(T &&value) noexcept 
   return value;
 }
 
+template <typename T>
+inline std::remove_reference_t<T> &mutable_receiver(T &&value) noexcept {
+  return static_cast<std::remove_reference_t<T> &>(value);
+}
+
 template <typename T> struct exact_type {};
 
-template <typename Callable, typename... Args>
-inline decltype(auto) invoke(Callable &callable, Args &&...args) {
+enum class callable_capability { read_call, mutable_call, once_call };
+
+enum class callable_binding : std::uint8_t {
+  value = 1,
+  read_reference = 2,
+  mutable_reference = 4,
+};
+
+template <std::uint8_t Allowed, typename T> struct call_argument {};
+
+template <typename Parameter, typename Argument>
+inline constexpr bool exact_call_type_compatible =
+    std::is_same_v<Parameter, Argument> ||
+    (std::is_pointer_v<Parameter> &&
+     std::is_same_v<Argument, std::nullptr_t>) ||
+    (std::is_pointer_v<Parameter> && std::is_pointer_v<Argument> &&
+     std::is_same_v<std::remove_cv_t<std::remove_pointer_t<Parameter>>,
+                    std::remove_cv_t<std::remove_pointer_t<Argument>>> &&
+     (std::is_const_v<std::remove_pointer_t<Parameter>> ||
+      !std::is_const_v<std::remove_pointer_t<Argument>>));
+
+template <callable_binding Binding, typename T> struct call_parameter {
+  template <std::uint8_t Allowed, typename Argument>
+    requires((Allowed & static_cast<std::uint8_t>(Binding)) != 0 &&
+             exact_call_type_compatible<T, Argument>)
+  call_parameter(call_argument<Allowed, Argument>) {}
+};
+
+template <callable_capability Capability, typename... Parameters>
+struct exact_call {
+  exact_call() = default;
+
+  template <typename... Arguments>
+    requires(sizeof...(Parameters) == sizeof...(Arguments) &&
+             (std::is_constructible_v<Parameters, Arguments> && ...))
+  exact_call(const exact_call<Capability, Arguments...> &) {}
+};
+
+template <callable_capability Target, callable_capability Source,
+          typename... Parameters>
+inline exact_call<Target, Parameters...>
+retag_call(exact_call<Source, Parameters...>) {
+  return {};
+}
+
+template <typename Callable, typename... Parameters, typename... Args>
+inline decltype(auto)
+invoke_read(Callable &&callable,
+            exact_call<callable_capability::read_call, Parameters...> selected,
+            Args &&...args) {
   if constexpr (requires {
-                  __gti_invoke(callable, std::forward<Args>(args)...);
+                  __gti_invoke(
+                      read_only_receiver(std::forward<Callable>(callable)),
+                      selected,
+                      std::forward<Args>(args)...);
                 }) {
-    return __gti_invoke(callable, std::forward<Args>(args)...);
+    return __gti_invoke(
+        read_only_receiver(std::forward<Callable>(callable)),
+        selected, std::forward<Args>(args)...);
   } else {
-    return callable(std::forward<Args>(args)...);
+    return read_only_receiver(std::forward<Callable>(callable))(
+        std::forward<Args>(args)...);
+  }
+}
+
+template <typename Callable, typename... Parameters, typename... Args>
+inline decltype(auto) invoke_mutable(
+    Callable &&callable,
+    exact_call<callable_capability::mutable_call, Parameters...> selected,
+    Args &&...args) {
+  if constexpr (requires {
+                  __gti_invoke(
+                      mutable_receiver(std::forward<Callable>(callable)),
+                      selected,
+                      std::forward<Args>(args)...);
+                }) {
+    return __gti_invoke(
+        mutable_receiver(std::forward<Callable>(callable)),
+        selected, std::forward<Args>(args)...);
+  } else if constexpr (requires {
+                         __gti_invoke(
+                             read_only_receiver(
+                                 std::forward<Callable>(callable)),
+                             retag_call<callable_capability::read_call>(
+                                 selected),
+                             std::forward<Args>(args)...);
+                       }) {
+    return __gti_invoke(
+        read_only_receiver(std::forward<Callable>(callable)),
+        retag_call<callable_capability::read_call>(selected),
+        std::forward<Args>(args)...);
+  } else {
+    return read_only_receiver(std::forward<Callable>(callable))(
+        std::forward<Args>(args)...);
+  }
+}
+
+template <typename Callable, typename... Parameters, typename... Args>
+inline decltype(auto)
+invoke_once(Callable &&callable,
+            exact_call<callable_capability::once_call, Parameters...> selected,
+            Args &&...args) {
+  if constexpr (requires {
+                  __gti_invoke(
+                      std::move(callable),
+                      selected,
+                      std::forward<Args>(args)...);
+                }) {
+    return __gti_invoke(
+        std::move(callable), selected, std::forward<Args>(args)...);
+  } else if constexpr (requires {
+                         __gti_invoke(
+                             mutable_receiver(callable),
+                             retag_call<callable_capability::mutable_call>(
+                                 selected),
+                             std::forward<Args>(args)...);
+                       }) {
+    return __gti_invoke(
+        mutable_receiver(callable),
+        retag_call<callable_capability::mutable_call>(selected),
+        std::forward<Args>(args)...);
+  } else if constexpr (requires {
+                         __gti_invoke(
+                             read_only_receiver(callable),
+                             retag_call<callable_capability::read_call>(
+                                 selected),
+                             std::forward<Args>(args)...);
+                       }) {
+    return __gti_invoke(
+        read_only_receiver(callable),
+        retag_call<callable_capability::read_call>(selected),
+        std::forward<Args>(args)...);
+  } else {
+    return read_only_receiver(callable)(std::forward<Args>(args)...);
+  }
+}
+
+template <typename Callable, callable_capability Capability,
+          typename... Parameters, typename... Args>
+inline decltype(auto)
+invoke_selected(Callable &&callable,
+                exact_call<Capability, Parameters...> selected,
+                Args &&...args) {
+  if constexpr (Capability == callable_capability::once_call) {
+    return __gti_invoke(std::forward<Callable>(callable), selected,
+                        std::forward<Args>(args)...);
+  } else if constexpr (Capability == callable_capability::mutable_call) {
+    return __gti_invoke(mutable_receiver(callable), selected,
+                        std::forward<Args>(args)...);
+  } else if constexpr (requires {
+                         __gti_invoke(read_only_receiver(callable), selected,
+                                      std::forward<Args>(args)...);
+                       }) {
+    return __gti_invoke(read_only_receiver(callable), selected,
+                        std::forward<Args>(args)...);
+  } else {
+    return read_only_receiver(callable)(std::forward<Args>(args)...);
   }
 }
 
@@ -1396,17 +1550,35 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
             semantics == nullptr ? nullptr
                                  : semantics->findDeferredCallableCall(expr);
         deferred != nullptr) {
-      output << "::gti_internal::backend::invoke(";
-      if (deferred->capability == CallableInvocationCapability::Read) {
-        output << "::gti_internal::backend::read_only_receiver(";
-      }
+      output << "::gti_internal::backend::"
+             << (deferred->capability == CallableInvocationCapability::Read
+                     ? "invoke_read"
+                 : deferred->capability == CallableInvocationCapability::Mutable
+                     ? "invoke_mutable"
+                     : "invoke_once")
+             << '(';
       emitExpression(expr.callee());
-      if (deferred->capability == CallableInvocationCapability::Read) {
-        output << ')';
-      }
-      if (!expr.arguments().empty()) {
+      output << ", ";
+      emitExactCallTag(deferred->capability, deferred->parameterTypes,
+                       expr.arguments());
+      for (const ExprPtr &argument : expr.arguments()) {
         output << ", ";
-        emitArguments(expr.arguments());
+        emitExpression(argument);
+      }
+      output << ')';
+      return;
+    }
+    if (const ResolvedLambdaCallInfo *lambdaCall =
+            semantics == nullptr ? nullptr : semantics->findLambdaCall(expr);
+        lambdaCall != nullptr && isExplicitMoveCallReceiver(expr.callee())) {
+      output << "::gti_internal::backend::invoke_selected(";
+      emitExpression(expr.callee());
+      output << ", ";
+      emitExactCallTag(lambdaCall->capability, lambdaCall->parameterTypes,
+                       expr.arguments(), true);
+      for (const ExprPtr &argument : expr.arguments()) {
+        output << ", ";
+        emitExpression(argument);
       }
       output << ')';
       return;
@@ -2056,12 +2228,19 @@ private:
     // source declarations.
     static constexpr std::string_view helperNames[] = {
         "Args",
+        "Allowed",
+        "Argument",
+        "Arguments",
         "Array",
+        "Binding",
+        "Capability",
         "Callable",
         "Count",
         "Error",
         "Index",
         "Left",
+        "Parameters",
+        "Parameter",
         "Result",
         "Right",
         "Source",
@@ -2087,6 +2266,10 @@ private:
         "bitwise_xor_assign",
         "bits",
         "callable",
+        "call_argument",
+        "call_parameter",
+        "callable_binding",
+        "callable_capability",
         "capacity",
         "capacity_",
         "checked_add",
@@ -2104,6 +2287,8 @@ private:
         "empty_owner_error",
         "elements",
         "error",
+        "exact_call",
+        "exact_call_type_compatible",
         "exact_type",
         "expected_result",
         "forward_pack_argument",
@@ -2112,6 +2297,10 @@ private:
         "index",
         "initialized_",
         "invoke",
+        "invoke_mutable",
+        "invoke_once",
+        "invoke_read",
+        "invoke_selected",
         "left",
         "lower",
         "make_unexpected_result",
@@ -2124,9 +2313,13 @@ private:
         "modulo",
         "multiply",
         "multiply_assign",
+        "mutable_call",
+        "mutable_reference",
+        "mutable_receiver",
         "negate",
         "numeric_cast",
         "numeric_conversion_error",
+        "once_call",
         "offset",
         "other",
         "outside",
@@ -2142,17 +2335,21 @@ private:
         "promoted_left",
         "promoted_right",
         "read",
+        "read_call",
+        "read_reference",
         "read_mut",
         "read_only_receiver",
         "release",
         "relocate_to",
         "remainder_assign",
+        "retag_call",
         "requested",
         "result",
         "right",
         "saturating_add",
         "saturating_mul",
         "saturating_sub",
+        "selected",
         "shift_count",
         "shift_left",
         "shift_left_assign",
@@ -2652,10 +2849,114 @@ private:
            semantics->unsafeOperation(expression) == operation;
   }
 
+  [[nodiscard]] bool isExplicitMoveCallReceiver(const ExprPtr &receiver) const {
+    const Expr *candidate = receiver.get();
+    while (const auto *grouping = dynamic_cast<const Grouping *>(candidate)) {
+      candidate = grouping->expression().get();
+    }
+    const auto *call = dynamic_cast<const Call *>(candidate);
+    const ResolvedCallInfo *resolution = call == nullptr || semantics == nullptr
+                                             ? nullptr
+                                             : semantics->findCall(*call);
+    return resolution != nullptr &&
+           resolution->intrinsic == IntrinsicKind::Move;
+  }
+
+  void emitExactCallValueType(const SemanticType &type,
+                              const ExprPtr *fallback = nullptr) {
+    if ((type == SemanticType::Void || type == SemanticType::Unknown) &&
+        fallback != nullptr) {
+      output << "std::remove_cvref_t<decltype(";
+      emitExpression(*fallback);
+      output << ")>";
+    } else if (type.kind == SemanticType::Reference &&
+               type.arguments.size() == 1) {
+      emitSemanticType(type.arguments.front());
+    } else {
+      emitSemanticType(type);
+    }
+  }
+
+  void emitExactCallParameter(const SemanticType &type,
+                              const ExprPtr *fallback = nullptr) {
+    output << "::gti_internal::backend::call_parameter<"
+              "::gti_internal::backend::callable_binding::";
+    if (type.kind != SemanticType::Reference) {
+      output << "value";
+    } else if (type.referenceAccess == AccessMode::Mutable) {
+      output << "mutable_reference";
+    } else {
+      output << "read_reference";
+    }
+    output << ", ";
+    emitExactCallValueType(type, fallback);
+    output << '>';
+  }
+
+  void emitExactCallArgument(const SemanticType &type,
+                             const ExprPtr &argument) {
+    std::uint8_t allowed =
+        static_cast<std::uint8_t>(1); // callable_binding::value
+    if (semantics != nullptr) {
+      if (const ExpressionInfo *info = semantics->findExpression(*argument);
+          info != nullptr && info->category == ValueCategory::Place) {
+        allowed |= 2; // callable_binding::read_reference
+        if (info->access == AccessMode::Mutable) {
+          allowed |= 4; // callable_binding::mutable_reference
+        }
+      }
+    }
+    output << "::gti_internal::backend::call_argument<"
+           << static_cast<unsigned>(allowed) << ", ";
+    emitExactCallValueType(type, &argument);
+    output << '>';
+  }
+
+  void emitExactCallTagType(CallableInvocationCapability capability,
+                            std::span<const SemanticType> parameterTypes,
+                            std::span<const ExprPtr> arguments = {},
+                            bool selectedParameters = false) {
+    output << "::gti_internal::backend::exact_call<"
+              "::gti_internal::backend::callable_capability::";
+    switch (capability) {
+    case CallableInvocationCapability::Read:
+      output << "read_call";
+      break;
+    case CallableInvocationCapability::Mutable:
+      output << "mutable_call";
+      break;
+    case CallableInvocationCapability::Once:
+      output << "once_call";
+      break;
+    }
+    for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
+      const SemanticType &parameterType = parameterTypes[index];
+      output << ", ";
+      if (!selectedParameters && index < arguments.size()) {
+        emitExactCallArgument(parameterType, arguments[index]);
+      } else {
+        const ExprPtr *fallback =
+            index < arguments.size() ? &arguments[index] : nullptr;
+        emitExactCallParameter(parameterType, fallback);
+      }
+    }
+    output << '>';
+  }
+
+  void emitExactCallTag(CallableInvocationCapability capability,
+                        std::span<const SemanticType> parameterTypes,
+                        std::span<const ExprPtr> arguments = {},
+                        bool selectedParameters = false) {
+    emitExactCallTagType(capability, parameterTypes, arguments,
+                         selectedParameters);
+    output << "{}";
+  }
+
   void emitDispatchReceiver(const ExprPtr &receiver, CallDispatch dispatch,
                             const SemanticType &dispatchOwner,
                             ReceiverMutability mutability,
-                            bool forceDispatchOwner = false) {
+                            bool forceDispatchOwner = false,
+                            bool stabilizeMutableReceiver = false) {
     const bool qualify =
         (forceDispatchOwner || dispatch == CallDispatch::Virtual) &&
         dispatchOwner.kind == SemanticType::Class;
@@ -2667,7 +2968,13 @@ private:
       emitSemanticType(dispatchOwner);
       output << " &>(";
     }
+    if (stabilizeMutableReceiver) {
+      output << "::gti_internal::backend::mutable_receiver(";
+    }
     emitExpression(receiver);
+    if (stabilizeMutableReceiver) {
+      output << ')';
+    }
     if (qualify) {
       output << ')';
     }
@@ -2676,6 +2983,23 @@ private:
   void emitOperatorMethodCall(const ResolvedOperatorInfo &resolved,
                               const ExprPtr &receiver,
                               std::span<const ExprPtr> arguments = {}) {
+    if (resolved.kind == OverloadedOperator::Call &&
+        isExplicitMoveCallReceiver(receiver)) {
+      output << "::gti_internal::backend::invoke_selected(";
+      emitExpression(receiver);
+      output << ", ";
+      emitExactCallTag(resolved.capability, resolved.parameterTypes, arguments,
+                       true);
+      for (const ExprPtr &argument : arguments) {
+        output << ", ";
+        emitExpression(argument);
+      }
+      output << ')';
+      return;
+    }
+    const bool stabilizeMutableReceiver =
+        resolved.receiverMutability == ReceiverMutability::Mutable &&
+        isExplicitMoveCallReceiver(receiver);
     const auto emitReceiver = [&] {
       if (resolved.receiverMutability == ReceiverMutability::ReadOnly) {
         output << "::gti_internal::backend::read_only_receiver(";
@@ -2689,7 +3013,8 @@ private:
            resolved.kind == OverloadedOperator::Greater ||
            resolved.kind == OverloadedOperator::GreaterEqual);
       emitDispatchReceiver(receiver, resolved.dispatch, resolved.dispatchOwner,
-                           resolved.receiverMutability, nativeComparison);
+                           resolved.receiverMutability, nativeComparison,
+                           stabilizeMutableReceiver);
       if (resolved.receiverMutability == ReceiverMutability::ReadOnly) {
         output << ')';
       }
@@ -4027,6 +4352,33 @@ private:
     emitExpression(callee);
   }
 
+  [[nodiscard]] bool currentClassHasConsumingCallOperator() const {
+    if (currentClass == nullptr) {
+      return false;
+    }
+    const auto contains = [&](const auto &self,
+                              const StmtList &members) -> bool {
+      for (const StmtPtr &member : members) {
+        if (const auto *function =
+                dynamic_cast<const FunctionDecl *>(member.get());
+            function != nullptr && function->operatorName() &&
+            function->operatorName()->kind == OverloadedOperator::Call &&
+            function->receiverMutability() == ReceiverMutability::Consuming) {
+          return true;
+        }
+        if (const auto *conditional =
+                dynamic_cast<const ConditionalStmt *>(member.get())) {
+          if (const StmtList *selected = conditional->activeBranch(target);
+              selected != nullptr && self(self, *selected)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    return contains(contains, currentClass->members());
+  }
+
   void emitFunctionSignature(const FunctionDecl &function) {
     const FunctionInfo *info =
         semantics == nullptr ? nullptr : semantics->findFunction(function);
@@ -4064,9 +4416,23 @@ private:
     output << emittedFunctionName(function) << '(';
     emitParameters(function.parameters());
     output << ')';
+    const bool refQualifiedCallFamily =
+        function.operatorName() &&
+        function.operatorName()->kind == OverloadedOperator::Call &&
+        currentClassHasConsumingCallOperator();
     if (classDepth > 0 && !function.isStatic() &&
         function.receiverMutability() == ReceiverMutability::ReadOnly) {
       output << " const";
+      if (refQualifiedCallFamily) {
+        output << " &";
+      }
+    } else if (classDepth > 0 && !function.isStatic() &&
+               function.receiverMutability() == ReceiverMutability::Mutable &&
+               refQualifiedCallFamily) {
+      output << " &";
+    } else if (classDepth > 0 && !function.isStatic() &&
+               function.receiverMutability() == ReceiverMutability::Consuming) {
+      output << " &&";
     }
     if (classDepth > 0 && !emittingDeferredMember && info != nullptr &&
         info->overrideMethod) {
@@ -4214,6 +4580,11 @@ private:
     }
     const FunctionInfo *info =
         semantics == nullptr ? nullptr : semantics->findFunction(function);
+    if (function.requiresClause() ||
+        (info != nullptr &&
+         (info->compilerPrivate || !info->requirements.empty()))) {
+      return;
+    }
     writeIndent();
     output << "friend ";
     if (function.returnType().reference &&
@@ -4226,7 +4597,45 @@ private:
       output << "const ";
     }
     output << currentClassLifecycle->declaration->name().lexeme
-           << " &__gti_callable";
+           << (function.receiverMutability() == ReceiverMutability::Consuming
+                   ? " &&__gti_callable"
+                   : " &__gti_callable");
+    output << ", ";
+    if (info != nullptr) {
+      emitExactCallTagType(
+          callableInvocationCapability(function.receiverMutability()),
+          info->parameterTypes, {}, true);
+    } else {
+      output << "::gti_internal::backend::exact_call<"
+                "::gti_internal::backend::callable_capability::";
+      switch (function.receiverMutability()) {
+      case ReceiverMutability::ReadOnly:
+        output << "read_call";
+        break;
+      case ReceiverMutability::Mutable:
+        output << "mutable_call";
+        break;
+      case ReceiverMutability::Consuming:
+        output << "once_call";
+        break;
+      }
+      for (const Parameter &parameter : function.parameters()) {
+        output << ", ";
+        output << "::gti_internal::backend::call_parameter<"
+                  "::gti_internal::backend::callable_binding::";
+        if (!parameter.type.reference) {
+          output << "value";
+        } else if (parameter.mutability == Mutability::Mutable) {
+          output << "mutable_reference";
+        } else {
+          output << "read_reference";
+        }
+        output << ", ";
+        emitType(parameter.type);
+        output << '>';
+      }
+      output << '>';
+    }
     for (std::size_t index = 0; index < function.parameters().size(); ++index) {
       output << ", ";
       emitParameter(function.parameters()[index],
@@ -4240,7 +4649,12 @@ private:
     if (!returnsVoid) {
       output << "return ";
     }
-    output << "__gti_callable." << emittedFunctionName(function) << '(';
+    if (function.receiverMutability() == ReceiverMutability::Consuming) {
+      output << "std::move(__gti_callable).";
+    } else {
+      output << "__gti_callable.";
+    }
+    output << emittedFunctionName(function) << '(';
     for (std::size_t index = 0; index < function.parameters().size(); ++index) {
       if (index != 0) {
         output << ", ";

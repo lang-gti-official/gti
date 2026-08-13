@@ -133,9 +133,35 @@ helper, so a mutable source binding cannot cause native overload resolution to
 prefer a mutable operator after GTI selected a read-only operation. Concrete
 restricted-method calls continue to name their resolved declaration directly.
 Deferred calls through confined generic callable parameters use the same rule:
-the semantic invocation capability selects either the const-view receiver for
-a read call or the writable local receiver for a mutable call. Native overload
-resolution therefore cannot replace the frontend-selected receiver capability.
+the emitter carries the semantic parameter types plus the required read,
+mutable, or once capability in a backend-private `exact_call` tag. Return types
+are not part of dispatch because GTI does not overload on return type. Hidden
+friend adapters carry their own exact receiver capability. The helper probes
+only the order permitted by semantics (`Once -> Mutable -> Read`,
+`Mutable -> Read`, or `Read`), while a direct concrete moved call carries its
+already-selected capability. Parameter tags retain whether the selected target
+takes a value, read reference, or mutable reference. Call-site tags carry the
+set of bindings permitted by the argument's checked value category and access;
+their constrained conversion admits exactly the same binding forms as semantic
+analysis. The underlying value type remains exact. When a generic expression
+type is deferred in the AST, the tag uses an unevaluated dependent `decltype`
+of that argument so C++ template instantiation materializes the concrete value
+type selected in HIR. Thus an `int32_t` call cannot reach a same-arity `bool`
+adapter through a native conversion, and native overload resolution does not
+repeat GTI semantic analysis. Raw-pointer tag compatibility is limited to the
+same two conversions semantics admits for calls: `null` to a raw pointer and
+mutable-to-read-only pointee access. Operators excluded by compiler-private
+visibility or the bounded trailing-requirements model do not receive adapters.
+
+A cleanup-free direct `std::move(value)(arguments)` whose selected exact target
+is reusable mutable invocation still consumes the source in GTI, but the
+bridge stabilizes that receiver as an lvalue for the selected C++ `&` member.
+A selected consuming target stays an rvalue and reaches the generated `&&`
+member. The bridge deliberately does not materialize a by-value helper local:
+that would clean up before sibling operands rather than at GTI's enclosing
+full-expression boundary. Semantics therefore rejects consuming invocation of
+a receiver that structurally requires active cleanup until the backend has an
+owned full-expression receiver representation.
 Native comparison methods are an existing transitional exception: they retain
 C++ `operator...` spellings, although the emitter pins their semantically
 selected dispatch owner and receiver mutability to prevent derived member
