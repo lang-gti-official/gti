@@ -76,6 +76,11 @@ struct NativeInputs {
   std::vector<std::string> trailingArguments;
 };
 
+// Native escape hatches may add ordinary compiler/linker policy, but they may
+// not replace driver-owned output, compilation mode, language/optimization,
+// target/data-layout selection, or response-file inputs.
+[[nodiscard]] bool isReservedNativeBuildArgument(std::string_view argument);
+
 class NativeCompileRequest final {
 public:
   NativeCompileRequest(std::string compiler,

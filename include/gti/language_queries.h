@@ -529,18 +529,23 @@ public:
         return note;
       };
       if (type != nullptr) {
-        if (type->cAbiRecord && type->cAbiLayout) {
+        if (type->cOpaqueHandle) {
+          result.notes.emplace_back(
+              "opaque C handle: address-only through raw pointers");
+        } else if (type->cAbiRecord && type->cAbiLayout) {
           result.notes.emplace_back(
               "C ABI record: size " +
               std::to_string(type->cAbiLayout->sizeBytes) +
               " bytes, ABI alignment " +
               std::to_string(type->cAbiLayout->abiAlignmentBytes) + " bytes");
         }
-        result.notes.emplace_back(
-            capabilityNote("transfer", occurrence->traits.transferCapable,
-                           type->transferPolicy));
-        result.notes.emplace_back(capabilityNote(
-            "share", occurrence->traits.shareCapable, type->sharePolicy));
+        if (!type->cOpaqueHandle) {
+          result.notes.emplace_back(
+              capabilityNote("transfer", occurrence->traits.transferCapable,
+                             type->transferPolicy));
+          result.notes.emplace_back(capabilityNote(
+              "share", occurrence->traits.shareCapable, type->sharePolicy));
+        }
       }
     } else if (occurrence->traits.ownership == OwnershipKind::Unique) {
       result.notes.emplace_back("move-only owner");

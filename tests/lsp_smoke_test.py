@@ -1996,6 +1996,8 @@ def test_diagnostic_capability_negotiation(executable, root):
 
 def test_current_language_diagnostics(executable, root):
     source = (
+        "class Cleanup { public: Cleanup() {} ~Cleanup() {} };\n"
+        "Cleanup global_cleanup{};\n"
         "int32_t runtime_value() { return 1; }\n"
         "constexpr int32_t called = runtime_value();\n"
         'int main(int bad) { string text = "value"; return bad; }\n'
@@ -2094,6 +2096,28 @@ def test_current_language_diagnostics(executable, root):
             "start": lsp_position(source, parameter_start),
             "end": lsp_position(source, parameter_start + 3),
         }
+
+        lifecycle = next(
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2061"
+        )
+        lifecycle_name = source.index("global_cleanup")
+        assert lifecycle["range"] == {
+            "start": lsp_position(source, lifecycle_name),
+            "end": lsp_position(
+                source, lifecycle_name + len("global_cleanup")
+            ),
+        }, lifecycle
+        assert lifecycle["data"]["phase"] == "semantics", lifecycle
+        assert lifecycle["data"]["hints"], lifecycle
+        assert lifecycle["relatedInformation"], lifecycle
+        destructor = source.index("~Cleanup")
+        assert lifecycle["relatedInformation"][0]["location"]["range"] == {
+            "start": lsp_position(source, destructor),
+            "end": lsp_position(source, destructor + 1),
+        }, lifecycle
+        assert "fixes" not in lifecycle["data"], lifecycle
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -2492,12 +2516,13 @@ def test_layout_query_tooling(executable, root):
         session.close()
 
 
-def test_checked_integer_tooling(executable, root):
+def test_integer_arithmetic_tooling(executable, root):
     source = (
         "#include <std/numeric>\n"
         "int main() {\n"
         "  auto result = std::checked_add(int8_t(1), int8_t(2));\n"
-        "  return result.value_or(int8_t(0));\n"
+        "  uint8_t wrapped = std::wrapping_add(uint8_t(255), uint8_t(1));\n"
+        "  return int32_t(result.value_or(int8_t(0))) + int32_t(wrapped);\n"
         "}\n"
     )
     path = root / "checked-integer-tooling.gti"
@@ -2581,6 +2606,43 @@ def test_checked_integer_tooling(executable, root):
         ]
         assert definition and definition["uri"].endswith("/std/numeric.gti"), definition
 
+        wrapping = source.index("wrapping_add")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 30,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, wrapping + 1),
+                },
+            }
+        )
+        wrapping_hover = session.receive_until(
+            lambda message: message.get("id") == 30
+        )["result"]
+        wrapping_rendered = json.dumps(wrapping_hover)
+        assert "uint8_t std::wrapping_add" in wrapping_rendered, wrapping_hover
+        assert "uint8_t left, uint8_t right" in wrapping_rendered, wrapping_hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 31,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, wrapping + 1),
+                },
+            }
+        )
+        wrapping_definition = session.receive_until(
+            lambda message: message.get("id") == 31
+        )["result"]
+        assert wrapping_definition and wrapping_definition["uri"].endswith(
+            "/std/numeric.gti"
+        ), wrapping_definition
+
         completion_source = source.replace(
             "std::checked_add(int8_t(1), int8_t(2))", "std::checked_"
         )
@@ -2644,7 +2706,16 @@ def test_native_record_tooling(executable, root):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "initialize",
-                "params": {"capabilities": {}},
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {
+                                "contentFormat": ["markdown", "plaintext"]
+                            },
+                            "publishDiagnostics": {"dataSupport": True},
+                        }
+                    }
+                },
             }
         )
         initialization = session.receive_until(
@@ -2654,6 +2725,7 @@ def test_native_record_tooling(executable, root):
             "legend"
         ]["tokenTypes"]
         attribute_type = token_types.index("decorator")
+        struct_type = token_types.index("struct")
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         session.send(
             {
@@ -2713,9 +2785,46 @@ def test_native_record_tooling(executable, root):
         opaque_hover = session.receive_until(
             lambda message: message.get("id") == 20
         )["result"]
-        assert opaque_hover and "[[c_opaque]]" in json.dumps(opaque_hover), (
-            opaque_hover
+        assert opaque_hover, opaque_hover
+        opaque_hover_value = opaque_hover["contents"]["value"]
+        assert opaque_hover_value.startswith(
+            "```gti\n[[c_opaque]]\nstruct NativeHandle;\n```"
+        ), opaque_hover
+        assert "*opaque C handle: address-only through raw pointers*" in (
+            opaque_hover_value
+        ), opaque_hover
+        assert "transfer-capable" not in opaque_hover_value, opaque_hover
+        assert "share-capable" not in opaque_hover_value, opaque_hover
+        opaque_name = source.index("NativeHandle")
+        assert opaque_hover["range"] == {
+            "start": lsp_position(source, opaque_name),
+            "end": lsp_position(source, opaque_name + len("NativeHandle")),
+        }, opaque_hover
+
+        opaque_use = source.index(
+            "NativeHandle", opaque_name + len("NativeHandle")
         )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 21,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, opaque_use + 1),
+                },
+            }
+        )
+        opaque_definition = session.receive_until(
+            lambda message: message.get("id") == 21
+        )["result"]
+        assert opaque_definition and opaque_definition["uri"] == uri, (
+            opaque_definition
+        )
+        assert opaque_definition["range"] == {
+            "start": lsp_position(source, opaque_name),
+            "end": lsp_position(source, opaque_name + len("NativeHandle")),
+        }, opaque_definition
 
         session.send(
             {
@@ -2741,6 +2850,10 @@ def test_native_record_tooling(executable, root):
                 opaque_attribute_position["character"],
             )
         ]["type"] == attribute_type
+        opaque_name_position = lsp_position(source, opaque_name)
+        assert tokens[
+            (opaque_name_position["line"], opaque_name_position["character"])
+        ]["type"] == struct_type
 
         invalid_source = (
             "[[c_abi]] struct Bad { bool value; };\n"
@@ -2808,13 +2921,55 @@ def test_native_record_tooling(executable, root):
         }, opaque_diagnostic
         assert "fixes" not in opaque_diagnostic.get("data", {}), opaque_diagnostic
 
-        incomplete_source = "[[c_abi]] struct Incomplete {\n  int32_t value;\n"
+        opaque_operation_source = (
+            "[[c_opaque]] struct NativeHandle;\n"
+            "extern \"C\" { NativeHandle* native_open(); }\n"
+            "int main() { NativeHandle* handle = native_open(); "
+            "unsafe { *handle; } return 0; }\n"
+        )
         session.send(
             {
                 "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": {"uri": uri, "version": 4},
+                    "contentChanges": [{"text": opaque_operation_source}],
+                },
+            }
+        )
+        invalid_opaque_operation = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+        )["params"]
+        operation_diagnostic = next(
+            item
+            for item in invalid_opaque_operation["diagnostics"]
+            if item.get("code") == "GTI-S2065"
+        )
+        dereference = opaque_operation_source.index("*handle")
+        assert operation_diagnostic["range"] == {
+            "start": lsp_position(opaque_operation_source, dereference),
+            "end": lsp_position(opaque_operation_source, dereference + 1),
+        }, operation_diagnostic
+        assert "Opaque C handle" in operation_diagnostic["message"], (
+            operation_diagnostic
+        )
+        assert operation_diagnostic["data"]["phase"] == "semantics", (
+            operation_diagnostic
+        )
+        assert "fixes" not in operation_diagnostic.get("data", {}), (
+            operation_diagnostic
+        )
+
+        incomplete_source = "[[c_abi]] struct Incomplete {\n  int32_t value;\n"
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 5},
                     "contentChanges": [{"text": incomplete_source}],
                 },
             }
@@ -2823,7 +2978,7 @@ def test_native_record_tooling(executable, root):
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 4
+            and message["params"].get("version") == 5
         )["params"]
         assert any(
             item.get("code") == "GTI-P0001"
@@ -3285,7 +3440,7 @@ def main():
     test_contextual_signed_integer_diagnostic(sys.argv[1], root)
     test_layout_query_tooling(sys.argv[1], root)
     test_native_record_tooling(sys.argv[1], root)
-    test_checked_integer_tooling(sys.argv[1], root)
+    test_integer_arithmetic_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"

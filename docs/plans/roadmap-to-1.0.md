@@ -760,10 +760,13 @@ target selection, containment, ordering, and automatic compilation of declared
 C and C++ sources. Project test targets build and execute independently in
 deterministic order. Step 4 now adds a verified SHA-256 whole-program cache for
 project build/run/test requests, with exact source-graph, effective policy,
-runtime/toolchain, structured native-input, argument, and admitted-environment
-identity. Cache hits skip parsing through native linking; corruption rebuilds
-before replacement; `--no-cache` bypasses lookup/publication; and direct mode
-remains uncached. Step 5 now adds canonical workspace membership, recursive
+runtime/toolchain, and admitted-environment identity. Requests with declared
+native sources, native search directories (including dependency-injecting
+environment paths), opaque native argument vectors, native link operands, or
+unresolved library/framework inputs bypass the cache until their transitive
+inputs are modeled. Cache hits skip parsing through
+native linking; corruption rebuilds before replacement; `--no-cache` bypasses
+lookup/publication; and direct mode remains uncached. Step 5 now adds canonical workspace membership, recursive
 source-only path dependency graphs, direct package include aliases,
 deterministic package selection/shared outputs, schema-7 metadata, and package
 cache provenance without network access. Exact Git/lockfile resolution and the

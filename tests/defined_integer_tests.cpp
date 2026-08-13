@@ -376,7 +376,7 @@ int main() {
           "checked_mul"}) {
       const bool checked = helper.starts_with("checked_");
       expect(generated.find(
-                 "return gti_internal::backend::" + std::string(helper) +
+                 "return ::gti_internal::backend::" + std::string(helper) +
                  (checked ? "<" : "(")) != std::string::npos,
              "ordinary std wrapper should lower through the selected private "
              "helper");
@@ -432,8 +432,12 @@ void testHelpersRequireExpectedSurface() {
     const std::string generated =
         lang::CppEmitter(standard, {}, nullptr, &result.semantics, &result.hir)
             .emit(result.program);
-    expect(generated.find("expected_result") == std::string::npos &&
-               generated.find("checked_add") == std::string::npos,
+    expect(generated.find("#include <expected>") == std::string::npos &&
+               generated.find("#include <nonstd/expected.hpp>") ==
+                   std::string::npos &&
+               generated.find("using expected_result =") == std::string::npos &&
+               generated.find("inline constexpr expected_result<") ==
+                   std::string::npos,
            "programs without expected values should not emit checked-result "
            "helpers or their native dependency");
   }

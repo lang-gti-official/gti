@@ -5,6 +5,7 @@
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
 
@@ -27,11 +28,14 @@ constexpr llvm::APFloat::roundingMode roundingMode =
 }
 
 [[nodiscard]] llvm::APFloat toAPFloat(BinaryFloat value) {
-  const std::uint8_t width = binaryFloatWidth(value.format);
+  const std::optional<std::uint8_t> width = binaryFloatWidth(value.format);
+  if (!width) {
+    llvm_unreachable("invalid GTI binary floating-point format");
+  }
   return llvm::APFloat(value.format == BinaryFloatFormat::Binary32
                            ? llvm::APFloat::IEEEsingle()
                            : llvm::APFloat::IEEEdouble(),
-                       llvm::APInt(width, value.bits));
+                       llvm::APInt(*width, value.bits));
 }
 
 [[nodiscard]] BinaryFloat fromAPFloat(const llvm::APFloat &value,
@@ -51,7 +55,7 @@ constexpr llvm::APFloat::roundingMode roundingMode =
 
 BinaryFloatParseResult parseBinaryFloat(std::string_view spelling,
                                         BinaryFloatFormat format) {
-  if (!isDecimalFloatSpelling(spelling)) {
+  if (!binaryFloatWidth(format) || !isDecimalFloatSpelling(spelling)) {
     return {.failure = BinaryFloatParseFailure::Invalid};
   }
 
@@ -132,7 +136,7 @@ std::optional<BinaryFloat> integerToBinaryFloat(CheckedIntegerValue value,
                                                 CheckedIntegerDomain domain,
                                                 BinaryFloatFormat format) {
   value = normalizeCheckedInteger(value);
-  if (!validCheckedIntegerDomain(domain) ||
+  if (!binaryFloatWidth(format) || !validCheckedIntegerDomain(domain) ||
       !checkedIntegerFits(value, domain)) {
     return std::nullopt;
   }
@@ -150,7 +154,7 @@ std::optional<BinaryFloat> integerToBinaryFloat(CheckedIntegerValue value,
 
 std::optional<CheckedIntegerValue>
 binaryFloatToInteger(BinaryFloat value, CheckedIntegerDomain domain) {
-  if (!validCheckedIntegerDomain(domain)) {
+  if (!validBinaryFloat(value) || !validCheckedIntegerDomain(domain)) {
     return std::nullopt;
   }
 

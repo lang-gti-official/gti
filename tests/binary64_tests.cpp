@@ -92,6 +92,11 @@ constantFloat(const lang::FrontendResult &result, std::string_view name) {
 }
 
 void testPrivateBinary64Authority() {
+  const auto invalidFormat = static_cast<lang::BinaryFloatFormat>(0xff);
+  expect(!lang::binaryFloatWidth(invalidFormat) &&
+             !lang::validBinaryFloat({.bits = 0, .format = invalidFormat}) &&
+             !lang::parseBinaryFloat("0.0", invalidFormat),
+         "binary floating entry points should reject unknown format tags");
   const lang::BinaryFloatParseResult tenth =
       lang::parseBinaryFloat("0.1", lang::BinaryFloatFormat::Binary64);
   const lang::BinaryFloatParseResult fifth =

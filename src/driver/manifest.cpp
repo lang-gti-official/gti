@@ -220,6 +220,16 @@ requiredString(const toml::table &table, std::string_view name,
 
 } // namespace
 
+std::string portableProjectNameKey(std::string_view name) {
+  std::string key(name);
+  std::transform(key.begin(), key.end(), key.begin(), [](char character) {
+    return character >= 'A' && character <= 'Z'
+               ? static_cast<char>(character - 'A' + 'a')
+               : character;
+  });
+  return key;
+}
+
 bool isPortableProjectName(std::string_view name) {
   const auto alphabetic = [](char character) {
     return (character >= 'A' && character <= 'Z') ||
@@ -231,10 +241,19 @@ bool isPortableProjectName(std::string_view name) {
   if (name.empty() || !alphabetic(name.front())) {
     return false;
   }
-  return std::all_of(name.begin() + 1, name.end(), [&](char character) {
-    return alphabetic(character) || digit(character) || character == '_' ||
-           character == '-';
-  });
+  if (!std::all_of(name.begin() + 1, name.end(), [&](char character) {
+        return alphabetic(character) || digit(character) || character == '_' ||
+               character == '-';
+      })) {
+    return false;
+  }
+  const std::string key = portableProjectNameKey(name);
+  if (key == "con" || key == "prn" || key == "aux" || key == "nul") {
+    return false;
+  }
+  return !(key.size() == 4 &&
+           (key.starts_with("com") || key.starts_with("lpt")) &&
+           key.back() >= '1' && key.back() <= '9');
 }
 
 namespace {
@@ -468,77 +487,12 @@ containedPaths(const toml::table &table, std::string_view name,
   return paths;
 }
 
-bool reservedForwardedLinkerComponent(std::string_view component) {
-  return component.starts_with('@') || component == "-o" ||
-         (component.size() > 2 && component.starts_with("-o")) ||
-         component == "--output" || component.starts_with("--output=") ||
-         component == "-r" || component == "-i" ||
-         component == "--relocatable" || component == "-shared" ||
-         component == "--shared" || component == "-dynamiclib" ||
-         component == "-dylib" || component == "-bundle" ||
-         component == "--config" || component.starts_with("--config=");
-}
-
-bool reservedForwardedLinkerArgument(std::string_view argument) {
-  constexpr std::string_view joinedPrefix = "-Xlinker=";
-  if (argument.starts_with(joinedPrefix)) {
-    return reservedForwardedLinkerComponent(
-        argument.substr(joinedPrefix.size()));
-  }
-  constexpr std::string_view listPrefix = "-Wl,";
-  if (!argument.starts_with(listPrefix)) {
-    return false;
-  }
-  std::string_view values = argument.substr(listPrefix.size());
-  while (true) {
-    const std::size_t separator = values.find(',');
-    const std::string_view component = values.substr(0, separator);
-    if (reservedForwardedLinkerComponent(component)) {
-      return true;
-    }
-    if (separator == std::string_view::npos) {
-      return false;
-    }
-    values.remove_prefix(separator + 1);
-  }
-}
-
-bool reservedManifestArgument(std::string_view argument) {
-  return reservedForwardedLinkerArgument(argument) ||
-         argument.starts_with('@') || argument == "-o" ||
-         (argument.size() > 2 && argument.starts_with("-o")) ||
-         argument.find(",@") != std::string_view::npos ||
-         argument == "--output" || argument.starts_with("--output=") ||
-         argument == "--options-file" ||
-         argument.starts_with("--options-file=") || argument == "--config" ||
-         argument.starts_with("--config=") || argument == "-x" ||
-         (argument.size() > 2 && argument.starts_with("-x")) ||
-         argument == "--language" || argument.starts_with("--language=") ||
-         argument.starts_with("/TC") || argument.starts_with("/TP") ||
-         argument.starts_with("/Tc") || argument.starts_with("/Tp") ||
-         argument.starts_with("/Fe") || argument.starts_with("/Fo") ||
-         argument.starts_with("/OUT:") || argument == "-c" ||
-         argument == "-E" || argument == "-S" || argument == "-M" ||
-         argument == "-MM" || argument == "-fsyntax-only" ||
-         argument == "--precompile" || argument == "-emit-llvm" ||
-         argument == "-emit-ast" || argument == "-analyze" ||
-         argument == "--analyze" || argument == "-shared" ||
-         argument == "--shared" || argument == "-dynamiclib" ||
-         argument == "-r" || argument == "-i" || argument == "/c" ||
-         argument == "/E" || argument == "/P" || argument == "/EP" ||
-         argument == "/Zs" || argument == "/LD" || argument == "-std" ||
-         argument.starts_with("-std=") || argument == "--std" ||
-         argument.starts_with("--std=") || argument.starts_with("/std:") ||
-         argument == "-ansi" || argument.starts_with("-O") ||
-         argument.starts_with("/O");
-}
-
 void rejectReservedArguments(std::vector<std::string> &arguments,
                              std::vector<SourceSpan> &declarations,
                              std::string_view field,
                              std::vector<Diagnostic> &diagnostics) {
   for (std::size_t index = 0; index < arguments.size();) {
-    if (!reservedManifestArgument(arguments[index])) {
+    if (!isReservedNativeBuildArgument(arguments[index])) {
       ++index;
       continue;
     }
@@ -546,7 +500,8 @@ void rejectReservedArguments(std::vector<std::string> &arguments,
         "GTI-B1005", declarations[index],
         "Native field '" + std::string(field) +
             "' cannot override the resolved language standard, optimization, "
-            "output, response-file inputs, or executable build mode."));
+            "target/data layout, output, response-file inputs, or executable "
+            "build mode."));
     arguments.erase(arguments.begin() + static_cast<std::ptrdiff_t>(index));
     declarations.erase(declarations.begin() +
                        static_cast<std::ptrdiff_t>(index));
@@ -1272,6 +1227,13 @@ discoverProjectManifest(const std::filesystem::path &startDirectory) {
       return result;
     }
     if (!missing) {
+      if (std::filesystem::is_symlink(candidateEntry)) {
+        result.status = ManifestDiscoveryStatus::FilesystemFailure;
+        result.diagnostics.push_back(buildDiagnostic(
+            "GTI-B1101", {pathString(candidate), 0, 1, 1},
+            "Discovered gti.toml must not be a symbolic link."));
+        return result;
+      }
       error.clear();
       if (!std::filesystem::is_regular_file(candidate, error) || error) {
         result.status = ManifestDiscoveryStatus::FilesystemFailure;
@@ -1406,7 +1368,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
         result.diagnostics.push_back(buildDiagnostic(
             "GTI-B1005",
             sourceSpan(sourceName, source, *packageTable->get("name")),
-            "Package names must match [A-Za-z][A-Za-z0-9_-]*."));
+            "Package names must match [A-Za-z][A-Za-z0-9_-]* and cannot use "
+            "a reserved portable device name."));
       }
     }
     if (version) {
@@ -1452,12 +1415,34 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
           "GTI-B1004", sourceSpan(sourceName, source, *targetsNode),
           "Manifest field 'targets' must be a table."));
     } else {
+      std::vector<std::pair<std::string, SourceSpan>> portableTargetNames;
       for (const auto &[targetKey, targetNode] : *targetsTable) {
         const std::string targetName(targetKey.str());
+        const SourceSpan targetNameSpan =
+            sourceSpan(sourceName, source, targetKey);
         if (!isPortableProjectName(targetName)) {
           result.diagnostics.push_back(buildDiagnostic(
-              "GTI-B1005", sourceSpan(sourceName, source, targetKey),
-              "Target names must match [A-Za-z][A-Za-z0-9_-]*."));
+              "GTI-B1005", targetNameSpan,
+              "Target names must match [A-Za-z][A-Za-z0-9_-]* and cannot use "
+              "a reserved portable device name."));
+        }
+        const std::string portableName = portableProjectNameKey(targetName);
+        const auto collision =
+            std::find_if(portableTargetNames.begin(), portableTargetNames.end(),
+                         [&portableName](const auto &candidate) {
+                           return candidate.first == portableName;
+                         });
+        if (collision != portableTargetNames.end()) {
+          Diagnostic diagnostic = buildDiagnostic(
+              "GTI-B1005", targetNameSpan,
+              "Target name '" + targetName +
+                  "' collides with another target under portable "
+                  "case-insensitive artifact identity.");
+          diagnostic.related.push_back(
+              {collision->second, "The conflicting target is declared here."});
+          result.diagnostics.push_back(std::move(diagnostic));
+        } else {
+          portableTargetNames.emplace_back(portableName, targetNameSpan);
         }
         const toml::table *targetTable = targetNode.as_table();
         if (targetTable == nullptr) {
@@ -1542,14 +1527,45 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
 
   std::vector<ProjectProfile> profiles{defaultProfile("dev"),
                                        defaultProfile("release")};
+  std::vector<std::pair<std::string, SourceSpan>> portableProfileNames;
   if (const toml::node *profilesNode = document.get("profiles")) {
     if (const toml::table *profilesTable = profilesNode->as_table()) {
       for (const auto &[profileKey, profileNode] : *profilesTable) {
         const std::string profileName(profileKey.str());
+        const SourceSpan profileNameSpan =
+            sourceSpan(sourceName, source, profileKey);
         if (!isPortableProjectName(profileName)) {
           result.diagnostics.push_back(buildDiagnostic(
-              "GTI-B1005", sourceSpan(sourceName, source, profileKey),
-              "Profile names must match [A-Za-z][A-Za-z0-9_-]*."));
+              "GTI-B1005", profileNameSpan,
+              "Profile names must match [A-Za-z][A-Za-z0-9_-]* and cannot "
+              "use a reserved portable device name."));
+        }
+        const std::string portableName = portableProjectNameKey(profileName);
+        const bool builtinCollision =
+            (portableName == "dev" && profileName != "dev") ||
+            (portableName == "release" && profileName != "release");
+        const auto collision = std::find_if(
+            portableProfileNames.begin(), portableProfileNames.end(),
+            [&portableName](const auto &candidate) {
+              return candidate.first == portableName;
+            });
+        if (builtinCollision || collision != portableProfileNames.end()) {
+          Diagnostic diagnostic = buildDiagnostic(
+              "GTI-B1005", profileNameSpan,
+              "Profile name '" + profileName +
+                  "' collides with another profile under portable "
+                  "case-insensitive artifact identity.");
+          if (collision != portableProfileNames.end()) {
+            diagnostic.related.push_back(
+                {collision->second,
+                 "The conflicting profile is declared here."});
+          } else {
+            diagnostic.hints.push_back("The built-in profile name is '" +
+                                       portableName + "'.");
+          }
+          result.diagnostics.push_back(std::move(diagnostic));
+        } else if (profileName != "dev" && profileName != "release") {
+          portableProfileNames.emplace_back(portableName, profileNameSpan);
         }
         const toml::table *profileTable = profileNode.as_table();
         if (profileTable == nullptr) {

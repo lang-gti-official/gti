@@ -221,9 +221,10 @@ C-linkage function shall not reuse the name of root-namespace GTI storage.
 The bounded ABI permits `void` results and fixed-width signed or unsigned
 integer, `float`, and `double` scalar parameters/results. It also permits valid
 `[[c_abi]]` records by value and one-level raw pointers whose pointee is `void`,
-one of those scalar types, or a valid `[[c_abi]]` record; the pointee may be
-qualified with `const`. Scalar, record, and raw-pointer parameters are
-immutable bindings passed by value. `bool`, `char`, enums, references, arrays,
+one of those scalar types, a valid `[[c_abi]]` record, or a `[[c_opaque]]`
+handle; the pointee may be qualified with `const`. Scalar, record, and
+raw-pointer parameters are immutable bindings passed by value. `bool`, `char`,
+enums, references, arrays,
 ordinary classes and structs, generics, owners, recoverable-result types,
 pointer-to-pointer types, and function pointers do not have C ABI forms.
 `std::string_view` is additionally permitted as a parameter only and lowers to
@@ -307,7 +308,8 @@ placement are toolchain concerns, not source-language semantics. Direct
 compilation remains valid without a project manifest.
 
 A native declaration does not select or link a library. The reference direct
-compiler forwards native toolchain options after `--` (for example `-- -lfoo`).
+compiler forwards accepted native toolchain options after `--` (for example
+`-- -lfoo`); driver-owned build invariants remain reserved.
 Project manifests may declare structured native C and C++ sources, search
 paths, exact link files, library and framework names, and native argument
 vectors at package, profile, or executable-target scope. Optional platform
@@ -326,11 +328,16 @@ C++, linker, and explicit raw arguments apply package, profile, then target so
 more-specific flags occur later. Within one fragment, exact link files precede
 libraries, which precede frameworks. A matching platform fragment is applied
 within its declaring scope. The most-specific base-table C standard wins;
-declared C++ sources use the project profile or CLI C++ standard. Output,
-compilation-mode, language-standard, optimization, and response-file overrides
-are reserved to the driver and are invalid in manifest argument lists.
+declared C++ sources use the project profile or CLI C++ standard. Recognized
+output, compilation-mode, language-standard, optimization, target, sysroot,
+data-layout, and response-file option families are reserved to the driver and
+are invalid in manifest argument lists. Raw compiler-driver/cc1 escapes and
+unjoined forwarded-linker escapes are also invalid because their following
+payload cannot be classified independently against those invariants.
 Compiler, linker, and raw argument arrays are trusted exact-argument escape
-hatches; embedded paths in them are not interpreted or package-contained. Only
+hatches; embedded paths in them are not interpreted or package-contained, and
+the driver cannot classify every vendor-specific ABI option. An admitted
+argument must not contradict the resolved target/data-layout contract. Only
 structured path fields receive containment validation. These settings are not
 a source language feature.
 

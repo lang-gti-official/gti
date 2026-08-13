@@ -92,6 +92,13 @@ new safety context, so dangerous operations in its body require their own
 checking, ownership checking, or any unrelated diagnostic. It states only that
 the programmer accepts the proof obligations of the gated operation.
 
+The pointee must still provide the representation required by the operation.
+In particular, `void*` and a pointer to a `[[c_opaque]]` handle remain
+address-only even inside `unsafe`: neither can be dereferenced, indexed, used
+for member access, or advanced. Opaque-handle pointers may still be copied,
+assigned, compared, passed, and returned as described in
+[`native-c-interop.md`](native-c-interop.md#opaque-native-handles).
+
 Pointer arithmetic accepts integer offsets. Adding or subtracting an integer
 produces the same pointer type; subtracting two identical non-`void` pointer
 types produces `int64_t` (the canonical type behind `std::ptrdiff_t`). Ordering
@@ -146,20 +153,25 @@ An `extern "C"` declaration may use a one-level raw pointer when its pointee is
 one of:
 
 - `void`;
-- a fixed-width signed or unsigned integer; or
-- `float` or `double`.
+- a fixed-width signed or unsigned integer;
+- `float` or `double`;
+- a valid passive `[[c_abi]]` record; or
+- a nominal `[[c_opaque]]` handle.
 
 The pointer may have a read-only pointee with `const`. Pointer parameters are
-immutable bindings. Pointers to GTI classes, enums, arrays, references,
-generic instances, owners, or `expected` values do not acquire a C ABI.
-Transparent aliases are validated after resolution.
+immutable bindings. Pointers to ordinary GTI classes, enums, arrays,
+references, generic instances, owners, or `expected` values do not acquire a C
+ABI. Transparent aliases are validated after resolution. A `[[c_abi]]` record
+has checked public representation; a `[[c_opaque]]` handle deliberately has no
+pointee representation and therefore retains the address-only restriction
+above.
 
 A declaration is not itself an unsafe operation. Calling a pointer-bearing C
 function is unsafe because the declaration cannot express native bounds,
 retention, nullability, ownership transfer, or aliasing requirements. A C call
 whose source-level signature contains only the existing fixed-width scalars,
-`float`, `double`, `void`, or the special non-retained `std::string_view` input remains
-valid in safe code.
+`float`, `double`, `void`, or the special non-retained `std::string_view` input
+remains valid in safe code.
 
 See [`native-c-interop.md`](native-c-interop.md) for symbol, ABI, and linking
 rules.

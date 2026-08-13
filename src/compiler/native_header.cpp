@@ -32,7 +32,11 @@ std::string emittedScope(std::string_view scope, std::size_t index) {
 }
 
 std::string qualifiedCppName(const ClassTypeInfo &info) {
-  std::string result = "::";
+  // Opaque handles are completed by the C++ consumer, so their public source
+  // name must remain the actual type rather than an alias to a private type
+  // that user code could not define. Passive records are compiler-defined and
+  // can safely expose a familiar alias to their isolated representation.
+  std::string result = info.cOpaqueHandle ? "::" : "::__gti_program::";
   for (std::size_t index = 0; index < info.namespaceScope.size(); ++index) {
     result += emittedScope(info.namespaceScope[index], index);
     result += "::";
@@ -53,6 +57,7 @@ std::string encodedCRecordName(const ClassTypeInfo &info) {
 
 void openCppNamespaces(std::ostream &output,
                        const std::vector<std::string> &scopes) {
+  output << "namespace __gti_program {\n";
   for (std::size_t index = 0; index < scopes.size(); ++index) {
     output << "namespace " << emittedScope(scopes[index], index) << " {\n";
   }
@@ -60,6 +65,24 @@ void openCppNamespaces(std::ostream &output,
 
 void closeCppNamespaces(std::ostream &output,
                         const std::vector<std::string> &scopes) {
+  for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+    output << "} // namespace "
+           << emittedScope(*scope, static_cast<std::size_t>(
+                                       std::distance(scope, scopes.rend()) - 1))
+           << "\n";
+  }
+  output << "} // namespace __gti_program\n";
+}
+
+void openPublicCppNamespaces(std::ostream &output,
+                             const std::vector<std::string> &scopes) {
+  for (std::size_t index = 0; index < scopes.size(); ++index) {
+    output << "namespace " << emittedScope(scopes[index], index) << " {\n";
+  }
+}
+
+void closePublicCppNamespaces(std::ostream &output,
+                              const std::vector<std::string> &scopes) {
   for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
     output << "} // namespace "
            << emittedScope(*scope, static_cast<std::size_t>(
@@ -87,6 +110,9 @@ public:
             "only by pointer.\n"
             " * C++ implementations may wrap arbitrary C++ internals, but "
             "must not let exceptions cross these functions.\n"
+            " * Define GTI_NATIVE_HEADER_NO_SOURCE_NAMES before inclusion to "
+            "suppress optional C++ record and function aliases. Opaque "
+            "handles retain their exact incomplete source identity.\n"
             " */\n\n"
             "#include <stddef.h>\n"
             "#include <stdint.h>\n"
@@ -310,9 +336,17 @@ private:
   }
 
   void emitCppForward(std::ostream &output, const NativeRecord &record) const {
-    openCppNamespaces(output, record.info->namespaceScope);
+    if (record.info->cOpaqueHandle) {
+      openPublicCppNamespaces(output, record.info->namespaceScope);
+    } else {
+      openCppNamespaces(output, record.info->namespaceScope);
+    }
     output << "struct " << record.declaration->name().lexeme << ";\n";
-    closeCppNamespaces(output, record.info->namespaceScope);
+    if (record.info->cOpaqueHandle) {
+      closePublicCppNamespaces(output, record.info->namespaceScope);
+    } else {
+      closeCppNamespaces(output, record.info->namespaceScope);
+    }
   }
 
   void emitCppRecord(std::ostream &output, const NativeRecord &record) const {
@@ -380,6 +414,41 @@ private:
     closeCppNamespaces(output, function.info->namespaceScope);
   }
 
+  void emitCppTypeAlias(std::ostream &output,
+                        const NativeRecord &record) const {
+    openPublicCppNamespaces(output, record.info->namespaceScope);
+    output << "using " << record.declaration->name().lexeme << " = "
+           << qualifiedCppName(*record.info) << ";\n";
+    closePublicCppNamespaces(output, record.info->namespaceScope);
+  }
+
+  void emitCppFunctionAlias(std::ostream &output,
+                            const NativeFunction &function) const {
+    openPublicCppNamespaces(output, function.info->namespaceScope);
+    output << "using ::__gti_program::";
+    for (std::size_t index = 0; index < function.info->namespaceScope.size();
+         ++index) {
+      output << emittedScope(function.info->namespaceScope[index], index)
+             << "::";
+    }
+    output << function.info->externalSymbol << ";\n";
+    closePublicCppNamespaces(output, function.info->namespaceScope);
+  }
+
+  void emitCppSourceNameAliases(std::ostream &output) const {
+    if (records.empty() && opaqueHandles.empty() && functions.empty()) {
+      return;
+    }
+    output << "#ifndef GTI_NATIVE_HEADER_NO_SOURCE_NAMES\n";
+    for (const NativeRecord &record : records) {
+      emitCppTypeAlias(output, record);
+    }
+    for (const NativeFunction &function : functions) {
+      emitCppFunctionAlias(output, function);
+    }
+    output << "#endif /* GTI_NATIVE_HEADER_NO_SOURCE_NAMES */\n\n";
+  }
+
   void emitCppBranch(std::ostream &output) const {
     output << "#ifdef __cplusplus\n\n";
     for (const NativeRecord &record : records) {
@@ -404,6 +473,7 @@ private:
     for (const NativeFunction &function : functions) {
       emitCppFunction(output, function);
     }
+    emitCppSourceNameAliases(output);
     output << '\n';
   }
 

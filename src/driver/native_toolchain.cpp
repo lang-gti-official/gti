@@ -104,7 +104,135 @@ bool canRenderWithReadableDoubleQuotes(std::string_view argument) {
   return true;
 }
 
+std::string asciiLower(std::string_view value) {
+  std::string lower(value);
+  for (char &character : lower) {
+    if (character >= 'A' && character <= 'Z') {
+      character = static_cast<char>(character - 'A' + 'a');
+    }
+  }
+  return lower;
+}
+
+bool isMsvcOptimizationArgument(std::string_view lower) {
+  if (lower == "/o" || lower == "/o1" || lower == "/o2" || lower == "/od" ||
+      lower == "/og" || lower == "/oi" || lower == "/oi-" || lower == "/os" ||
+      lower == "/ot" || lower == "/ox" || lower == "/oy" || lower == "/oy-") {
+    return true;
+  }
+  return lower.size() == 4 && lower.starts_with("/ob") && lower.back() >= '0' &&
+         lower.back() <= '3';
+}
+
+bool isMsvcForceLinkerArgument(std::string_view lower) {
+  return lower == "/force" || lower.starts_with("/force:");
+}
+
+bool reservedForwardedLinkerComponent(std::string_view component) {
+  const std::string lower = asciiLower(component);
+  return component.starts_with('@') || component == "-o" ||
+         (component.size() > 2 && component.starts_with("-o")) ||
+         component == "--output" || component.starts_with("--output=") ||
+         component == "-r" || component == "-i" ||
+         component == "--relocatable" || component == "-shared" ||
+         component == "--shared" || component == "-dynamiclib" ||
+         component == "-dylib" || component == "-bundle" ||
+         component == "--config" || component.starts_with("--config=") ||
+         component == "-arch" || component.starts_with("-arch=") ||
+         component == "-syslibroot" || component.starts_with("-syslibroot=") ||
+         component == "--sysroot" || component.starts_with("--sysroot=") ||
+         component == "-m" || component.starts_with("-m=") ||
+         component == "--architecture" ||
+         component.starts_with("--architecture=") || component == "-A" ||
+         component == "-platform_version" || component == "--oformat" ||
+         component.starts_with("--oformat=") || lower.starts_with("/machine:");
+}
+
+bool reservedForwardedLinkerArgument(std::string_view argument) {
+  constexpr std::string_view joinedPrefix = "-Xlinker=";
+  if (argument.starts_with(joinedPrefix)) {
+    return reservedForwardedLinkerComponent(
+        argument.substr(joinedPrefix.size()));
+  }
+  constexpr std::string_view listPrefix = "-Wl,";
+  if (!argument.starts_with(listPrefix)) {
+    return false;
+  }
+  std::string_view values = argument.substr(listPrefix.size());
+  while (true) {
+    const std::size_t separator = values.find(',');
+    const std::string_view component = values.substr(0, separator);
+    if (reservedForwardedLinkerComponent(component)) {
+      return true;
+    }
+    if (separator == std::string_view::npos) {
+      return false;
+    }
+    values.remove_prefix(separator + 1);
+  }
+}
+
 } // namespace
+
+bool isReservedNativeBuildArgument(std::string_view argument) {
+  const std::string lower = asciiLower(argument);
+  return reservedForwardedLinkerArgument(argument) || argument == "-Xclang" ||
+         argument.starts_with("-Xclang=") || argument == "-cc1" ||
+         argument == "-cc1as" || argument == "--driver-mode" ||
+         argument.starts_with("--driver-mode=") || argument == "-Xlinker" ||
+         argument.starts_with('@') || argument == "-o" ||
+         (argument.size() > 2 && argument.starts_with("-o")) ||
+         argument == "--output" || argument.starts_with("--output=") ||
+         argument == "--options-file" ||
+         argument.starts_with("--options-file=") || argument == "--config" ||
+         argument.starts_with("--config=") || argument == "-x" ||
+         (argument.size() > 2 && argument.starts_with("-x")) ||
+         argument == "--language" || argument.starts_with("--language=") ||
+         lower.starts_with("/tc") || lower.starts_with("/tp") ||
+         lower.starts_with("/fe") ||
+         (lower.starts_with("/fo") && !isMsvcForceLinkerArgument(lower)) ||
+         lower.starts_with("/out:") || argument == "-c" || argument == "-E" ||
+         argument == "-S" || argument == "-M" || argument == "-MM" ||
+         argument == "-fsyntax-only" || argument == "--precompile" ||
+         argument == "-emit-llvm" || argument == "-emit-ast" ||
+         argument == "-analyze" || argument == "--analyze" ||
+         argument == "-shared" || argument == "--shared" ||
+         argument == "-dynamiclib" || argument == "-r" || argument == "-i" ||
+         lower == "/c" || lower == "/e" || lower == "/p" || lower == "/ep" ||
+         lower == "/zs" || lower == "/ld" || argument == "-std" ||
+         argument.starts_with("-std=") || argument == "--std" ||
+         argument.starts_with("--std=") || lower.starts_with("/std:") ||
+         argument == "-ansi" || argument.starts_with("-O") ||
+         isMsvcOptimizationArgument(lower) || argument == "--target" ||
+         argument.starts_with("--target=") || argument == "-target" ||
+         argument.starts_with("-target=") || argument == "-arch" ||
+         argument.starts_with("-arch=") || argument == "-march" ||
+         argument.starts_with("-march=") || argument == "-mcpu" ||
+         argument.starts_with("-mcpu=") || argument == "-mfloat-abi" ||
+         argument.starts_with("-mfloat-abi=") || argument == "-mfpu" ||
+         argument.starts_with("-mfpu=") || argument == "-mthumb" ||
+         argument == "-marm" || argument == "-m" ||
+         argument == "--architecture" ||
+         argument.starts_with("--architecture=") || argument == "-A" ||
+         argument == "-platform_version" || argument == "--oformat" ||
+         argument.starts_with("--oformat=") || argument == "-m32" ||
+         argument == "-m64" || argument == "-EL" || argument == "-EB" ||
+         argument == "-mlittle-endian" || argument == "-mbig-endian" ||
+         argument == "--sysroot" || argument.starts_with("--sysroot=") ||
+         argument == "-isysroot" || argument.starts_with("-isysroot=") ||
+         argument == "-syslibroot" || argument.starts_with("-syslibroot=") ||
+         argument.starts_with("-mabi=") || argument == "-fsigned-char" ||
+         argument == "-funsigned-char" || argument == "-fno-signed-char" ||
+         argument == "-fno-unsigned-char" || argument == "-fabi-version" ||
+         argument.starts_with("-fabi-version=") ||
+         argument == "-fshort-enums" || argument == "-fshort-wchar" ||
+         argument == "-fno-short-wchar" || argument == "-fpack-struct" ||
+         argument.starts_with("-fpack-struct=") ||
+         lower.starts_with("/machine:") || lower.starts_with("/zp") ||
+         lower == "/j" || lower.starts_with("/arch:") ||
+         lower.starts_with("/favor:") || lower.starts_with("/vd") ||
+         lower.starts_with("/vm") || lower.starts_with("/zc:wchar_t");
+}
 
 ToolchainLayout discoverToolchainLayout(const char *driver) {
   const std::filesystem::path executable = executablePath(driver);

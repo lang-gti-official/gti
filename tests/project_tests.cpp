@@ -11,10 +11,16 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace {
+
+static_assert(
+    !std::is_constructible_v<
+        lang::driver::ProjectWorkspace, std::filesystem::path,
+        std::vector<lang::driver::ResolvedProjectPackage>, std::string, bool>);
 
 int failures = 0;
 
@@ -122,6 +128,27 @@ void testDiscoveryParsingAndResolution() {
            "silently selecting a parent project");
   }
 
+  const std::filesystem::path redirected = temporary.root() / "redirected";
+  expect(writeFile(redirected / "gti.toml", validManifest()),
+         "the redirected manifest fixture should be writable");
+  const std::filesystem::path redirectedMember =
+      temporary.root() / "redirected-member";
+  std::filesystem::create_directory(redirectedMember);
+  symlinkError.clear();
+  std::filesystem::create_symlink(redirected / "gti.toml",
+                                  redirectedMember / "gti.toml", symlinkError);
+  if (!symlinkError) {
+    const lang::driver::ManifestDiscoveryResult redirectedLocal =
+        lang::driver::discoverProjectManifest(redirectedMember);
+    expect(redirectedLocal.status ==
+                   lang::driver::ManifestDiscoveryStatus::FilesystemFailure &&
+               !redirectedLocal.path &&
+               findDiagnostic(redirectedLocal.diagnostics, "GTI-B1101") !=
+                   nullptr,
+           "manifest discovery should reject a valid local gti.toml symlink "
+           "before canonicalization can redirect package ownership");
+  }
+
   const lang::driver::ManifestLoadResult loaded =
       lang::driver::loadProjectManifest(manifest);
   expect(loaded.succeeded(), "a schema version 1 manifest should parse");
@@ -176,7 +203,7 @@ void testDiscoveryParsingAndResolution() {
     expect(plan.entry() == std::filesystem::canonical(source) &&
                plan.output().parent_path() == expectedDirectory &&
                plan.generatedSource() ==
-                   expectedDirectory / "intermediate/game.gti.cpp",
+                   expectedDirectory / ".gti-intermediate/game.gti.cpp",
            "project artifacts should use the deterministic project layout");
     expect(plan.optimization() == lang::OptimizationLevel::O3 &&
                plan.cppStandard() == lang::CppStandard::Cpp23 &&
@@ -283,6 +310,51 @@ void testManifestDiagnostics() {
              targetKind->primary.start < targetKind->primary.end,
          "manifest target kinds should accept only executable and test");
 
+  const std::string collidingTargets =
+      "manifest-version = 1\n"
+      "[package]\nname = \"sample\"\nversion = \"1.0.0\"\n"
+      "[targets.Tool]\nkind = \"executable\"\nroot = \"src/main.gti\"\n"
+      "[targets.tool]\nkind = \"executable\"\nroot = \"src/main.gti\"\n";
+  expect(writeFile(manifest, collidingTargets),
+         "the portable target-collision manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  const lang::Diagnostic *targetCollision =
+      findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(targetCollision != nullptr &&
+             targetCollision->message.find(
+                 "case-insensitive artifact identity") != std::string::npos &&
+             !targetCollision->related.empty(),
+         "case-only target names should be rejected before they can publish "
+         "the same artifact on a supported filesystem");
+
+  const std::string collidingProfiles =
+      validManifest("\n[profiles.Fast]\noptimization = 1\n"
+                    "[profiles.fast]\noptimization = 2\n");
+  expect(writeFile(manifest, collidingProfiles),
+         "the portable profile-collision manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  const lang::Diagnostic *profileCollision =
+      findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(profileCollision != nullptr &&
+             profileCollision->message.find(
+                 "case-insensitive artifact identity") != std::string::npos,
+         "case-only profile names should be rejected before sharing a build "
+         "directory on a supported filesystem");
+
+  const std::string reservedPackage =
+      "manifest-version = 1\n"
+      "[package]\nname = \"CON\"\nversion = \"1.0.0\"\n";
+  expect(writeFile(manifest, reservedPackage),
+         "the reserved portable-name manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  const lang::Diagnostic *reservedName =
+      findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(reservedName != nullptr &&
+             reservedName->message.find("reserved portable device name") !=
+                 std::string::npos,
+         "project artifact names should reject portable device names before "
+         "filesystem publication");
+
   expect(
       writeFile(temporary.root() / "outside.gti", "int main() { return 0; }\n"),
       "the escaping target fixture should be writable");
@@ -364,6 +436,21 @@ void testTargetSelectionDiagnostics() {
   expect(unknownProfile != nullptr && !unknownProfile->hints.empty() &&
              unknownProfile->hints.front().find("release") != std::string::npos,
          "unknown profiles should suggest the nearest available profile");
+
+  const std::string intermediateTarget =
+      "\n[targets.intermediate]\nkind = \"executable\"\n"
+      "root = \"src/alpha.gti\"\n";
+  expect(writeFile(temporary.root() / "gti.toml",
+                   validManifest(intermediateTarget)),
+         "the intermediate-named target manifest should be writable");
+  result = lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+      temporary.root(), std::nullopt, "dev", host));
+  expect(result.succeeded() && result.plan &&
+             result.plan->output().filename() == "intermediate" &&
+             result.plan->generatedSource().parent_path().filename() ==
+                 ".gti-intermediate",
+         "a user target named 'intermediate' should not collide with the "
+         "driver-owned generated-source directory");
 
   const lang::driver::ManifestDiscoveryResult missing =
       lang::driver::discoverProjectManifest(temporary.root().parent_path());
@@ -807,7 +894,9 @@ void testNativeManifestDiagnostics() {
   expect(writeFile(manifestPath,
                    nativeManifest("[package.native]\n"
                                   "raw-args = [\"@flags.rsp\", \"-o\", "
-                                  "\"-oelsewhere\", \"-c\", \"-x\"]\n"
+                                  "\"-oelsewhere\", \"-c\", \"-x\", "
+                                  "\"--target=other-unknown-os\", "
+                                  "\"-Xclang\", \"--driver-mode=cl\"]\n"
                                   "compile-args = [7, \"-std=c++20\", \"-O3\", "
                                   "\"-Oexperimental\", \"-ansi\", "
                                   "\"--config=flags.cfg\"]\n"
@@ -826,6 +915,8 @@ void testNativeManifestDiagnostics() {
   bool exactArgumentSpan = false;
   bool exactForwardedSpan = false;
   bool exactJoinedOutputSpan = false;
+  bool exactTargetSpan = false;
+  bool exactDriverEscapeSpan = false;
   const std::string *argumentSource =
       loaded.sources.find(std::filesystem::canonical(manifestPath).string());
   for (const lang::Diagnostic &diagnostic : loaded.diagnostics) {
@@ -846,11 +937,19 @@ void testNativeManifestDiagnostics() {
     if (selected == "\"-Wl,-ojoined\"") {
       exactJoinedOutputSpan = true;
     }
+    if (selected == "\"--target=other-unknown-os\"") {
+      exactTargetSpan = true;
+    }
+    if (selected == "\"-Xclang\"") {
+      exactDriverEscapeSpan = true;
+    }
   }
-  expect(exactArgumentSpan && exactForwardedSpan && exactJoinedOutputSpan,
+  expect(exactArgumentSpan && exactForwardedSpan && exactJoinedOutputSpan &&
+             exactTargetSpan && exactDriverEscapeSpan,
          "native argument diagnostics should retain the exact offending "
-         "element span after an earlier invalid array element, including a "
-         "non-first or joined forwarded linker output mode");
+         "element span after an earlier invalid array element, including "
+         "target selection, raw native-driver escapes, and a non-first or "
+         "joined forwarded linker output mode");
 
   expect(writeFile(manifestPath,
                    nativeManifest("[package.native]\n"
@@ -1206,7 +1305,7 @@ root = "src/main.gti"
   const std::string duplicateNameManifest = R"(manifest-version = 1
 
 [package]
-name = "app"
+name = "App"
 version = "2.0.0"
 source-root = "lib"
 )";
@@ -1217,7 +1316,8 @@ source-root = "lib"
   expect(workspace.status ==
                  lang::driver::WorkspaceResolutionStatus::GraphFailure &&
              findDiagnostic(workspace.diagnostics, "GTI-B1604") != nullptr,
-         "workspace package names should be unique across canonical roots");
+         "workspace package names should be unique under portable "
+         "case-insensitive identity across canonical roots");
 
   const std::string nestedWorkspaceManifest = mathManifest + "\n[workspace]\n"
                                                              "members = []\n";
@@ -1228,6 +1328,71 @@ source-root = "lib"
                  lang::driver::WorkspaceResolutionStatus::GraphFailure &&
              findDiagnostic(workspace.diagnostics, "GTI-B1600") != nullptr,
          "workspace members should not introduce nested workspace roots");
+
+  const std::filesystem::path redirected = root / "redirected-package";
+  const std::string redirectedManifest = R"(manifest-version = 1
+
+[package]
+name = "redirected"
+version = "1.0.0"
+)";
+  expect(writeFile(redirected / "gti.toml", redirectedManifest),
+         "the redirected package manifest fixture should be writable");
+  std::error_code memberSymlinkError;
+  std::filesystem::remove(math / "gti.toml", memberSymlinkError);
+  memberSymlinkError.clear();
+  std::filesystem::create_symlink(redirected / "gti.toml", math / "gti.toml",
+                                  memberSymlinkError);
+  if (!memberSymlinkError) {
+    workspace = lang::driver::resolveProjectWorkspace(root);
+    expect(workspace.status ==
+                   lang::driver::WorkspaceResolutionStatus::ManifestFailure &&
+               findDiagnostic(workspace.diagnostics, "GTI-B1608") != nullptr,
+           "a workspace member manifest symlink must not redirect package "
+           "ownership outside the declared canonical member directory");
+  }
+
+  const std::filesystem::path dependencyApp = root / "dependency-app";
+  const std::filesystem::path declaredDependency = root / "declared-dependency";
+  const std::filesystem::path externalDependency = root / "external-dependency";
+  const std::string dependencyAppManifest = R"(manifest-version = 1
+
+[package]
+name = "dependency_app"
+version = "1.0.0"
+
+[dependencies]
+redirected = { path = "../declared-dependency" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
+)";
+  const std::string externalDependencyManifest = R"(manifest-version = 1
+
+[package]
+name = "external_dependency"
+version = "1.0.0"
+)";
+  expect(
+      writeFile(dependencyApp / "src/main.gti", "int main() { return 0; }\n") &&
+          writeFile(dependencyApp / "gti.toml", dependencyAppManifest) &&
+          writeFile(externalDependency / "gti.toml",
+                    externalDependencyManifest),
+      "path-dependency redirection fixtures should be writable");
+  std::filesystem::create_directories(declaredDependency);
+  std::error_code dependencySymlinkError;
+  std::filesystem::create_symlink(externalDependency / "gti.toml",
+                                  declaredDependency / "gti.toml",
+                                  dependencySymlinkError);
+  if (!dependencySymlinkError) {
+    workspace = lang::driver::resolveProjectWorkspace(dependencyApp);
+    expect(workspace.status ==
+                   lang::driver::WorkspaceResolutionStatus::GraphFailure &&
+               findDiagnostic(workspace.diagnostics, "GTI-B1608") != nullptr,
+           "a path-dependency manifest symlink must not redirect package "
+           "ownership outside the declared canonical dependency directory");
+  }
 }
 
 void testProjectScaffolding() {

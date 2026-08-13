@@ -188,8 +188,10 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
   std::vector<ResolvedProjectPackage> packages;
   std::unordered_map<std::string, std::size_t> packageByRoot;
   const auto addLoadedManifest =
-      [&](ManifestLoadResult loaded,
-          ProjectPackageMembership membership) -> std::optional<std::size_t> {
+      [&](ManifestLoadResult loaded, ProjectPackageMembership membership,
+          const std::optional<std::filesystem::path> &declaredRoot,
+          const std::optional<SourceSpan> &declaration,
+          std::string_view relationship) -> std::optional<std::size_t> {
     mergeSources(result.sources, loaded.sources);
     if (!loaded.succeeded()) {
       result.diagnostics.insert(result.diagnostics.end(),
@@ -197,8 +199,24 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
                                 loaded.diagnostics.end());
       return std::nullopt;
     }
-    const std::string root = loaded.manifest->packageRoot().string();
-    if (const auto existing = packageByRoot.find(root);
+    if (declaredRoot && loaded.manifest->packageRoot() != *declaredRoot) {
+      Diagnostic diagnostic = workspaceDiagnostic(
+          "GTI-B1608", declaration.value_or(manifestSpan(*loaded.manifest)),
+          std::string(relationship) + " manifest resolves to package root '" +
+              loaded.manifest->packageRoot().string() +
+              "', which differs from its declared package directory '" +
+              declaredRoot->string() + "'.");
+      diagnostic.related.push_back(
+          {manifestSpan(*loaded.manifest),
+           "The redirected package manifest is located here."});
+      diagnostic.hints.push_back(
+          "Keep gti.toml within the declared package directory; a manifest "
+          "symbolic link cannot redirect package ownership.");
+      result.diagnostics.push_back(std::move(diagnostic));
+      return std::nullopt;
+    }
+    const std::string loadedRoot = loaded.manifest->packageRoot().string();
+    if (const auto existing = packageByRoot.find(loadedRoot);
         existing != packageByRoot.end()) {
       ResolvedProjectPackage &package = packages[existing->second];
       if (membershipRank(membership) > membershipRank(package.membership)) {
@@ -207,7 +225,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
       return existing->second;
     }
     const std::size_t index = packages.size();
-    packageByRoot.emplace(root, index);
+    packageByRoot.emplace(loadedRoot, index);
     packages.push_back(
         {.manifest = std::move(*loaded.manifest), .membership = membership});
     return index;
@@ -218,7 +236,8 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
           ? std::move(nearestLoad)
           : loadProjectManifest(workspaceManifest);
   const std::optional<std::size_t> rootIndex = addLoadedManifest(
-      std::move(workspaceLoad), ProjectPackageMembership::Root);
+      std::move(workspaceLoad), ProjectPackageMembership::Root, std::nullopt,
+      std::nullopt, "Workspace root");
   if (!rootIndex) {
     result.status = WorkspaceResolutionStatus::ManifestFailure;
     return result;
@@ -227,11 +246,16 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
       packages[*rootIndex].manifest.packageRoot();
 
   if (declaredWorkspace) {
-    const ProjectWorkspaceManifest &workspace =
+    // Loading a member appends to `packages` and may reallocate it. Retain an
+    // owned manifest value so member iteration never refers into that vector.
+    const ProjectWorkspaceManifest workspace =
         *packages[*rootIndex].manifest.workspace();
-    for (const std::filesystem::path &memberRoot : workspace.members) {
+    for (std::size_t index = 0; index < workspace.members.size(); ++index) {
+      const std::filesystem::path &memberRoot = workspace.members[index];
       if (!addLoadedManifest(loadProjectManifest(memberRoot / manifestFilename),
-                             ProjectPackageMembership::Member)) {
+                             ProjectPackageMembership::Member, memberRoot,
+                             workspace.memberDeclarations[index],
+                             "Workspace member")) {
         result.status = WorkspaceResolutionStatus::ManifestFailure;
         return result;
       }
@@ -268,7 +292,8 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
       } else {
         dependencyIndex = addLoadedManifest(
             loadProjectManifest(dependency.packageRoot / manifestFilename),
-            ProjectPackageMembership::Dependency);
+            ProjectPackageMembership::Dependency, dependency.packageRoot,
+            dependency.pathDeclaration, "Path dependency");
       }
       if (!dependencyIndex) {
         continue;
@@ -305,13 +330,15 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
   std::unordered_map<std::string, std::size_t> packageByName;
   for (std::size_t index = 0; index < packages.size(); ++index) {
     const std::string &name = packages[index].manifest.package().name;
-    const auto [found, inserted] = packageByName.emplace(name, index);
+    const auto [found, inserted] =
+        packageByName.emplace(portableProjectNameKey(name), index);
     if (!inserted && packages[found->second].manifest.packageRoot() !=
                          packages[index].manifest.packageRoot()) {
       Diagnostic diagnostic = workspaceDiagnostic(
           "GTI-B1604", manifestSpan(packages[index].manifest),
           "Package name '" + name +
-              "' is declared by more than one canonical package root.");
+              "' collides with another package under portable "
+              "case-insensitive identity.");
       diagnostic.related.push_back(
           {manifestSpan(packages[found->second].manifest),
            "The first package with this name is declared here."});
@@ -424,8 +451,8 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
         }
         return left.manifest.packageRoot() < right.manifest.packageRoot();
       });
-  result.workspace.emplace(workspaceRoot, std::move(packages), selectedIdentity,
-                           declaredWorkspace);
+  result.workspace = ProjectWorkspace(workspaceRoot, std::move(packages),
+                                      selectedIdentity, declaredWorkspace);
   result.status = WorkspaceResolutionStatus::Success;
   return result;
 }

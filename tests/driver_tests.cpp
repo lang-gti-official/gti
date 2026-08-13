@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -52,6 +53,44 @@ private:
   std::filesystem::path path;
 };
 
+class ScopedEnvironment final {
+public:
+  ScopedEnvironment(std::string name, std::string value)
+      : variable(std::move(name)) {
+    if (const char *current = std::getenv(variable.c_str())) {
+      previous = current;
+    }
+    set(value);
+  }
+
+  ScopedEnvironment(const ScopedEnvironment &) = delete;
+  ScopedEnvironment &operator=(const ScopedEnvironment &) = delete;
+
+  ~ScopedEnvironment() {
+    if (previous) {
+      set(*previous);
+      return;
+    }
+#if defined(_WIN32)
+    (void)_putenv_s(variable.c_str(), "");
+#else
+    (void)unsetenv(variable.c_str());
+#endif
+  }
+
+private:
+  void set(const std::string &value) {
+#if defined(_WIN32)
+    (void)_putenv_s(variable.c_str(), value.c_str());
+#else
+    (void)setenv(variable.c_str(), value.c_str(), 1);
+#endif
+  }
+
+  std::string variable;
+  std::optional<std::string> previous;
+};
+
 bool writeFile(const std::filesystem::path &path, std::string_view contents) {
   std::ofstream output(path);
   output << contents;
@@ -62,6 +101,33 @@ std::string readFile(const std::filesystem::path &path) {
   std::ifstream input(path);
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
+}
+
+std::vector<std::string> activeSanitizerArguments() {
+  bool addressSanitizer = false;
+  bool undefinedBehaviorSanitizer = false;
+#if defined(__SANITIZE_ADDRESS__)
+  addressSanitizer = true;
+#endif
+#if defined(__SANITIZE_UNDEFINED__)
+  undefinedBehaviorSanitizer = true;
+#endif
+#if defined(__clang__)
+#if __has_feature(address_sanitizer)
+  addressSanitizer = true;
+#endif
+#if __has_feature(undefined_behavior_sanitizer)
+  undefinedBehaviorSanitizer = true;
+#endif
+#endif
+  std::vector<std::string> arguments;
+  if (addressSanitizer) {
+    arguments.emplace_back("-fsanitize=address");
+  }
+  if (undefinedBehaviorSanitizer) {
+    arguments.emplace_back("-fsanitize=undefined");
+  }
+  return arguments;
 }
 
 void testCompilationRequestAndTargetPropagation() {
@@ -275,6 +341,38 @@ void testNativeCommandConstruction() {
          "ordered native link operands should preserve mixed file, -l, and "
          "framework dependency order after the build-owned runtime and be "
          "authoritative over compatibility category vectors");
+
+  expect(lang::driver::isReservedNativeBuildArgument("-o") &&
+             lang::driver::isReservedNativeBuildArgument(
+                 "--target=other-unknown-os") &&
+             lang::driver::isReservedNativeBuildArgument("-target=arm64") &&
+             lang::driver::isReservedNativeBuildArgument("-m32") &&
+             lang::driver::isReservedNativeBuildArgument(
+                 "-Wl,-syslibroot,/other-sdk") &&
+             lang::driver::isReservedNativeBuildArgument(
+                 "-Wl,--sysroot=/other-sdk") &&
+             lang::driver::isReservedNativeBuildArgument(
+                 "-Xlinker=--sysroot=/other-sdk") &&
+             lang::driver::isReservedNativeBuildArgument("-Xlinker") &&
+             lang::driver::isReservedNativeBuildArgument("-Xclang") &&
+             lang::driver::isReservedNativeBuildArgument("-Xclang=-triple") &&
+             lang::driver::isReservedNativeBuildArgument("-cc1") &&
+             lang::driver::isReservedNativeBuildArgument("-cc1as") &&
+             lang::driver::isReservedNativeBuildArgument("--driver-mode=cl") &&
+             lang::driver::isReservedNativeBuildArgument("-Wl,-m,elf_i386") &&
+             lang::driver::isReservedNativeBuildArgument("/machine:x64") &&
+             lang::driver::isReservedNativeBuildArgument("/O2") &&
+             !lang::driver::isReservedNativeBuildArgument(
+                 "-DGTI_NATIVE_POLICY=1") &&
+             !lang::driver::isReservedNativeBuildArgument(
+                 "-DGTI_LIST=alpha,@beta") &&
+             !lang::driver::isReservedNativeBuildArgument("-lprovider") &&
+             !lang::driver::isReservedNativeBuildArgument("/openmp") &&
+             !lang::driver::isReservedNativeBuildArgument("/FORCE:MULTIPLE"),
+         "the shared native argument policy should reserve driver-owned "
+         "output and target/data-layout settings, including raw native-driver "
+         "escape modes, while preserving ordinary compiler definitions and "
+         "link operands without prefix-based false positives");
 }
 
 void testRenderedCommandReplay(const std::filesystem::path &testExecutable) {
@@ -512,6 +610,8 @@ void testManagedOutputSafety() {
   TemporaryDirectory temporary;
   const std::filesystem::path project = temporary.root() / "project";
   const std::filesystem::path managedRoot = project / "build/gti";
+  const std::filesystem::path generated =
+      managedRoot / "dev/host/intermediate/program.gti.cpp";
   const std::filesystem::path externalOutput =
       temporary.root() / "external/program";
   std::filesystem::create_directory(project);
@@ -536,9 +636,86 @@ void testManagedOutputSafety() {
              !std::filesystem::exists(externalOutput.parent_path()),
          "managed builds should reject output paths outside their declared "
          "project subtree before compiling or mutating the filesystem");
+
+  const std::filesystem::path externalGenerated =
+      temporary.root() / "external-generated.cpp";
+  expect(writeFile(externalGenerated, "preserve me\n"),
+         "the external generated-source fixture should be writable");
+  std::filesystem::create_directories(generated.parent_path());
+  std::error_code symlinkError;
+  std::filesystem::create_symlink(externalGenerated, generated, symlinkError);
+  if (!symlinkError) {
+    const lang::driver::ExecutableBuildResult symlinkedGenerated =
+        lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+            lang::driver::CompilationRequest(
+                project / "missing.gti",
+                lang::standardLibraryLayout(temporary.root()),
+                lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+                lang::CppStandard::Cpp23),
+            {}, generated, managedRoot / "dev/host/program", "unused-c++", {},
+            true, true, false,
+            lang::driver::ManagedOutputPolicy{.trustedRoot = project,
+                                              .outputRoot = managedRoot}));
+    expect(
+        symlinkedGenerated.status ==
+                lang::driver::ExecutableBuildStatus::OutputDirectoryFailure &&
+            symlinkedGenerated.driverDiagnostic &&
+            symlinkedGenerated.driverDiagnostic->find(
+                "symbolic-link managed output artifact") != std::string::npos &&
+            readFile(externalGenerated) == "preserve me\n",
+        "managed builds should reject a symbolic-link generated-source "
+        "leaf before loading source or overwriting its external target");
+  }
+
+  const std::filesystem::path externalProject =
+      temporary.root() / "external-project";
+  const std::filesystem::path linkedProject = temporary.root() / "project-link";
+  std::filesystem::create_directory(externalProject);
+  symlinkError.clear();
+  std::filesystem::create_directory_symlink(externalProject, linkedProject,
+                                            symlinkError);
+  if (!symlinkError) {
+    const std::filesystem::path linkedManagedRoot = linkedProject / "build/gti";
+    const lang::driver::ExecutableBuildResult symlinkedTrustRoot =
+        lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+            lang::driver::CompilationRequest(
+                linkedProject / "missing.gti",
+                lang::standardLibraryLayout(temporary.root()),
+                lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+                lang::CppStandard::Cpp23),
+            {}, linkedManagedRoot / "intermediate/program.gti.cpp",
+            linkedManagedRoot / "program", "unused-c++", {}, false, true, false,
+            lang::driver::ManagedOutputPolicy{.trustedRoot = linkedProject,
+                                              .outputRoot =
+                                                  linkedManagedRoot}));
+    expect(
+        symlinkedTrustRoot.status ==
+                lang::driver::ExecutableBuildStatus::OutputDirectoryFailure &&
+            symlinkedTrustRoot.driverDiagnostic &&
+            symlinkedTrustRoot.driverDiagnostic->find(
+                "symbolic-link managed output trust root") !=
+                std::string::npos &&
+            !std::filesystem::exists(externalProject / "build"),
+        "managed builds should reject a symbolic-link trust root before "
+        "creating output through its external target");
+  }
 }
 
 void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
+  ScopedEnvironment clearCpath("CPATH", "");
+  ScopedEnvironment clearCIncludePath("C_INCLUDE_PATH", "");
+  ScopedEnvironment clearCxxIncludePath("CPLUS_INCLUDE_PATH", "");
+  ScopedEnvironment clearObjcIncludePath("OBJC_INCLUDE_PATH", "");
+  ScopedEnvironment clearLibraryPath("LIBRARY_PATH", "");
+  ScopedEnvironment clearCompilerPath("COMPILER_PATH", "");
+  ScopedEnvironment clearGccExecPrefix("GCC_EXEC_PREFIX", "");
+  ScopedEnvironment clearSdkRoot("SDKROOT", "");
+  ScopedEnvironment clearDeveloperDirectory("DEVELOPER_DIR", "");
+  ScopedEnvironment clearLdLibraryPath("LD_LIBRARY_PATH", "");
+  ScopedEnvironment clearDyldLibraryPath("DYLD_LIBRARY_PATH", "");
+  ScopedEnvironment clearMsvcIncludePath("INCLUDE", "");
+  ScopedEnvironment clearMsvcLibraryPath("LIB", "");
+
   TemporaryDirectory temporary;
   const std::filesystem::path project = temporary.root() / "project";
   const std::filesystem::path managedRoot = project / "build/gti";
@@ -593,6 +770,27 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
       .compilerIdentity = "driver-cache-test-v1",
       .projectModelIdentity = "driver-project-model-v1",
   };
+  std::string nativeCompiler = "c++";
+  if (!activeSanitizerArguments().empty()) {
+    // Keep sanitizer runtime linkage in the compiler identity rather than in
+    // NativeInputs: opaque user arguments correctly bypass cache lookup, while
+    // sanitizer CI still needs to exercise the cache implementation itself.
+    std::filesystem::path wrapper = temporary.root() / "native-cxx-wrapper";
+#if defined(_WIN32)
+    wrapper += ".exe";
+#endif
+    std::error_code wrapperError;
+    std::filesystem::create_symlink(testExecutable, wrapper, wrapperError);
+    if (wrapperError) {
+      wrapperError.clear();
+      std::filesystem::copy_file(testExecutable, wrapper, wrapperError);
+    }
+    expect(!wrapperError,
+           "the sanitizer-aware native compiler wrapper should be creatable");
+    if (!wrapperError) {
+      nativeCompiler = wrapper.string();
+    }
+  }
   const auto build = [&](lang::OptimizationLevel optimization,
                          lang::driver::NativeInputs nativeInputs = {},
                          bool keepCpp = false,
@@ -602,12 +800,38 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
         lang::driver::CompilationRequest(source, toolchain.standardLibrary,
                                          std::move(target), optimization,
                                          standard),
-        toolchain, generated, output, "c++", std::move(nativeInputs), keepCpp,
-        true, false, managed, std::nullopt, cache));
+        toolchain, generated, output, nativeCompiler, std::move(nativeInputs),
+        keepCpp, true, false, managed, std::nullopt, cache));
   };
 
   const lang::driver::ExecutableBuildResult first =
       build(lang::OptimizationLevel::O0);
+  if (!first.succeeded()) {
+    if (first.driverDiagnostic) {
+      std::cerr << "whole-program cache first-build diagnostic: "
+                << *first.driverDiagnostic << '\n';
+    }
+    if (first.nativeProcess) {
+      std::cerr << "whole-program cache first-build native output:\n"
+                << first.nativeProcess->output;
+    }
+    for (const lang::Diagnostic &diagnostic : first.compilation.diagnostics) {
+      std::cerr << "whole-program cache first-build compiler diagnostic: "
+                << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  if (first.cache.status != lang::driver::BuildCacheStatus::Miss) {
+    std::cerr << "whole-program cache first-build status: "
+              << static_cast<int>(first.cache.status) << '\n';
+    if (first.cache.detail) {
+      std::cerr << "whole-program cache first-build detail: "
+                << *first.cache.detail << '\n';
+    }
+  }
+  if (first.cache.warning) {
+    std::cerr << "whole-program cache first-build warning: "
+              << *first.cache.warning << '\n';
+  }
   expect(first.succeeded() &&
              first.cache.status == lang::driver::BuildCacheStatus::Miss &&
              first.nativeProcess && first.nativeProcess->succeeded() &&
@@ -702,15 +926,134 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   expect(writeFile(runtimeHeader, originalRuntimeHeader),
          "the original runtime header should be restorable");
 
-  lang::driver::NativeInputs flaggedInputs;
-  flaggedInputs.compilerArguments = {"-DGTI_CACHE_VARIANT=1"};
-  const lang::driver::ExecutableBuildResult nativeFlagChange =
-      build(lang::OptimizationLevel::O0, std::move(flaggedInputs));
-  expect(nativeFlagChange.succeeded() &&
-             nativeFlagChange.cache.status ==
-                 lang::driver::BuildCacheStatus::Miss &&
-             nativeFlagChange.cache.key != firstKey,
-         "native compiler arguments should participate in cache identity");
+  const std::filesystem::path forcedHeader = project / "forced-cache.hpp";
+  expect(writeFile(forcedHeader, "#define GTI_FORCED_CACHE_VALUE 1\n"),
+         "the forced native header fixture should be writable");
+  const auto buildWithForcedHeader = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.compilerArguments = {"-include", forcedHeader.string()};
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
+  const lang::driver::ExecutableBuildResult forcedHeaderBuild =
+      buildWithForcedHeader();
+  expect(forcedHeaderBuild.succeeded() &&
+             forcedHeaderBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             forcedHeaderBuild.cache.detail &&
+             forcedHeaderBuild.cache.detail->find("opaque native arguments") !=
+                 std::string::npos &&
+             forcedHeaderBuild.nativeProcess,
+         "opaque compiler arguments should bypass cache lookup because they "
+         "can introduce dependencies such as forced native headers");
+  expect(writeFile(forcedHeader, "#define GTI_FORCED_CACHE_VALUE 2\n"),
+         "the forced native header should remain mutable between builds");
+  const lang::driver::ExecutableBuildResult forcedHeaderChange =
+      buildWithForcedHeader();
+  expect(forcedHeaderChange.succeeded() &&
+             forcedHeaderChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             forcedHeaderChange.nativeProcess,
+         "changing a header introduced through an opaque compiler argument "
+         "should force native compilation rather than restore a stale entry");
+
+  lang::driver::NativeInputs exactNativeLinkInput;
+  exactNativeLinkInput.libraryFiles.push_back(localRuntimeLibrary);
+  const lang::driver::ExecutableBuildResult exactNativeLinkBuild =
+      build(lang::OptimizationLevel::O0, std::move(exactNativeLinkInput));
+  expect(exactNativeLinkBuild.succeeded() &&
+             exactNativeLinkBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             exactNativeLinkBuild.cache.detail &&
+             exactNativeLinkBuild.cache.detail->find(
+                 "opaque native arguments") != std::string::npos &&
+             exactNativeLinkBuild.nativeProcess,
+         "exact native link files should bypass the whole-program cache until "
+         "linker scripts, thin archives, and transitive inputs can be "
+         "discovered");
+
+  const std::filesystem::path nativeSearchDirectory = project / "native-search";
+  std::filesystem::create_directories(nativeSearchDirectory);
+  lang::driver::NativeInputs nativeIncludeDirectory;
+  nativeIncludeDirectory.includeDirectories.push_back(nativeSearchDirectory);
+  const lang::driver::ExecutableBuildResult nativeIncludeDirectoryBuild =
+      build(lang::OptimizationLevel::O0, std::move(nativeIncludeDirectory));
+  expect(nativeIncludeDirectoryBuild.succeeded() &&
+             nativeIncludeDirectoryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             nativeIncludeDirectoryBuild.cache.detail &&
+             nativeIncludeDirectoryBuild.cache.detail->find(
+                 "native search paths") != std::string::npos &&
+             nativeIncludeDirectoryBuild.nativeProcess,
+         "native include directories should bypass the whole-program cache "
+         "until compiler depfiles identify transitive headers outside the "
+         "declared tree");
+
+  lang::driver::NativeInputs nativeLibraryDirectory;
+  nativeLibraryDirectory.libraryDirectories.push_back(nativeSearchDirectory);
+  const lang::driver::ExecutableBuildResult nativeLibraryDirectoryBuild =
+      build(lang::OptimizationLevel::O0, std::move(nativeLibraryDirectory));
+  expect(nativeLibraryDirectoryBuild.succeeded() &&
+             nativeLibraryDirectoryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             nativeLibraryDirectoryBuild.cache.detail &&
+             nativeLibraryDirectoryBuild.cache.detail->find(
+                 "native search paths") != std::string::npos &&
+             nativeLibraryDirectoryBuild.nativeProcess,
+         "native library directories should bypass the whole-program cache "
+         "until linker tracing identifies scripts, thin archives, and other "
+         "transitive inputs");
+
+  {
+    ScopedEnvironment injectedIncludePath("CPATH",
+                                          nativeSearchDirectory.string());
+    const lang::driver::ExecutableBuildResult nativeEnvironmentBuild =
+        build(lang::OptimizationLevel::O0);
+    expect(nativeEnvironmentBuild.succeeded() &&
+               nativeEnvironmentBuild.cache.status ==
+                   lang::driver::BuildCacheStatus::Bypassed &&
+               nativeEnvironmentBuild.cache.detail &&
+               nativeEnvironmentBuild.cache.detail->find(
+                   "environment search paths") != std::string::npos &&
+               nativeEnvironmentBuild.nativeProcess,
+           "dependency-injecting native environment search paths should "
+           "bypass cache lookup until their compiler/linker-discovered "
+           "transitive inputs can be modeled");
+  }
+
+  const std::filesystem::path nativeHeader = project / "cache-native.hpp";
+  const std::filesystem::path nativeSource = project / "cache-native.cpp";
+  expect(writeFile(nativeHeader, "#define GTI_CACHE_NATIVE_VALUE 1\n") &&
+             writeFile(nativeSource,
+                       "#include \"cache-native.hpp\"\n"
+                       "extern \"C\" int gti_cache_native_value() { "
+                       "return GTI_CACHE_NATIVE_VALUE; }\n"),
+         "native cache-bypass fixtures should be writable");
+  const auto buildWithNativeSource = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.cppSources.push_back(nativeSource);
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
+  const lang::driver::ExecutableBuildResult nativeSourceBuild =
+      buildWithNativeSource();
+  expect(nativeSourceBuild.succeeded() &&
+             nativeSourceBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             nativeSourceBuild.cache.detail &&
+             nativeSourceBuild.cache.detail->find("dependency discovery") !=
+                 std::string::npos &&
+             nativeSourceBuild.cppCompilations.size() == 1,
+         "declared native sources should bypass the whole-program cache until "
+         "compiler-discovered header dependencies can join its identity");
+  expect(writeFile(nativeHeader, "#define GTI_CACHE_NATIVE_VALUE 2\n"),
+         "the native transitive-header fixture should be writable");
+  const lang::driver::ExecutableBuildResult nativeHeaderChange =
+      buildWithNativeSource();
+  expect(nativeHeaderChange.succeeded() &&
+             nativeHeaderChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             nativeHeaderChange.cppCompilations.size() == 1,
+         "changing a compiler-discovered native header should force native "
+         "recompilation instead of restoring a stale cached executable");
 
   expect(writeFile(firstEntry / "executable", "corrupt"),
          "the cache corruption fixture should be writable");
@@ -882,6 +1225,24 @@ void testResourcesAndArtifactOwnership() {
 
 int main(int argc, char *argv[]) {
   lang::installCrashHandlers(argc > 0 ? argv[0] : "gti_driver_tests");
+  if (argc > 0 &&
+      std::filesystem::path(argv[0]).stem() == "native-cxx-wrapper") {
+    std::vector<std::string> command{"c++"};
+    const std::vector<std::string> sanitizerArguments =
+        activeSanitizerArguments();
+    command.insert(command.end(), sanitizerArguments.begin(),
+                   sanitizerArguments.end());
+    for (int index = 1; index < argc; ++index) {
+      command.emplace_back(argv[index]);
+    }
+    const lang::driver::ProcessResult result = lang::driver::invokeProcess(
+        command, {.outputMode = lang::driver::ProcessOutputMode::Inherit,
+                  .description = "sanitizer-aware native compiler wrapper"});
+    if (result.driverDiagnostic) {
+      std::cerr << *result.driverDiagnostic << '\n';
+    }
+    return result.exitCode;
+  }
   if (argc > 1 && std::string_view(argv[1]) == "--process-child") {
     if (argc != 5 || std::string_view(argv[2]) != "alpha" ||
         std::string_view(argv[3]) != "two words" ||

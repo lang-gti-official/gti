@@ -33,12 +33,15 @@ struct ResolvedProjectPackage {
   [[nodiscard]] bool selectable() const;
 };
 
+class ProjectWorkspace;
+struct WorkspaceResolutionResult;
+
+[[nodiscard]] WorkspaceResolutionResult resolveProjectWorkspace(
+    const std::filesystem::path &startDirectory,
+    const std::optional<std::string> &requestedPackage = std::nullopt);
+
 class ProjectWorkspace final {
 public:
-  ProjectWorkspace(std::filesystem::path root,
-                   std::vector<ResolvedProjectPackage> packages,
-                   std::string selectedIdentity, bool declaredWorkspace);
-
   [[nodiscard]] const std::filesystem::path &root() const;
   [[nodiscard]] bool declared() const;
   [[nodiscard]] const std::vector<ResolvedProjectPackage> &packages() const;
@@ -49,6 +52,14 @@ public:
   [[nodiscard]] std::string modelIdentity() const;
 
 private:
+  friend WorkspaceResolutionResult
+  resolveProjectWorkspace(const std::filesystem::path &,
+                          const std::optional<std::string> &);
+
+  ProjectWorkspace(std::filesystem::path root,
+                   std::vector<ResolvedProjectPackage> packages,
+                   std::string selectedIdentity, bool declaredWorkspace);
+
   std::filesystem::path workspaceRoot;
   std::vector<ResolvedProjectPackage> resolvedPackages;
   std::string selectedPackageIdentity;
@@ -75,9 +86,5 @@ struct WorkspaceResolutionResult {
            workspace.has_value();
   }
 };
-
-[[nodiscard]] WorkspaceResolutionResult resolveProjectWorkspace(
-    const std::filesystem::path &startDirectory,
-    const std::optional<std::string> &requestedPackage = std::nullopt);
 
 } // namespace lang::driver

@@ -64,8 +64,15 @@ LLVM package.
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
 Its source graph produces one whole-program C++ artifact and one native compiler
-invocation. Native arguments after `--` remain exact argv values, but cannot
-override language invariants: the driver appends `-fno-fast-math` and
+invocation. Accepted native arguments after `--` remain exact argv values.
+The shared native-argument policy rejects response files and recognized option
+families that replace driver-owned output, executable build mode,
+language/optimization, target, sysroot, or data layout. Raw Clang cc1/driver
+mode escapes and an unjoined `-Xlinker` are rejected because their following
+payload cannot be validated independently against that policy. Native argument
+arrays remain a trusted escape hatch: the driver does not claim to classify
+every vendor-specific ABI flag, and admitted arguments must not contradict the
+resolved `TargetInfo`. The driver appends `-fno-fast-math` and
 `-ffp-contract=off` after every forwarded argument, followed by the generated
 artifact's `__gti_strict_ieee754=1` policy marker. `TargetInfo` is resolved
 before frontend entry and passed unchanged through semantics, optimization,
@@ -96,6 +103,15 @@ rejects a test target and points to `gti test`. `clean` removes only a validated
 tool-owned subtree. When a package has one executable plus test targets, that
 executable remains the default for `build`, `check`, and `run`. `metadata` is
 read-only.
+
+Package, target, and profile names have portable artifact identity: reserved
+device names and case-fold collisions are rejected before filesystem mutation.
+Generated C++ and declared native objects live beneath the driver-owned hidden
+`.gti-intermediate` directory, so a target named `intermediate` remains valid.
+Managed builds require the declared project trust root itself to be a real
+directory and reject symbolic links in every output-directory component and at
+an output leaf; generated C++, native objects, executables, and cache payloads
+publish from unique sibling staging paths rather than following a leaf link.
 
 `new` and a source-creating `init` scaffold the implemented owned-argument
 entry form, `int main(int argc, std::vector<std::string> argv)`, with the
@@ -140,11 +156,14 @@ dummy executable or test. Selecting such a package for `build`, `check`,
 `run`, or `test` produces a focused no-target diagnostic; it remains valid as
 a dependency.
 
-A workspace root is itself a package and lists canonical member roots.
-Commands run inside a member select that member; commands at the root select
+A workspace root is itself a package and lists canonical member roots. Loading
+each member or path dependency must produce the same canonical package root as
+the directory declared by the owning manifest; a `gti.toml` symbolic link cannot
+redirect package ownership elsewhere. Commands run inside a member select that
+member; commands at the root select
 the root package; `--package <name>` selects any root/member package
 explicitly for build/check/run/test/metadata. Package names are unique across
-the graph. The resolver loads
+the graph under portable case-fold identity. The resolver loads
 members and recursively declared local dependencies, rejects nested workspace
 declarations, duplicate canonical dependency roots, duplicate names, missing
 source roots, and package cycles before target selection or compilation. It
@@ -186,20 +205,24 @@ existing native include settings.
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,
-content-addressed
-whole-program cache by default. Direct `gti source.gti` mode and `gti check`
-remain uncached. `--no-cache` disables both lookup and publication for one
-project build/run/test command; under `--verbose`, the CLI reports the cache
-identity and whether the request hit, missed, recovered a corrupt entry, or
-was conservatively bypassed.
+content-addressed whole-program cache by default when the build has no declared
+native C or C++ source, native search directory, opaque native argument vector,
+native link operand, name-resolved library/framework, or dependency-injecting
+native environment search path. Search paths and native link files bypass the
+cache: a header, linker script, or thin archive can name transitive inputs
+outside the declared tree, file, or environment value. Those native
+configurations, direct `gti source.gti` mode, and `gti check` remain uncached.
+`--no-cache` disables
+both lookup and publication for one project build/run/test command; under
+`--verbose`, the CLI reports the cache identity and whether the request hit,
+missed, recovered a corrupt entry, or was conservatively bypassed.
 
 The cache does not parse includes or manifests independently. The driver calls
 `loadCompilationInputs`, which uses the compiler's existing `SourceLoader` to
 produce the exact `SourceGraph`, source text, source diagnostics, and logical
 dependency edges for the request. A miss moves that same loaded state into
 `Frontend::analyzeLoaded`; a hit occurs before parsing, semantic analysis, HIR,
-MIR, backend generation, declared-native-source compilation, or final native
-linking.
+MIR, backend generation, or final native linking.
 
 The current key includes:
 
@@ -208,13 +231,12 @@ The current key includes:
   layout;
 - SHA-256 content identities for every loaded GTI unit, ordered logical source
   edges, and standard-library import names;
-- the native C/C++ compiler command, resolved executable content, and
-  `--version` output;
+- the native C++ compiler command, resolved executable content, and `--version`
+  output;
 - runtime headers/archive and the C++20 compatibility headers when selected;
-- structured native C/C++ sources, include/library directory contents, link
-  files, standards, ordered operands, and exact argument vectors; and
-- the bounded native-toolchain environment variables that can change compiler
-  or linker selection/search behavior.
+- selected native standards; and
+- bounded scalar native-toolchain environment values that affect policy without
+  injecting a mutable search root.
 
 Application GTI paths in a resolved package graph use package
 `name@version` plus the package-relative unit path; standalone application
@@ -237,12 +259,33 @@ not discard a successfully published program. Deleting only `build/gti/cache`
 does not modify sources or published target artifacts; `gti clean` deliberately
 removes the entire validated `build/gti` subtree, including both.
 
-Exact native argument strings are part of the key, but the driver does not
-interpret embedded paths inside trusted `c-compile-args`, `compile-args`,
-`link-args`, or `raw-args`. A package whose trusted argument refers to an
-undeclared external file should use the structured path fields or
-`--no-cache`; changing an undeclared file cannot be discovered safely from an
-opaque argv element.
+Builds with declared C or C++ source files currently bypass whole-program cache
+lookup and publication. Native preprocessing can read compiler-discovered
+headers and time/metadata-sensitive macros that a source-content-only key cannot
+represent safely. Opaque `c-compile-args`, `compile-args`, `link-args`, and
+`raw-args` also bypass because options such as `-include` and linker scripts can
+introduce undeclared inputs. Native include/library search directories, exact
+link files, ordered link operands, and named libraries/frameworks also bypass.
+A header, linker script, or thin archive can name transitive files outside a
+declared directory or file, and the driver does not yet retain the exact file
+selected by native search. Every such build recompiles and relinks until native
+depfiles and resolved link-input discovery are part of the cache input model.
+Non-empty compiler/SDK/include/library search environment variables likewise
+bypass: hashing `CPATH=/path`, for example, does not identify a transitive or
+subsequently mutated header below that path.
+
+Cacheable builds still consume implicit C++ standard-library and platform SDK
+headers/libraries selected by the native compiler. The bounded toolchain
+identity treats those implicit resources as stable for an unchanged compiler
+executable, compiler version output, selected target, and admitted toolchain
+environment. This is an explicit non-hermetic boundary, not proof of every
+system-file dependency; use `--no-cache` after mutating an SDK/toolchain in
+place without changing that identity. Compiler-generated depfiles must cover
+the generated GTI translation unit before this assumption can be removed.
+Content-modeled runtime and vendor resources are also expected to remain stable
+for the duration of one build. GTI compiles the loaded GTI source snapshot, but
+it does not yet snapshot those native resources or reverify their identity
+after linking; concurrent mutation is outside the current cache contract.
 
 Verbose native command lines are presentation text. They retain the leading
 `+ ` trace marker, and the remainder is encoded as a reproducible POSIX-shell

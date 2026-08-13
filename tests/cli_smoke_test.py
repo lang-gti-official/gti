@@ -69,9 +69,52 @@ def main():
         )
 
         executable.write_text("previous artifact\n", encoding="utf-8")
-        built = run([gti, str(source), "-o", str(executable), "--", "-O0"])
+        built = run(
+            [
+                gti,
+                str(source),
+                "-o",
+                str(executable),
+                "--",
+                "-DGTI_DIRECT_FORWARDING=1",
+            ]
+        )
         assert "Built" in built.stdout
         assert executable.is_file()
+        assert run([str(executable)]).stdout == "hello world\n"
+
+        redirected_output = root / "redirected-output"
+        rejected_output_override = run(
+            [
+                gti,
+                str(source),
+                "-o",
+                str(executable),
+                "--",
+                "-o",
+                str(redirected_output),
+            ],
+            64,
+        )
+        assert "cannot override" in rejected_output_override.stderr
+        assert not redirected_output.exists()
+        assert run([str(executable)]).stdout == "hello world\n"
+
+        rejected_cc1_target_override = run(
+            [
+                gti,
+                str(source),
+                "-o",
+                str(executable),
+                "--",
+                "-Xclang",
+                "-triple",
+                "-Xclang",
+                "x86_64-unknown-linux-gnu",
+            ],
+            64,
+        )
+        assert "cannot override" in rejected_cc1_target_override.stderr
         assert run([str(executable)]).stdout == "hello world\n"
 
         direct_project = root / "direct-project"
@@ -789,6 +832,91 @@ def main():
             ]
         )
         run([str(standard_accumulate_cpp20)])
+
+        backend_isolation_source = root / "backend-isolation.gti"
+        backend_isolation_source.write_text(
+            "static int32_t seed = 7; "
+            "constexpr int32_t constant_seed = 9; "
+            "static constexpr int32_t internal_seed = 10; "
+            "class NULL { public: NULL() {} int32_t value() { return 1; } }; "
+            "class FILE { public: FILE() {} int32_t value() { return 2; } }; "
+            "class size_t { public: size_t() {} int32_t value() { return 3; } }; "
+            "class Holder { public: State state = State::Ready; "
+            "int32_t first = seed; int32_t second = constant_seed; "
+            "Holder() {} int32_t value() { return this.first + this.second; } }; "
+            "enum class State { Ready, Done }; "
+            "namespace scheduled { "
+            "class Early { Later value = Later(); public: Early() {} "
+            "int32_t read() { return this.value.read(); } }; "
+            "class Later { public: Later() {} int32_t read() { return 4; } }; "
+            "class Derived : public Base { public: Derived() : Base() {} "
+            "int32_t read() { return this.base_value(); } }; "
+            "class Base { public: Base() {} int32_t base_value() { return 5; } }; "
+            "class MutualA { public: MutualA() {} int32_t read() { "
+            "MutualB value = MutualB(); return value.read(); } }; "
+            "class MutualB { public: MutualB() {} int32_t read() { return 6; } "
+            "int32_t construct_a() { MutualA value = MutualA(); return 0; } }; "
+            "} "
+            "namespace nonstd { int32_t marker() { return 7; } } "
+            "expected<int32_t, int32_t> checked() { return 8; } "
+            "int main() { constexpr int32_t local_seed = 11; "
+            "unsafe { const int32_t* constant_pointer = &constant_seed; "
+            "const int32_t* internal_pointer = &internal_seed; "
+            "const int32_t* local_pointer = &local_seed; "
+            "if (*constant_pointer != 9 or *internal_pointer != 10 or "
+            "*local_pointer != 11) { return 1; } } "
+            "NULL null_value = NULL(); FILE file_value = FILE(); "
+            "size_t size_value = size_t(); Holder holder = Holder(); "
+            "scheduled::Early early = scheduled::Early(); "
+            "scheduled::Derived derived = scheduled::Derived(); "
+            "scheduled::MutualA mutual = scheduled::MutualA(); "
+            "expected<int32_t, int32_t> result = checked(); "
+            "if (!result) { return result.error(); } "
+            "return null_value.value() + file_value.value() + "
+            "size_value.value() + holder.value() + early.read() + "
+            "derived.read() + mutual.read() + nonstd::marker() + "
+            "result.value() - 52; }\n",
+            encoding="utf-8",
+        )
+        forced_backend_macros = root / "forced-backend-macros.hpp"
+        forced_backend_macros.write_text(
+            "#define min(left, right) forced_min_macro(left, right)\n"
+            "#define max(left, right) forced_max_macro(left, right)\n"
+            "#define add(left, right) forced_add_macro(left, right)\n"
+            "#define storage(...) forced_storage_macro(__VA_ARGS__)\n"
+            "#define read(...) forced_read_macro(__VA_ARGS__)\n"
+            "#define backend forced_backend_namespace\n"
+            "#define forward(...) forced_forward_macro(__VA_ARGS__)\n"
+            "#define move(...) forced_move_macro(__VA_ARGS__)\n"
+            "#define construct_at(...) forced_construct_macro(__VA_ARGS__)\n"
+            "#define destroy_at(...) forced_destroy_macro(__VA_ARGS__)\n"
+            "#define launder(...) forced_launder_macro(__VA_ARGS__)\n"
+            "#define fputs(...) forced_fputs_macro(__VA_ARGS__)\n"
+            "#define reset(...) forced_reset_macro(__VA_ARGS__)\n"
+            "#define size(...) forced_size_macro(__VA_ARGS__)\n"
+            "#define Value forced_template_parameter\n"
+            "#define std forced_standard_namespace\n",
+            encoding="utf-8",
+        )
+        for standard in ("c++20", "c++23"):
+            backend_isolation_executable = root / (
+                "backend-isolation-" + standard
+            )
+            command = [
+                gti,
+                str(backend_isolation_source),
+                "-o",
+                str(backend_isolation_executable),
+                "--std",
+                standard,
+            ]
+            if standard == "c++20":
+                command.extend(["--", "-include", "nonstd/expected.hpp"])
+            else:
+                command.append("--")
+            command.extend(["-include", str(forced_backend_macros)])
+            run(command)
+            run([str(backend_isolation_executable)])
 
         program_arguments_source = root / "program-arguments.gti"
         program_arguments_source.write_text(

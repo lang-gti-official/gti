@@ -515,7 +515,8 @@ void testHirMirAndBackend() {
                                    .optimizations = optimizations});
   const auto emittedInitializer = [&](std::string_view name,
                                       std::uint64_t expected) {
-    const std::size_t binding = artifact.contents.find(name);
+    const std::size_t binding =
+        artifact.contents.find(std::string(name) + " =");
     const std::size_t equal = artifact.contents.find('=', binding);
     const std::size_t semicolon = artifact.contents.find(';', equal);
     if (binding == std::string::npos || equal == std::string::npos ||

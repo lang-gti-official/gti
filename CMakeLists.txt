@@ -572,9 +572,14 @@ if(BUILD_TESTING)
                    "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
     )
     if(GTI_RELEASE_BUILD)
+      # Release binaries deliberately omit source-tree fallback paths so the
+      # installed-toolchain checks exercise relocatable discovery. Build-tree
+      # tests still run before installation and therefore need an explicit
+      # test-only resource layout.
       set_tests_properties(
+        driver_pipeline
         output_determinism defined_integer_runtime binary64_runtime
-        native_record_c_oracle
+        native_record_c_oracle native_header_c_cpp_oracle
         cli_workflow project_cli_workflow
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"

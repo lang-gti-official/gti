@@ -353,6 +353,16 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     std::cerr << "gti: native compiler arguments require executable output\n";
     return ArgumentResult::ExitFailure;
   }
+  for (const std::string &argument : options.compilerArguments) {
+    if (!lang::driver::isReservedNativeBuildArgument(argument)) {
+      continue;
+    }
+    std::cerr << "gti: native compiler argument '" << argument
+              << "' cannot override the resolved language standard, "
+                 "optimization, target/data layout, output, response-file "
+                 "inputs, or executable build mode\n";
+    return ArgumentResult::ExitFailure;
+  }
 
   if (options.output.empty()) {
     if (options.emitCpp) {

@@ -1294,12 +1294,12 @@ private:
     return false;
   }
 
-  // True when this `requires` introduces a trailing requirement on a
-  // declaration, as opposed to an ordinary identifier that happens to be
-  // spelled `requires` (the word is not a GTI keyword). The grammar places a
-  // requires-clause directly after the parameter clause, optionally separated
-  // by the receiver-mutability `mut`, and it is always followed by a concept
-  // application.
+  // True when the `requires` keyword introduces a trailing requirement on a
+  // declaration. The formatter tokenizes words independently from the
+  // compiler lexer, so this still needs structural recognition. The grammar
+  // places a requires-clause directly after the parameter clause, optionally
+  // separated by the receiver-mutability `mut`, and it is always followed by
+  // a concept application.
   static bool isTrailingRequiresClause(const std::vector<Lexeme> &lexemes,
                                        std::size_t index) {
     const Lexeme &lexeme = lexemes[index];

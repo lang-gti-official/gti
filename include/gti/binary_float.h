@@ -24,14 +24,25 @@ struct BinaryFloat {
   friend bool operator==(BinaryFloat, BinaryFloat) = default;
 };
 
-[[nodiscard]] constexpr std::uint8_t
+[[nodiscard]] constexpr std::optional<std::uint8_t>
 binaryFloatWidth(BinaryFloatFormat format) {
-  return format == BinaryFloatFormat::Binary32 ? 32 : 64;
+  switch (format) {
+  case BinaryFloatFormat::Binary32:
+    return 32;
+  case BinaryFloatFormat::Binary64:
+    return 64;
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] constexpr bool validBinaryFloat(BinaryFloat value) {
-  return value.format == BinaryFloatFormat::Binary64 ||
-         (value.bits & 0xffffffff00000000ULL) == 0;
+  switch (value.format) {
+  case BinaryFloatFormat::Binary32:
+    return (value.bits & 0xffffffff00000000ULL) == 0;
+  case BinaryFloatFormat::Binary64:
+    return true;
+  }
+  return false;
 }
 
 enum class BinaryFloatParseFailure {

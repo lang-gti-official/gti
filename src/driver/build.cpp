@@ -275,6 +275,22 @@ managedPathDiagnostic(const ManagedOutputPolicy &policy,
   }
 
   error.clear();
+  const std::filesystem::file_status trustedRootStatus =
+      std::filesystem::symlink_status(trustedRoot, error);
+  if (error || !std::filesystem::exists(trustedRootStatus)) {
+    return "gti: refusing unavailable managed output trust root '" +
+           policy.trustedRoot.string() + "'";
+  }
+  if (std::filesystem::is_symlink(trustedRootStatus)) {
+    return "gti: refusing symbolic-link managed output trust root '" +
+           policy.trustedRoot.string() + "'";
+  }
+  if (!std::filesystem::is_directory(trustedRootStatus)) {
+    return "gti: managed output trust root is not a directory: '" +
+           policy.trustedRoot.string() + "'";
+  }
+
+  error.clear();
   const std::filesystem::path outputRoot =
       std::filesystem::absolute(policy.outputRoot, error).lexically_normal();
   if (error || outputRoot == trustedRoot ||
@@ -336,6 +352,22 @@ managedPathDiagnostic(const ManagedOutputPolicy &policy,
       return "gti: managed output path component is not a directory: '" +
              current.string() + "'";
     }
+  }
+
+  error.clear();
+  const std::filesystem::file_status artifactStatus =
+      std::filesystem::symlink_status(absoluteArtifact, error);
+  const bool artifactMissing =
+      error == std::errc::no_such_file_or_directory ||
+      (!error && !std::filesystem::exists(artifactStatus));
+  if (artifactMissing) {
+    error.clear();
+  } else if (error) {
+    return "gti: failed to inspect managed output artifact '" +
+           absoluteArtifact.string() + "': " + error.message();
+  } else if (std::filesystem::is_symlink(artifactStatus)) {
+    return "gti: refusing symbolic-link managed output artifact '" +
+           absoluteArtifact.string() + "'";
   }
   return std::nullopt;
 }
@@ -1145,6 +1177,45 @@ loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
          "' with " + std::string(artifactKind) + " '" + artifact.string() + "'";
 }
 
+bool hasOpaqueNativeCacheInputs(const NativeInputs &inputs) {
+  if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
+      !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty() ||
+      !inputs.includeDirectories.empty() ||
+      !inputs.libraryDirectories.empty() || !inputs.libraryFiles.empty() ||
+      !inputs.libraries.empty() || !inputs.frameworks.empty() ||
+      !inputs.orderedLinkOperands.empty()) {
+    return true;
+  }
+  return false;
+}
+
+bool hasDependencyInjectingNativeEnvironment() {
+  // These variables name mutable search roots or toolchain resources. Hashing
+  // only the variable spelling cannot identify headers, linker scripts,
+  // archives, plugins, or sub-tools reached through the named location.
+  constexpr std::array<std::string_view, 13> variables{
+      "CPATH",
+      "C_INCLUDE_PATH",
+      "CPLUS_INCLUDE_PATH",
+      "OBJC_INCLUDE_PATH",
+      "LIBRARY_PATH",
+      "COMPILER_PATH",
+      "GCC_EXEC_PREFIX",
+      "SDKROOT",
+      "DEVELOPER_DIR",
+      "LD_LIBRARY_PATH",
+      "DYLD_LIBRARY_PATH",
+      "INCLUDE",
+      "LIB",
+  };
+  return std::any_of(variables.begin(), variables.end(),
+                     [](std::string_view name) {
+                       const std::string ownedName(name);
+                       const char *value = std::getenv(ownedName.c_str());
+                       return value != nullptr && value[0] != '\0';
+                     });
+}
+
 std::vector<std::filesystem::path>
 nativeCppIncludeDirectories(const ToolchainLayout &toolchain,
                             CppStandard standard,
@@ -1380,7 +1451,22 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   std::optional<std::filesystem::path> cacheEntry;
   bool corruptCacheEntry = false;
   if (request.cache()) {
-    if (!request.managedOutput()) {
+    if (!request.nativeInputs().cSources.empty() ||
+        !request.nativeInputs().cppSources.empty()) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail =
+          "declared native sources require compiler dependency discovery";
+    } else if (hasOpaqueNativeCacheInputs(request.nativeInputs())) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail =
+          "opaque native arguments, native search paths, or link dependencies "
+          "require compiler/linker dependency discovery";
+    } else if (hasDependencyInjectingNativeEnvironment()) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail =
+          "native environment search paths require compiler/linker dependency "
+          "discovery";
+    } else if (!request.managedOutput()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
@@ -1493,12 +1579,18 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     return result;
   }
 
-  result.artifactWriteStatus = writeArtifact(
-      request.generatedSource(), result.compilation.artifact->contents);
-  if (*result.artifactWriteStatus != ArtifactWriteStatus::Success) {
+  std::string generatedWriteError;
+  if (!publishTextAtomically(request.generatedSource(),
+                             result.compilation.artifact->contents,
+                             generatedWriteError)) {
+    result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
+    result.driverDiagnostic = "gti: failed to publish generated C++ '" +
+                              request.generatedSource().string() +
+                              "': " + generatedWriteError;
     result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
     return result;
   }
+  result.artifactWriteStatus = ArtifactWriteStatus::Success;
 
   TemporaryArtifact generatedArtifact(request.generatedSource(),
                                       !request.keepGeneratedSource());

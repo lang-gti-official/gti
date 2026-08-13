@@ -109,6 +109,15 @@ def main():
         )
         assert override_metadata["package"]["name"] == "valid_name"
 
+        reserved_project = root / "reserved-project"
+        reserved_name = run(
+            [gti, "new", str(reserved_project), "--name", "CON"],
+            expected=64,
+            cwd=root,
+        )
+        assert "reserved portable device name" in reserved_name.stderr
+        assert not reserved_project.exists()
+
         init_project = root / "init-project"
         init_source = init_project / "src/main.gti"
         init_source.parent.mkdir(parents=True)
@@ -132,6 +141,34 @@ def main():
             default_init.joinpath("src/main.gti").read_text(encoding="utf-8")
             == scaffold_source
         )
+
+        intermediate_project = root / "intermediate-target"
+        intermediate_source = intermediate_project / "src/main.gti"
+        intermediate_source.parent.mkdir(parents=True)
+        intermediate_source.write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        (intermediate_project / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "intermediate_target"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.intermediate]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[profiles.dev]\n"
+            "keep-cpp = true\n",
+            encoding="utf-8",
+        )
+        run([gti, "build"], cwd=intermediate_project)
+        intermediate_executable = executable_named(
+            intermediate_project / "build/gti/dev", "intermediate"
+        )
+        run([str(intermediate_executable)])
+        assert (
+            intermediate_executable.parent
+            / ".gti-intermediate/intermediate.gti.cpp"
+        ).is_file()
 
         missing_new_path = run([gti, "new"], expected=64, cwd=root)
         assert "requires a destination path" in missing_new_path.stderr
@@ -232,7 +269,7 @@ def main():
         run([str(executable)])
         assert not (project / "build/gti/release").exists()
 
-        generated = executable.parent / "intermediate/sample.gti.cpp"
+        generated = executable.parent / ".gti-intermediate/sample.gti.cpp"
         assert generated.is_file()
         direct_cpp = root / "direct.cpp"
         run([gti, str(source), "--emit-cpp", "-o", str(direct_cpp)])
@@ -283,7 +320,7 @@ def main():
         release_executable = executable_named(project / "build/gti/release", "sample")
         run([str(release_executable)])
         release_generated = (
-            release_executable.parent / "intermediate/sample.gti.cpp"
+            release_executable.parent / ".gti-intermediate/sample.gti.cpp"
         )
         assert not release_generated.exists()
 
@@ -684,14 +721,14 @@ def main():
         assert "--gti-unselected-native-platform" not in native_command
         native_objects = list(
             (native_project / "build/gti/dev").glob(
-                "*/intermediate/*.native-0-native abi.o"
+                "*/.gti-intermediate/*.native-0-native abi.o"
             )
         )
         assert len(native_objects) == 1
         native_object = native_objects[0]
         native_cpp_objects = list(
             (native_project / "build/gti/dev").glob(
-                "*/intermediate/*.native-1-native support.o"
+                "*/.gti-intermediate/*.native-1-native support.o"
             )
         )
         assert len(native_cpp_objects) == 1
@@ -964,6 +1001,53 @@ def main():
         assert "source-only" in source_only_package.stderr
         run([gti, "clean"], cwd=app_package)
         assert not (workspace / "build/gti").exists()
+
+        redirected_workspace = root / "redirected-workspace"
+        redirected_member = redirected_workspace / "member"
+        redirected_external = root / "redirected-external"
+        redirected_member.mkdir(parents=True)
+        redirected_external.mkdir()
+        (redirected_workspace / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "redirected_workspace"\n'
+            'version = "1.0.0"\n\n'
+            "[workspace]\n"
+            'members = ["member"]\n',
+            encoding="utf-8",
+        )
+        (redirected_external / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "redirected_external"\n'
+            'version = "1.0.0"\n\n'
+            "[targets.redirected_external]\n"
+            'kind = "executable"\n'
+            'root = "main.gti"\n',
+            encoding="utf-8",
+        )
+        (redirected_external / "main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        external_build = redirected_external / "build/gti"
+        external_build.mkdir(parents=True)
+        external_sentinel = external_build / "sentinel"
+        external_sentinel.write_text("preserve", encoding="utf-8")
+        try:
+            (redirected_member / "gti.toml").symlink_to(
+                redirected_external / "gti.toml"
+            )
+        except OSError:
+            pass
+        else:
+            for command in (["metadata"], ["build"], ["clean"]):
+                rejected_redirect = run(
+                    [gti, *command], expected=65, cwd=redirected_member
+                )
+                assert "error[GTI-B1101]" in rejected_redirect.stderr
+                assert "must not be a symbolic link" in rejected_redirect.stderr
+                assert external_sentinel.read_text(encoding="utf-8") == "preserve"
+            assert not (redirected_workspace / "build/gti").exists()
 
         example_source = (
             pathlib.Path(__file__).resolve().parent.parent

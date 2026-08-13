@@ -68,13 +68,24 @@ parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 1 with exact source spans, resolves executable/test targets and named profiles,
 and writes artifacts beneath
 `build/gti/<profile>/<arch>-<vendor>-<os>/` for standalone packages (and the
-package-qualified workspace layout above), with verified whole-program cache
-entries beneath `build/gti/cache/v1/`. Plain project commands select the
+package-qualified workspace layout above), with verified-payload whole-program
+cache entries beneath `build/gti/cache/v1/` for builds without declared native
+source files, native search directories, opaque native arguments, native link
+operands, name-resolved link inputs, or dependency-injecting native environment
+search paths. Those native configurations bypass the cache until
+compiler/linker-discovered inputs are represented. Plain project commands select the
 `dev` profile; `--release` is an exact alias for `--profile release`. Only the
-selected profile directory is created, existing symbolic-link components below
-the package root are never traversed for managed output, and build/check status
+selected profile directory is created, a symbolic-link package trust root is
+rejected, and existing symbolic-link components or artifact leaves below the
+package root are never traversed for managed output,
+and build/check status
 identifies the effective target, profile, target triple, and artifact or source
 path.
+
+Package, target, and profile names use one portable artifact-name rule. The
+ASCII manifest spelling remains case-sensitive for selection, but names that
+case-fold to the same path identity and Windows reserved device names are
+rejected before output planning or scaffolding mutates the filesystem.
 
 `check` stops after shared frontend analysis without emitting C++ or invoking a
 native compiler. `run` builds through the normal atomic publication path and
@@ -107,11 +118,15 @@ target, and passed through the shared native request. Declared `.c` inputs are
 compiled with a separately resolved C compiler; declared `.cpp`, `.cc`, and
 `.cxx` inputs use the existing resolved C++ compiler and profile policy. Both
 become managed link objects. Structured paths are validated within the package;
-exact argument arrays use the documented trusted escape-hatch policy. Project
-build/run/test requests use the whole-program cache unless `--no-cache` is
-selected. Git/registry dependencies, lockfiles, and `fetch` are not implemented
-and are rejected rather than silently ignored. Package-level native inputs on
-a dependency are rejected until native dependency composition is defined.
+exact argument arrays use the documented trusted escape-hatch policy. Eligible
+project build/run/test requests use the whole-program cache unless `--no-cache`
+is selected; declared native sources, native search directories, opaque native
+argument vectors, native link operands, and name-resolved
+libraries/frameworks bypass it. Git/registry dependency declarations and fetch
+options are not implemented and are rejected. A `gti.lock` file is not yet
+consumed or authoritative; its presence has no effect. Package-level native
+inputs on a dependency are rejected until native dependency composition is
+defined.
 
 ## Decision Summary
 
@@ -196,7 +211,9 @@ The following existing behavior is a compatibility surface:
 - `--std c++20` and `--std c++23` select C++ backend compatibility;
 - `--emit-cpp`, `--emit-native-header`, `--keep-cpp`, and `--verbose` retain
   their current meaning;
-- arguments after `--` are passed to the native C++ compiler;
+- accepted arguments after `--` are passed to the native C++ compiler, while
+  driver-owned output, build mode, standard, optimization, target, sysroot,
+  data-layout, and response-file overrides are rejected;
 - the default output remains beside the entry source when `-o` is omitted.
 
 Project support must be added without silently consulting a nearby manifest
@@ -414,8 +431,8 @@ package with `c17` as its default; C++ sources use the selected profile or CLI
 C++ standard. All four argument fields are trusted exact argv escape hatches:
 GTI does not shell-split or containment-check embedded paths, and future
 transitive packages must not inject them without a separate trust policy.
-Response files and options that override output, phase, a language standard, or
-optimization policy remain rejected.
+Response files and options that override output, phase, a language standard,
+optimization, target, sysroot, or data layout remain rejected.
 
 Source-only local dependencies are implemented in the schema-compatible form:
 
@@ -689,11 +706,11 @@ build/
     dev/
       <target-triple>/
         chip8
-        intermediate/
+        .gti-intermediate/
     release/
       <target-triple>/
         chip8
-        intermediate/
+        .gti-intermediate/
 ```
 
 The manifest directory anchors the default `build/` path. A CLI option may
@@ -720,8 +737,9 @@ directories are not explicitly synchronized to stable storage.
 
 ### Cache model
 
-**Implementation status: complete for the bounded whole-program unit.** The
-current cache stores generated C++ plus the final executable and is keyed by:
+**Implementation status: complete for the bounded whole-program unit described
+below.** The current cache stores generated C++ plus the final executable and
+is keyed by:
 
 - GTI compiler and runtime version;
 - manifest schema and effective target/profile configuration;
@@ -731,9 +749,8 @@ current cache stores generated C++ plus the final executable and is keyed by:
 - content hashes for every loaded source unit in `SourceGraph`;
 - ordered direct dependency edges and logical standard-library imports;
 - standard-library/runtime identity;
-- C and C++ native compiler identities and relevant version output;
-- structured native C/C++ source, include, library, framework, standard, and
-  argument inputs;
+- native C++ compiler identity and relevant version output;
+- selected native standards;
 - resolved dependency identities from `gti.lock` once dependencies exist.
 
 Canonical filesystem paths may be recorded for diagnostics but should not be
@@ -744,11 +761,39 @@ to the request and key.
 
 The implementation admits a bounded list of native-toolchain environment
 variables that affect executable/search-path selection and hashes their exact
-presence/value. Structured native paths contribute both content and the path
-when it can be observed by the native language. Opaque trusted argument vectors
-contribute their exact strings; GTI deliberately does not infer hidden file
-dependencies from them, so clients must use structured fields or `--no-cache`
-when an argument refers to undeclared mutable state.
+presence/value. Content-modeled toolchain resources contribute their contents;
+paths are also retained when their native spelling is observable. Manifest
+native search paths and opaque trusted argument vectors are not
+dependency-complete and therefore bypass lookup and publication rather than
+merely contributing their declared tree or strings.
+
+Non-empty compiler/SDK/include/library environment search paths also bypass.
+Their string values do not identify mutable or transitive resources selected
+below those roots. Scalar policy environment values that do not inject a search
+root remain part of eligible cache identity.
+
+Declared C and C++ sources bypass the whole-program cache. Their preprocessors
+may consume undeclared adjacent/system headers or time- and metadata-sensitive
+macros, so hashing the declared source alone would permit stale executable
+reuse. Native include/library search directories, exact link files, ordered
+link operands, and named libraries/frameworks also bypass: a header, linker
+script, or thin archive can name files outside a declared tree or file, and
+native search has not been resolved to exact content identities. A future
+cacheable native phase requires compiler depfiles, exact link-input discovery,
+and a defined deterministic preprocessing policy.
+
+The remaining cacheable generated C++ build can still consume implicit system
+headers and libraries. The current bounded contract assumes those resources are
+stable while compiler executable content, version output, target, and admitted
+toolchain environment remain unchanged. This is deliberately documented as a
+non-hermetic toolchain boundary; generated-translation-unit depfiles are future
+work.
+
+Content-modeled runtime and vendor resources are currently assumed not to
+change between key construction and native linking. A future hardening step
+should snapshot them or recompute the admitted external-input identity before
+cache publication so a concurrent mutation cannot publish under the earlier
+key.
 
 Cache metadata is an atomic commit marker and records the SHA-256 and size of
 both payloads plus executable permissions. Cache corruption is a build
@@ -956,8 +1001,8 @@ Status: complete
 - Define program arguments versus native compiler arguments unambiguously.
   Complete for the current command surface: only `run -- args` accepts the
   separator as program input, and the owned hosted `main` form exposes those
-  values to GTI source. Direct-mode arguments after `--` remain native compiler
-  inputs.
+  values to GTI source. Accepted direct-mode arguments after `--` remain native
+  compiler inputs; driver-owned build invariants remain reserved.
 - Add safe output cleanup and machine-readable metadata tests. Complete.
 
 Acceptance criteria:
@@ -1029,7 +1074,8 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- **Passed:** an unchanged rebuild performs no native compilation;
+- **Passed:** an unchanged cache-eligible rebuild performs no native
+  compilation;
 - **Passed:** changing a directly or transitively included unit invalidates the
   target;
 - **Passed:** effective profile/target/runtime/C++ standard/compiler/native

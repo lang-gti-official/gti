@@ -47,6 +47,8 @@ them. Keep exact name ranges distinct from full extents.
 
 Extend `LanguageQueries` and `SemanticDatabase` rather than adding LSP tables:
 
+- expose concrete generic-instance diagnostics through an editor-safe compiler
+  query without requiring the protocol layer to run or reproduce HIR lowering;
 - preferred declaration/definition and overload-set queries;
 - current-snapshot references by `SymbolId` and occurrence role;
 - rename validation and exact edits for complete-enough scopes;

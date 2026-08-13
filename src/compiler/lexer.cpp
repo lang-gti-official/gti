@@ -461,7 +461,7 @@ void Lexer::number() {
     report("GTI-L0006",
            parsed.failure == BinaryFloatParseFailure::OutOfRange
                ? "Floating-point literal is outside the finite binary" +
-                     std::to_string(binaryFloatWidth(format)) + " range."
+                     std::to_string(*binaryFloatWidth(format)) + " range."
                : "Invalid floating-point literal.");
     addToken(TokenKind::FLOAT_LITERAL, BinaryFloat{.format = format});
   } else {

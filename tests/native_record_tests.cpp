@@ -211,18 +211,20 @@ void testSemanticLayoutAndAbi() {
                                    .hir = result.hir,
                                    .mir = result.mir,
                                    .optimizations = optimizations});
-  expect(artifact.contents.find("static_assert(sizeof(Packet) == 32") !=
-                 std::string::npos &&
-             artifact.contents.find("static_assert(alignof(Packet) == 8") !=
-                 std::string::npos &&
-             artifact.contents.find("offsetof(Packet, point) == 20") !=
-                 std::string::npos &&
-             artifact.contents.find("::Packet packet_roundtrip(::Packet") !=
-                 std::string::npos &&
-             artifact.contents.find("static_cast<std::uint64_t>(32)") !=
-                 std::string::npos,
-         "the C++ backend should emit a passive record, C signatures, native "
-         "layout guards, and frontend-resolved query constants");
+  expect(
+      artifact.contents.find("static_assert(sizeof(Packet) == 32") !=
+              std::string::npos &&
+          artifact.contents.find("static_assert(alignof(Packet) == 8") !=
+              std::string::npos &&
+          artifact.contents.find("__builtin_offsetof(Packet, point) == 20") !=
+              std::string::npos &&
+          artifact.contents.find("::__gti_program::Packet "
+                                 "packet_roundtrip(::__gti_program::Packet") !=
+              std::string::npos &&
+          artifact.contents.find("static_cast<std::uint64_t>(32)") !=
+              std::string::npos,
+      "the C++ backend should emit a passive record, C signatures, native "
+      "layout guards, and frontend-resolved query constants");
 }
 
 void testTargetMatrix() {
@@ -283,6 +285,27 @@ void expectOpaqueHandleFailure(std::string_view name, std::string source,
   }
   expect(focused, "invalid opaque handle '" + std::string(name) +
                       "' should fail in semantics with focused GTI-S2065");
+}
+
+void expectNativeIdentifierFailure(std::string_view name, std::string source,
+                                   std::string_view code,
+                                   std::string_view spelling,
+                                   std::string_view messageFragment) {
+  const std::size_t expectedStart = source.find(spelling);
+  const lang::FrontendResult result = analyze(name, std::move(source));
+  const lang::Diagnostic *diagnostic = findCode(result, code);
+  const bool focused =
+      !result.canGenerateCode() && expectedStart != std::string::npos &&
+      diagnostic != nullptr && diagnostic->primary.start == expectedStart &&
+      diagnostic->primary.end == expectedStart + spelling.size() &&
+      diagnostic->message.find(messageFragment) != std::string::npos &&
+      !diagnostic->hints.empty() && diagnostic->fixes.empty() &&
+      countCode(result, "GTI-B0001") == 0;
+  if (!focused) {
+    printDiagnostics(result);
+  }
+  expect(focused, "native-facing identifier '" + std::string(spelling) +
+                      "' should fail before native-header emission");
 }
 
 void testNativeRecordDiagnostics() {
@@ -357,6 +380,146 @@ void testNativeRecordDiagnostics() {
              countCode(ordinarySignature, "GTI-S2054") >= 1 &&
              countCode(ordinarySignature, "GTI-B0001") == 0,
          "ordinary GTI records should remain outside extern C signatures");
+}
+
+void testNativeIdentifierPortability() {
+  expectNativeIdentifierFailure(
+      "native-record-support-name.gti",
+      "[[c_abi]] struct gti_c_string_view { int32_t value; }; "
+      "int main() { return 0; }",
+      "GTI-S2064", "gti_c_string_view", "support type name");
+  expectNativeIdentifierFailure(
+      "opaque-support-name.gti",
+      "[[c_opaque]] struct size_t; int main() { return 0; }", "GTI-S2065",
+      "size_t", "support type name");
+  expectNativeIdentifierFailure("native-record-keyword-field.gti",
+                                "[[c_abi]] struct Value { int32_t restrict; }; "
+                                "int main() { return 0; }",
+                                "GTI-S2064", "restrict", "C17 keyword");
+  expectNativeIdentifierFailure(
+      "extern-c-keyword-symbol.gti",
+      "extern \"C\" { void restrict(); } int main() { return 0; }", "GTI-S2054",
+      "restrict", "C17 keyword");
+  expectNativeIdentifierFailure(
+      "extern-c-keyword-parameter.gti",
+      "extern \"C\" { void inspect(int32_t restrict); } "
+      "int main() { return 0; }",
+      "GTI-S2054", "restrict", "C17 keyword");
+  expectNativeIdentifierFailure("native-record-header-macro.gti",
+                                "[[c_abi]] struct Value { int32_t NULL; }; "
+                                "int main() { return 0; }",
+                                "GTI-S2064", "NULL", "support macro");
+  expectNativeIdentifierFailure("extern-c-generated-prefix.gti",
+                                "extern \"C\" { void gti_cabi_deadbeef(); } "
+                                "int main() { return 0; }",
+                                "GTI-S2054", "gti_cabi_deadbeef",
+                                "native-record prefix");
+  expectNativeIdentifierFailure("native-record-reserved-everywhere.gti",
+                                "[[c_abi]] struct Value { int32_t _Field; }; "
+                                "int main() { return 0; }",
+                                "GTI-S2064", "_Field",
+                                "implementation-reserved");
+  expectNativeIdentifierFailure("native-record-reserved-file-scope.gti",
+                                "[[c_abi]] struct _value { int32_t field; }; "
+                                "int main() { return 0; }",
+                                "GTI-S2064", "_value", "C file-scope");
+  expectNativeIdentifierFailure(
+      "opaque-reserved-everywhere.gti",
+      "namespace handles { [[c_opaque]] struct __Handle; } "
+      "int main() { return 0; }",
+      "GTI-S2065", "__Handle", "implementation-reserved");
+  expectNativeIdentifierFailure(
+      "extern-c-reserved-file-scope.gti",
+      "extern \"C\" { void _inspect(); } int main() { return 0; }", "GTI-S2054",
+      "_inspect", "C file-scope");
+  expectNativeIdentifierFailure(
+      "extern-c-function-macro.gti",
+      "extern \"C\" { void INT32_C(); } int main() { return 0; }", "GTI-S2054",
+      "INT32_C", "support macro");
+  expectNativeIdentifierFailure(
+      "extern-c-stddef-function-macro.gti",
+      "extern \"C\" { void offsetof(); } int main() { return 0; }", "GTI-S2054",
+      "offsetof", "support macro");
+  expectNativeIdentifierFailure(
+      "native-namespace-host-type.gti",
+      "namespace FILE { [[c_opaque]] struct Handle; } "
+      "int main() { return 0; }",
+      "GTI-S2054", "FILE", "support type name");
+  expectNativeIdentifierFailure(
+      "native-nested-namespace-host-macro.gti",
+      "namespace bridge { namespace EOF { "
+      "[[c_abi]] struct Value { int32_t field; }; } } "
+      "int main() { return 0; }",
+      "GTI-S2054", "EOF", "support macro");
+  expectNativeIdentifierFailure(
+      "native-namespace-header-control-macro.gti",
+      "namespace GTI_NATIVE_HEADER_NO_SOURCE_NAMES { "
+      "[[c_opaque]] struct Handle; } int main() { return 0; }",
+      "GTI-S2054", "GTI_NATIVE_HEADER_NO_SOURCE_NAMES", "support macro");
+  expectNativeIdentifierFailure(
+      "native-field-header-control-macro.gti",
+      "[[c_abi]] struct Value { "
+      "int32_t GTI_NATIVE_HEADER_NO_SOURCE_NAMES; }; "
+      "int main() { return 0; }",
+      "GTI-S2064", "GTI_NATIVE_HEADER_NO_SOURCE_NAMES", "support macro");
+  expectNativeIdentifierFailure(
+      "native-namespace-reserved.gti",
+      "namespace bridge { namespace __native { "
+      "extern \"C\" { void inspect(); } } } int main() { return 0; }",
+      "GTI-S2054", "__native", "implementation-reserved");
+  expectNativeIdentifierFailure(
+      "native-root-namespace-underscore.gti",
+      "namespace _native { [[c_opaque]] struct Handle; } "
+      "int main() { return 0; }",
+      "GTI-S2054", "_native", "C file-scope");
+
+  const lang::FrontendResult scopedNames =
+      analyze("scoped-native-identifiers.gti", R"(
+namespace records {
+[[c_abi]] struct restrict { int32_t size_t; };
+[[c_abi]] struct _record { int32_t offsetof; int32_t INT32_C; int32_t _field; };
+}
+namespace handles {
+[[c_opaque]] struct restrict;
+[[c_opaque]] struct _handle;
+}
+namespace outer {
+namespace size_t {
+[[c_opaque]] struct Handle;
+}
+}
+namespace offsetof {
+[[c_abi]] struct Value { int32_t field; };
+}
+extern "C" {
+  void inspect(int32_t size_t, int32_t offsetof, int32_t INT32_C,
+               int32_t _parameter);
+}
+int main() { return 0; }
+)");
+  if (!scopedNames.canGenerateCode()) {
+    printDiagnostics(scopedNames);
+  }
+  expect(scopedNames.canGenerateCode() && scopedNames.diagnostics.empty(),
+         "a namespaced native type may use a C-only keyword because its C "
+         "name is encoded; lower-case underscore names outside C file scope "
+         "and function-like macro names not followed by '(' remain valid; "
+         "fields, parameters, and non-root namespace components may shadow "
+         "support typedef names");
+
+  const lang::FrontendResult ordinaryHostNames =
+      analyze("ordinary-host-name-namespaces.gti", R"(
+namespace FILE { struct Local { int32_t value = 0; }; }
+namespace EOF { int32_t value = 1; }
+int main() { return EOF::value; }
+)");
+  if (!ordinaryHostNames.canGenerateCode()) {
+    printDiagnostics(ordinaryHostNames);
+  }
+  expect(ordinaryHostNames.canGenerateCode() &&
+             ordinaryHostNames.diagnostics.empty(),
+         "host support names should remain valid ordinary GTI namespaces "
+         "when they do not participate in a native header surface");
 }
 
 void testUnsafeBoundary() {
@@ -507,6 +670,86 @@ int main() { return 0; }
              countCode(unsafeRequired, "GTI-B0001") == 0,
          "opaque-handle calls should retain the lexical raw-pointer unsafe "
          "boundary");
+
+  const auto expectOpaqueOperation = [](std::string_view name,
+                                        std::string expression,
+                                        std::string_view operation) {
+    const lang::FrontendResult result = analyze(
+        name, "[[c_opaque]] struct NativeEngine; "
+              "int probe(mut NativeEngine* left, NativeEngine* right) { "
+              "unsafe { " +
+                  std::move(expression) +
+                  "; } return 0; } int main() { return 0; }");
+    const lang::Diagnostic *diagnostic = findCode(result, "GTI-S2065");
+    const bool focused =
+        !result.canGenerateCode() && diagnostic != nullptr &&
+        diagnostic->message.find(operation) != std::string::npos &&
+        !diagnostic->related.empty() && !diagnostic->hints.empty() &&
+        diagnostic->fixes.empty() && countCode(result, "GTI-S2055") == 0 &&
+        countCode(result, "GTI-B0001") == 0;
+    if (!focused) {
+      printDiagnostics(result);
+    }
+    expect(focused, "opaque handle operation '" + std::string(name) +
+                        "' should fail as an incomplete-pointee use");
+  };
+  expectOpaqueOperation("opaque-dereference.gti", "*left",
+                        "raw-pointer dereference");
+  expectOpaqueOperation("opaque-index.gti", "left[0]", "raw-pointer indexing");
+  expectOpaqueOperation("opaque-dereference-write.gti", "*left = *right",
+                        "raw-pointer dereference");
+  expectOpaqueOperation("opaque-index-write.gti", "left[0] = right[0]",
+                        "raw-pointer indexing");
+  expectOpaqueOperation("opaque-add.gti", "left + 1", "raw-pointer arithmetic");
+  expectOpaqueOperation("opaque-difference.gti", "left - right",
+                        "raw-pointer arithmetic");
+  expectOpaqueOperation("opaque-prefix.gti", "++left",
+                        "raw-pointer arithmetic");
+  expectOpaqueOperation("opaque-postfix.gti", "left++",
+                        "raw-pointer arithmetic");
+  expectOpaqueOperation("opaque-compound.gti", "left += 1",
+                        "raw-pointer arithmetic");
+  expectOpaqueOperation("opaque-member.gti", "left->field",
+                        "raw-pointer member access");
+
+  const lang::FrontendResult genericOperation =
+      analyze("opaque-generic-operation.gti", R"(
+[[c_opaque]] struct NativeEngine;
+T* advance<T>(mut T* pointer) {
+  unsafe { pointer++; }
+  return pointer;
+}
+int main() {
+  mut NativeEngine* pointer = nullptr;
+  unsafe { pointer = advance(pointer); }
+  return pointer == nullptr ? 0 : 1;
+}
+)");
+  const lang::Diagnostic *genericDiagnostic =
+      findCode(genericOperation, "GTI-S2065");
+  expect(!genericOperation.canGenerateCode() && genericDiagnostic != nullptr &&
+             genericDiagnostic->message.find("raw-pointer arithmetic") !=
+                 std::string::npos &&
+             genericDiagnostic->related.size() >= 2,
+         "concrete generic reanalysis should retain the opaque-pointee rule "
+         "and both declaration and instantiation context");
+
+  const lang::FrontendResult addressOnly =
+      analyze("opaque-address-only.gti", R"(
+[[c_opaque]] struct NativeEngine;
+NativeEngine* preserve(mut NativeEngine* left, NativeEngine* right) {
+  left = right;
+  if (left == nullptr || left == right) { return left; }
+  return right;
+}
+int main() { return 0; }
+)");
+  if (!addressOnly.canGenerateCode()) {
+    printDiagnostics(addressOnly);
+  }
+  expect(addressOnly.canGenerateCode() && addressOnly.diagnostics.empty(),
+         "opaque-handle pointers should retain address-only copy, assignment, "
+         "comparison, null comparison, parameter, and return operations");
 }
 
 void testFormatting() {
@@ -534,6 +777,7 @@ int main() {
   testSemanticLayoutAndAbi();
   testTargetMatrix();
   testNativeRecordDiagnostics();
+  testNativeIdentifierPortability();
   testUnsafeBoundary();
   testOpaqueHandles();
   testFormatting();

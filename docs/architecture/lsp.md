@@ -65,10 +65,12 @@ diagnostic; the protocol layer neither computes layout nor keeps a second field
 allowlist.
 
 For `[[c_opaque]] struct Name;`, hover renders the incomplete declaration and
-semantic tokens classify the attribute as a decorator. Invalid bodies, kinds,
-and direct values publish compiler-owned `GTI-S2065` ranges without an LSP
-ownership model or generated fix-it. Definitions treat the bodyless form as a
-declaration, not as a source definition.
+the compiler-owned address-only contract instead of value/concurrency
+capability notes. Semantic tokens classify the attribute as a decorator.
+Invalid bodies, kinds, direct values, and pointee operations publish
+compiler-owned `GTI-S2065` ranges without an LSP ownership model or generated
+fix-it. Definitions treat the bodyless form as a declaration, not as a source
+definition.
 
 ## Document State
 
@@ -157,6 +159,11 @@ meaning from punctuation.
 
 - Documentation comments are not retained by the compiler, so hover's optional
   Markdown documentation field is normally empty.
+- Editor snapshots stop after symbolic semantic analysis. Diagnostics that
+  require concrete generic instantiation during HIR lowering are therefore
+  reported by a full compile, not by the current LSP snapshot. Moving concrete
+  instance checking into an editor-safe compiler query is future work; the LSP
+  must not reproduce it independently.
 - Definition is implemented from exact resolved symbols. References, rename,
   signature help, and a project symbol index are not implemented.
 - `SymbolId` is snapshot-local. There is no durable cross-analysis identity.

@@ -59,14 +59,24 @@ diagnostics or letting a backend message choose either identity.
   token, retain a negative sign in the message, and emit only the range
   diagnostic rather than cascading with unary-unsigned or mixed-operand
   errors. No replacement is universally correct, so do not attach a fix-it.
+- `GTI-S2054` owns an invalid `extern "C"` declaration, including an exact
+  symbol or parameter spelling that cannot be represented portably in the
+  generated C17/C++ header. It also owns a containing namespace component that
+  would collide with the generated C++ support surface when that namespace
+  contains a public native record, opaque handle, or C-linkage declaration.
+  Point at the offending identifier, distinguish a keyword, reserved spelling,
+  support-header name, or compiler-reserved prefix in the message, and do not
+  invent a replacement ABI name. Ordinary namespaces outside a native surface
+  do not receive this portability restriction.
 - `GTI-S2064` owns a written `[[c_abi]]` record whose declaration shape, field
-  type, recursive structure, or checked layout cannot satisfy the bounded C
-  record contract. Point at the actionable attribute, member, field type, or
-  recursive edge, preserve ordinary type-resolution diagnostics, and do not
-  offer a fix-it when choosing a replacement representation requires design.
-  A field initializer uses the same code and points at that field: native
-  records are representation-only so initialization belongs in a safe wrapper
-  or native factory, and no replacement is universally correct.
+  name, declaration shape, field name or type, recursive structure, or checked
+  layout cannot satisfy the bounded C record contract. Point at the actionable
+  identifier, attribute, member, field type, or recursive edge, preserve
+  ordinary type-resolution diagnostics, and do not offer a fix-it when choosing
+  a replacement representation requires design. A field initializer uses the
+  same code and points at that field: native records are representation-only so
+  initialization belongs in a safe wrapper or native factory, and no
+  replacement is universally correct.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or
@@ -86,12 +96,14 @@ diagnostics or letting a backend message choose either identity.
   invalid source.
 
 `GTI-S2065` owns the opaque-native-handle boundary. It points at the invalid
-attribute, declaration name, or direct type use; explains that the only valid
-declaration is `[[c_opaque]] struct Name;`; relates a direct use to the owning
-attribute when available; and recommends a one-level raw pointer plus an
-ordinary safe wrapper. It has no automatic fix because choosing native identity
-and ownership policy is not mechanical. Parser errors continue to own malformed
-declaration structure.
+attribute, declaration name, native-facing name conflict, direct type use, or
+operation that would require the hidden pointee representation. It explains
+that the only valid declaration is `[[c_opaque]] struct Name;`, relates a
+direct use or pointee operation to the owning attribute when available, and
+recommends a one-level address-only raw pointer plus an ordinary safe wrapper.
+It has no automatic fix because choosing native identity and ownership policy
+is not mechanical. Parser errors continue to own malformed declaration
+structure.
 
 The LSP publishes diagnostics from the same versioned `FrontendResult` used by
 semantic queries. It always preserves the stable code, severity, source, and

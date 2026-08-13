@@ -26,6 +26,27 @@ The emitter is responsible for choices such as:
 - mapping the root GTI namespace `std` to the compiler-reserved C++ namespace
   `__gti_std`, while leaving an ordinary user namespace named `gti_std`
   distinct;
+- placing ordinary GTI-source declarations under the compiler-owned
+  `::__gti_program` namespace and undefining source identifiers that host
+  headers define as macros. Before emitting its own helper preamble, the
+  backend separately maintains a fixed set of macro-expandable tokens used by
+  its helper preamble and undefines that set both before and after generated
+  includes; numeric-limit `min`/`max` calls also use the macro-resistant
+  parenthesized C++ spelling. This is a maintained representation boundary,
+  not a promise to sandbox arbitrary native macros. A separate semantic-symbol
+  cleanup prevents valid root names such as `FILE`, `size_t`, `NULL`, or `EOF`
+  from colliding with the C++ implementation;
+- dependency-ordering enum and class definitions before the emitted class
+  bodies that require complete types, while leaving global definitions and
+  their initialization order in source order. Class member bodies are emitted
+  out of class after all type definitions so mutually referring method bodies
+  do not inherit C++ source-order restrictions. Namespace globals receive
+  declaration-only spellings where C++ permits them. A namespace `constexpr`
+  binding is forward-declared as `extern const` before its later `constexpr`
+  definition, while internal-linkage globals use compiler-private holders.
+  Frontend constants may replace value-category expressions, but never
+  place-category expressions whose storage identity is observable through an
+  address or reference;
 - emitting already-selected mangled calls, C-linkage symbols, dispatch, and
   lifecycle operations;
 - representing fixed arrays, unique ownership, storage, classes, and virtual
@@ -49,16 +70,19 @@ The emitter is responsible for choices such as:
   `static_assert`s rather than accepting native layout as language authority;
 - emitting the same native-record definition through `NativeHeaderBackend` as
   a dual C17/C++20-or-C++23 header. The C++ branch preserves exact source
-  namespaces and `extern "C"` function identity; the C branch uses
-  deterministic flattened names where namespaces cannot be represented. Both
-  consume semantic field types/layouts and never reconstruct ABI facts from
-  generated C++;
+  qualification through default public aliases while defining passive records
+  and C-linkage declarations in `::__gti_program`; consumers may suppress the
+  optional aliases. The C branch uses deterministic flattened names where
+  namespaces cannot be represented. Both consume semantic field types/layouts
+  and never reconstruct ABI facts from generated C++;
 - preserving `[[c_opaque]]` types as declarations only: generated GTI C++ and
   the bridge header's C++ branch emit the exact namespaced forward declaration,
   while the C branch emits a deterministic incomplete `typedef struct`. The
   native implementation may complete that type privately in C or C++, but the
   backend never asks for its layout or emits a GTI definition;
-- selecting C++20 versus C++23 expected support.
+- selecting C++20 versus C++23 expected support. C++20 references the vendored
+  compatibility namespace as absolute `::nonstd`; a source `nonstd` remains
+  isolated inside `::__gti_program`.
 
 GTI constant evaluation remains authoritative for checked-result constants.
 C++23 may emit their representation as native `constexpr std::expected`.
@@ -159,8 +183,8 @@ aborting callee as propagation. M-BACK-01 may therefore start with a genuinely
 failure-free closed family; M-BACK-02 owns the family-by-family closed-call-graph
 migration and removal of compatibility helpers.
 
-For `int main(int, std::vector<std::string>)`, the source entry function is
-emitted under its ordinary GTI identity. A separate native C++ `main` performs
+Both accepted entry signatures lower their source function to a private name
+inside `::__gti_program`. A separate global native C++ `main` performs
 the checked count conversion and owned startup copy, then moves the resulting
 vector into the source function. `ProgramEntryKind` and the append
 declaration are semantic facts; HIR concretizes the append target and MIR

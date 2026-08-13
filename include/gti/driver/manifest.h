@@ -17,6 +17,7 @@ namespace lang::driver {
 inline constexpr int currentManifestVersion = 1;
 
 [[nodiscard]] bool isPortableProjectName(std::string_view name);
+[[nodiscard]] std::string portableProjectNameKey(std::string_view name);
 
 struct ProjectNativePlatform {
   std::optional<std::string> os;

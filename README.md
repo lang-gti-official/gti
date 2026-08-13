@@ -205,11 +205,14 @@ and dependency cycles or duplicate package identities fail before compilation.
 Git dependencies and `gti.lock` remain the next package-system phase.
 
 Project `build`, `run`, and `test` commands use a verified local whole-program
-cache under `build/gti/cache/v1`. An unchanged rebuild restores the executable
-without rerunning the frontend/backend or native compiler. Use `--verbose` to
-see the cache identity and hit/miss reason, or `--no-cache` to bypass both
-lookup and publication for verification. Direct `gti file.gti` compilation and
-`gti check` remain uncached.
+cache under `build/gti/cache/v1`. An unchanged eligible build restores the
+executable without rerunning the frontend/backend or native compiler. Builds
+with native sources, search paths, opaque native arguments, link inputs, or
+dependency-injecting environment paths conservatively bypass the cache until
+their transitive inputs can be modeled. Use `--verbose` to see the cache
+identity and hit/miss reason, or `--no-cache` to bypass both lookup and
+publication for verification. Direct `gti file.gti` compilation and `gti
+check` remain uncached.
 
 Create a new manifest-driven executable package with:
 

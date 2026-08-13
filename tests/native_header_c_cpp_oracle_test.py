@@ -44,6 +44,14 @@ struct NativePoint {
   mut float y;
 };
 
+// Function-like support macros do not expand in these declaration positions.
+[[c_abi]]
+struct offsetof {
+  mut int32_t offsetof;
+  mut int32_t INT32_C;
+  mut int32_t _field;
+};
+
 namespace bridge_cpp {
 using NativeScalar = float;
 
@@ -69,6 +77,8 @@ extern "C" {
   void c_counter_destroy(NativeCounter* counter);
   int32_t c_counter_read(const NativeCounter* counter);
   NativePoint c_point_make(float x, float y);
+  void c_macro_name_probe(offsetof value, int32_t offsetof,
+                          int32_t INT32_C, int32_t _parameter);
   uint32_t c_boundary_version();
   NativePoint cpp_point_scale(NativePoint value, float factor);
   int32_t cpp_text_length(std::string_view value);
@@ -208,10 +218,32 @@ extern "C" NativePoint cpp_apply_offset(NativePoint value, Offset offset) {
         header_path = temp / "native_bridge.h"
         c_path = temp / "bridge.c"
         cpp_path = temp / "bridge.cpp"
+        isolated_cpp_path = temp / "isolated.cpp"
         c_object = temp / "bridge-c.o"
         source_path.write_text(gti_source, encoding="utf-8")
         c_path.write_text(c_source, encoding="utf-8")
         cpp_path.write_text(cpp_source, encoding="utf-8")
+        isolated_cpp_path.write_text(
+            '#define GTI_NATIVE_HEADER_NO_SOURCE_NAMES\n'
+            'struct NativePoint {};\n'
+            '#include "native_bridge.h"\n'
+            'namespace __gti_program {\n'
+            'extern "C" NativeCounter* c_counter_create(int32_t) {\n'
+            '  return nullptr;\n'
+            '}\n'
+            '}\n'
+            'namespace __gti_program::bridge_cpp {\n'
+            'extern "C" ::bridge_cpp::Engine* cpp_engine_create(float) {\n'
+            '  return nullptr;\n'
+            '}\n'
+            '}\n'
+            'int isolated_header_surface() {\n'
+            '  NativeCounter* counter = nullptr;\n'
+            '  bridge_cpp::Engine* engine = nullptr;\n'
+            '  return counter == nullptr && engine == nullptr ? 0 : 1;\n'
+            '}\n',
+            encoding="utf-8",
+        )
 
         run([gti, source_path, "--emit-native-header"], cwd=root)
         default_header = source_path.with_suffix(".native.h")
@@ -242,6 +274,17 @@ extern "C" NativePoint cpp_apply_offset(NativePoint value, Offset offset) {
             )
 
         include_arguments = ["-I", temp, "-I", root / "runtime" / "include"]
+        run(
+            [
+                cpp_compiler,
+                "-std=c++20",
+                *include_arguments,
+                "-c",
+                isolated_cpp_path,
+                "-o",
+                temp / "isolated.o",
+            ]
+        )
         run(
             [
                 c_compiler,

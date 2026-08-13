@@ -28,10 +28,14 @@ GTI-defined types.
 
 The compiler can emit one native bridge header for this bounded surface. The
 header is valid C17 and C++20/C++23: C sees deterministic C record names, while
-C++ sees the exact GTI source namespaces and record identities under
-`extern "C"` function linkage. This is deliberately a C ABI that C++ code can
-implement and consume, not an `extern "C++"` ABI for classes, overloads,
-exceptions, templates, or native C++ ownership.
+the default C++ surface exposes familiar GTI source namespaces and names under
+`extern "C"` function linkage. A consumer may define
+`GTI_NATIVE_HEADER_NO_SOURCE_NAMES` before including the header to suppress the
+optional C++ record and function aliases. Opaque handles retain their exact
+incomplete source identity because a C++ consumer must be able to complete
+that type. This is deliberately a C ABI that C++ code can implement and
+consume, not an `extern "C++"` ABI for classes, overloads, exceptions,
+templates, or native C++ ownership.
 
 ## Declaration Contract
 
@@ -51,6 +55,41 @@ function also cannot share its GTI overload set with an ordinary GTI function.
 The symbol `main` is reserved for the GTI entry point, and an external symbol
 cannot reuse the name of root-namespace GTI storage. Invalid ABI declarations
 use semantic diagnostic `GTI-S2054`.
+
+Native-facing source names must also remain valid after the compiler places
+them in the generated C17/C++ bridge header. Semantics rejects a C17 keyword
+where the source spelling is emitted as an exact C name, an
+implementation-reserved spelling such as `__name` or `_Name` on either emitted
+language surface, and a leading-underscore root type or C symbol because that
+spelling is reserved at C file scope. It also rejects actual collisions with the
+`<stddef.h>`, `<stdint.h>`, and `<gti/c_abi.h>` surface included by the header:
+object-like macros where the name is emitted, function-like macros when an
+external function name is followed by `(`, and root ordinary identifiers that
+conflict with support typedefs, `gti_c_string_view`, or the compiler-reserved
+`gti_cabi_` record-name prefix. The generated-header control macro
+`GTI_NATIVE_HEADER_NO_SOURCE_NAMES` is reserved anywhere its expansion could
+replace a native-facing identifier token, including a namespace component,
+record or opaque-handle name, record field, C function, or parameter.
+
+Every namespace component containing a public native record, opaque handle, or
+C-linkage declaration is part of the default C++ source-name surface too.
+Those components reject implementation-reserved spellings and object-like
+support macros at any depth. A root component also rejects ordinary names
+already supplied by the generated C++ environment, including the fixed-width
+and size typedefs and `FILE`; for example, `namespace FILE` cannot contain an
+opaque handle. `EOF` and the other C17 stdio object macros are rejected even in
+a nested native namespace because macro expansion is not scope-aware.
+Ordinary namespaces that contain no native surface remain unrestricted.
+
+This validation follows the generated token context rather than banning every
+support-header spelling everywhere. A field or parameter may shadow a typedef
+such as `size_t`, and `offsetof` or `INT32_C` may be a type, field, or parameter
+name because a function-like macro is not invoked without a following `(`.
+Likewise, a lower-case leading underscore remains valid for a field, parameter,
+or namespaced type that is not emitted at C file scope. `GTI-S2054` owns these
+conflicts on C function declarations, `GTI-S2064` owns them on native records,
+and `GTI-S2065` owns them on opaque handles; each points at the exact source
+identifier before header generation.
 
 The current ABI allowlist is based on the resolved type, so a transparent alias
 follows the same rule as its canonical allowed type:
@@ -121,8 +160,8 @@ An admitted field is one of:
 
 - a fixed-width signed or unsigned integer, `float`, or `double`;
 - another valid `[[c_abi]]` record by value; or
-- a one-level raw pointer to `void`, an admitted scalar, or a valid C ABI
-  record, with optional pointee `const`.
+- a one-level raw pointer to `void`, an admitted scalar, a valid C ABI record,
+  or a `[[c_opaque]]` handle, with optional pointee `const`.
 
 Transparent aliases follow the resolved type. `bool`, `char`, enums, ordinary
 nominal types, references, owners, borrowed values, `expected`, fixed arrays,
@@ -167,8 +206,15 @@ their checked size/alignment/offset assertions, and its source `extern "C"`
 prototypes. Root-namespace record names remain readable in C. A namespaced GTI
 record receives a deterministic encoded C name, recorded beside its qualified
 source name in a comment, because C has no namespace facility. The C++ branch
-instead recreates the exact source namespace. Nested by-value records are
-defined dependency-first and pointer edges use forward declarations.
+defines passive records and declarations in the compiler-owned
+`::__gti_program` namespace, then exposes familiar source-qualified record and
+function aliases by default. Defining `GTI_NATIVE_HEADER_NO_SOURCE_NAMES`
+suppresses those optional aliases when embedding the header beside an existing
+C++ source-name surface. Opaque handles are different: their public
+source-qualified incomplete struct is the actual identity that native C++ must
+be able to complete, so it is never hidden by that opt-out. Nested by-value
+records are defined dependency-first and pointer edges use forward
+declarations.
 
 The header is compiler output and should be regenerated when the GTI boundary
 changes rather than edited. It does not import a foreign header, infer a C
@@ -201,6 +247,14 @@ only as the pointee of one raw pointer. Passing it by value, defining a GTI
 body, using it as a base or generic argument, or querying the pointee layout is
 invalid. `sizeof(NativeDatabase*)` and `alignof(NativeDatabase*)` remain valid
 pointer queries.
+
+An opaque-handle pointer is an address-only value. It may be initialized,
+copied, assigned, compared with a compatible pointer or `nullptr`, passed, and
+returned. The hidden pointee cannot be dereferenced, indexed, reached with
+`->`, or used for pointer arithmetic, difference, increment, or decrement.
+Those operations require a complete pointee representation, so `unsafe` does
+not enable them; semantics rejects them with `GTI-S2065` and relates the use to
+the `[[c_opaque]]` declaration.
 
 A `[[c_abi]]` field may contain `NativeDatabase*` or
 `const NativeDatabase*`. The record contains only the address; the opaque
@@ -342,8 +396,11 @@ platform-dependent length type such as `size_t`.
 
 An `extern "C"` declaration does not locate a header or library. The GTI source
 contains the prototype; the native link step must still provide the symbol.
-Direct compiler mode forwards every argument after `--` to the selected native
-C++ compiler, so a library can be linked explicitly:
+Direct compiler mode forwards accepted arguments after `--` to the selected
+native C++ compiler, so a library can be linked explicitly. Arguments that
+would replace driver-owned output, executable mode, standard, optimization,
+target, sysroot, or data layout are rejected. Raw compiler-driver/cc1 escapes
+whose payload could replace those facts are rejected as a family:
 
 ```sh
 gti main.gti -o main -- -lfoo
@@ -446,11 +503,14 @@ argv elements. GTI does not shell-split, interpolate, execute, or interpret
 embedded paths in these fields, so their paths are not package-containment
 checked; only the root package may declare them. Use `c-sources`,
 `cpp-sources`, `include-dirs`, `library-dirs`, and `link-files` when GTI should
-validate package-relative inputs. Reserved standard, optimization, output,
-language-mode, response-file, and non-executable-mode options are rejected.
-`raw-args` are placed after the build-owned output arguments. Dependencies do
-not exist yet; future dependency manifests must not contribute trusted
-argument fields without a separate trust policy.
+validate package-relative inputs. Reserved standard, optimization,
+target/data-layout, sysroot, output, language-mode, response-file, and
+non-executable-mode options are rejected. Raw compiler-driver/cc1 escapes and
+unjoined forwarded-linker escapes are rejected because the following payload
+cannot be classified independently. `raw-args` are placed after the
+build-owned output arguments. Local path dependencies are source-only: a
+dependency package that declares native inputs is rejected until native
+dependency composition and trust policy are defined.
 
 For every selected C source, `gti build` invokes the resolved C compiler with
 the C standard, target profile optimization, GTI's runtime include directory,
@@ -469,7 +529,11 @@ objects are linked first, followed by C++ objects, the runtime, and declared
 native operands. C++ source objects use the same atomic publication and failure
 preservation contract as C objects. GTI does not parse either native language
 or verify that a definition matches its GTI prototype; that cross-language ABI
-agreement remains the programmer's responsibility.
+agreement remains the programmer's responsibility. It therefore does not yet
+have a complete dependency graph for native included headers or preprocessing
+state. A build with declared C or C++ sources bypasses the whole-program
+executable cache and recompiles those sources. Pure GTI builds without native
+search paths or link operands remain cacheable.
 
 `gti build` and `gti run` pass the effective inputs through the same
 `ExecutableBuildRequest` as direct mode. `gti check` validates the selected
@@ -482,12 +546,13 @@ Arguments after `gti run --` remain the executed program's arguments.
 
 Source-level native includes and linker flags are not GTI language syntax.
 They belong to the toolchain so platform selection, ordering, diagnostics, and
-cache keys remain explicit. Structured native files and directories contribute
-their content (and path where native path spelling is observable) to the
-whole-program project cache. Trusted exact argument strings also contribute to
-the key, but GTI does not interpret embedded file paths inside those opaque
-arguments. Use structured fields or `gti build --no-cache` when such an
-argument depends on undeclared mutable external state.
+cache policy remain explicit. Declared native source, trusted exact argument
+vectors, native include/library search directories, exact link files and
+ordered link operands, name-resolved library/framework inputs, and
+dependency-injecting native environment search paths bypass the whole-program
+project cache because their complete compiler/linker-discovered dependencies
+are not yet modeled. A header, linker script, or thin archive can name
+transitive inputs outside the declared tree, file, or environment value.
 
 ## Runtime Relationship
 

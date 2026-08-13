@@ -321,7 +321,8 @@ ProjectBuildPlan makeBuildPlan(const ProjectWorkspace &workspace,
 #endif
   const std::filesystem::path output = outputDirectory / executableName;
   const std::filesystem::path generatedSource =
-      outputDirectory / "intermediate" / (selectedTarget.name + ".gti.cpp");
+      outputDirectory / ".gti-intermediate" /
+      (selectedTarget.name + ".gti.cpp");
   return ProjectBuildPlan(
       manifest.path(), manifest.packageRoot(), workspace.root(),
       manifest.package().name, manifest.package().version, selectedTarget.name,
@@ -985,8 +986,9 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
     result.status = ProjectScaffoldStatus::InvalidRequest;
     result.diagnostics.push_back(scaffoldDiagnostic(
         result.packageRoot, "GTI-B1500",
-        "Package names must match [A-Za-z][A-Za-z0-9_-]*; use --name to "
-        "select a portable package name."));
+        "Package names must match [A-Za-z][A-Za-z0-9_-]* and cannot use a "
+        "reserved portable device name; use --name to select another "
+        "portable package name."));
     return result;
   }
 

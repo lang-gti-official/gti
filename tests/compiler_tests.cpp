@@ -18,6 +18,7 @@
 #include "gti/support.h"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -5735,6 +5736,154 @@ int main() {
          "reference syntax formatting should be idempotent");
 }
 
+void testGlobalReferencePlaces() {
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("global-reference-places.gti", R"(
+constexpr int direct_value = 7;
+static constexpr int internal_value = 8;
+
+namespace values {
+constexpr int qualified_value = 9;
+}
+
+class Constants {
+public:
+  static constexpr int member_value = 10;
+};
+
+mut int slots[2] = {1, 2};
+
+int main() {
+  int& direct = direct_value;
+  int& internal = internal_value;
+  int& qualified = values::qualified_value;
+  int& member = Constants::member_value;
+  mut int& first = slots[0];
+  mut int& second = slots[1];
+  first += 1;
+  second += 1;
+  return direct + internal + qualified + member + first + second - 39;
+}
+)");
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected global-reference-place diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && valid.mirValid && valid.mir.valid(),
+         "references to unqualified, namespace-qualified, internal, static "
+         "member, and projected global storage should lower through valid "
+         "MIR places");
+
+  const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
+  const std::array<std::string_view, 6> aliases{
+      "direct", "internal", "qualified", "member", "first", "second"};
+  std::array<const lang::SemanticLoanInfo *, 6> semanticLoans{};
+  bool loansRetainGlobalPlaces = true;
+  for (std::size_t index = 0; index < aliases.size(); ++index) {
+    const lang::VariableDecl *alias =
+        findDirectLocal(main, std::string(aliases[index]));
+    const lang::BindingInfo *binding =
+        alias == nullptr ? nullptr : valid.semantics.findBinding(*alias);
+    semanticLoans[index] =
+        binding == nullptr ? nullptr
+                           : valid.semantics.findLoan(binding->retainedLoan);
+    loansRetainGlobalPlaces = loansRetainGlobalPlaces &&
+                              semanticLoans[index] != nullptr &&
+                              semanticLoans[index]->place.root != 0 &&
+                              !semanticLoans[index]->place.receiver;
+  }
+  expect(loansRetainGlobalPlaces,
+         "semantic loans should retain a nonzero symbol-rooted place for "
+         "every borrowed global or static binding");
+  const auto constantIndex = [](const lang::SemanticLoanInfo *loan,
+                                std::uint64_t index) {
+    return loan != nullptr && loan->place.projections.size() == 1 &&
+           loan->place.projections.front().kind ==
+               lang::SemanticLoanPlaceProjectionKind::ConstantIndex &&
+           loan->place.projections.front().index == index;
+  };
+  expect(constantIndex(semanticLoans[4], 0) &&
+             constantIndex(semanticLoans[5], 1) &&
+             semanticLoans[4]->place.root == semanticLoans[5]->place.root,
+         "global fixed-array borrows should retain one shared symbol root "
+         "with disjoint constant-index projections");
+
+  const lang::HirFunctionInstance *mainHir = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == main) {
+      mainHir = &instance;
+      break;
+    }
+  }
+  const lang::MirFunctionInstance *mainMir =
+      mainHir == nullptr ? nullptr
+                         : valid.mir.findFunctionInstance(mainHir->id);
+  bool mirLoansUseSymbolPlaces = mainMir != nullptr;
+  if (mainMir != nullptr) {
+    for (const lang::SemanticLoanInfo *semanticLoan : semanticLoans) {
+      const auto mirLoan =
+          std::find_if(mainMir->body.loans.begin(), mainMir->body.loans.end(),
+                       [&](const lang::MirLoan &candidate) {
+                         return semanticLoan != nullptr &&
+                                candidate.semanticLoan == semanticLoan->id;
+                       });
+      const lang::MirPlace *source =
+          mirLoan == mainMir->body.loans.end()
+              ? nullptr
+              : mainMir->body.findPlace(mirLoan->source);
+      mirLoansUseSymbolPlaces =
+          mirLoansUseSymbolPlaces && source != nullptr &&
+          source->root == lang::MirPlaceRootKind::Symbol && source->symbol != 0;
+    }
+  }
+  expect(mirLoansUseSymbolPlaces,
+         "MIR should lower semantic global-loan roots to concrete symbol "
+         "places rather than producing an invalid empty operand");
+
+  const lang::FrontendResult conflicting =
+      lang::Frontend().analyze("conflicting-global-reference-places.gti", R"(
+namespace state {
+mut int value = 1;
+}
+
+int main() {
+  mut int& alias = state::value;
+  state::value = 2;
+  return alias;
+}
+)");
+  expect(!conflicting.canGenerateCode() &&
+             hasDiagnosticCode(conflicting.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(
+                 conflicting.diagnostics,
+                 "Cannot assign to storage while an overlapping borrow") &&
+             !hasDiagnosticCode(conflicting.diagnostics, "GTI-B0001"),
+         "a conflicting qualified-global write should be rejected by "
+         "semantic loan analysis instead of reaching the MIR verifier");
+
+  const lang::FrontendResult conflictingRead =
+      lang::Frontend().analyze("read-global-reference-places.gti", R"(
+mut int value = 1;
+
+int main() {
+  mut int& alias = value;
+  int copy = value;
+  return alias + copy;
+}
+)");
+  expect(!conflictingRead.canGenerateCode() &&
+             hasDiagnosticCode(conflictingRead.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(conflictingRead.diagnostics,
+                           "Cannot read storage while an overlapping mutable "
+                           "borrow") &&
+             !hasDiagnosticCode(conflictingRead.diagnostics, "GTI-B0001"),
+         "a conflicting unqualified-global read should be rejected by "
+         "semantic loan analysis before MIR lowering");
+}
+
 void testReceiverTiedReferenceReturns() {
   const std::string source = R"(
 class Box<T> {
@@ -8847,13 +8996,13 @@ int main() {
          "the C++ backend should emit the nominal unique_ptr wrapper");
   expect(
       artifact.contents.find(
-          "gti_internal::backend::make_unique<T>(gti_internal::backend::"
+          "::gti_internal::backend::make_unique<T>(::gti_internal::backend::"
           "forward_pack_argument(args)...)") != std::string::npos &&
           artifact.contents.find("__gti_std::__gti_fn_") != std::string::npos &&
           artifact.contents.find("_make_unique<Widget>(value)") !=
               std::string::npos &&
           artifact.contents.find(
-              "gti_internal::backend::owner_access(((*this)).owner)") !=
+              "::gti_internal::backend::owner_access(((*this)).owner)") !=
               std::string::npos &&
           artifact.contents.find("unique_owner_is_null") != std::string::npos &&
           artifact.contents.find("unique_owner_has_value") == std::string::npos,
@@ -9280,12 +9429,12 @@ int main() {
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(
-      artifact.contents.find("gti_internal::backend::storage<T> data") !=
+      artifact.contents.find("::gti_internal::backend::storage<T> data") !=
               std::string::npos &&
           artifact.contents.find(
-              "gti_internal::backend::allocate_storage<T>(capacity)") !=
+              "::gti_internal::backend::allocate_storage<T>(capacity)") !=
               std::string::npos &&
-          artifact.contents.find("gti_internal::backend::storage_relocate") !=
+          artifact.contents.find("::gti_internal::backend::storage_relocate") !=
               std::string::npos &&
           artifact.contents.find("storage_capacity") == std::string::npos &&
           artifact.contents.find("std::construct_at") != std::string::npos &&
@@ -10550,8 +10699,10 @@ int main() {
              generated.find("case Stage::Boot:") != std::string::npos &&
              generated.find("case static_cast<std::uint64_t>(7):") !=
                  std::string::npos &&
-             generated.find("case Stage::Ready:\n    case Stage::Running:\n"
-                            "    {") != std::string::npos,
+             generated.find("case Stage::Ready:") != std::string::npos &&
+             generated.find("case Stage::Running:") != std::string::npos &&
+             generated.find("case Stage::Running:\n      {") !=
+                 std::string::npos,
          "the C++ backend should emit explicit labels with arm-local scopes");
 
   const lang::FrontendResult invalid =
@@ -10763,7 +10914,7 @@ int main() {
   const std::string generated = lang::CppEmitter().emit(program);
   expect(generated.find("#include <cstdint>") != std::string::npos &&
              generated.find("const std::int8_t minimum8 = "
-                            "gti_internal::backend::negate(128)") !=
+                            "::gti_internal::backend::negate(128)") !=
                  std::string::npos &&
              generated.find("const std::int16_t widened16 = minimum8") !=
                  std::string::npos &&
@@ -10891,9 +11042,9 @@ bool matches_boundaries(int8_t narrow, int32_t wide, int64_t widest) {
          "signed literal operands should adopt the other integer operand's "
          "exact type through HIR");
   expect(generated.find(
-             "numeric_cast<std::int8_t>(gti_internal::backend::negate(1))") !=
+             "numeric_cast<std::int8_t>(::gti_internal::backend::negate(1))") !=
                  std::string::npos &&
-             generated.find("numeric_cast<std::int32_t>(gti_internal::"
+             generated.find("numeric_cast<std::int32_t>(::gti_internal::"
                             "backend::negate(2147483648))") !=
                  std::string::npos &&
              generated.find("numeric_cast<std::int64_t>((-"
@@ -11203,7 +11354,7 @@ int main() {
              generated.find("std::uint8_t{71}") != std::string::npos &&
              generated.find("std::string_view{\"GTI\\000text\", 8}") !=
                  std::string::npos &&
-             generated.find("gti_internal::backend::string_view_at") !=
+             generated.find("::gti_internal::backend::string_view_at") !=
                  std::string::npos &&
              generated.find("const bool literal_chars_match = true") !=
                  std::string::npos,
@@ -11312,17 +11463,18 @@ int main() {
       lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                        nullptr, &valid.semantics, &valid.hir)
           .emit(valid.program);
-  expect(
-      generated.find("class string") != std::string::npos &&
-          generated.find("gti_internal::backend::storage<std::uint8_t> data") !=
-              std::string::npos &&
-          generated.find("string(const string &) = delete;") !=
-              std::string::npos &&
-          generated.find("string(string &&) = default;") != std::string::npos &&
-          generated.find("gti_internal::backend::storage_read_mut") !=
-              std::string::npos,
-      "std::string lowering should retain nominal move-only lifecycle and "
-      "checked mutable storage access");
+  expect(generated.find("class string") != std::string::npos &&
+             generated.find(
+                 "::gti_internal::backend::storage<std::uint8_t> data") !=
+                 std::string::npos &&
+             generated.find("string(const string &) = delete;") !=
+                 std::string::npos &&
+             generated.find("string(string &&) = default;") !=
+                 std::string::npos &&
+             generated.find("::gti_internal::backend::storage_read_mut") !=
+                 std::string::npos,
+         "std::string lowering should retain nominal move-only lifecycle and "
+         "checked mutable storage access");
 
   const lang::FrontendResult invalidCopy = lang::Frontend().analyze(
       entry, R"(
@@ -11494,11 +11646,11 @@ int main() {
          "valid integer bitwise and modulo operations should type-check");
 
   const std::string generated = lang::CppEmitter().emit(validProgram);
-  expect(generated.find("gti_internal::backend::modulo(") !=
+  expect(generated.find("::gti_internal::backend::modulo(") !=
                  std::string::npos &&
-             generated.find("gti_internal::backend::shift_left(") !=
+             generated.find("::gti_internal::backend::shift_left(") !=
                  std::string::npos &&
-             generated.find("gti_internal::backend::shift_right(") !=
+             generated.find("::gti_internal::backend::shift_right(") !=
                  std::string::npos,
          "modulo and shifts should lower through checked integer helpers");
   expect(generated.find("(left & right)") != std::string::npos &&
@@ -12666,10 +12818,9 @@ int read(Reading reading) { return reading.value; }
              generated.find("struct Reading;") != std::string::npos &&
              generated.find("class Vault {") != std::string::npos &&
              generated.find("struct Reading {") != std::string::npos &&
-             generated.find("public:\n  std::int32_t reveal()") !=
+             generated.find("std::int32_t reveal() const;") !=
                  std::string::npos &&
-             generated.find("private:\n  std::int32_t hidden = 2") !=
-                 std::string::npos,
+             generated.find("std::int32_t hidden = 2") != std::string::npos,
          "emitter should preserve declaration kinds, access labels, and "
          "frontend-owned field immutability");
 
@@ -13054,9 +13205,10 @@ int main() {
       lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                        nullptr, &validFrontend.semantics)
           .emit(validFrontend.program);
-  expect(generated.find(
-             "explicit Counter(const std::int32_t initial) : value(initial)") !=
-             std::string::npos,
+  expect(generated.find("explicit Counter(const std::int32_t initial);") !=
+                 std::string::npos &&
+             generated.find("Counter::Counter(const std::int32_t initial) : "
+                            "value(initial)") != std::string::npos,
          "constructor overloads should lower explicitly with field "
          "initialization");
   expect(generated.find("std::int32_t read() const") != std::string::npos,
@@ -13497,9 +13649,12 @@ int main() {
           generated.find(" = 0;") != std::string::npos &&
           generated.find("virtual ~Renderable() noexcept = default;") !=
               std::string::npos &&
-          generated.find("explicit Sprite(const std::int32_t id) : "
+          generated.find("explicit Sprite(const std::int32_t id);") !=
+              std::string::npos &&
+          generated.find("Sprite::Sprite(const std::int32_t id) : "
                          "Entity(id)") != std::string::npos &&
-          generated.find("static_cast<const ::Entity &>") != std::string::npos,
+          generated.find("static_cast<const ::__gti_program::Entity &>") !=
+              std::string::npos,
       "the C++ backend should emit inheritance, pure contracts, overrides, "
       "base construction, polymorphic destruction, and GTI-selected virtual "
       "overloads");
@@ -14156,7 +14311,7 @@ int main() {
           artifact.contents.find("other." + activeName + " = false;") !=
               std::string::npos &&
           artifact.contents.find(cleanupName + "();") != std::string::npos &&
-          artifact.contents.find("gti_internal::backend::storage_destroy") !=
+          artifact.contents.find("::gti_internal::backend::storage_destroy") !=
               std::string::npos,
       "the backend should lower declared cleanup through an active drop state "
       "and generated safe moves");
@@ -14850,14 +15005,14 @@ int main() {
          "generic substitution and exact inference should validate");
 
   const std::string generated = lang::CppEmitter().emit(validProgram);
-  expect(generated.find("template <typename T>\nclass Box;") !=
+  expect(generated.find("template <typename T>\n  class Box;") !=
                  std::string::npos &&
-             generated.find("template <typename T>\nclass Box {") !=
+             generated.find("template <typename T>\n  class Box {") !=
                  std::string::npos,
          "generic classes should lower with matching C++ forward declarations");
-  expect(generated.find("template <typename T>\nT identity(const T value)") !=
+  expect(generated.find("template <typename T>\n  T identity(const T value)") !=
                  std::string::npos &&
-             generated.find("template <typename T>\nT unbox(") !=
+             generated.find("template <typename T>\n  T unbox(") !=
                  std::string::npos,
          "generic functions should lower as C++ function templates");
   expect(generated.find("Box<std::int32_t> box = "
@@ -15086,10 +15241,10 @@ int main() {
   lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                            nullptr, &valid.semantics);
   const std::string generated = emitter.emit(valid.program);
-  expect(generated.find("template <typename T>\nT __gti_fn_") !=
+  expect(generated.find("template <typename T>\n  T __gti_fn_") !=
                  std::string::npos &&
              generated.find("_minimum(T left, T right)") != std::string::npos &&
-             generated.find("numeric_cast<T>(gti_internal::backend::multiply("
+             generated.find("numeric_cast<T>(::gti_internal::backend::multiply("
                             "left, right))") != std::string::npos,
          "constraints should remain frontend metadata while generic numeric "
          "conversions lower through checked backend casts");
@@ -15629,10 +15784,16 @@ int main() {
   lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                            nullptr, &valid.semantics);
   const std::string generated = emitter.emit(valid.program);
-  expect(generated.find("unsafe_transfer") == std::string::npos &&
-             generated.find("no_transfer") == std::string::npos &&
-             generated.find("transferable") == std::string::npos &&
-             generated.find("shareable") == std::string::npos,
+  const std::size_t emittedProgram =
+      generated.find("namespace __gti_program {");
+  const std::string_view generatedProgram =
+      emittedProgram == std::string::npos
+          ? std::string_view(generated)
+          : std::string_view(generated).substr(emittedProgram);
+  expect(generatedProgram.find("unsafe_transfer") == std::string_view::npos &&
+             generatedProgram.find("no_transfer") == std::string_view::npos &&
+             generatedProgram.find("transferable") == std::string_view::npos &&
+             generatedProgram.find("shareable") == std::string_view::npos,
          "capability policy and constraints should remain frontend facts, not "
          "emitted C++ traits or spellings");
 
@@ -16537,20 +16698,20 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
   lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                            nullptr, &valid.semantics, &valid.hir);
   const std::string generated = emitter.emit(valid.program);
-  expect(generated.find("concept compatible_sentinel") == std::string::npos &&
-             generated.find("requires __gti_std::") == std::string::npos &&
-             generated.find("__gti_operator_dereference(gti_internal::backend::"
-                            "read_only_receiver(first))") !=
-                 std::string::npos &&
-             generated.find("__gti_operator_pre_increment(first)") !=
-                 std::string::npos &&
-             generated.find("__gti_operator_not_equal(gti_internal::backend::"
-                            "read_only_receiver(first), "
-                            "gti_internal::backend::exact_type<"
-                            "std::remove_cvref_t<decltype(last)>>{}, last)") !=
-                 std::string::npos,
-         "the C++ backend should emit already-validated operator calls, not "
-         "GTI concepts or trailing requires clauses");
+  expect(
+      generated.find("concept compatible_sentinel") == std::string::npos &&
+          generated.find("requires __gti_std::") == std::string::npos &&
+          generated.find("__gti_operator_dereference(::gti_internal::backend::"
+                         "read_only_receiver(first))") != std::string::npos &&
+          generated.find("__gti_operator_pre_increment(first)") !=
+              std::string::npos &&
+          generated.find("__gti_operator_not_equal(::gti_internal::backend::"
+                         "read_only_receiver(first), "
+                         "::gti_internal::backend::exact_type<"
+                         "std::remove_cvref_t<decltype(last)>>{}, last)") !=
+              std::string::npos,
+      "the C++ backend should emit already-validated operator calls, not "
+      "GTI concepts or trailing requires clauses");
 
   const lang::FrontendResult exactSentinelBridges = lang::Frontend().analyze(
       "exact-sentinel-bridges.gti", R"(
@@ -16649,14 +16810,15 @@ int main() {
   const std::string exactBridgeCpp =
       exactBridgeEmitter.emit(exactSentinelBridges.program);
   expect(
-      exactBridgeCpp.find("gti_internal::backend::exact_type<DerivedEnd>") !=
+      exactBridgeCpp.find("::gti_internal::backend::exact_type<DerivedEnd>") !=
               std::string::npos &&
-          exactBridgeCpp.find("gti_internal::backend::exact_type<BaseEnd>") !=
-              std::string::npos &&
-          exactBridgeCpp.find("gti_internal::backend::exact_type<OtherEnd>") ==
+          exactBridgeCpp.find("::gti_internal::backend::exact_type<BaseEnd>") !=
               std::string::npos &&
           exactBridgeCpp.find(
-              "gti_internal::backend::exact_type<std::remove_cvref_t<"
+              "::gti_internal::backend::exact_type<OtherEnd>") ==
+              std::string::npos &&
+          exactBridgeCpp.find(
+              "::gti_internal::backend::exact_type<std::remove_cvref_t<"
               "decltype(last)>>{}") != std::string::npos &&
           exactBridgeCpp.find(
               "friend const std::int32_t &__gti_operator_dereference("
@@ -16920,8 +17082,9 @@ int32_t after() {
   return requires - 1;
 }
 )",
-         "an ordinary identifier spelled 'requires' should not be treated as "
-         "a trailing clause");
+         "recovery-oriented formatting should not misindent a non-clause "
+         "'requires' occurrence even though the compiler reserves it as a "
+         "keyword");
 }
 
 void testValueGenerics() {
@@ -16992,7 +17155,7 @@ int main() {
   const std::string generated = emitter.emit(valid.program);
   expect(
       generated.find(
-          "template <typename T, std::uint64_t N>\nclass StaticArray") !=
+          "template <typename T, std::uint64_t N>\n  class StaticArray") !=
               std::string::npos &&
           generated.find("std::array<T, N> values = {}") != std::string::npos &&
           generated.find("StaticArray<T, N> value") != std::string::npos &&
@@ -17105,7 +17268,7 @@ int main() {
              generated.find("forward_pack_argument(values)...") !=
                  std::string::npos,
          "variadic declarations and forwarding should lower explicitly");
-  expect(generated.find("0, gti_internal::backend::forward_pack_argument("
+  expect(generated.find("0, ::gti_internal::backend::forward_pack_argument("
                         "values)...") != std::string::npos,
          "a final symbolic pack should compose with concrete pack elements");
   expect(generated.find("template <typename T, typename... Rest>") !=
@@ -18649,7 +18812,7 @@ int main() {
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
-             "gti_internal::backend::invoke(operation, value)") !=
+             "::gti_internal::backend::invoke(operation, value)") !=
                  std::string::npos &&
              artifact.contents.find("friend void __gti_invoke(") !=
                  std::string::npos &&
@@ -18968,7 +19131,7 @@ int main() {
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
-             "return gti_internal::backend::invoke(predicate, value)") !=
+             "return ::gti_internal::backend::invoke(predicate, value)") !=
                  std::string::npos &&
              artifact.contents.find("friend bool __gti_invoke(") !=
                  std::string::npos,
@@ -19129,9 +19292,9 @@ int main() {
           .emit(frontend.program);
   expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
              cpp20.find(
-                 "nonstd::expected<std::int32_t, __gti_std::string_view>") !=
+                 "::nonstd::expected<std::int32_t, __gti_std::string_view>") !=
                  std::string::npos &&
-             cpp20.find("nonstd::make_unexpected(") != std::string::npos,
+             cpp20.find("::nonstd::make_unexpected(") != std::string::npos,
          "C++20 should lower expected values to the vendored implementation");
 
   auto invalidTokens = lexer.scan(R"(
@@ -19228,7 +19391,8 @@ Result main() {
                  std::string::npos &&
              generated.find("using Triple = std::array<std::int32_t, 3>;") !=
                  std::string::npos &&
-             generated.find("using IntBox = ::Box<std::int32_t>;") !=
+             generated.find(
+                 "using IntBox = ::__gti_program::Box<std::int32_t>;") !=
                  std::string::npos &&
              generated.find("numeric_cast<Size>") != std::string::npos &&
              generated.find("#include <expected>") != std::string::npos &&
@@ -19661,7 +19825,7 @@ int main() {
           runtimeCpp.find(
               "std::int32_t gti_rt_write_stdout(::gti_c_string_view "
               "value);") != std::string::npos &&
-          runtimeCpp.find("gti_internal::backend::to_c_string_view(value)") !=
+          runtimeCpp.find("::gti_internal::backend::to_c_string_view(value)") !=
               std::string::npos,
       "text views should cross C linkage through the explicit public "
       "counted-buffer ABI");
@@ -20925,6 +21089,7 @@ int main() {
   testIndexedPlaceMovesAndInitialization();
   testTrustedIntrinsicDeclarations();
   testNonNullReferences();
+  testGlobalReferencePlaces();
   testExclusiveReborrowLoanGraph();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();

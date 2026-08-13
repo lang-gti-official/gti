@@ -139,8 +139,10 @@ declaration line for projects that prefer it.
 
 The clause is recognized structurally: `requires` introduces a clause only
 where the grammar admits one, directly after a parameter clause and optionally
-after the receiver-mutability `mut`. `requires` is not a GTI keyword, so an
-ordinary identifier spelled `requires` is left alone.
+after the receiver-mutability `mut`. `requires` is a GTI keyword, but the
+formatter's recovery-oriented lexer does not assign compiler token kinds. A
+non-clause occurrence is therefore formatted without clause indentation while
+the compiler remains responsible for rejecting it as an identifier.
 
 ## Deliberate next phases
 

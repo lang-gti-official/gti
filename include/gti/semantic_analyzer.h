@@ -3209,6 +3209,7 @@ public:
     collectClassMembers(program.declarations(), {});
     resolveInheritedMembers();
     validateNativeRecords();
+    validateNativeFacingNamespaces(program.declarations());
     validateStoredReferenceContracts();
     resolveFunctionBorrowSummaries();
     validateInterfaceCapabilities();
@@ -5377,10 +5378,10 @@ public:
                 symbol->type.arguments.size() == 1
             ? symbol->type.arguments[0]
             : symbol->type;
-    Symbol *mutableTarget = qualified ? nullptr : resolveMutable(expr.name());
-    SemanticPlace targetPlace = mutableTarget == nullptr
-                                    ? SemanticPlace{}
-                                    : placeForSymbol(*mutableTarget);
+    Symbol *placeTarget = qualified ? resolveQualifiedPlaceSymbol(expr.path())
+                                    : resolvePlaceSymbol(expr.name());
+    SemanticPlace targetPlace =
+        placeTarget == nullptr ? SemanticPlace{} : placeForSymbol(*placeTarget);
     if (expr.oper().kind != TokenKind::EQUAL &&
         symbol->valueState != ValueState::Available) {
       reportUnavailableValue(expr.name(), *symbol);
@@ -5465,6 +5466,7 @@ public:
            expr.oper().kind == TokenKind::MINUS_EQUAL) &&
           isInteger(valueType) && targetType.arguments.size() == 1 &&
           targetType.arguments.front() != SemanticType::Void &&
+          !isCOpaqueHandleType(targetType.arguments.front()) &&
           symbol->assignable) {
         requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.oper(),
                       "Raw pointer arithmetic");
@@ -5558,6 +5560,15 @@ public:
          expr.oper().kind == TokenKind::MINUS) &&
         (leftType.kind == SemanticType::RawPointer ||
          rightType.kind == SemanticType::RawPointer)) {
+      if ((leftType.kind == SemanticType::RawPointer &&
+           rejectCOpaquePointeeOperation(leftType, expr.oper(),
+                                         "raw-pointer arithmetic")) ||
+          (rightType.kind == SemanticType::RawPointer &&
+           rejectCOpaquePointeeOperation(rightType, expr.oper(),
+                                         "raw-pointer arithmetic"))) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
       const auto validPointer = [&](const SemanticType &type) {
         return type.kind == SemanticType::RawPointer &&
                type.arguments.size() == 1 &&
@@ -6427,6 +6438,12 @@ public:
     SemanticType valueTarget = SemanticType::Unknown;
     bool mutableTarget = isMutableObject(expr.object());
     if (ownerType.kind == SemanticType::RawPointer) {
+      if (rejectCOpaquePointeeOperation(ownerType, expr.dereference(),
+                                        "raw-pointer dereference")) {
+        analyze(expr.value());
+        currentType = SemanticType::Unknown;
+        return;
+      }
       if (ownerType.arguments.size() != 1 ||
           ownerType.arguments.front() == SemanticType::Void) {
         report(expr.dereference(), "void* cannot be dereferenced.",
@@ -6597,6 +6614,11 @@ public:
     const SemanticType indexType = analyze(expr.index());
     semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
     if (objectType.kind == SemanticType::RawPointer) {
+      if (rejectCOpaquePointeeOperation(objectType, expr.bracket(),
+                                        "raw-pointer indexing")) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
       const bool validIndex =
           isInteger(indexType) || indexType == SemanticType::Unknown;
       if (!validIndex) {
@@ -6664,6 +6686,12 @@ public:
     SemanticType elementType = SemanticType::Unknown;
     const ResolvedOperatorInfo *resolvedOperator = nullptr;
     if (objectType.kind == SemanticType::RawPointer) {
+      if (rejectCOpaquePointeeOperation(objectType, expr.bracket(),
+                                        "raw-pointer indexing")) {
+        analyze(expr.value());
+        currentType = SemanticType::Unknown;
+        return;
+      }
       const bool validIndex =
           isInteger(indexType) || indexType == SemanticType::Unknown;
       if (!validIndex) {
@@ -6789,6 +6817,7 @@ public:
            expr.oper().kind == TokenKind::MINUS_EQUAL) &&
           isInteger(valueType) && elementType.arguments.size() == 1 &&
           elementType.arguments.front() != SemanticType::Void &&
+          !isCOpaqueHandleType(elementType.arguments.front()) &&
           mutableElement) {
         requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.oper(),
                       "Raw pointer arithmetic");
@@ -7359,6 +7388,11 @@ public:
         expr.expression(), OccurrenceRole::Reference | OccurrenceRole::Read |
                                OccurrenceRole::Write);
     if (type.kind == SemanticType::RawPointer) {
+      if (rejectCOpaquePointeeOperation(type, expr.oper(),
+                                        "raw-pointer arithmetic")) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
       const bool validPointee = type.arguments.size() == 1 &&
                                 type.arguments.front() != SemanticType::Void;
       const bool mutableTarget = isMutableTarget(expr.expression());
@@ -7586,6 +7620,7 @@ public:
            expr.oper().kind == TokenKind::MINUS_EQUAL) &&
           isInteger(valueType) && resolvedMember.type.arguments.size() == 1 &&
           resolvedMember.type.arguments.front() != SemanticType::Void &&
+          !isCOpaqueHandleType(resolvedMember.type.arguments.front()) &&
           resolvedMember.assignable && mutableReceiver) {
         if (expr.access().kind != TokenKind::ARROW ||
             receiverType.kind != SemanticType::RawPointer) {
@@ -7687,6 +7722,11 @@ public:
     if ((expr.oper().kind == TokenKind::PLUS_PLUS ||
          expr.oper().kind == TokenKind::MINUS_MINUS) &&
         rightType.kind == SemanticType::RawPointer) {
+      if (rejectCOpaquePointeeOperation(rightType, expr.oper(),
+                                        "raw-pointer arithmetic")) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
       const bool validPointee =
           rightType.arguments.size() == 1 &&
           rightType.arguments.front() != SemanticType::Void;
@@ -7724,6 +7764,11 @@ public:
 
     if (expr.oper().kind == TokenKind::STAR) {
       if (rightType.kind == SemanticType::RawPointer) {
+        if (rejectCOpaquePointeeOperation(rightType, expr.oper(),
+                                          "raw-pointer dereference")) {
+          currentType = SemanticType::Unknown;
+          return;
+        }
         if (rightType.arguments.size() != 1 ||
             rightType.arguments.front() == SemanticType::Void) {
           report(expr.oper(), "void* cannot be dereferenced.", "GTI-S2056");
@@ -12057,18 +12102,19 @@ private:
       return;
     }
 
+    SemanticLoanPlace place = retainedLoanPlace(expression);
     const Variable *owner = borrowedOwnerVariable(expression);
     const bool receiverOrigin =
         owner == nullptr && currentClass && isReceiverDerivedBorrow(expression);
-    if (owner == nullptr && !receiverOrigin) {
+    if (owner == nullptr && !receiverOrigin && place.root == 0 &&
+        !place.receiver) {
       return;
     }
 
     Symbol *ownerSymbol =
-        owner == nullptr ? nullptr : resolveMutable(owner->name());
+        owner == nullptr ? nullptr : resolvePlaceSymbol(owner->name());
     const bool stableStorage = hasStableBorrowStorage(expression);
     const bool protectsStorage = stableStorage;
-    SemanticLoanPlace place = retainedLoanPlace(expression);
     const SymbolId ownerId =
         ownerSymbol == nullptr ? place.root : toolingSymbolFor(*ownerSymbol);
     if (place.root == 0 && !place.receiver) {
@@ -12972,6 +13018,20 @@ private:
     const ExprPtr &argument = expr.arguments().front();
     const SemanticType valueType = analyzeProjectionBase(argument);
     SemanticPlace place = semanticPlace(argument);
+    if (place.root != nullptr &&
+        (place.root->bindingKind == SemanticBindingKind::GlobalVariable ||
+         place.root->bindingKind == SemanticBindingKind::StaticField)) {
+      report(expressionToken(argument),
+             place.root->bindingKind == SemanticBindingKind::GlobalVariable
+                 ? "std::move cannot consume global binding '" +
+                       place.root->declaration.lexeme +
+                       "' because its move state is not locally provable."
+                 : "std::move cannot consume static class storage because "
+                   "its move state is not locally provable.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (place.root != nullptr && !place.projections.empty()) {
       const ExpressionInfo *info = semanticModel.findExpression(*argument);
       if (place.root->type.kind == SemanticType::Reference) {
@@ -15750,6 +15810,10 @@ private:
                                const SemanticType &receiverType,
                                const Token &token) {
     if (receiverType.kind == SemanticType::RawPointer) {
+      if (rejectCOpaquePointeeOperation(receiverType, token,
+                                        "raw-pointer member access")) {
+        return SemanticType::Unknown;
+      }
       if (receiverType.arguments.size() != 1 ||
           receiverType.arguments.front() == SemanticType::Void) {
         report(token, "void* does not provide member access.", "GTI-S2056");
@@ -18885,6 +18949,8 @@ private:
     const auto fail = [&](const Token &location, std::string message) {
       report(location, std::move(message), "GTI-S2054");
     };
+    (void)validateNativeCIdentifier(function.name(), "GTI-S2054",
+                                    "extern C symbol", true, true, true);
     if (methodDeclaration || currentClass) {
       fail(function.name(),
            "extern \"C\" declarations must be namespace-scope free "
@@ -18924,6 +18990,10 @@ private:
     }
 
     for (const Parameter &parameter : function.parameters()) {
+      if (!parameter.name.lexeme.empty()) {
+        (void)validateNativeCIdentifier(parameter.name, "GTI-S2054",
+                                        "extern C parameter name", true, false);
+      }
       const SemanticType parameterType = typeOf(parameter);
       if (parameter.mutability == Mutability::Mutable || parameter.pack ||
           parameter.type.reference || !parameter.type.arrayExtents.empty() ||
@@ -19247,6 +19317,15 @@ private:
     }
     static const std::unordered_map<std::string, Symbol> empty;
     return empty;
+  }
+
+  [[nodiscard]] std::unordered_map<std::string, Symbol> *
+  currentNamespaceSymbolsMutable() {
+    if (sourceGraph == nullptr || currentSourceUnit == 0) {
+      return &namespaceSymbols;
+    }
+    const auto found = visibleNamespaceSymbols.find(currentSourceUnit);
+    return found == visibleNamespaceSymbols.end() ? nullptr : &found->second;
   }
 
   [[nodiscard]] const std::unordered_map<std::string, ClassId> &
@@ -21100,6 +21179,241 @@ private:
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
+  [[nodiscard]] static bool isC17Keyword(std::string_view spelling) {
+    static constexpr std::string_view keywords[]{
+        "_Alignas",      "_Alignof",  "_Atomic",
+        "_Bool",         "_Complex",  "_Generic",
+        "_Imaginary",    "_Noreturn", "_Static_assert",
+        "_Thread_local", "auto",      "break",
+        "case",          "char",      "const",
+        "continue",      "default",   "do",
+        "double",        "else",      "enum",
+        "extern",        "float",     "for",
+        "goto",          "if",        "inline",
+        "int",           "long",      "register",
+        "restrict",      "return",    "short",
+        "signed",        "sizeof",    "static",
+        "struct",        "switch",    "typedef",
+        "union",         "unsigned",  "void",
+        "volatile",      "while",
+    };
+    return std::find(std::begin(keywords), std::end(keywords), spelling) !=
+           std::end(keywords);
+  }
+
+  [[nodiscard]] static bool
+  isNativeBridgeSupportTypeName(std::string_view spelling) {
+    static constexpr std::string_view names[]{
+        "FILE",           "gti_c_string_view", "ptrdiff_t",
+        "size_t",         "max_align_t",       "wchar_t",
+        "int8_t",         "int16_t",           "int32_t",
+        "int64_t",        "uint8_t",           "uint16_t",
+        "uint32_t",       "uint64_t",          "int_least8_t",
+        "int_least16_t",  "int_least32_t",     "int_least64_t",
+        "uint_least8_t",  "uint_least16_t",    "uint_least32_t",
+        "uint_least64_t", "int_fast8_t",       "int_fast16_t",
+        "int_fast32_t",   "int_fast64_t",      "uint_fast8_t",
+        "uint_fast16_t",  "uint_fast32_t",     "uint_fast64_t",
+        "intptr_t",       "uintptr_t",         "intmax_t",
+        "uintmax_t",
+    };
+    return std::find(std::begin(names), std::end(names), spelling) !=
+           std::end(names);
+  }
+
+  [[nodiscard]] static bool
+  isNativeBridgeObjectMacroName(std::string_view spelling) {
+    static constexpr std::string_view names[]{
+        "BUFSIZ",
+        "EOF",
+        "FILENAME_MAX",
+        "FOPEN_MAX",
+        "GTI_NATIVE_HEADER_NO_SOURCE_NAMES",
+        "L_tmpnam",
+        "NULL",
+        "SEEK_CUR",
+        "SEEK_END",
+        "SEEK_SET",
+        "SIZE_MAX",
+        "TMP_MAX",
+        "stderr",
+        "stdin",
+        "stdout",
+    };
+    if (std::find(std::begin(names), std::end(names), spelling) !=
+        std::end(names)) {
+      return true;
+    }
+    static constexpr std::string_view signedPrefixes[]{
+        "INT8",        "INT16",       "INT32",       "INT64",     "INT_LEAST8",
+        "INT_LEAST16", "INT_LEAST32", "INT_LEAST64", "INT_FAST8", "INT_FAST16",
+        "INT_FAST32",  "INT_FAST64",  "INTPTR",      "INTMAX",    "PTRDIFF",
+        "SIG_ATOMIC",  "WCHAR",       "WINT",
+    };
+    static constexpr std::string_view unsignedPrefixes[]{
+        "UINT8",       "UINT16",       "UINT32",       "UINT64",
+        "UINT_LEAST8", "UINT_LEAST16", "UINT_LEAST32", "UINT_LEAST64",
+        "UINT_FAST8",  "UINT_FAST16",  "UINT_FAST32",  "UINT_FAST64",
+        "UINTPTR",     "UINTMAX",
+    };
+    const auto matchesSuffix = [&](std::span<const std::string_view> prefixes,
+                                   std::string_view suffix) {
+      return std::any_of(
+          prefixes.begin(), prefixes.end(), [&](std::string_view prefix) {
+            return spelling.size() == prefix.size() + suffix.size() &&
+                   spelling.starts_with(prefix) && spelling.ends_with(suffix);
+          });
+    };
+    return matchesSuffix(signedPrefixes, "_MIN") ||
+           matchesSuffix(signedPrefixes, "_MAX") ||
+           matchesSuffix(unsignedPrefixes, "_MAX");
+  }
+
+  [[nodiscard]] static bool
+  isNativeBridgeFunctionMacroName(std::string_view spelling) {
+    if (spelling == "offsetof") {
+      return true;
+    }
+    static constexpr std::string_view prefixes[]{
+        "INT8",   "INT16",  "INT32",  "INT64",  "UINT8",
+        "UINT16", "UINT32", "UINT64", "INTMAX", "UINTMAX",
+    };
+    return std::any_of(
+        std::begin(prefixes), std::end(prefixes), [&](std::string_view prefix) {
+          return spelling.size() == prefix.size() + 2 &&
+                 spelling.starts_with(prefix) && spelling.ends_with("_C");
+        });
+  }
+
+  [[nodiscard]] static std::optional<std::string>
+  reservedNativeIdentifierConflict(std::string_view spelling,
+                                   bool occupiesCFileScope) {
+    if (spelling.size() >= 2 && spelling.front() == '_' &&
+        (spelling[1] == '_' || (spelling[1] >= 'A' && spelling[1] <= 'Z'))) {
+      return "an implementation-reserved identifier spelling";
+    }
+    if (spelling.find("__") != std::string_view::npos) {
+      return "an implementation-reserved C++ identifier spelling";
+    }
+    if (occupiesCFileScope && spelling.starts_with('_')) {
+      return "an implementation-reserved C file-scope identifier spelling";
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static std::optional<std::string> nativeCIdentifierConflict(
+      std::string_view spelling, bool exposedWithExactCSpelling,
+      bool occupiesCOrdinaryNamespace, bool followedByLeftParen) {
+    if (exposedWithExactCSpelling && isC17Keyword(spelling)) {
+      return "the C17 keyword '" + std::string(spelling) + "'";
+    }
+    if (const std::optional<std::string> conflict =
+            reservedNativeIdentifierConflict(spelling,
+                                             occupiesCOrdinaryNamespace)) {
+      return conflict;
+    }
+    if (isNativeBridgeObjectMacroName(spelling) ||
+        (followedByLeftParen && isNativeBridgeFunctionMacroName(spelling))) {
+      return "the support macro '" + std::string(spelling) +
+             "' provided by the generated bridge headers";
+    }
+    if (!occupiesCOrdinaryNamespace) {
+      return std::nullopt;
+    }
+    if (isNativeBridgeSupportTypeName(spelling)) {
+      return "the support type name '" + std::string(spelling) +
+             "' provided by the generated bridge headers";
+    }
+    if (spelling.starts_with("gti_cabi_")) {
+      return "the reserved generated native-record prefix 'gti_cabi_'";
+    }
+    return std::nullopt;
+  }
+
+  bool validateNativeCIdentifier(const Token &identifier,
+                                 std::string_view diagnosticCode,
+                                 std::string_view entity,
+                                 bool exposedWithExactCSpelling,
+                                 bool occupiesCOrdinaryNamespace,
+                                 bool followedByLeftParen = false) {
+    const std::optional<std::string> conflict = nativeCIdentifierConflict(
+        identifier.lexeme, exposedWithExactCSpelling,
+        occupiesCOrdinaryNamespace, followedByLeftParen);
+    if (!conflict) {
+      return true;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        std::string(diagnosticCode), DiagnosticPhase::Semantics, identifier,
+        std::string(entity) + " '" + identifier.lexeme + "' conflicts with " +
+            *conflict + ".");
+    diagnostic.hints.emplace_back(
+        "Rename this native-facing identifier; generated native declarations "
+        "preserve this spelling and cannot safely rewrite the ABI surface.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
+
+  bool validateNativeFacingNamespaces(const StmtList &declarations,
+                                      std::size_t depth = 0) {
+    const SourceUnitId enclosingSourceUnit = currentSourceUnit;
+    bool containsNativeSurface = false;
+    for (const StmtPtr &statement : declarations) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          containsNativeSurface =
+              validateNativeFacingNamespaces(*branch, depth) ||
+              containsNativeSurface;
+        }
+        continue;
+      }
+      if (const auto *nameSpace =
+              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        const bool childContainsNative = validateNativeFacingNamespaces(
+            nameSpace->declarations(), depth + 1);
+        if (childContainsNative) {
+          currentSourceUnit = sourceUnitFor(nameSpace->name());
+          (void)validateNativeCIdentifier(nameSpace->name(), "GTI-S2054",
+                                          "Native-facing namespace component",
+                                          false, depth == 0);
+          containsNativeSurface = true;
+        }
+        continue;
+      }
+      if (const auto *classDeclaration =
+              dynamic_cast<const ClassDecl *>(statement.get())) {
+        const auto found = classDeclIds.find(classDeclaration);
+        if (found != classDeclIds.end()) {
+          const ClassInfo &owner = classInfo(found->second);
+          containsNativeSurface =
+              containsNativeSurface ||
+              (!owner.compilerPrivate &&
+               ((owner.cAbiRecord && owner.cAbiLayout.has_value()) ||
+                owner.cOpaqueHandle));
+        }
+        continue;
+      }
+      const auto *externC = dynamic_cast<const ExternCDecl *>(statement.get());
+      if (externC == nullptr) {
+        continue;
+      }
+      for (const StmtPtr &nativeDeclaration : externC->declarations()) {
+        const auto *function =
+            dynamic_cast<const FunctionDecl *>(nativeDeclaration.get());
+        const FunctionInfo *info = function == nullptr
+                                       ? nullptr
+                                       : semanticModel.findFunction(*function);
+        if (info != nullptr && info->linkage == LanguageLinkage::C &&
+            !info->compilerPrivate) {
+          containsNativeSurface = true;
+          break;
+        }
+      }
+    }
+    currentSourceUnit = enclosingSourceUnit;
+    return containsNativeSurface;
+  }
+
   void reportCOpaqueHandle(const Token &location, std::string message) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2065", DiagnosticPhase::Semantics, location, std::move(message));
@@ -21107,6 +21421,34 @@ private:
         "Declare an incomplete native handle as '[[c_opaque]] struct Name;' "
         "and use it only through 'Name*' or 'const Name*'.");
     diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  bool rejectCOpaquePointeeOperation(const SemanticType &pointer,
+                                     const Token &location,
+                                     std::string_view operation) {
+    if (pointer.kind != SemanticType::RawPointer ||
+        pointer.arguments.size() != 1 ||
+        !isCOpaqueHandleType(pointer.arguments.front())) {
+      return false;
+    }
+    const SemanticType &pointee = pointer.arguments.front();
+    const ClassInfo &owner = classInfo(pointee.classId);
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2065", DiagnosticPhase::Semantics, location,
+                       "Opaque C handle '" + typeSpelling(pointee) +
+                           "' is incomplete and does not support " +
+                           std::string(operation) + ".");
+    if (owner.cOpaqueAttribute) {
+      diagnostic.related.push_back(
+          {tokenSpan(*owner.cOpaqueAttribute),
+           "The pointer-only opaque handle is declared here."});
+    }
+    diagnostic.hints.emplace_back(
+        "An opaque-handle pointer may be initialized, copied, assigned, "
+        "compared with a compatible pointer or nullptr, passed, and returned; "
+        "its hidden pointee cannot be accessed even inside unsafe.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return true;
   }
 
   void validateCOpaqueHandles() {
@@ -21124,6 +21466,9 @@ private:
       if (!owner.cOpaqueHandle) {
         continue;
       }
+      (void)validateNativeCIdentifier(
+          owner.name, "GTI-S2065", "Opaque C handle name",
+          owner.namespaceScope.empty(), owner.namespaceScope.empty());
       if (owner.kind != ClassKind::Struct) {
         continue;
       }
@@ -21193,6 +21538,10 @@ private:
       return false;
     }
     bool valid = owner.kind == ClassKind::Struct;
+    valid = validateNativeCIdentifier(
+                owner.name, "GTI-S2064", "C ABI record name",
+                owner.namespaceScope.empty(), owner.namespaceScope.empty()) &&
+            valid;
     if (!owner.genericParameters.empty()) {
       reportCAbiRecord(owner.genericParameters.front().name,
                        "C ABI record '" + owner.name.lexeme +
@@ -21264,6 +21613,10 @@ private:
         valid = false;
         continue;
       }
+      valid =
+          validateNativeCIdentifier(field.declaration->name(), "GTI-S2064",
+                                    "C ABI record field name", true, false) &&
+          valid;
       const auto member = owner.members.find(field.declaration->name().lexeme);
       if (member == owner.members.end()) {
         valid = false;
@@ -23963,6 +24316,25 @@ private:
     return nullptr;
   }
 
+  [[nodiscard]] Symbol *resolvePlaceSymbol(const Token &name) {
+    if (Symbol *local = resolveMutable(name)) {
+      return local;
+    }
+    std::unordered_map<std::string, Symbol> *symbols =
+        currentNamespaceSymbolsMutable();
+    if (symbols == nullptr) {
+      return nullptr;
+    }
+    for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
+      const auto found = symbols->find(
+          qualifiedName(currentNamespace, depth - 1, name.lexeme));
+      if (found != symbols->end()) {
+        return &found->second;
+      }
+    }
+    return nullptr;
+  }
+
   [[nodiscard]] std::vector<ResolvedNamespaceSegment>
   resolveNamespaceSegments(const NamePath &path,
                            const std::vector<std::string> &fromScope) const {
@@ -24049,6 +24421,38 @@ private:
     }
     const EnumeratorRecord *enumerator = resolveEnumerator(path);
     return enumerator == nullptr ? nullptr : &enumerator->symbol;
+  }
+
+  [[nodiscard]] Symbol *resolveQualifiedPlaceSymbol(const NamePath &path) {
+    if (path.segments.size() < 2) {
+      return resolvePlaceSymbol(path.last());
+    }
+
+    NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePath(namespacePath);
+    if (!resolvedNamespace) {
+      const std::optional<ClassId> classId =
+          resolveClassPath(namespacePath, currentNamespace);
+      if (!classId) {
+        return nullptr;
+      }
+      ClassInfo &owner = classInfo(*classId);
+      const auto member = owner.members.find(path.last().lexeme);
+      return member != owner.members.end() && member->second.symbol.staticMember
+                 ? &member->second.symbol
+                 : nullptr;
+    }
+
+    std::unordered_map<std::string, Symbol> *symbols =
+        currentNamespaceSymbolsMutable();
+    if (symbols == nullptr) {
+      return nullptr;
+    }
+    const auto symbol =
+        symbols->find(*resolvedNamespace + "::" + path.last().lexeme);
+    return symbol == symbols->end() ? nullptr : &symbol->second;
   }
 
   [[nodiscard]] std::optional<std::string> resolveInitialNamespaceGlobally(
@@ -24802,7 +25206,9 @@ private:
 
   [[nodiscard]] SemanticPlace placeForSymbol(Symbol &symbol) {
     if (symbol.bindingKind == SemanticBindingKind::LocalVariable ||
-        symbol.bindingKind == SemanticBindingKind::Parameter) {
+        symbol.bindingKind == SemanticBindingKind::Parameter ||
+        symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+        symbol.bindingKind == SemanticBindingKind::StaticField) {
       return {.root = &symbol, .rootIdentity = toolingSymbolFor(symbol)};
     }
     if (symbol.bindingKind == SemanticBindingKind::Field &&
@@ -24870,7 +25276,12 @@ private:
       return semanticPlace(grouping->expression().get());
     }
     if (const auto *variable = dynamic_cast<const Variable *>(expression)) {
-      Symbol *symbol = resolveMutable(variable->name());
+      Symbol *symbol = resolvePlaceSymbol(variable->name());
+      return symbol == nullptr ? SemanticPlace{} : placeForSymbol(*symbol);
+    }
+    if (const auto *qualified =
+            dynamic_cast<const QualifiedName *>(expression)) {
+      Symbol *symbol = resolveQualifiedPlaceSymbol(qualified->name());
       return symbol == nullptr ? SemanticPlace{} : placeForSymbol(*symbol);
     }
     if (dynamic_cast<const This *>(expression) != nullptr) {
@@ -25625,6 +26036,10 @@ private:
                                   SemanticType value,
                                   const Expr *valueExpression) {
     if (target.kind == SemanticType::RawPointer) {
+      if (rejectCOpaquePointeeOperation(target, operation,
+                                        "raw-pointer arithmetic")) {
+        return;
+      }
       if ((operation.kind == TokenKind::PLUS_EQUAL ||
            operation.kind == TokenKind::MINUS_EQUAL) &&
           isInteger(value) && target.arguments.size() == 1 &&

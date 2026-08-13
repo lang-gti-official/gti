@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.119.0
+Checkpoint version: 0.121.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -46,6 +46,19 @@ structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
 
+The 0.121.0 integrity checkpoint hardens recently landed public capabilities
+without adding a competing language layer. Native-facing identifiers and
+namespaces now reject C/header collisions before emission; opaque C handles are
+address-only through raw pointers; and editor hover presents that compiler-owned
+contract. The transitional C++ backend isolates ordinary GTI names from host
+macros/namespaces and dependency-orders complete type definitions while
+preserving source-order global initialization. Managed build publication rejects
+leaf and root symlink escapes, workspace discovery rejects redirected manifests,
+and the whole-program cache conservatively bypasses native sources, search
+paths (including dependency-injecting environment paths), opaque argument
+vectors, link operands, and unresolved libraries until their transitive native
+inputs can be modeled.
+
 The 0.118.0 checkpoint completes B-PROJECT-03. Manifest schema version 1 now
 resolves canonical workspace members and recursive source-only path
 dependencies without network access. Direct package aliases feed the
@@ -70,8 +83,12 @@ claiming the ordered evaluation schedule that remains M-EXEC-01 work.
 The 0.115.0 checkpoint completes B-PROJECT-02. Project build, run, and test
 requests derive a SHA-256 whole-program identity from the compiler-owned loaded
 source graph, effective target/profile/backend policy, runtime and native
-compiler identity, structured native contents, exact argument vectors, and
-admitted toolchain environment. Verified generated C++ and executable payloads
+compiler identity, and admitted toolchain environment. The current hardened
+eligibility policy bypasses declared native sources, native search directories,
+opaque native argument vectors, native link operands, and unresolved
+library/framework inputs, plus dependency-injecting environment search paths,
+until their transitive dependencies can be modeled.
+Verified generated C++ and executable payloads
 live under `build/gti/cache/v1`; hits skip parsing through native linking,
 corruption is diagnosed and rebuilt before replacement, and `--no-cache`
 provides a clean verification path. Pure-GTI checkout moves retain content
