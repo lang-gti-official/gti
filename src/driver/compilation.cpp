@@ -4,6 +4,8 @@
 #include "gti/frontend.h"
 #include "gti/native_header.h"
 
+#include <exception>
+#include <string>
 #include <utility>
 
 namespace lang::driver {
@@ -20,9 +22,9 @@ FrontendResult analyze(const CompilationRequest &request,
                      inputs.sourceValid);
 }
 
-CompilationResult compileWithBackend(const CompilationRequest &request,
-                                     CompilationInputs inputs,
-                                     Backend &backend) {
+CompilationResult compileWithBackendInputs(const CompilationRequest &request,
+                                           CompilationInputs inputs,
+                                           Backend &backend) {
   FrontendResult frontend = analyze(request, std::move(inputs));
   CompilationResult result;
   if (!frontend.canGenerateCode()) {
@@ -52,12 +54,46 @@ CompilationResult compileWithBackend(const CompilationRequest &request,
     return result;
   }
 
-  result.artifact = backend.generate({.program = frontend.program,
-                                      .semantics = frontend.semantics,
-                                      .hir = frontend.hir,
-                                      .mir = optimizedProgram.mir,
-                                      .optimizations = optimizations,
-                                      .target = request.target()});
+  std::string backendName = "unknown";
+  try {
+    backendName = backend.name();
+  } catch (...) {
+    // A backend name is presentation metadata, not permission to let a
+    // backend exception escape the reusable compilation boundary.
+  }
+  const auto backendFailure = [&](std::string detail) {
+    const SourceUnit *entry = std::as_const(frontend.sourceGraph)
+                                  .findUnit(frontend.sourceGraph.entryUnit());
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-B0001", DiagnosticPhase::Backend,
+        SourceSpan{entry == nullptr ? request.entry().string()
+                                    : entry->path.string(),
+                   0, 0, 1},
+        "Internal compiler error: backend '" + backendName +
+            "' failed while generating an artifact: " + std::move(detail));
+    diagnostic.hints.emplace_back(
+        "Report this as a GTI compiler bug and include this diagnostic, the "
+        "GTI version, selected target, optimization level, and a reduced "
+        "source input when possible.");
+    result.status = CompilationStatus::BackendFailure;
+    result.sources = std::move(frontend.sources);
+    result.diagnostics = std::move(frontend.diagnostics);
+    result.diagnostics.emplace_back(std::move(diagnostic));
+    return result;
+  };
+
+  try {
+    result.artifact = backend.generate({.program = frontend.program,
+                                        .semantics = frontend.semantics,
+                                        .hir = frontend.hir,
+                                        .mir = optimizedProgram.mir,
+                                        .optimizations = optimizations,
+                                        .target = request.target()});
+  } catch (const std::exception &exception) {
+    return backendFailure(exception.what());
+  } catch (...) {
+    return backendFailure("a non-standard exception was thrown");
+  }
   result.sources = std::move(frontend.sources);
   result.diagnostics = std::move(frontend.diagnostics);
   result.status = CompilationStatus::Success;
@@ -113,6 +149,12 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
   return inputs;
 }
 
+CompilationResult compileWithBackend(const CompilationRequest &request,
+                                     Backend &backend) {
+  return compileWithBackendInputs(request, loadCompilationInputs(request),
+                                  backend);
+}
+
 CheckResult checkCompilation(const CompilationRequest &request) {
   FrontendResult frontend = analyze(request, loadCompilationInputs(request));
   CheckResult result;
@@ -124,18 +166,19 @@ CheckResult checkCompilation(const CompilationRequest &request) {
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request) {
-  return compileToCpp(request, loadCompilationInputs(request));
+  CppBackend backend(request.cppStandard());
+  return compileWithBackend(request, backend);
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request,
                                CompilationInputs inputs) {
   CppBackend backend(request.cppStandard());
-  return compileWithBackend(request, std::move(inputs), backend);
+  return compileWithBackendInputs(request, std::move(inputs), backend);
 }
 
 CompilationResult compileToNativeHeader(const CompilationRequest &request) {
   NativeHeaderBackend backend;
-  return compileWithBackend(request, loadCompilationInputs(request), backend);
+  return compileWithBackend(request, backend);
 }
 
 } // namespace lang::driver

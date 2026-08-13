@@ -2320,3 +2320,99 @@ public:
               (primary_expression
                 (literal
                   (integer_literal))))))))))
+
+==================
+Native unions and payload enums
+==================
+
+union Bits {
+  mut uint32_t integer;
+  float real;
+};
+
+enum class Event {
+  idle,
+  point(int32_t x, int32_t y),
+};
+
+int inspect(Event event) {
+  switch (event) {
+  case Event::idle:
+    return 0;
+  case Event::point(x, y):
+    return x + y;
+  }
+}
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier))
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier))))
+  (enum_declaration
+    (identifier)
+    (enumerator
+      (identifier))
+    (enumerator
+      (identifier)
+      (parameter_clause
+        (parameter
+          (type
+            (primitive_type))
+          (identifier))
+        (parameter
+          (type
+            (primitive_type))
+          (identifier)))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (switch_statement
+        (primary_expression
+          (identifier))
+        (switch_body
+          (case_label
+            (primary_expression
+              (scoped_identifier
+                (identifier)
+                (identifier))))
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal)))))
+          (case_label
+            (call_expression
+              (primary_expression
+                (scoped_identifier
+                  (identifier)
+                  (identifier)))
+              (argument_list
+                (primary_expression
+                  (identifier))
+                (primary_expression
+                  (identifier)))))
+          (return_statement
+            (initializer_expression
+              (binary_expression
+                (primary_expression
+                  (identifier))
+                (primary_expression
+                  (identifier))))))))))

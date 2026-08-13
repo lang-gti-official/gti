@@ -1,0 +1,47 @@
+union NumberBits {
+  mut uint32_t integer;
+  mut float real;
+};
+
+enum class Command {
+  stop,
+  translate(int32_t x, int32_t y),
+  exit_code(int32_t code),
+};
+
+int32_t read_integer_bits() {
+  NumberBits bits{uint32_t(42)};
+  unsafe {
+    return int32_t(bits.integer);
+  }
+}
+
+Command next_command(mut int32_t& calls) {
+  calls++;
+  return Command::translate(20, 22);
+}
+
+int main() {
+  Command stopped = Command::stop;
+  switch (stopped) {
+  case Command::stop:
+    break;
+  case Command::translate(x, y):
+    return x + y;
+  case Command::exit_code(code):
+    return code;
+  }
+
+  mut int32_t calls = 0;
+  switch (next_command(calls)) {
+  case Command::stop:
+    return 1;
+  case Command::translate(x, y):
+    if (calls != 1) {
+      return 2;
+    }
+    return read_integer_bits() - (x + y);
+  case Command::exit_code(code):
+    return code;
+  }
+}

@@ -183,6 +183,7 @@ enum class ClassKind {
   Class,
   Struct,
   Interface,
+  Union,
 };
 
 enum class AccessModifier {
@@ -1190,6 +1191,7 @@ private:
 struct EnumeratorDecl {
   Token name;
   ExprPtr initializer;
+  std::vector<Parameter> payload;
 };
 
 class EnumDecl final : public Stmt {

@@ -38,6 +38,19 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
+std::string
+emitAnalyzedProgram(const lang::Program &program,
+                    lang::SemanticVisitor &semantic,
+                    lang::TargetInfo target = lang::TargetInfo::host(),
+                    lang::CppStandard standard = lang::CppStandard::Cpp23) {
+  lang::HirLoweringResult hir =
+      lang::HirLowerer(target).lower(program, semantic);
+  expect(hir.valid(),
+         "a semantically valid direct-emitter fixture should lower to HIR");
+  return lang::CppEmitter(semantic.model(), hir.program, standard, target)
+      .emit(program);
+}
+
 bool hasDiagnostic(const lang::SemanticVisitor &semantic,
                    const std::string &text) {
   for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
@@ -655,6 +668,257 @@ int main() { [[discard]] flow(true); }
                          }),
          "receiver-tied reference returns should retain an escaping loan from "
          "a projected 'this' place");
+}
+
+void testOrderedOrdinaryCallInputs() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("ordered-call-inputs.gti", R"(
+extern "C" {
+  void ordered_native_close(void* value);
+}
+
+class OrderedReceiver {
+  mut void* handle = nullptr;
+
+public:
+  OrderedReceiver() {}
+
+  int ordered_member(int scalar, int& observed, mut int& changed) mut {
+    changed += scalar;
+    return observed + changed;
+  }
+
+  void ordered_close() mut {
+    unsafe { ordered_native_close(this.handle); }
+  }
+};
+
+int ordered_free(int scalar, int& observed, mut int& changed) {
+  changed += scalar;
+  return observed + changed;
+}
+
+int main() {
+  mut OrderedReceiver receiver = OrderedReceiver();
+  mut int observed = 2;
+  mut int changed = 3;
+  int first = ordered_free(1, observed, changed);
+  int second = receiver.ordered_member(4, observed, changed);
+  receiver.ordered_close();
+  return first + second;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected ordered-call diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "ordinary scalar/reference calls should lower to verified ordered "
+         "call inputs");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto hirFunction =
+      [&](std::string_view name) -> const lang::HirFunctionInstance * {
+    const auto found =
+        std::find_if(frontend.hir.functionInstances().begin(),
+                     frontend.hir.functionInstances().end(),
+                     [&](const lang::HirFunctionInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->name().lexeme == name;
+                     });
+    return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
+  };
+  const lang::HirFunctionInstance *freeTarget = hirFunction("ordered_free");
+  const lang::HirFunctionInstance *memberTarget = hirFunction("ordered_member");
+  const lang::HirFunctionInstance *nativeTarget =
+      hirFunction("ordered_native_close");
+  const lang::HirFunctionInstance *closeTarget = hirFunction("ordered_close");
+  const lang::HirFunctionInstance *mainTarget = hirFunction("main");
+  const lang::MirFunctionInstance *mirMain =
+      mainTarget == nullptr ? nullptr
+                            : frontend.mir.findFunctionInstance(mainTarget->id);
+  expect(freeTarget != nullptr && memberTarget != nullptr &&
+             nativeTarget != nullptr && closeTarget != nullptr &&
+             mainTarget != nullptr && mirMain != nullptr,
+         "the ordered-call fixture should retain exact HIR and MIR targets");
+  if (freeTarget == nullptr || memberTarget == nullptr ||
+      nativeTarget == nullptr || closeTarget == nullptr ||
+      mainTarget == nullptr || mirMain == nullptr) {
+    return;
+  }
+
+  const auto hirCallTo = [&](lang::HirFunctionInstanceId target) {
+    const auto found = std::find_if(
+        mainTarget->body.values.begin(), mainTarget->body.values.end(),
+        [&](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::Call &&
+                 value.functionTarget == target;
+        });
+    return found == mainTarget->body.values.end() ? nullptr : &*found;
+  };
+  const lang::HirValue *freeCall = hirCallTo(freeTarget->id);
+  const lang::HirValue *memberCall = hirCallTo(memberTarget->id);
+  const auto nativeCall = std::find_if(
+      closeTarget->body.values.begin(), closeTarget->body.values.end(),
+      [&](const lang::HirValue &value) {
+        return value.kind == lang::HirValueKind::Call &&
+               value.functionTarget == nativeTarget->id;
+      });
+  const auto validArguments = [&](const lang::HirValue *call) {
+    if (call == nullptr || !call->callPlan ||
+        call->callPlan->arguments.size() != 3 || call->operands.size() < 3) {
+      return false;
+    }
+    const std::array kinds{lang::HirCallInputKind::Value,
+                           lang::HirCallInputKind::ReadBorrow,
+                           lang::HirCallInputKind::MutableBorrow};
+    for (std::size_t index = 0; index < kinds.size(); ++index) {
+      const lang::HirCallArgument &argument = call->callPlan->arguments[index];
+      if (argument.parameterIndex != index || argument.kind != kinds[index] ||
+          argument.parameterType != call->parameterTypes[index] ||
+          argument.value != call->operands[call->operands.size() - 3 + index]) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const lang::HirValue *memberCallee =
+      memberCall == nullptr || memberCall->operands.empty()
+          ? nullptr
+          : mainTarget->body.findValue(memberCall->operands.front());
+  expect(freeCall != nullptr && freeCall->callPlan &&
+             !freeCall->callPlan->receiver && validArguments(freeCall) &&
+             memberCall != nullptr && memberCall->callPlan &&
+             memberCall->callPlan->receiver &&
+             memberCall->callPlan->receiver->kind ==
+                 lang::HirCallInputKind::MutableBorrow &&
+             memberCallee != nullptr && !memberCallee->operands.empty() &&
+             memberCall->callPlan->receiver->value ==
+                 memberCallee->operands.front() &&
+             validArguments(memberCall) &&
+             nativeCall != closeTarget->body.values.end() &&
+             nativeCall->callPlan && !nativeCall->callPlan->receiver &&
+             nativeCall->callPlan->arguments.size() == 1,
+         "HIR should retain the exact receiver and source-ordered scalar, "
+         "read-borrow, and mutable-borrow inputs without inventing a receiver "
+         "for a free native call inside a method");
+
+  const lang::MirFunctionInstance *mirClose =
+      frontend.mir.findFunctionInstance(closeTarget->id);
+  const lang::MirInstruction *nativeMirCall = nullptr;
+  if (mirClose != nullptr) {
+    for (const lang::MirBlock &block : mirClose->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == nativeTarget->id;
+          });
+      if (found != block.instructions.end()) {
+        nativeMirCall = &*found;
+        break;
+      }
+    }
+  }
+  expect(mirClose != nullptr && nativeMirCall != nullptr &&
+             !nativeMirCall->receiver && nativeMirCall->operands.size() == 1 &&
+             nativeMirCall->callSite != 0,
+         "MIR should materialize a raw-pointer argument conversion without "
+         "falling back to the enclosing method receiver");
+
+  const auto instructionForValue =
+      [&](const lang::MirOperand &operand) -> const lang::MirInstruction * {
+    if (operand.kind != lang::MirOperandKind::Value) {
+      return nullptr;
+    }
+    const lang::MirValue *value = mirMain->body.findValue(operand.value);
+    const lang::MirBlock *block =
+        value == nullptr ? nullptr
+                         : mirMain->body.findBlock(value->definitionBlock);
+    if (block == nullptr) {
+      return nullptr;
+    }
+    const auto found =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const lang::MirInstruction &instruction) {
+                       return instruction.id == value->definition;
+                     });
+    return found == block->instructions.end() ? nullptr : &*found;
+  };
+  const auto mirCallTo = [&](lang::HirFunctionInstanceId target) {
+    for (const lang::MirBlock &block : mirMain->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == target;
+          });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<const lang::MirInstruction *>(nullptr);
+  };
+  const auto orderedMirCall = [&](const lang::HirValue *hirCall,
+                                  const lang::MirInstruction *call,
+                                  bool hasReceiver) {
+    if (hirCall == nullptr || call == nullptr ||
+        call->callSite != hirCall->id || call->hirValue != hirCall->id ||
+        call->operands.size() != 3 ||
+        call->receiver.has_value() != hasReceiver) {
+      return false;
+    }
+    const std::array inputKinds{lang::HirCallInputKind::Value,
+                                lang::HirCallInputKind::ReadBorrow,
+                                lang::HirCallInputKind::MutableBorrow};
+    const std::array operandKinds{lang::MirOperandKind::Value,
+                                  lang::MirOperandKind::BorrowRead,
+                                  lang::MirOperandKind::BorrowWrite};
+    const lang::MirInstruction *previous = nullptr;
+    if (call->receiver) {
+      previous = instructionForValue(*call->receiver);
+      if (previous == nullptr ||
+          previous->kind != lang::MirInstructionKind::CallInput ||
+          previous->callSite != call->callSite ||
+          previous->callInputRole != lang::MirCallInputRole::Receiver ||
+          previous->callInputKind != lang::HirCallInputKind::MutableBorrow ||
+          previous->operands.size() != 1 ||
+          previous->operands.front().kind !=
+              lang::MirOperandKind::BorrowWrite) {
+        return false;
+      }
+    }
+    for (std::size_t index = 0; index < call->operands.size(); ++index) {
+      const lang::MirInstruction *input =
+          instructionForValue(call->operands[index]);
+      if (input == nullptr ||
+          input->kind != lang::MirInstructionKind::CallInput ||
+          input->callSite != call->callSite ||
+          input->callInputRole != lang::MirCallInputRole::Argument ||
+          input->callInputIndex != index ||
+          input->callInputKind != inputKinds[index] ||
+          input->info.type != call->parameterTypes[index] ||
+          input->operands.size() != 1 ||
+          input->operands.front().kind != operandKinds[index] ||
+          mirMain->body.usesOf(*input->result).size() != 1 ||
+          (previous != nullptr && previous->id >= input->id)) {
+        return false;
+      }
+      previous = input;
+    }
+    return previous != nullptr && previous->id < call->id;
+  };
+  const lang::MirInstruction *freeMirCall = mirCallTo(freeTarget->id);
+  const lang::MirInstruction *memberMirCall = mirCallTo(memberTarget->id);
+  expect(orderedMirCall(freeCall, freeMirCall, false) &&
+             orderedMirCall(memberCall, memberMirCall, true),
+         "MIR should form a one-use receiver, argument-zero, argument-one, "
+         "argument-two, invocation chain");
 }
 
 void testMirTemporaryAndDropObligations() {
@@ -2107,8 +2371,7 @@ int main(mut int argc, mut arguments_type argv) {
          "MIR verification should reject a startup append target corrupted by "
          "a later pass");
 
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &valid.semantics, &valid.hir);
+  lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
   const lang::FunctionInfo *append =
       mainInfo == nullptr
@@ -2654,8 +2917,7 @@ void testStandardLibraryImports() {
          "rejected private-signature member occurrences must remain hidden "
          "from compiler-owned tooling queries");
 
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &imported.semantics);
+  lang::CppEmitter emitter(imported.semantics, imported.hir);
   const std::string generated = emitter.emit(imported.program);
   expect(generated.find("namespace __gti_std") != std::string::npos &&
              generated.find("class array") != std::string::npos &&
@@ -2683,9 +2945,8 @@ void testStandardLibraryImports() {
   expect(distinctStandardNamespace.canGenerateCode(),
          "a user gti_std namespace should remain distinct in GTI");
   const std::string distinctNamespaceCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &distinctStandardNamespace.semantics,
-                       &distinctStandardNamespace.hir)
+      lang::CppEmitter(distinctStandardNamespace.semantics,
+                       distinctStandardNamespace.hir)
           .emit(distinctStandardNamespace.program);
   expect(
       distinctNamespaceCpp.find("namespace __gti_std") != std::string::npos &&
@@ -2787,8 +3048,8 @@ void testStandardLibraryImports() {
   expect(tcp.canGenerateCode(),
          "the POSIX std::tcp owner should provide typed open and close");
   const std::string tcpCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, linuxTarget, nullptr,
-                       &tcp.semantics, &tcp.hir)
+      lang::CppEmitter(tcp.semantics, tcp.hir, lang::CppStandard::Cpp23,
+                       linuxTarget)
           .emit(tcp.program);
   expect(tcpCpp.find("class socket") != std::string::npos &&
              tcpCpp.find("socket(2, 1, 0)") != std::string::npos &&
@@ -4047,7 +4308,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v8\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v10\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -10120,12 +10381,14 @@ int main() {
   lang::SemanticVisitor semantic;
   expect(semantic.check(program), "valid program should pass semantic checks");
 
-  const std::string generated = lang::CppEmitter().emit(program);
-  expect(generated.find("std::int32_t twice(const std::int32_t value)") !=
-             std::string::npos,
+  const std::string generated = emitAnalyzedProgram(program, semantic);
+  expect(generated.find("std::int32_t __gti_fn_") != std::string::npos &&
+             generated.find("_twice(const std::int32_t value)") !=
+                 std::string::npos,
          "emitter should lower function signatures");
-  expect(generated.find("const std::int32_t result = twice(4)") !=
-             std::string::npos,
+  expect(generated.find("const std::int32_t result = __gti_fn_") !=
+                 std::string::npos &&
+             generated.find("_twice(4)") != std::string::npos,
          "emitter should make variables const by default");
   expect(generated.find("#include <iostream>") == std::string::npos,
          "emitter should not include print runtime support");
@@ -10165,8 +10428,8 @@ int main() {
       lang::OptimizationPipeline().run(hir.program,
                                        lang::OptimizationLevel::O1);
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       &optimizations, nullptr, &hir.program)
+      lang::CppEmitter(semantic.model(), hir.program, lang::CppStandard::Cpp23,
+                       lang::TargetInfo::host(), &optimizations)
           .emit(program);
   expect(generated.find("continue;") != std::string::npos &&
              generated.find("break;") != std::string::npos,
@@ -10692,9 +10955,7 @@ int main() {
          "HIR should preserve switch arms and normalized labels for backends");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(generated.find("switch (stage)") != std::string::npos &&
              generated.find("case Stage::Boot:") != std::string::npos &&
              generated.find("case static_cast<std::uint64_t>(7):") !=
@@ -10911,7 +11172,7 @@ int main() {
   }
   expect(valid, "in-range literals and widening conversions should be valid");
 
-  const std::string generated = lang::CppEmitter().emit(program);
+  const std::string generated = emitAnalyzedProgram(program, semantic);
   expect(generated.find("#include <cstdint>") != std::string::npos &&
              generated.find("const std::int8_t minimum8 = "
                             "::gti_internal::backend::negate(128)") !=
@@ -11034,8 +11295,7 @@ bool matches_boundaries(int8_t narrow, int32_t wide, int64_t widest) {
           sawInt64Operand || value.info.type == lang::SemanticType::Int64;
     }
   }
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &valid.semantics);
+  lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
   expect(valid.canGenerateCode() && sawInt8Operand && sawInt32Operand &&
              sawInt64Operand,
@@ -11261,8 +11521,9 @@ int main() {
   const lang::OptimizationResult optimized = lang::OptimizationPipeline().run(
       frontend.hir, lang::OptimizationLevel::O1);
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       &optimized, &frontend.semantics, &frontend.hir)
+      lang::CppEmitter(frontend.semantics, frontend.hir,
+                       lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       &optimized)
           .emit(frontend.program);
   expect(generated.find("std::bit_cast<float>(std::uint32_t{0x3e99999aU})") !=
                  std::string::npos &&
@@ -11283,8 +11544,9 @@ int main() {
       lang::OptimizationPipeline().run(ordinary.hir,
                                        lang::OptimizationLevel::O1);
   const std::string ordinaryGenerated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       &ordinaryOptimized, &ordinary.semantics, &ordinary.hir)
+      lang::CppEmitter(ordinary.semantics, ordinary.hir,
+                       lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       &ordinaryOptimized)
           .emit(ordinary.program);
   expect(ordinary.canGenerateCode() &&
              ordinaryGenerated.find(
@@ -11346,8 +11608,8 @@ int main() {
   const lang::OptimizationResult optimized =
       lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O1);
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       &optimized, &valid.semantics, &valid.hir)
+      lang::CppEmitter(valid.semantics, valid.hir, lang::CppStandard::Cpp23,
+                       lang::TargetInfo::host(), &optimized)
           .emit(valid.program);
   expect(generated.find("using string_view = std::string_view;") !=
                  std::string::npos &&
@@ -11460,9 +11722,7 @@ int main() {
          "storage");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &valid.semantics, &valid.hir)
-          .emit(valid.program);
+      lang::CppEmitter(valid.semantics, valid.hir).emit(valid.program);
   expect(generated.find("class string") != std::string::npos &&
              generated.find(
                  "::gti_internal::backend::storage<std::uint8_t> data") !=
@@ -11548,7 +11808,8 @@ int main() {
   expect(validSemantic.check(validProgram),
          "mixed logical operator spellings should share boolean semantics");
 
-  const std::string generated = lang::CppEmitter().emit(validProgram);
+  const std::string generated =
+      emitAnalyzedProgram(validProgram, validSemantic);
   expect(generated.find("&&") != std::string::npos &&
              generated.find("||") != std::string::npos,
          "both logical spellings should lower to short-circuit C++ operators");
@@ -11645,7 +11906,8 @@ int main() {
   expect(valid,
          "valid integer bitwise and modulo operations should type-check");
 
-  const std::string generated = lang::CppEmitter().emit(validProgram);
+  const std::string generated =
+      emitAnalyzedProgram(validProgram, validSemantic);
   expect(generated.find("::gti_internal::backend::modulo(") !=
                  std::string::npos &&
              generated.find("::gti_internal::backend::shift_left(") !=
@@ -11783,9 +12045,7 @@ int main() {
          "checked arithmetic and every compound assignment should validate");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &valid.semantics, &valid.hir)
-          .emit(valid.program);
+      lang::CppEmitter(valid.semantics, valid.hir).emit(valid.program);
   const std::vector<std::string_view> checkedHelpers = {
       "backend::add(",
       "backend::subtract(",
@@ -12264,9 +12524,11 @@ int main() {
   expect(validSemantic.check(validProgram),
          "mutable bindings should permit mutation");
 
-  const std::string generated = lang::CppEmitter().emit(validProgram);
-  expect(generated.find("std::int32_t identity(const std::int32_t value)") !=
-             std::string::npos,
+  const std::string generated =
+      emitAnalyzedProgram(validProgram, validSemantic);
+  expect(generated.find("std::int32_t __gti_fn_") != std::string::npos &&
+             generated.find("_identity(const std::int32_t value)") !=
+                 std::string::npos,
          "parameters should be const by default");
   expect(generated.find("const std::int32_t fixed = 1") != std::string::npos,
          "immutable variables should lower to const");
@@ -12452,9 +12714,7 @@ int main() {
          "branch");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(generated.find("constexpr std::uint64_t extent = ") !=
                  std::string::npos &&
              generated.find("static constexpr std::uint64_t count = ") !=
@@ -12614,9 +12874,7 @@ int main() {
          "namespace functions");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(
       generated.find("static const std::int32_t answer;") !=
               std::string::npos &&
@@ -12763,9 +13021,7 @@ int main() {
          "typed HIR should preserve the current-object expression");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(generated.find("((*this)).value") != std::string::npos,
          "the C++ backend should lower GTI this as a checked object receiver");
 
@@ -12813,13 +13069,14 @@ int read(Reading reading) { return reading.value; }
   expect(validSemantic.check(validProgram),
          "public members and same-class private access should resolve");
 
-  const std::string generated = lang::CppEmitter().emit(validProgram);
+  const std::string generated =
+      emitAnalyzedProgram(validProgram, validSemantic);
   expect(generated.find("class Vault;") != std::string::npos &&
              generated.find("struct Reading;") != std::string::npos &&
              generated.find("class Vault {") != std::string::npos &&
              generated.find("struct Reading {") != std::string::npos &&
-             generated.find("std::int32_t reveal() const;") !=
-                 std::string::npos &&
+             generated.find("std::int32_t __gti_fn_") != std::string::npos &&
+             generated.find("_reveal() const;") != std::string::npos &&
              generated.find("std::int32_t hidden = 2") != std::string::npos,
          "emitter should preserve declaration kinds, access labels, and "
          "frontend-owned field immutability");
@@ -13200,10 +13457,11 @@ int main() {
   expect(mirCopies == 2 && mirMoves == 2,
          "MIR construct instructions should retain copy and move identity");
 
-  const std::string generated = lang::CppEmitter().emit(validProgram);
+  const std::string generated =
+      lang::CppEmitter(validFrontend.semantics, validFrontend.hir)
+          .emit(validFrontend.program);
   const std::string lifecycleGenerated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &validFrontend.semantics)
+      lang::CppEmitter(validFrontend.semantics, validFrontend.hir)
           .emit(validFrontend.program);
   expect(generated.find("explicit Counter(const std::int32_t initial);") !=
                  std::string::npos &&
@@ -13211,14 +13469,14 @@ int main() {
                             "value(initial)") != std::string::npos,
          "constructor overloads should lower explicitly with field "
          "initialization");
-  expect(generated.find("std::int32_t read() const") != std::string::npos,
+  expect(generated.find("std::int32_t __gti_fn_") != std::string::npos &&
+             generated.find("_read() const") != std::string::npos,
          "methods should lower as read-only by default");
-  expect(
-      generated.find("std::int32_t advance(const std::int32_t amount) const") ==
-              std::string::npos &&
-          generated.find("std::int32_t advance(const std::int32_t amount)") !=
-              std::string::npos,
-      "mutable receiver methods should lower without C++ const");
+  expect(generated.find("_advance(const std::int32_t amount) const") ==
+                 std::string::npos &&
+             generated.find("_advance(const std::int32_t amount)") !=
+                 std::string::npos,
+         "mutable receiver methods should lower without C++ const");
   expect(generated.find("Origin origin = Origin()") != std::string::npos,
          "generated default construction should remain explicit at the call "
          "site");
@@ -13633,9 +13891,7 @@ int main() {
          "MIR should preserve inheritance metadata for future backends");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(
       generated.find(
           "class Sprite : public Entity, public Renderable, public Named") !=
@@ -14088,9 +14344,7 @@ int main() {
          "HIR should retain direct initialization and its constructor edge");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(generated.find("const Box<std::int32_t> boxed = "
                         "Box<std::int32_t>(1)") != std::string::npos &&
              generated.find("Box<std::int32_t> changing = "
@@ -15466,23 +15720,26 @@ int main() {
   expect(validFrontend.canGenerateCode(),
          "generic substitution and exact inference should validate");
 
-  const std::string generated = lang::CppEmitter().emit(validProgram);
+  const std::string generated =
+      lang::CppEmitter(validFrontend.semantics, validFrontend.hir)
+          .emit(validFrontend.program);
   expect(generated.find("template <typename T>\n  class Box;") !=
                  std::string::npos &&
              generated.find("template <typename T>\n  class Box {") !=
                  std::string::npos,
          "generic classes should lower with matching C++ forward declarations");
-  expect(generated.find("template <typename T>\n  T identity(const T value)") !=
+  expect(generated.find("template <typename T>\n  T __gti_fn_") !=
                  std::string::npos &&
-             generated.find("template <typename T>\n  T unbox(") !=
-                 std::string::npos,
+             generated.find("_identity(T value)") != std::string::npos &&
+             generated.find("_unbox(") != std::string::npos,
          "generic functions should lower as C++ function templates");
   expect(generated.find("Box<std::int32_t> box = "
-                        "Box<std::int32_t>(identity(7))") !=
-                 std::string::npos &&
-             generated.find("identity<std::int32_t>(9)") != std::string::npos,
+                        "Box<std::int32_t>(__gti_fn_") != std::string::npos &&
+             generated.find("_identity(7))") != std::string::npos &&
+             generated.find("_identity<std::int32_t>(9)") != std::string::npos,
          "applied types and explicit generic calls should lower recursively");
-  expect(generated.find(".template echo<std::int32_t>(") != std::string::npos,
+  expect(generated.find(".template __gti_fn_") != std::string::npos &&
+             generated.find("_echo<std::int32_t>(") != std::string::npos,
          "the backend should hide C++ dependent-template disambiguation");
 
   auto invalidTokens = lexer.scan(R"(
@@ -15700,8 +15957,7 @@ int main() {
                      .lexeme == "ordered",
          "the AST should retain the qualified generic constraint path");
 
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &valid.semantics);
+  lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
   expect(generated.find("template <typename T>\n  T __gti_fn_") !=
                  std::string::npos &&
@@ -15829,9 +16085,7 @@ int main() {
          "constrained generic default construction should retain an explicit "
          "intrinsic through HIR and MIR");
 
-  lang::CppEmitter capabilityEmitter(lang::CppStandard::Cpp23,
-                                     lang::TargetInfo::host(), nullptr,
-                                     &capabilities.semantics);
+  lang::CppEmitter capabilityEmitter(capabilities.semantics, capabilities.hir);
   const std::string capabilityCpp =
       capabilityEmitter.emit(capabilities.program);
   expect(capabilityCpp.find("operator<(") != std::string::npos &&
@@ -16243,8 +16497,7 @@ int main() {
                  policyHover->notes.end(),
          "class hover should present compiler-owned capability policy facts");
 
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &valid.semantics);
+  lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
   const std::size_t emittedProgram =
       generated.find("namespace __gti_program {");
@@ -16755,8 +17008,7 @@ int main() {
          "concept uses should expose their canonical composition and semantic "
          "definition identity");
 
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &valid.semantics);
+  lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
   expect(generated.find("concept arithmetic_value") == std::string::npos &&
              generated.find("concept signed_arithmetic") == std::string::npos &&
@@ -17116,8 +17368,7 @@ public:
          "bounded trailing requirements should reject operator declarations "
          "instead of creating recursively constrained operator proof");
   lang::CppEmitter rejectedOperatorEmitter(
-      lang::CppStandard::Cpp23, lang::TargetInfo::host(), nullptr,
-      &rejectedConstrainedOperator.semantics, &rejectedConstrainedOperator.hir);
+      rejectedConstrainedOperator.semantics, rejectedConstrainedOperator.hir);
   const std::string rejectedOperatorGenerated =
       rejectedOperatorEmitter.emit(rejectedConstrainedOperator.program);
   expect(rejectedOperatorGenerated.find("friend bool __gti_invoke(") ==
@@ -17171,8 +17422,7 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
       "generic forwarding should require the outer declaration to prove "
       "the callee's exact structural contract");
 
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &valid.semantics, &valid.hir);
+  lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
   expect(
       generated.find("concept compatible_sentinel") == std::string::npos &&
@@ -17280,9 +17530,8 @@ int main() {
   expect(exactSentinelBridges.canGenerateCode(),
          "an inherited exact sentinel operation should remain valid beside a "
          "derived convertible overload and mutable-sentinel overload");
-  lang::CppEmitter exactBridgeEmitter(
-      lang::CppStandard::Cpp23, lang::TargetInfo::host(), nullptr,
-      &exactSentinelBridges.semantics, &exactSentinelBridges.hir);
+  lang::CppEmitter exactBridgeEmitter(exactSentinelBridges.semantics,
+                                      exactSentinelBridges.hir);
   const std::string exactBridgeCpp =
       exactBridgeEmitter.emit(exactSentinelBridges.program);
   expect(
@@ -17626,8 +17875,7 @@ int main() {
          "HIR should keep value arguments in class identity and substitute "
          "symbolic array extents");
 
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &valid.semantics);
+  lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
   expect(
       generated.find(
@@ -17736,8 +17984,7 @@ int main() {
          "final function type packs should infer, forward, and preserve exact "
          "concrete MIR parameter roles across equivalent pack groupings");
 
-  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                           nullptr, &valid.semantics);
+  lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
   expect(generated.find("template <typename... Args>") != std::string::npos &&
              generated.find("Args... values") != std::string::npos &&
@@ -19033,9 +19280,8 @@ int main() {
                                {standardLibraryPrelude()});
   const std::string cpp20 =
       expectedLambda.canGenerateCode()
-          ? lang::CppEmitter(lang::CppStandard::Cpp20, lang::TargetInfo::host(),
-                             nullptr, &expectedLambda.semantics,
-                             &expectedLambda.hir)
+          ? lang::CppEmitter(expectedLambda.semantics, expectedLambda.hir,
+                             lang::CppStandard::Cpp20)
                 .emit(expectedLambda.program)
           : std::string{};
   expect(expectedLambda.canGenerateCode() &&
@@ -19859,7 +20105,7 @@ int main() {
           hasDiagnostic(invalidBoundary.diagnostics,
                         "would escape through the function return value") &&
           hasDiagnosticHint(invalidBoundary.diagnostics,
-                            "Confined callable parameters"),
+                            "exact owned generic transport"),
       "the first callable layer should reject references and escaping "
       "closure values explicitly");
 
@@ -20713,6 +20959,236 @@ int main() { return 0; }
       "callable diagnostic without an owner-origin cascade");
 }
 
+void testOwnedCallableTransport() {
+  const lang::FrontendResult frontend =
+      analyzeTrustedPreludeFixture("owned-callable-transport.gti", R"(
+mut int cleanup_count = 0;
+
+class DropTracer {
+  int value;
+
+public:
+  DropTracer(int value) : value(value) {}
+  ~DropTracer() { cleanup_count++; }
+  int read() { return this.value; }
+};
+
+class CallableOwner<T> {
+  T value;
+
+public:
+  CallableOwner(T value) : value(std::move(value)) {}
+};
+
+T relay<T>(T value) { return std::move(value); }
+
+CallableOwner<T> own<T>(T value) {
+  return CallableOwner<T>(std::move(value));
+}
+
+void transport() {
+  DropTracer tracer = DropTracer(7);
+  auto operation = [owned = std::move(tracer)]() -> int {
+    return owned.read();
+  };
+  auto returned = relay(std::move(operation));
+  if (returned() != 7) { return; }
+  auto owner = own(std::move(returned));
+}
+
+int main() {
+  transport();
+  return cleanup_count - 1;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected owned-callable diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "exact generic callable return and owner-field transport should "
+         "reach valid MIR");
+
+  const lang::FunctionDecl *relay =
+      findTopLevelFunction(frontend.program, "relay");
+  const lang::FunctionDecl *own = findTopLevelFunction(frontend.program, "own");
+  const lang::FunctionInfo *relayInfo =
+      relay == nullptr ? nullptr : frontend.semantics.findFunction(*relay);
+  const lang::FunctionInfo *ownInfo =
+      own == nullptr ? nullptr : frontend.semantics.findFunction(*own);
+  expect(relayInfo != nullptr && relayInfo->callableParameters.size() == 1 &&
+             relayInfo->callableParameters.front().boundary ==
+                 lang::CallableBoundary::Owned &&
+             relayInfo->callableParameters.front().ownedTransport &&
+             relayInfo->callableParameters.front().ownedTransport->kind ==
+                 lang::CallableOwnedTransportKind::ExactReturn &&
+             ownInfo != nullptr && ownInfo->callableParameters.size() == 1 &&
+             ownInfo->callableParameters.front().boundary ==
+                 lang::CallableBoundary::Owned &&
+             ownInfo->callableParameters.front().ownedTransport &&
+             ownInfo->callableParameters.front().ownedTransport->kind ==
+                 lang::CallableOwnedTransportKind::ExactField &&
+             ownInfo->callableParameters.front().ownedTransport->field != 0,
+         "semantics should distinguish exact-return and exact-field owned "
+         "callable transports");
+
+  std::size_t ownedHirFunctions = 0;
+  std::size_t ownedMirFunctions = 0;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        (instance.source->name().lexeme != "relay" &&
+         instance.source->name().lexeme != "own") ||
+        instance.callableParameters.empty()) {
+      continue;
+    }
+    const lang::HirCallableParameter &contract =
+        instance.callableParameters.front();
+    ownedHirFunctions +=
+        contract.boundary == lang::CallableBoundary::Owned &&
+                contract.callableType.kind == lang::SemanticType::Lambda &&
+                contract.ownedTransport.has_value()
+            ? 1
+            : 0;
+    const lang::MirFunctionInstance *mir =
+        frontend.mir.findFunctionInstance(instance.id);
+    ownedMirFunctions +=
+        mir != nullptr && mir->callableParameters.size() == 1 &&
+                mir->callableParameters.front().boundary ==
+                    lang::CallableBoundary::Owned &&
+                mir->callableParameters.front().ownedTransport.has_value()
+            ? 1
+            : 0;
+  }
+  const bool constructorProof = std::any_of(
+      frontend.mir.constructorInstances().begin(),
+      frontend.mir.constructorInstances().end(),
+      [](const lang::MirConstructorInstance &constructor) {
+        return std::any_of(
+            constructor.initializers.begin(), constructor.initializers.end(),
+            [](const lang::MirConstructorInitializer &initializer) {
+              return initializer.ownedParameter ==
+                         std::optional<std::size_t>{0} &&
+                     initializer.field != 0 &&
+                     initializer.arguments.size() == 1;
+            });
+      });
+  const std::string mirDump = lang::MirPrinter().print(frontend.mir);
+  expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
+             mirDump.starts_with("mir-v10 ") &&
+             mirDump.find("boundary=owned;transport=exact-return") !=
+                 std::string::npos &&
+             mirDump.find("boundary=owned;transport=exact-field") !=
+                 std::string::npos &&
+             mirDump.find("owned-parameter=0") != std::string::npos,
+         "HIR, MIR, and deterministic dumps should retain concrete owned "
+         "transport and constructor-field proof metadata");
+
+  const lang::FrontendResult missingMove =
+      analyzeTrustedPreludeFixture("owned-callable-missing-move.gti", R"(
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  int captured = 1;
+  auto operation = [captured]() -> int { return captured; };
+  auto escaped = relay(operation);
+  return 0;
+}
+)");
+  expect(
+      !missingMove.canGenerateCode() &&
+          hasDiagnosticCode(missingMove.diagnostics, "GTI-S2046") &&
+          hasDiagnostic(missingMove.diagnostics,
+                        "requires an explicit std::move ownership transfer") &&
+          !hasDiagnosticCode(missingMove.diagnostics, "GTI-B0001"),
+      "owned callable transport should require an explicit call-site "
+      "ownership move");
+
+  const lang::FrontendResult rawCapture =
+      analyzeTrustedPreludeFixture("owned-callable-raw-capture.gti", R"(
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  int value = 1;
+  unsafe {
+    int* raw = &value;
+    auto operation = [raw]() -> int { return 1; };
+    auto escaped = relay(std::move(operation));
+  }
+  return 0;
+}
+)");
+  expect(!rawCapture.canGenerateCode() &&
+             hasDiagnosticCode(rawCapture.diagnostics, "GTI-S2046") &&
+             hasDiagnostic(rawCapture.diagnostics,
+                           "contains borrowed or raw-pointer capture state") &&
+             !hasDiagnosticCode(rawCapture.diagnostics, "GTI-B0001"),
+         "owned callable transport should reject raw-pointer capture state "
+         "before HIR and MIR");
+
+  const lang::FrontendResult nestedRawCapture =
+      analyzeTrustedPreludeFixture("owned-callable-nested-raw-capture.gti", R"(
+class RawState {
+  int* pointer;
+
+public:
+  RawState(int* pointer) : pointer(pointer) {}
+};
+
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  int value = 1;
+  unsafe {
+    int* raw = &value;
+    RawState state = RawState(raw);
+    auto operation = [state]() -> int { return 1; };
+    auto escaped = relay(std::move(operation));
+  }
+  return 0;
+}
+)");
+  expect(!nestedRawCapture.canGenerateCode() &&
+             hasDiagnosticCode(nestedRawCapture.diagnostics, "GTI-S2046") &&
+             hasDiagnostic(nestedRawCapture.diagnostics,
+                           "contains borrowed or raw-pointer capture state") &&
+             !hasDiagnosticCode(nestedRawCapture.diagnostics, "GTI-B0001"),
+         "owned callable transport should inspect captured aggregate fields "
+         "for raw-pointer state");
+
+  const lang::FrontendResult rawSignature =
+      analyzeTrustedPreludeFixture("owned-callable-raw-signature.gti", R"(
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  auto operation = [](int* pointer) -> int {
+    return pointer == nullptr ? 0 : 1;
+  };
+  auto returned = relay(std::move(operation));
+  return 0;
+}
+)");
+  expect(rawSignature.canGenerateCode(),
+         "raw pointers in a callable signature should not be mistaken for "
+         "captured raw-pointer state");
+
+  const lang::FrontendResult borrowedCapture =
+      analyzeTrustedPreludeFixture("owned-callable-borrowed-capture.gti", R"(
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  std::string_view text = "borrowed";
+  auto operation = [text]() -> int { return 1; };
+  auto escaped = relay(std::move(operation));
+  return 0;
+}
+)");
+  expect(!borrowedCapture.canGenerateCode() &&
+             hasDiagnosticCode(borrowedCapture.diagnostics, "GTI-S2046") &&
+             hasDiagnostic(borrowedCapture.diagnostics,
+                           "contains borrowed or raw-pointer capture state") &&
+             !hasDiagnosticCode(borrowedCapture.diagnostics, "GTI-B0001"),
+         "owned callable transport should reject borrowed view capture state");
+}
+
 void testDefaultNodiscard() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -20736,7 +21212,8 @@ int main() {
   expect(validSemantic.check(validProgram),
          "explicit discard and void calls should pass semantic checks");
 
-  const std::string generated = lang::CppEmitter().emit(validProgram);
+  const std::string generated =
+      emitAnalyzedProgram(validProgram, validSemantic);
   expect(generated.find("calculate();") != std::string::npos &&
              generated.find("[[discard]]") == std::string::npos,
          "discard should be a GTI-only call-site attribute");
@@ -20808,9 +21285,7 @@ int main() {
          "expected construction and observers should pass semantic checks");
 
   const std::string cpp23 =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(
       cpp23.find("#include <expected>") != std::string::npos &&
           cpp23.find("std::expected<std::int32_t, __gti_std::string_view>") !=
@@ -20819,10 +21294,9 @@ int main() {
           cpp23.find("return {};") != std::string::npos,
       "C++23 should lower expected values to the standard library");
 
-  const std::string cpp20 =
-      lang::CppEmitter(lang::CppStandard::Cpp20, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+  const std::string cpp20 = lang::CppEmitter(frontend.semantics, frontend.hir,
+                                             lang::CppStandard::Cpp20)
+                                .emit(frontend.program);
   expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
              cpp20.find(
                  "::nonstd::expected<std::int32_t, __gti_std::string_view>") !=
@@ -20871,9 +21345,10 @@ int main() { return print(0); }
   expect(semantic.check(program),
          "user code should be able to declare a function named print");
 
-  const std::string generated = lang::CppEmitter().emit(program);
-  expect(generated.find("std::int32_t print(const std::int32_t value)") !=
-             std::string::npos,
+  const std::string generated = emitAnalyzedProgram(program, semantic);
+  expect(generated.find("std::int32_t __gti_fn_") != std::string::npos &&
+             generated.find("_print(const std::int32_t value)") !=
+                 std::string::npos,
          "print should lower as a normal function");
 }
 
@@ -20916,10 +21391,7 @@ Result main() {
   expect(semantic.check(program),
          "type aliases should canonicalize before semantic checks");
 
-  const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &semantic.model())
-          .emit(program);
+  const std::string generated = emitAnalyzedProgram(program, semantic);
   expect(generated.find("using LaterSize = std::uint64_t;") !=
                  std::string::npos &&
              generated.find("using Triple = std::array<std::int32_t, 3>;") !=
@@ -20998,17 +21470,20 @@ int main() {
   expect(semantic.check(program),
          "qualified calls and namespace aliases should resolve");
 
-  const std::string generated = lang::CppEmitter().emit(program);
+  const std::string generated = emitAnalyzedProgram(program, semantic);
   expect(generated.find("namespace engine {") != std::string::npos &&
              generated.find("namespace graphics {") != std::string::npos,
          "emitter should preserve nested namespaces");
   expect(generated.find("namespace gfx = engine::graphics;") !=
              std::string::npos,
          "emitter should preserve namespace aliases");
-  expect(generated.find("gfx::Renderer createRenderer();") != std::string::npos,
+  expect(generated.find("gfx::Renderer __gti_fn_") != std::string::npos &&
+             generated.find("_createRenderer();") != std::string::npos,
          "qualified types should parse and emit through namespace aliases");
-  expect(generated.find("engine::graphics::render();") != std::string::npos &&
-             generated.find("gfx::renderTwice();") != std::string::npos,
+  expect(generated.find("engine::graphics::__gti_fn_") != std::string::npos &&
+             generated.find("_render();") != std::string::npos &&
+             generated.find("gfx::__gti_fn_") != std::string::npos &&
+             generated.find("_renderTwice();") != std::string::npos,
          "emitter should preserve qualified calls");
 
   auto invalidTokens = lexer.scan(R"(
@@ -21081,7 +21556,7 @@ int main() {
   expect(appleSemantic.check(program),
          "inactive branches should not participate in Apple semantics");
   const std::string appleCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, apple).emit(program);
+      emitAnalyzedProgram(program, appleSemantic, apple);
   expect(appleCpp.find("return 101;") != std::string::npos &&
              appleCpp.find("return 64;") != std::string::npos &&
              appleCpp.find("std::int32_t bits = 64") != std::string::npos &&
@@ -21096,7 +21571,7 @@ int main() {
   expect(windowsSemantic.check(program),
          "Windows should select the elif and else branches");
   const std::string windowsCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, windows).emit(program);
+      emitAnalyzedProgram(program, windowsSemantic, windows);
   expect(windowsCpp.find("return 202;") != std::string::npos &&
              windowsCpp.find("std::int32_t bits = 32") != std::string::npos &&
              windowsCpp.find("nested_value") == std::string::npos &&
@@ -21160,7 +21635,7 @@ int main() {
   expect(allowedSemantic.check(errorProgram),
          "inactive #error directives should not affect semantics");
   const std::string allowedCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, allowed).emit(errorProgram);
+      emitAnalyzedProgram(errorProgram, allowedSemantic, allowed);
   expect(allowedCpp.find("#error") == std::string::npos,
          "#error directives should never leak into backend output");
 
@@ -21262,9 +21737,7 @@ int main() {
          "MIR should retain C linkage for future backend consumption");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(generated.find("extern \"C\" {") != std::string::npos &&
              generated.find(
                  "std::int32_t socket(std::int32_t domain, std::int32_t "
@@ -21290,9 +21763,7 @@ int main() { return platform::invoke_close(-1); }
          "namespace-scoped C declarations should resolve before their source "
          "position");
   const std::string lateCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &lateDeclaration.semantics,
-                       &lateDeclaration.hir)
+      lang::CppEmitter(lateDeclaration.semantics, lateDeclaration.hir)
           .emit(lateDeclaration.program);
   const std::size_t latePrototype = lateCpp.find("extern \"C\" {");
   const std::size_t lateCall = lateCpp.find("close(descriptor)");
@@ -21309,9 +21780,7 @@ int main() { return native_like(7); }
   expect(ordinaryPrototype.canGenerateCode(),
          "ordinary GTI bodyless functions should remain valid declarations");
   const std::string ordinaryCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &ordinaryPrototype.semantics,
-                       &ordinaryPrototype.hir)
+      lang::CppEmitter(ordinaryPrototype.semantics, ordinaryPrototype.hir)
           .emit(ordinaryPrototype.program);
   expect(ordinaryCpp.find("extern \"C\"") == std::string::npos &&
              ordinaryCpp.find("return native_like(7)") == std::string::npos &&
@@ -21349,9 +21818,7 @@ int main() {
   expect(runtime.canGenerateCode(),
          "counted text buffers should support runtime C ABI migration");
   const std::string runtimeCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &runtime.semantics, &runtime.hir)
-          .emit(runtime.program);
+      lang::CppEmitter(runtime.semantics, runtime.hir).emit(runtime.program);
   expect(
       runtimeCpp.find("#include <gti/c_abi.h>") != std::string::npos &&
           runtimeCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
@@ -21379,8 +21846,7 @@ int main() { return native::measure() - 1; }
          "a GTI namespace should be allowed to reuse the public record's "
          "unqualified spelling");
   const std::string shadowedRecordCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &shadowedRecord.semantics, &shadowedRecord.hir)
+      lang::CppEmitter(shadowedRecord.semantics, shadowedRecord.hir)
           .emit(shadowedRecord.program);
   expect(
       shadowedRecordCpp.find("inline ::gti_c_string_view to_c_string_view") !=
@@ -21409,8 +21875,7 @@ int main() {
          "the closed compiler-owned runtime attribute should remain a "
          "compatible internal declaration surface");
   const std::string legacyRuntimeCpp =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &legacyRuntime.semantics, &legacyRuntime.hir)
+      lang::CppEmitter(legacyRuntime.semantics, legacyRuntime.hir)
           .emit(legacyRuntime.program);
   expect(legacyRuntimeCpp.find("#include <gti/runtime.hpp>") !=
                  std::string::npos &&
@@ -21632,9 +22097,7 @@ int main() {
          "HIR enum references should carry resolved nominal value identity");
 
   const std::string generated =
-      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &frontend.semantics, &frontend.hir)
-          .emit(frontend.program);
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
   expect(generated.find("enum class State : std::uint8_t;") !=
                  std::string::npos &&
              generated.find("enum class State : std::uint8_t {") !=
@@ -22607,6 +23070,7 @@ int main() {
   testSupportFacilities();
   testFrontendBackendAndOptimizationPipeline();
   testMirControlFlowAndOwnershipEffects();
+  testOrderedOrdinaryCallInputs();
   testMirTemporaryAndDropObligations();
   testDefiniteReturnAnalysis();
   testProgramArgumentsEntryPoint();
@@ -22681,6 +23145,7 @@ int main() {
   testLambdas();
   testConfinedCallableParameters();
   testConfinedCallableResults();
+  testOwnedCallableTransport();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

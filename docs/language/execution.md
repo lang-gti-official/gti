@@ -302,16 +302,21 @@ library state.
 
 **Implementation gap:** semantic analysis still conservatively rejects a
 transient borrow and overlapping mutation in either call-argument order. HIR
-maps semantic-selected full-expression roots to concrete drop identities but
-has no complete ordered materialization plan. MIR verifies normal-exit
-temporary/drop obligations, including path-conditional cleanup at the
-enclosing full-expression boundary, but lacks ordered receiver/parameter
-materialization and one merged program-initialization body. The
-transitional C++ emitter emits calls and helper operands inline and may rely on
-native static initialization. M-EXEC-01, M-FAIL-01 for failure edges, and the
-matching M-BACK closed-body migrations must make the remaining contract
-executable before those families are conforming or the conservative borrow
-restriction is narrowed.
+maps semantic-selected full-expression roots to concrete drop identities. Its
+first bounded ordered-call plan now names the receiver and exact
+scalar/reference arguments for concrete non-intrinsic ordinary calls. MIR
+turns those roles into one-use checkpoints and verifies the strict receiver,
+source-ordered arguments, then invocation chain while preserving normal-exit
+temporary/drop obligations.
+
+That schedule is not yet production authority: the transitional C++ emitter
+still emits calls and helper operands inline. Class-value parameter
+construction, packs and other call forms, target places, compound expressions,
+failure rollback, and one merged program-initialization body remain incomplete,
+and native static initialization may still be used. Later M-EXEC-01 slices,
+M-FAIL-01 for failure edges, and matching M-BACK closed-body migrations must
+make those families executable before they are conforming or the conservative
+borrow restriction is narrowed.
 
 ## 4.3 Numeric Execution
 
@@ -435,6 +440,18 @@ executes the selected iterator increment before the next condition test.
 
 A `switch` selects the exact matching case value or `default`. Adjacent labels
 share an arm. Arms do not fall through implicitly.
+
+A payload enum retains exactly one active alternative. Construction evaluates
+payload arguments in the ordinary call-input order and publishes the tagged
+value only after its admitted passive fields are available. A payload switch
+evaluates its subject once, selects by the active alternative, copies that
+alternative's fields into immutable arm bindings, and executes the selected
+arm. An exhaustive payload switch has no unmatched execution path.
+
+A native union retains only overlapping bytes and no active-field tag. A union
+member operation performs the requested native access inside `unsafe`; the
+program is responsible for selecting a field whose object representation and
+lifetime satisfy that access. GTI inserts no runtime check or hidden tag.
 
 ## 4.6 Arrays And Checked Access
 

@@ -21,6 +21,15 @@ consults semantic facts, HIR, optimization replacements, and the target. It
 does not currently consume `BackendInput::mir`. The generated C++ is a
 representation artifact, not GTI semantics.
 
+`CppEmitter` requires references to the matching `SemanticModel` and
+`HirProgram` at construction. There is no fact-free emission mode: callers
+must run the same `Program` through semantics and HIR before requesting C++.
+Those models are borrowed lvalues; temporary models are rejected so the
+emitter cannot retain dangling authority references.
+Individual lookup results remain optional where the semantic or HIR model says
+that no such fact applies, but their owning models cannot be omitted to make
+the emitter reconstruct meaning from source spellings.
+
 The emitter is responsible for choices such as:
 
 - mapping the root GTI namespace `std` to the compiler-reserved C++ namespace
@@ -85,6 +94,14 @@ The emitter is responsible for choices such as:
   while the C branch emits a deterministic incomplete `typedef struct`. The
   native implementation may complete that type privately in C or C++, but the
   backend never asks for its layout or emits a GTI definition;
+- emitting a valid passive GTI `union` as a native C++ union and asserting the
+  frontend-selected size, alignment, and trivial-copy contract. The backend
+  does not infer an active member and a GTI union does not acquire C ABI status
+  merely because its storage representation is native;
+- emitting a payload enum as a closed generated wrapper over `std::variant`.
+  Semantic variant identity, exact payload construction, exhaustiveness, and
+  pattern bindings are already fixed before emission; `std::variant` is a
+  replaceable backend representation rather than a source-level dependency;
 - selecting C++20 versus C++23 expected support. C++20 references the vendored
   compatibility namespace as absolute `::nonstd`; a source `nonstd` remains
   isolated inside `::__gti_program`.
@@ -167,6 +184,14 @@ that would clean up before sibling operands rather than at GTI's enclosing
 full-expression boundary. Semantics therefore rejects consuming invocation of
 a receiver that structurally requires active cleanup until the backend has an
 owned full-expression receiver representation.
+
+Exact owned-callable generic return and field transport needs no erased native
+wrapper. Once semantics, HIR, and MIR have proved the exact closure identity,
+caller move, result/field destination, constructor move, and cleanup owner, the
+transitional backend lowers the existing generic function/class and
+`std::move` expression through C++ templates and `auto`. Native closure traits
+or template behavior never establish that ownership contract.
+
 Native comparison methods are an existing transitional exception: they retain
 C++ `operator...` spellings, although the emitter pins their semantically
 selected dispatch owner and receiver mutability to prevent derived member
@@ -248,6 +273,14 @@ MIR pipeline may produce its verified primitive literal-identity shadow
 rewrite, but `CppBackend` still ignores MIR bodies and emits from the HIR
 compatibility result. The driver refuses backend generation unless every
 frontend validity gate and MIR verification succeeds.
+
+The reusable `compileWithBackend` boundary also contains exceptions thrown by
+`Backend::generate`. It translates both standard and non-standard exceptions
+into a `CompilationStatus::BackendFailure` with an entry-anchored `GTI-B0001`
+diagnostic, retains the analyzed source snapshot and prior diagnostics, and
+publishes no artifact. Direct C++ emission, native-header emission, and project
+builds all use that boundary; individual CLI modes do not install divergent
+backend exception policy.
 
 The resulting C++ artifact is handed to `gti_driver`, which owns temporary
 files, native tool discovery, exact argument vectors, process execution, and

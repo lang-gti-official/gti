@@ -52,8 +52,10 @@ diagnostics or letting a backend message choose either identity.
   no bounded source layout, has a symbolic or zero array extent, or overflows
   `uint64_t` size computation. Point at the actionable written type or
   offending extent, include the supported category boundary in the hint, and
-  do not add a speculative fix-it. Suppress this diagnostic when ordinary type
-  resolution has already made the operand unknown.
+  do not add a speculative fix-it. The supported boundary includes integral
+  scoped enums and valid passive unions, but not payload enums. Suppress this
+  diagnostic when ordinary type resolution has already made the operand
+  unknown.
 - `GTI-S2004` owns an integer literal operand whose signed mathematical value
   does not fit the concrete contextual operand type. Point at the numeric
   token, retain a negative sign in the message, and emit only the range
@@ -93,7 +95,11 @@ diagnostics or letting a backend message choose either identity.
   replacement is universally correct. `delete` uses the same code outside its
   one accepted `= delete` special-member-policy context.
 - Reserve `GTI-B0001` for internal MIR/backend integrity failure, not ordinary
-  invalid source.
+  invalid source. The reusable driver uses it when `Backend::generate` throws,
+  anchors the diagnostic at byte zero of the selected entry unit, includes the
+  backend's failure detail when a standard exception provides one, and suggests
+  reporting a reduced compiler bug. A non-standard exception receives the same
+  stable code without inventing a native exception description.
 
 `GTI-S2046` owns the confined-callable boundary. It points at the callable
 use, forwarding argument, or enclosing return type that lacks a proven exact
@@ -145,6 +151,14 @@ spelling; lambda captures retain the canonical declaration identity they
 captured. Return escape and unproven forwarding retain their more specific
 messages instead of cascading into a second ordinary-use diagnostic.
 
+`GTI-S2046` also owns failure at the bounded owned-callable boundary. It points
+at the argument when the caller omits `std::move`, the concrete closure is not
+movable, its capture state contains a reference, tracked borrow, or raw
+pointer, or the selected generic result/field does not preserve its exact
+type. Relate the diagnostic to the generic parameter declaration. These are
+source contract errors; forged return, field, constructor, or move evidence is
+instead rejected by MIR verification as compiler corruption.
+
 `GTI-S2027` owns lambda capture-shape and ownership failures. The parser keeps
 `[target = expression]` recoverable; semantics accepts only
 `[target = std::move(local)]`, rejects non-local or stored-borrowed-state
@@ -162,6 +176,20 @@ recommends a one-level address-only raw pointer plus an ordinary safe wrapper.
 It has no automatic fix because choosing native identity and ownership policy
 is not mechanical. Parser errors continue to own malformed declaration
 structure.
+
+`GTI-S2066` owns passive-union declaration and layout failures. It points at
+the unsupported attribute, generic/base/access/member declaration, field
+initializer or type, empty body, recursive edge, or unavailable target layout.
+Its hint directs safe tagged-state use to payload enums and reminds users that
+union member access belongs in `unsafe`; actual safe-context member access
+continues to use the shared unsafe-operation diagnostic `GTI-S2055`.
+
+`GTI-S2067` owns payload-enum declarations, exact variant construction, switch
+patterns, duplicate coverage, and exhaustiveness. It points at the payload
+field, argument, case pattern, duplicate label, or switch keyword as
+appropriate, relates duplicates to their first declaration/arm, and names
+missing alternatives. No fix-it is offered when choosing a payload type,
+binding, or missing-arm behavior requires program intent.
 
 The LSP publishes diagnostics from the same versioned `FrontendResult` used by
 semantic queries. It always preserves the stable code, severity, source, and

@@ -846,8 +846,20 @@ def test_callable_contract_hover(executable, root):
         "    return operation(value);\n"
         "  }\n"
         "};\n"
+        "class CallableOwner<T> {\n"
+        "  T value;\n"
+        "public:\n"
+        "  CallableOwner(T value) : value(std::move(value)) {}\n"
+        "};\n"
+        "T relay<T>(T value) { return std::move(value); }\n"
+        "CallableOwner<T> own<T>(T value) {\n"
+        "  return CallableOwner<T>(std::move(value));\n"
+        "}\n"
         "int main() {\n"
         "  auto increment = [](int value) -> int { return value + 1; };\n"
+        "  auto owned_operation = []() -> int { return 7; };\n"
+        "  auto returned = relay(std::move(owned_operation));\n"
+        "  auto retained = own(std::move(returned));\n"
         "  MemberMapper<int> mapper = MemberMapper<int>();\n"
         "  int member_result = mapper.apply(1, increment);\n"
         "  return map(1, increment) + member_result - 4;\n"
@@ -965,6 +977,22 @@ def test_callable_contract_hover(executable, root):
             "exact signatures: read-callable (int32_t) -> int32_t; "
             "read-callable (bool) -> int32_t*"
             in dispatch_hover
+        )
+
+        relay = source.index("relay<T>")
+        relay_hover = hover(8, relay + 1)
+        assert (
+            "*owned callable parameter 'value' (explicit ownership move), "
+            "exact transport: return T*"
+            in relay_hover
+        )
+
+        own = source.index("own<T>")
+        own_hover = hover(9, own + 1)
+        assert (
+            "*owned callable parameter 'value' (explicit ownership move), "
+            "exact transport: field of CallableOwner<T>*"
+            in own_hover
         )
     finally:
         session.close()

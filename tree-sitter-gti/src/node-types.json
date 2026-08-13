@@ -949,6 +949,10 @@
           {
             "type": "struct",
             "named": false
+          },
+          {
+            "type": "union",
+            "named": false
           }
         ]
       },
@@ -1735,6 +1739,16 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "payload": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "parameter_clause",
             "named": true
           }
         ]
@@ -4563,6 +4577,10 @@
   },
   {
     "type": "unexpected",
+    "named": false
+  },
+  {
+    "type": "union",
     "named": false
   },
   {

@@ -189,6 +189,8 @@ private:
     case HirValueKind::Lambda:
     case HirValueKind::LayoutQuery:
     case HirValueKind::PackExpansion:
+    case HirValueKind::PayloadConstruction:
+    case HirValueKind::PayloadExtraction:
     case HirValueKind::Postfix:
     case HirValueKind::QualifiedName:
     case HirValueKind::This:

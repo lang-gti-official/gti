@@ -165,6 +165,7 @@
   "interface"
   "enum"
   "struct"
+  "union"
   "using"
 ] @keyword.type
 
@@ -191,7 +192,7 @@
     "noexcept" "not" "not_eq" "or_eq" "protected" "register"
     "reinterpret_cast" "short" "signed" "static_assert" "static_cast"
     "template" "thread_local" "throw" "try" "typedef" "typeid" "typename"
-    "union" "unsigned" "volatile" "wchar_t" "xor" "xor_eq")
+    "unsigned" "volatile" "wchar_t" "xor" "xor_eq")
   (#set! priority 96))
 
 [

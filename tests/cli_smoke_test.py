@@ -2042,6 +2042,49 @@ def main():
                 )
                 assert run([str(owned_move_capture_executable)]).stdout == "drop\n"
 
+        owned_callable_transport_source = root / "owned-callable-transport.gti"
+        owned_callable_transport_source.write_text(
+            "#include <std/memory>\n"
+            "class DropTracer { public: DropTracer() {} "
+            "DropTracer(DropTracer& other) = delete; "
+            "DropTracer(DropTracer&& other) = default; "
+            "~DropTracer() { std::println(\"drop\"); } "
+            "int read() { return 7; } };\n"
+            "class CallableOwner<T> { T value; public: "
+            "CallableOwner(T value) : value(std::move(value)) {} };\n"
+            "T relay<T>(T value) { return std::move(value); }\n"
+            "CallableOwner<T> own<T>(T value) { "
+            "return CallableOwner<T>(std::move(value)); }\n"
+            "void transport() { DropTracer source{}; "
+            "auto operation = [owned = std::move(source)]() -> int { "
+            "return owned.read(); }; "
+            "auto returned = relay(std::move(operation)); "
+            "if (returned() != 7) { return; } "
+            "auto retained = own(std::move(returned)); }\n"
+            "int main() { transport(); return 0; }\n",
+            encoding="utf-8",
+        )
+        for standard in ("c++20", "c++23"):
+            for optimization in ("-O0", "-O3"):
+                owned_callable_transport_executable = root / (
+                    f"owned-callable-transport-{standard}-{optimization[1:]}"
+                )
+                run(
+                    [
+                        gti,
+                        str(owned_callable_transport_source),
+                        "--std",
+                        standard,
+                        optimization,
+                        "-o",
+                        str(owned_callable_transport_executable),
+                    ]
+                )
+                assert (
+                    run([str(owned_callable_transport_executable)]).stdout
+                    == "drop\n"
+                )
+
         dependent_callable_source = root / "dependent-callable-dispatch.gti"
         dependent_callable_executable = root / "dependent-callable-dispatch"
         dependent_callable_source.write_text(

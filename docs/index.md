@@ -74,6 +74,9 @@ for the current implementation when a document is stale or ambiguous.
   — defines the passive `[[c_abi]]` record family, compiler-owned layout,
   by-value/pointer passage, ownership exclusions, and the follow-on
   pointer-only `[[c_opaque]]` identity used by C/C++ adapters.
+- [014: Native unions and payload enums](decisions/014-native-unions-and-payload-enums.md)
+  — separates unsafe passive overlapping storage from safe closed tagged sums
+  and defines the bounded first payload family.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

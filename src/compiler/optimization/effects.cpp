@@ -35,6 +35,7 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{
         .readsPlace = true, .writesPlace = true, .movesValue = true},
     MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
+    MirEffectTraits{},
     unknownEffects(),
     MirEffectTraits{
         .mayTrap = true, .initializesValue = true, .invokesUserCode = true},
@@ -59,6 +60,8 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
     harmless(), // ExpectedHasValue
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
     MirEffectTraits{.copiesValue = true}, // PackExpansion
+    MirEffectTraits{.copiesValue = true, .initializesValue = true},
+    MirEffectTraits{.copiesValue = true}, // PayloadExtract
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
     MirEffectTraits{.targetDependent = true}, // AddressOf
     MirEffectTraits{.targetDependent = true}, // PointerAdd
@@ -169,6 +172,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "modify",
     "move",
     "borrow",
+    "call-input",
     "call",
     "construct",
     "drop",
@@ -187,6 +191,8 @@ constexpr auto operationNames = std::to_array<std::string_view>({
     "expected-value",
     "closure",
     "pack-expansion",
+    "payload-construct",
+    "payload-extract",
     "unexpected",
     "address-of",
     "pointer-add",

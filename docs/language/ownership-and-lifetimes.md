@@ -568,6 +568,41 @@ because the temporary is already a value.
 Direct self-move assignment such as `value = std::move(value)` is rejected
 rather than inheriting backend-specific self-move behavior.
 
+### Exact Generic Callable Transport
+
+A free function's direct immutable by-value generic parameter may carry one
+exact lexical lambda across either of these bounded ownership destinations:
+
+```gti
+T relay<T>(T value) {
+  return std::move(value);
+}
+
+class callable_owner<T> {
+  T value;
+
+public:
+  callable_owner(T value) : value(std::move(value)) {}
+};
+
+callable_owner<T> own<T>(T value) {
+  return callable_owner<T>(std::move(value));
+}
+```
+
+The caller must also pass the lambda with `std::move`. The first form preserves
+the exact concrete lambda as the declared generic result. The second form
+constructs a concrete generic owner whose sole field has that exact substituted
+type and whose constructor moves its matching parameter into the field. The
+closure's move-only captures and cleanup obligation move with it; the source is
+unavailable and the final owner cleans the environment exactly once.
+
+This is not lambda-result inference or type erasure. A transported lambda must
+be movable and its capture state cannot contain a reference, tracked borrow, or
+raw pointer. Fresh-lambda inferred returns, nested or arbitrary wrappers,
+implicit copies, namespace/static storage, owner extraction, callable
+references, and erased callable containers remain unsupported.
+
 The semantic model records which immutable bindings are explicitly moved. The
 C++ backend must not equate those bindings with physical C++ `const`, while HIR
 represents the operation directly as `Move` rather than an ordinary function

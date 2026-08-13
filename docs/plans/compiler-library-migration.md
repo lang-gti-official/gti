@@ -4,8 +4,8 @@
 > boundaries are documented in
 > [`docs/architecture/overview.md`](../architecture/overview.md).
 
-Status: accepted; phases 1 and 7 implemented, phases 4 and 5 partially
-implemented
+Status: accepted; phases 1 and 7 implemented, phase 2 in progress, and phases 4
+and 5 partially implemented
 
 Prompt-sized migration ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below
@@ -22,6 +22,12 @@ Phase 1 is implemented by the change that introduces this document. `Lexer`
 keeps its declaration in `include/gti/lexer.h`, its implementation now lives in
 `src/compiler/lexer.cpp`, and `gti_compiler` is a static CMake library linked by
 the CLI, LSP, and compiler tests.
+
+Phase 2 now has its first complete subsystem slice. `SourceLoader` keeps its
+declaration and request-owned state in `include/gti/source_loader.h`, while its
+filesystem, include-resolution, cycle, visibility-edge, provenance, and
+source-manager algorithms live in `src/compiler/source_loader.cpp`. Parser
+algorithms remain header-defined.
 
 Later optimizer groundwork has also moved coherent non-template utilities into
 the library without completing the intervening migration phases. MIR
@@ -300,10 +306,10 @@ Acceptance criteria:
 
 ### Phase 2: compile source loading and parsing
 
-Status: proposed
+Status: in progress; source loading is compiled, parsing remains header-defined
 
-- Move `SourceLoader` filesystem, include-resolution, cycle, visibility-edge,
-  and source-manager algorithms behind its existing API.
+- `SourceLoader` filesystem, include-resolution, cycle, visibility-edge,
+  provenance, and source-manager algorithms now live behind its existing API.
 - Move non-template parser algorithms out of `parser.h` while keeping AST
   declarations and parser result types visible.
 - Preserve per-source-unit parsing and dependency-ordered program assembly.

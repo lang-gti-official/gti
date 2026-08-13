@@ -31,6 +31,14 @@ gti build|check|run|test|clean|metadata project mode
   availability no longer depends on discovering or bundling a separate json-c
   library.
 
+`gti_driver` exposes `compileWithBackend` as the generic whole-program backend
+seam. The driver runs the same frontend, optimization, and verified-MIR gates
+before invoking a caller-provided `Backend`. If artifact generation throws, the
+driver returns `CompilationStatus::BackendFailure` with a structured
+entry-anchored diagnostic and the retained frontend source/diagnostic snapshot.
+The CLI renders that diagnostic and returns its ordinary compilation-failure
+status; it does not depend on an exception escaping to a CLI-only handler.
+
 `include/gti/target.h` owns the selected target vocabulary and the immutable
 `TargetDataLayout` value carried through these layers. The public value contains
 only GTI domains, byte sizes, ABI/preferred alignments, pointer width, and

@@ -2,6 +2,7 @@
 #include "gti/cpp_backend.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/lexer.h"
 #include "gti/optimizer.h"
 
 #include <algorithm>
@@ -10,15 +11,24 @@
 #include <cstdint>
 #include <iostream>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace {
+
+static_assert(!std::is_default_constructible_v<lang::CppEmitter>);
+static_assert(!std::is_constructible_v<lang::CppEmitter, lang::SemanticModel &&,
+                                       const lang::HirProgram &>);
+static_assert(
+    !std::is_constructible_v<lang::CppEmitter, const lang::SemanticModel &,
+                             lang::HirProgram &&>);
+static_assert(!std::is_constructible_v<lang::CppEmitter, lang::SemanticModel &&,
+                                       lang::HirProgram &&>);
 
 int failures = 0;
 
@@ -204,6 +214,8 @@ std::string validLayoutSource() {
   return R"(
 using Word = uint16_t;
 using Matrix = int16_t[3][4];
+enum class State : uint8_t { Ready };
+union WordBits { uint32_t integer; float real; };
 constexpr uint64_t stride = sizeof(uint32_t);
 
 int main() {
@@ -225,6 +237,9 @@ int main() {
   uint64_t pointer_alignment = alignof(const int32_t*);
   uint64_t void_pointer_size = sizeof(void*);
   uint64_t alias_size = sizeof(Word);
+  uint64_t enum_size = sizeof(State);
+  uint64_t union_size = sizeof(WordBits);
+  uint64_t union_alignment = alignof(WordBits);
   uint64_t matrix_size = sizeof(Matrix);
   uint64_t matrix_alignment = alignof(Matrix);
   uint64_t indirect_array_size = sizeof(int16_t[stride]);
@@ -241,31 +256,22 @@ void testSemanticLayoutConstants() {
     printDiagnostics(result);
   }
   expect(result.canGenerateCode() && result.diagnostics.empty(),
-         "supported scalar, pointer, alias, and array layout queries should "
-         "complete the frontend pipeline");
+         "supported scalar, pointer, enum, union, alias, and array layout "
+         "queries should complete the frontend pipeline");
 
   const std::unordered_map<std::string, std::uint64_t> expected = {
-      {"bool_size", 1},
-      {"char_alignment", 1},
-      {"default_int_size", 4},
-      {"default_uint_alignment", 4},
-      {"i8_size", 1},
-      {"i16_alignment", 2},
-      {"i32_size", 4},
-      {"i64_alignment", 8},
-      {"u8_size", 1},
-      {"u16_alignment", 2},
-      {"u32_size", 4},
-      {"u64_alignment", 8},
-      {"float_size", 4},
-      {"double_size", 8},
-      {"double_alignment", 8},
-      {"pointer_alignment", 8},
-      {"void_pointer_size", 8},
-      {"alias_size", 2},
-      {"matrix_size", 24},
-      {"matrix_alignment", 2},
-      {"indirect_array_size", 8}};
+      {"bool_size", 1},         {"char_alignment", 1},
+      {"default_int_size", 4},  {"default_uint_alignment", 4},
+      {"i8_size", 1},           {"i16_alignment", 2},
+      {"i32_size", 4},          {"i64_alignment", 8},
+      {"u8_size", 1},           {"u16_alignment", 2},
+      {"u32_size", 4},          {"u64_alignment", 8},
+      {"float_size", 4},        {"double_size", 8},
+      {"double_alignment", 8},  {"pointer_alignment", 8},
+      {"void_pointer_size", 8}, {"alias_size", 2},
+      {"enum_size", 1},         {"union_size", 4},
+      {"union_alignment", 4},   {"matrix_size", 24},
+      {"matrix_alignment", 2},  {"indirect_array_size", 8}};
   for (const auto &[name, value] : expected) {
     expect(queryValue(result, name) == value,
            "semantic model should retain the uint64_t layout constant for '" +
@@ -322,27 +328,19 @@ void testTargetDeterminism() {
     return;
   }
 
-  const std::vector<std::string> names = {"bool_size",
-                                          "char_alignment",
-                                          "default_int_size",
-                                          "default_uint_alignment",
-                                          "i8_size",
-                                          "i16_alignment",
-                                          "i32_size",
-                                          "i64_alignment",
-                                          "u8_size",
-                                          "u16_alignment",
-                                          "u32_size",
-                                          "u64_alignment",
-                                          "float_size",
-                                          "double_size",
-                                          "double_alignment",
-                                          "pointer_alignment",
-                                          "void_pointer_size",
-                                          "alias_size",
-                                          "matrix_size",
-                                          "matrix_alignment",
-                                          "indirect_array_size"};
+  const std::vector<std::string> names = {
+      "bool_size",         "char_alignment",
+      "default_int_size",  "default_uint_alignment",
+      "i8_size",           "i16_alignment",
+      "i32_size",          "i64_alignment",
+      "u8_size",           "u16_alignment",
+      "u32_size",          "u64_alignment",
+      "float_size",        "double_size",
+      "double_alignment",  "pointer_alignment",
+      "void_pointer_size", "alias_size",
+      "enum_size",         "union_size",
+      "union_alignment",   "matrix_size",
+      "matrix_alignment",  "indirect_array_size"};
   std::vector<std::unordered_map<std::string, std::uint64_t>> selections;
   bool allValid = true;
   for (std::size_t index = 0; index < targets.size(); ++index) {
@@ -399,8 +397,8 @@ uint64_t query(int32_t& value) { return alignof(int32_t&); }
 uint64_t query() { return sizeof(void); }
 )",
                       "no GTI layout contract", "void");
-  expectLayoutFailure("layout-query-enum.gti", R"(
-enum class State : uint8_t { Ready };
+  expectLayoutFailure("layout-query-payload-enum.gti", R"(
+enum class State { Ready, Value(uint8_t value) };
 uint64_t query() { return sizeof(State); }
 )",
                       "no GTI layout contract", "State");
@@ -481,7 +479,7 @@ void testHirMirAndBackend() {
         "HIR should preserve layout-query provenance and its exact uint64 "
         "literal");
   }
-  expect(layoutValues.size() == 21,
+  expect(layoutValues.size() == 24,
          "HIR should retain every local source layout query");
 
   std::unordered_set<lang::HirValueId> literalOperations;
@@ -535,15 +533,9 @@ void testHirMirAndBackend() {
          "the backend should emit frontend-computed numeric constants, not "
          "native C++ layout queries for source expressions");
 
-  bool failedClosed = false;
-  try {
-    (void)lang::CppEmitter().emit(result.program);
-  } catch (const std::logic_error &) {
-    failedClosed = true;
-  }
-  expect(failedClosed,
-         "backend emission without the semantic layout constant must fail "
-         "closed rather than substitute a numeric value");
+  expect(!std::is_default_constructible_v<lang::CppEmitter>,
+         "backend emission should require semantic and HIR facts at its API "
+         "boundary");
 }
 
 void testConstexprControlFlow() {

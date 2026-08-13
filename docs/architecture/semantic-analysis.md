@@ -111,6 +111,23 @@ cleanup-owning or symbolic fields with `GTI-S2064`. The resulting immutable
 layout is also the authority used by `extern "C"` signature validation and by
 recursive unsafe-call classification when a record contains a raw pointer.
 
+Native-union validation is a separate semantic family. It accepts a nonempty,
+nongeneric, baseless public field-only declaration and computes maximum-field
+size/alignment from target facts, nested valid unions, and admitted passive
+records. `GTI-S2066` rejects behavior, hidden lifecycle, initializers,
+references, ownership-bearing fields, and recursive by-value edges. Every
+resolved member read/write is independently classified as an unsafe union
+operation; emitted C++ layout is not semantic authority.
+
+Payload-enum resolution assigns stable declaration-order variant identities,
+resolves exact passive field types, and records construction and switch-pattern
+selections. Pattern bindings are fresh immutable arm-local symbols. Semantics
+records a switch as exhaustive only when it has `default` or every variant is
+covered once with valid patterns. `GTI-S2067` owns payload shape, exact
+construction, pattern, duplicate, and missing-variant failures. This first
+family deliberately excludes ownership-bearing payloads until variant-aware
+move/borrow and partial drop state exist.
+
 AST pointers in these records remain valid only while the owning
 `FrontendResult::program` lives.
 
@@ -223,10 +240,16 @@ distinct symbols and are not part of the callable contract.
 non-escaping booleans in semantics. Concrete generic reanalysis substitutes
 symbolic result and parameter types before validating the selected target, so
 a symbolic `T` requirement cannot leak into a concrete `int32_t` instance.
-`Owned` is reserved cross-phase vocabulary only; no source construct produces
-that boundary until exact generic callable transport and escape are
-implemented. Local closure environment movement and cleanup are already
-represented independently of that boundary.
+`Owned` is produced only for a free function's direct immutable by-value type
+parameter whose one-statement body moves that exact parameter into the
+same-type result, or
+returns a construction whose sole exact generic field is initialized by the
+constructor's matching parameter move. A lambda argument at that boundary must
+use explicit `std::move`, remain exactly typed and movable, and contain no
+reference, tracked-borrow, or raw-pointer capture state. Arbitrary storage,
+wrappers, inferred closure results, and type erasure do not acquire this fact.
+Local closure environment movement and cleanup remain represented
+independently and supply its concrete lifecycle evidence.
 
 Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter

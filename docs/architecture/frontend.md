@@ -7,8 +7,11 @@ syntax-preserving `Program`, then hands that owned tree to semantic analysis.
 
 ## Source Loading
 
-`SourceLoader` in `include/gti/source_loader.h` canonicalizes source identity,
-lexes each unit, resolves `#include` directives, and builds `SourceGraph`.
+`SourceLoader` is declared in `include/gti/source_loader.h`; its canonical path,
+filesystem, include-resolution, cycle, provenance, and source-manager algorithms
+are compiled into `gti_compiler` from `src/compiler/source_loader.cpp`. It
+canonicalizes source identity, lexes each unit, resolves `#include` directives,
+and builds `SourceGraph`.
 Quoted paths are relative GTI files; `<std/name>` resolves only beneath the
 configured GTI standard-library roots. When the driver supplies an immutable
 package graph, `<alias/name>` resolves only through the including package's
@@ -85,6 +88,12 @@ used the bodyless `struct Name;` form. Semantics admits that syntax only with
 `[[c_opaque]]`; the parser keeps it recoverable so an ordinary or malformed
 forward declaration receives one source diagnostic rather than a brace
 cascade.
+
+The parser also records `union` as a distinct `ClassKind` while reusing the
+recoverable class-member tree; semantic analysis owns the narrower passive
+shape. `EnumeratorDecl` retains an optional ordered `Parameter` payload. The
+AST does not infer a tag representation, validate payload storage, or decide
+whether a switch pattern is exhaustive.
 
 `ConceptDecl` retains every written type parameter and concept application.
 `FunctionDecl` optionally retains a `RequiresClause` containing the `requires`

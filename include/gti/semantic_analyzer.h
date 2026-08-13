@@ -831,6 +831,7 @@ enum class UnsafeOperationKind {
   RawDereference,
   RawIndex,
   RawMember,
+  UnionMember,
   PointerArithmetic,
   ForeignPointerCall,
 };
@@ -942,6 +943,20 @@ enum class CallableBoundary {
   Owned,
 };
 
+enum class CallableOwnedTransportKind {
+  ExactReturn,
+  ExactField,
+};
+
+struct CallableOwnedTransport {
+  CallableOwnedTransportKind kind = CallableOwnedTransportKind::ExactReturn;
+  SemanticType destinationType = SemanticType::Unknown;
+  SymbolId field = 0;
+
+  friend bool operator==(const CallableOwnedTransport &,
+                         const CallableOwnedTransport &) = default;
+};
+
 struct CallableArgumentBoundary {
   std::size_t parameterIndex = 0;
   CallableBoundary boundary = CallableBoundary::Confined;
@@ -956,6 +971,7 @@ struct CallableParameterContract {
   SemanticType callableType = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
   CallableBoundary boundary = CallableBoundary::Confined;
+  std::optional<CallableOwnedTransport> ownedTransport;
   std::vector<CallableSignatureRequirement> signatures;
   std::vector<CallableForwardingRequirement> forwardings;
 };
@@ -1132,6 +1148,19 @@ struct CAbiRecordLayout {
   std::vector<CAbiRecordFieldLayout> fields;
 };
 
+struct UnionFieldLayout {
+  const VariableDecl *declaration = nullptr;
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t sizeBytes = 0;
+  std::uint32_t abiAlignmentBytes = 0;
+};
+
+struct UnionLayout {
+  std::uint64_t sizeBytes = 0;
+  std::uint32_t abiAlignmentBytes = 0;
+  std::vector<UnionFieldLayout> fields;
+};
+
 struct ClassTypeInfo {
   ClassId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -1149,6 +1178,7 @@ struct ClassTypeInfo {
   bool cAbiRecord = false;
   bool cOpaqueHandle = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
+  std::optional<UnionLayout> unionLayout;
   SemanticTypeTraits traits{};
   ConcurrencyCapabilityPolicy transferPolicy =
       ConcurrencyCapabilityPolicy::Structural;
@@ -1186,6 +1216,8 @@ struct EnumeratorInfo {
   const EnumeratorDecl *declaration = nullptr;
   EnumConstant value;
   bool explicitValue = false;
+  std::size_t variantIndex = 0;
+  std::vector<SemanticType> payloadTypes;
 };
 
 struct EnumTypeInfo {
@@ -1196,6 +1228,7 @@ struct EnumTypeInfo {
   std::vector<std::string> namespaceScope;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<EnumeratorInfo> enumerators;
+  bool payload = false;
   bool compilerPrivate = false;
 };
 
@@ -1203,6 +1236,28 @@ struct ResolvedEnumeratorInfo {
   EnumId owner = 0;
   const EnumeratorDecl *declaration = nullptr;
   EnumConstant value;
+  std::size_t variantIndex = 0;
+};
+
+struct ResolvedPayloadConstructionInfo {
+  EnumId owner = 0;
+  const EnumeratorDecl *declaration = nullptr;
+  std::size_t variantIndex = 0;
+  std::vector<SemanticType> parameterTypes;
+};
+
+struct PayloadBindingInfo {
+  const Token *name = nullptr;
+  const Expr *source = nullptr;
+  BindingInfo binding;
+  std::size_t payloadIndex = 0;
+};
+
+struct ResolvedPayloadPatternInfo {
+  EnumId owner = 0;
+  const EnumeratorDecl *declaration = nullptr;
+  std::size_t variantIndex = 0;
+  std::vector<PayloadBindingInfo> bindings;
 };
 
 struct TypeAliasInfo {
@@ -1289,6 +1344,7 @@ struct ResolvedConstructorInitializerInfo {
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
+  std::optional<std::size_t> ownedParameter;
 };
 
 struct ResolvedClassArguments {
@@ -2043,7 +2099,16 @@ public:
 
   [[nodiscard]] std::size_t bindingCount() const {
     return variableBindings.size() + parameterBindings.size() +
+           payloadBindings.size() +
            (base == nullptr ? 0 : base->bindingCount());
+  }
+
+  [[nodiscard]] const BindingInfo *findPayloadBinding(const Token &name) const {
+    const auto found = payloadBindings.find(&name);
+    if (found != payloadBindings.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findPayloadBinding(name);
   }
 
   [[nodiscard]] const SemanticLoanInfo *findLoan(SemanticLoanId id) const {
@@ -2196,6 +2261,29 @@ public:
       return &found->second;
     }
     return base == nullptr ? nullptr : base->findSwitchCase(expression);
+  }
+
+  [[nodiscard]] bool isExhaustiveSwitch(const SwitchStmt &statement) const {
+    return exhaustiveSwitches.contains(&statement) ||
+           (base != nullptr && base->isExhaustiveSwitch(statement));
+  }
+
+  [[nodiscard]] const ResolvedPayloadConstructionInfo *
+  findPayloadConstruction(const Call &call) const {
+    const auto found = payloadConstructions.find(&call);
+    if (found != payloadConstructions.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findPayloadConstruction(call);
+  }
+
+  [[nodiscard]] const ResolvedPayloadPatternInfo *
+  findPayloadPattern(const Expr &expression) const {
+    const auto found = payloadPatterns.find(&expression);
+    if (found != payloadPatterns.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findPayloadPattern(expression);
   }
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const {
@@ -2405,6 +2493,7 @@ private:
     arrayExtents.clear();
     variableBindings.clear();
     parameterBindings.clear();
+    payloadBindings.clear();
     retainedLoans.clear();
     loanEnds.clear();
     conditionalLoanEnds.clear();
@@ -2422,6 +2511,9 @@ private:
     enumTypesById.clear();
     enumerators.clear();
     switchCases.clear();
+    exhaustiveSwitches.clear();
+    payloadConstructions.clear();
+    payloadPatterns.clear();
     calls.clear();
     lambdaCalls.clear();
     deferredCallableCalls.clear();
@@ -2615,6 +2707,10 @@ private:
     parameterBindings.insert_or_assign(&parameter, std::move(info));
   }
 
+  void recordPayloadBinding(const Token &name, BindingInfo info) {
+    payloadBindings.insert_or_assign(&name, std::move(info));
+  }
+
   void recordLoan(SemanticLoanInfo info) {
     if (info.id == 0) {
       return;
@@ -2779,6 +2875,20 @@ private:
     switchCases.insert_or_assign(&expression, std::move(value));
   }
 
+  void recordExhaustiveSwitch(const SwitchStmt &statement) {
+    exhaustiveSwitches.insert(&statement);
+  }
+
+  void recordPayloadConstruction(const Call &call,
+                                 ResolvedPayloadConstructionInfo info) {
+    payloadConstructions.insert_or_assign(&call, std::move(info));
+  }
+
+  void recordPayloadPattern(const Expr &expression,
+                            ResolvedPayloadPatternInfo info) {
+    payloadPatterns.insert_or_assign(&expression, std::move(info));
+  }
+
   void record(const Call &call, ResolvedCallInfo info) {
     calls.insert_or_assign(&call, std::move(info));
   }
@@ -2807,6 +2917,11 @@ private:
     if (existing == function->second.callableParameters.end()) {
       function->second.callableParameters.emplace_back(std::move(requirement));
       return;
+    }
+    if (requirement.boundary == CallableBoundary::Owned &&
+        existing->signatures.empty() && existing->forwardings.empty()) {
+      existing->boundary = CallableBoundary::Owned;
+      existing->ownedTransport = std::move(requirement.ownedTransport);
     }
     for (CallableSignatureRequirement &signature : requirement.signatures) {
       const auto concrete =
@@ -2937,6 +3052,19 @@ private:
     for (const CallableParameterContract &parameter :
          function->callableParameters) {
       if (parameter.parameterIndex < call.parameterTypes.size()) {
+        const auto containsLambda = [&](const auto &self,
+                                        const SemanticType &type) -> bool {
+          return type.kind == SemanticType::Lambda ||
+                 std::any_of(type.arguments.begin(), type.arguments.end(),
+                             [&](const SemanticType &argument) {
+                               return self(self, argument);
+                             });
+        };
+        if (parameter.boundary == CallableBoundary::Owned &&
+            !containsLambda(containsLambda,
+                            call.parameterTypes[parameter.parameterIndex])) {
+          continue;
+        }
         const auto existing = std::find_if(
             call.callableArguments.begin(), call.callableArguments.end(),
             [&](const CallableArgumentBoundary &candidate) {
@@ -3068,6 +3196,7 @@ private:
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
+  std::unordered_map<const Token *, BindingInfo> payloadBindings;
   std::vector<SemanticLoanInfo> retainedLoans;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
@@ -3089,6 +3218,10 @@ private:
   std::unordered_map<EnumId, const EnumDecl *> enumTypesById;
   std::unordered_map<const QualifiedName *, ResolvedEnumeratorInfo> enumerators;
   std::unordered_map<const Expr *, SwitchCaseValue> switchCases;
+  std::unordered_set<const SwitchStmt *> exhaustiveSwitches;
+  std::unordered_map<const Call *, ResolvedPayloadConstructionInfo>
+      payloadConstructions;
+  std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
   std::unordered_map<const Call *, DeferredCallableCallInfo>
@@ -3343,6 +3476,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    allowPayloadEnumeratorReference = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     loanFlow = {};
@@ -3373,6 +3507,7 @@ public:
     resolveConcepts();
     registerClasses(program.declarations(), {});
     resolveTypeAliases();
+    resolveEnumPayloads();
     resolveClassInheritance();
     registerFunctionGenericParameters(program.declarations(), {}, false);
     registerNamespaceSymbols(program.declarations(), {});
@@ -3389,8 +3524,10 @@ public:
     beginScope();
     analyze(program.declarations());
     endScope();
+    discoverOwnedCallableContracts();
     semanticModel.finalizeCallableForwardings();
     validateOnceCallableForwardings();
+    validateOwnedCallableArguments();
     validateProvisionalCallableArguments();
     validateConfinedCallableContracts();
     validateConfinedCallableUses();
@@ -3454,6 +3591,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    allowPayloadEnumeratorReference = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     loanFlow = {};
@@ -3682,7 +3820,8 @@ public:
          .name = stmt.name().lexeme,
          .type = type,
          .enumType = &stmt});
-    for (const EnumeratorDecl &enumerator : stmt.enumerators()) {
+    for (std::size_t index = 0; index < stmt.enumerators().size(); ++index) {
+      const EnumeratorDecl &enumerator = stmt.enumerators()[index];
       const SymbolId enumeratorSymbol = recordToolingSymbol(
           enumerator.name, SymbolKind::Enumerator,
           (info == nullptr ? stmt.name().lexeme : info->qualifiedName) +
@@ -3696,6 +3835,31 @@ public:
            .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
            .name = enumerator.name.lexeme,
            .type = type});
+      for (std::size_t payloadIndex = 0;
+           payloadIndex < enumerator.payload.size(); ++payloadIndex) {
+        const Parameter &parameter = enumerator.payload[payloadIndex];
+        if (parameter.name.lexeme.empty()) {
+          continue;
+        }
+        const SemanticType fieldType =
+            info != nullptr && index < info->enumerators.size() &&
+                    payloadIndex < info->enumerators[index].payloadTypes.size()
+                ? info->enumerators[index].payloadTypes[payloadIndex]
+                : SemanticType::Unknown;
+        const SymbolId fieldSymbol = recordToolingSymbol(
+            parameter.name, SymbolKind::Field,
+            (info == nullptr ? stmt.name().lexeme : info->qualifiedName) +
+                "::" + enumerator.name.lexeme + "::" + parameter.name.lexeme,
+            fieldType);
+        semanticModel.recordOccurrence(
+            {.sourceUnit = currentSourceUnit,
+             .span = tokenSpan(parameter.name),
+             .kind = SemanticOccurrenceKind::Symbol,
+             .symbol = fieldSymbol,
+             .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+             .name = parameter.name.lexeme,
+             .type = fieldType});
+      }
     }
   }
 
@@ -3744,7 +3908,8 @@ public:
       validateType(base.type);
       validateReferencePlacement(base.type, false, "base type");
     }
-    if (info.constructors.empty() && !info.cAbiRecord && !info.cOpaqueHandle) {
+    if (info.constructors.empty() && !info.cAbiRecord && !info.cOpaqueHandle &&
+        info.kind != ClassKind::Union) {
       for (const FieldInfo &field : info.fields) {
         const auto member = info.members.find(field.declaration->name().lexeme);
         const bool storedReference =
@@ -3913,15 +4078,16 @@ public:
         report(target, "Constructor field '" + target.lexeme +
                            "' is initialized more than once.");
       }
+      SymbolId fieldSymbol = 0;
       if (field != nullptr) {
         const auto member = owner.members.find(target.lexeme);
         if (member != owner.members.end()) {
-          const SymbolId symbol = toolingSymbolFor(member->second.symbol);
+          fieldSymbol = toolingSymbolFor(member->second.symbol);
           semanticModel.recordOccurrence(
               {.sourceUnit = currentSourceUnit,
                .span = tokenSpan(target),
                .kind = SemanticOccurrenceKind::Symbol,
-               .symbol = symbol,
+               .symbol = fieldSymbol,
                .roles = OccurrenceRole::Reference | OccurrenceRole::Write,
                .name = target.lexeme,
                .type = member->second.symbol.type,
@@ -3936,7 +4102,7 @@ public:
               ResolvedConstructorInitializerInfo{
                   .kind = ConstructorInitializerTargetKind::Field,
                   .targetType = member->second.symbol.type,
-                  .field = symbol,
+                  .field = fieldSymbol,
                   .storesReference = member->second.symbol.type.kind ==
                                      SemanticType::Reference,
                   .borrowAccess = member->second.symbol.type.referenceAccess});
@@ -3998,6 +4164,38 @@ public:
                    typeSpelling(fieldType) + "' with a value of type '" +
                    typeSpelling(valueType) + "'.",
                "GTI-S2003");
+      }
+      if (field != nullptr && fieldSymbol != 0 &&
+          initializer.arguments.size() == 1) {
+        std::optional<std::size_t> ownedParameter;
+        if (const ExprPtr *moved =
+                explicitMoveSource(initializer.arguments.front())) {
+          const auto *variable = dynamic_cast<const Variable *>(moved->get());
+          const Symbol *source =
+              variable == nullptr ? nullptr : resolve(variable->name());
+          if (source != nullptr && source->parameterDeclaration != nullptr &&
+              source->type == fieldType) {
+            const auto parameter = std::find_if(
+                stmt.parameters().begin(), stmt.parameters().end(),
+                [&](const Parameter &candidate) {
+                  return &candidate == source->parameterDeclaration;
+                });
+            if (parameter != stmt.parameters().end() &&
+                !parameter->type.reference && !parameter->pack) {
+              ownedParameter = static_cast<std::size_t>(
+                  std::distance(stmt.parameters().begin(), parameter));
+            }
+          }
+        }
+        semanticModel.record(
+            initializer,
+            ResolvedConstructorInitializerInfo{
+                .kind = ConstructorInitializerTargetKind::Field,
+                .targetType = fieldType,
+                .field = fieldSymbol,
+                .storesReference = fieldType.kind == SemanticType::Reference,
+                .borrowAccess = fieldType.referenceAccess,
+                .ownedParameter = ownedParameter});
       }
     }
 
@@ -4809,6 +5007,13 @@ public:
                                          .order = loanFlow.currentOrder,
                                          .statement = &stmt});
     const SemanticType subjectType = analyze(stmt.expression());
+    const EnumTypeInfo *payloadEnum =
+        subjectType.kind == SemanticType::Enum
+            ? semanticModel.findEnumType(subjectType.enumId)
+            : nullptr;
+    if (payloadEnum != nullptr && !payloadEnum->payload) {
+      payloadEnum = nullptr;
+    }
     const bool validSubject = isInteger(subjectType) ||
                               subjectType == SemanticType::Char ||
                               subjectType.kind == SemanticType::Enum;
@@ -4830,12 +5035,16 @@ public:
     std::vector<std::pair<SwitchCaseValue, const SwitchLabel *>> seenCases;
     const SwitchLabel *firstDefault = nullptr;
     std::vector<std::pair<ScopeStack, FlowSummary>> armResults;
+    std::unordered_set<std::size_t> coveredPayloadVariants;
+    bool invalidPayloadPattern = false;
     bool hasDefault = false;
 
     ++switchDepth;
     beginValueControlFlow(ValueControlFlowKind::Switch, stmt);
     for (std::size_t armIndex = 0; armIndex < stmt.arms().size(); ++armIndex) {
       const SwitchArm &arm = stmt.arms()[armIndex];
+      std::vector<std::pair<const Expr *, ResolvedPayloadPatternInfo>>
+          payloadPatterns;
       for (const SwitchLabel &label : arm.labels) {
         if (label.isDefault()) {
           hasDefault = true;
@@ -4850,6 +5059,41 @@ public:
                  "First 'default' label declared here."});
             diagnostics.emplace_back(std::move(diagnostic));
           }
+          continue;
+        }
+
+        if (payloadEnum != nullptr) {
+          scopes = beforeSwitch;
+          std::optional<ResolvedPayloadPatternInfo> pattern =
+              analyzePayloadSwitchPattern(label.value, subjectType);
+          scopes = beforeSwitch;
+          if (!pattern) {
+            invalidPayloadPattern = true;
+            continue;
+          }
+          const SwitchCaseValue value{
+              .kind = SwitchCaseKind::Enumerator,
+              .type = subjectType,
+              .value = {.magnitude = pattern->variantIndex},
+              .enumOwner = subjectType.enumId};
+          const auto duplicate = std::find_if(
+              seenCases.begin(), seenCases.end(),
+              [&](const auto &candidate) { return candidate.first == value; });
+          if (duplicate != seenCases.end()) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2067", DiagnosticPhase::Semantics, label.keyword,
+                "Duplicate payload-enum switch variant.");
+            diagnostic.related.push_back(
+                {tokenSpan(duplicate->second->keyword),
+                 "First matching variant is handled here."});
+            diagnostics.emplace_back(std::move(diagnostic));
+            invalidPayloadPattern = true;
+            continue;
+          }
+          seenCases.emplace_back(value, &label);
+          coveredPayloadVariants.insert(pattern->variantIndex);
+          semanticModel.recordSwitchCase(*label.value, value);
+          payloadPatterns.emplace_back(label.value.get(), std::move(*pattern));
           continue;
         }
 
@@ -4908,6 +5152,29 @@ public:
 
       scopes = beforeSwitch;
       beginScope();
+      for (auto &[source, pattern] : payloadPatterns) {
+        if (!pattern.bindings.empty() && arm.labels.size() != 1) {
+          report(expressionToken(*source),
+                 "A payload-binding switch arm must have exactly one case "
+                 "label.",
+                 "GTI-S2067");
+          invalidPayloadPattern = true;
+          pattern.bindings.clear();
+        }
+        for (PayloadBindingInfo &payload : pattern.bindings) {
+          if (payload.name == nullptr) {
+            continue;
+          }
+          const SymbolId symbol = recordBindingOccurrence(
+              *payload.name, payload.binding.type, false,
+              SemanticBindingKind::LocalVariable);
+          payload.binding.symbol = symbol;
+          semanticModel.recordPayloadBinding(*payload.name, payload.binding);
+          declare(*payload.name, payload.binding.type, false,
+                  SemanticBindingKind::LocalVariable);
+        }
+        semanticModel.recordPayloadPattern(*source, std::move(pattern));
+      }
       loanFlow.activeSwitchArms.push_back(
           {.switchIndex = loanSwitchIndex, .armIndex = armIndex});
       analyze(arm.statements);
@@ -4927,11 +5194,38 @@ public:
         diagnostics.emplace_back(std::move(diagnostic));
       }
     }
+    const bool exhaustivePayload =
+        payloadEnum != nullptr && !invalidPayloadPattern &&
+        coveredPayloadVariants.size() == payloadEnum->enumerators.size();
+    if (hasDefault || exhaustivePayload) {
+      semanticModel.recordExhaustiveSwitch(stmt);
+    }
+    if (payloadEnum != nullptr && !hasDefault && !invalidPayloadPattern &&
+        !exhaustivePayload) {
+      std::string missing;
+      for (const EnumeratorInfo &enumerator : payloadEnum->enumerators) {
+        if (coveredPayloadVariants.contains(enumerator.variantIndex) ||
+            enumerator.declaration == nullptr) {
+          continue;
+        }
+        if (!missing.empty()) {
+          missing += ", ";
+        }
+        missing += payloadEnum->qualifiedName +
+                   "::" + enumerator.declaration->name.lexeme;
+      }
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2067", DiagnosticPhase::Semantics, stmt.keyword(),
+          "Payload-enum switch is not exhaustive; missing " + missing + ".");
+      diagnostic.hints.emplace_back(
+          "Handle every variant explicitly or add a 'default' arm.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
     ValueControlFlowContext valueFlow = endValueControlFlow();
     --switchDepth;
 
     std::vector<ScopeStack> loanExitStates;
-    if (!hasDefault) {
+    if (!hasDefault && !exhaustivePayload) {
       loanExitStates.push_back(beforeSwitch);
     }
     for (const auto &[armScopes, flow] : armResults) {
@@ -4945,7 +5239,7 @@ public:
             : mergedValueStates(beforeSwitch, loanExitStates);
 
     std::vector<ScopeStack> exitStates;
-    if (!hasDefault) {
+    if (!hasDefault && !exhaustivePayload) {
       exitStates.push_back(beforeSwitch);
     }
     for (auto &[armScopes, flow] : armResults) {
@@ -4961,7 +5255,8 @@ public:
                            : mergedValueStates(beforeSwitch, exitStates);
     scopes = loanScopes;
     applyMoveStates(moveScopes);
-    loanFlow.switches[loanSwitchIndex].hasDefault = hasDefault;
+    loanFlow.switches[loanSwitchIndex].hasDefault =
+        hasDefault || exhaustivePayload;
     loanFlow.switches[loanSwitchIndex].endSequence = loanFlow.nextSequence++;
     loanFlow.switchBoundaries.pop_back();
   }
@@ -5316,11 +5611,14 @@ public:
              "GTI-S2017");
     } else if (!stmt.initializer()) {
       const bool field = currentClass && functionDepth == 0 && !stmt.isStatic();
-      const bool cAbiField =
-          field && currentClass && classInfo(*currentClass).cAbiRecord;
+      const bool passiveStorageField =
+          field && currentClass &&
+          (classInfo(*currentClass).cAbiRecord ||
+           classInfo(*currentClass).kind == ClassKind::Union);
       if (stmt.isConstexpr()) {
         // The constexpr contract reports its more specific initializer error.
-      } else if (declaredType.kind == SemanticType::RawPointer && !cAbiField) {
+      } else if (declaredType.kind == SemanticType::RawPointer &&
+                 !passiveStorageField) {
         report(stmt.name(),
                "Raw pointer bindings and fields require an explicit "
                "initializer; use 'nullptr' when no address is available.",
@@ -5913,6 +6211,11 @@ public:
   }
 
   void visitCallExpr(const Call &expr) override {
+    if (const EnumeratorRecord *enumerator =
+            payloadEnumeratorForCallee(expr.callee())) {
+      analyzePayloadConstruction(expr, *enumerator);
+      return;
+    }
     if (const std::optional<FunctionCandidate> intrinsic =
             intrinsicCandidate(expr.callee())) {
       analyzeIntrinsicCall(expr, *intrinsic);
@@ -6764,6 +7067,12 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
+    if (objectType.kind == SemanticType::Class && objectType.classId != 0 &&
+        objectType.classId <= classes.size() &&
+        classInfo(objectType.classId).kind == ClassKind::Union) {
+      requireUnsafe(expr, UnsafeOperationKind::UnionMember, expr.name(),
+                    "Union member access");
+    }
     if (member->symbol.staticMember) {
       report(expr.name(),
              "Static member '" + expr.name().lexeme +
@@ -7431,7 +7740,19 @@ public:
         return {.sizeBytes = record->cAbiLayout->sizeBytes,
                 .abiAlignmentBytes = record->cAbiLayout->abiAlignmentBytes};
       }
+      if (record != nullptr && record->kind == ClassKind::Union &&
+          record->unionLayout) {
+        return {.sizeBytes = record->unionLayout->sizeBytes,
+                .abiAlignmentBytes = record->unionLayout->abiAlignmentBytes};
+      }
       return {.error = LayoutEvaluationError::UnsupportedType};
+    }
+    if (type.kind == SemanticType::Enum) {
+      const EnumTypeInfo *enumeration = semanticModel.findEnumType(type.enumId);
+      if (enumeration == nullptr || enumeration->payload) {
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      }
+      return evaluateLayout(enumeration->underlyingType);
     }
     if (type.kind != SemanticType::Array) {
       return {.error = type.kind == SemanticType::TypeParameter
@@ -7578,9 +7899,9 @@ public:
           "GTI-S2063", DiagnosticPhase::Semantics,
           layoutDiagnosticSpan(expr.type(), layout.error), std::move(message));
       diagnostic.hints.emplace_back(
-          "Use a primitive scalar, one-level raw pointer, valid [[c_abi]] "
-          "record, or concrete non-zero fixed array whose element layout is "
-          "supported.");
+          "Use a primitive scalar, one-level raw pointer, integral scoped "
+          "enum, valid passive union or [[c_abi]] record, or concrete "
+          "non-zero fixed array whose element layout is supported.");
       diagnostics.emplace_back(std::move(diagnostic));
       return;
     }
@@ -7676,7 +7997,8 @@ public:
     const SemanticType type = analyze(
         expr.expression(), OccurrenceRole::Reference | OccurrenceRole::Read |
                                OccurrenceRole::Write);
-    if (type.kind == SemanticType::RawPointer) {
+    if (type.kind == SemanticType::RawPointer ||
+        type.kind == SemanticType::StringView) {
       if (rejectCOpaquePointeeOperation(type, expr.oper(),
                                         "raw-pointer arithmetic")) {
         currentType = SemanticType::Unknown;
@@ -7780,10 +8102,21 @@ public:
     }
     if (const EnumeratorRecord *enumerator = resolveEnumerator(expr.name())) {
       const SemanticType &type = enumerator->symbol.type;
-      semanticModel.record(
-          expr, ResolvedEnumeratorInfo{.owner = type.enumId,
-                                       .declaration = enumerator->declaration,
-                                       .value = enumerator->value});
+      semanticModel.record(expr, ResolvedEnumeratorInfo{
+                                     .owner = type.enumId,
+                                     .declaration = enumerator->declaration,
+                                     .value = enumerator->value,
+                                     .variantIndex = enumerator->variantIndex});
+      if (type.enumId != 0 && type.enumId <= enums.size() &&
+          enums[type.enumId - 1].payload && !enumerator->payloadTypes.empty() &&
+          !allowPayloadEnumeratorReference) {
+        report(expr.name().last(),
+               "Payload variant '" + expr.name().last().lexeme + "' requires " +
+                   std::to_string(enumerator->payloadTypes.size()) +
+                   " constructor argument" +
+                   (enumerator->payloadTypes.size() == 1 ? "." : "s."),
+               "GTI-S2067");
+      }
     }
     if (symbol->type == SemanticType::Function && !analyzingCallCallee) {
       report(expr.name().last(),
@@ -7850,6 +8183,12 @@ public:
       analyze(expr.value());
       currentType = SemanticType::Unknown;
       return;
+    }
+    if (objectType.kind == SemanticType::Class && objectType.classId != 0 &&
+        objectType.classId <= classes.size() &&
+        classInfo(objectType.classId).kind == ClassKind::Union) {
+      requireUnsafe(expr, UnsafeOperationKind::UnionMember, expr.name(),
+                    "Union member assignment");
     }
     if (member->symbol.staticMember) {
       analyze(expr.value());
@@ -8536,6 +8875,7 @@ private:
     bool cOpaqueHandle = false;
     std::optional<Token> cOpaqueAttribute;
     std::optional<CAbiRecordLayout> cAbiLayout;
+    std::optional<UnionLayout> unionLayout;
     ConcurrencyCapabilityPolicy transferPolicy =
         ConcurrencyCapabilityPolicy::Structural;
     ConcurrencyCapabilityPolicy sharePolicy =
@@ -8567,6 +8907,8 @@ private:
   struct EnumeratorRecord {
     const EnumeratorDecl *declaration = nullptr;
     EnumConstant value;
+    std::size_t variantIndex = 0;
+    std::vector<SemanticType> payloadTypes;
     Symbol symbol;
   };
 
@@ -8578,6 +8920,7 @@ private:
     std::vector<std::string> namespaceScope;
     SemanticType underlyingType = SemanticType::Int32;
     std::unordered_map<std::string, EnumeratorRecord> enumerators;
+    bool payload = false;
     bool compilerPrivate = false;
   };
 
@@ -9971,12 +10314,13 @@ private:
     }
     if (const auto *switchStatement =
             dynamic_cast<const SwitchStmt *>(statement)) {
-      bool hasDefault = false;
+      bool coversEveryValue =
+          semanticModel.isExhaustiveSwitch(*switchStatement);
       bool reachesAfterSwitch = false;
       bool continuesEnclosingLoop = false;
       for (const SwitchArm &arm : switchStatement->arms()) {
         for (const SwitchLabel &label : arm.labels) {
-          hasDefault = hasDefault || label.isDefault();
+          coversEveryValue = coversEveryValue || label.isDefault();
         }
         const FlowSummary armFlow = summarizeFlow(arm.statements);
         reachesAfterSwitch = reachesAfterSwitch || armFlow.canFallThrough ||
@@ -9984,7 +10328,7 @@ private:
         continuesEnclosingLoop =
             continuesEnclosingLoop || armFlow.continuesEnclosingLoop;
       }
-      return {.canFallThrough = !hasDefault || reachesAfterSwitch,
+      return {.canFallThrough = !coversEveryValue || reachesAfterSwitch,
               .continuesEnclosingLoop = continuesEnclosingLoop};
     }
     if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
@@ -10472,8 +10816,25 @@ private:
     case SemanticType::Bool:
     case SemanticType::Char:
     case SemanticType::NullPtr:
-    case SemanticType::Enum:
       return {.transferCapable = true, .shareCapable = true};
+    case SemanticType::Enum: {
+      if (type.enumId == 0 || type.enumId > enums.size() ||
+          !enums[type.enumId - 1].payload) {
+        return {.transferCapable = true, .shareCapable = true};
+      }
+      ConcurrencyCapabilities result{.transferCapable = true,
+                                     .shareCapable = true};
+      for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+        for (const SemanticType &payload : enumerator.payloadTypes) {
+          const ConcurrencyCapabilities component =
+              typeCapabilities(payload, visiting);
+          result.transferCapable =
+              result.transferCapable && component.transferCapable;
+          result.shareCapable = result.shareCapable && component.shareCapable;
+        }
+      }
+      return result;
+    }
     case SemanticType::Array:
     case SemanticType::UniqueOwner:
     case SemanticType::Storage:
@@ -10661,6 +11022,30 @@ private:
       return traits;
     }
 
+    if (type.kind == SemanticType::Enum && type.enumId != 0 &&
+        type.enumId <= enums.size() && enums[type.enumId - 1].payload) {
+      SemanticTypeTraits traits = semanticTraits(type);
+      for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+        for (const SemanticType &payload : enumerator.payloadTypes) {
+          const SemanticTypeTraits component = typeTraits(payload, visiting);
+          if (component.ownership == OwnershipKind::Unique ||
+              (traits.ownership == OwnershipKind::Value &&
+               component.ownership == OwnershipKind::Shared)) {
+            traits.ownership = component.ownership;
+          }
+          traits.copyable = traits.copyable && component.copyable;
+          traits.movable = traits.movable && component.movable;
+          traits.copyAssignable =
+              traits.copyAssignable && component.copyAssignable;
+          traits.moveAssignable =
+              traits.moveAssignable && component.moveAssignable;
+          traits.containsBorrowedState =
+              traits.containsBorrowedState || component.containsBorrowedState;
+        }
+      }
+      return traits;
+    }
+
     if (type.kind != SemanticType::Class || type.classId == 0 ||
         type.classId > classes.size()) {
       return semanticTraits(type);
@@ -10677,7 +11062,7 @@ private:
     }
 
     const ClassInfo &owner = classInfo(type.classId);
-    if (owner.cAbiRecord) {
+    if (owner.cAbiRecord || owner.kind == ClassKind::Union) {
       traits.drop = DropKind::Trivial;
     }
     const GenericSubstitution substitution = classSubstitution(type);
@@ -15493,6 +15878,358 @@ private:
                        });
   }
 
+  [[nodiscard]] bool containsDisallowedCallableCaptureState(
+      const SemanticType &type, std::unordered_set<ClassId> &visiting) const {
+    if (type.kind == SemanticType::Reference ||
+        type.kind == SemanticType::RawPointer ||
+        type.kind == SemanticType::StringView) {
+      return true;
+    }
+    if (type.kind == SemanticType::Lambda) {
+      return type.hasLambdaShape() &&
+             std::any_of(type.lambdaCaptureTypes().begin(),
+                         type.lambdaCaptureTypes().end(),
+                         [&](const SemanticType &capture) {
+                           return containsDisallowedCallableCaptureState(
+                               capture, visiting);
+                         });
+    }
+    if (type.kind == SemanticType::Class && type.classId != 0 &&
+        type.classId <= classes.size()) {
+      if (!visiting.insert(type.classId).second) {
+        return false;
+      }
+      const ClassInfo &owner = classInfo(type.classId);
+      const GenericSubstitution substitution = classSubstitution(type);
+      bool found = false;
+      if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
+        found = containsDisallowedCallableCaptureState(
+            substituteType(base->type, substitution), visiting);
+      }
+      for (const FieldInfo &field : owner.fields) {
+        if (found || field.declaration == nullptr) {
+          continue;
+        }
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        if (member != owner.members.end()) {
+          found = containsDisallowedCallableCaptureState(
+              substituteType(member->second.symbol.type, substitution),
+              visiting);
+        }
+      }
+      visiting.erase(type.classId);
+      return found;
+    }
+    if (type.kind == SemanticType::Enum && type.enumId != 0 &&
+        type.enumId <= enums.size() && enums[type.enumId - 1].payload) {
+      return std::any_of(
+          enums[type.enumId - 1].enumerators.begin(),
+          enums[type.enumId - 1].enumerators.end(), [&](const auto &entry) {
+            return std::any_of(entry.second.payloadTypes.begin(),
+                               entry.second.payloadTypes.end(),
+                               [&](const SemanticType &payload) {
+                                 return containsDisallowedCallableCaptureState(
+                                     payload, visiting);
+                               });
+          });
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return containsDisallowedCallableCaptureState(
+                             argument, visiting);
+                       });
+  }
+
+  [[nodiscard]] bool
+  containsDisallowedCallableCaptureState(const SemanticType &type) const {
+    std::unordered_set<ClassId> visiting;
+    return containsDisallowedCallableCaptureState(type, visiting);
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
+  movedFunctionParameter(const ExprPtr &expression,
+                         const FunctionInfo &function) const {
+    if (function.declaration == nullptr) {
+      return std::nullopt;
+    }
+    const ExprPtr *moved = explicitMoveSource(expression);
+    const auto *variable = moved == nullptr
+                               ? nullptr
+                               : dynamic_cast<const Variable *>(moved->get());
+    const SymbolId symbol =
+        variable == nullptr ? 0 : semanticModel.findResolvedSymbol(*variable);
+    if (symbol == 0) {
+      return std::nullopt;
+    }
+    for (std::size_t index = 0;
+         index < function.declaration->parameters().size(); ++index) {
+      const BindingInfo *binding =
+          semanticModel.findBinding(function.declaration->parameters()[index]);
+      if (binding != nullptr && binding->symbol == symbol) {
+        return index;
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static const ExprList *
+  constructionArguments(const ExprPtr &expression) {
+    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      return &call->arguments();
+    }
+    if (const auto *initializer =
+            dynamic_cast<const DirectInitializer *>(expression.get())) {
+      return &initializer->arguments();
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] std::optional<CallableOwnedTransport>
+  exactOwnedFieldTransport(const FunctionInfo &function,
+                           std::size_t parameterIndex,
+                           const ExprPtr &expression) const {
+    if (function.returnType.kind != SemanticType::Class ||
+        parameterIndex >= function.parameterTypes.size()) {
+      return std::nullopt;
+    }
+    const ExprList *arguments = constructionArguments(expression);
+    const ResolvedConstructionInfo *construction =
+        expression ? semanticModel.findConstruction(*expression) : nullptr;
+    if (arguments == nullptr || arguments->size() != 1 ||
+        construction == nullptr || construction->declaration == nullptr ||
+        construction->constructedType != function.returnType ||
+        construction->parameterTypes.size() != 1 ||
+        movedFunctionParameter(arguments->front(), function) !=
+            parameterIndex ||
+        construction->parameterTypes.front() !=
+            function.parameterTypes[parameterIndex]) {
+      return std::nullopt;
+    }
+
+    const ClassInfo &owner = classInfo(function.returnType.classId);
+    if (owner.fields.size() != 1) {
+      return std::nullopt;
+    }
+    const GenericSubstitution substitution =
+        classSubstitution(function.returnType);
+    for (const ConstructorInitializer &initializer :
+         construction->declaration->initializers()) {
+      const ResolvedConstructorInitializerInfo *resolved =
+          semanticModel.findConstructorInitializer(initializer);
+      if (resolved == nullptr ||
+          resolved->kind != ConstructorInitializerTargetKind::Field ||
+          resolved->ownedParameter != std::optional<std::size_t>{0} ||
+          resolved->field == 0 ||
+          substituteType(resolved->targetType, substitution) !=
+              function.parameterTypes[parameterIndex]) {
+        continue;
+      }
+      return CallableOwnedTransport{.kind =
+                                        CallableOwnedTransportKind::ExactField,
+                                    .destinationType = function.returnType,
+                                    .field = resolved->field};
+    }
+    return std::nullopt;
+  }
+
+  void discoverOwnedCallableContracts() {
+    struct PendingOwnedContract {
+      const FunctionDecl *declaration = nullptr;
+      CallableParameterContract contract;
+    };
+    std::vector<PendingOwnedContract> pending;
+    for (const auto &[_, function] : semanticModel.functions) {
+      if (function.declaration == nullptr || function.ownerClass != 0 ||
+          function.declaration->body() == nullptr ||
+          function.declaration->body()->statements().size() != 1) {
+        continue;
+      }
+      const auto *returnStatement = dynamic_cast<const ReturnStmt *>(
+          function.declaration->body()->statements().front().get());
+      if (returnStatement == nullptr || !returnStatement->value()) {
+        continue;
+      }
+      for (std::size_t index = 0;
+           index < function.parameterTypes.size() &&
+           index < function.declaration->parameters().size();
+           ++index) {
+        const Parameter &parameter = function.declaration->parameters()[index];
+        const SemanticType &parameterType = function.parameterTypes[index];
+        if (parameterType.kind != SemanticType::TypeParameter ||
+            parameter.type.reference || parameter.pack ||
+            parameter.mutability != Mutability::Immutable) {
+          continue;
+        }
+        const auto existing =
+            std::find_if(function.callableParameters.begin(),
+                         function.callableParameters.end(),
+                         [index](const CallableParameterContract &candidate) {
+                           return candidate.parameterIndex == index;
+                         });
+        if (existing != function.callableParameters.end()) {
+          continue;
+        }
+
+        std::optional<CallableOwnedTransport> transport;
+        if (function.returnType == parameterType &&
+            movedFunctionParameter(returnStatement->value(), function) ==
+                index) {
+          transport = CallableOwnedTransport{
+              .kind = CallableOwnedTransportKind::ExactReturn,
+              .destinationType = function.returnType};
+        } else {
+          transport = exactOwnedFieldTransport(function, index,
+                                               returnStatement->value());
+        }
+        if (!transport) {
+          continue;
+        }
+        pending.push_back(
+            {.declaration = function.declaration,
+             .contract = CallableParameterContract{
+                 .parameterIndex = index,
+                 .genericParameter = parameterType.genericParameterId,
+                 .callableType = parameterType,
+                 .access = AccessMode::ReadOnly,
+                 .boundary = CallableBoundary::Owned,
+                 .ownedTransport = std::move(transport)}});
+      }
+    }
+    for (PendingOwnedContract &contract : pending) {
+      semanticModel.recordCallableRequirement(*contract.declaration,
+                                              std::move(contract.contract));
+    }
+  }
+
+  [[nodiscard]] bool
+  ownedTransportMatchesConcrete(const FunctionInfo &function,
+                                const CallableParameterContract &contract,
+                                const ResolvedCallInfo &call) {
+    if (!contract.ownedTransport ||
+        contract.parameterIndex >= call.parameterTypes.size()) {
+      return false;
+    }
+    GenericSubstitution substitution;
+    std::size_t typeIndex = 0;
+    for (const GenericParameterInfo &parameter : function.genericParameters) {
+      if (!parameter.value && typeIndex < call.typeArguments.size()) {
+        substitution.types.emplace(parameter.id,
+                                   call.typeArguments[typeIndex++]);
+      }
+    }
+    const SemanticType destination =
+        substituteType(contract.ownedTransport->destinationType, substitution);
+    const SemanticType &callableType =
+        call.parameterTypes[contract.parameterIndex];
+    if (destination != call.returnType) {
+      return false;
+    }
+    if (contract.ownedTransport->kind ==
+        CallableOwnedTransportKind::ExactReturn) {
+      return destination == callableType && contract.ownedTransport->field == 0;
+    }
+    if (destination.kind != SemanticType::Class ||
+        contract.ownedTransport->field == 0) {
+      return false;
+    }
+    const ClassInfo &owner = classInfo(destination.classId);
+    const GenericSubstitution classArguments = classSubstitution(destination);
+    return std::any_of(
+        owner.fields.begin(), owner.fields.end(), [&](const FieldInfo &field) {
+          if (field.declaration == nullptr) {
+            return false;
+          }
+          const auto member =
+              owner.members.find(field.declaration->name().lexeme);
+          return member != owner.members.end() &&
+                 toolingSymbolFor(member->second.symbol) ==
+                     contract.ownedTransport->field &&
+                 substituteType(member->second.symbol.type, classArguments) ==
+                     callableType;
+        });
+  }
+
+  void validateOwnedCallableArguments() {
+    std::vector<Diagnostic> ownedDiagnostics;
+    for (const auto &[call, resolved] : semanticModel.calls) {
+      if (call == nullptr) {
+        continue;
+      }
+      const FunctionInfo *target =
+          semanticModel.findFunction(resolved.function);
+      if (target == nullptr || target->declaration == nullptr) {
+        continue;
+      }
+      for (const CallableParameterContract &contract :
+           target->callableParameters) {
+        if (contract.boundary != CallableBoundary::Owned ||
+            contract.parameterIndex >= call->arguments().size() ||
+            contract.parameterIndex >= resolved.parameterTypes.size() ||
+            !containsLambdaType(
+                resolved.parameterTypes[contract.parameterIndex])) {
+          continue;
+        }
+        const ExprPtr &argument = call->arguments()[contract.parameterIndex];
+        const SemanticType &argumentType =
+            resolved.parameterTypes[contract.parameterIndex];
+        const SemanticTypeTraits traits = typeTraits(argumentType);
+        std::string failure;
+        if (explicitMoveSource(argument) == nullptr) {
+          failure = "requires an explicit std::move ownership transfer";
+        } else if (!traits.movable) {
+          failure = "is not movable";
+        } else if (traits.containsBorrowedState ||
+                   !argumentType.hasLambdaShape() ||
+                   std::any_of(argumentType.lambdaCaptureTypes().begin(),
+                               argumentType.lambdaCaptureTypes().end(),
+                               [&](const SemanticType &capture) {
+                                 return containsDisallowedCallableCaptureState(
+                                     capture);
+                               })) {
+          failure = "contains borrowed or raw-pointer capture state";
+        } else if (!ownedTransportMatchesConcrete(*target, contract,
+                                                  resolved)) {
+          failure = "does not preserve the callable's exact concrete type in "
+                    "its declared owner";
+        }
+        if (failure.empty()) {
+          continue;
+        }
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2046", DiagnosticPhase::Semantics, expressionToken(argument),
+            "Owned callable argument " +
+                std::to_string(contract.parameterIndex + 1) + " " + failure +
+                ".");
+        diagnostic.related.push_back(
+            {tokenSpan(
+                 target->declaration->parameters()[contract.parameterIndex]
+                     .name),
+             "Exact owned callable parameter declared here."});
+        diagnostic.hints.emplace_back(
+            "Move an exact movable closure whose captures contain no "
+            "references, tracked borrowed state, or raw pointers.");
+        ownedDiagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+    std::sort(ownedDiagnostics.begin(), ownedDiagnostics.end(),
+              [](const Diagnostic &left, const Diagnostic &right) {
+                if (left.primary.source != right.primary.source) {
+                  return left.primary.source < right.primary.source;
+                }
+                if (left.primary.start != right.primary.start) {
+                  return left.primary.start < right.primary.start;
+                }
+                if (left.primary.end != right.primary.end) {
+                  return left.primary.end < right.primary.end;
+                }
+                return left.message < right.message;
+              });
+    for (Diagnostic &diagnostic : ownedDiagnostics) {
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+
   void validateProvisionalCallableArguments() {
     std::vector<Diagnostic> argumentDiagnostics;
     for (const auto &[call, resolved] : semanticModel.calls) {
@@ -15503,26 +16240,31 @@ private:
           semanticModel.findFunction(resolved.function);
       for (const CallableArgumentBoundary &argument :
            resolved.callableArguments) {
-        const bool provenConfined =
+        const bool provenBoundary =
             target != nullptr &&
-            std::any_of(
-                target->callableParameters.begin(),
-                target->callableParameters.end(),
-                [&](const CallableParameterContract &contract) {
-                  return contract.parameterIndex == argument.parameterIndex &&
-                         contract.boundary == CallableBoundary::Confined;
-                });
-        if (provenConfined ||
+            std::any_of(target->callableParameters.begin(),
+                        target->callableParameters.end(),
+                        [&](const CallableParameterContract &contract) {
+                          return contract.parameterIndex ==
+                                 argument.parameterIndex;
+                        });
+        if (provenBoundary ||
             argument.parameterIndex >= call->arguments().size()) {
           continue;
         }
 
+        const bool escapingReturn = containsLambdaType(resolved.returnType);
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2046", DiagnosticPhase::Semantics,
             expressionToken(call->arguments()[argument.parameterIndex]),
-            "Lambda argument " + std::to_string(argument.parameterIndex + 1) +
-                " cannot bind because the selected target parameter is not "
-                "proven confined.");
+            escapingReturn
+                ? "Lambda argument " +
+                      std::to_string(argument.parameterIndex + 1) +
+                      " would escape through the function return value."
+                : "Lambda argument " +
+                      std::to_string(argument.parameterIndex + 1) +
+                      " cannot bind because the selected target parameter is "
+                      "not proven confined or owned.");
         if (target != nullptr && target->declaration != nullptr &&
             argument.parameterIndex <
                 target->declaration->parameters().size()) {
@@ -15533,9 +16275,12 @@ private:
                "Selected generic parameter declared here."});
         }
         diagnostic.hints.emplace_back(
-            "Pass a lambda only to a direct by-value generic parameter whose "
-            "visible body invokes it or forwards it through another proven "
-            "confined parameter.");
+            escapingReturn
+                ? "Return a callable only through an exact owned generic "
+                  "transport using std::move."
+                : "Pass a lambda only to a direct by-value generic parameter "
+                  "whose visible body proves confined use or exact owned "
+                  "transport.");
         argumentDiagnostics.emplace_back(std::move(diagnostic));
       }
     }
@@ -15979,7 +16724,7 @@ private:
   }
 
   bool validateConfinedCallableArguments(
-      const FunctionCandidate &candidate, const FunctionCandidate &resolved,
+      const FunctionCandidate &candidate, const FunctionCandidate &,
       const std::vector<SemanticType> &argumentTypes,
       const ExprList &arguments) {
     bool valid = true;
@@ -15990,12 +16735,12 @@ private:
       const CallableParameterContract *targetContract =
           callableParameterContract(candidate.id, index);
       const bool lexicalClosure = containsLambdaType(argumentTypes[index]);
-      const bool provenConfined =
+      const bool provenBoundary =
           (sourceContract != nullptr &&
-           sourceContract->boundary == CallableBoundary::Confined) ||
-          (targetContract != nullptr &&
-           targetContract->boundary == CallableBoundary::Confined);
-      if (!lexicalClosure && !provenConfined) {
+           (sourceContract->boundary == CallableBoundary::Confined ||
+            sourceContract->boundary == CallableBoundary::Owned)) ||
+          (lexicalClosure && targetContract != nullptr);
+      if (!lexicalClosure && !provenBoundary) {
         continue;
       }
       const Parameter *parameter =
@@ -16009,18 +16754,17 @@ private:
           !parameter->type.reference && !parameter->pack;
       if (instanceAnalysisActive) {
         if (!directByValueGeneric || candidate.declaration == nullptr ||
-            !candidate.declaration->body() || targetContract == nullptr ||
-            targetContract->boundary != CallableBoundary::Confined) {
+            !candidate.declaration->body() || targetContract == nullptr) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2046", DiagnosticPhase::Semantics,
               expressionToken(arguments[index]),
               "Callable argument " + std::to_string(index + 1) +
                   " cannot be forwarded because the selected parameter is "
-                  "not proven confined.");
+                  "not proven confined or owned.");
           diagnostic.hints.emplace_back(
               "Forward closures only through a direct by-value generic "
-              "parameter whose visible body invokes or forwards it under a "
-              "confined callable contract.");
+              "parameter whose visible body proves confined use or exact "
+              "owned transport.");
           diagnostics.emplace_back(std::move(diagnostic));
           valid = false;
         }
@@ -16036,28 +16780,6 @@ private:
         diagnostic.hints.emplace_back(
             "Use a generic value parameter such as 'Operation operation'; "
             "callable references and owning type erasure are not available.");
-        diagnostics.emplace_back(std::move(diagnostic));
-        valid = false;
-      }
-      // A function with an established callable contract is diagnosed once at
-      // its declaration by validateConfinedCallableContracts. A lambda passed
-      // through an otherwise ordinary generic value path still needs the
-      // call-site check because lexical closures cannot escape at all yet.
-      if (lexicalClosure && targetContract == nullptr &&
-          containsLambdaType(resolved.returnType)) {
-        Diagnostic diagnostic = makeDiagnostic(
-            "GTI-S2046", DiagnosticPhase::Semantics,
-            expressionToken(arguments[index]),
-            "Lambda argument " + std::to_string(index + 1) +
-                " would escape through the function return value.");
-        if (candidate.declaration != nullptr) {
-          diagnostic.related.push_back(
-              {tokenSpan(candidate.declaration->returnType().name.last()),
-               "The selected function returns the callable's concrete type."});
-        }
-        diagnostic.hints.emplace_back(
-            "Confined callable parameters may only be used during the "
-            "selected call.");
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;
       }
@@ -17506,6 +18228,26 @@ private:
         }
         viable.push_back({&constructor, std::move(parameterTypes), false,
                           ConstructorKind::Ordinary});
+      }
+    }
+
+    if (owner.kind == ClassKind::Union && arguments.size() == 1 &&
+        !owner.fields.empty() && owner.fields.front().declaration != nullptr) {
+      const auto firstMember =
+          owner.members.find(owner.fields.front().declaration->name().lexeme);
+      if (firstMember != owner.members.end()) {
+        const SemanticType firstType = firstMember->second.symbol.type;
+        const AnalyzedCallArgument &argument = arguments.front();
+        const bool exact =
+            argument.forwardedPackElement
+                ? forwardedPackArgumentMatches(firstType, argument.type)
+                : argument.expression != nullptr &&
+                      callArgumentMatches(firstType, argument.type,
+                                          *argument.expression);
+        if (exact) {
+          viable.push_back(
+              {nullptr, {firstType}, false, ConstructorKind::Ordinary});
+        }
       }
     }
 
@@ -21139,6 +21881,18 @@ private:
         continue;
       }
 
+      const bool payload = std::any_of(enumDecl->enumerators().begin(),
+                                       enumDecl->enumerators().end(),
+                                       [](const EnumeratorDecl &enumerator) {
+                                         return !enumerator.payload.empty();
+                                       });
+      if (payload && enumDecl->underlyingType()) {
+        report(enumDecl->underlyingType()->name.last(),
+               "Payload enums use compiler-defined variant indices and "
+               "cannot declare an integral backing type.",
+               "GTI-S2067");
+      }
+
       SemanticType underlying = enumUnderlyingType(enumDecl->underlyingType());
       if (enumDecl->underlyingType() &&
           !validEnumUnderlyingSyntax(*enumDecl->underlyingType())) {
@@ -21158,6 +21912,7 @@ private:
                                .name = enumDecl->name(),
                                .namespaceScope = scope,
                                .underlyingType = underlying,
+                               .payload = payload,
                                .compilerPrivate = compilerPrivateDeclaration(
                                    currentSourceUnit, scope)});
       EnumInfo &info = enums.back();
@@ -21165,10 +21920,22 @@ private:
       modelEnumerators.reserve(enumDecl->enumerators().size());
 
       std::optional<EnumConstant> nextValue = EnumConstant{};
-      for (const EnumeratorDecl &enumerator : enumDecl->enumerators()) {
+      for (std::size_t variantIndex = 0;
+           variantIndex < enumDecl->enumerators().size(); ++variantIndex) {
+        const EnumeratorDecl &enumerator =
+            enumDecl->enumerators()[variantIndex];
         EnumConstant value = nextValue.value_or(EnumConstant{});
         bool valueKnown = nextValue.has_value();
-        if (enumerator.initializer) {
+        if (payload) {
+          value = {.magnitude = variantIndex};
+          valueKnown = true;
+          if (enumerator.initializer) {
+            report(expressionToken(enumerator.initializer),
+                   "Payload enum variants cannot declare numeric values; "
+                   "their closed declaration order defines the tag.",
+                   "GTI-S2067");
+          }
+        } else if (enumerator.initializer) {
           const std::optional<IntegerConstant> constant =
               integerConstant(enumerator.initializer.get());
           if (!constant) {
@@ -21203,6 +21970,7 @@ private:
             EnumeratorRecord{
                 .declaration = &enumerator,
                 .value = value,
+                .variantIndex = variantIndex,
                 .symbol = Symbol{.type = SemanticType::enumType(id),
                                  .sourceUnit = currentSourceUnit,
                                  .assignable = false,
@@ -21220,8 +21988,12 @@ private:
         modelEnumerators.push_back(
             {.declaration = &enumerator,
              .value = value,
-             .explicitValue = enumerator.initializer != nullptr});
-        nextValue = valueKnown ? nextEnumConstant(value) : std::nullopt;
+             .explicitValue = enumerator.initializer != nullptr,
+             .variantIndex = variantIndex});
+        nextValue = payload
+                        ? std::optional<EnumConstant>{EnumConstant{
+                              .magnitude = variantIndex + 1}}
+                        : (valueKnown ? nextEnumConstant(value) : std::nullopt);
       }
 
       semanticModel.recordEnumType(
@@ -21232,8 +22004,122 @@ private:
                                   .namespaceScope = scope,
                                   .underlyingType = underlying,
                                   .enumerators = std::move(modelEnumerators),
+                                  .payload = payload,
                                   .compilerPrivate = info.compilerPrivate});
     }
+  }
+
+  [[nodiscard]] bool payloadTypeAllowed(const SemanticType &type,
+                                        EnumId owner) const {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::Bool:
+    case SemanticType::Char:
+    case SemanticType::StringView:
+    case SemanticType::NullPtr:
+    case SemanticType::RawPointer:
+      return true;
+    case SemanticType::Enum:
+      return type.enumId != owner && type.enumId != 0 &&
+             type.enumId <= enums.size() && !enums[type.enumId - 1].payload;
+    default:
+      return false;
+    }
+  }
+
+  void resolveEnumPayloads() {
+    const std::vector<std::string> enclosingNamespace = currentNamespace;
+    for (EnumInfo &info : enums) {
+      if (!info.payload || info.declaration == nullptr) {
+        continue;
+      }
+      currentSourceUnit = info.sourceUnit;
+      currentNamespace = info.namespaceScope;
+      std::vector<EnumeratorInfo> modelEnumerators;
+      modelEnumerators.reserve(info.declaration->enumerators().size());
+      for (std::size_t variantIndex = 0;
+           variantIndex < info.declaration->enumerators().size();
+           ++variantIndex) {
+        const EnumeratorDecl &enumerator =
+            info.declaration->enumerators()[variantIndex];
+        const auto found = info.enumerators.find(enumerator.name.lexeme);
+        std::vector<SemanticType> payloadTypes;
+        payloadTypes.reserve(enumerator.payload.size());
+        std::unordered_set<std::string> payloadNames;
+        for (const Parameter &parameter : enumerator.payload) {
+          validateType(parameter.type);
+          SemanticType type = typeOf(parameter, info.namespaceScope);
+          const Token &location = parameter.name.lexeme.empty()
+                                      ? parameter.type.name.last()
+                                      : parameter.name;
+          if (parameter.name.lexeme.empty()) {
+            report(location,
+                   "Payload enum fields require names so switch patterns can "
+                   "bind them.",
+                   "GTI-S2067");
+          } else if (!payloadNames.insert(parameter.name.lexeme).second) {
+            report(parameter.name,
+                   "Duplicate payload field name '" + parameter.name.lexeme +
+                       "' in variant '" + enumerator.name.lexeme + "'.",
+                   "GTI-S2067");
+          }
+          if (parameter.mutability == Mutability::Mutable) {
+            report(location,
+                   "Payload enum fields are values and do not take 'mut'.",
+                   "GTI-S2067");
+          }
+          if (parameter.pack) {
+            report(*parameter.pack, "Payload enum fields cannot be variadic.",
+                   "GTI-S2067");
+          }
+          if (parameter.type.reference ||
+              !parameter.type.arrayExtents.empty()) {
+            report(location,
+                   "The first payload-enum family does not store references "
+                   "or fixed arrays.",
+                   "GTI-S2067");
+          } else if (type != SemanticType::Unknown &&
+                     !payloadTypeAllowed(type, info.id)) {
+            report(location,
+                   "Payload field type '" + typeSpelling(type) +
+                       "' is outside the passive payload family.",
+                   "GTI-S2067");
+          }
+          payloadTypes.push_back(type);
+        }
+        if (found != info.enumerators.end()) {
+          found->second.payloadTypes = payloadTypes;
+        }
+        modelEnumerators.push_back(
+            {.declaration = &enumerator,
+             .value = {.magnitude = variantIndex},
+             .explicitValue = enumerator.initializer != nullptr,
+             .variantIndex = variantIndex,
+             .payloadTypes = std::move(payloadTypes)});
+      }
+      semanticModel.recordEnumType(
+          *info.declaration,
+          EnumTypeInfo{.id = info.id,
+                       .sourceUnit = info.sourceUnit,
+                       .declaration = info.declaration,
+                       .qualifiedName =
+                           qualifiedName(info.namespaceScope, info.name.lexeme),
+                       .namespaceScope = info.namespaceScope,
+                       .underlyingType = info.underlyingType,
+                       .enumerators = std::move(modelEnumerators),
+                       .payload = true,
+                       .compilerPrivate = info.compilerPrivate});
+    }
+    currentNamespace = enclosingNamespace;
   }
 
   [[nodiscard]] CapabilityPolicyRegistration
@@ -21476,6 +22362,20 @@ private:
                    "GTI-S2023");
           }
         }
+        if (classDecl->kind() == ClassKind::Union) {
+          if (!classDecl->genericParameters().empty()) {
+            report(classDecl->genericParameters().front().name,
+                   "Unions cannot declare generic parameters in the passive "
+                   "storage model.",
+                   "GTI-S2066");
+          }
+          if (classDecl->isForwardDeclaration()) {
+            report(classDecl->name(),
+                   "A union must define its storage fields; forward "
+                   "declarations are not supported.",
+                   "GTI-S2066");
+          }
+        }
         classIds.emplace(qualified, id);
         publishClass(qualified, id, currentSourceUnit);
         classDeclIds.emplace(classDecl, id);
@@ -21498,8 +22398,17 @@ private:
                    classDecl->name().lexeme == "text_view") {
           compilerCapability = CompilerCapabilityTypeKind::TextView;
         }
-        const CapabilityPolicyRegistration capabilityPolicies =
-            registerClassAttributes(*classDecl);
+        CapabilityPolicyRegistration capabilityPolicies;
+        if (classDecl->kind() == ClassKind::Union) {
+          for (const Token &attribute : classDecl->attributes()) {
+            report(attribute,
+                   "Unions do not accept class capability or native-record "
+                   "attributes.",
+                   "GTI-S2066");
+          }
+        } else {
+          capabilityPolicies = registerClassAttributes(*classDecl);
+        }
         classes.push_back(
             ClassInfo{.id = id,
                       .sourceUnit = currentSourceUnit,
@@ -21537,6 +22446,8 @@ private:
       return "struct";
     case ClassKind::Interface:
       return "interface";
+    case ClassKind::Union:
+      return "union";
     }
     return "type";
   }
@@ -21548,6 +22459,14 @@ private:
       }
       currentSourceUnit = owner.sourceUnit;
       beginTypeParameterScope(owner.genericParameters);
+      if (owner.kind == ClassKind::Union) {
+        if (!owner.declaration->bases().empty()) {
+          report(owner.declaration->bases().front().type.name.last(),
+                 "A union cannot declare base types.", "GTI-S2066");
+        }
+        endTypeParameterScope();
+        continue;
+      }
       bool hasConcreteBase = false;
       std::unordered_set<ClassId> directBases;
       for (const BaseSpecifier &syntax : owner.declaration->bases()) {
@@ -21587,6 +22506,11 @@ private:
         }
 
         const ClassInfo &base = classInfo(baseType.classId);
+        if (base.kind == ClassKind::Union) {
+          report(location, "A union cannot be used as a base type.",
+                 "GTI-S2066");
+          continue;
+        }
         const bool interfaceBase = base.kind == ClassKind::Interface;
         if (owner.kind == ClassKind::Interface && !interfaceBase) {
           report(location,
@@ -22091,6 +23015,9 @@ private:
 
   [[nodiscard]] bool classCanGenerateDefaultConstructor(
       const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const {
+    if (owner.kind == ClassKind::Union) {
+      return owner.unionLayout.has_value();
+    }
     if (!fieldsHaveDeclarationInitializers(owner)) {
       return false;
     }
@@ -22865,6 +23792,217 @@ private:
     return layout;
   }
 
+  void reportUnion(const Token &location, std::string message) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2066", DiagnosticPhase::Semantics, location, std::move(message));
+    diagnostic.hints.emplace_back(
+        "Keep native unions passive and use them only inside an 'unsafe' "
+        "block; use a payload enum when the active alternative must be "
+        "tracked safely.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  [[nodiscard]] bool unionFieldTypeAllowed(const SemanticType &type) const {
+    if (layoutScalarKind(type) || type.kind == SemanticType::Enum) {
+      if (type.kind != SemanticType::Enum) {
+        return true;
+      }
+      const EnumTypeInfo *enumeration = semanticModel.findEnumType(type.enumId);
+      return enumeration != nullptr && !enumeration->payload;
+    }
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+        type.arrayLength != 0 && type.arrayLengthParameterId == 0) {
+      return unionFieldTypeAllowed(type.arguments.front());
+    }
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size() || !type.arguments.empty() ||
+        !type.valueArguments.empty()) {
+      return false;
+    }
+    const ClassInfo &fieldOwner = classInfo(type.classId);
+    return fieldOwner.kind == ClassKind::Union ||
+           (fieldOwner.cAbiRecord && fieldOwner.cAbiLayout.has_value());
+  }
+
+  [[nodiscard]] bool validateUnionShape(ClassInfo &owner) {
+    if (owner.kind != ClassKind::Union || owner.declaration == nullptr) {
+      return false;
+    }
+    bool valid = !owner.declaration->isForwardDeclaration() &&
+                 owner.genericParameters.empty() && owner.bases.empty();
+    if (owner.fields.empty()) {
+      reportUnion(owner.name, "Union '" + owner.name.lexeme +
+                                  "' must contain at least one field.");
+      valid = false;
+    }
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        valid = false;
+        continue;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member == owner.members.end()) {
+        valid = false;
+        continue;
+      }
+      if (member->second.access != AccessModifier::Public) {
+        reportUnion(field.declaration->name(), "Every field of union '" +
+                                                   owner.name.lexeme +
+                                                   "' must be public.");
+        valid = false;
+      }
+      if (field.declaration->initializer()) {
+        reportUnion(field.declaration->name(),
+                    "Union field '" + field.declaration->name().lexeme +
+                        "' cannot have an initializer.");
+        valid = false;
+      }
+      const SemanticType &fieldType = member->second.symbol.type;
+      if (fieldType.kind == SemanticType::Reference) {
+        reportUnion(field.declaration->type().name.last(),
+                    "Union fields cannot store references.");
+        valid = false;
+      } else if (fieldType != SemanticType::Unknown &&
+                 !unionFieldTypeAllowed(fieldType)) {
+        reportUnion(field.declaration->type().name.last(),
+                    "Union field '" + field.declaration->name().lexeme +
+                        "' has non-passive type '" + typeSpelling(fieldType) +
+                        "'.");
+        valid = false;
+      }
+    }
+    return valid;
+  }
+
+  [[nodiscard]] std::optional<UnionLayout>
+  computeUnionLayout(ClassId id, std::vector<std::uint8_t> &state,
+                     const std::vector<bool> &shapeValid) {
+    if (id == 0 || id > classes.size() || !shapeValid[id - 1]) {
+      return std::nullopt;
+    }
+    ClassInfo &owner = classInfo(id);
+    if (state[id - 1] == 2) {
+      return owner.unionLayout;
+    }
+    if (state[id - 1] == 3) {
+      return std::nullopt;
+    }
+    state[id - 1] = 1;
+    UnionLayout layout{.abiAlignmentBytes = 1};
+    layout.fields.reserve(owner.fields.size());
+
+    const auto fieldLayout = [&](const auto &self, const SemanticType &type,
+                                 const Token &location) -> LayoutEvaluation {
+      if (type.kind == SemanticType::Array) {
+        if (type.arguments.size() != 1 || type.arrayLength == 0 ||
+            type.arrayLengthParameterId != 0) {
+          return {.error = LayoutEvaluationError::UnsupportedType};
+        }
+        const LayoutEvaluation element =
+            self(self, type.arguments.front(), location);
+        if (!element) {
+          return element;
+        }
+        if (element.sizeBytes >
+            std::numeric_limits<std::uint64_t>::max() / type.arrayLength) {
+          return {.error = LayoutEvaluationError::SizeOverflow};
+        }
+        return {.sizeBytes = element.sizeBytes * type.arrayLength,
+                .abiAlignmentBytes = element.abiAlignmentBytes};
+      }
+      if (type.kind == SemanticType::Class && type.classId != 0 &&
+          type.classId <= classes.size()) {
+        ClassInfo &nestedOwner = classInfo(type.classId);
+        if (nestedOwner.kind == ClassKind::Union) {
+          if (state[type.classId - 1] == 1) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2066", DiagnosticPhase::Semantics, location,
+                "Unions cannot contain a recursive by-value field.");
+            diagnostic.related.push_back(
+                {tokenSpan(nestedOwner.name),
+                 "The recursive union is declared here."});
+            diagnostic.hints.emplace_back(
+                "Use a one-level raw pointer for the recursive edge, or a "
+                "safe owning standard-library wrapper at a higher layer.");
+            diagnostics.emplace_back(std::move(diagnostic));
+            return {.error = LayoutEvaluationError::UnsupportedType};
+          }
+          const std::optional<UnionLayout> nested =
+              computeUnionLayout(type.classId, state, shapeValid);
+          return nested ? LayoutEvaluation{.sizeBytes = nested->sizeBytes,
+                                           .abiAlignmentBytes =
+                                               nested->abiAlignmentBytes}
+                        : LayoutEvaluation{
+                              .error = LayoutEvaluationError::UnsupportedType};
+        }
+        if (nestedOwner.cAbiRecord && nestedOwner.cAbiLayout) {
+          return {.sizeBytes = nestedOwner.cAbiLayout->sizeBytes,
+                  .abiAlignmentBytes =
+                      nestedOwner.cAbiLayout->abiAlignmentBytes};
+        }
+      }
+      return evaluateLayout(type);
+    };
+
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        state[id - 1] = 3;
+        return std::nullopt;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member == owner.members.end()) {
+        state[id - 1] = 3;
+        return std::nullopt;
+      }
+      const LayoutEvaluation fieldResult =
+          fieldLayout(fieldLayout, member->second.symbol.type,
+                      field.declaration->type().name.last());
+      if (!fieldResult) {
+        reportUnion(field.declaration->type().name.last(),
+                    "Target layout facts are unavailable for union field '" +
+                        field.declaration->name().lexeme + "'.");
+        state[id - 1] = 3;
+        return std::nullopt;
+      }
+      layout.fields.push_back(
+          {.declaration = field.declaration,
+           .type = member->second.symbol.type,
+           .sizeBytes = fieldResult.sizeBytes,
+           .abiAlignmentBytes = fieldResult.abiAlignmentBytes});
+      layout.sizeBytes = std::max(layout.sizeBytes, fieldResult.sizeBytes);
+      layout.abiAlignmentBytes =
+          std::max(layout.abiAlignmentBytes, fieldResult.abiAlignmentBytes);
+    }
+    std::uint64_t finalSize = 0;
+    if (!alignCAbiOffset(layout.sizeBytes, layout.abiAlignmentBytes,
+                         finalSize)) {
+      reportUnion(owner.name, "Layout of union '" + owner.name.lexeme +
+                                  "' exceeds uint64_t.");
+      state[id - 1] = 3;
+      return std::nullopt;
+    }
+    layout.sizeBytes = finalSize;
+    owner.unionLayout = layout;
+    state[id - 1] = 2;
+    return layout;
+  }
+
+  void validateUnions() {
+    std::vector<bool> shapeValid(classes.size(), false);
+    for (ClassInfo &owner : classes) {
+      if (owner.kind == ClassKind::Union) {
+        shapeValid[owner.id - 1] = validateUnionShape(owner);
+      }
+    }
+    std::vector<std::uint8_t> state(classes.size(), 0);
+    for (ClassInfo &owner : classes) {
+      if (owner.kind == ClassKind::Union && shapeValid[owner.id - 1] &&
+          !computeUnionLayout(owner.id, state, shapeValid)) {
+        state[owner.id - 1] = 3;
+      }
+    }
+  }
+
   void validateNativeRecords() {
     validateCOpaqueHandles();
     std::vector<bool> shapeValid(classes.size(), false);
@@ -22880,10 +24018,14 @@ private:
         state[owner.id - 1] = 3;
       }
     }
+    validateUnions();
   }
 
   void validateStoredReferenceContracts() {
     for (ClassInfo &owner : classes) {
+      if (owner.kind == ClassKind::Union) {
+        continue;
+      }
       for (const FieldInfo &field : owner.fields) {
         if (field.declaration == nullptr) {
           continue;
@@ -22923,6 +24065,9 @@ private:
     }
 
     for (ClassInfo &owner : classes) {
+      if (owner.kind == ClassKind::Union) {
+        continue;
+      }
       for (const ClassBaseTypeInfo &base : owner.bases) {
         if (!base.interface && typeTraits(base.type).containsBorrowedState) {
           report(base.syntax == nullptr ? owner.name
@@ -23171,12 +24316,26 @@ private:
                  "not permitted.",
                  "GTI-S2041");
         }
-        access = specifier->modifier();
+        if (owner.kind == ClassKind::Union &&
+            specifier->modifier() == AccessModifier::Private) {
+          report(specifier->keyword(),
+                 "Union fields are public; a union cannot declare a private "
+                 "section.",
+                 "GTI-S2066");
+          access = AccessModifier::Public;
+        } else {
+          access = specifier->modifier();
+        }
         continue;
       }
 
       if (const auto *constructor =
               dynamic_cast<const ConstructorDecl *>(statement.get())) {
+        if (owner.kind == ClassKind::Union) {
+          report(constructor->name(),
+                 "A passive union cannot declare constructors.", "GTI-S2066");
+          continue;
+        }
         if (owner.kind == ClassKind::Interface) {
           report(constructor->name(), "Interfaces cannot declare constructors.",
                  "GTI-S2041");
@@ -23311,6 +24470,11 @@ private:
 
       if (const auto *destructor =
               dynamic_cast<const DestructorDecl *>(statement.get())) {
+        if (owner.kind == ClassKind::Union) {
+          report(destructor->tilde(),
+                 "A passive union cannot declare a destructor.", "GTI-S2066");
+          continue;
+        }
         if (owner.kind == ClassKind::Interface) {
           report(destructor->tilde(),
                  "Interfaces use compiler-generated polymorphic destruction "
@@ -23351,6 +24515,11 @@ private:
           dynamic_cast<const FunctionDecl *>(statement.get());
       Symbol symbol;
       if (function != nullptr) {
+        if (owner.kind == ClassKind::Union) {
+          report(function->name(), "A passive union cannot declare methods.",
+                 "GTI-S2066");
+          continue;
+        }
         for (const GenericParameter &methodParameter :
              function->genericParameters()) {
           for (const GenericParameterInfo &classParameter :
@@ -23411,6 +24580,11 @@ private:
         }
       } else if (const auto *variable =
                      dynamic_cast<const VariableDecl *>(statement.get())) {
+        if (owner.kind == ClassKind::Union && variable->isStatic()) {
+          report(variable->name(),
+                 "A passive union cannot declare static fields.", "GTI-S2066");
+          continue;
+        }
         name = &variable->name();
         field = variable;
         symbol = Symbol{.type = typeOf(variable->type(), variable->mutability(),
@@ -23675,6 +24849,7 @@ private:
                         .cAbiRecord = owner.cAbiRecord,
                         .cOpaqueHandle = owner.cOpaqueHandle,
                         .cAbiLayout = owner.cAbiLayout,
+                        .unionLayout = owner.unionLayout,
                         .traits = typeTraits(openClassType(owner.id)),
                         .transferPolicy = owner.transferPolicy,
                         .sharePolicy = owner.sharePolicy,
@@ -25945,6 +27120,172 @@ private:
     return found == owner.enumerators.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] const EnumeratorRecord *
+  payloadEnumeratorForCallee(const ExprPtr &callee) const {
+    const auto *qualified = dynamic_cast<const QualifiedName *>(callee.get());
+    if (qualified == nullptr) {
+      return nullptr;
+    }
+    const EnumeratorRecord *enumerator = resolveEnumerator(qualified->name());
+    if (enumerator == nullptr ||
+        enumerator->symbol.type.kind != SemanticType::Enum) {
+      return nullptr;
+    }
+    const EnumId owner = enumerator->symbol.type.enumId;
+    return owner != 0 && owner <= enums.size() && enums[owner - 1].payload
+               ? enumerator
+               : nullptr;
+  }
+
+  void analyzePayloadConstruction(const Call &call,
+                                  const EnumeratorRecord &enumerator) {
+    const EnumId owner = enumerator.symbol.type.enumId;
+    const bool enclosingCallCallee = analyzingCallCallee;
+    const bool enclosingPayloadReference = allowPayloadEnumeratorReference;
+    analyzingCallCallee = true;
+    allowPayloadEnumeratorReference = true;
+    (void)analyze(call.callee());
+    allowPayloadEnumeratorReference = enclosingPayloadReference;
+    analyzingCallCallee = enclosingCallCallee;
+
+    for (const TypeRef &argument : call.typeArguments()) {
+      validateType(argument);
+    }
+    if (!call.typeArguments().empty()) {
+      report(call.paren(), "Payload variants do not take generic arguments.",
+             "GTI-S2067");
+    }
+
+    if (enumerator.payloadTypes.empty()) {
+      for (const ExprPtr &argument : call.arguments()) {
+        analyze(argument);
+      }
+      report(call.paren(),
+             "Unit variant '" + enumerator.declaration->name.lexeme +
+                 "' is a value; write it without '()'.",
+             "GTI-S2067");
+      currentType = SemanticType::enumType(owner);
+      return;
+    }
+
+    if (call.arguments().size() != enumerator.payloadTypes.size()) {
+      report(call.paren(),
+             "Payload variant '" + enumerator.declaration->name.lexeme +
+                 "' expects " + std::to_string(enumerator.payloadTypes.size()) +
+                 " argument" +
+                 (enumerator.payloadTypes.size() == 1 ? "." : "s."),
+             "GTI-S2067");
+    }
+    const std::size_t common =
+        std::min(call.arguments().size(), enumerator.payloadTypes.size());
+    for (std::size_t index = 0; index < common; ++index) {
+      const SemanticType actual = analyzeInitializer(
+          call.arguments()[index], enumerator.payloadTypes[index]);
+      if (actual != SemanticType::Unknown &&
+          !callArgumentMatches(enumerator.payloadTypes[index], actual,
+                               call.arguments()[index])) {
+        report(expressionToken(call.arguments()[index]),
+               "Payload argument " + std::to_string(index + 1) + " has type '" +
+                   typeSpelling(actual) + "'; variant '" +
+                   enumerator.declaration->name.lexeme +
+                   "' requires exact type '" +
+                   typeSpelling(enumerator.payloadTypes[index]) + "'.",
+               "GTI-S2067");
+      }
+    }
+    for (std::size_t index = common; index < call.arguments().size(); ++index) {
+      analyze(call.arguments()[index]);
+    }
+    semanticModel.recordPayloadConstruction(
+        call, {.owner = owner,
+               .declaration = enumerator.declaration,
+               .variantIndex = enumerator.variantIndex,
+               .parameterTypes = enumerator.payloadTypes});
+    currentType = SemanticType::enumType(owner);
+  }
+
+  [[nodiscard]] std::optional<ResolvedPayloadPatternInfo>
+  analyzePayloadSwitchPattern(const ExprPtr &expression,
+                              const SemanticType &subjectType) {
+    const Call *call = dynamic_cast<const Call *>(expression.get());
+    const auto *qualified = dynamic_cast<const QualifiedName *>(
+        call == nullptr ? expression.get() : call->callee().get());
+    if (qualified == nullptr) {
+      report(expressionToken(expression),
+             "Payload-enum cases must name a variant, optionally followed by "
+             "binding names in parentheses.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    const EnumeratorRecord *enumerator = resolveEnumerator(qualified->name());
+    if (enumerator == nullptr || enumerator->symbol.type != subjectType) {
+      report(qualified->name().last(),
+             "Switch case must name a variant of '" +
+                 typeSpelling(subjectType) + "'.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+
+    const bool enclosingCallCallee = analyzingCallCallee;
+    const bool enclosingPayloadReference = allowPayloadEnumeratorReference;
+    analyzingCallCallee = true;
+    allowPayloadEnumeratorReference = true;
+    (void)analyze(*qualified);
+    allowPayloadEnumeratorReference = enclosingPayloadReference;
+    analyzingCallCallee = enclosingCallCallee;
+
+    ResolvedPayloadPatternInfo result{.owner = subjectType.enumId,
+                                      .declaration = enumerator->declaration,
+                                      .variantIndex = enumerator->variantIndex};
+    if (call == nullptr) {
+      return result;
+    }
+    semanticModel.record(*call, makeExpressionInfo(subjectType));
+    if (!call->typeArguments().empty()) {
+      for (const TypeRef &argument : call->typeArguments()) {
+        validateType(argument);
+      }
+      report(call->paren(),
+             "Payload switch patterns do not take generic arguments.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    if (call->arguments().size() != enumerator->payloadTypes.size()) {
+      report(call->paren(),
+             "Variant '" + enumerator->declaration->name.lexeme + "' exposes " +
+                 std::to_string(enumerator->payloadTypes.size()) +
+                 " payload field" +
+                 (enumerator->payloadTypes.size() == 1 ? "." : "s."),
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    std::unordered_set<std::string> names;
+    for (std::size_t index = 0; index < call->arguments().size(); ++index) {
+      const auto *binding =
+          dynamic_cast<const Variable *>(call->arguments()[index].get());
+      if (binding == nullptr) {
+        report(expressionToken(call->arguments()[index]),
+               "Payload switch patterns accept only plain binding names.",
+               "GTI-S2067");
+        return std::nullopt;
+      }
+      if (!names.insert(binding->name().lexeme).second) {
+        report(binding->name(),
+               "Duplicate payload binding '" + binding->name().lexeme +
+                   "' in this pattern.",
+               "GTI-S2067");
+        return std::nullopt;
+      }
+      result.bindings.push_back(
+          {.name = &binding->name(),
+           .source = binding,
+           .binding = bindingInfo(enumerator->payloadTypes[index],
+                                  AccessMode::ReadOnly),
+           .payloadIndex = index});
+    }
+    return result;
+  }
+
   [[nodiscard]] std::optional<Symbol>
   resolveExpressionSymbol(const ExprPtr &expression) const {
     if (const auto *variable =
@@ -28000,6 +29341,7 @@ private:
   bool analyzingFieldInitializer = false;
   bool analyzingConstructorInitializer = false;
   bool analyzingCallCallee = false;
+  bool allowPayloadEnumeratorReference = false;
   bool currentStaticMemberFunction = false;
   bool allowPackTypeReference = false;
   LoanFlowContext loanFlow;

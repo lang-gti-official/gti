@@ -42,6 +42,7 @@ enum class CompilationStatus {
   Success,
   FrontendFailure,
   MirVerificationFailure,
+  BackendFailure,
 };
 
 // The exact source state consumed by one whole-program compilation. Project
@@ -88,6 +89,13 @@ struct CheckResult {
 
 [[nodiscard]] CompilationInputs
 loadCompilationInputs(const CompilationRequest &request);
+
+// Run the canonical whole-program pipeline with a caller-provided backend.
+// Backend exceptions are translated into structured compilation failures at
+// this driver boundary rather than escaping into individual CLI/library
+// callers.
+[[nodiscard]] CompilationResult
+compileWithBackend(const CompilationRequest &request, Backend &backend);
 
 [[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request);
 

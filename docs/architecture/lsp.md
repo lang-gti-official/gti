@@ -44,11 +44,12 @@ must not reconstruct `requires` syntax or capability meaning in the protocol
 adapter.
 
 Function-declaration and selected-call hover also append compiler-owned
-callable-parameter contracts from `FunctionInfo`. Each note identifies the
-callable boundary (currently confined), read-only or mutable access, and the
-deduplicated exact invocation signatures with their read-callable,
-mut-callable, or once-callable requirement using the canonical
-semantic type printer. Declaration hover retains the symbolic generic
+callable-parameter contracts from `FunctionInfo`. Confined notes identify
+read-only or mutable access and the deduplicated exact invocation signatures
+with their read-callable, mut-callable, or once-callable requirement. Owned
+notes instead identify the explicit ownership move and exact generic return or
+owner-field destination. All types use the canonical semantic type printer.
+Declaration hover retains the symbolic generic
 contract, while
 selected-call hover applies the compiler-recorded generic type arguments so
 the same contract is rendered with the selected call's concrete types. Method
@@ -95,6 +96,14 @@ Invalid bodies, kinds, direct values, and pointee operations publish
 compiler-owned `GTI-S2065` ranges without an LSP ownership model or generated
 fix-it. Definitions treat the bodyless form as a declaration, not as a source
 definition.
+
+`union` uses the compiler keyword and nominal-type facts and Tree-sitter's
+type-declaration capture. Payload alternatives remain enum-member semantic
+tokens, while hover and completion render their resolved constructor-like
+field signatures. Payload field declarations and case bindings consume
+compiler-owned symbol/type occurrences; the protocol layer neither recognizes
+patterns nor recomputes exhaustiveness. Shared `GTI-S2066`/`GTI-S2067`
+diagnostics are published unchanged.
 
 ## Document State
 

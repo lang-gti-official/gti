@@ -192,6 +192,7 @@ add_library(
   "src/compiler/optimization/effects.cpp"
   "src/compiler/optimization/rewrite.cpp"
   "src/compiler/optimizer.cpp"
+  "src/compiler/source_loader.cpp"
   "src/compiler/support.cpp"
   "src/compiler/target.cpp"
 )
@@ -445,6 +446,10 @@ if(BUILD_TESTING)
   target_link_libraries("gti_binary64_tests" PRIVATE gti_compiler)
   add_test(NAME binary64_pipeline COMMAND gti_binary64_tests)
 
+  add_executable("gti_sum_type_tests" "tests/sum_type_tests.cpp")
+  target_link_libraries("gti_sum_type_tests" PRIVATE gti_compiler)
+  add_test(NAME sum_type_pipeline COMMAND gti_sum_type_tests)
+
   add_executable("gti_layout_query_native_smoke"
                  "tests/layout_query_native_smoke.cpp")
   target_link_libraries("gti_layout_query_native_smoke" PRIVATE gti_compiler)
@@ -478,6 +483,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/binary64_runtime_test.py"
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/47-binary64.gti"
+    )
+    add_test(
+      NAME sum_types_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/sum_types_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/examples/56-sum-types.gti"
     )
     add_test(
       NAME native_record_c_oracle

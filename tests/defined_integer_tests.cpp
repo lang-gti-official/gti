@@ -367,9 +367,7 @@ int main() {
 
   if (result.canGenerateCode()) {
     const std::string generated =
-        lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                         nullptr, &result.semantics, &result.hir)
-            .emit(result.program);
+        lang::CppEmitter(result.semantics, result.hir).emit(result.program);
     for (const std::string_view helper :
          {"wrapping_add", "wrapping_sub", "wrapping_mul", "saturating_add",
           "saturating_sub", "saturating_mul", "checked_add", "checked_sub",
@@ -430,7 +428,7 @@ void testHelpersRequireExpectedSurface() {
   for (const lang::CppStandard standard :
        {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
     const std::string generated =
-        lang::CppEmitter(standard, {}, nullptr, &result.semantics, &result.hir)
+        lang::CppEmitter(result.semantics, result.hir, standard)
             .emit(result.program);
     expect(generated.find("#include <expected>") == std::string::npos &&
                generated.find("#include <nonstd/expected.hpp>") ==

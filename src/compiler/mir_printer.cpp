@@ -44,6 +44,17 @@ callableCapabilityName(CallableInvocationCapability capability) {
 }
 
 [[nodiscard]] constexpr std::string_view
+ownedTransportName(CallableOwnedTransportKind kind) {
+  switch (kind) {
+  case CallableOwnedTransportKind::ExactReturn:
+    return "exact-return";
+  case CallableOwnedTransportKind::ExactField:
+    return "exact-field";
+  }
+  return "invalid";
+}
+
+[[nodiscard]] constexpr std::string_view
 lambdaCaptureModeName(LambdaCaptureMode mode) {
   switch (mode) {
   case LambdaCaptureMode::Copy:
@@ -54,10 +65,34 @@ lambdaCaptureModeName(LambdaCaptureMode mode) {
   return "invalid";
 }
 
+[[nodiscard]] constexpr std::string_view
+callInputRoleName(MirCallInputRole role) {
+  switch (role) {
+  case MirCallInputRole::Receiver:
+    return "receiver";
+  case MirCallInputRole::Argument:
+    return "argument";
+  }
+  return "invalid";
+}
+
+[[nodiscard]] constexpr std::string_view
+callInputKindName(HirCallInputKind kind) {
+  switch (kind) {
+  case HirCallInputKind::Value:
+    return "value";
+  case HirCallInputKind::ReadBorrow:
+    return "read-borrow";
+  case HirCallInputKind::MutableBorrow:
+    return "mutable-borrow";
+  }
+  return "invalid";
+}
+
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v8 valid=" << program.valid() << '\n';
+    output << "mir-v10 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -90,6 +125,25 @@ public:
         }
         output << "]}";
       }
+      if (instance.unionLayout) {
+        output << " union-layout={size=" << instance.unionLayout->sizeBytes
+               << ",align=" << instance.unionLayout->abiAlignmentBytes
+               << ",fields=[";
+        for (std::size_t index = 0; index < instance.unionLayout->fields.size();
+             ++index) {
+          separator(index);
+          const UnionFieldLayout &field = instance.unionLayout->fields[index];
+          output << "{name="
+                 << (field.declaration == nullptr
+                         ? std::string_view{"?"}
+                         : std::string_view{field.declaration->name().lexeme})
+                 << ",type=";
+          type(field.type);
+          output << ",size=" << field.sizeBytes
+                 << ",align=" << field.abiAlignmentBytes << '}';
+        }
+        output << "]}";
+      }
       output << " destructor=";
       optional(instance.destructor);
       output << " active-drop=" << instance.requiresActiveDropState
@@ -110,6 +164,17 @@ public:
         output << "{instance=" << base.instance << ",type=";
         type(base.type);
         output << ",interface=" << base.interface << '}';
+      }
+      output << "] declared-fields=[";
+      for (std::size_t index = 0; index < instance.declaredFields.size();
+           ++index) {
+        separator(index);
+        const MirClassFieldInfo &field = instance.declaredFields[index];
+        output << "{field=" << field.field << ",symbol=" << field.symbol
+               << ",type=";
+        type(field.type);
+        output << ",drop=" << number(field.dropKind)
+               << ",active-cleanup=" << field.requiresActiveCleanup << '}';
       }
       output << "] lifecycle-fields=[";
       for (std::size_t index = 0; index < instance.fields.size(); ++index) {
@@ -257,7 +322,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v8\n";
+    output << "mir-body-v10\n";
     body(value, 0);
     return output.str();
   }
@@ -430,7 +495,15 @@ private:
     type(value.callableType);
     output << ";access=" << number(value.access)
            << ";boundary=" << callableBoundaryName(value.boundary)
-           << ";signatures=[";
+           << ";transport=";
+    if (value.ownedTransport) {
+      output << ownedTransportName(value.ownedTransport->kind) << ':';
+      type(value.ownedTransport->destinationType);
+      output << ':' << value.ownedTransport->field;
+    } else {
+      output << '-';
+    }
+    output << ";signatures=[";
     for (std::size_t index = 0; index < value.signatures.size(); ++index) {
       separator(index);
       callableSignature(value.signatures[index]);
@@ -573,6 +646,14 @@ private:
     output << "    i" << value.id << ' ' << name(value.kind)
            << " hir-value=" << value.hirValue
            << " hir-statement=" << value.hirStatement
+           << " call-site=" << value.callSite << " call-input-role=";
+    if (value.callInputRole) {
+      output << callInputRoleName(*value.callInputRole);
+    } else {
+      output << '-';
+    }
+    output << " call-input-index=" << value.callInputIndex
+           << " call-input-kind=" << callInputKindName(value.callInputKind)
            << " unsafe-operation=" << number(value.unsafeOperation)
            << " raw-memory=" << value.rawMemoryAccess << " result=";
     optional(value.result);
@@ -621,6 +702,10 @@ private:
     } else {
       output << '-';
     }
+    output << " enum-variant=";
+    optional(value.enumVariant);
+    output << " payload-index=";
+    optional(value.payloadIndex);
     output << " intrinsic=" << name(value.intrinsic)
            << " dispatch=" << number(value.dispatch) << " dispatch-owner=";
     type(value.dispatchOwner);
@@ -781,7 +866,9 @@ private:
     list(value.arguments);
     output << "];stores-reference=" << value.storesReference
            << ";borrow-access=" << number(value.borrowAccess)
-           << ";generated=" << value.generatedDefault << ')';
+           << ";generated=" << value.generatedDefault << ";owned-parameter=";
+    optional(value.ownedParameter);
+    output << ')';
   }
 
   std::ostringstream output;

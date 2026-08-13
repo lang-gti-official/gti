@@ -1000,6 +1000,22 @@
             "type": "CHOICE",
             "members": [
               {
+                "type": "FIELD",
+                "name": "payload",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "parameter_clause"
+                }
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
+          },
+          {
+            "type": "CHOICE",
+            "members": [
+              {
                 "type": "SEQ",
                 "members": [
                   {
@@ -1424,6 +1440,10 @@
               {
                 "type": "STRING",
                 "value": "interface"
+              },
+              {
+                "type": "STRING",
+                "value": "union"
               }
             ]
           }

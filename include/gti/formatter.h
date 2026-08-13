@@ -732,8 +732,8 @@ private:
       if (lexemes[index].kind != Kind::Word ||
           (lexemes[index].text != "class" && lexemes[index].text != "concept" &&
            lexemes[index].text != "interface" &&
-           lexemes[index].text != "struct" && lexemes[index].text != "enum" &&
-           lexemes[index].text != "using")) {
+           lexemes[index].text != "struct" && lexemes[index].text != "union" &&
+           lexemes[index].text != "enum" && lexemes[index].text != "using")) {
         continue;
       }
       const Lexeme *name = nextSignificant(lexemes, index);
@@ -834,7 +834,7 @@ private:
       }
       if (candidate.kind == Kind::Word &&
           (candidate.text == "class" || candidate.text == "interface" ||
-           candidate.text == "struct")) {
+           candidate.text == "struct" || candidate.text == "union")) {
         return false;
       }
     }
@@ -851,10 +851,10 @@ private:
     }
     if (typeEnd->kind == Kind::Word &&
         (typeEnd->text == "class" || typeEnd->text == "interface" ||
-         typeEnd->text == "struct" || typeEnd->text == "enum" ||
-         typeEnd->text == "namespace" || typeEnd->text == "return" ||
-         typeEnd->text == "else" || typeEnd->text == "case" ||
-         typeEnd->text == "default")) {
+         typeEnd->text == "struct" || typeEnd->text == "union" ||
+         typeEnd->text == "enum" || typeEnd->text == "namespace" ||
+         typeEnd->text == "return" || typeEnd->text == "else" ||
+         typeEnd->text == "case" || typeEnd->text == "default")) {
       return false;
     }
     const bool plausibleTypeEnd =

@@ -5,8 +5,9 @@
 > context-supplied confined-safe value results. Repeated read-callable and
 > mut-callable selection plus consuming once-callable cardinality are
 > implemented for confined generic parameters. Ordered copy/move closure
-> environments and one explicit owned move-capture mode are implemented;
-> exact generic owned return/field escape remains planned.
+> environments, one explicit owned move-capture mode, exact same-type generic
+> return, and one exact generic field owner are implemented. General owned
+> wrappers, extraction, erasure, and external storage remain planned.
 
 Baseline: GTI 0.94.0.
 
@@ -74,7 +75,7 @@ keywords.
 
 ## Current Baseline Preserved
 
-As of GTI 0.125.0, the deliberately confined layer plus local closure
+As of GTI 0.126.0, the deliberately bounded callable layer plus local closure
 environment implements:
 
 - every lambda has explicit parameter and result types and one lexical
@@ -110,14 +111,18 @@ environment implements:
   forms for zero-or-more invocation, while one-call generic clients may use
   the consuming form; and
 - the C++ backend emits a closure or exact `operator()` bridge only after the
-  frontend has selected the callable.
+  frontend has selected the callable; and
+- a free function's direct immutable by-value generic parameter may be
+  explicitly moved through the exact same-type result or into the exact sole
+  field of a generic owner whose constructor performs the matching parameter
+  move.
 
 Semantic, HIR, and MIR records retain capture source/field identity, ordered
 copy/move initialization, move provenance, and cleanup; moving a local closure
 transfers that environment and cleanup executes exactly once. `auto` result
-inference, reference or borrowed-state results, and owned callable return/field
-escape remain rejected. D-CALL-01 does not make any other previously rejected
-lambda valid.
+inference, reference or borrowed-state results, arbitrary nested owners,
+namespace/static storage, and erased callable escape remain rejected.
+D-CALL-01 does not make any other previously rejected lambda valid.
 
 ## One Callable Model
 
@@ -281,9 +286,9 @@ The environment is an ordinary aggregate for lifecycle purposes:
 
 M-LIFE-01 supplies the normal-exit temporary and active-drop prerequisite, and
 L-CALL-01 now models local capture initialization, closure movement, exact
-environment places, and cleanup. General owned return/field escape remains a
-separate boundary. The C++ closure object's special-member behavior is not the
-proof.
+environment places, cleanup, and the bounded exact generic return/field owner.
+General owned escape remains a separate boundary. The C++ closure object's
+special-member behavior is not the proof.
 
 ## Confinement, Ownership, And Escape
 
@@ -319,8 +324,8 @@ problem does not justify type erasure.
 | --- | --- | --- |
 | local binding in defining scope | current local copy/move baseline | existing lexical identity, capture mode, and traits |
 | direct by-value generic parameter, confined | current bounded baseline | visible invocation/forwarding summary |
-| exact generic parameter/result transport | accepted bounded owned slice | move state plus M-LIFE cleanup proof |
-| field of a concrete generic owner | accepted bounded owned slice | exact substituted type and owner drop proof |
+| exact generic parameter/result transport | current bounded owned slice | exact caller/callee moves plus M-LIFE cleanup proof |
+| field of a concrete generic owner | current bounded one-field owner | exact substituted type, constructor move, and owner drop proof |
 | capture of another owned closure | accepted bounded move-capture slice | explicit move and acyclic construction |
 | namespace global or static field | later breadth | requires separate global init/shutdown policy |
 | reference/callable-reference parameter | later breadth | requires explicit callable borrow lifetime |
@@ -436,9 +441,11 @@ MIR materializes:
 
 MIR verifies semantic decisions and predecessor agreement. It does not infer a
 capture's ownership mode or rescue an escaping borrow. M-LIFE-01 makes
-temporary and active-drop state authoritative; MIR v8 now carries exact
-capture places and environment initialization/move/drop. General owned escape
-still waits for the next L-CALL-01 transport boundary.
+temporary and active-drop state authoritative; MIR v10 carries exact capture
+places, environment initialization/move/drop, owned-callable destinations, all
+declared owner fields, and constructor parameter-to-field evidence. General
+owned wrappers and external storage remain later L-CALL-01 or client-specific
+work.
 
 ### Backend And Runtime
 
@@ -494,7 +501,8 @@ With M-LIFE-01 complete, implement bounded sub-slices in this order:
 5. **Done in 0.125.0:** represent closure environment initialize/move/drop in
    HIR/MIR and add `[target = std::move(source)]` as the explicit owned
    move-capture mode;
-6. permit exact generic owned transport and one concrete generic field owner;
+6. **Done in 0.126.0:** permit exact generic owned transport and one concrete
+   generic field owner;
 7. add public unary callable/predicate concepts using those same semantic
    requirements; and
 8. serve L-RANGE-04 without storing callables beyond the accepted exact owner.

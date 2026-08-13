@@ -517,15 +517,17 @@ confined until the lifecycle and owned-callable rows below land.
   generic parameter whose selected callee contract is confined. Semantic
   analysis resolves chains independent of declaration order, and HIR/MIR retain
   each concrete forwarding target.
-- Keep `auto`-deduced, reference, tracked borrowed-state, and lambda-identity
-  results and callable references rejected, and do not allow lambdas to escape
-  until L-CALL-01 implements exact owned transport.
+- Keep `auto`-deduced, reference, tracked borrowed-state, and inferred
+  lambda-identity results and callable references rejected. The implemented
+  owned slice permits only explicit movement through an exact same-type generic
+  result or the exact sole field of a concrete generic owner.
 - Explicit `[target = std::move(source)]` move capture is implemented now that
   semantic/HIR/MIR capture ownership and local closure moves/drop are
   represented. Keep other init-capture expressions unavailable.
 - Keep implicit capture defaults and untracked reference capture unavailable.
 - Keep consuming invocation confined to named source places and direct generic
-  parameters until exact owned transport is represented.
+  parameters; bounded owned transport does not yet add owner extraction or
+  invocation through a stored callable field.
 - Defer a general owning `std::function`-style type erasure facility until a
   demonstrated client justifies a separate design; the accepted bounded
   contract deliberately preserves exact concrete callable types.
@@ -902,9 +904,11 @@ the evaluation/full-expression, concurrency/memory-model, callable,
 defined-failure, and compatibility decisions, restriction ledger, I-CAP-01,
 C-TYPE-01, C-GLOBAL-01, the target/data-layout contract, and M-OWN-01/M-OWN-02
 place authority and M-LIFE-01's normal-exit temporary/drop authority are
-complete. The first recommended unowned task is `M-EXEC-01` because every
-readiness workload needs authoritative ordered materialization, not because
-lowering machinery is independently the product.
+complete. The first scalar/reference ordinary-call M-EXEC-01 slice now has
+verified HIR/MIR input order; the first recommended unowned task is the next
+bounded M-EXEC-01 family because every readiness workload needs authoritative
+ordered materialization, not because lowering machinery is independently the
+product.
 `D-COMPAT-01` is complete on the independent release-policy lane. The executable
 compiler critical path starts with ordered MIR lowering, then co-delivered
 failure/runtime lowering, the first

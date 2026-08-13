@@ -13,6 +13,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -102,6 +103,37 @@ private:
 
   std::string variable;
   std::optional<std::string> previous;
+};
+
+class ThrowingBackend final : public lang::Backend {
+public:
+  explicit ThrowingBackend(bool throwStandardException,
+                           bool throwFromName = false)
+      : standardException(throwStandardException), throwingName(throwFromName) {
+  }
+
+  [[nodiscard]] std::string_view name() const override {
+    if (throwingName) {
+      throw std::runtime_error("deliberate backend name failure");
+    }
+    return "throwing-test";
+  }
+
+  [[nodiscard]] lang::BackendArtifact
+  generate(const lang::BackendInput &) override {
+    invoked = true;
+    if (standardException) {
+      throw std::runtime_error("deliberate backend failure");
+    }
+    throw 17;
+  }
+
+  [[nodiscard]] bool wasInvoked() const { return invoked; }
+
+private:
+  bool standardException = true;
+  bool throwingName = false;
+  bool invoked = false;
 };
 
 bool writeFile(const std::filesystem::path &path, std::string_view contents) {
@@ -208,6 +240,89 @@ int main() { return selected() - 41; }
   expect(!invalidCheck.succeeded() && !invalidCheck.diagnostics.empty(),
          "driver checks should preserve structured frontend failures without "
          "entering a backend");
+}
+
+void testBackendExceptionBoundary() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path prelude = temporary.root() / "prelude.gti";
+  const std::filesystem::path source = temporary.root() / "main.gti";
+  expect(writeFile(prelude, ""),
+         "the backend-failure test prelude should be writable");
+  expect(writeFile(source, "int main() { return 0; }\n"),
+         "the backend-failure test source should be writable");
+
+  const lang::driver::CompilationRequest request(
+      source, lang::standardLibraryLayout(temporary.root()),
+      lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+      lang::CppStandard::Cpp23);
+  const std::filesystem::path canonicalSource =
+      std::filesystem::weakly_canonical(source);
+
+  ThrowingBackend standardBackend(true);
+  const lang::driver::CompilationResult standardFailure =
+      lang::driver::compileWithBackend(request, standardBackend);
+  const auto standardDiagnostic = std::find_if(
+      standardFailure.diagnostics.begin(), standardFailure.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-B0001";
+      });
+  expect(standardBackend.wasInvoked() && !standardFailure.succeeded() &&
+             standardFailure.status ==
+                 lang::driver::CompilationStatus::BackendFailure &&
+             !standardFailure.artifact,
+         "a standard backend exception should become a backend compilation "
+         "failure without publishing an artifact");
+  expect(standardDiagnostic != standardFailure.diagnostics.end() &&
+             standardDiagnostic->phase == lang::DiagnosticPhase::Backend &&
+             standardDiagnostic->primary.source == canonicalSource.string() &&
+             standardDiagnostic->primary.start == 0 &&
+             standardDiagnostic->primary.end == 0 &&
+             standardDiagnostic->message.find("throwing-test") !=
+                 std::string::npos &&
+             standardDiagnostic->message.find("deliberate backend failure") !=
+                 std::string::npos &&
+             !standardDiagnostic->hints.empty() &&
+             standardFailure.sources.find(canonicalSource.string()) != nullptr,
+         "a standard backend exception should retain the source snapshot and "
+         "produce an actionable entry-anchored GTI-B0001 diagnostic");
+
+  ThrowingBackend unknownBackend(false);
+  const lang::driver::CompilationResult unknownFailure =
+      lang::driver::compileWithBackend(request, unknownBackend);
+  const auto unknownDiagnostic = std::find_if(
+      unknownFailure.diagnostics.begin(), unknownFailure.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-B0001";
+      });
+  expect(unknownBackend.wasInvoked() && !unknownFailure.succeeded() &&
+             unknownFailure.status ==
+                 lang::driver::CompilationStatus::BackendFailure &&
+             !unknownFailure.artifact &&
+             unknownDiagnostic != unknownFailure.diagnostics.end() &&
+             unknownDiagnostic->message.find("non-standard exception") !=
+                 std::string::npos &&
+             unknownFailure.sources.find(canonicalSource.string()) != nullptr,
+         "a non-standard backend exception should use the same structured "
+         "driver failure boundary");
+
+  ThrowingBackend unnamedBackend(true, true);
+  const lang::driver::CompilationResult unnamedFailure =
+      lang::driver::compileWithBackend(request, unnamedBackend);
+  const auto unnamedDiagnostic = std::find_if(
+      unnamedFailure.diagnostics.begin(), unnamedFailure.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-B0001";
+      });
+  expect(unnamedBackend.wasInvoked() && !unnamedFailure.succeeded() &&
+             unnamedFailure.status ==
+                 lang::driver::CompilationStatus::BackendFailure &&
+             unnamedDiagnostic != unnamedFailure.diagnostics.end() &&
+             unnamedDiagnostic->message.find("backend 'unknown'") !=
+                 std::string::npos &&
+             unnamedDiagnostic->message.find("deliberate backend failure") !=
+                 std::string::npos,
+         "an exception from backend name metadata should not defeat the "
+         "generation exception boundary");
 }
 
 void testProcessInvocation(const std::filesystem::path &testExecutable) {
@@ -1306,6 +1421,7 @@ int main(int argc, char *argv[]) {
   }
 
   testCompilationRequestAndTargetPropagation();
+  testBackendExceptionBoundary();
   testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();
   testRenderedCommandReplay(std::filesystem::absolute(argv[0]));

@@ -16,8 +16,8 @@ public:
 
   [[nodiscard]] BackendArtifact generate(const BackendInput &input) override {
     return {.kind = BackendArtifactKind::Source,
-            .contents = CppEmitter(standard, input.target, &input.optimizations,
-                                   &input.semantics, &input.hir)
+            .contents = CppEmitter(input.semantics, input.hir, standard,
+                                   input.target, &input.optimizations)
                             .emit(input.program),
             .extension = ".cpp"};
   }

@@ -26,15 +26,24 @@ enum class CppStandard {
 
 class CppEmitter final : public ExprVisitor, public StmtVisitor {
 public:
-  explicit CppEmitter(CppStandard standard = CppStandard::Cpp23,
+  explicit CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
+                      CppStandard standard = CppStandard::Cpp23,
                       TargetInfo target = TargetInfo::host(),
-                      const OptimizationResult *optimizations = nullptr,
-                      const SemanticModel *semantics = nullptr,
-                      const HirProgram *hir = nullptr)
+                      const OptimizationResult *optimizations = nullptr)
       : standard(standard), target(std::move(target)),
         optimizations(optimizations), semantics(semantics), hir(hir) {
     indexUnsafeOperations();
   }
+
+  CppEmitter(const SemanticModel &&, const HirProgram &,
+             CppStandard = CppStandard::Cpp23, TargetInfo = TargetInfo::host(),
+             const OptimizationResult * = nullptr) = delete;
+  CppEmitter(const SemanticModel &, const HirProgram &&,
+             CppStandard = CppStandard::Cpp23, TargetInfo = TargetInfo::host(),
+             const OptimizationResult * = nullptr) = delete;
+  CppEmitter(const SemanticModel &&, const HirProgram &&,
+             CppStandard = CppStandard::Cpp23, TargetInfo = TargetInfo::host(),
+             const OptimizationResult * = nullptr) = delete;
 
   std::string emit(const Program &program) {
     output.str("");
@@ -61,6 +70,7 @@ public:
     currentClass = nullptr;
     currentClassAccess = AccessModifier::Public;
     ownedArgumentsEntry = nullptr;
+    payloadSwitchCounter = 0;
     classDepth = 0;
     emittingScheduledType = false;
     emittingDeferredMember = false;
@@ -79,7 +89,8 @@ public:
               "#include <new>\n"
               "#include <string_view>\n"
               "#include <type_traits>\n"
-              "#include <utility>\n";
+              "#include <utility>\n"
+              "#include <variant>\n";
     const bool usesExpected = containsExpectedType(program.declarations());
     if (usesExpected) {
       if (standard == CppStandard::Cpp23) {
@@ -1081,16 +1092,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (!emittingScheduledType && scheduledClasses.contains(&stmt)) {
       return;
     }
-    const ClassTypeInfo *classInfo =
-        semantics == nullptr ? nullptr : semantics->findClassType(stmt);
-    if (semantics != nullptr) {
-      if (classInfo != nullptr &&
-          classInfo->compilerCapability != CompilerCapabilityTypeKind::None) {
-        return;
-      }
-      if (classInfo != nullptr && classInfo->cOpaqueHandle) {
-        return;
-      }
+    const ClassTypeInfo *classInfo = semantics.findClassType(stmt);
+    if (classInfo != nullptr &&
+        classInfo->compilerCapability != CompilerCapabilityTypeKind::None) {
+      return;
+    }
+    if (classInfo != nullptr && classInfo->cOpaqueHandle) {
+      return;
     }
     const ClassLifecycleInfo *enclosingLifecycle = currentClassLifecycle;
     const ClassDecl *enclosingClass = currentClass;
@@ -1099,11 +1107,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     currentClassAccess = stmt.kind() == ClassKind::Class
                              ? AccessModifier::Private
                              : AccessModifier::Public;
-    currentClassLifecycle =
-        semantics == nullptr ? nullptr : semantics->findClassLifecycle(stmt);
+    currentClassLifecycle = semantics.findClassLifecycle(stmt);
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
-    output << (stmt.kind() == ClassKind::Struct ? "struct " : "class ")
+    output << (stmt.kind() == ClassKind::Struct  ? "struct "
+               : stmt.kind() == ClassKind::Union ? "union "
+                                                 : "class ")
            << stmt.name().lexeme;
     if (!stmt.bases().empty()) {
       output << " : ";
@@ -1130,7 +1139,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     // availability is already enforced before backend entry; emitting
     // explicit deleted/defaulted special members here would make the record a
     // different C++ definition in another translation unit.
-    if (classInfo == nullptr || !classInfo->cAbiRecord) {
+    if ((classInfo == nullptr || !classInfo->cAbiRecord) &&
+        stmt.kind() != ClassKind::Union) {
       emitClassLifecycle(stmt);
     }
     --classDepth;
@@ -1138,6 +1148,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     writeIndent();
     output << "};\n";
     emitCAbiRecordAssertions(stmt, classInfo);
+    emitUnionAssertions(stmt, classInfo);
     std::vector<const VariableDecl *> staticFields;
     collectStaticFields(stmt.members(), staticFields);
     for (const VariableDecl *field : staticFields) {
@@ -1246,6 +1257,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (!emittingScheduledType && scheduledEnums.contains(&stmt)) {
       return;
     }
+    const EnumTypeInfo *info = semantics.findEnumType(stmt);
+    if (info != nullptr && info->payload) {
+      emitPayloadEnum(stmt, *info);
+      return;
+    }
     writeIndent();
     output << "enum class " << stmt.name().lexeme << " : ";
     emitEnumUnderlyingType(stmt);
@@ -1301,8 +1317,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     emitFunctionSignature(stmt);
-    const FunctionInfo *info =
-        semantics == nullptr ? nullptr : semantics->findFunction(stmt);
+    const FunctionInfo *info = semantics.findFunction(stmt);
     const bool interfaceContract =
         currentClass != nullptr && currentClass->kind() == ClassKind::Interface;
     if (stmt.isPure() || (info != nullptr && info->pureVirtual) ||
@@ -1348,9 +1363,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
   void visitIfStmt(const IfStmt &stmt) override {
     if (stmt.isConstexpr()) {
-      const std::optional<bool> selected =
-          semantics == nullptr ? std::nullopt
-                               : semantics->findConstexprBranch(stmt);
+      const std::optional<bool> selected = semantics.findConstexprBranch(stmt);
       writeIndent();
       if (!selected) {
         output << "static_assert(false, \"unresolved GTI if constexpr\");\n";
@@ -1439,6 +1452,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitSwitchStmt(const SwitchStmt &stmt) override {
+    if (stmt.expression()) {
+      const SemanticType *subject = semantics.findType(*stmt.expression());
+      const EnumTypeInfo *enumeration =
+          subject != nullptr && subject->kind == SemanticType::Enum
+              ? semantics.findEnumType(subject->enumId)
+              : nullptr;
+      if (enumeration != nullptr && enumeration->payload) {
+        emitPayloadSwitch(stmt);
+        return;
+      }
+    }
     writeIndent();
     output << "switch (";
     emitExpression(stmt.expression());
@@ -1511,8 +1535,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitArrayInitializerExpr(const ArrayInitializer &expr) override {
-    const SemanticType *arrayType =
-        semantics == nullptr ? nullptr : semantics->findType(expr);
+    const SemanticType *arrayType = semantics.findType(expr);
     const bool nested = arrayType != nullptr &&
                         arrayType->kind == SemanticType::Array &&
                         arrayType->arguments.size() == 1 &&
@@ -1546,9 +1569,18 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitCallExpr(const Call &expr) override {
+    if (const ResolvedPayloadConstructionInfo *payload =
+            semantics.findPayloadConstruction(expr)) {
+      emitSemanticType(SemanticType::enumType(payload->owner));
+      output << '{';
+      emitSemanticType(SemanticType::enumType(payload->owner));
+      output << "::__gti_variant_" << payload->variantIndex << '{';
+      emitArguments(expr.arguments());
+      output << "}}";
+      return;
+    }
     if (const DeferredCallableCallInfo *deferred =
-            semantics == nullptr ? nullptr
-                                 : semantics->findDeferredCallableCall(expr);
+            semantics.findDeferredCallableCall(expr);
         deferred != nullptr) {
       output << "::gti_internal::backend::"
              << (deferred->capability == CallableInvocationCapability::Read
@@ -1569,7 +1601,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       return;
     }
     if (const ResolvedLambdaCallInfo *lambdaCall =
-            semantics == nullptr ? nullptr : semantics->findLambdaCall(expr);
+            semantics.findLambdaCall(expr);
         lambdaCall != nullptr && isExplicitMoveCallReceiver(expr.callee())) {
       output << "::gti_internal::backend::invoke_selected(";
       emitExpression(expr.callee());
@@ -1583,15 +1615,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << ')';
       return;
     }
-    if (const ResolvedOperatorInfo *operatorCall =
-            semantics == nullptr ? nullptr : semantics->findOperator(expr);
+    if (const ResolvedOperatorInfo *operatorCall = semantics.findOperator(expr);
         operatorCall != nullptr &&
         operatorCall->kind == OverloadedOperator::Call) {
       emitOperatorMethodCall(*operatorCall, expr.callee(), expr.arguments());
       return;
     }
-    const ResolvedCallInfo *resolved =
-        semantics == nullptr ? nullptr : semantics->findCall(expr);
+    const ResolvedCallInfo *resolved = semantics.findCall(expr);
     if (resolved != nullptr &&
         resolved->intrinsic ==
             IntrinsicKind::DefaultTypeParameterConstruction) {
@@ -1720,10 +1750,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     output << '(';
     const FunctionInfo *calledFunction =
-        resolved == nullptr || resolved->declaration == nullptr ||
-                semantics == nullptr
+        resolved == nullptr || resolved->declaration == nullptr
             ? nullptr
-            : semantics->findFunction(*resolved->declaration);
+            : semantics.findFunction(*resolved->declaration);
     for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
       if (index > 0) {
         output << ", ";
@@ -1780,8 +1809,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
             output << "(*";
             emitExpression(expr.object());
             output << ')';
-          } else if (semantics != nullptr &&
-                     semantics->findOperator(expr) != nullptr) {
+          } else if (semantics.findOperator(expr) != nullptr) {
             emitResolvedOperator(expr, expr.object());
           } else {
             output << "::gti_internal::backend::owner_access(";
@@ -1800,7 +1828,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         return;
       }
       output << '(';
-      if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+      if (semantics.findOperator(expr) != nullptr) {
         emitResolvedOperator(expr, expr.object());
       } else {
         output << "::gti_internal::backend::owner_access(";
@@ -1828,8 +1856,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << '[';
       emitExpression(expr.index());
       output << "])";
-    } else if (semantics != nullptr &&
-               semantics->findOperator(expr) != nullptr) {
+    } else if (semantics.findOperator(expr) != nullptr) {
       emitResolvedOperator(expr, expr.object(), &expr.index());
     } else {
       output << (isStringViewIndex(expr)
@@ -1850,8 +1877,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << '[';
         emitExpression(expr.index());
         output << "])";
-      } else if (semantics != nullptr &&
-                 semantics->findOperator(expr) != nullptr) {
+      } else if (semantics.findOperator(expr) != nullptr) {
         emitResolvedOperator(expr, expr.object(), &expr.index());
       } else {
         output << "::gti_internal::backend::array_at(";
@@ -1861,8 +1887,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << ')';
       }
     };
-    const SemanticType *targetType =
-        semantics == nullptr ? nullptr : semantics->findType(expr);
+    const SemanticType *targetType = semantics.findType(expr);
     if (expr.oper().kind != TokenKind::EQUAL && targetType != nullptr &&
         targetType->kind == SemanticType::RawPointer &&
         hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic)) {
@@ -1894,8 +1919,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     const TypeRef *enclosingReturnType = currentReturnType;
     const SemanticType enclosingReturnSemanticType = currentReturnSemanticType;
     currentReturnType = &expr.returnType();
-    const LambdaInfo *info =
-        semantics == nullptr ? nullptr : semantics->findLambda(expr);
+    const LambdaInfo *info = semantics.findLambda(expr);
     currentReturnSemanticType =
         info == nullptr ? SemanticType::Unknown : info->returnType;
     ++indentation;
@@ -1910,11 +1934,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitLayoutQueryExpr(const LayoutQuery &expr) override {
-    const std::optional<ConstantValue> constant =
-        semantics == nullptr ? std::nullopt : semantics->findConstant(expr);
+    const std::optional<ConstantValue> constant = semantics.findConstant(expr);
     if (constant) {
-      emitConstant(*constant,
-                   semantics == nullptr ? nullptr : semantics->findType(expr));
+      emitConstant(*constant, semantics.findType(expr));
       return;
     }
     throw std::logic_error(
@@ -1969,8 +1991,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (std::holds_alternative<std::nullptr_t>(literal)) {
       output << "nullptr";
     } else if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
-      const SemanticType *type =
-          semantics == nullptr ? nullptr : semantics->findType(expr);
+      const SemanticType *type = semantics.findType(expr);
       const bool contextuallyTyped =
           type != nullptr &&
           (isFixedWidthIntegerType(*type) ||
@@ -2028,6 +2049,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitQualifiedNameExpr(const QualifiedName &expr) override {
+    if (const ResolvedEnumeratorInfo *enumerator =
+            semantics.findEnumerator(expr)) {
+      const EnumTypeInfo *owner = semantics.findEnumType(enumerator->owner);
+      if (owner != nullptr && owner->payload) {
+        emitSemanticType(SemanticType::enumType(enumerator->owner));
+        output << '{';
+        emitSemanticType(SemanticType::enumType(enumerator->owner));
+        output << "::__gti_variant_" << enumerator->variantIndex << "{}}";
+        return;
+      }
+    }
     emitResolvedName(expr, expr.name());
   }
 
@@ -2042,7 +2074,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           return;
         }
         output << '(';
-        if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+        if (semantics.findOperator(expr) != nullptr) {
           emitResolvedOperator(expr, expr.object());
         } else {
           output << "::gti_internal::backend::owner_access(";
@@ -2057,8 +2089,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       }
       output << expr.name().lexeme;
     };
-    const SemanticType *targetType =
-        semantics == nullptr ? nullptr : semantics->findType(expr);
+    const SemanticType *targetType = semantics.findType(expr);
     if (expr.oper().kind != TokenKind::EQUAL && targetType != nullptr &&
         targetType->kind == SemanticType::RawPointer &&
         (hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic) ||
@@ -2070,8 +2101,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitUnaryExpr(const Unary &expr) override {
-    if (expr.oper().kind == TokenKind::PLUS_PLUS && semantics != nullptr &&
-        semantics->findOperator(expr) != nullptr) {
+    if (expr.oper().kind == TokenKind::PLUS_PLUS &&
+        semantics.findOperator(expr) != nullptr) {
       emitResolvedOperator(expr, expr.right());
       return;
     }
@@ -2095,8 +2126,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << "(*";
         emitExpression(expr.right());
         output << ')';
-      } else if (semantics != nullptr &&
-                 semantics->findOperator(expr) != nullptr) {
+      } else if (semantics.findOperator(expr) != nullptr) {
         emitResolvedOperator(expr, expr.right());
       } else {
         output << "::gti_internal::backend::owner_access(";
@@ -2120,8 +2150,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     if ((expr.oper().kind == TokenKind::PLUS ||
          expr.oper().kind == TokenKind::MINUS) &&
-        semantics != nullptr && semantics->isContextualIntegerOperand(expr)) {
-      const SemanticType *targetType = semantics->findType(expr);
+        semantics.isContextualIntegerOperand(expr)) {
+      const SemanticType *targetType = semantics.findType(expr);
       if (targetType == nullptr) {
         throw std::logic_error(
             "Contextual integer operand requires a resolved semantic type");
@@ -2489,11 +2519,8 @@ private:
   }
 
   void emitUserMacroIsolation() {
-    if (semantics == nullptr) {
-      return;
-    }
     std::vector<std::string> names;
-    for (const SymbolRecord &symbol : semantics->database().symbols()) {
+    for (const SymbolRecord &symbol : semantics.database().symbols()) {
       if (validMacroName(symbol.name) &&
           !std::string_view(symbol.name).starts_with("__gti_")) {
         names.push_back(symbol.name);
@@ -2548,9 +2575,9 @@ private:
       const auto *classDeclaration =
           dynamic_cast<const ClassDecl *>(declaration.get());
       const ClassTypeInfo *info =
-          classDeclaration == nullptr || semantics == nullptr
+          classDeclaration == nullptr
               ? nullptr
-              : semantics->findClassType(*classDeclaration);
+              : semantics.findClassType(*classDeclaration);
       if (info == nullptr || !info->cOpaqueHandle || info->compilerPrivate) {
         continue;
       }
@@ -2585,9 +2612,9 @@ private:
       const auto *classDeclaration =
           dynamic_cast<const ClassDecl *>(declaration.get());
       const ClassTypeInfo *info =
-          classDeclaration == nullptr || semantics == nullptr
+          classDeclaration == nullptr
               ? nullptr
-              : semantics->findClassType(*classDeclaration);
+              : semantics.findClassType(*classDeclaration);
       if (info != nullptr && info->cOpaqueHandle && !info->compilerPrivate) {
         return true;
       }
@@ -2644,10 +2671,10 @@ private:
       }
       const auto *classDeclaration =
           dynamic_cast<const ClassDecl *>(declaration.get());
-      if (classDeclaration == nullptr || semantics == nullptr) {
+      if (classDeclaration == nullptr) {
         continue;
       }
-      const ClassTypeInfo *info = semantics->findClassType(*classDeclaration);
+      const ClassTypeInfo *info = semantics.findClassType(*classDeclaration);
       if (info == nullptr ||
           info->compilerCapability != CompilerCapabilityTypeKind::None ||
           info->cOpaqueHandle) {
@@ -2695,9 +2722,9 @@ private:
   [[nodiscard]] std::vector<ClassId>
   classDependencies(const ScheduledClassDefinition &scheduled) const {
     std::vector<ClassId> result;
-    if (semantics != nullptr && scheduled.declaration != nullptr) {
+    if (scheduled.declaration != nullptr) {
       if (const ClassTypeInfo *info =
-              semantics->findClassType(*scheduled.declaration)) {
+              semantics.findClassType(*scheduled.declaration)) {
         for (const ClassBaseTypeInfo &base : info->bases) {
           collectRepresentationDependencies(base.type, result);
         }
@@ -2706,8 +2733,8 @@ private:
         }
       }
     }
-    if (hir != nullptr && scheduled.declaration != nullptr) {
-      for (const HirClassInstance &instance : hir->classInstances()) {
+    if (scheduled.declaration != nullptr) {
+      for (const HirClassInstance &instance : hir.classInstances()) {
         if (instance.source != scheduled.declaration) {
           continue;
         }
@@ -2719,27 +2746,27 @@ private:
           }
           if (value.functionTarget) {
             if (const HirFunctionInstance *function =
-                    hir->findFunctionInstance(*value.functionTarget);
+                    hir.findFunctionInstance(*value.functionTarget);
                 function != nullptr && function->owner) {
               const auto owner = std::find_if(
-                  hir->classInstances().begin(), hir->classInstances().end(),
+                  hir.classInstances().begin(), hir.classInstances().end(),
                   [&](const HirClassInstance &candidate) {
                     return candidate.id == *function->owner;
                   });
-              if (owner != hir->classInstances().end()) {
+              if (owner != hir.classInstances().end()) {
                 collectRepresentationDependencies(owner->type, result);
               }
             }
           }
           if (value.constructorTarget) {
             if (const HirConstructorInstance *constructor =
-                    hir->findConstructorInstance(*value.constructorTarget)) {
+                    hir.findConstructorInstance(*value.constructorTarget)) {
               const auto owner = std::find_if(
-                  hir->classInstances().begin(), hir->classInstances().end(),
+                  hir.classInstances().begin(), hir.classInstances().end(),
                   [&](const HirClassInstance &candidate) {
                     return candidate.id == constructor->owner;
                   });
-              if (owner != hir->classInstances().end()) {
+              if (owner != hir.classInstances().end()) {
                 collectRepresentationDependencies(owner->type, result);
               }
             }
@@ -2810,9 +2837,6 @@ private:
   }
 
   void indexUnsafeOperations() {
-    if (hir == nullptr) {
-      return;
-    }
     const auto indexBody = [&](const HirBody &body) {
       for (const HirValue &value : body.values) {
         if (value.source != nullptr &&
@@ -2822,36 +2846,33 @@ private:
         }
       }
     };
-    indexBody(hir->module());
-    for (const HirClassInstance &instance : hir->classInstances()) {
+    indexBody(hir.module());
+    for (const HirClassInstance &instance : hir.classInstances()) {
       indexBody(instance.fieldInitializers);
       indexBody(instance.staticFieldInitializers);
     }
-    for (const HirFunctionInstance &function : hir->functionInstances()) {
+    for (const HirFunctionInstance &function : hir.functionInstances()) {
       indexBody(function.body);
     }
     for (const HirConstructorInstance &constructor :
-         hir->constructorInstances()) {
+         hir.constructorInstances()) {
       indexBody(constructor.body);
     }
-    for (const HirDestructorInstance &destructor : hir->destructorInstances()) {
+    for (const HirDestructorInstance &destructor : hir.destructorInstances()) {
       indexBody(destructor.body);
     }
-    for (const HirLambda &lambda : hir->lambdaInstances()) {
+    for (const HirLambda &lambda : hir.lambdaInstances()) {
       indexBody(lambda.body);
     }
   }
 
   [[nodiscard]] bool hasUnsafeOperation(const Expr &expression,
                                         UnsafeOperationKind operation) const {
-    if (hir != nullptr) {
-      const auto found = hirUnsafeOperations.find(&expression);
-      if (!hir->valueIdsForSource(expression).empty()) {
-        return found != hirUnsafeOperations.end() && found->second == operation;
-      }
+    const auto found = hirUnsafeOperations.find(&expression);
+    if (!hir.valueIdsForSource(expression).empty()) {
+      return found != hirUnsafeOperations.end() && found->second == operation;
     }
-    return semantics != nullptr &&
-           semantics->unsafeOperation(expression) == operation;
+    return semantics.unsafeOperation(expression) == operation;
   }
 
   [[nodiscard]] bool isExplicitMoveCallReceiver(const ExprPtr &receiver) const {
@@ -2860,9 +2881,8 @@ private:
       candidate = grouping->expression().get();
     }
     const auto *call = dynamic_cast<const Call *>(candidate);
-    const ResolvedCallInfo *resolution = call == nullptr || semantics == nullptr
-                                             ? nullptr
-                                             : semantics->findCall(*call);
+    const ResolvedCallInfo *resolution =
+        call == nullptr ? nullptr : semantics.findCall(*call);
     return resolution != nullptr &&
            resolution->intrinsic == IntrinsicKind::Move;
   }
@@ -2902,13 +2922,11 @@ private:
                              const ExprPtr &argument) {
     std::uint8_t allowed =
         static_cast<std::uint8_t>(1); // callable_binding::value
-    if (semantics != nullptr) {
-      if (const ExpressionInfo *info = semantics->findExpression(*argument);
-          info != nullptr && info->category == ValueCategory::Place) {
-        allowed |= 2; // callable_binding::read_reference
-        if (info->access == AccessMode::Mutable) {
-          allowed |= 4; // callable_binding::mutable_reference
-        }
+    if (const ExpressionInfo *info = semantics.findExpression(*argument);
+        info != nullptr && info->category == ValueCategory::Place) {
+      allowed |= 2; // callable_binding::read_reference
+      if (info->access == AccessMode::Mutable) {
+        allowed |= 4; // callable_binding::mutable_reference
       }
     }
     output << "::gti_internal::backend::call_argument<"
@@ -3057,8 +3075,7 @@ private:
 
   void emitResolvedOperator(const Expr &site, const ExprPtr &receiver,
                             const ExprPtr *argument = nullptr) {
-    const ResolvedOperatorInfo *resolved =
-        semantics == nullptr ? nullptr : semantics->findOperator(site);
+    const ResolvedOperatorInfo *resolved = semantics.findOperator(site);
     if (resolved != nullptr) {
       emitOperatorMethodCall(*resolved, receiver,
                              argument == nullptr
@@ -3072,8 +3089,7 @@ private:
       return;
     }
     const ResolvedOperatorInfo *resolved =
-        semantics == nullptr ? nullptr
-                             : semantics->findContextualConversion(*expression);
+        semantics.findContextualConversion(*expression);
     if (resolved != nullptr) {
       emitOperatorMethodCall(*resolved, expression);
     } else if (const auto *binary =
@@ -3163,10 +3179,7 @@ private:
 
   [[nodiscard]] const ClassBaseTypeInfo *
   stateBearingBase(const ClassDecl &declaration) const {
-    if (semantics == nullptr) {
-      return nullptr;
-    }
-    const ClassTypeInfo *type = semantics->findClassType(declaration);
+    const ClassTypeInfo *type = semantics.findClassType(declaration);
     if (type == nullptr) {
       return nullptr;
     }
@@ -3263,8 +3276,7 @@ private:
 
   void emitClassLifecycle(const ClassDecl &declaration) {
     const ClassLifecycleInfo *lifecycle =
-        semantics == nullptr ? nullptr
-                             : semantics->findClassLifecycle(declaration);
+        semantics.findClassLifecycle(declaration);
     if (lifecycle == nullptr) {
       return;
     }
@@ -3357,6 +3369,27 @@ private:
     }
   }
 
+  void emitUnionAssertions(const ClassDecl &declaration,
+                           const ClassTypeInfo *info) {
+    if (info == nullptr || info->kind != ClassKind::Union ||
+        !info->unionLayout) {
+      return;
+    }
+    const UnionLayout &layout = *info->unionLayout;
+    const std::string &name = declaration.name().lexeme;
+    writeIndent();
+    output << "static_assert(std::is_union_v<" << name
+           << "> && std::is_trivially_copyable_v<" << name
+           << ">, \"GTI unions must remain passive native unions\");\n";
+    writeIndent();
+    output << "static_assert(sizeof(" << name << ") == " << layout.sizeBytes
+           << ", \"native compiler disagrees with GTI union size\");\n";
+    writeIndent();
+    output << "static_assert(alignof(" << name
+           << ") == " << layout.abiAlignmentBytes
+           << ", \"native compiler disagrees with GTI union alignment\");\n";
+  }
+
   void emitArguments(const ExprList &arguments) {
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       if (index > 0) {
@@ -3367,37 +3400,32 @@ private:
   }
 
   [[nodiscard]] bool isArraySizeCall(const Call &call) const {
-    if (semantics == nullptr || !call.arguments().empty() ||
-        !call.typeArguments().empty()) {
+    if (!call.arguments().empty() || !call.typeArguments().empty()) {
       return false;
     }
     const auto *member = dynamic_cast<const Get *>(call.callee().get());
     if (member == nullptr || member->name().lexeme != "size") {
       return false;
     }
-    const SemanticType *objectType = semantics->findType(*member->object());
+    const SemanticType *objectType = semantics.findType(*member->object());
     return objectType != nullptr && objectType->kind == SemanticType::Array;
   }
 
   [[nodiscard]] bool isStringViewSizeCall(const Call &call) const {
-    if (semantics == nullptr || !call.arguments().empty() ||
-        !call.typeArguments().empty()) {
+    if (!call.arguments().empty() || !call.typeArguments().empty()) {
       return false;
     }
     const auto *member = dynamic_cast<const Get *>(call.callee().get());
     if (member == nullptr || member->name().lexeme != "size") {
       return false;
     }
-    const SemanticType *objectType = semantics->findType(*member->object());
+    const SemanticType *objectType = semantics.findType(*member->object());
     return objectType != nullptr &&
            objectType->kind == SemanticType::StringView;
   }
 
   [[nodiscard]] bool isStringViewIndex(const Index &index) const {
-    if (semantics == nullptr) {
-      return false;
-    }
-    const SemanticType *objectType = semantics->findType(*index.object());
+    const SemanticType *objectType = semantics.findType(*index.object());
     return objectType != nullptr &&
            objectType->kind == SemanticType::StringView;
   }
@@ -3442,7 +3470,7 @@ private:
   }
 
   void emitBinaryExpression(const Binary &expr, bool parenthesize) {
-    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+    if (semantics.findOperator(expr) != nullptr) {
       emitResolvedOperator(expr, expr.left(), &expr.right());
       return;
     }
@@ -3496,8 +3524,7 @@ private:
   }
 
   void emitExternCSignature(const FunctionDecl &function) {
-    const FunctionInfo *info =
-        semantics == nullptr ? nullptr : semantics->findFunction(function);
+    const FunctionInfo *info = semantics.findFunction(function);
     emitCAbiType(info == nullptr ? SemanticType::Unknown : info->returnType,
                  function.returnType());
     const std::string_view symbol =
@@ -3562,14 +3589,10 @@ private:
         }
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(declaration.get())) {
-        const ClassTypeInfo *classInfo =
-            semantics == nullptr ? nullptr
-                                 : semantics->findClassType(*classDecl);
-        if (semantics != nullptr) {
-          if (classInfo != nullptr && classInfo->compilerCapability !=
-                                          CompilerCapabilityTypeKind::None) {
-            continue;
-          }
+        const ClassTypeInfo *classInfo = semantics.findClassType(*classDecl);
+        if (classInfo != nullptr &&
+            classInfo->compilerCapability != CompilerCapabilityTypeKind::None) {
+          continue;
         }
         if (classInfo != nullptr && classInfo->cOpaqueHandle) {
           writeIndent();
@@ -3587,16 +3610,22 @@ private:
         }
         emitTemplateDeclaration(classDecl->genericParameters());
         writeIndent();
-        output << (classDecl->kind() == ClassKind::Struct ? "struct "
-                                                          : "class ")
+        output << (classDecl->kind() == ClassKind::Struct  ? "struct "
+                   : classDecl->kind() == ClassKind::Union ? "union "
+                                                           : "class ")
                << classDecl->name().lexeme << ";\n";
         emitted = true;
       } else if (const auto *enumDecl =
                      dynamic_cast<const EnumDecl *>(declaration.get())) {
         writeIndent();
-        output << "enum class " << enumDecl->name().lexeme << " : ";
-        emitEnumUnderlyingType(*enumDecl);
-        output << ";\n";
+        const EnumTypeInfo *info = semantics.findEnumType(*enumDecl);
+        if (info != nullptr && info->payload) {
+          output << "struct " << enumDecl->name().lexeme << ";\n";
+        } else {
+          output << "enum class " << enumDecl->name().lexeme << " : ";
+          emitEnumUnderlyingType(*enumDecl);
+          output << ";\n";
+        }
         emitted = true;
       }
     }
@@ -3736,8 +3765,7 @@ private:
       if (variable == nullptr) {
         continue;
       }
-      const BindingInfo *binding =
-          semantics == nullptr ? nullptr : semantics->findBinding(*variable);
+      const BindingInfo *binding = semantics.findBinding(*variable);
       if (variable->isStatic()) {
         namespaceStaticVariables.insert(variable);
         if (binding != nullptr) {
@@ -3880,13 +3908,10 @@ private:
       if (function == nullptr || !function->hasCLinkage()) {
         continue;
       }
-      if (semantics != nullptr) {
-        if (const FunctionInfo *info = semantics->findFunction(*function)) {
-          if (std::find(info->parameterTypes.begin(),
-                        info->parameterTypes.end(), SemanticType::StringView) !=
-              info->parameterTypes.end()) {
-            return true;
-          }
+      if (const FunctionInfo *info = semantics.findFunction(*function)) {
+        if (std::find(info->parameterTypes.begin(), info->parameterTypes.end(),
+                      SemanticType::StringView) != info->parameterTypes.end()) {
+          return true;
         }
       }
       if (std::any_of(function->parameters().begin(),
@@ -4231,10 +4256,10 @@ private:
         break;
       }
     }
-    if (function.runtimeBinding() || semantics == nullptr) {
+    if (function.runtimeBinding()) {
       return function.name().lexeme;
     }
-    const FunctionInfo *info = semantics->findFunction(function);
+    const FunctionInfo *info = semantics.findFunction(function);
     if (function.hasCLinkage()) {
       return info != nullptr && !info->externalSymbol.empty()
                  ? info->externalSymbol
@@ -4255,10 +4280,7 @@ private:
   }
 
   [[nodiscard]] bool isIntrinsicFunction(const FunctionDecl &function) const {
-    if (semantics == nullptr) {
-      return false;
-    }
-    const FunctionInfo *info = semantics->findFunction(function);
+    const FunctionInfo *info = semantics.findFunction(function);
     return info != nullptr && info->intrinsic != IntrinsicKind::None;
   }
 
@@ -4333,8 +4355,7 @@ private:
         output << " &>(";
       }
       if (member->access().kind == TokenKind::ARROW) {
-        if (semantics != nullptr &&
-            semantics->findOperator(*member) != nullptr) {
+        if (semantics.findOperator(*member) != nullptr) {
           emitResolvedOperator(*member, member->object());
         } else {
           output << "::gti_internal::backend::owner_access(";
@@ -4385,8 +4406,7 @@ private:
   }
 
   void emitFunctionSignature(const FunctionDecl &function) {
-    const FunctionInfo *info =
-        semantics == nullptr ? nullptr : semantics->findFunction(function);
+    const FunctionInfo *info = semantics.findFunction(function);
     const bool isMain =
         (info != nullptr ? info->entryPoint
                          : sourceNamespaces.empty() && classDepth == 0 &&
@@ -4521,8 +4541,7 @@ private:
   }
 
   void emitStructuralOperatorAdapter(const FunctionDecl &function) {
-    const FunctionInfo *info =
-        semantics == nullptr ? nullptr : semantics->findFunction(function);
+    const FunctionInfo *info = semantics.findFunction(function);
     if (currentClass == nullptr ||
         currentClassAccess != AccessModifier::Public ||
         !isStructuralOperatorBridge(function, info)) {
@@ -4583,8 +4602,7 @@ private:
         currentClassLifecycle->declaration == nullptr) {
       return;
     }
-    const FunctionInfo *info =
-        semantics == nullptr ? nullptr : semantics->findFunction(function);
+    const FunctionInfo *info = semantics.findFunction(function);
     if (function.requiresClause() ||
         (info != nullptr &&
          (info->compilerPrivate || !info->requirements.empty()))) {
@@ -4676,8 +4694,7 @@ private:
   }
 
   void emitParameter(const Parameter &parameter, std::string_view name) {
-    const BindingInfo *binding =
-        semantics == nullptr ? nullptr : semantics->findBinding(parameter);
+    const BindingInfo *binding = semantics.findBinding(parameter);
     const bool rawPointer = binding != nullptr
                                 ? binding->type.kind == SemanticType::RawPointer
                                 : parameter.type.pointer.has_value();
@@ -4719,10 +4736,10 @@ private:
   }
 
   void emitProgramEntryAdapter() {
-    if (ownedArgumentsEntry == nullptr || semantics == nullptr) {
+    if (ownedArgumentsEntry == nullptr) {
       return;
     }
-    const FunctionInfo *entry = semantics->findFunction(*ownedArgumentsEntry);
+    const FunctionInfo *entry = semantics.findFunction(*ownedArgumentsEntry);
     if (entry == nullptr || entry->entryKind == ProgramEntryKind::None) {
       return;
     }
@@ -4737,7 +4754,7 @@ private:
       return;
     }
     const FunctionInfo *append =
-        semantics->findFunction(entry->entryArgumentAppendFunction);
+        semantics.findFunction(entry->entryArgumentAppendFunction);
     if (append == nullptr || append->declaration == nullptr) {
       return;
     }
@@ -4781,8 +4798,7 @@ private:
   void emitType(const TypeRef &type) { emitArrayType(type, 0); }
 
   void emitEnumUnderlyingType(const EnumDecl &declaration) {
-    const EnumTypeInfo *info =
-        semantics == nullptr ? nullptr : semantics->findEnumType(declaration);
+    const EnumTypeInfo *info = semantics.findEnumType(declaration);
     if (info != nullptr) {
       emitSemanticType(info->underlyingType);
       return;
@@ -4794,11 +4810,49 @@ private:
     output << "std::int32_t";
   }
 
+  void emitPayloadEnum(const EnumDecl &declaration, const EnumTypeInfo &info) {
+    writeIndent();
+    output << "struct " << declaration.name().lexeme << " {\n";
+    ++indentation;
+    for (const EnumeratorInfo &enumerator : info.enumerators) {
+      writeIndent();
+      output << "struct __gti_variant_" << enumerator.variantIndex << " {\n";
+      ++indentation;
+      for (std::size_t index = 0; index < enumerator.payloadTypes.size();
+           ++index) {
+        writeIndent();
+        emitSemanticType(enumerator.payloadTypes[index]);
+        output << " __gti_field_" << index << ";\n";
+      }
+      writeIndent();
+      output << "friend bool operator==(const __gti_variant_"
+             << enumerator.variantIndex << " &, const __gti_variant_"
+             << enumerator.variantIndex << " &) = default;\n";
+      --indentation;
+      writeIndent();
+      output << "};\n";
+    }
+    writeIndent();
+    output << "std::variant<";
+    for (std::size_t index = 0; index < info.enumerators.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << "__gti_variant_" << info.enumerators[index].variantIndex;
+    }
+    output << "> __gti_value;\n";
+    writeIndent();
+    output << "friend bool operator==(const " << declaration.name().lexeme
+           << " &, const " << declaration.name().lexeme << " &) = default;\n";
+    --indentation;
+    writeIndent();
+    output << "};\n";
+  }
+
   void emitTypeAliasDeclaration(const TypeAliasDecl &alias) {
     writeIndent();
     output << "using " << alias.name().lexeme << " = ";
-    const TypeAliasInfo *info =
-        semantics == nullptr ? nullptr : semantics->findTypeAlias(alias);
+    const TypeAliasInfo *info = semantics.findTypeAlias(alias);
     if (info != nullptr && info->type != SemanticType::Unknown) {
       emitSemanticType(info->type);
     } else {
@@ -4875,9 +4929,7 @@ private:
       output << ", " << type.arrayLength << '>';
       return;
     case SemanticType::Class: {
-      const ClassTypeInfo *classInfo =
-          semantics == nullptr ? nullptr
-                               : semantics->findClassType(type.classId);
+      const ClassTypeInfo *classInfo = semantics.findClassType(type.classId);
       if (classInfo == nullptr || classInfo->declaration == nullptr) {
         output << "void";
         return;
@@ -4907,9 +4959,7 @@ private:
             output << argument.value;
           } else if (argument.kind == CompileTimeValue::Parameter) {
             const GenericParameterInfo *parameter =
-                semantics == nullptr
-                    ? nullptr
-                    : semantics->findGenericParameter(argument.parameterId);
+                semantics.findGenericParameter(argument.parameterId);
             output << (parameter == nullptr ? "0" : parameter->name.lexeme);
           } else {
             output << '0';
@@ -4921,8 +4971,7 @@ private:
       return;
     }
     case SemanticType::Enum: {
-      const EnumTypeInfo *enumInfo =
-          semantics == nullptr ? nullptr : semantics->findEnumType(type.enumId);
+      const EnumTypeInfo *enumInfo = semantics.findEnumType(type.enumId);
       if (enumInfo == nullptr || enumInfo->declaration == nullptr) {
         output << "void";
         return;
@@ -4964,9 +5013,7 @@ private:
     case SemanticType::TypeParameter:
     case SemanticType::TypePack: {
       const GenericParameterInfo *parameter =
-          semantics == nullptr
-              ? nullptr
-              : semantics->findGenericParameter(type.genericParameterId);
+          semantics.findGenericParameter(type.genericParameterId);
       output << (parameter == nullptr ? "void" : parameter->name.lexeme);
       if (type.kind == SemanticType::TypePack && type.concretePack) {
         output << "...";
@@ -4996,8 +5043,7 @@ private:
       output << ", ";
       const ArrayExtentExprPtr &extent = type.arrayExtents[extentIndex];
       const CompileTimeValue *resolved =
-          semantics == nullptr || !extent ? nullptr
-                                          : semantics->findArrayExtent(*extent);
+          !extent ? nullptr : semantics.findArrayExtent(*extent);
       if (resolved != nullptr && resolved->kind == CompileTimeValue::UInt64) {
         output << resolved->value;
       } else if (extent && extent->isAtom()) {
@@ -5124,18 +5170,18 @@ private:
   }
 
   [[nodiscard]] bool isGtiInternalUniqueOwner(const TypeRef &type) const {
-    return semantics != nullptr && semantics->compilerCapabilityType(type) ==
-                                       CompilerCapabilityTypeKind::UniqueOwner;
+    return semantics.compilerCapabilityType(type) ==
+           CompilerCapabilityTypeKind::UniqueOwner;
   }
 
   [[nodiscard]] bool isGtiInternalStorage(const TypeRef &type) const {
-    return semantics != nullptr && semantics->compilerCapabilityType(type) ==
-                                       CompilerCapabilityTypeKind::Storage;
+    return semantics.compilerCapabilityType(type) ==
+           CompilerCapabilityTypeKind::Storage;
   }
 
   [[nodiscard]] bool isGtiInternalTextView(const TypeRef &type) const {
-    return semantics != nullptr && semantics->compilerCapabilityType(type) ==
-                                       CompilerCapabilityTypeKind::TextView;
+    return semantics.compilerCapabilityType(type) ==
+           CompilerCapabilityTypeKind::TextView;
   }
 
   [[nodiscard]] static bool isMoveOnlyOwner(const SemanticTypeTraits &traits) {
@@ -5219,8 +5265,7 @@ private:
 
   [[nodiscard]] std::string
   emittedStaticVariableHolderName(const VariableDecl &variable) const {
-    const BindingInfo *binding =
-        semantics == nullptr ? nullptr : semantics->findBinding(variable);
+    const BindingInfo *binding = semantics.findBinding(variable);
     const SymbolId symbol = binding == nullptr ? 0 : binding->symbol;
     return emittedStaticVariableBaseName(symbol, variable.name().lexeme);
   }
@@ -5259,38 +5304,33 @@ private:
   }
 
   void emitResolvedName(const Expr &expression, const NamePath &path) {
-    if (semantics != nullptr) {
-      const SymbolId symbol = semantics->findResolvedSymbol(expression);
-      const SymbolRecord *record = semantics->database().findSymbol(symbol);
-      if (record != nullptr && record->kind == SymbolKind::GlobalVariable &&
-          record->internalLinkage) {
-        if (path.segments.size() > 1) {
-          emitNamePath(NamePath(std::vector<Token>(path.segments.begin(),
-                                                   path.segments.end() - 1)));
-          output << "::";
-        }
-        output << (namespaceStaticVariableSymbols.contains(record->id)
-                       ? emittedStaticVariableName(record->id, record->name)
-                       : emittedStaticVariableBaseName(record->id,
-                                                       record->name));
-        return;
+    const SymbolId symbol = semantics.findResolvedSymbol(expression);
+    const SymbolRecord *record = semantics.database().findSymbol(symbol);
+    if (record != nullptr && record->kind == SymbolKind::GlobalVariable &&
+        record->internalLinkage) {
+      if (path.segments.size() > 1) {
+        emitNamePath(NamePath(std::vector<Token>(path.segments.begin(),
+                                                 path.segments.end() - 1)));
+        output << "::";
       }
+      output << (namespaceStaticVariableSymbols.contains(record->id)
+                     ? emittedStaticVariableName(record->id, record->name)
+                     : emittedStaticVariableBaseName(record->id, record->name));
+      return;
     }
     emitNamePath(path);
   }
 
   [[nodiscard]] std::string
   emittedVariableName(const VariableDecl &variable) const {
-    if (semantics != nullptr) {
-      const BindingInfo *binding = semantics->findBinding(variable);
-      if (binding != nullptr && binding->internalLinkage &&
-          binding->symbol != 0) {
-        return namespaceStaticVariables.contains(&variable)
-                   ? emittedStaticVariableName(binding->symbol,
-                                               variable.name().lexeme)
-                   : emittedStaticVariableBaseName(binding->symbol,
-                                                   variable.name().lexeme);
-      }
+    const BindingInfo *binding = semantics.findBinding(variable);
+    if (binding != nullptr && binding->internalLinkage &&
+        binding->symbol != 0) {
+      return namespaceStaticVariables.contains(&variable)
+                 ? emittedStaticVariableName(binding->symbol,
+                                             variable.name().lexeme)
+                 : emittedStaticVariableBaseName(binding->symbol,
+                                                 variable.name().lexeme);
     }
     return variable.name().lexeme;
   }
@@ -5303,12 +5343,10 @@ private:
   }
 
   void emitVariable(const VariableDecl &variable) {
-    const BindingInfo *binding =
-        semantics == nullptr ? nullptr : semantics->findBinding(variable);
+    const BindingInfo *binding = semantics.findBinding(variable);
     const ClassTypeInfo *enclosingType =
-        semantics == nullptr || currentClass == nullptr
-            ? nullptr
-            : semantics->findClassType(*currentClass);
+        currentClass == nullptr ? nullptr
+                                : semantics.findClassType(*currentClass);
     const bool cAbiField = emittingField && enclosingType != nullptr &&
                            enclosingType->cAbiRecord && binding != nullptr;
     const bool rawPointer = binding != nullptr
@@ -5363,8 +5401,8 @@ private:
   }
 
   void emitVariableInitializer(const VariableDecl &variable) {
-    if (variable.isConstexpr() && semantics != nullptr) {
-      if (const BindingInfo *binding = semantics->findBinding(variable);
+    if (variable.isConstexpr()) {
+      if (const BindingInfo *binding = semantics.findBinding(variable);
           binding != nullptr && binding->constant) {
         output << " = ";
         emitConstant(*binding->constant, &binding->type);
@@ -5408,8 +5446,7 @@ private:
       }
 
       const VariableDecl &declaration = *field.declaration;
-      const BindingInfo *binding =
-          semantics == nullptr ? nullptr : semantics->findBinding(declaration);
+      const BindingInfo *binding = semantics.findBinding(declaration);
       const bool rawPointer =
           binding != nullptr ? binding->type.kind == SemanticType::RawPointer
                              : declaration.type().pointer.has_value();
@@ -5452,10 +5489,7 @@ private:
         const std::size_t enclosingDepth = classDepth;
         const bool enclosingDeferred = emittingDeferredMember;
         currentClass = definition.owner;
-        currentClassLifecycle =
-            semantics == nullptr
-                ? nullptr
-                : semantics->findClassLifecycle(*definition.owner);
+        currentClassLifecycle = semantics.findClassLifecycle(*definition.owner);
         currentClassAccess = AccessModifier::Public;
         classDepth = 1;
         emittingDeferredMember = true;
@@ -5595,24 +5629,20 @@ private:
 
   void emitExpression(const ExprPtr &expression) {
     if (expression) {
-      const ExpressionInfo *info = semantics == nullptr
-                                       ? nullptr
-                                       : semantics->findExpression(*expression);
+      const ExpressionInfo *info = semantics.findExpression(*expression);
       const bool materializeValue =
           info == nullptr || info->category == ValueCategory::Value;
-      if (semantics != nullptr && materializeValue) {
+      if (materializeValue) {
         if (const std::optional<ConstantValue> constant =
-                semantics->findConstant(*expression)) {
-          emitConstant(*constant, semantics->findType(*expression));
+                semantics.findConstant(*expression)) {
+          emitConstant(*constant, semantics.findType(*expression));
           return;
         }
       }
-      if (optimizations != nullptr && hir != nullptr && materializeValue) {
+      if (optimizations != nullptr && materializeValue) {
         if (const ConstantValue *constant =
-                optimizations->replacement(*hir, *expression)) {
-          emitConstant(*constant, semantics == nullptr || !expression
-                                      ? nullptr
-                                      : semantics->findType(*expression));
+                optimizations->replacement(hir, *expression)) {
+          emitConstant(*constant, semantics.findType(*expression));
           return;
         }
       }
@@ -5622,9 +5652,7 @@ private:
 
   void emitSwitchCase(const SwitchLabel &label) {
     const SwitchCaseValue *value =
-        semantics == nullptr || !label.value
-            ? nullptr
-            : semantics->findSwitchCase(*label.value);
+        !label.value ? nullptr : semantics.findSwitchCase(*label.value);
     if (value == nullptr || value->kind == SwitchCaseKind::Enumerator) {
       emitExpression(label.value);
       return;
@@ -5635,6 +5663,69 @@ private:
     output << ">(";
     emitSwitchInteger(value->value, value->type);
     output << ')';
+  }
+
+  void emitPayloadSwitch(const SwitchStmt &statement) {
+    const std::size_t index = payloadSwitchCounter++;
+    const std::string temporary =
+        "__gti_payload_switch_" + std::to_string(index);
+    writeIndent();
+    output << "{\n";
+    ++indentation;
+    writeIndent();
+    output << "const auto &" << temporary << " = ";
+    emitExpression(statement.expression());
+    output << ";\n";
+    writeIndent();
+    output << "switch (" << temporary << ".__gti_value.index()) {\n";
+    ++indentation;
+    for (const SwitchArm &arm : statement.arms()) {
+      const ResolvedPayloadPatternInfo *bindingPattern = nullptr;
+      for (const SwitchLabel &label : arm.labels) {
+        writeIndent();
+        if (label.isDefault()) {
+          output << "default:\n";
+          continue;
+        }
+        const ResolvedPayloadPatternInfo *pattern =
+            label.value ? semantics.findPayloadPattern(*label.value) : nullptr;
+        if (pattern == nullptr) {
+          throw std::logic_error(
+              "validated payload switch is missing its semantic pattern");
+        }
+        output << "case " << pattern->variantIndex << ":\n";
+        if (!pattern->bindings.empty()) {
+          bindingPattern = pattern;
+        }
+      }
+      writeIndent();
+      output << "{\n";
+      ++indentation;
+      if (bindingPattern != nullptr) {
+        for (const PayloadBindingInfo &binding : bindingPattern->bindings) {
+          if (binding.name == nullptr) {
+            continue;
+          }
+          writeIndent();
+          output << "const auto " << binding.name->lexeme << " = std::get<"
+                 << bindingPattern->variantIndex << ">(" << temporary
+                 << ".__gti_value).__gti_field_" << binding.payloadIndex
+                 << ";\n";
+        }
+      }
+      for (const StmtPtr &bodyStatement : arm.statements) {
+        bodyStatement->accept(*this);
+      }
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
   }
 
   void emitSwitchInteger(const EnumConstant &value, const SemanticType &type) {
@@ -5830,8 +5921,8 @@ private:
   CppStandard standard;
   TargetInfo target;
   const OptimizationResult *optimizations;
-  const SemanticModel *semantics;
-  const HirProgram *hir;
+  const SemanticModel &semantics;
+  const HirProgram &hir;
   std::unordered_map<const Expr *, UnsafeOperationKind> hirUnsafeOperations;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
   std::unordered_set<const TypeAliasDecl *> forwardedTypeAliases;
@@ -5856,6 +5947,7 @@ private:
   const FunctionDecl *ownedArgumentsEntry = nullptr;
   std::size_t indentation = 0;
   std::size_t classDepth = 0;
+  std::size_t payloadSwitchCounter = 0;
   bool emittingField = false;
   bool emittingScheduledType = false;
   bool emittingDeferredMember = false;

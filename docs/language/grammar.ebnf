@@ -131,7 +131,8 @@ enum-declaration       = "enum" "class" IDENTIFIER
                          "{" [ enumerator { "," enumerator } [ "," ] ] "}"
                          ";" ;
 
-enumerator             = IDENTIFIER [ "=" signed-integer-literal ] ;
+enumerator             = IDENTIFIER [ parameter-clause ]
+                         [ "=" signed-integer-literal ] ;
 
 signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
 
@@ -143,7 +144,13 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    type. The backing type defaults to int32_t and may be an explicit fixed
    integral primitive. This first layer confines explicit values to signed
    integer literals; duplicate names and values outside the backing range are
-   invalid, while duplicate numeric values are allowed. *)
+   invalid, while duplicate numeric values are allowed.
+
+   If any enumerator has a parameter clause, the declaration is a payload
+   enum. A payload enum has no explicit backing type or enumerator initializer.
+   A payload alternative is constructed as `EnumName::case(arguments)`; a
+   unit alternative is the value `EnumName::case` and is not called. Payload
+   field restrictions and exhaustive switch patterns are semantic rules. *)
 
 (* Type aliases are transparent, namespace-scoped names for complete types.
    They are available regardless of declaration order and cannot be generic.
@@ -202,7 +209,7 @@ class-attributes       = "[[" class-attribute
 
 class-attribute        = IDENTIFIER ;
 
-class-key              = "class" | "struct" | "interface" ;
+class-key              = "class" | "struct" | "interface" | "union" ;
 
 base-clause            = ":" base-specifier { "," base-specifier } ;
 
@@ -228,6 +235,9 @@ access-specifier       = ( "public" | "private" ) ":" ;
 
 (* Class members are private by default and struct members are public by
    default. An access specifier changes the visibility of following members.
+   A union is always public and semantic analysis restricts it to passive
+   instance fields; the shared parser surface keeps malformed declarations
+   recoverable for one focused diagnostic.
    Private members are accessible from methods of their declaring type.
 
    Inheritance is intentionally narrower than C++. Every base must be written
@@ -825,7 +835,10 @@ switch-label           = "case" logical-or-expression ":" | "default" ":" ;
    labels are invalid. Adjacent labels form one arm. Every executable arm must
    terminate on every path with an explicit break, return, or a valid continue
    inside an enclosing loop, so GTI has no implicit fallthrough. Each arm is a
-   lexical scope even without source braces. *)
+   lexical scope even without source braces. A payload-enum label is either a
+   unit alternative or `EnumName::case(bindings...)`. Bindings are immutable
+   copied values local to that arm. Without `default`, every payload variant
+   must appear exactly once. *)
 
 loop-control-statement = ( "break" | "continue" ) ";" ;
 

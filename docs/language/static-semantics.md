@@ -14,8 +14,8 @@ The implemented language includes:
 - primitive integers, `float`, `double`, `bool`, and `char`;
 - `void` in permitted return and `expected` positions;
 - `nullptr_t`;
-- scoped nominal enumeration types;
-- class, struct, and interface types;
+- integral scoped enumerations and closed payload-enum types;
+- class, struct, interface, and passive union types;
 - fixed arrays whose extents participate in type identity;
 - non-null read-only and mutable reference types;
 - nullable one-level `T*` and `const T*` raw-pointer types;
@@ -160,6 +160,10 @@ converting to `float` is the required explicit narrowing operation.
 `Type name{arguments};` directly constructs a declared class or struct. It is
 not C++ aggregate initialization, list conversion, initializer-list preference,
 copy-list initialization, or CTAD.
+
+A union uses the same direct-brace spelling only for zero initialization or an
+exact value for its first declared field. Selecting another active field is an
+explicit write to a `mut` field through a mutable union value inside `unsafe`.
 
 Fixed arrays require complete initialization. Empty braces value-initialize all
 elements; a non-empty initializer supplies exactly one value per element.
@@ -309,6 +313,59 @@ nullable, non-owning, and subject to lexical unsafe rules. Direct values,
 construction, inheritance, generic arguments, pointee layout queries, and
 ordinary forward declarations are rejected with `GTI-S2065` before lowering.
 
+### 3.8.1 Passive Unions And Payload Enums
+
+`union Name { fields... };` declares untagged overlapping storage. A union is
+nongeneric, complete, baseless, non-empty, and public. It contains only
+instance fields and cannot declare attributes, access sections, methods,
+constructors, a destructor, static fields, or field initializers. Fields may be
+fixed-width scalars, raw pointers, integral scoped enums, concrete fixed arrays
+of admitted fields, nested valid unions, or valid `[[c_abi]]` records. A
+recursive by-value edge and every ownership-bearing or cleanup-bearing field
+are ill-formed. The frontend computes the maximum field size and alignment and
+rounds size to that alignment. `sizeof` and `alignof` expose those facts.
+
+Every union member read or write requires an `unsafe` block because the
+compiler does not track the active field. Ordinary mutability still applies: a
+write also requires a mutable union place and a field declared with `mut`.
+Union copies are passive byte-representation copies; unions do not acquire
+hidden lifecycle behavior. `GTI-S2066` owns declaration-shape failures, while
+the ordinary unsafe diagnostic owns safe member access.
+
+An `enum class` with at least one parameterized alternative is a closed tagged
+sum. It cannot declare an integral backing type or explicit enumerator values.
+Every payload field is named, immutable, non-variadic, and currently limited to
+primitive scalars, `std::string_view`, `nullptr_t`, one-level raw pointers, and
+integral scoped enums. References, arrays, classes, nested payload enums, and
+ownership-bearing values are rejected until move/borrow patterns and
+variant-aware partial lifecycle state are implemented.
+
+Payload alternatives use exact construction. A unit alternative is written
+`Result::empty`; a payload alternative is written `Result::value(arguments)`.
+A `switch` over a payload enum uses the same alternatives as patterns:
+
+```gti
+enum class Message {
+  quit,
+  move(int32_t x, int32_t y),
+};
+
+int32_t coordinate_sum(Message message) {
+  switch (message) {
+  case Message::quit:
+    return 0;
+  case Message::move(x, y):
+    return x + y;
+  }
+}
+```
+
+Each binding is an immutable copied value scoped to its arm. Every alternative
+must be handled exactly once unless a `default` arm is present. A complete
+payload switch is exhaustive for return, ownership-state, loan, HIR, and MIR
+control-flow analysis. `GTI-S2067` owns payload declaration, construction, and
+pattern/exhaustiveness failures.
+
 ## 3.9 Operators And Contextual Conversion
 
 The overloadable operator set and arity rules are defined by the incorporated
@@ -326,7 +383,9 @@ returns an appropriate value. The permitted top-level `main` definition may
 reach its closing brace, which returns zero.
 
 Every executable `switch` arm terminates explicitly as defined by the control
-flow rules. GTI does not have implicit switch fallthrough.
+flow rules. GTI does not have implicit switch fallthrough. A payload-enum
+switch without `default` covers every value only when all alternatives are
+present; such a switch has no reachable unmatched path.
 
 Every non-`void` call result is used unless intentionally suppressed with the
 specified discard form.
@@ -347,8 +406,10 @@ After transparent alias resolution, the bounded operand set is:
   compatibility spelling of the fixed-width signed and unsigned integers;
 - one-level `T*` or `const T*` raw pointers, including `void*` and pointers
   whose pointee does not itself have a queryable layout; and
-- a valid, concrete `[[c_abi]]` struct whose compiler-owned native-record
-  layout is available; and
+- integral scoped enums, whose layout is the layout of their exact underlying
+  fixed-width integer type;
+- valid passive unions and concrete `[[c_abi]]` structs whose compiler-owned
+  aggregate layout is available; and
 - a fixed array whose element type is supported recursively and whose every
   extent is a concrete positive value.
 
@@ -358,10 +419,11 @@ to multidimensional arrays. A zero or symbolic extent, or a product that does
 not fit `uint64_t`, is ill-formed.
 
 Bare `void`, `nullptr_t`, references, ordinary classes/structs, opaque-handle
-pointees, interfaces,
-scoped enums, `expected`, compiler-private types, and symbolic type parameters
-have no source-queryable layout when queried directly. `[[c_abi]]` is the only
-source nominal layout opt-in. Unsupported complete operands are rejected as
+pointees, interfaces, payload enums, `expected`, compiler-private types, and
+symbolic type parameters have no source-queryable layout when queried
+directly. Passive unions and `[[c_abi]]` records are the bounded nominal layout
+opt-ins; integral scoped enums inherit their declared integer layout.
+Unsupported complete operands are rejected as
 `GTI-S2063` before HIR lowering; a direct opaque-handle operand retains its
 focused incomplete-type `GTI-S2065`, and an unresolved name retains its
 ordinary type-resolution diagnostic without a duplicate layout diagnostic.
@@ -424,8 +486,9 @@ current implementation:
   capability families plus any general expression-requirement model;
 - complete lifetime relationships for borrowed aggregate values;
 - general place movement, partial initialization, and reinitialization;
-- owned callable return/field escape beyond the implemented local closure
-  movement and explicit owned move-capture slice;
+- owned callable escape beyond exact same-type generic return, the bounded
+  one-field generic owner, local closure movement, and explicit owned
+  move-capture;
 - generic and aggregate constexpr evaluation plus compile-time assertions;
 - audited expansion beyond the bounded scalar, counted-text-input,
   `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, and one-level

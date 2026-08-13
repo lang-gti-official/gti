@@ -142,6 +142,9 @@ public:
     case ClassKind::Interface:
       result += "interface ";
       break;
+    case ClassKind::Union:
+      result += "union ";
+      break;
     }
     result += info.qualifiedName;
     if (!info.genericParameters.empty()) {
@@ -156,8 +159,39 @@ public:
   }
 
   [[nodiscard]] std::string enumType(const EnumTypeInfo &info) const {
-    return "enum class " + info.qualifiedName + " : " +
-           types.print(info.underlyingType);
+    std::string result = "enum class " + info.qualifiedName;
+    if (!info.payload) {
+      result += " : " + types.print(info.underlyingType);
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::string enumerator(const EnumTypeInfo &owner,
+                                       std::string_view name) const {
+    const std::size_t separator = name.rfind("::");
+    const std::string_view unqualified =
+        separator == std::string_view::npos ? name : name.substr(separator + 2);
+    const auto found =
+        std::find_if(owner.enumerators.begin(), owner.enumerators.end(),
+                     [&](const EnumeratorInfo &candidate) {
+                       return candidate.declaration != nullptr &&
+                              candidate.declaration->name.lexeme == unqualified;
+                     });
+    if (!owner.payload || found == owner.enumerators.end()) {
+      return owner.qualifiedName + " " + owner.qualifiedName +
+             "::" + std::string(unqualified);
+    }
+    std::string result = owner.qualifiedName + " " + owner.qualifiedName +
+                         "::" + std::string(unqualified);
+    if (!found->payloadTypes.empty()) {
+      result += '(';
+      const std::vector<Parameter> *parameters =
+          found->declaration == nullptr ? nullptr
+                                        : &found->declaration->payload;
+      appendParameters(result, found->payloadTypes, parameters, true);
+      result += ')';
+    }
+    return result;
   }
 
   [[nodiscard]] std::string typeAlias(const TypeAliasInfo &info) const {
@@ -495,6 +529,13 @@ public:
                                             symbol->nameSpan));
         break;
       case SymbolKind::Enumerator:
+        if (symbol->type.kind == SemanticType::Enum) {
+          if (const EnumTypeInfo *owner =
+                  semantics.findEnumType(symbol->type.enumId)) {
+            result.signature = signatures.enumerator(*owner, symbol->name);
+            break;
+          }
+        }
         result.signature =
             types.print(symbol->type) + " " + symbol->qualifiedName;
         break;
@@ -773,8 +814,6 @@ private:
       const std::string_view boundary =
           contract->boundary == CallableBoundary::Confined ? "confined"
                                                            : "owned";
-      const std::string_view access =
-          contract->access == AccessMode::Mutable ? "mutable" : "read-only";
       std::string note(boundary);
       note += " callable parameter ";
       if (function.declaration != nullptr &&
@@ -789,7 +828,13 @@ private:
       } else {
         note += "#" + std::to_string(contract->parameterIndex + 1);
       }
-      note += " (" + std::string(access) + " access)";
+      if (contract->boundary == CallableBoundary::Owned) {
+        note += " (explicit ownership move)";
+      } else {
+        const std::string_view access =
+            contract->access == AccessMode::Mutable ? "mutable" : "read-only";
+        note += " (" + std::string(access) + " access)";
+      }
 
       std::vector<std::string> renderedSignatures;
       renderedSignatures.reserve(contract->signatures.size());
@@ -823,7 +868,16 @@ private:
         }
       }
 
-      if (renderedSignatures.empty()) {
+      if (contract->boundary == CallableBoundary::Owned &&
+          contract->ownedTransport) {
+        note += ", exact transport: ";
+        note += contract->ownedTransport->kind ==
+                        CallableOwnedTransportKind::ExactReturn
+                    ? "return "
+                    : "field of ";
+        note += types.print(substituteSelectedCallType(
+            contract->ownedTransport->destinationType, substitution));
+      } else if (renderedSignatures.empty()) {
         note += contract->forwardings.empty()
                     ? "; no direct invocation signature"
                     : "; forwarded only";
@@ -1002,7 +1056,7 @@ private:
     if (record.enumType != 0) {
       if (const EnumTypeInfo *type = semantics.findEnumType(record.enumType)) {
         if (record.kind == SemanticCompletionCandidateKind::Enumerator) {
-          return type->qualifiedName + " " + record.qualifiedName;
+          return signatures.enumerator(*type, record.qualifiedName);
         }
         return signatures.enumType(*type);
       }

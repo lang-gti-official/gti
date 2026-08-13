@@ -79,6 +79,8 @@ enum class HirValueKind {
   Literal,
   Logical,
   PackExpansion,
+  PayloadConstruction,
+  PayloadExtraction,
   Postfix,
   QualifiedName,
   This,
@@ -110,6 +112,7 @@ struct HirBinding {
   HirBindingId id = 0;
   const VariableDecl *variable = nullptr;
   const Parameter *parameter = nullptr;
+  const Token *payloadPattern = nullptr;
   const StructuredBindingDecl *structuredSource = nullptr;
   BindingInfo info;
   std::optional<HirDropObligationId> dropObligation;
@@ -122,6 +125,30 @@ struct HirLoan {
   AccessMode access = AccessMode::ReadOnly;
   std::vector<HirBindingId> carriers;
   bool entry = false;
+};
+
+enum class HirCallInputKind {
+  Value,
+  ReadBorrow,
+  MutableBorrow,
+};
+
+struct HirCallReceiver {
+  HirValueId value = 0;
+  HirCallInputKind kind = HirCallInputKind::Value;
+  SemanticType type = SemanticType::Unknown;
+};
+
+struct HirCallArgument {
+  std::size_t parameterIndex = 0;
+  HirValueId value = 0;
+  SemanticType parameterType = SemanticType::Unknown;
+  HirCallInputKind kind = HirCallInputKind::Value;
+};
+
+struct HirCallPlan {
+  std::optional<HirCallReceiver> receiver;
+  std::vector<HirCallArgument> arguments;
 };
 
 struct HirValue {
@@ -144,6 +171,7 @@ struct HirValue {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirValueId> receiver;
+  std::optional<HirCallPlan> callPlan;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirFunctionInstanceId> contextualBoolTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
@@ -154,6 +182,8 @@ struct HirValue {
   std::optional<CallableInvocationCapability> callableInvocation;
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
+  std::optional<std::size_t> enumVariant;
+  std::optional<std::size_t> payloadIndex;
   std::optional<PlaceKey> place;
   std::optional<OwnershipEvent> ownership;
   HirFullExpressionId fullExpression = 0;
@@ -169,6 +199,11 @@ struct HirSwitchLabel {
 
 struct HirSwitchArm {
   std::vector<HirSwitchLabel> labels;
+  struct PayloadBinding {
+    HirBindingId binding = 0;
+    HirValueId value = 0;
+  };
+  std::vector<PayloadBinding> payloadBindings;
   std::vector<HirStatementId> statements;
   std::vector<SemanticLoanId> entryEndedLoans;
 };
@@ -200,6 +235,7 @@ struct HirStatement {
   std::optional<HirStatementId> elseBranch;
   std::vector<HirStatementId> statements;
   std::vector<HirSwitchArm> switchArms;
+  bool exhaustiveSwitch = false;
   std::vector<HirStructuredBindingElement> structuredBindings;
   std::vector<SemanticLoanId> endedLoans;
   std::vector<SemanticLoanId> thenEntryEndedLoans;
@@ -261,6 +297,8 @@ struct HirLambda {
 struct HirEnumerator {
   const EnumeratorDecl *source = nullptr;
   EnumConstant value;
+  std::size_t variantIndex = 0;
+  std::vector<SemanticType> payloadTypes;
 };
 
 struct HirEnum {
@@ -270,6 +308,7 @@ struct HirEnum {
   std::string qualifiedName;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<HirEnumerator> enumerators;
+  bool payload = false;
 };
 
 struct HirClassField {
@@ -305,6 +344,7 @@ struct HirClassInstance {
   bool polymorphic = false;
   bool cAbiRecord = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
+  std::optional<UnionLayout> unionLayout;
   std::vector<HirClassField> fields;
   HirBody fieldInitializers;
   std::vector<HirClassField> staticFields;
@@ -336,6 +376,7 @@ struct HirCallableParameter {
   SemanticType callableType = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
   CallableBoundary boundary = CallableBoundary::Confined;
+  std::optional<CallableOwnedTransport> ownedTransport;
   std::vector<HirCallableSignature> signatures;
   std::vector<HirCallableForwarding> forwardings;
 };
@@ -381,6 +422,7 @@ struct HirConstructorInitializer {
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
+  std::optional<std::size_t> ownedParameter;
 };
 
 struct HirConstructorInstance {
@@ -677,6 +719,7 @@ private:
          .polymorphic = declaration->polymorphic,
          .cAbiRecord = declaration->cAbiRecord,
          .cAbiLayout = declaration->cAbiLayout,
+         .unionLayout = declaration->unionLayout,
          .requiresActiveDropState =
              lifecycle != nullptr && lifecycle->requiresActiveDropState,
          .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
@@ -872,11 +915,15 @@ private:
                           .sourceUnit = info->sourceUnit,
                           .source = enumDeclaration,
                           .qualifiedName = info->qualifiedName,
-                          .underlyingType = info->underlyingType};
+                          .underlyingType = info->underlyingType,
+                          .payload = info->payload};
           lowered.enumerators.reserve(info->enumerators.size());
           for (const EnumeratorInfo &enumerator : info->enumerators) {
             lowered.enumerators.push_back(
-                {.source = enumerator.declaration, .value = enumerator.value});
+                {.source = enumerator.declaration,
+                 .value = enumerator.value,
+                 .variantIndex = enumerator.variantIndex,
+                 .payloadTypes = enumerator.payloadTypes});
           }
           output.program.enums.push_back(std::move(lowered));
         }
@@ -959,9 +1006,16 @@ private:
     }
   }
 
+  [[nodiscard]] static bool containsLambdaType(const SemanticType &type) {
+    return type.kind == SemanticType::Lambda ||
+           std::any_of(type.arguments.begin(), type.arguments.end(),
+                       containsLambdaType);
+  }
+
   void processClass(std::size_t index) {
     lambdaTargets.clear();
     const HirClassInstance snapshot = output.program.classes[index];
+    seedLambdaTargets(snapshot.typeArguments);
     const ClassTypeInfo *declaration =
         baseModel->findClassType(snapshot.declaration);
     if (declaration == nullptr) {
@@ -1159,14 +1213,21 @@ private:
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :
          declaration->callableParameters) {
+      if (parameter.parameterIndex >= snapshot.parameterTypes.size() ||
+          (parameter.boundary == CallableBoundary::Owned &&
+           !containsLambdaType(
+               snapshot.parameterTypes[parameter.parameterIndex]))) {
+        continue;
+      }
       HirCallableParameter lowered{
           .parameterIndex = parameter.parameterIndex,
-          .callableType =
-              parameter.parameterIndex < snapshot.parameterTypes.size()
-                  ? snapshot.parameterTypes[parameter.parameterIndex]
-                  : SemanticType::Unknown,
+          .callableType = snapshot.parameterTypes[parameter.parameterIndex],
           .access = parameter.access,
-          .boundary = parameter.boundary};
+          .boundary = parameter.boundary,
+          .ownedTransport = parameter.ownedTransport};
+      if (lowered.ownedTransport) {
+        lowered.ownedTransport->destinationType = snapshot.returnType;
+      }
       lowered.signatures.reserve(parameter.signatures.size());
       for (const CallableSignatureRequirement &signature :
            parameter.signatures) {
@@ -1257,6 +1318,7 @@ private:
                               snapshot.instantiationSite);
 
     lambdaTargets.clear();
+    seedLambdaTargets(classArguments);
     HirBody body;
     std::vector<HirBindingId> parameterBindings;
     parameterBindings.reserve(snapshot.source->parameters().size());
@@ -1279,6 +1341,7 @@ private:
         lowered.storesReference = resolved->storesReference;
         lowered.borrowAccess = resolved->borrowAccess;
         lowered.generatedDefault = resolved->generatedDefault;
+        lowered.ownedParameter = resolved->ownedParameter;
         if (resolved->kind == ConstructorInitializerTargetKind::Base) {
           hasExplicitBase = true;
           lowered.base = enqueueClass(resolved->targetType);
@@ -1375,6 +1438,7 @@ private:
     }
 
     lambdaTargets.clear();
+    seedLambdaTargets(owner.typeArguments);
     HirBody body;
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), *model,
@@ -1449,6 +1513,15 @@ private:
     if (info != nullptr) {
       (void)enqueueClass(info->type);
     }
+    return id;
+  }
+
+  [[nodiscard]] HirBindingId lowerPayloadBinding(const Token &name,
+                                                 const BindingInfo &info,
+                                                 HirBody &body) {
+    const HirBindingId id = nextBindingId++;
+    body.bindings.push_back({.id = id, .payloadPattern = &name, .info = info});
+    (void)enqueueClass(info.type);
     return id;
   }
 
@@ -1541,6 +1614,7 @@ private:
     case HirValueKind::Literal:
     case HirValueKind::Logical:
     case HirValueKind::PackExpansion:
+    case HirValueKind::PayloadConstruction:
     case HirValueKind::Postfix:
     case HirValueKind::Unary:
     case HirValueKind::Unexpected:
@@ -1552,6 +1626,7 @@ private:
     case HirValueKind::DereferenceSet:
     case HirValueKind::IndexSet:
     case HirValueKind::LayoutQuery:
+    case HirValueKind::PayloadExtraction:
     case HirValueKind::QualifiedName:
     case HirValueKind::This:
     case HirValueKind::MemberSet:
@@ -1906,8 +1981,13 @@ private:
         HirSwitchArm loweredArm;
         loweredArm.labels.reserve(arm.labels.size());
         for (const SwitchLabel &label : arm.labels) {
-          std::optional<HirValueId> value = lowerExpression(
-              label.value, model, classArguments, classValueArguments, body);
+          const ResolvedPayloadPatternInfo *payloadPattern =
+              label.value ? model.findPayloadPattern(*label.value) : nullptr;
+          std::optional<HirValueId> value;
+          if (payloadPattern == nullptr) {
+            value = lowerExpression(label.value, model, classArguments,
+                                    classValueArguments, body);
+          }
           const SwitchCaseValue *constant =
               label.value ? model.findSwitchCase(*label.value) : nullptr;
           loweredArm.labels.push_back(
@@ -1917,6 +1997,33 @@ private:
                .constant = constant == nullptr
                                ? std::nullopt
                                : std::optional<SwitchCaseValue>{*constant}});
+          if (payloadPattern != nullptr && subject) {
+            for (const PayloadBindingInfo &payload : payloadPattern->bindings) {
+              if (payload.name == nullptr || payload.source == nullptr) {
+                continue;
+              }
+              const HirBindingId binding =
+                  lowerPayloadBinding(*payload.name, payload.binding, body);
+              const HirValueId extraction = nextValueId++;
+              body.values.push_back(
+                  {.id = extraction,
+                   .kind = HirValueKind::PayloadExtraction,
+                   .source = payload.source,
+                   .info = {.type = payload.binding.type,
+                            .category = ValueCategory::Value,
+                            .access = AccessMode::ReadOnly,
+                            .traits =
+                                analyzer->traitsFor(payload.binding.type)},
+                   .operands = {*subject},
+                   .enumOwner = payloadPattern->owner,
+                   .enumVariant = payloadPattern->variantIndex,
+                   .payloadIndex = payload.payloadIndex});
+              output.program.sourceValueIds[payload.source].push_back(
+                  extraction);
+              loweredArm.payloadBindings.push_back(
+                  {.binding = binding, .value = extraction});
+            }
+          }
         }
         loweredArm.statements = lowerStatements(
             arm.statements, model, classArguments, classValueArguments, body);
@@ -1925,11 +2032,13 @@ private:
             model);
         arms.push_back(std::move(loweredArm));
       }
-      return appendStatement({.kind = HirStatementKind::Switch,
-                              .source = statement,
-                              .value = subject,
-                              .switchArms = std::move(arms)},
-                             body);
+      return appendStatement(
+          {.kind = HirStatementKind::Switch,
+           .source = statement,
+           .value = subject,
+           .switchArms = std::move(arms),
+           .exhaustiveSwitch = model.isExhaustiveSwitch(*switchStatement)},
+          body);
     }
     if (const auto *structured =
             dynamic_cast<const StructuredBindingDecl *>(statement)) {
@@ -2156,6 +2265,8 @@ private:
     std::optional<HirLambdaId> lambdaTarget;
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
+    std::optional<std::size_t> enumVariant;
+    std::optional<std::size_t> payloadIndex;
     const auto lowerOperand = [&](const ExprPtr &operand) {
       if (const std::optional<HirValueId> id = lowerExpression(
               operand, model, classArguments, classValueArguments, body)) {
@@ -2180,10 +2291,27 @@ private:
       lowerOperand(binary->right());
     } else if (const auto *call = dynamic_cast<const Call *>(raw)) {
       const ResolvedCallInfo *resolved = model.findCall(*call);
-      kind = resolved != nullptr && resolved->intrinsic == IntrinsicKind::Move
+      const ResolvedPayloadConstructionInfo *payload =
+          model.findPayloadConstruction(*call);
+      const ResolvedConstructionInfo *construction =
+          model.findConstruction(*call);
+      const ClassTypeInfo *constructedClass =
+          construction == nullptr ||
+                  construction->constructedType.kind != SemanticType::Class
+              ? nullptr
+              : baseModel->findClassType(construction->constructedType.classId);
+      kind = payload != nullptr ? HirValueKind::PayloadConstruction
+             : construction != nullptr && constructedClass != nullptr &&
+                     constructedClass->kind == ClassKind::Union &&
+                     construction->constructor == 0
+                 ? HirValueKind::DirectInitializer
+             : resolved != nullptr && resolved->intrinsic == IntrinsicKind::Move
                  ? HirValueKind::Move
                  : HirValueKind::Call;
-      if (kind == HirValueKind::Call) {
+      if (payload != nullptr) {
+        enumOwner = payload->owner;
+        enumVariant = payload->variantIndex;
+      } else if (kind == HirValueKind::Call) {
         lowerOperand(call->callee());
         if (resolved != nullptr && resolved->declaration != nullptr &&
             !resolved->declaration->isStatic() &&
@@ -2273,6 +2401,12 @@ private:
               model.findEnumerator(*qualified)) {
         enumOwner = resolved->owner;
         enumValue = resolved->value;
+        enumVariant = resolved->variantIndex;
+        const EnumTypeInfo *enumeration =
+            baseModel->findEnumType(resolved->owner);
+        if (enumeration != nullptr && enumeration->payload) {
+          kind = HirValueKind::PayloadConstruction;
+        }
       }
     } else if (dynamic_cast<const This *>(raw) != nullptr) {
       kind = HirValueKind::This;
@@ -2304,7 +2438,9 @@ private:
                    .receiver = receiver,
                    .lambdaTarget = lambdaTarget,
                    .enumOwner = enumOwner,
-                   .enumValue = enumValue};
+                   .enumValue = enumValue,
+                   .enumVariant = enumVariant,
+                   .payloadIndex = payloadIndex};
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);
@@ -2486,6 +2622,112 @@ private:
         value.contextualBoolTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
                             resolved->returnType, resolved->parameterTypes);
+      }
+    }
+    if (const auto *call = dynamic_cast<const Call *>(raw);
+        call != nullptr && kind == HirValueKind::Call &&
+        value.intrinsic == IntrinsicKind::None && !value.constructorTarget &&
+        value.functionTarget && model.findOperator(*call) == nullptr &&
+        model.findLambdaCall(*call) == nullptr &&
+        model.findDeferredCallableCall(*call) == nullptr &&
+        value.parameterTypes.size() == call->arguments().size()) {
+      const auto orderedParameterType = [](const SemanticType &type) {
+        switch (type.kind) {
+        case SemanticType::Int8:
+        case SemanticType::Int16:
+        case SemanticType::Int32:
+        case SemanticType::Int64:
+        case SemanticType::UInt8:
+        case SemanticType::UInt16:
+        case SemanticType::UInt32:
+        case SemanticType::UInt64:
+        case SemanticType::Float:
+        case SemanticType::Double:
+        case SemanticType::Bool:
+        case SemanticType::Char:
+        case SemanticType::StringView:
+        case SemanticType::NullPtr:
+        case SemanticType::RawPointer:
+        case SemanticType::Enum:
+        case SemanticType::Reference:
+          return true;
+        default:
+          return false;
+        }
+      };
+      const std::size_t argumentCount = call->arguments().size();
+      const bool exactOperands = argumentCount <= value.operands.size();
+      std::vector<HirValueId> arguments;
+      if (exactOperands) {
+        arguments.assign(value.operands.end() -
+                             static_cast<std::ptrdiff_t>(argumentCount),
+                         value.operands.end());
+      }
+      const bool supportedArguments =
+          exactOperands &&
+          std::all_of(value.parameterTypes.begin(), value.parameterTypes.end(),
+                      orderedParameterType) &&
+          std::none_of(arguments.begin(), arguments.end(),
+                       [&](HirValueId argument) {
+                         const HirValue *input = body.findValue(argument);
+                         return input == nullptr ||
+                                input->kind == HirValueKind::PackExpansion;
+                       });
+      const ResolvedCallInfo *resolved = model.findCall(*call);
+      const FunctionInfo *resolvedTarget =
+          resolved == nullptr || resolved->function == 0
+              ? nullptr
+              : baseModel->findFunction(resolved->function);
+      std::optional<HirValueId> callReceiver;
+      bool supportedReceiver = true;
+      if (resolved != nullptr && resolved->declaration != nullptr &&
+          resolvedTarget != nullptr && resolvedTarget->ownerClass != 0 &&
+          !resolved->declaration->isStatic()) {
+        const HirValue *callee = value.operands.empty()
+                                     ? nullptr
+                                     : body.findValue(value.operands.front());
+        if (callee != nullptr && callee->kind == HirValueKind::MemberAccess &&
+            !callee->operands.empty()) {
+          supportedReceiver =
+              callee->unsafeOperation != UnsafeOperationKind::RawMember;
+          callReceiver = callee->operands.front();
+        } else {
+          callReceiver = value.receiver;
+        }
+        supportedReceiver = supportedReceiver && callReceiver.has_value() &&
+                            body.findValue(*callReceiver) != nullptr;
+      }
+      if (supportedArguments && supportedReceiver) {
+        HirCallPlan plan;
+        if (callReceiver) {
+          const HirValue &input = *body.findValue(*callReceiver);
+          const bool mutableReceiver =
+              resolved != nullptr && resolved->declaration != nullptr &&
+              receiverAllowsMutation(
+                  resolved->declaration->receiverMutability());
+          plan.receiver = {
+              .value = *callReceiver,
+              .kind = input.info.category == ValueCategory::Place
+                          ? (mutableReceiver ? HirCallInputKind::MutableBorrow
+                                             : HirCallInputKind::ReadBorrow)
+                          : HirCallInputKind::Value,
+              .type = input.info.type,
+          };
+        }
+        plan.arguments.reserve(arguments.size());
+        for (std::size_t index = 0; index < arguments.size(); ++index) {
+          const SemanticType &parameter = value.parameterTypes[index];
+          plan.arguments.push_back(
+              {.parameterIndex = index,
+               .value = arguments[index],
+               .parameterType = parameter,
+               .kind = parameter.kind != SemanticType::Reference
+                           ? HirCallInputKind::Value
+                           : (parameter.referenceAccess == AccessMode::Mutable
+                                  ? HirCallInputKind::MutableBorrow
+                                  : HirCallInputKind::ReadBorrow)});
+        }
+        value.callPlan = std::move(plan);
       }
     }
     const HirValueId id = value.id;

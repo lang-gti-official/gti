@@ -1,6 +1,7 @@
 #include "gti/ast_printer.h"
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/lexer.h"
 #include "gti/optimization/effects.h"
 #include "gti/support.h"
 

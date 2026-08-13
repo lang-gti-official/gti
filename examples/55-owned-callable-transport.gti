@@ -1,0 +1,48 @@
+#include <std/memory>
+
+mut int cleanup_count = 0;
+
+class resource {
+  int value;
+
+public:
+  resource(int value) : value(value) {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() { cleanup_count++; }
+
+  int read() { return this.value; }
+};
+
+class callable_owner<T> {
+  T value;
+
+public:
+  callable_owner(T value) : value(std::move(value)) {}
+};
+
+T relay<T>(T value) {
+  return std::move(value);
+}
+
+callable_owner<T> own<T>(T value) {
+  return callable_owner<T>(std::move(value));
+}
+
+int transport() {
+  resource source = resource(42);
+  auto operation = [owned = std::move(source)]() -> int {
+    return owned.read();
+  };
+
+  auto returned = relay(std::move(operation));
+  int result = returned();
+  auto retained = own(std::move(returned));
+  return result;
+}
+
+int main() {
+  int result = transport();
+  std::println("owned callable transport completed");
+  return result - 42 + cleanup_count - 1;
+}

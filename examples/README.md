@@ -60,6 +60,8 @@ own `main` function.
 | `52-stateful-callables.gti` | reusable stateful call operators in source-defined algorithms |
 | `53-consuming-callables.gti` | one-shot `operator() &&` objects and path-checked generic consumption |
 | `54-owned-move-captures.gti` | explicit ownership transfer into an immutable closure environment and closure movement |
+| `55-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport with exactly-once cleanup |
+| `56-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive matching |
 
 Build and run an example from the repository root:
 

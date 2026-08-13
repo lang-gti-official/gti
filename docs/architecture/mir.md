@@ -19,9 +19,13 @@ it from host/backend flags. The current profile fact constrains frontend
 global/static validity; future synchronization and task operations will
 consume it only in their owning rows.
 
-The deterministic serialization is currently `mir-v8`/`mir-body-v8`. Version
-8 adds ordered closure capture operands, copy/move modes, exact environment
-symbols and capture-place projections. It retains version 7's consuming
+The deterministic serialization is currently `mir-v10`/`mir-body-v10`.
+Version 10 adds explicit call-input roles and materialization order for the
+bounded ordinary-call stage. It also includes exact owned-callable
+return/field transport, complete declared-field metadata, and constructor
+parameter-to-field move evidence introduced alongside that stage. It retains
+version 8's ordered closure capture operands, copy/move modes, exact environment
+symbols and capture-place projections and version 7's consuming
 callable capabilities and full concrete semantic type on lambda-instance
 records, so deterministic output exposes enclosing generic identity as well as
 physical closure shape. It also retains the version-6 exact
@@ -42,18 +46,30 @@ A `MirBody` owns:
   the corresponding value-owned `PlaceKey`;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
+- for the bounded ordinary scalar/reference-call slice, one non-removable,
+  non-reorderable `CallInput` checkpoint per receiver and argument. Each
+  checkpoint retains the source HIR value, call-site identity, receiver or
+  exact argument-index role, selected parameter type, and value/read-borrow/
+  mutable-borrow mode. Its single result has exactly one executable use by the
+  matching call, so the call consumes only prepared inputs rather than
+  reevaluating a source operand;
 - typed lexical/value drop obligations and per-instruction initialize, move,
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
-- exact confined-callable invocation and argument-boundary records. The
+- exact confined invocation and confined/owned argument-boundary records. The
   verifier permits this metadata only on calls; requires descriptors to be
   ordered, unique, within the call's operand list, and identical to the
   concrete target contract; and requires a confined invocation boundary if
   and only if the receiver traces to the matching enclosing callable-parameter
-  binding. `Owned` remains representational vocabulary only and is rejected
-  until exact generic transport and escape invariants land. Local environment
-  movement and cleanup are represented independently;
+  binding. An owned call argument must be the exact moved parameter operand.
+  An owned callee must either return that exact moved binding as a single-use
+  result transferred out of local cleanup, or return the exact owner
+  construction whose declared field and constructor initializer prove the
+  corresponding parameter-to-field move. Direct result/field materialization
+  is distinguished from a local temporary that requires an explicit
+  transfer-out event. Class records retain all declared fields so this proof
+  is not inferred from the lexical-drop subset;
 - read-, mut-, or once-callable invocation on each concrete callable call,
   plus the required and selected capability for each exact generic signature.
   Mutable invocation requires an exclusive or owned receiver. Once invocation
@@ -101,6 +117,19 @@ their semantic `float` or `double` type. The verifier requires the retained
 `BinaryFloat` format to match that type, and deterministic printing uses
 `f32:0x........` or `f64:0x................`. MIR contains no LLVM floating
 representation.
+
+Payload-enum construction and pattern extraction lower as distinct typed HIR
+values and `MirOperation::PayloadConstruct`/`PayloadExtract` instructions with
+the semantic enum, variant, field index, and ordered operands retained. An
+exhaustive payload switch carries that semantic fact in HIR; MIR terminates its
+otherwise-required unmatched CFG target with `Unreachable` instead of
+inventing a path to the switch exit. The current extracted fields are passive
+immutable copies, so this is not yet a move/borrow projection model.
+
+Valid passive unions retain their checked size, ABI alignment, and ordered
+field layout on semantic, HIR, and MIR class records. MIR does not infer an
+active field or add a union operation: member access remains an ordinary place
+operation carrying the frontend's unsafe classification.
 
 Each defined integer operation lowers as an ordinary call with one of nine
 exact intrinsic identities. Its effect-table entry is speculatable, removable
@@ -280,21 +309,29 @@ initialization, failure-edge rollback, object/vtable layout, calling
 conventions, a general ABI, or the runtime realization of every checked
 operation.
 
-It also does not yet implement
-[Execution Section 4.2](../language/execution.md#42-evaluation-order). The
-lowerer recursively visits many operands left to right and gives logical and
-conditional expressions explicit CFG, but that traversal is not a verified
-ordered child/materialization schedule and does not control production
-emission. Calls remain ordinary instructions after inline operand lowering;
-target-place formation and parameter/result materialization are incomplete.
-Module initializers and each class's static-field initializer body are separate
-rather than one source-graph-derived hosted sequence.
+It also does not yet completely implement
+[Execution Section 4.2](../language/execution.md#42-evaluation-order). For the
+bounded ordinary scalar/reference-call slice, the verifier requires the
+receiver input, argument inputs in exact source/parameter order, and final call
+to form a strict dominance/order chain. It rejects a direct unprepared operand,
+wrong call-site, duplicate or abandoned checkpoint, swapped argument index,
+type/role drift, and invocation before setup. Borrow-source, callable-source,
+and loan-flow checks trace through the checkpoint's one underlying operand.
+
+Other calls and expression families still rely on recursive lowering order,
+which is not a verified materialization schedule and does not control
+production emission. Class-value parameter construction, target-place
+formation, parameter/result storage, operators, packs, conditional families,
+and failure rollback are incomplete. Module initializers and each class's
+static-field initializer body remain separate rather than one
+source-graph-derived hosted sequence.
 
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations for the current
-failure-free place slice. M-EXEC-01 must now decompose receivers, parameters,
-target places, operators, branches, and program initialization into ordered
-instructions/CFG, with a `ProgramInitializationStepId` where applicable.
+failure-free place slice. Later M-EXEC-01 slices must extend the ordered input
+representation to class-value parameter construction, remaining call forms,
+target places, operators, branches, and program initialization, with a
+`ProgramInitializationStepId` where applicable.
 The verifier must reject use before materialization, duplicate target
 evaluation, invocation before parameter setup, cleanup-state mismatch at an
 edge, and a boundary with a live untransferred obligation. A structural edit

@@ -248,6 +248,7 @@ module.exports = grammar({
         1,
         seq(
           field("name", $.identifier),
+          optional(field("payload", $.parameter_clause)),
           optional(seq("=", field("value", $._expression_not_comma))),
         ),
       ),
@@ -320,7 +321,7 @@ module.exports = grammar({
         optional(
           field("attributes", $.class_attribute_list),
         ),
-        field("kind", choice("class", "struct", "interface")),
+        field("kind", choice("class", "struct", "interface", "union")),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         optional(field("bases", $.base_clause)),

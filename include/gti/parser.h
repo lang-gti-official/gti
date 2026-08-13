@@ -116,7 +116,8 @@ private:
         peekAt(1).kind == TokenKind::LEFT_BRACKET) {
       return attributedClassDeclaration();
     }
-    if (match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE})) {
+    if (match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
+               TokenKind::UNION})) {
       return classDeclaration({}, previous());
     }
     if (match({TokenKind::SEMICOLON})) {
@@ -134,7 +135,7 @@ private:
     throw error(
         peek(),
         "Expect a namespace, concept, enum class, class, struct, interface, "
-        "function, or variable declaration.");
+        "union, function, or variable declaration.");
   }
 
   StmtPtr attributedDeclaration() {
@@ -307,18 +308,20 @@ private:
             "Expect ']]' after class or interface attributes.");
     consume(TokenKind::RIGHT_BRACKET,
             "Expect ']]' after class or interface attributes.");
-    if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE})) {
+    if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
+                TokenKind::UNION})) {
       throw error(peek(), "These attributes apply only to class, "
-                          "struct, or interface declarations.");
+                          "struct, interface, or union declarations.");
     }
     return classDeclaration(std::move(attributes), previous());
   }
 
   StmtPtr classDeclaration(std::vector<Token> attributes, Token keyword) {
-    const ClassKind kind = keyword.kind == TokenKind::STRUCT ? ClassKind::Struct
-                           : keyword.kind == TokenKind::INTERFACE
-                               ? ClassKind::Interface
-                               : ClassKind::Class;
+    const ClassKind kind =
+        keyword.kind == TokenKind::STRUCT      ? ClassKind::Struct
+        : keyword.kind == TokenKind::INTERFACE ? ClassKind::Interface
+        : keyword.kind == TokenKind::UNION     ? ClassKind::Union
+                                               : ClassKind::Class;
     Token name = consume(TokenKind::IDENTIFIER, "Expect type name.");
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
@@ -384,11 +387,16 @@ private:
       do {
         Token enumerator =
             consume(TokenKind::IDENTIFIER, "Expect enumerator name.");
+        std::vector<Parameter> payload;
+        if (match({TokenKind::LEFT_PAREN})) {
+          payload = parameterList();
+        }
         ExprPtr initializer;
         if (match({TokenKind::EQUAL})) {
           initializer = assignment();
         }
-        enumerators.push_back({std::move(enumerator), std::move(initializer)});
+        enumerators.push_back({std::move(enumerator), std::move(initializer),
+                               std::move(payload)});
       } while (match({TokenKind::COMMA}) && !check(TokenKind::RIGHT_BRACE));
     }
 
@@ -2313,8 +2321,8 @@ private:
              check(TokenKind::AT) || check(TokenKind::CLASS) ||
              check(TokenKind::CONCEPT) || check(TokenKind::ENUM) ||
              check(TokenKind::EXTERN) || check(TokenKind::STRUCT) ||
-             check(TokenKind::INTERFACE) || check(TokenKind::NAMESPACE) ||
-             check(TokenKind::USING))) {
+             check(TokenKind::INTERFACE) || check(TokenKind::UNION) ||
+             check(TokenKind::NAMESPACE) || check(TokenKind::USING))) {
           return;
         }
         if (allowStatements &&

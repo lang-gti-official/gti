@@ -42,7 +42,6 @@ int try = 1;
 int typedef = 1;
 int typeid = 1;
 int typename = 1;
-int union = 1;
 int unsigned = 1;
 int volatile = 1;
 int wchar_t = 1;

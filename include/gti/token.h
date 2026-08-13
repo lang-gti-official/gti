@@ -117,6 +117,7 @@ enum class TokenKind : std::uint8_t {
   SIZEOF,
   SWITCH,
   TRUE,
+  UNION,
   UNSAFE,
   USING,
   VIRTUAL,
@@ -282,6 +283,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"sizeof", TokenKind::SIZEOF},
     {"switch", TokenKind::SWITCH},
     {"true", TokenKind::TRUE},
+    {"union", TokenKind::UNION},
     {"unsafe", TokenKind::UNSAFE},
     {"using", TokenKind::USING},
     {"virtual", TokenKind::VIRTUAL},
@@ -337,9 +339,9 @@ inline constexpr std::string_view cppReservedIdentifiers[]{
     "short",       "signed",     "static_assert",
     "static_cast", "template",   "thread_local",
     "throw",       "try",        "typedef",
-    "typeid",      "typename",   "union",
-    "unsigned",    "volatile",   "wchar_t",
-    "xor",         "xor_eq",
+    "typeid",      "typename",   "unsigned",
+    "volatile",    "wchar_t",    "xor",
+    "xor_eq",
 };
 
 inline constexpr bool isCppReservedIdentifier(std::string_view spelling) {
@@ -539,6 +541,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "SWITCH";
   case TokenKind::TRUE:
     return "TRUE";
+  case TokenKind::UNION:
+    return "UNION";
   case TokenKind::UNSAFE:
     return "UNSAFE";
   case TokenKind::USING:

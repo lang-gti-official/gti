@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.125.0
+Checkpoint: 0.127.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,7 +134,7 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.125.0 |
+| Foundation | Evidence at 0.127.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -149,9 +149,9 @@ start a later phase:
 | Place/ownership authority | M-OWN-01 defines one snapshot/body-scoped value key, exhaustive equal/prefix/disjoint/may-alias relation, finite ownership-state transfer, and semantics -> HIR -> MIR authority/invalidation contract. |
 | Temporary/drop authority | M-LIFE-01 gives supported lexical storage and materializing values typed HIR/MIR obligations, exact cleanup descriptors, lifecycle transitions, normal-edge verification, and recursive cleanup-owning global/static rejection. |
 | Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
-| Target/layout queries | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian scalar layout. Type-only `sizeof`/`alignof` expose exact unsigned-64 frontend constants for supported scalars, pointers, aliases, and positive concrete arrays; installed probes check the host facts against each native build target. |
+| Target/layout queries | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian layout. Type-only `sizeof`/`alignof` expose exact unsigned-64 frontend constants for supported scalars, pointers, integral scoped enums, passive unions, aliases, and positive concrete arrays; installed probes check the host facts against each native build target. |
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
-| Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move closure environments now implement its bounded capture lifecycle. |
+| Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move environments plus exact generic return and one-field owner transport implement its current bounded lifecycle. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. |
 
@@ -235,9 +235,9 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `M-EXEC-01` | **ready** | `D-EXEC-01` and `M-LIFE-01` done | Lower one complete ordered expression family into authoritative MIR. | The selected family has deterministic HIR/MIR order, balanced obligations, and verifier mutations. |
+| 1 | `M-EXEC-01` | **in progress** | `D-EXEC-01` and `M-LIFE-01` done | Extend the landed scalar/reference ordinary-call schedule to the next bounded call/materialization family. | The selected family has deterministic HIR/MIR order, balanced obligations, and verifier mutations. |
 | 2 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 3 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 3 | `C-MIG-02` | **in progress** | none; parallel lane | Establish the first parser compiled-library seam after completing the SourceLoader extraction. | Parser recovery, focused frontend/LSP/installed-library checks, and asserted diagnostics remain unchanged. |
 
 Do not bypass named prerequisites by beginning `C-ATOM-01`, `C-THREAD-01`,
 public allocator APIs, native callbacks/out-parameter families, or an
@@ -375,8 +375,9 @@ make the proposal feel concrete.
   temporary/drop obligations to M-LIFE; ordered CFG and invalidation to M-EXEC;
   and production emission to M-BACK. Current conservative semantics and the
   compatibility emitter remain explicit implementation gaps.
-- **Unlocked:** `D-COMPAT-01`, `M-OWN-02`, and `M-LIFE-01` are complete, so
-  `M-EXEC-01` is ready. The conservative
+- **Unlocked:** `D-COMPAT-01`, `M-OWN-02`, and `M-LIFE-01` are complete, and
+  the first bounded `M-EXEC-01` ordinary-call schedule is implemented. The
+  conservative
   both-argument overlap restriction may be removed per operation family only
   after ordered MIR and its matching production backend migration are
   authoritative.
@@ -629,8 +630,10 @@ analysis, HIR, MIR, and the backend.
 
 ### M-EXEC-01: Ordered Expression And Call Lowering
 
-- **State/role:** ready; `M-LIFE-01` and `D-EXEC-01` are done;
-  systems-readiness implementation.
+- **State/role:** in progress; `M-LIFE-01` and `D-EXEC-01` are done. Concrete
+  non-intrinsic ordinary calls with scalar/reference parameters now retain
+  exact HIR input roles and verified MIR receiver/argument/invocation order;
+  the remaining families are systems-readiness implementation.
 - **Scope:** Decompose one complete expression family into ordered MIR values
   and temporaries, including receivers, arguments, transient loans, and cleanup.
   Extend one family per prompt: ordinary calls, construction/parameter setup,
@@ -640,6 +643,14 @@ analysis, HIR, MIR, and the backend.
   conservative safe-GTI call/access proof rejecting any initializer that may
   observe a later step. Add structural verifier mutations for ordering,
   materialization, full-expression boundaries, and cleanup.
+- **Landed bounded slice:** Eligible ordinary calls retain one HIR receiver and
+  source-ordered arguments with exact selected parameter types and
+  value/read-borrow/mutable-borrow roles. MIR emits one-use `CallInput`
+  checkpoints and verifies call-site, role, index, type, dominance, and strict
+  receiver-then-arguments-then-invocation order. Mutation tests cover wrong
+  sites, duplicate/abandoned and bypassed inputs, type drift, and reordering.
+  Class-value parameters, packs, overloaded/callable calls, failure rollback,
+  backend emission, and semantic borrow relaxation remain out of this slice.
 - **Non-goals:** broad AST emitter rewrite, production body emission, or an
   IIFE workaround. M-BACK owns production C++ consumption of this schedule.
 - **Exit gate:** deterministic HIR/MIR snapshots and verifier mutations prove
@@ -1204,9 +1215,10 @@ name recognition.
 - **State/role:** in progress; `D-CALL-01`, `M-LIFE-01`, explicit confined
   boundary records, exact context-supplied value results, repeatable read/mut
   invocation, consuming once-callable cardinality, and ordered local
-  copy/move closure environments are done. Exact generic owned return/field
-  transport remains systems-readiness implementation shared by algorithms,
-  tasks, and callbacks.
+  copy/move closure environments are done. Exact same-type generic return and
+  the bounded one-field generic owner are also done; broader public
+  callable/predicate capabilities and external owners remain
+  systems-readiness implementation shared by algorithms, tasks, and callbacks.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
   one independently tested sub-slice at a time. Keep callable identity,
@@ -1278,17 +1290,25 @@ name recognition.
 
 ### L-SUM-01: Payload Enums And Exhaustive Matching
 
-- **State/role:** ready; prerequisites `D-LANG-01`, `M-OWN-02`,
-  `M-LIFE-01`, and `S-LAYOUT-01` are done; systems-readiness work for the
-  compiler-AST/protocol workload.
-- **Scope:** Design nominal payload cases, construction, move/borrow matching,
-  exhaustiveness, partial initialization, drop, generic payloads, and layout.
-  Land construction and matching in bounded payload families.
-- **Non-goals:** C unions, implicit conversions, open variants, or making
-  `std::variant` compiler magic.
-- **Exit gate:** the first closed payload family has exhaustive diagnostics,
-  exact partial-initialization/drop state, generic positive/negative tests,
-  deterministic layout facts, and O0/O3 runtime parity.
+- **State/role:** in progress; prerequisites `D-LANG-01`, `M-OWN-02`,
+  `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
+  payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,
+  formatter, Tree-sitter, and LSP tooling.
+- **Implemented slice:** Nominal payload cases construct by exact case calls.
+  `switch` accepts qualified case patterns, creates immutable copied bindings,
+  and requires a `default` or every variant. Semantic variant identity and
+  exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
+  `std::variant` wrapper without making that library type source semantics.
+- **Remaining scope:** Add ownership-aware move/borrow matching, partial
+  initialization and drop, generic payloads, and deterministic layout in
+  separately proven families.
+- **Non-goals:** Implicit conversions, open variants, making `std::variant`
+  compiler magic, or treating the separately implemented passive native union
+  as a tagged sum or C ABI union.
+- **Exit gate:** an ownership-capable generic payload family has exact
+  partial-initialization/drop state, move/borrow and positive/negative tests,
+  deterministic layout facts, and O0/O3 runtime parity. The passive first slice
+  already has exact construction, exhaustive diagnostics, and runtime parity.
 
 ### L-ERR-01: Error Propagation Operator
 
@@ -1506,7 +1526,7 @@ The accepted detailed plan remains
 
 | ID | State | Next bounded result | Serialization rule |
 | --- | --- | --- | --- |
-| `C-MIG-02` | ready | Move one SourceLoader or parser responsibility behind its existing compiled interface, preserving diagnostics and recovery. | Do before large parser recovery/syntax work; never mix movement with behavior change. |
+| `C-MIG-02` | in progress | SourceLoader is compiled; next move one non-template parser responsibility behind its existing interface, preserving diagnostics and recovery. | Do before large parser recovery/syntax work; never mix movement with behavior change. |
 | `C-MIG-03` | ready | Separate semantic record/query declarations from one responsibility-focused algorithm source. Ownership/type traits are the preferred seam before concurrency expansion. | Use bounded sub-slices; do not attempt a one-prompt 20k-line header split. |
 | `C-MIG-04` | ready | Move one HIR or MIR lowerer responsibility into compiled sources, but serialize with any active semantic/lifetime row touching the same implementation. | Mechanical extraction and new lifetime semantics land in separate commits. |
 | `C-MIG-06` | blocked | After a sufficient `BackendInput` and MIR body family exist, isolate `gti_cpp_backend`. | The library split must not become the backend migration itself. |
@@ -1606,7 +1626,7 @@ owned by the rows and domain plans above.
 | Concurrency memory model | **adopted durable decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
 | Transfer/share facts and concurrent globals | **complete policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; bounded public concurrency is systems-ready work |
 | Public threads/atomics/mutex | **systems-readiness work-queue profile** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
-| Evaluation order | **contract adopted; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
+| Evaluation order | **contract adopted; bounded ordinary-call schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference ordinary-call HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` done -> `M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
 | Source text and documentation comments | **systems-readiness contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
 | Target/data-layout facts and `sizeof`/`alignof` | **complete bounded systems-readiness substrate** | `S-LAYOUT-01` and `S-LAYOUT-02` done; aggregate/native layout remains client-driven |
@@ -1616,10 +1636,10 @@ owned by the rows and domain plans above.
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | systems-readiness library critical path | `L-RANGE-01` -> `L-RANGE-03` |
 | Native C records/handles/callbacks | records, adapter, and pointer-only opaque identity complete; callback work remains systems-readiness | `S-ABI-01/02/03` + first `S-FFI-02` sub-slice done; callable lifetime/failure/executable authority -> `S-CALL-01` |
-| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v8 environments, and explicit owned move capture implemented; exact generic owned return/field escape remains systems-readiness work shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> remaining `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
+| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return, and one-field generic owner implemented; broader owner/extraction/concept work remains systems-readiness work shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> remaining `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **systems-readiness language work** | `L-SUM-01` after partial initialization, drop, and layout |
+| Payload enums/matching | **in progress:** passive exact construction and exhaustive copied matching complete; ownership, generics, and stable layout remain | `L-SUM-01` |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
@@ -1678,12 +1698,15 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended unowned prompt is `M-EXEC-01`. M-LIFE-01 now makes the
-supported normal-exit temporary and active-drop obligations authoritative in
-HIR and MIR, so ordered expression/call materialization is the next executable-
-lifetime slice on the compiler critical path. It is first because every
-accepted readiness workload consumes its result, not because lowering
-machinery is independently the product. After it lands, select the smallest
-newly unblocked vertical slice from an outcome lane.
+The next recommended unowned prompt remains the next bounded `M-EXEC-01`
+family. M-LIFE-01 makes the supported normal-exit temporary and active-drop
+obligations authoritative in HIR and MIR, and the first scalar/reference
+ordinary-call slice now proves the schedule shape. Class-value parameter setup,
+remaining call forms, target places, operators, compound expressions, and
+hosted initialization still need the same executable-lifetime treatment. Keep
+the next prompt to one coherent family; every accepted readiness workload
+consumes this result, but lowering machinery is not independently the product.
+After the row's remaining families land, select the smallest newly unblocked
+vertical slice from an outcome lane.
 `D-COMPAT-01` is complete on the independent release-policy lane. Stop after
 the selected row rather than beginning its successor.

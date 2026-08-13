@@ -181,12 +181,18 @@ enum class MirInstructionKind {
   Modify,
   Move,
   Borrow,
+  CallInput,
   Call,
   Construct,
   Drop,
   EndBorrow,
   Lifecycle,
   Count,
+};
+
+enum class MirCallInputRole {
+  Receiver,
+  Argument,
 };
 
 enum class MirOperation {
@@ -200,6 +206,8 @@ enum class MirOperation {
   ExpectedHasValue,
   Closure,
   PackExpansion,
+  PayloadConstruct,
+  PayloadExtract,
   Unexpected,
   AddressOf,
   PointerAdd,
@@ -249,6 +257,10 @@ struct MirInstruction {
   MirInstructionKind kind = MirInstructionKind::Compute;
   HirValueId hirValue = 0;
   HirStatementId hirStatement = 0;
+  HirValueId callSite = 0;
+  std::optional<MirCallInputRole> callInputRole;
+  std::size_t callInputIndex = 0;
+  HirCallInputKind callInputKind = HirCallInputKind::Value;
   UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None;
   bool rawMemoryAccess = false;
   std::optional<MirValueId> result;
@@ -266,6 +278,8 @@ struct MirInstruction {
   std::optional<Literal> literal;
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
+  std::optional<std::size_t> enumVariant;
+  std::optional<std::size_t> payloadIndex;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
@@ -425,6 +439,14 @@ struct MirClassFieldLifecycle {
   bool requiresActiveCleanup = false;
 };
 
+struct MirClassFieldInfo {
+  HirBindingId field = 0;
+  SymbolId symbol = 0;
+  SemanticType type = SemanticType::Unknown;
+  DropKind dropKind = DropKind::Trivial;
+  bool requiresActiveCleanup = false;
+};
+
 struct MirClassInstance {
   HirClassInstanceId id = 0;
   ClassId declaration = 0;
@@ -436,9 +458,11 @@ struct MirClassInstance {
   bool polymorphic = false;
   bool cAbiRecord = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
+  std::optional<UnionLayout> unionLayout;
   std::optional<HirDestructorInstanceId> destructor;
   bool requiresActiveDropState = false;
   bool requiresActiveCleanup = false;
+  std::vector<MirClassFieldInfo> declaredFields;
   std::vector<MirClassFieldLifecycle> fields;
   MirBody fieldInitializers;
   MirBody staticFieldInitializers;
@@ -465,6 +489,7 @@ struct MirCallableParameter {
   SemanticType callableType = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
   CallableBoundary boundary = CallableBoundary::Confined;
+  std::optional<CallableOwnedTransport> ownedTransport;
   std::vector<MirCallableSignature> signatures;
   std::vector<MirCallableForwarding> forwardings;
 };
@@ -505,6 +530,7 @@ struct MirConstructorInitializer {
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
+  std::optional<std::size_t> ownedParameter;
 };
 
 struct MirConstructorInstance {
@@ -2298,6 +2324,10 @@ private:
       return MirOperation::Literal;
     case HirValueKind::PackExpansion:
       return MirOperation::PackExpansion;
+    case HirValueKind::PayloadConstruction:
+      return MirOperation::PayloadConstruct;
+    case HirValueKind::PayloadExtraction:
+      return MirOperation::PayloadExtract;
     case HirValueKind::QualifiedName:
       return value.enumOwner && value.enumValue ? MirOperation::EnumConstant
                                                 : MirOperation::None;
@@ -2468,9 +2498,36 @@ private:
     return id;
   }
 
+  [[nodiscard]] MirOperand
+  prepareCallInput(HirValueId callSite, HirValueId sourceValue,
+                   const SemanticType &type, HirCallInputKind inputKind,
+                   MirCallInputRole role, std::size_t index,
+                   MirOperand operand) {
+    ExpressionInfo info{.type = type,
+                        .category = ValueCategory::Value,
+                        .access = AccessMode::ReadOnly,
+                        .traits = semanticTraits(type)};
+    if (const HirValue *sourceValueInfo = findValue(sourceValue);
+        sourceValueInfo != nullptr && sourceValueInfo->info.type == type) {
+      info.traits = sourceValueInfo->info.traits;
+    }
+    const MirValueId result = appendValue(sourceValue, info);
+    (void)appendInstruction({.kind = MirInstructionKind::CallInput,
+                             .hirValue = sourceValue,
+                             .callSite = callSite,
+                             .callInputRole = role,
+                             .callInputIndex = index,
+                             .callInputKind = inputKind,
+                             .result = result,
+                             .operands = {std::move(operand)},
+                             .info = info});
+    return {.kind = MirOperandKind::Value, .value = result, .type = type};
+  }
+
   void emitCall(const HirValue &value) {
     MirInstruction call{.kind = MirInstructionKind::Call,
                         .hirValue = value.id,
+                        .callSite = value.callPlan ? value.id : 0,
                         .result = resultFor(value),
                         .intrinsic = value.intrinsic,
                         .dispatch = value.dispatch,
@@ -2484,7 +2541,25 @@ private:
                         .callableInvocation = value.callableInvocation,
                         .info = value.info};
 
-    if (const std::optional<HirValueId> receiver = receiverValue(value)) {
+    const std::vector<HirValueId> arguments = callArgumentValues(value);
+    std::optional<MirOperand> sourceReceiver;
+    std::vector<MirOperand> sourceArguments;
+    sourceArguments.reserve(arguments.size());
+
+    if (value.callPlan) {
+      if (value.callPlan->receiver) {
+        const HirCallReceiver &receiver = *value.callPlan->receiver;
+        const AccessMode access =
+            receiver.kind == HirCallInputKind::MutableBorrow
+                ? AccessMode::Mutable
+                : AccessMode::ReadOnly;
+        sourceReceiver = receiverOperand(receiver.value, access);
+        call.receiver = prepareCallInput(
+            value.id, receiver.value, receiver.type, receiver.kind,
+            MirCallInputRole::Receiver, 0, *sourceReceiver);
+      }
+    } else if (const std::optional<HirValueId> receiver =
+                   receiverValue(value)) {
       const AccessMode access = receiverAccess(value);
       call.receiver = receiverOperand(*receiver, access);
       if (const HirValue *source = findValue(*receiver);
@@ -2494,24 +2569,35 @@ private:
       }
     }
 
-    if (value.lambdaTarget && !value.operands.empty() &&
+    if (!value.callPlan && value.lambdaTarget && !value.operands.empty() &&
         !value.functionTarget) {
-      const std::size_t argumentCount = callArgumentValues(value).size();
+      const std::size_t argumentCount = arguments.size();
       if (value.operands.size() > argumentCount) {
         call.receiver = valueOperand(value.operands.front());
       }
     }
 
-    const std::vector<HirValueId> arguments = callArgumentValues(value);
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-      const SemanticType parameter =
-          index < value.parameterTypes.size()
-              ? value.parameterTypes[index]
-              : (findValue(arguments[index]) == nullptr
-                     ? SemanticType::Unknown
-                     : findValue(arguments[index])->info.type);
-      call.parameterTypes.push_back(parameter);
-      call.operands.push_back(argumentOperand(arguments[index], parameter));
+    if (value.callPlan) {
+      for (const HirCallArgument &argument : value.callPlan->arguments) {
+        call.parameterTypes.push_back(argument.parameterType);
+        sourceArguments.push_back(
+            argumentOperand(argument.value, argument.parameterType));
+        call.operands.push_back(
+            prepareCallInput(value.id, argument.value, argument.parameterType,
+                             argument.kind, MirCallInputRole::Argument,
+                             argument.parameterIndex, sourceArguments.back()));
+      }
+    } else {
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const SemanticType parameter =
+            index < value.parameterTypes.size()
+                ? value.parameterTypes[index]
+                : (findValue(arguments[index]) == nullptr
+                       ? SemanticType::Unknown
+                       : findValue(arguments[index])->info.type);
+        call.parameterTypes.push_back(parameter);
+        call.operands.push_back(argumentOperand(arguments[index], parameter));
+      }
     }
 
     const auto operandLoan = [&](const MirOperand &operand) {
@@ -2540,15 +2626,27 @@ private:
     };
     MirLoanId originLoan = 0;
     if (value.borrowOrigin == BorrowOriginKind::Receiver) {
-      if (call.receiver) {
-        originLoan = operandLoan(*call.receiver);
+      const std::optional<MirOperand> &receiver =
+          sourceReceiver ? sourceReceiver : call.receiver;
+      if (receiver) {
+        originLoan = operandLoan(*receiver);
       }
     } else if (value.borrowOrigin == BorrowOriginKind::Argument &&
                value.borrowArgument < arguments.size() &&
                value.borrowArgument < call.operands.size()) {
-      originLoan = operandLoan(call.operands[value.borrowArgument]);
+      const MirOperand &argument = value.borrowArgument < sourceArguments.size()
+                                       ? sourceArguments[value.borrowArgument]
+                                       : call.operands[value.borrowArgument];
+      originLoan = operandLoan(argument);
     }
-    const MirPlaceId origin = borrowOriginPlace(value, call);
+    MirInstruction originCall = call;
+    if (sourceReceiver) {
+      originCall.receiver = sourceReceiver;
+    }
+    if (!sourceArguments.empty()) {
+      originCall.operands = sourceArguments;
+    }
+    const MirPlaceId origin = borrowOriginPlace(value, originCall);
     call.borrowOrigin = value.borrowOrigin;
     call.borrowArgument = value.borrowArgument;
     call.borrowAccess = value.borrowAccess;
@@ -3222,6 +3320,8 @@ private:
                                .literal = value->literal,
                                .enumOwner = value->enumOwner,
                                .enumValue = value->enumValue,
+                               .enumVariant = value->enumVariant,
+                               .payloadIndex = value->payloadIndex,
                                .intrinsic = value->intrinsic,
                                .lambdaTarget = value->lambdaTarget,
                                .info = value->info};
@@ -4252,9 +4352,12 @@ private:
                                            return label.isDefault;
                                          });
                     });
+    const bool coversEveryValue = hasDefault || statement.exhaustiveSwitch;
     const MirBlockId unmatchedBlock =
-        !hasDefault && !statement.endedLoans.empty() ? appendBlock()
-                                                     : exitBlock;
+        statement.exhaustiveSwitch
+            ? appendBlock()
+            : (!hasDefault && !statement.endedLoans.empty() ? appendBlock()
+                                                            : exitBlock);
 
     MirTerminator terminator{.kind = MirTerminatorKind::Switch,
                              .hirStatement = statement.id,
@@ -4283,7 +4386,7 @@ private:
         switchBindingLoans;
     normalizeSemanticLoanState(statement.endedLoans, exitScopes,
                                exitBindingLoans);
-    if (hasDefault && !statement.switchArms.empty()) {
+    if (coversEveryValue && !statement.switchArms.empty()) {
       std::vector<SemanticLoanId> endedOnEveryArm =
           statement.switchArms.front().entryEndedLoans;
       std::erase_if(endedOnEveryArm, [&](SemanticLoanId loan) {
@@ -4304,7 +4407,14 @@ private:
         }
       }
     }
-    if (unmatchedBlock != exitBlock) {
+    if (statement.exhaustiveSwitch) {
+      current = unmatchedBlock;
+      scopes = switchScopes;
+      temporaryDrops = switchTemporaryDrops;
+      bindingLoans = switchBindingLoans;
+      terminate({.kind = MirTerminatorKind::Unreachable,
+                 .hirStatement = statement.id});
+    } else if (unmatchedBlock != exitBlock) {
       current = unmatchedBlock;
       scopes = switchScopes;
       temporaryDrops = switchTemporaryDrops;
@@ -4325,6 +4435,24 @@ private:
       scopes.push_back({});
       endSemanticLoans(statement.switchArms[armIndex].entryEndedLoans,
                        statement.id);
+      for (const HirSwitchArm::PayloadBinding &payload :
+           statement.switchArms[armIndex].payloadBindings) {
+        const HirBinding *binding = findBinding(payload.binding);
+        const MirPlaceId destination = placeForBinding(payload.binding);
+        if (binding == nullptr || destination == 0 || payload.value == 0) {
+          valid = false;
+          continue;
+        }
+        (void)appendInstruction({.kind = MirInstructionKind::Initialize,
+                                 .hirStatement = statement.id,
+                                 .destination = destination,
+                                 .operands = {valueOperand(payload.value)},
+                                 .info = {.type = binding->info.type,
+                                          .category = ValueCategory::Place,
+                                          .access = binding->info.access,
+                                          .traits = binding->info.traits}});
+        registerDrop(payload.binding, destination);
+      }
       lowerStatements(statement.switchArms[armIndex].statements);
       if (!terminated()) {
         if (temporaryDrops != switchTemporaryDrops) {
@@ -4531,11 +4659,18 @@ public:
           .polymorphic = instance.polymorphic,
           .cAbiRecord = instance.cAbiRecord,
           .cAbiLayout = instance.cAbiLayout,
+          .unionLayout = instance.unionLayout,
           .destructor = instance.destructor,
           .requiresActiveDropState = instance.requiresActiveDropState,
           .requiresActiveCleanup = instance.requiresActiveCleanup};
       lowered.fields.reserve(instance.fields.size());
       for (const HirClassField &field : instance.fields) {
+        lowered.declaredFields.push_back(
+            {.field = field.binding,
+             .symbol = field.info.symbol,
+             .type = field.info.type,
+             .dropKind = field.info.traits.drop,
+             .requiresActiveCleanup = field.requiresActiveCleanup});
         if (field.info.traits.drop != DropKind::Lexical) {
           continue;
         }
@@ -4577,7 +4712,9 @@ public:
         MirCallableParameter lowered{.parameterIndex = parameter.parameterIndex,
                                      .callableType = parameter.callableType,
                                      .access = parameter.access,
-                                     .boundary = parameter.boundary};
+                                     .boundary = parameter.boundary,
+                                     .ownedTransport =
+                                         parameter.ownedTransport};
         lowered.signatures.reserve(parameter.signatures.size());
         for (const HirCallableSignature &signature : parameter.signatures) {
           lowered.signatures.push_back(
@@ -4644,7 +4781,8 @@ public:
              .arguments = initializer.arguments,
              .storesReference = initializer.storesReference,
              .borrowAccess = initializer.borrowAccess,
-             .generatedDefault = initializer.generatedDefault});
+             .generatedDefault = initializer.generatedDefault,
+             .ownedParameter = initializer.ownedParameter});
       }
       result.program.constructors.push_back(
           {.id = instance.id,

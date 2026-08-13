@@ -199,3 +199,22 @@ int capture_owned(int value) {
   auto operation = [owned = std::move(value)]() -> int { return owned; };
   return operation();
 }
+
+union Bits {
+  mut uint32_t integer;
+  float real;
+};
+
+enum class Event {
+  idle,
+  point(int32_t x, int32_t y),
+};
+
+int inspect_event(Event event) {
+  switch (event) {
+  case Event::idle:
+    return 0;
+  case Event::point(x, y):
+    return x + y;
+  }
+}

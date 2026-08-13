@@ -59,10 +59,12 @@ Each closure-producing `HirValue` carries its initializer operands in written
 left-to-right order; an owned capture is an ordinary HIR `Move` with the same
 place/ownership event used elsewhere. Callable parameters and call values
 use an explicit boundary enum rather than a generic "non-escaping" boolean. The
-only boundary
-HIR currently produces is `Confined`; `Owned` is reserved vocabulary for a
-later transport/escape slice that can consume the now-explicit environment
-movement and cleanup facts. Confined
+`Confined` boundary retains invocation/forwarding requirements. The bounded
+`Owned` boundary retains either an exact same-type generic return or an exact
+generic owner/field destination, after semantics has required an explicit
+source move. Concrete lowering drops symbolic owned contracts from non-lambda
+instantiations, substitutes the exact closure and destination types, and
+retains constructor parameter-to-field move evidence. Confined
 signatures retain exact `void`, `bool`, or context-supplied non-reference value
 results without tracked borrowed state or lambda identity after concrete
 generic substitution. Every signature carries its required read/mut/once
@@ -103,10 +105,23 @@ HIR bodies retain source operand vectors and attach semantic type/category,
 access, ownership, selected call/operator/constructor, intrinsic, dispatch,
 unsafe, move, and borrow facts to explicit values and statements. Generated
 range operations and constructor initialization use the same resolved call
-records as ordinary source. This current child order is useful provenance, but
-it is not yet a complete executable schedule: calls do not carry an explicit
-receiver/parameter materialization plan, conditional values list both arms,
-and module/static initializer bodies are not one ordered program plan.
+records as ordinary source.
+
+The first bounded M-EXEC-01 slice gives an eligible ordinary call a
+`HirCallPlan`. Eligibility is deliberately narrow: the call is a concrete,
+non-intrinsic, non-construction, non-operator function call; source argument
+cardinality exactly matches the selected parameters; no pack expansion is
+present; and every parameter is a scalar, enum, pointer, string view, or
+reference. The plan names the receiver, when present, once and records each
+argument in source order with its exact concrete parameter type and value,
+read-borrow, or mutable-borrow role. The legacy operand vector remains source
+provenance and compatibility-backend input; MIR consumes the plan as schedule
+authority for this slice.
+
+This is not yet a complete executable schedule. Class-value parameter
+construction, packs, overloaded/callable calls, operators, conditionals,
+target-place formation, and module/static initializer bodies remain outside
+the bounded plan.
 
 M-LIFE-01 maps each AST full-expression root selected by `SemanticModel` to a
 snapshot-local `HirFullExpressionId`; HIR does not infer endpoints from
@@ -115,11 +130,12 @@ type requires cleanup carry typed `HirDropObligation` records; class records
 retain the exact concrete destructor identity and whether their own declared
 cleanup needs active-drop state. These records describe lifetime and cleanup
 authority, not an evaluation schedule. Under the accepted D-EXEC-01 contract,
-M-EXEC-01 must still retain named concrete child roles in semantic order,
-destination-materialization intent, and the semantic program-initialization
-step identity before linearizing complete expression families into MIR. HIR
-does not select source endpoints, repeat borrow validity, or infer that vector
-position alone is sufficient for every expression kind.
+later M-EXEC-01 slices must extend named concrete child roles to the remaining
+expression families, retain destination-materialization intent, and add the
+semantic program-initialization step identity before those families are
+linearized into MIR. HIR does not select source endpoints, repeat borrow
+validity, or infer that vector position alone is sufficient for every
+expression kind.
 
 `HirValueKind::LayoutQuery` preserves layout-query provenance while carrying
 the semantic model's exact `uint64_t` constant and numeric literal value.

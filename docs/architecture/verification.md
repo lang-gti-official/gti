@@ -73,14 +73,15 @@ where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
 
 For bounded layout queries, `layout_query_pipeline` owns the reserved-word and
-type-only grammar, alias/raw-pointer/recursive positive-array matrix,
-`uint64_t` constant retention, `GTI-S2063` spans, HIR query provenance, MIR
-literal lowering, and the absence of native layout operators in emitted query
-expressions. `layout_query_native_boundary` compares the host selection with
-an independent scalar, pointer, and nonzero array oracle; synthetic
-arm64/x86_64 macOS/Linux/Windows selections prove deterministic frontend facts.
-Zero or symbolic extents, overflow, references, nominal aggregates, enums, and
-other unsupported categories must fail before lowering.
+type-only grammar, alias/raw-pointer/integral-enum/passive-union/recursive
+positive-array matrix, `uint64_t` constant retention, `GTI-S2063` spans, HIR
+query provenance, MIR literal lowering, and the absence of native layout
+operators in emitted query expressions. `layout_query_native_boundary`
+compares the host selection with an independent scalar, pointer, and nonzero
+array oracle; synthetic arm64/x86_64 macOS/Linux/Windows selections prove
+deterministic frontend facts. Zero or symbolic extents, overflow, references,
+ordinary nominal aggregates, payload enums, and other unsupported categories
+must fail before lowering.
 
 For bounded native records, `native_record_pipeline` owns the source opt-in,
 passive-record and field allowlists, checked source-order layout, `GTI-S2064`,
@@ -99,6 +100,13 @@ layout. `native_record_pipeline` owns `GTI-S2065`, pointer-only semantic
 identity, formatter shape, and the absence of an emitted GTI body.
 The installed-library smoke compiles `NativeHeaderBackend` from the exported
 compiler package.
+
+For sum types, `sum_type_pipeline` owns union/payload parsing, passive union
+layout, unsafe member diagnostics, payload metadata, exact construction,
+exhaustiveness, HIR/MIR operations, impossible unmatched CFG edges, formatter
+shape, and backend representation checks. `sum_types_runtime` compiles and
+runs the same one-evaluation construction/matching path under C++20 and C++23.
+The Tree-sitter corpus and capture tests own editor grammar and highlighting.
 
 For defined integer arithmetic, `defined_integer_arithmetic` covers all eight
 fixed-width domains, all nine add/subtract/multiply identities, signed and
@@ -131,12 +139,18 @@ cleanup trace at O0/O3 in the default and C++20 compatibility modes, while
 `optimizer_foundation` keeps lifecycle-only events non-removable
 and non-reorderable. The trace deliberately uses indistinguishable call
 argument cleanup so it does not depend on native C++ argument evaluation order.
-M-EXEC-01 still owns ordered receiver/argument/place/initializer snapshots and
-malformed-schedule mutations; matching M-BACK migrations own production
-authority, the full supported-mode matrix, and native-compiler runtime traces
-before any conservative semantic restriction is removed. A compatibility
-emitter trace is evidence for lifecycle composition, not proof that ordered MIR
-controls that family.
+The first bounded M-EXEC-01 gate is split across `compiler_pipeline` and
+`optimizer_foundation`. The compiler test retains exact HIR receiver/argument
+roles and the MIR receiver, indexed arguments, then invocation chain for
+ordinary scalar/reference calls. Optimizer mutations reject wrong call-site,
+duplicate/abandoned or directly bypassed inputs, selected-parameter type drift,
+and receiver/argument reordering; effect coverage keeps each checkpoint
+non-removable and non-reorderable. Later M-EXEC-01 slices still own class-value
+parameter setup, place/operator/initializer schedules, and cleanup composition.
+Matching M-BACK migrations own production authority, the full supported-mode
+matrix, and native-compiler runtime traces before any conservative semantic
+restriction is removed. A compatibility emitter trace is evidence for
+lifecycle composition, not proof that ordered MIR controls that family.
 
 M-OWN-02 now supplies indexed-place implementation evidence for the directly
 owned fixed-array slice. `compiler_pipeline` covers equal and both prefix

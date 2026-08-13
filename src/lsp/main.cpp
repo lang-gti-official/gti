@@ -853,7 +853,8 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
       tokens[attributeEnd + 1].kind == RIGHT_BRACKET &&
       (tokens[attributeEnd + 2].kind == CLASS ||
        tokens[attributeEnd + 2].kind == STRUCT ||
-       tokens[attributeEnd + 2].kind == INTERFACE)) {
+       tokens[attributeEnd + 2].kind == INTERFACE ||
+       tokens[attributeEnd + 2].kind == UNION)) {
     return SemanticClassification{Decorator, 0};
   }
 

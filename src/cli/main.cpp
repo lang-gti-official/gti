@@ -791,15 +791,20 @@ void reportCapturedOutput(std::string_view output, std::string_view heading) {
 int reportCompilationFailure(
     const lang::driver::CompilationResult &compilation) {
   if (!compilation.succeeded()) {
-    if (compilation.status ==
-        lang::driver::CompilationStatus::FrontendFailure) {
+    switch (compilation.status) {
+    case lang::driver::CompilationStatus::FrontendFailure:
+    case lang::driver::CompilationStatus::BackendFailure:
       reportDiagnostics(compilation.diagnostics, compilation.sources);
-    } else {
+      break;
+    case lang::driver::CompilationStatus::MirVerificationFailure:
       std::cerr << "gti: internal compiler error: MIR verification failed";
       if (!compilation.mirErrors.empty()) {
         std::cerr << ": " << compilation.mirErrors.front().message;
       }
       std::cerr << '\n';
+      break;
+    case lang::driver::CompilationStatus::Success:
+      break;
     }
   }
   return exitCode(ExitStatus::Compilation);

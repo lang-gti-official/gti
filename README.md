@@ -67,11 +67,13 @@ int main() {
   literals, deterministic promotion and conversion, frontend constant
   evaluation, and bit-exact native emission.
 - Frontend-computed `sizeof(type)` and `alignof(type)` for primitives,
-  one-level raw pointers, aliases, positive concrete fixed arrays, and passive
-  `[[c_abi]]` records, using the selected GTI target layout rather than native
-  C++ queries.
+  one-level raw pointers, integral scoped enums, aliases, positive concrete
+  fixed arrays, passive unions, and passive `[[c_abi]]` records, using the
+  selected GTI target layout rather than native C++ queries.
 - Classes, structs, interfaces, public inheritance, virtual dispatch, explicit
   construction, and deterministic cleanup.
+- Passive native unions with lexically unsafe member access, plus closed
+  payload enums with exact construction and exhaustive `switch` patterns.
 - Fixed arrays and read-only structured bindings over arrays and flat public
   class or struct fields.
 - Non-null read-only and mutable borrows, consumed moves, move-only values,
@@ -84,7 +86,9 @@ int main() {
   results, and cleanup-free consuming `operator() &&` callables with
   path-checked at-most-once invocation. Typed lambdas support immutable copy
   captures and explicit `[target = std::move(source)]` owned captures with
-  checked closure movement and cleanup.
+  checked closure movement and cleanup. An exact direct generic parameter of a
+  free function may also move a lambda through the same-type result or into the
+  exact field of a bounded generic owner without type erasure.
 - Independent source units, load-once `#include`, namespaces, aliases, and
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width

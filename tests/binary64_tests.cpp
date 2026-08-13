@@ -2,6 +2,7 @@
 #include "gti/cpp_emitter.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/lexer.h"
 #include "gti/mir_printer.h"
 
 #include <algorithm>
@@ -257,9 +258,7 @@ void testLanguagePipeline() {
 
   if (result.canGenerateCode()) {
     const std::string generated =
-        lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                         nullptr, &result.semantics, &result.hir)
-            .emit(result.program);
+        lang::CppEmitter(result.semantics, result.hir).emit(result.program);
     expect(generated.find("std::bit_cast<double>(std::uint64_t{"
                           "0x3fb999999999999aULL})") != std::string::npos &&
                generated.find("static_assert(__gti_strict_ieee754 == 1") !=
