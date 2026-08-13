@@ -61,6 +61,7 @@ order, or serialized form must not become the contract between GTI phases.
 | `Triple` parses a target string | adopted | `TargetInfo` remains the representation; the triple is mapped into GTI's vocabulary and never stored |
 | `APFloat` evaluates float constants | adopted | `BinaryFloat` stores GTI-owned binary32 bits from exact source ingestion; `APFloat` parses, computes, compares, and converts with explicit rounding inside compiled code; the native driver disables reassociation and contraction, and direct backend consumers inherit the same obligation |
 | `GraphTraits` + `GenericDomTree` over MIR | adopted, bounded | A private CFG snapshot computes a fresh read-only `MirDominanceInfo` expressed in GTI block IDs; the verifier consumes it, and no analysis survives CFG mutation |
+| `llvm::json` parses and encodes LSP messages | adopted, confined | `src/lsp/main.cpp` still owns the JSON-RPC/LSP schema and validation; LLVM value types remove manual reference counting and the separate json-c build, validate incoming UTF-8, and never leave the private protocol translation unit |
 | `FoldingSet` nodes become `SemanticType` | rejected | Intrusive profiling and LLVM-shaped nodes would make a container define GTI's central semantic representation |
 | `BumpPtrAllocator` or an index inside `TypeContext::Implementation` | deferred | Private machinery remains allowed, but types are only ~3% of retained semantic memory, snapshot/context ownership is unresolved, and there is no allocation benchmark yet |
 | `ilist` holding MIR instructions | rejected | Would make instructions address-identified, contradicting the address-free printer contract |
@@ -69,9 +70,9 @@ order, or serialized form must not become the contract between GTI phases.
 | `raw_ostream` in `CppEmitter` or `MirPrinter` | rejected | It would change hundreds of GTI formatting sites without a demonstrated bottleneck |
 
 The structural consequence of rule 5 is that the boundary is always a
-compiled translation unit: LLVM appears in `src/compiler/*.cpp` and never in
-`include/gti/`. This is a standing policy, not a migration step — see *Header
-Posture*.
+compiled translation unit: LLVM appears in private implementation sources such
+as `src/compiler/*.cpp` and `src/lsp/main.cpp`, and never in `include/gti/`.
+This is a standing policy, not a migration step — see *Header Posture*.
 
 ### Header Posture
 
@@ -110,7 +111,10 @@ is a separate future decision with its own ADR, not an incremental drift.
   `FoldingSet`, …) may serve as a lookup index but must never be iterated to
   produce diagnostics, printed IR, emitted C++, or metadata; iteration order
   is address-dependent. `output_determinism` and the MIR print determinism
-  test are the standing gates.
+  test are the standing gates. The confined LSP JSON encoder is safe under
+  this rule because LLVM's serializer sorts object keys before writing them;
+  GTI owns the object schema and never iterates `json::Object` to assign
+  protocol meaning.
 - **Link surface.** Only `LLVMSupport`, `LLVMTargetParser`, and
   `LLVMDemangle` may be linked. `scripts/check_llvm_link_surface.py` (the
   `llvm_link_surface` test) enforces this in every build.
@@ -159,8 +163,9 @@ the Apache-2.0 modification-notice clause moot.
   GTI header.
 - Crash handling, compile-time telemetry (`--time-trace`), target-triple
   parsing, checked-integer arithmetic, exact binary32 computation, the HIR
-  instance lookup index, and snapshot-scoped MIR dominance have one active
-  LLVM-backed implementation behind GTI-owned interfaces.
+  instance lookup index, snapshot-scoped MIR dominance, and private LSP JSON
+  parsing/encoding have one active LLVM-backed implementation behind GTI-owned
+  interfaces.
 - A displaced implementation under `archive/` is a short-term review and
   rollback aid only. It is never compiled, selected, or maintained as a second
   compiler configuration.

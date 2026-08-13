@@ -2988,7 +2988,7 @@ def test_native_record_tooling(executable, root):
         session.close()
 
 
-def test_protocol_framing_rejects_invalid_lengths(executable):
+def test_protocol_input_validation(executable):
     for header in (
         b"Content-Length: -1\r\n\r\n",
         b"Content-Length: 16777217\r\n\r\n",
@@ -3016,6 +3016,25 @@ def test_protocol_framing_rejects_invalid_lengths(executable):
     )
     assert malformed.returncode == 0, malformed.stderr.decode(errors="replace")
     assert decode_messages(malformed.stdout)[0]["error"]["code"] == -32700
+
+    invalid_utf8_payload = b'{"jsonrpc":"2.0","id":"\xff"}'
+    invalid_utf8 = subprocess.run(
+        [executable],
+        input=(
+            b"Content-Length: "
+            + str(len(invalid_utf8_payload)).encode()
+            + b"\r\n\r\n"
+            + invalid_utf8_payload
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=5,
+    )
+    assert invalid_utf8.returncode == 0, invalid_utf8.stderr.decode(
+        errors="replace"
+    )
+    assert decode_messages(invalid_utf8.stdout)[0]["error"]["code"] == -32700
 
 
 def test_canonical_document_identity(executable, root):
@@ -3421,7 +3440,7 @@ def main():
     )
     assert version.returncode == 0, version.stderr
     assert version.stdout.strip() == f"gti_lsp {expected_version}"
-    test_protocol_framing_rejects_invalid_lengths(sys.argv[1])
+    test_protocol_input_validation(sys.argv[1])
 
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
     root = pathlib.Path(directory.name)

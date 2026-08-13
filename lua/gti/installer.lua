@@ -158,7 +158,6 @@ local function validate_toolchain(root, version)
     "share/gti/stdlib/prelude.gti",
     "share/gti/stdlib/std/array.gti",
     "share/licenses/gti/GTI-LICENSE.txt",
-    "share/licenses/gti/json-c-LICENSE.txt",
   }
   for _, relative in ipairs(required) do
     if not exists(join(root, relative)) then

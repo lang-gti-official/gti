@@ -26,6 +26,10 @@ gti build|check|run|test|clean|metadata project mode
   native command construction, and process execution.
 - `src/cli/` owns argument routing, diagnostics/output presentation, and exit
   status. It constructs driver requests rather than reimplementing compilation.
+- `gti_lsp` is built whenever `GTI_BUILD_LSP` is enabled. Its private JSON
+  protocol machinery reuses the mandatory LLVM support dependency, so LSP
+  availability no longer depends on discovering or bundling a separate json-c
+  library.
 
 `include/gti/target.h` owns the selected target vocabulary and the immutable
 `TargetDataLayout` value carried through these layers. The public value contains

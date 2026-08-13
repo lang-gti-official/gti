@@ -133,6 +133,14 @@ full document sync, formatting, semantic tokens, hover, completion, and
 definition. It advertises quick-fix code actions when the client supports code
 action literals.
 
+The protocol translation unit uses `llvm::json` as private parsing and encoding
+machinery. Incoming payloads are parsed into RAII value objects and invalid
+UTF-8 is rejected as a JSON-RPC parse error. IDs and params retained by queued
+or superseded requests are ordinary value copies, so asynchronous request
+lifetime does not depend on protocol-library retain/release calls. GTI still
+owns the JSON-RPC/LSP object schema and validation; no LLVM JSON type crosses a
+public header or enters compiler snapshots.
+
 The shared compiler token contract classifies `double` as a built-in type and
 the complete `d`/`D`-suffixed decimal as one numeric semantic token. The LSP
 does not rescan the suffix or infer float width independently.

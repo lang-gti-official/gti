@@ -100,19 +100,6 @@ jobs:
             --test-dir "${{ runner.temp }}/gti-installed-library-smoke" \
             -C Release --output-on-failure
 
-      - name: Verify portable LSP dependencies
-        shell: bash
-        run: |
-          if [[ "${RUNNER_OS}" == "macOS" ]]; then
-            if otool -L "${{ runner.temp }}/gti-stage/bin/gti_lsp" | grep -i "json-c"; then
-              echo "gti_lsp still depends on a dynamic json-c library" >&2
-              exit 1
-            fi
-          elif ldd "${{ runner.temp }}/gti-stage/bin/gti_lsp" | grep -i "libjson-c"; then
-            echo "gti_lsp still depends on a dynamic json-c library" >&2
-            exit 1
-          fi
-
       - name: Create release archive
         run: >-
           cmake

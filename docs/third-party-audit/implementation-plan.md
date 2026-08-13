@@ -536,7 +536,7 @@ prerequisite lands.
 | 8.7 | Parsed-unit cache keyed on `{path, content hash}` so an edit skips re-lexing and re-parsing the prelude and standard library | GTI | — | `A§6.2` |
 | 8.8 | Concrete instance emission replacing C++ templates, one instance family at a time | GTI | Stage 3, 8.2 | `A§5.2` |
 | 8.9 | Thread a location token into emitted checked-failure calls; single `gti_rt_fail(kind, location)` entry point replacing seven abort helpers | GTI | — | `A§7.2` |
-| 8.10 | `llvm::json` replacing json-c in the LSP | **LLVM** | LSP state extraction | `L§8` |
+| 8.10 | **Done:** `llvm::json` replaced json-c in the private LSP protocol translation unit | **LLVM** | Landed as a protocol-only value/RAII migration; document-state extraction remains independently deferred | `L§8`, ADR 006 |
 
 **8.4 decision.** `raw_ostream` would touch hundreds of call sites and changes
 float and pointer formatting. No measured emission bottleneck justifies that

@@ -20,7 +20,6 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 option(GTI_BUILD_LSP "Build the GTI language server" ON)
-option(GTI_BUNDLE_JSON_C "Build a static json-c for a portable GTI LSP" OFF)
 option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
 option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
 
@@ -45,7 +44,6 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 if(GTI_RELEASE_BUILD)
-  set(GTI_BUNDLE_JSON_C ON)
   set(GTI_BUNDLE_LLVM ON)
 endif()
 
@@ -66,7 +64,7 @@ endif()
 # installed LLVM, while release builds fetch the pinned version. Only
 # LLVMSupport, LLVMTargetParser, and LLVMDemangle may be linked; llvm/IR, MC,
 # Target, and CodeGen remain out of scope. LLVM headers stay private to
-# compiler sources and never become a public-header dependency.
+# compiled implementation targets and never become a public-header dependency.
 set(GTI_PINNED_LLVM_VERSION "20.1.0")
 if(GTI_BUNDLE_LLVM)
   include(FetchContent)
@@ -282,49 +280,16 @@ target_compile_definitions(
 )
 
 if(GTI_BUILD_LSP)
-  if(GTI_BUNDLE_JSON_C)
-    enable_language(C)
-    include(FetchContent)
-
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static release dependencies" FORCE)
-    set(BUILD_STATIC_LIBS OFF CACHE BOOL "Avoid duplicate json-c libraries" FORCE)
-    set(BUILD_APPS OFF CACHE BOOL "Do not build json-c applications" FORCE)
-    FetchContent_Declare(
-      json_c
-      URL "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.19.tar.gz"
-      URL_HASH
-        "SHA256=37ad0249902e301bd9052bf712e511fcc6acff4ecaad4b5900aad9ce564e26de"
-      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(json_c)
-    set(GTI_JSON_C_TARGET json-c)
-  else()
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-      pkg_check_modules(JSON_C QUIET IMPORTED_TARGET json-c)
-    endif()
-    if(TARGET PkgConfig::JSON_C)
-      set(GTI_JSON_C_TARGET PkgConfig::JSON_C)
-    endif()
-  endif()
-
-  if(GTI_JSON_C_TARGET)
-    find_package(Threads REQUIRED)
-    add_executable("gti_lsp" "src/lsp/main.cpp")
-    target_link_libraries("gti_lsp" PRIVATE gti_compiler ${GTI_JSON_C_TARGET}
-                                            Threads::Threads)
-    if(GTI_BUNDLE_JSON_C)
-      target_compile_definitions("gti_lsp" PRIVATE GTI_BUNDLED_JSON_C=1)
-    endif()
-    target_compile_definitions(
-      "gti_lsp"
-      PRIVATE
-        GTI_VERSION="${PROJECT_VERSION}"
-        GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
-    )
-  else()
-    message(WARNING "json-c was not found; the gti_lsp target will not be built")
-  endif()
+  find_package(Threads REQUIRED)
+  add_executable("gti_lsp" "src/lsp/main.cpp")
+  target_include_directories("gti_lsp" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+  target_link_libraries("gti_lsp" PRIVATE gti_compiler Threads::Threads)
+  target_compile_definitions(
+    "gti_lsp"
+    PRIVATE
+      GTI_VERSION="${PROJECT_VERSION}"
+      GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
+  )
 endif()
 
 if(GTI_RELEASE_BUILD AND NOT TARGET gti_lsp)
@@ -409,12 +374,6 @@ install(FILES "vendor/tomlplusplus/LICENSE"
 install(FILES "LICENSE" DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
         RENAME "GTI-LICENSE.txt"
         COMPONENT gti_toolchain)
-if(GTI_BUNDLE_JSON_C)
-  install(FILES "${json_c_SOURCE_DIR}/COPYING"
-          DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
-          RENAME "json-c-LICENSE.txt"
-          COMPONENT gti_toolchain)
-endif()
 if(GTI_BUNDLE_LLVM)
   install(FILES "${llvm_project_SOURCE_DIR}/llvm/LICENSE.TXT"
           DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"

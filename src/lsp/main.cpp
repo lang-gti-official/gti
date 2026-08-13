@@ -7,11 +7,7 @@
 #include "gti/support.h"
 #include "gti/token.h"
 
-#if defined(GTI_BUNDLED_JSON_C)
-#include <json.h>
-#else
-#include <json-c/json.h>
-#endif
+#include <llvm/Support/JSON.h>
 
 #include <algorithm>
 #include <atomic>
@@ -38,6 +34,10 @@
 #include <vector>
 
 namespace {
+
+using JsonArray = llvm::json::Array;
+using JsonObject = llvm::json::Object;
+using JsonValue = llvm::json::Value;
 
 #if !defined(GTI_BUILD_STDLIB_ROOT)
 #define GTI_BUILD_STDLIB_ROOT ""
@@ -220,58 +220,47 @@ Position positionAt(std::string_view source, std::size_t byteOffset) {
   return SourcePositionIndex(source).at(byteOffset);
 }
 
-json_object *positionJson(Position position) {
-  json_object *result = json_object_new_object();
-  json_object_object_add(result, "line", json_object_new_int64(position.line));
-  json_object_object_add(result, "character",
-                         json_object_new_int64(position.character));
-  return result;
+JsonValue positionJson(Position position) {
+  return JsonObject{{"line", position.line}, {"character", position.character}};
 }
 
-json_object *rangeJson(std::string_view source, std::size_t byteOffset,
-                       std::size_t byteLength) {
+JsonValue rangeJson(std::string_view source, std::size_t byteOffset,
+                    std::size_t byteLength) {
   const std::size_t end = std::min(source.size(), byteOffset + byteLength);
-  json_object *range = json_object_new_object();
-  json_object_object_add(range, "start",
-                         positionJson(positionAt(source, byteOffset)));
-  json_object_object_add(range, "end", positionJson(positionAt(source, end)));
-  return range;
+  return JsonObject{{"start", positionJson(positionAt(source, byteOffset))},
+                    {"end", positionJson(positionAt(source, end))}};
 }
 
-json_object *member(json_object *object, const char *name) {
-  json_object *value = nullptr;
-  return object != nullptr && json_object_object_get_ex(object, name, &value)
-             ? value
-             : nullptr;
+const JsonValue *member(const JsonValue *value, llvm::StringRef name) {
+  const JsonObject *object = value != nullptr ? value->getAsObject() : nullptr;
+  return object != nullptr ? object->get(name) : nullptr;
 }
 
-std::string stringMember(json_object *object, const char *name) {
-  json_object *value = member(object, name);
-  return value != nullptr && json_object_is_type(value, json_type_string)
-             ? json_object_get_string(value)
-             : std::string{};
+std::string stringMember(const JsonValue *object, llvm::StringRef name) {
+  const JsonValue *value = member(object, name);
+  const std::optional<llvm::StringRef> string =
+      value != nullptr ? value->getAsString() : std::nullopt;
+  return string ? string->str() : std::string{};
 }
 
-std::size_t sizeMember(json_object *object, const char *name,
+std::size_t sizeMember(const JsonValue *object, llvm::StringRef name,
                        std::size_t fallback) {
-  json_object *value = member(object, name);
-  if (value == nullptr || !json_object_is_type(value, json_type_int)) {
+  const JsonValue *value = member(object, name);
+  const std::optional<std::int64_t> number =
+      value != nullptr ? value->getAsInteger() : std::nullopt;
+  if (!number) {
     return fallback;
   }
-  const std::int64_t number = json_object_get_int64(value);
-  return number > 0 ? static_cast<std::size_t>(number) : fallback;
+  return *number > 0 ? static_cast<std::size_t>(*number) : fallback;
 }
 
-std::optional<std::int64_t> integerMember(json_object *object,
-                                          const char *name) {
-  json_object *value = member(object, name);
-  if (value == nullptr || !json_object_is_type(value, json_type_int)) {
-    return std::nullopt;
-  }
-  return json_object_get_int64(value);
+std::optional<std::int64_t> integerMember(const JsonValue *object,
+                                          llvm::StringRef name) {
+  const JsonValue *value = member(object, name);
+  return value != nullptr ? value->getAsInteger() : std::nullopt;
 }
 
-std::optional<Position> positionMember(json_object *object) {
+std::optional<Position> positionMember(const JsonValue *object) {
   const std::optional<std::int64_t> line = integerMember(object, "line");
   const std::optional<std::int64_t> character =
       integerMember(object, "character");
@@ -284,7 +273,7 @@ std::optional<Position> positionMember(json_object *object) {
                   .character = static_cast<std::uint32_t>(*character)};
 }
 
-std::optional<LspRange> rangeMember(json_object *object) {
+std::optional<LspRange> rangeMember(const JsonValue *object) {
   const std::optional<Position> start = positionMember(member(object, "start"));
   const std::optional<Position> end = positionMember(member(object, "end"));
   if (!start || !end) {
@@ -322,128 +311,122 @@ bool rangesIntersect(const LspRange &left, const LspRange &right) {
          positionBefore(right.start, left.end);
 }
 
-bool boolMember(json_object *object, const char *name, bool fallback) {
-  json_object *value = member(object, name);
-  return value != nullptr && json_object_is_type(value, json_type_boolean)
-             ? json_object_get_boolean(value) != 0
-             : fallback;
+bool boolMember(const JsonValue *object, llvm::StringRef name, bool fallback) {
+  const JsonValue *value = member(object, name);
+  const std::optional<bool> boolean =
+      value != nullptr ? value->getAsBoolean() : std::nullopt;
+  return boolean.value_or(fallback);
 }
 
-std::string requestIdKey(json_object *id) {
-  if (id == nullptr || (!json_object_is_type(id, json_type_int) &&
-                        !json_object_is_type(id, json_type_string))) {
+std::string requestIdKey(const JsonValue *id) {
+  if (id == nullptr ||
+      (!id->getAsInteger().has_value() && !id->getAsString().has_value())) {
     return {};
   }
-  return json_object_to_json_string_ext(id, JSON_C_TO_STRING_PLAIN);
+  return llvm::formatv("{0}", *id).str();
 }
 
-bool supportsHoverFormat(json_object *params, std::string_view format) {
-  json_object *contentFormats = member(
+bool supportsHoverFormat(const JsonValue *params, std::string_view format) {
+  const JsonValue *contentFormats = member(
       member(member(member(params, "capabilities"), "textDocument"), "hover"),
       "contentFormat");
-  if (contentFormats == nullptr ||
-      !json_object_is_type(contentFormats, json_type_array)) {
+  const JsonArray *formats =
+      contentFormats != nullptr ? contentFormats->getAsArray() : nullptr;
+  if (formats == nullptr) {
     return false;
   }
-  const std::size_t count = json_object_array_length(contentFormats);
-  for (std::size_t index = 0; index < count; ++index) {
-    json_object *candidate = json_object_array_get_idx(contentFormats, index);
-    if (candidate != nullptr &&
-        json_object_is_type(candidate, json_type_string) &&
-        format == json_object_get_string(candidate)) {
+  for (const JsonValue &candidate : *formats) {
+    const std::optional<llvm::StringRef> value = candidate.getAsString();
+    if (value && llvm::StringRef(format.data(), format.size()) == *value) {
       return true;
     }
   }
   return false;
 }
 
-bool supportsCompletionSnippets(json_object *params) {
-  json_object *completionItem =
+bool supportsCompletionSnippets(const JsonValue *params) {
+  const JsonValue *completionItem =
       member(member(member(member(params, "capabilities"), "textDocument"),
                     "completion"),
              "completionItem");
   return boolMember(completionItem, "snippetSupport", false);
 }
 
-bool supportsSemanticTokenRefresh(json_object *params) {
-  json_object *semanticTokens = member(
+bool supportsSemanticTokenRefresh(const JsonValue *params) {
+  const JsonValue *semanticTokens = member(
       member(member(params, "capabilities"), "workspace"), "semanticTokens");
   return boolMember(semanticTokens, "refreshSupport", false);
 }
 
-bool supportsWorkspaceDocumentChanges(json_object *params) {
-  json_object *workspaceEdit = member(
+bool supportsWorkspaceDocumentChanges(const JsonValue *params) {
+  const JsonValue *workspaceEdit = member(
       member(member(params, "capabilities"), "workspace"), "workspaceEdit");
   return boolMember(workspaceEdit, "documentChanges", false);
 }
 
-bool supportsWatchedFilesDynamicRegistration(json_object *params) {
-  json_object *watchedFiles =
+bool supportsWatchedFilesDynamicRegistration(const JsonValue *params) {
+  const JsonValue *watchedFiles =
       member(member(member(params, "capabilities"), "workspace"),
              "didChangeWatchedFiles");
   return boolMember(watchedFiles, "dynamicRegistration", false);
 }
 
-json_object *publishDiagnosticsCapabilities(json_object *params) {
+const JsonValue *publishDiagnosticsCapabilities(const JsonValue *params) {
   return member(member(member(params, "capabilities"), "textDocument"),
                 "publishDiagnostics");
 }
 
-bool supportsDiagnosticRelatedInformation(json_object *params) {
+bool supportsDiagnosticRelatedInformation(const JsonValue *params) {
   return boolMember(publishDiagnosticsCapabilities(params),
                     "relatedInformation", false);
 }
 
-bool supportsDiagnosticData(json_object *params) {
+bool supportsDiagnosticData(const JsonValue *params) {
   return boolMember(publishDiagnosticsCapabilities(params), "dataSupport",
                     false);
 }
 
-json_object *codeActionCapabilities(json_object *params) {
+const JsonValue *codeActionCapabilities(const JsonValue *params) {
   return member(member(member(params, "capabilities"), "textDocument"),
                 "codeAction");
 }
 
-bool supportsCodeActionLiterals(json_object *params) {
-  json_object *literalSupport =
+bool supportsCodeActionLiterals(const JsonValue *params) {
+  const JsonValue *literalSupport =
       member(codeActionCapabilities(params), "codeActionLiteralSupport");
-  json_object *valueSet =
+  const JsonValue *valueSet =
       member(member(literalSupport, "codeActionKind"), "valueSet");
   return literalSupport != nullptr &&
-         json_object_is_type(literalSupport, json_type_object) &&
-         valueSet != nullptr && json_object_is_type(valueSet, json_type_array);
+         literalSupport->getAsObject() != nullptr && valueSet != nullptr &&
+         valueSet->getAsArray() != nullptr;
 }
 
-bool supportsPreferredCodeActions(json_object *params) {
+bool supportsPreferredCodeActions(const JsonValue *params) {
   return boolMember(codeActionCapabilities(params), "isPreferredSupport",
                     false);
 }
 
-bool contextAllowsQuickFix(json_object *context) {
-  json_object *only = member(context, "only");
-  if (only == nullptr || !json_object_is_type(only, json_type_array)) {
+bool contextAllowsQuickFix(const JsonValue *context) {
+  const JsonValue *only = member(context, "only");
+  const JsonArray *kinds = only != nullptr ? only->getAsArray() : nullptr;
+  if (kinds == nullptr) {
     return true;
   }
-  const std::size_t count = json_object_array_length(only);
-  for (std::size_t index = 0; index < count; ++index) {
-    json_object *kind = json_object_array_get_idx(only, index);
-    if (kind != nullptr && json_object_is_type(kind, json_type_string) &&
-        std::string_view(json_object_get_string(kind)) == "quickfix") {
+  for (const JsonValue &kind : *kinds) {
+    const std::optional<llvm::StringRef> name = kind.getAsString();
+    if (name && *name == "quickfix") {
       return true;
     }
   }
   return false;
 }
 
-void sendJson(json_object *message) {
+void sendJson(JsonValue message) {
   const std::lock_guard lock(outputMutex);
-  const char *json =
-      json_object_to_json_string_ext(message, JSON_C_TO_STRING_PLAIN);
-  const std::size_t length = std::char_traits<char>::length(json);
-  std::cout << "Content-Length: " << length << "\r\n\r\n";
-  std::cout.write(json, static_cast<std::streamsize>(length));
+  const std::string json = llvm::formatv("{0}", message).str();
+  std::cout << "Content-Length: " << json.size() << "\r\n\r\n";
+  std::cout.write(json.data(), static_cast<std::streamsize>(json.size()));
   std::cout.flush();
-  json_object_put(message);
 }
 
 std::optional<std::string> readMessage() {
@@ -504,27 +487,27 @@ std::optional<std::string> readMessage() {
   return payload;
 }
 
-json_object *response(json_object *id, json_object *result) {
-  json_object *message = json_object_new_object();
-  json_object_object_add(message, "jsonrpc", json_object_new_string("2.0"));
-  json_object_object_add(message, "id", json_object_get(id));
-  json_object_object_add(message, "result", result);
-  return message;
+JsonValue response(const JsonValue *id, JsonValue result) {
+  return JsonObject{{"jsonrpc", "2.0"},
+                    {"id", id != nullptr ? JsonValue(*id) : JsonValue(nullptr)},
+                    {"result", std::move(result)}};
 }
 
-json_object *errorResponse(json_object *id, int code,
-                           std::string_view message) {
-  json_object *error = json_object_new_object();
-  json_object_object_add(error, "code", json_object_new_int(code));
-  json_object_object_add(error, "message",
-                         json_object_new_string_len(
-                             message.data(), static_cast<int>(message.size())));
+JsonValue response(const JsonValue &id, JsonValue result) {
+  return response(&id, std::move(result));
+}
 
-  json_object *result = json_object_new_object();
-  json_object_object_add(result, "jsonrpc", json_object_new_string("2.0"));
-  json_object_object_add(result, "id", json_object_get(id));
-  json_object_object_add(result, "error", error);
-  return result;
+JsonValue errorResponse(const JsonValue *id, int code,
+                        std::string_view message) {
+  return JsonObject{
+      {"jsonrpc", "2.0"},
+      {"id", id != nullptr ? JsonValue(*id) : JsonValue(nullptr)},
+      {"error", JsonObject{{"code", code}, {"message", std::string(message)}}}};
+}
+
+JsonValue errorResponse(const JsonValue &id, int code,
+                        std::string_view message) {
+  return errorResponse(&id, code, message);
 }
 
 int hexDigit(char character) {
@@ -656,88 +639,66 @@ std::string diagnosticMessage(const lang::Diagnostic &diagnostic) {
   return message;
 }
 
-json_object *diagnosticJson(const LspDiagnostic &published,
-                            bool includeRelatedInformation, bool includeData) {
+JsonValue diagnosticJson(const LspDiagnostic &published,
+                         bool includeRelatedInformation, bool includeData) {
   const lang::Diagnostic &diagnostic = published.diagnostic;
-  json_object *result = json_object_new_object();
-  json_object_object_add(
-      result, "range",
-      rangeJson(published.source, diagnostic.primary.start,
-                diagnostic.primary.end >= diagnostic.primary.start
-                    ? diagnostic.primary.end - diagnostic.primary.start
-                    : 0));
-  json_object_object_add(
-      result, "severity",
-      json_object_new_int(static_cast<int>(diagnostic.severity)));
+  JsonObject result{
+      {"range",
+       rangeJson(published.source, diagnostic.primary.start,
+                 diagnostic.primary.end >= diagnostic.primary.start
+                     ? diagnostic.primary.end - diagnostic.primary.start
+                     : 0)},
+      {"severity", static_cast<int>(diagnostic.severity)},
+      {"source", std::string(diagnosticSource)}};
   if (!diagnostic.code.empty()) {
-    json_object_object_add(result, "code",
-                           json_object_new_string(diagnostic.code.c_str()));
+    result["code"] = diagnostic.code;
   }
-  json_object_object_add(
-      result, "source",
-      json_object_new_string_len(diagnosticSource.data(),
-                                 static_cast<int>(diagnosticSource.size())));
 
   const std::string message = diagnosticMessage(diagnostic);
-  json_object_object_add(result, "message",
-                         json_object_new_string(message.c_str()));
+  result["message"] = message;
 
   if (includeRelatedInformation && !published.related.empty()) {
-    json_object *relatedInformation = json_object_new_array();
+    JsonArray relatedInformation;
     for (const LspRelatedDiagnostic &related : published.related) {
-      json_object *location = json_object_new_object();
-      json_object_object_add(location, "uri",
-                             json_object_new_string(related.uri.c_str()));
-      json_object_object_add(
-          location, "range",
-          rangeJson(related.source, related.related.span.start,
-                    related.related.span.end >= related.related.span.start
-                        ? related.related.span.end - related.related.span.start
-                        : 0));
-      json_object *information = json_object_new_object();
-      json_object_object_add(information, "location", location);
-      json_object_object_add(
-          information, "message",
-          json_object_new_string(related.related.message.c_str()));
-      json_object_array_add(relatedInformation, information);
+      JsonObject location{
+          {"uri", related.uri},
+          {"range",
+           rangeJson(related.source, related.related.span.start,
+                     related.related.span.end >= related.related.span.start
+                         ? related.related.span.end - related.related.span.start
+                         : 0)}};
+      relatedInformation.push_back(
+          JsonObject{{"location", std::move(location)},
+                     {"message", related.related.message}});
     }
-    json_object_object_add(result, "relatedInformation", relatedInformation);
+    result["relatedInformation"] = std::move(relatedInformation);
   }
   if (includeData) {
-    json_object *data = json_object_new_object();
+    JsonObject data;
     const std::string_view phase = lang::phaseName(diagnostic.phase);
-    json_object_object_add(data, "phase",
-                           json_object_new_string_len(
-                               phase.data(), static_cast<int>(phase.size())));
+    data["phase"] = std::string(phase);
     if (!diagnostic.hints.empty()) {
-      json_object *hints = json_object_new_array();
+      JsonArray hints;
       for (const std::string &hint : diagnostic.hints) {
-        json_object_array_add(hints, json_object_new_string(hint.c_str()));
+        hints.push_back(hint);
       }
-      json_object_object_add(data, "hints", hints);
+      data["hints"] = std::move(hints);
     }
     if (!published.fixes.empty()) {
-      json_object *fixes = json_object_new_array();
+      JsonArray fixes;
       for (const LspFixIt &fix : published.fixes) {
-        json_object *edit = json_object_new_object();
-        json_object_object_add(edit, "uri",
-                               json_object_new_string(fix.uri.c_str()));
-        json_object_object_add(
-            edit, "range",
-            rangeJson(fix.source, fix.fix.span.start,
-                      fix.fix.span.end >= fix.fix.span.start
-                          ? fix.fix.span.end - fix.fix.span.start
-                          : 0));
-        json_object_object_add(
-            edit, "replacement",
-            json_object_new_string(fix.fix.replacement.c_str()));
-        json_object_object_add(edit, "message",
-                               json_object_new_string(fix.fix.message.c_str()));
-        json_object_array_add(fixes, edit);
+        fixes.push_back(JsonObject{
+            {"uri", fix.uri},
+            {"range", rangeJson(fix.source, fix.fix.span.start,
+                                fix.fix.span.end >= fix.fix.span.start
+                                    ? fix.fix.span.end - fix.fix.span.start
+                                    : 0)},
+            {"replacement", fix.fix.replacement},
+            {"message", fix.fix.message}});
       }
-      json_object_object_add(data, "fixes", fixes);
+      data["fixes"] = std::move(fixes);
     }
-    json_object_object_add(result, "data", data);
+    result["data"] = std::move(data);
   }
   return result;
 }
@@ -752,32 +713,31 @@ bool diagnosticIntersects(const LspDiagnostic &diagnostic,
 }
 
 bool diagnosticRequested(const LspDiagnostic &diagnostic,
-                         json_object *requestedDiagnostics) {
-  if (requestedDiagnostics == nullptr ||
-      !json_object_is_type(requestedDiagnostics, json_type_array)) {
+                         const JsonValue *requestedDiagnostics) {
+  const JsonArray *requestedValues = requestedDiagnostics != nullptr
+                                         ? requestedDiagnostics->getAsArray()
+                                         : nullptr;
+  if (requestedValues == nullptr) {
     return false;
   }
   const Position expectedStart =
       positionAt(diagnostic.source, diagnostic.diagnostic.primary.start);
   const Position expectedEnd =
       positionAt(diagnostic.source, diagnostic.diagnostic.primary.end);
-  const std::size_t count = json_object_array_length(requestedDiagnostics);
-  for (std::size_t index = 0; index < count; ++index) {
-    json_object *requested =
-        json_object_array_get_idx(requestedDiagnostics, index);
+  for (const JsonValue &requested : *requestedValues) {
     const std::optional<LspRange> range =
-        rangeMember(member(requested, "range"));
+        rangeMember(member(&requested, "range"));
     if (!range || !samePosition(range->start, expectedStart) ||
         !samePosition(range->end, expectedEnd)) {
       continue;
     }
-    if (stringMember(requested, "code") != diagnostic.diagnostic.code) {
+    if (stringMember(&requested, "code") != diagnostic.diagnostic.code) {
       continue;
     }
-    if (stringMember(requested, "source") != diagnosticSource) {
+    if (stringMember(&requested, "source") != diagnosticSource) {
       continue;
     }
-    if (stringMember(requested, "message") !=
+    if (stringMember(&requested, "message") !=
         diagnosticMessage(diagnostic.diagnostic)) {
       continue;
     }
@@ -786,64 +746,50 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
   return false;
 }
 
-json_object *codeActionJson(const CodeActionCandidate &candidate,
-                            bool documentChanges,
-                            bool includeRelatedInformation,
-                            bool includeDiagnosticData, bool includePreferred) {
+JsonValue codeActionJson(const CodeActionCandidate &candidate,
+                         bool documentChanges, bool includeRelatedInformation,
+                         bool includeDiagnosticData, bool includePreferred) {
   const std::string title =
       candidate.fix.fix.message.empty()
           ? (candidate.diagnostic.diagnostic.code.empty()
                  ? "Apply suggested fix"
                  : "Apply fix for " + candidate.diagnostic.diagnostic.code)
           : candidate.fix.fix.message;
-  json_object *action = json_object_new_object();
-  json_object_object_add(action, "title",
-                         json_object_new_string(title.c_str()));
-  json_object_object_add(action, "kind", json_object_new_string("quickfix"));
-  json_object *diagnostics = json_object_new_array();
-  json_object_array_add(diagnostics, diagnosticJson(candidate.diagnostic,
-                                                    includeRelatedInformation,
-                                                    includeDiagnosticData));
-  json_object_object_add(action, "diagnostics", diagnostics);
+  JsonArray diagnostics;
+  diagnostics.push_back(diagnosticJson(
+      candidate.diagnostic, includeRelatedInformation, includeDiagnosticData));
+  JsonObject action{{"title", title},
+                    {"kind", "quickfix"},
+                    {"diagnostics", std::move(diagnostics)}};
   if (includePreferred) {
-    json_object_object_add(action, "isPreferred",
-                           json_object_new_boolean(candidate.preferred));
+    action["isPreferred"] = candidate.preferred;
   }
 
-  json_object *textEdit = json_object_new_object();
-  json_object_object_add(
-      textEdit, "range",
-      rangeJson(candidate.fix.source, candidate.fix.fix.span.start,
-                candidate.fix.fix.span.end >= candidate.fix.fix.span.start
-                    ? candidate.fix.fix.span.end - candidate.fix.fix.span.start
-                    : 0));
-  json_object_object_add(
-      textEdit, "newText",
-      json_object_new_string(candidate.fix.fix.replacement.c_str()));
-  json_object *edits = json_object_new_array();
-  json_object_array_add(edits, textEdit);
+  JsonArray edits;
+  edits.push_back(JsonObject{
+      {"range",
+       rangeJson(candidate.fix.source, candidate.fix.fix.span.start,
+                 candidate.fix.fix.span.end >= candidate.fix.fix.span.start
+                     ? candidate.fix.fix.span.end - candidate.fix.fix.span.start
+                     : 0)},
+      {"newText", candidate.fix.fix.replacement}});
 
-  json_object *workspaceEdit = json_object_new_object();
+  JsonObject workspaceEdit;
   if (documentChanges) {
-    json_object *textDocument = json_object_new_object();
-    json_object_object_add(textDocument, "uri",
-                           json_object_new_string(candidate.fix.uri.c_str()));
-    json_object_object_add(textDocument, "version",
-                           candidate.version
-                               ? json_object_new_int64(*candidate.version)
-                               : json_object_new_null());
-    json_object *documentEdit = json_object_new_object();
-    json_object_object_add(documentEdit, "textDocument", textDocument);
-    json_object_object_add(documentEdit, "edits", edits);
-    json_object *changes = json_object_new_array();
-    json_object_array_add(changes, documentEdit);
-    json_object_object_add(workspaceEdit, "documentChanges", changes);
+    JsonObject textDocument{{"uri", candidate.fix.uri},
+                            {"version", candidate.version
+                                            ? JsonValue(*candidate.version)
+                                            : JsonValue(nullptr)}};
+    JsonArray changes;
+    changes.push_back(JsonObject{{"textDocument", std::move(textDocument)},
+                                 {"edits", std::move(edits)}});
+    workspaceEdit["documentChanges"] = std::move(changes);
   } else {
-    json_object *changes = json_object_new_object();
-    json_object_object_add(changes, candidate.fix.uri.c_str(), edits);
-    json_object_object_add(workspaceEdit, "changes", changes);
+    JsonObject changes;
+    changes[candidate.fix.uri] = std::move(edits);
+    workspaceEdit["changes"] = std::move(changes);
   }
-  json_object_object_add(action, "edit", workspaceEdit);
+  action["edit"] = std::move(workspaceEdit);
   return action;
 }
 
@@ -1149,8 +1095,9 @@ collectSemanticTokens(std::string_view source,
   return result;
 }
 
-json_object *semanticTokensJson(const std::vector<SemanticToken> &tokens) {
-  json_object *data = json_object_new_array();
+JsonValue semanticTokensJson(const std::vector<SemanticToken> &tokens) {
+  JsonArray data;
+  data.reserve(tokens.size() * 5);
   Position previous;
 
   for (const SemanticToken &token : tokens) {
@@ -1158,17 +1105,15 @@ json_object *semanticTokensJson(const std::vector<SemanticToken> &tokens) {
     const std::uint32_t deltaCharacter =
         deltaLine == 0 ? token.position.character - previous.character
                        : token.position.character;
-    json_object_array_add(data, json_object_new_int64(deltaLine));
-    json_object_array_add(data, json_object_new_int64(deltaCharacter));
-    json_object_array_add(data, json_object_new_int64(token.length));
-    json_object_array_add(data, json_object_new_int64(token.type));
-    json_object_array_add(data, json_object_new_int64(token.modifiers));
+    data.push_back(deltaLine);
+    data.push_back(deltaCharacter);
+    data.push_back(token.length);
+    data.push_back(token.type);
+    data.push_back(token.modifiers);
     previous = token.position;
   }
 
-  json_object *result = json_object_new_object();
-  json_object_object_add(result, "data", data);
-  return result;
+  return JsonObject{{"data", std::move(data)}};
 }
 
 int completionItemKind(lang::CompletionCandidateKind kind) {
@@ -1200,46 +1145,35 @@ int completionItemKind(lang::CompletionCandidateKind kind) {
   return 6;
 }
 
-json_object *completionListJson(const lang::CompletionResult &completion,
-                                std::string_view source, bool snippetSupport) {
-  json_object *items = json_object_new_array();
+JsonValue completionListJson(const lang::CompletionResult &completion,
+                             std::string_view source, bool snippetSupport) {
+  JsonArray items;
+  items.reserve(completion.candidates.size());
   for (const lang::CompletionCandidate &candidate : completion.candidates) {
-    json_object *item = json_object_new_object();
-    json_object_object_add(item, "label",
-                           json_object_new_string(candidate.label.c_str()));
-    json_object_object_add(
-        item, "kind", json_object_new_int(completionItemKind(candidate.kind)));
+    JsonObject item{{"label", candidate.label},
+                    {"kind", completionItemKind(candidate.kind)},
+                    {"filterText", candidate.label},
+                    {"sortText", candidate.sortText}};
     if (!candidate.detail.empty()) {
-      json_object_object_add(item, "detail",
-                             json_object_new_string(candidate.detail.c_str()));
+      item["detail"] = candidate.detail;
     }
-    json_object_object_add(item, "filterText",
-                           json_object_new_string(candidate.label.c_str()));
-    json_object_object_add(item, "sortText",
-                           json_object_new_string(candidate.sortText.c_str()));
 
     const bool useSnippet = snippetSupport && candidate.snippet.has_value();
     const std::string &insertion =
         useSnippet ? *candidate.snippet : candidate.insertion;
-    json_object *textEdit = json_object_new_object();
-    json_object_object_add(textEdit, "range",
-                           rangeJson(source, candidate.replacementRange.start,
-                                     candidate.replacementRange.end -
-                                         candidate.replacementRange.start));
-    json_object_object_add(textEdit, "newText",
-                           json_object_new_string(insertion.c_str()));
-    json_object_object_add(item, "textEdit", textEdit);
+    item["textEdit"] =
+        JsonObject{{"range", rangeJson(source, candidate.replacementRange.start,
+                                       candidate.replacementRange.end -
+                                           candidate.replacementRange.start)},
+                   {"newText", insertion}};
     if (useSnippet) {
-      json_object_object_add(item, "insertTextFormat", json_object_new_int(2));
+      item["insertTextFormat"] = 2;
     }
-    json_object_array_add(items, item);
+    items.push_back(std::move(item));
   }
 
-  json_object *result = json_object_new_object();
-  json_object_object_add(result, "isIncomplete",
-                         json_object_new_boolean(completion.isIncomplete));
-  json_object_object_add(result, "items", items);
-  return result;
+  return JsonObject{{"isIncomplete", completion.isIncomplete},
+                    {"items", std::move(items)}};
 }
 
 struct AnalysisRequest {
@@ -1252,7 +1186,7 @@ struct AnalysisRequest {
 };
 
 struct CompletionRequest {
-  json_object *id = nullptr;
+  JsonValue id{nullptr};
   std::string idKey;
   std::string uri;
   std::filesystem::path entryPath;
@@ -1266,8 +1200,8 @@ struct CompletionRequest {
 enum class SemanticRequestKind { Tokens, Hover, Definition };
 
 struct PendingSemanticRequest {
-  json_object *id = nullptr;
-  json_object *params = nullptr;
+  JsonValue id{nullptr};
+  JsonValue params{nullptr};
   std::string idKey;
   std::string uri;
   std::uint64_t generation = 0;
@@ -1312,41 +1246,31 @@ public:
 
   int run() {
     while (const std::optional<std::string> payload = readMessage()) {
-      json_tokener *tokener = json_tokener_new();
-      json_object *message = json_tokener_parse_ex(
-          tokener, payload->data(), static_cast<int>(payload->size()));
-      const json_tokener_error parseError = json_tokener_get_error(tokener);
-      json_tokener_free(tokener);
-
-      if (parseError != json_tokener_success || message == nullptr) {
-        if (message != nullptr) {
-          json_object_put(message);
-        }
+      llvm::Expected<JsonValue> message = llvm::json::parse(*payload);
+      if (!message) {
+        llvm::consumeError(message.takeError());
         sendJson(errorResponse(nullptr, -32700, "Parse error"));
         continue;
       }
 
-      if (!json_object_is_type(message, json_type_object)) {
+      if (message->getAsObject() == nullptr) {
         sendJson(errorResponse(nullptr, -32600, "Invalid Request"));
-        json_object_put(message);
         continue;
       }
 
       try {
-        if (handle(message)) {
-          json_object_put(message);
+        if (handle(&*message)) {
           return shutdownRequested ? 0 : 1;
         }
       } catch (const std::exception &error) {
         std::cerr << "LSP request failed: " << error.what() << '\n';
         sendJson(
-            errorResponse(member(message, "id"), -32603, "Internal error"));
+            errorResponse(member(&*message, "id"), -32603, "Internal error"));
       } catch (...) {
         std::cerr << "LSP request failed with an unknown exception\n";
         sendJson(
-            errorResponse(member(message, "id"), -32603, "Internal error"));
+            errorResponse(member(&*message, "id"), -32603, "Internal error"));
       }
-      json_object_put(message);
     }
     stopCompletionWorker();
     stopAnalysisWorker();
@@ -1354,10 +1278,10 @@ public:
   }
 
 private:
-  bool handle(json_object *message) {
+  bool handle(const JsonValue *message) {
     const std::string method = stringMember(message, "method");
-    json_object *id = member(message, "id");
-    json_object *params = member(message, "params");
+    const JsonValue *id = member(message, "id");
+    const JsonValue *params = member(message, "params");
 
     if (method == "initialize") {
       sendJson(response(id, initializeResult(params)));
@@ -1400,7 +1324,7 @@ private:
     return false;
   }
 
-  json_object *initializeResult(json_object *params) {
+  JsonValue initializeResult(const JsonValue *params) {
     markdownHover = supportsHoverFormat(params, "markdown");
     completionSnippets = supportsCompletionSnippets(params);
     semanticTokenRefreshSupport = supportsSemanticTokenRefresh(params);
@@ -1411,79 +1335,52 @@ private:
     diagnosticData = supportsDiagnosticData(params);
     codeActionLiterals = supportsCodeActionLiterals(params);
     preferredCodeActions = supportsPreferredCodeActions(params);
-    json_object *sync = json_object_new_object();
-    json_object_object_add(sync, "openClose", json_object_new_boolean(true));
-    json_object_object_add(sync, "change", json_object_new_int(1));
-    json_object_object_add(sync, "save", json_object_new_boolean(true));
+    JsonObject sync{{"openClose", true}, {"change", 1}, {"save", true}};
 
-    json_object *tokenTypes = json_object_new_array();
+    JsonArray tokenTypes;
     for (const char *type :
          {"keyword", "type", "typeParameter", "namespace", "class", "function",
           "method", "variable", "parameter", "property", "string", "number",
           "operator", "macro", "decorator", "comment", "enumMember", "struct",
           "enum"}) {
-      json_object_array_add(tokenTypes, json_object_new_string(type));
+      tokenTypes.push_back(type);
     }
-    json_object *tokenModifiers = json_object_new_array();
+    JsonArray tokenModifiers;
     for (const char *modifier : {"declaration", "definition", "readonly",
                                  "defaultLibrary", "functionScope", "static"}) {
-      json_object_array_add(tokenModifiers, json_object_new_string(modifier));
+      tokenModifiers.push_back(modifier);
     }
-    json_object *legend = json_object_new_object();
-    json_object_object_add(legend, "tokenTypes", tokenTypes);
-    json_object_object_add(legend, "tokenModifiers", tokenModifiers);
+    JsonObject legend{{"tokenTypes", std::move(tokenTypes)},
+                      {"tokenModifiers", std::move(tokenModifiers)}};
 
-    json_object *semanticTokens = json_object_new_object();
-    json_object_object_add(semanticTokens, "legend", legend);
-    json_object_object_add(semanticTokens, "full",
-                           json_object_new_boolean(true));
+    JsonObject semanticTokens{{"legend", std::move(legend)}, {"full", true}};
 
-    json_object *capabilities = json_object_new_object();
-    json_object_object_add(capabilities, "positionEncoding",
-                           json_object_new_string("utf-16"));
-    json_object_object_add(capabilities, "textDocumentSync", sync);
-    json_object_object_add(capabilities, "semanticTokensProvider",
-                           semanticTokens);
-    json_object_object_add(capabilities, "documentFormattingProvider",
-                           json_object_new_boolean(true));
-    json_object_object_add(capabilities, "hoverProvider",
-                           json_object_new_boolean(true));
-    json_object_object_add(capabilities, "definitionProvider",
-                           json_object_new_boolean(true));
+    JsonObject capabilities{
+        {"positionEncoding", "utf-16"},
+        {"textDocumentSync", std::move(sync)},
+        {"semanticTokensProvider", std::move(semanticTokens)},
+        {"documentFormattingProvider", true},
+        {"hoverProvider", true},
+        {"definitionProvider", true}};
     if (codeActionLiterals) {
-      json_object *codeActions = json_object_new_object();
-      json_object *codeActionKinds = json_object_new_array();
-      json_object_array_add(codeActionKinds,
-                            json_object_new_string("quickfix"));
-      json_object_object_add(codeActions, "codeActionKinds", codeActionKinds);
-      json_object_object_add(codeActions, "resolveProvider",
-                             json_object_new_boolean(false));
-      json_object_object_add(capabilities, "codeActionProvider", codeActions);
+      capabilities["codeActionProvider"] =
+          JsonObject{{"codeActionKinds", JsonArray{"quickfix"}},
+                     {"resolveProvider", false}};
     }
-    json_object *completion = json_object_new_object();
-    json_object *triggers = json_object_new_array();
+    JsonArray triggers;
     for (const char *trigger : {".", ">", ":"}) {
-      json_object_array_add(triggers, json_object_new_string(trigger));
+      triggers.push_back(trigger);
     }
-    json_object_object_add(completion, "triggerCharacters", triggers);
-    json_object_object_add(completion, "resolveProvider",
-                           json_object_new_boolean(false));
-    json_object_object_add(capabilities, "completionProvider", completion);
+    capabilities["completionProvider"] = JsonObject{
+        {"triggerCharacters", std::move(triggers)}, {"resolveProvider", false}};
 
-    json_object *serverInfo = json_object_new_object();
-    json_object_object_add(serverInfo, "name",
-                           json_object_new_string("gti_lsp"));
-    json_object_object_add(serverInfo, "version",
-                           json_object_new_string(GTI_VERSION));
-
-    json_object *result = json_object_new_object();
-    json_object_object_add(result, "capabilities", capabilities);
-    json_object_object_add(result, "serverInfo", serverInfo);
-    return result;
+    return JsonObject{{"capabilities", std::move(capabilities)},
+                      {"serverInfo", JsonObject{{"name", "gti_lsp"},
+                                                {"version", GTI_VERSION}}}};
   }
 
-  void didOpen(json_object *params) {
-    json_object *document = member(params, "textDocument");
+  void didOpen(const JsonValue *params) {
+    const JsonValue *document = member(params, "textDocument");
     const std::string clientUri = stringMember(document, "uri");
     if (clientUri.empty()) {
       return;
@@ -1514,20 +1411,19 @@ private:
     scheduleAnalyses(std::move(requests));
   }
 
-  void didChange(json_object *params) {
+  void didChange(const JsonValue *params) {
     const std::string clientUri =
         stringMember(member(params, "textDocument"), "uri");
-    json_object *changes = member(params, "contentChanges");
-    if (clientUri.empty() || changes == nullptr ||
-        !json_object_is_type(changes, json_type_array)) {
+    const JsonValue *changes = member(params, "contentChanges");
+    const JsonArray *contentChanges =
+        changes != nullptr ? changes->getAsArray() : nullptr;
+    if (clientUri.empty() || contentChanges == nullptr) {
       return;
     }
     const std::string uri = documentKeyFromUri(clientUri);
 
-    const std::size_t count = json_object_array_length(changes);
-    if (count > 0) {
-      const std::string source =
-          stringMember(json_object_array_get_idx(changes, count - 1), "text");
+    if (!contentChanges->empty()) {
+      const std::string source = stringMember(&contentChanges->back(), "text");
       const std::optional<std::int64_t> version =
           integerMember(member(params, "textDocument"), "version");
       std::vector<AnalysisRequest> requests;
@@ -1554,13 +1450,13 @@ private:
     }
   }
 
-  void didSave(json_object *) {
+  void didSave(const JsonValue *) {
     // Full synchronization already schedules analysis for every changed
     // version. Repeating it here blocks later requests and republishes the
     // same diagnostics during format-on-save.
   }
 
-  void didClose(json_object *params) {
+  void didClose(const JsonValue *params) {
     const std::string clientUri =
         stringMember(member(params, "textDocument"), "uri");
     if (clientUri.empty()) {
@@ -1611,9 +1507,11 @@ private:
     analysisCondition.notify_all();
   }
 
-  void didChangeWatchedFiles(json_object *params) {
-    json_object *changes = member(params, "changes");
-    if (changes == nullptr || !json_object_is_type(changes, json_type_array)) {
+  void didChangeWatchedFiles(const JsonValue *params) {
+    const JsonValue *changes = member(params, "changes");
+    const JsonArray *changedFiles =
+        changes != nullptr ? changes->getAsArray() : nullptr;
+    if (changedFiles == nullptr) {
       return;
     }
 
@@ -1622,10 +1520,8 @@ private:
     {
       const std::lock_guard lock(stateMutex);
       std::unordered_set<std::string> affected;
-      const std::size_t count = json_object_array_length(changes);
-      for (std::size_t index = 0; index < count; ++index) {
-        const std::string clientUri =
-            stringMember(json_object_array_get_idx(changes, index), "uri");
+      for (const JsonValue &change : *changedFiles) {
+        const std::string clientUri = stringMember(&change, "uri");
         if (clientUri.empty()) {
           continue;
         }
@@ -1649,37 +1545,21 @@ private:
       return;
     }
 
-    json_object *watcher = json_object_new_object();
-    json_object_object_add(watcher, "globPattern",
-                           json_object_new_string("**/*.gti"));
-    json_object *watchers = json_object_new_array();
-    json_object_array_add(watchers, watcher);
-    json_object *options = json_object_new_object();
-    json_object_object_add(options, "watchers", watchers);
-
-    json_object *registration = json_object_new_object();
-    json_object_object_add(registration, "id",
-                           json_object_new_string("gti-source-watcher"));
-    json_object_object_add(
-        registration, "method",
-        json_object_new_string("workspace/didChangeWatchedFiles"));
-    json_object_object_add(registration, "registerOptions", options);
-    json_object *registrations = json_object_new_array();
-    json_object_array_add(registrations, registration);
-    json_object *params = json_object_new_object();
-    json_object_object_add(params, "registrations", registrations);
-
-    json_object *request = json_object_new_object();
-    json_object_object_add(request, "jsonrpc", json_object_new_string("2.0"));
-    json_object_object_add(
-        request, "id", json_object_new_int64(nextServerRequestId.fetch_add(1)));
-    json_object_object_add(request, "method",
-                           json_object_new_string("client/registerCapability"));
-    json_object_object_add(request, "params", params);
-    sendJson(request);
+    JsonArray watchers;
+    watchers.push_back(JsonObject{{"globPattern", "**/*.gti"}});
+    JsonArray registrations;
+    registrations.push_back(JsonObject{
+        {"id", "gti-source-watcher"},
+        {"method", "workspace/didChangeWatchedFiles"},
+        {"registerOptions", JsonObject{{"watchers", std::move(watchers)}}}});
+    sendJson(JsonObject{
+        {"jsonrpc", "2.0"},
+        {"id", nextServerRequestId.fetch_add(1)},
+        {"method", "client/registerCapability"},
+        {"params", JsonObject{{"registrations", std::move(registrations)}}}});
   }
 
-  void semanticTokens(json_object *id, json_object *params) {
+  void semanticTokens(const JsonValue *id, const JsonValue *params) {
     const std::string uri =
         documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
     std::string source;
@@ -1711,8 +1591,9 @@ private:
         hasCurrentSnapshot = true;
       } else if (id != nullptr && documents.contains(uri)) {
         pendingSemanticRequests.push_back(
-            {.id = json_object_get(id),
-             .params = json_object_get(params),
+            {.id = *id,
+             .params =
+                 params != nullptr ? JsonValue(*params) : JsonValue(nullptr),
              .idKey = requestIdKey(id),
              .uri = uri,
              .generation = generation,
@@ -1748,7 +1629,7 @@ private:
     sendJson(response(id, semanticTokensJson(tokens)));
   }
 
-  void respondHover(json_object *id, Position position, std::string source,
+  void respondHover(const JsonValue *id, Position position, std::string source,
                     const AnalysisSnapshot &snapshot) {
     const std::optional<std::size_t> byteOffset =
         SourcePositionIndex(source).byteOffset(position);
@@ -1774,22 +1655,16 @@ private:
       value += markdownHover ? "\n\n*" + note + "*" : "\n\n" + note;
     }
 
-    json_object *contents = json_object_new_object();
-    json_object_object_add(
-        contents, "kind",
-        json_object_new_string(markdownHover ? "markdown" : "plaintext"));
-    json_object_object_add(contents, "value",
-                           json_object_new_string_len(
-                               value.data(), static_cast<int>(value.size())));
-    json_object *result = json_object_new_object();
-    json_object_object_add(result, "contents", contents);
-    json_object_object_add(result, "range",
-                           rangeJson(source, info->range.start,
-                                     info->range.end - info->range.start));
-    sendJson(response(id, result));
+    sendJson(response(
+        id, JsonObject{
+                {"contents",
+                 JsonObject{{"kind", markdownHover ? "markdown" : "plaintext"},
+                            {"value", value}}},
+                {"range", rangeJson(source, info->range.start,
+                                    info->range.end - info->range.start)}}));
   }
 
-  void hover(json_object *id, json_object *params) {
+  void hover(const JsonValue *id, const JsonValue *params) {
     const std::string uri =
         documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
     const std::optional<Position> position =
@@ -1818,8 +1693,9 @@ private:
       } else if (id != nullptr && document != documents.end() &&
                  currentGeneration != analysisGenerations.end()) {
         pendingSemanticRequests.push_back(
-            {.id = json_object_get(id),
-             .params = json_object_get(params),
+            {.id = *id,
+             .params =
+                 params != nullptr ? JsonValue(*params) : JsonValue(nullptr),
              .idKey = requestIdKey(id),
              .uri = uri,
              .generation = currentGeneration->second,
@@ -1837,7 +1713,7 @@ private:
     respondHover(id, *position, std::move(source), snapshot);
   }
 
-  void respondDefinition(json_object *id, std::string_view uri,
+  void respondDefinition(const JsonValue *id, std::string_view uri,
                          Position position, std::string source,
                          const AnalysisSnapshot &snapshot) {
     const std::optional<std::size_t> byteOffset =
@@ -1862,7 +1738,6 @@ private:
       sendJson(response(id, nullptr));
       return;
     }
-    json_object *location = json_object_new_object();
     std::string targetUri =
         uriForSource(info->target.source, snapshot.rootPath, uri);
     {
@@ -1872,15 +1747,14 @@ private:
         targetUri = preferred->second;
       }
     }
-    json_object_object_add(location, "uri",
-                           json_object_new_string(targetUri.c_str()));
-    json_object_object_add(location, "range",
-                           rangeJson(targetSource, info->target.start,
-                                     info->target.end - info->target.start));
-    sendJson(response(id, location));
+    sendJson(response(
+        id, JsonObject{
+                {"uri", targetUri},
+                {"range", rangeJson(targetSource, info->target.start,
+                                    info->target.end - info->target.start)}}));
   }
 
-  void definition(json_object *id, json_object *params) {
+  void definition(const JsonValue *id, const JsonValue *params) {
     const std::string uri =
         documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
     const std::optional<Position> position =
@@ -1910,8 +1784,9 @@ private:
       } else if (id != nullptr && document != documents.end() &&
                  generation != analysisGenerations.end()) {
         pendingSemanticRequests.push_back(
-            {.id = json_object_get(id),
-             .params = json_object_get(params),
+            {.id = *id,
+             .params =
+                 params != nullptr ? JsonValue(*params) : JsonValue(nullptr),
              .idKey = requestIdKey(id),
              .uri = uri,
              .generation = generation->second,
@@ -1929,7 +1804,7 @@ private:
     respondDefinition(id, uri, *position, std::move(source), snapshot);
   }
 
-  void completion(json_object *id, json_object *params) {
+  void completion(const JsonValue *id, const JsonValue *params) {
     if (id == nullptr) {
       return;
     }
@@ -1976,28 +1851,28 @@ private:
           response(id, completionListJson({}, source, completionSnippets)));
       return;
     }
-    request.id = json_object_get(id);
+    request.id = *id;
     request.idKey = requestIdKey(id);
     request.entryPath = *filePath;
     request.byteOffset = *byteOffset;
     scheduleCompletion(std::move(request));
   }
 
-  void codeActions(json_object *id, json_object *params) {
+  void codeActions(const JsonValue *id, const JsonValue *params) {
     if (id == nullptr) {
       return;
     }
-    json_object *actions = json_object_new_array();
+    JsonArray actions;
     const std::string clientUri =
         stringMember(member(params, "textDocument"), "uri");
     const std::string uri = documentKeyFromUri(clientUri);
     const std::optional<LspRange> requestedRange =
         rangeMember(member(params, "range"));
-    json_object *context = member(params, "context");
-    json_object *requestedDiagnostics = member(context, "diagnostics");
+    const JsonValue *context = member(params, "context");
+    const JsonValue *requestedDiagnostics = member(context, "diagnostics");
     if (uri.empty() || !codeActionLiterals || !requestedRange ||
         !validRange(*requestedRange) || !contextAllowsQuickFix(context)) {
-      sendJson(response(id, actions));
+      sendJson(response(id, JsonValue(std::move(actions))));
       return;
     }
 
@@ -2057,16 +1932,15 @@ private:
     }
 
     for (const CodeActionCandidate &candidate : candidates) {
-      json_object_array_add(
-          actions, codeActionJson(candidate, workspaceDocumentChanges,
-                                  diagnosticRelatedInformation, diagnosticData,
-                                  preferredCodeActions));
+      actions.push_back(codeActionJson(candidate, workspaceDocumentChanges,
+                                       diagnosticRelatedInformation,
+                                       diagnosticData, preferredCodeActions));
     }
-    sendJson(response(id, actions));
+    sendJson(response(id, JsonValue(std::move(actions))));
   }
 
-  void documentFormatting(json_object *id, json_object *params) {
-    json_object *edits = json_object_new_array();
+  void documentFormatting(const JsonValue *id, const JsonValue *params) {
+    JsonArray edits;
     const std::string clientUri =
         stringMember(member(params, "textDocument"), "uri");
     const std::string uri = documentKeyFromUri(clientUri);
@@ -2079,11 +1953,11 @@ private:
       }
     }
     if (source.empty()) {
-      sendJson(response(id, edits));
+      sendJson(response(id, JsonValue(std::move(edits))));
       return;
     }
 
-    json_object *formatOptions = member(params, "options");
+    const JsonValue *formatOptions = member(params, "options");
     lang::FormatOptions options{
         .indentWidth =
             std::min<std::size_t>(sizeMember(formatOptions, "tabSize", 2), 16),
@@ -2102,18 +1976,13 @@ private:
     }
     const std::string formatted = lang::Formatter(options).format(source);
     if (formatted == source) {
-      sendJson(response(id, edits));
+      sendJson(response(id, JsonValue(std::move(edits))));
       return;
     }
 
-    json_object *edit = json_object_new_object();
-    json_object_object_add(edit, "range", rangeJson(source, 0, source.size()));
-    json_object_object_add(
-        edit, "newText",
-        json_object_new_string_len(formatted.data(),
-                                   static_cast<int>(formatted.size())));
-    json_object_array_add(edits, edit);
-    sendJson(response(id, edits));
+    edits.push_back(JsonObject{{"range", rangeJson(source, 0, source.size())},
+                               {"newText", formatted}});
+    sendJson(response(id, JsonValue(std::move(edits))));
   }
 
   DocumentAnalysis analyzeDocument(const AnalysisRequest &request) const {
@@ -2234,8 +2103,6 @@ private:
     }
     for (PendingSemanticRequest &request : rejected) {
       sendJson(errorResponse(request.id, code, message));
-      json_object_put(request.params);
-      json_object_put(request.id);
     }
   }
 
@@ -2257,8 +2124,6 @@ private:
     }
     for (PendingSemanticRequest &request : rejected) {
       sendJson(errorResponse(request.id, code, message));
-      json_object_put(request.params);
-      json_object_put(request.id);
     }
   }
 
@@ -2295,25 +2160,23 @@ private:
         }
       }
       const std::optional<Position> position =
-          positionMember(member(request.params, "position"));
+          positionMember(member(&request.params, "position"));
       if (!current) {
         sendJson(errorResponse(request.id, -32801, "Content modified"));
       } else if (request.kind == SemanticRequestKind::Tokens) {
-        semanticTokens(request.id, request.params);
+        semanticTokens(&request.id, &request.params);
       } else if (!position) {
         sendJson(response(request.id, nullptr));
       } else if (request.kind == SemanticRequestKind::Hover) {
-        respondHover(request.id, *position, std::move(source), snapshot);
+        respondHover(&request.id, *position, std::move(source), snapshot);
       } else {
-        respondDefinition(request.id, request.uri, *position, std::move(source),
-                          snapshot);
+        respondDefinition(&request.id, request.uri, *position,
+                          std::move(source), snapshot);
       }
-      json_object_put(request.params);
-      json_object_put(request.id);
     }
   }
 
-  void cancelRequest(json_object *params) {
+  void cancelRequest(const JsonValue *params) {
     const std::string idKey = requestIdKey(member(params, "id"));
     if (idKey.empty()) {
       return;
@@ -2347,12 +2210,9 @@ private:
     }
     for (CompletionRequest &request : canceled) {
       sendJson(errorResponse(request.id, -32800, "Request cancelled"));
-      json_object_put(request.id);
     }
     for (PendingSemanticRequest &request : canceledSemantic) {
       sendJson(errorResponse(request.id, -32800, "Request cancelled"));
-      json_object_put(request.params);
-      json_object_put(request.id);
     }
     completionCondition.notify_all();
   }
@@ -2362,7 +2222,6 @@ private:
     {
       const std::lock_guard lock(stateMutex);
       if (stoppingCompletion) {
-        json_object_put(request.id);
         return;
       }
       for (auto queued = completionRequests.begin();
@@ -2384,7 +2243,6 @@ private:
     for (CompletionRequest &obsolete : dropped) {
       sendJson(errorResponse(obsolete.id, -32802,
                              "Superseded by a newer completion request"));
-      json_object_put(obsolete.id);
     }
     completionCondition.notify_one();
   }
@@ -2448,7 +2306,6 @@ private:
             response(request.id, completionListJson(completion, request.source,
                                                     request.snippetSupport)));
       }
-      json_object_put(request.id);
       {
         const std::lock_guard lock(stateMutex);
         --activeCompletions;
@@ -2667,14 +2524,9 @@ private:
     if (!semanticTokenRefreshSupport) {
       return;
     }
-    json_object *request = json_object_new_object();
-    json_object_object_add(request, "jsonrpc", json_object_new_string("2.0"));
-    json_object_object_add(
-        request, "id", json_object_new_int64(nextServerRequestId.fetch_add(1)));
-    json_object_object_add(
-        request, "method",
-        json_object_new_string("workspace/semanticTokens/refresh"));
-    sendJson(request);
+    sendJson(JsonObject{{"jsonrpc", "2.0"},
+                        {"id", nextServerRequestId.fetch_add(1)},
+                        {"method", "workspace/semanticTokens/refresh"}});
   }
 
   std::string clientUriForKeyLocked(std::string_view key) const {
@@ -2727,36 +2579,27 @@ private:
 
   void publish(std::vector<DiagnosticPublication> publications) const {
     for (const DiagnosticPublication &publication : publications) {
-      json_object *diagnostics = json_object_new_array();
+      JsonArray diagnostics;
+      diagnostics.reserve(publication.diagnostics.size());
       for (const LspDiagnostic &diagnostic : publication.diagnostics) {
-        json_object_array_add(diagnostics,
-                              diagnosticJson(diagnostic,
-                                             diagnosticRelatedInformation,
-                                             diagnosticData));
+        diagnostics.push_back(diagnosticJson(
+            diagnostic, diagnosticRelatedInformation, diagnosticData));
       }
-      publishDiagnostics(publication.uri, diagnostics, publication.version);
+      publishDiagnostics(publication.uri, std::move(diagnostics),
+                         publication.version);
     }
   }
 
   static void
-  publishDiagnostics(const std::string &uri, json_object *diagnostics,
+  publishDiagnostics(const std::string &uri, JsonArray diagnostics,
                      std::optional<std::int64_t> version = std::nullopt) {
-    json_object *params = json_object_new_object();
-    json_object_object_add(params, "uri", json_object_new_string(uri.c_str()));
+    JsonObject params{{"uri", uri}, {"diagnostics", std::move(diagnostics)}};
     if (version) {
-      json_object_object_add(params, "version",
-                             json_object_new_int64(*version));
+      params["version"] = *version;
     }
-    json_object_object_add(params, "diagnostics", diagnostics);
-
-    json_object *notification = json_object_new_object();
-    json_object_object_add(notification, "jsonrpc",
-                           json_object_new_string("2.0"));
-    json_object_object_add(
-        notification, "method",
-        json_object_new_string("textDocument/publishDiagnostics"));
-    json_object_object_add(notification, "params", params);
-    sendJson(notification);
+    sendJson(JsonObject{{"jsonrpc", "2.0"},
+                        {"method", "textDocument/publishDiagnostics"},
+                        {"params", std::move(params)}});
   }
 
   void flushAnalyses() {
@@ -2784,9 +2627,6 @@ private:
       stoppingCompletion = true;
       abandoned.swap(completionRequests);
     }
-    for (CompletionRequest &request : abandoned) {
-      json_object_put(request.id);
-    }
     completionCondition.notify_all();
     if (completionWorker.joinable()) {
       completionWorker.join();
@@ -2804,10 +2644,6 @@ private:
       pendingAnalyses.clear();
       analysisOrder.clear();
       abandoned.swap(pendingSemanticRequests);
-    }
-    for (PendingSemanticRequest &request : abandoned) {
-      json_object_put(request.params);
-      json_object_put(request.id);
     }
     analysisCondition.notify_all();
     if (analysisWorker.joinable()) {
