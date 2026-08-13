@@ -7,7 +7,7 @@ GTI has one language compilation pipeline and two user entry modes:
 
 ```text
 gti source.gti ...                 direct mode
-gti build|check|run|clean|metadata project mode
+gti build|check|run|test|clean|metadata project mode
                  \                /
                   gti_driver requests
                          -> Frontend
@@ -81,12 +81,20 @@ not configure a native compiler, sysroot, runtime, or linker for that target.
 ## Project Mode
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
-resolves executable targets/profiles and structured native inputs (including
-declared C and C++ sources), and produces an immutable `ProjectBuildPlan`.
-`build`, `check`, `run`, `clean`, `metadata`, `new`, and `init` are implemented.
-`check` stops after the frontend; `run` executes through exact arguments and
-inherited streams; `clean` removes only a validated tool-owned subtree;
-`metadata` is read-only.
+resolves executable and test targets, profiles, and structured native inputs
+(including declared C and C++ sources), and produces immutable
+`ProjectBuildPlan` values. `build`, `check`, `run`, `test`, `clean`, `metadata`,
+`new`, and `init` are implemented. `check` stops after the frontend; `run`
+executes one executable target through exact arguments and inherited streams;
+`test` deterministically plans every test target or one named test and
+builds/runs each as an independent whole program in target-name order. A build
+failure stops the command; a runtime failure is recorded while later tests
+continue, and the command returns the first failing process status after the
+summary. `build` and `check` can explicitly select either kind, while `run`
+rejects a test target and points to `gti test`. `clean` removes only a validated
+tool-owned subtree. When a package has one executable plus test targets, that
+executable remains the default for `build`, `check`, and `run`. `metadata` is
+read-only.
 
 `new` and a source-creating `init` scaffold the implemented owned-argument
 entry form, `int main(int argc, std::vector<std::string> argv)`, with the
@@ -118,7 +126,7 @@ a shell. The display contract does not claim compatibility with Windows
 Each manifest `[profiles.<name>]` table may set
 `execution-profile = "single-threaded"|"concurrent"`; the selected value is
 resolved into the plan's `TargetInfo`, and the command-line option is an
-explicit project override. Metadata schema 5 publishes the declared value for
+explicit project override. Metadata schema 6 publishes the declared value for
 every profile. This build profile field selects static language policy only;
 the later target/runtime `threads` capability remains independent.
 
@@ -131,9 +139,8 @@ rule is driver policy, while the typed `main` contract is compiler semantics.
 
 ## Current Limits
 
-Project test targets, caching, external dependencies, lockfiles, workspaces,
-`fetch`, arbitrary native build scripts, and a package registry are not
-implemented.
+Caching, external dependencies, lockfiles, workspaces, `fetch`, arbitrary
+native build scripts, and a package registry are not implemented.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP must consume reusable resolved project facts rather than parse manifest

@@ -271,6 +271,28 @@ std::optional<NativeInputs> resolveNativeInputs(
   return inputs;
 }
 
+const ProjectProfile *selectProfile(const ProjectManifest &manifest,
+                                    std::string_view requested,
+                                    std::vector<Diagnostic> &diagnostics) {
+  const ProjectProfile *profile = manifest.findProfile(requested);
+  if (profile != nullptr) {
+    return profile;
+  }
+
+  Diagnostic diagnostic = projectDiagnostic("GTI-B1202", manifestSpan(manifest),
+                                            "Unknown build profile '" +
+                                                std::string(requested) + "'.");
+  if (const std::optional<std::string_view> nearest =
+          nearestName(requested, manifest.profiles(),
+                      [](const ProjectProfile &candidate) -> std::string_view {
+                        return candidate.name;
+                      })) {
+    diagnostic.hints.push_back("Did you mean '" + std::string(*nearest) + "'?");
+  }
+  diagnostics.push_back(std::move(diagnostic));
+  return nullptr;
+}
+
 ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
                                const ProjectTarget &selectedTarget,
                                const ProjectProfile &selectedProfile,
@@ -297,9 +319,9 @@ ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
       outputDirectory / "intermediate" / (selectedTarget.name + ".gti.cpp");
   return ProjectBuildPlan(
       manifest.path(), manifest.packageRoot(), manifest.package().name,
-      selectedTarget.name, selectedProfile.name, selectedTarget.root, output,
-      generatedSource, std::move(resolvedTarget), optimization, cppStandard,
-      keepCpp, std::move(nativeInputs));
+      selectedTarget.name, selectedTarget.kind, selectedProfile.name,
+      selectedTarget.root, output, generatedSource, std::move(resolvedTarget),
+      optimization, cppStandard, keepCpp, std::move(nativeInputs));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -412,7 +434,8 @@ const ProjectBuildOverrides &ProjectBuildRequest::overrides() const {
 
 ProjectBuildPlan::ProjectBuildPlan(
     std::filesystem::path manifestPath, std::filesystem::path packageRoot,
-    std::string packageName, std::string targetName, std::string profileName,
+    std::string packageName, std::string targetName,
+    ProjectTargetKind targetKind, std::string profileName,
     std::filesystem::path entry, std::filesystem::path output,
     std::filesystem::path generatedSource, TargetInfo target,
     OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
@@ -420,7 +443,7 @@ ProjectBuildPlan::ProjectBuildPlan(
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectPackageName(std::move(packageName)),
-      executableTargetName(std::move(targetName)),
+      projectTargetName(std::move(targetName)), projectTargetKind(targetKind),
       buildProfileName(std::move(profileName)), entryPath(std::move(entry)),
       outputPath(std::move(output)),
       generatedSourcePath(std::move(generatedSource)),
@@ -441,7 +464,11 @@ const std::string &ProjectBuildPlan::packageName() const {
 }
 
 const std::string &ProjectBuildPlan::targetName() const {
-  return executableTargetName;
+  return projectTargetName;
+}
+
+ProjectTargetKind ProjectBuildPlan::targetKind() const {
+  return projectTargetKind;
 }
 
 const std::string &ProjectBuildPlan::profileName() const {
@@ -558,36 +585,34 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
   } else if (manifest.targets().size() == 1) {
     selectedTarget = &manifest.targets().front();
   } else {
-    Diagnostic diagnostic = projectDiagnostic(
-        "GTI-B1201", manifestSpan(manifest),
-        "The manifest declares multiple targets; select one explicitly.");
-    std::string names;
     for (const ProjectTarget &target : manifest.targets()) {
-      if (!names.empty()) {
-        names += ", ";
+      if (target.kind != ProjectTargetKind::Executable) {
+        continue;
       }
-      names += target.name;
+      if (selectedTarget != nullptr) {
+        selectedTarget = nullptr;
+        break;
+      }
+      selectedTarget = &target;
     }
-    diagnostic.hints.push_back("Available targets: " + names + ".");
-    result.diagnostics.push_back(std::move(diagnostic));
+    if (selectedTarget == nullptr) {
+      Diagnostic diagnostic = projectDiagnostic(
+          "GTI-B1201", manifestSpan(manifest),
+          "The manifest declares multiple targets; select one explicitly.");
+      std::string names;
+      for (const ProjectTarget &target : manifest.targets()) {
+        if (!names.empty()) {
+          names += ", ";
+        }
+        names += target.name;
+      }
+      diagnostic.hints.push_back("Available targets: " + names + ".");
+      result.diagnostics.push_back(std::move(diagnostic));
+    }
   }
 
   const ProjectProfile *selectedProfile =
-      manifest.findProfile(request.profileName());
-  if (selectedProfile == nullptr) {
-    Diagnostic diagnostic = projectDiagnostic(
-        "GTI-B1202", manifestSpan(manifest),
-        "Unknown build profile '" + request.profileName() + "'.");
-    if (const std::optional<std::string_view> nearest =
-            nearestName(request.profileName(), manifest.profiles(),
-                        [](const ProjectProfile &profile) -> std::string_view {
-                          return profile.name;
-                        })) {
-      diagnostic.hints.push_back("Did you mean '" + std::string(*nearest) +
-                                 "'?");
-    }
-    result.diagnostics.push_back(std::move(diagnostic));
-  }
+      selectProfile(manifest, request.profileName(), result.diagnostics);
 
   if (!result.diagnostics.empty() || selectedTarget == nullptr ||
       selectedProfile == nullptr) {
@@ -607,6 +632,101 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
   result.plan = makeBuildPlan(manifest, *selectedTarget, *selectedProfile,
                               request.target(), std::move(*nativeInputs),
                               request.overrides());
+  return result;
+}
+
+ProjectTestResolutionResult
+resolveProjectTests(const ProjectBuildRequest &request) {
+  ProjectTestResolutionResult result;
+  ManifestDiscoveryResult discovery =
+      discoverProjectManifest(request.startDirectory());
+  if (!discovery.succeeded()) {
+    result.status = ProjectResolutionStatus::DiscoveryFailure;
+    result.diagnostics = std::move(discovery.diagnostics);
+    return result;
+  }
+
+  ManifestLoadResult loaded = loadProjectManifest(*discovery.path);
+  result.sources = std::move(loaded.sources);
+  if (!loaded.succeeded()) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    result.diagnostics = std::move(loaded.diagnostics);
+    return result;
+  }
+
+  const ProjectManifest &manifest = *loaded.manifest;
+  std::vector<const ProjectTarget *> selectedTargets;
+  if (request.targetName()) {
+    const ProjectTarget *selected = manifest.findTarget(*request.targetName());
+    if (selected == nullptr) {
+      Diagnostic diagnostic = projectDiagnostic(
+          "GTI-B1200", manifestSpan(manifest),
+          "Unknown test target '" + *request.targetName() + "'.");
+      std::vector<const ProjectTarget *> testTargets;
+      for (const ProjectTarget &target : manifest.targets()) {
+        if (target.kind == ProjectTargetKind::Test) {
+          testTargets.push_back(&target);
+        }
+      }
+      if (const std::optional<std::string_view> nearest =
+              nearestName(*request.targetName(), testTargets,
+                          [](const ProjectTarget *target) -> std::string_view {
+                            return target->name;
+                          })) {
+        diagnostic.hints.push_back("Did you mean '" + std::string(*nearest) +
+                                   "'?");
+      }
+      result.diagnostics.push_back(std::move(diagnostic));
+    } else if (selected->kind != ProjectTargetKind::Test) {
+      Diagnostic diagnostic = projectDiagnostic(
+          "GTI-B1204", selected->declaration,
+          "Target '" + selected->name + "' is not a test target.");
+      diagnostic.hints.push_back(
+          "Select a target whose manifest kind is 'test'.");
+      result.diagnostics.push_back(std::move(diagnostic));
+    } else {
+      selectedTargets.push_back(selected);
+    }
+  } else {
+    for (const ProjectTarget &target : manifest.targets()) {
+      if (target.kind == ProjectTargetKind::Test) {
+        selectedTargets.push_back(&target);
+      }
+    }
+    if (selectedTargets.empty()) {
+      Diagnostic diagnostic =
+          projectDiagnostic("GTI-B1203", manifestSpan(manifest),
+                            "The manifest declares no test targets.");
+      diagnostic.hints.push_back(
+          "Declare a target with kind = \"test\" before running gti test.");
+      result.diagnostics.push_back(std::move(diagnostic));
+    }
+  }
+
+  const ProjectProfile *selectedProfile =
+      selectProfile(manifest, request.profileName(), result.diagnostics);
+
+  if (!result.diagnostics.empty() || selectedProfile == nullptr) {
+    result.status = ProjectResolutionStatus::SelectionFailure;
+    return result;
+  }
+
+  result.plans.reserve(selectedTargets.size());
+  for (const ProjectTarget *selectedTarget : selectedTargets) {
+    std::optional<NativeInputs> nativeInputs =
+        resolveNativeInputs(manifest, *selectedTarget, *selectedProfile,
+                            request.target(), result.diagnostics);
+    if (!nativeInputs) {
+      result.status = ProjectResolutionStatus::ManifestFailure;
+      result.plans.clear();
+      return result;
+    }
+    result.plans.push_back(makeBuildPlan(
+        manifest, *selectedTarget, *selectedProfile, request.target(),
+        std::move(*nativeInputs), request.overrides()));
+  }
+
+  result.status = ProjectResolutionStatus::Success;
   return result;
 }
 

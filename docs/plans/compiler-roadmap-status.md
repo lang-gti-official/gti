@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.111.0
+Checkpoint version: 0.113.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -44,6 +44,16 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.113.0 checkpoint completes B-PROJECT-01. Manifest schema version 1 now
+accepts executable and test target kinds; the driver resolves all or one named
+test into deterministic immutable build plans; and `gti test` builds each root
+as an independent whole program. Runtime failures are reported by target while
+later tests continue, the first failing process status is propagated, metadata
+schema 6 publishes target kinds, and direct compilation plus source-tree and
+installed CLI/library workflows remain covered. The next project-system row is
+the deterministic whole-program cache; workspaces/path dependencies and Git
+lockfiles remain sequenced behind it.
 
 The 0.98.0 checkpoint adds multi-parameter source concepts and bounded,
 validity-only trailing `requires` conjunctions. Exact input-iterator,
@@ -387,7 +397,7 @@ semantic publication prevent application access to the surrounding namespace.
 | Optimizer | Stage A complete; Stage B started | Backend-neutral checked-integer and exact binary32/binary64 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. One atomic controlled editor client folds primitive grouping identities in verified shadow MIR and reports HIR agreement plus repair/invalidation. General pass management, cached analyses, broader folds, and MIR-controlled emission remain outstanding. |
 | C++ backend | Transitional with documented evaluation/failure gaps | Consumes semantic and HIR decisions, including compiler-capability type identity, emits exact binary32/binary64 and layout-query constants, never delegates a GTI layout query to native C++, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. Inline native argument/helper lists, temporary behavior, and static initialization do not implement Execution Section 4.2; emitter-local abort helpers and native expected observers do not implement Section 4.10's category/site, cleanup, embedding, or status contract. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
-| Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `clean`, and schema-4 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Project tests, caching, dependencies, and lockfiles remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
+| Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `test`, `clean`, and schema-6 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Test targets build and execute independently in deterministic order. Caching, dependencies, and lockfiles remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
 
 ## Roadmap Milestones
 
@@ -573,11 +583,11 @@ lifetime work are incomplete.
   folds one proof family at a time or implement `O-MIR-02` conservative
   per-function effects. General pass management must still follow a concrete
   client, and no new optimization should extend the HIR replacement bridge.
-- **Build system:** immutable compiler/driver requests, executable manifest
-  targets, and `build`, `check`, `run`, `clean`, and `metadata` are complete.
-  Structured package/profile/target native inputs and declared C/C++ source
-  compilation are also complete. Project test targets are next, followed by
-  deterministic caching.
+- **Build system:** immutable compiler/driver requests, executable/test
+  manifest targets, and `build`, `check`, `run`, `test`, `clean`, and
+  `metadata` are complete. Structured package/profile/target native inputs and
+  declared C/C++ source compilation are also complete. Deterministic caching
+  is next, before workspaces/path dependencies and Git lockfiles.
 - **Quality/tooling:** deterministic diagnostics, formatting, Tree-sitter,
   semantic tokens, completion, hover, and definition have foundations.
   Shipped GTI sources are parsed by Tree-sitter in CI; interface/pack signature

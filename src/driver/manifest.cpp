@@ -975,9 +975,18 @@ ProjectManifest::ProjectManifest(std::filesystem::path path,
                                  std::vector<ProjectTarget> targets,
                                  std::vector<ProjectProfile> profiles)
     : manifestPath(std::move(path)), rootPath(manifestPath.parent_path()),
-      packageIdentity(std::move(package)),
-      executableTargets(std::move(targets)),
+      packageIdentity(std::move(package)), projectTargets(std::move(targets)),
       buildProfiles(std::move(profiles)) {}
+
+std::string_view projectTargetKindName(ProjectTargetKind kind) {
+  switch (kind) {
+  case ProjectTargetKind::Executable:
+    return "executable";
+  case ProjectTargetKind::Test:
+    return "test";
+  }
+  return "executable";
+}
 
 const std::filesystem::path &ProjectManifest::path() const {
   return manifestPath;
@@ -992,7 +1001,7 @@ const ProjectPackage &ProjectManifest::package() const {
 }
 
 const std::vector<ProjectTarget> &ProjectManifest::targets() const {
-  return executableTargets;
+  return projectTargets;
 }
 
 const std::vector<ProjectProfile> &ProjectManifest::profiles() const {
@@ -1001,9 +1010,9 @@ const std::vector<ProjectProfile> &ProjectManifest::profiles() const {
 
 const ProjectTarget *ProjectManifest::findTarget(std::string_view name) const {
   const auto found = std::find_if(
-      executableTargets.begin(), executableTargets.end(),
+      projectTargets.begin(), projectTargets.end(),
       [name](const ProjectTarget &target) { return target.name == name; });
-  return found == executableTargets.end() ? nullptr : &*found;
+  return found == projectTargets.end() ? nullptr : &*found;
 }
 
 const ProjectProfile *
@@ -1201,8 +1210,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
     if (targetsTable->empty()) {
       result.diagnostics.push_back(buildDiagnostic(
           "GTI-B1002", sourceSpan(sourceName, source, *targetsTable),
-          "Manifest table 'targets' must declare at least one executable "
-          "target."));
+          "Manifest table 'targets' must declare at least one target."));
     }
     for (const auto &[targetKey, targetNode] : *targetsTable) {
       const std::string targetName(targetKey.str());
@@ -1226,11 +1234,17 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
       const std::optional<std::string> root =
           requiredString(*targetTable, "root", "target", sourceName, source,
                          result.diagnostics);
-      if (kind && *kind != "executable") {
-        result.diagnostics.push_back(buildDiagnostic(
-            "GTI-B1005",
-            sourceSpan(sourceName, source, *targetTable->get("kind")),
-            "Target kind must be 'executable' in manifest version 1."));
+      ProjectTargetKind targetKind = ProjectTargetKind::Executable;
+      if (kind) {
+        if (*kind == "test") {
+          targetKind = ProjectTargetKind::Test;
+        } else if (*kind != "executable") {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1005",
+              sourceSpan(sourceName, source, *targetTable->get("kind")),
+              "Target kind must be 'executable' or 'test' in manifest "
+              "version 1."));
+        }
       }
       if (!root) {
         continue;
@@ -1275,6 +1289,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
       }
       targets.push_back(
           {.name = targetName,
+           .kind = targetKind,
            .root = resolvedRoot,
            .declaration = sourceSpan(sourceName, source, targetKey),
            .native =

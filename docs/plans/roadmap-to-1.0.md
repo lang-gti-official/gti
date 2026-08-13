@@ -719,9 +719,9 @@ Add the staged project workflow from the build-system proposal:
 
 1. extract immutable compiler and native-toolchain requests into `gti_driver`;
 2. add `gti.toml`, one executable target, and dev/release profiles;
-3. add project workflow commands: `gti build`, `check`, `run`, `clean`, and
-   `metadata` are complete; structured native manifest inputs are complete;
-   `test` remains;
+3. add project workflow commands: `gti build`, `check`, `run`, `test`, `clean`,
+   and `metadata` are complete; structured native manifest inputs and test
+   targets are complete;
 4. add deterministic whole-program caching;
 5. add workspaces and path dependencies;
 6. add exact Git dependency resolution, `gti.lock`, `fetch`, `--locked`, and
@@ -732,13 +732,14 @@ Add the staged project workflow from the build-system proposal:
 Steps 1 and 2 are complete: direct mode and project builds route immutable
 compilation and native requests through the separately compiled `gti_driver`
 library. Project mode discovers and validates schema-versioned `gti.toml`
-manifests, resolves executable targets and profiles, and publishes uncached
-artifacts under `build/gti/`. Step 3 now includes frontend-only checking,
-build-and-run with exact arguments, safe cleanup, read-only deterministic
-metadata, and package/profile/target native inputs with explicit target
-selection, containment, ordering, and automatic compilation of declared C and
-C++ sources. Project test targets are the remaining workflow work before
-caching.
+manifests, resolves executable/test targets and profiles, and publishes
+uncached artifacts under `build/gti/`. Step 3 now includes frontend-only
+checking, build-and-run with exact arguments, safe cleanup, read-only
+deterministic metadata, and package/profile/target native inputs with explicit
+target selection, containment, ordering, and automatic compilation of declared
+C and C++ sources. Project test targets build and execute independently in
+deterministic order, so whole-program caching is now the next project-system
+milestone.
 
 The systems-ready build workflow does not need a registry, package build
 scripts, binary GTI libraries, source globbing, or CMake replacement for

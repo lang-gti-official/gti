@@ -215,7 +215,9 @@ void writeProjectMetadata(std::ostream &stream,
         manifest.targets()[targetIndex];
     stream << (targetIndex == 0 ? "\n" : ",\n") << "    {\n      \"name\": ";
     writeJsonString(stream, projectTarget.name);
-    stream << ",\n      \"kind\": \"executable\",\n      \"root\": ";
+    stream << ",\n      \"kind\": ";
+    writeJsonString(stream, driver::projectTargetKindName(projectTarget.kind));
+    stream << ",\n      \"root\": ";
     writeJsonString(stream, projectTarget.root.string());
     stream << ",\n      \"outputs\": [";
     for (std::size_t profileIndex = 0;

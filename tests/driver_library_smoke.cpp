@@ -50,6 +50,8 @@ int main() {
   const lang::driver::ManifestLoadResult missingManifest =
       lang::driver::loadProjectManifest("missing-gti.toml");
   if (missingManifest.succeeded() ||
+      lang::driver::projectTargetKindName(
+          lang::driver::ProjectTargetKind::Test) != "test" ||
       lang::driver::targetTriple(
           {.os = "macos", .vendor = "apple", .arch = "arm64"}) !=
           "arm64-apple-macos") {

@@ -294,7 +294,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 5
+        assert metadata_document["schemaVersion"] == 6
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -330,6 +330,92 @@ def main():
             "rawArguments": [],
         }
         assert not (check_project / "build").exists()
+
+        no_test_targets = run(
+            [gti, "test"], expected=65, cwd=check_project
+        )
+        assert "error[GTI-B1203]" in no_test_targets.stderr
+        assert "kind = \"test\"" in no_test_targets.stderr
+
+        test_project = root / "test-project"
+        (test_project / "src").mkdir(parents=True)
+        (test_project / "tests").mkdir()
+        (test_project / "src/main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        (test_project / "tests/alpha.gti").write_text(
+            "int main() { return 7; }\n", encoding="utf-8"
+        )
+        (test_project / "tests/beta.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        (test_project / "gti.toml").write_text(
+            manifest(
+                "[targets.beta]\n"
+                'kind = "test"\n'
+                'root = "tests/beta.gti"\n\n'
+                "[targets.app]\n"
+                'kind = "executable"\n'
+                'root = "src/main.gti"\n\n'
+                "[targets.alpha]\n"
+                'kind = "test"\n'
+                'root = "tests/alpha.gti"\n'
+            ),
+            encoding="utf-8",
+        )
+        test_metadata = json.loads(
+            run([gti, "metadata"], cwd=test_project).stdout
+        )
+        assert test_metadata["schemaVersion"] == 6
+        assert [
+            (target["name"], target["kind"])
+            for target in test_metadata["targets"]
+        ] == [
+            ("alpha", "test"),
+            ("app", "executable"),
+            ("beta", "test"),
+        ]
+
+        default_mixed_build = run([gti, "build"], cwd=test_project)
+        assert "Built app [dev," in default_mixed_build.stdout
+        default_mixed_run = run([gti, "run"], cwd=test_project)
+        assert "Built app [dev," in default_mixed_run.stderr
+
+        all_tests = run([gti, "test"], expected=7, cwd=test_project)
+        assert all_tests.stderr.index("Building test alpha") < all_tests.stderr.index(
+            "Building test beta"
+        )
+        assert all_tests.stderr.index("Testing alpha") < all_tests.stderr.index(
+            "Testing beta"
+        )
+        assert "Failed alpha (exit code 7)" in all_tests.stderr
+        assert "Passed beta" in all_tests.stderr
+        assert "Test result: 1 passed, 1 failed" in all_tests.stderr
+
+        selected_test = run(
+            [gti, "test", "beta", "--release", "--verbose"],
+            cwd=test_project,
+        )
+        assert "Testing beta" in selected_test.stderr
+        assert "Testing alpha" not in selected_test.stderr
+        assert "target beta [release," in selected_test.stderr
+        assert "Test result: 1 passed" in selected_test.stderr
+
+        wrong_test_kind = run(
+            [gti, "test", "app"], expected=65, cwd=test_project
+        )
+        assert "error[GTI-B1204]" in wrong_test_kind.stderr
+        assert "not a test target" in wrong_test_kind.stderr
+        unknown_test = run(
+            [gti, "test", "btea"], expected=65, cwd=test_project
+        )
+        assert "error[GTI-B1200]" in unknown_test.stderr
+        assert "Did you mean 'beta'?" in unknown_test.stderr
+        wrong_run_kind = run(
+            [gti, "run", "alpha"], expected=64, cwd=test_project
+        )
+        assert "use gti test alpha" in wrong_run_kind.stderr
+        run([gti, "test", "--"], expected=64, cwd=test_project)
 
         unusable_environment = os.environ.copy()
         unusable_environment["CXX"] = "definitely-not-a-native-compiler"
@@ -471,7 +557,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 5
+        assert native_document["schemaVersion"] == 6
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [

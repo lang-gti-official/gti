@@ -176,10 +176,12 @@ The native ABI and manifest-link contracts are documented in
 bounded low-level surface is specified in
 [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md).
 
-Manifest-driven executable projects use `gti.toml` and `gti build`. The
-[Build System and CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI)
-manual page documents direct options, project profiles, outputs, and current
-project-mode boundaries.
+Manifest-driven executable and test targets use `gti.toml`; `gti build` builds
+one selected target and `gti test` runs all declared test targets or one named
+test. The [Build System and
+CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI) manual page
+documents direct options, project profiles, outputs, and current project-mode
+boundaries.
 
 Create a new manifest-driven executable package with:
 
@@ -188,6 +190,10 @@ gti new hello
 cd hello
 gti run
 ```
+
+Declare an independent whole-program test with `kind = "test"`, then run it
+with `gti test` (or `gti test <name>`). Runtime failures are reported per target
+without preventing later tests from running.
 
 Use `gti init` to initialize an existing directory. It preserves an existing
 `src/main.gti` and refuses to replace an existing `gti.toml`; `--name <name>`

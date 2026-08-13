@@ -43,8 +43,9 @@ class ProjectBuildPlan final {
 public:
   ProjectBuildPlan(std::filesystem::path manifestPath,
                    std::filesystem::path packageRoot, std::string packageName,
-                   std::string targetName, std::string profileName,
-                   std::filesystem::path entry, std::filesystem::path output,
+                   std::string targetName, ProjectTargetKind targetKind,
+                   std::string profileName, std::filesystem::path entry,
+                   std::filesystem::path output,
                    std::filesystem::path generatedSource, TargetInfo target,
                    OptimizationLevel optimization, CppStandard cppStandard,
                    bool keepCpp, NativeInputs nativeInputs);
@@ -53,6 +54,7 @@ public:
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
   [[nodiscard]] const std::string &packageName() const;
   [[nodiscard]] const std::string &targetName() const;
+  [[nodiscard]] ProjectTargetKind targetKind() const;
   [[nodiscard]] const std::string &profileName() const;
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const std::filesystem::path &output() const;
@@ -67,7 +69,8 @@ private:
   std::filesystem::path projectManifestPath;
   std::filesystem::path projectRoot;
   std::string projectPackageName;
-  std::string executableTargetName;
+  std::string projectTargetName;
+  ProjectTargetKind projectTargetKind;
   std::string buildProfileName;
   std::filesystem::path entryPath;
   std::filesystem::path outputPath;
@@ -109,6 +112,17 @@ struct ProjectResolutionResult {
 
   [[nodiscard]] bool succeeded() const {
     return status == ProjectResolutionStatus::Success && plan.has_value();
+  }
+};
+
+struct ProjectTestResolutionResult {
+  ProjectResolutionStatus status = ProjectResolutionStatus::DiscoveryFailure;
+  std::vector<ProjectBuildPlan> plans;
+  SourceManager sources;
+  std::vector<Diagnostic> diagnostics;
+
+  [[nodiscard]] bool succeeded() const {
+    return status == ProjectResolutionStatus::Success && !plans.empty();
   }
 };
 
@@ -191,6 +205,9 @@ struct ProjectScaffoldResult {
 
 [[nodiscard]] ProjectResolutionResult
 resolveProjectBuild(const ProjectBuildRequest &request);
+
+[[nodiscard]] ProjectTestResolutionResult
+resolveProjectTests(const ProjectBuildRequest &request);
 
 [[nodiscard]] ProjectMetadataResult
 resolveProjectMetadata(const std::filesystem::path &startDirectory,

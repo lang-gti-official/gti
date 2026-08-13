@@ -132,8 +132,10 @@ void testDiscoveryParsingAndResolution() {
            "the package identity should be retained");
     const lang::driver::ProjectTarget *target = project.findTarget("game");
     expect(target != nullptr &&
+               target->kind == lang::driver::ProjectTargetKind::Executable &&
                target->root == std::filesystem::canonical(source),
-           "target roots should resolve relative to the manifest");
+           "executable target roots and kinds should resolve from the "
+           "manifest");
     const lang::driver::ProjectProfile *development =
         project.findProfile("dev");
     const lang::driver::ProjectProfile *release =
@@ -265,6 +267,22 @@ void testManifestDiagnostics() {
          "manifest execution profiles should use the exact compiler-owned "
          "vocabulary");
 
+  std::string invalidKind = validManifest();
+  invalidKind.replace(invalidKind.find("executable"),
+                      std::string_view("executable").size(), "benchmark");
+  expect(writeFile(manifest, invalidKind),
+         "the invalid target-kind fixture should be writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  const lang::Diagnostic *targetKind =
+      findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(targetKind != nullptr &&
+             targetKind->message.find("'executable' or 'test'") !=
+                 std::string::npos &&
+             targetKind->primary.source ==
+                 std::filesystem::canonical(manifest).string() &&
+             targetKind->primary.start < targetKind->primary.end,
+         "manifest target kinds should accept only executable and test");
+
   expect(
       writeFile(temporary.root() / "outside.gti", "int main() { return 0; }\n"),
       "the escaping target fixture should be writable");
@@ -352,6 +370,105 @@ void testTargetSelectionDiagnostics() {
   expect(!missing.succeeded() &&
              findDiagnostic(missing.diagnostics, "GTI-B1100") != nullptr,
          "discovery should report a focused error when no manifest exists");
+}
+
+void testTestTargetResolution() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path manifest = temporary.root() / "gti.toml";
+  expect(writeFile(temporary.root() / "src/app.gti",
+                   "int main() { return 0; }\n") &&
+             writeFile(temporary.root() / "tests/integration.gti",
+                       "int main() { return 0; }\n") &&
+             writeFile(temporary.root() / "tests/unit.gti",
+                       "int main() { return 0; }\n"),
+         "project test target sources should be writable");
+  const std::string targets =
+      "\n[targets.unit]\nkind = \"test\"\nroot = \"tests/unit.gti\"\n"
+      "\n[targets.app]\nkind = \"executable\"\nroot = \"src/app.gti\"\n"
+      "\n[targets.integration]\nkind = \"test\"\n"
+      "root = \"tests/integration.gti\"\n";
+  expect(writeFile(manifest, validManifest(targets)),
+         "the mixed executable/test manifest should be writable");
+
+  const lang::driver::ManifestLoadResult loaded =
+      lang::driver::loadProjectManifest(manifest);
+  const lang::driver::ProjectTarget *unit =
+      loaded.manifest ? loaded.manifest->findTarget("unit") : nullptr;
+  expect(loaded.succeeded() && unit != nullptr &&
+             unit->kind == lang::driver::ProjectTargetKind::Test &&
+             lang::driver::projectTargetKindName(unit->kind) == "test",
+         "manifest version 1 should retain test target kinds");
+
+  const lang::driver::ProjectResolutionResult defaultBuild =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          temporary.root(), std::nullopt, "dev", lang::TargetInfo::host()));
+  expect(defaultBuild.succeeded() && defaultBuild.plan &&
+             defaultBuild.plan->targetName() == "app",
+         "a sole executable should remain the default build target when test "
+         "targets are present");
+
+  lang::driver::ProjectBuildOverrides overrides;
+  overrides.optimization = lang::OptimizationLevel::O3;
+  const lang::TargetInfo targetInfo{
+      .os = "testos", .vendor = "testvendor", .arch = "testarch"};
+  lang::driver::ProjectTestResolutionResult tests =
+      lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
+          temporary.root(), std::nullopt, "dev", targetInfo, overrides));
+  expect(tests.succeeded() && tests.plans.size() == 2 &&
+             tests.plans[0].targetName() == "integration" &&
+             tests.plans[1].targetName() == "unit" &&
+             tests.plans[0].targetKind() ==
+                 lang::driver::ProjectTargetKind::Test &&
+             tests.plans[1].targetKind() ==
+                 lang::driver::ProjectTargetKind::Test,
+         "gti test planning should select every test target in deterministic "
+         "name order");
+  if (tests.plans.size() == 2) {
+    expect(tests.plans[0].optimization() == lang::OptimizationLevel::O3 &&
+               tests.plans[0].output() != tests.plans[1].output(),
+           "test plans should retain CLI overrides and independent outputs");
+  }
+
+  tests = lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
+      temporary.root(), std::string("unit"), "release", targetInfo));
+  expect(tests.succeeded() && tests.plans.size() == 1 &&
+             tests.plans.front().targetName() == "unit" &&
+             tests.plans.front().profileName() == "release",
+         "an explicitly named test should produce one selected test plan");
+
+  tests = lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
+      temporary.root(), std::string("unt"), "dev", targetInfo));
+  const lang::Diagnostic *unknown =
+      findDiagnostic(tests.diagnostics, "GTI-B1200");
+  expect(unknown != nullptr && !unknown->hints.empty() &&
+             unknown->message.find("Unknown test target") !=
+                 std::string::npos &&
+             unknown->hints.front().find("unit") != std::string::npos,
+         "unknown test targets should suggest the nearest test target");
+
+  tests = lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
+      temporary.root(), std::string("app"), "dev", targetInfo));
+  const lang::Diagnostic *wrongKind =
+      findDiagnostic(tests.diagnostics, "GTI-B1204");
+  expect(wrongKind != nullptr && !wrongKind->hints.empty() &&
+             wrongKind->primary.source ==
+                 std::filesystem::canonical(manifest).string(),
+         "selecting an executable as a test should retain the target "
+         "declaration span and an actionable hint");
+
+  const std::string noTests =
+      "\n[targets.app]\nkind = \"executable\"\nroot = \"src/app.gti\"\n";
+  expect(writeFile(manifest, validManifest(noTests)),
+         "the no-test manifest should be writable");
+  tests = lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
+      temporary.root(), std::nullopt, "dev", targetInfo));
+  const lang::Diagnostic *missing =
+      findDiagnostic(tests.diagnostics, "GTI-B1203");
+  expect(missing != nullptr && !missing->hints.empty() &&
+             missing->message.find("no test targets") != std::string::npos &&
+             missing->hints.front().find("kind = \"test\"") !=
+                 std::string::npos,
+         "gti test should diagnose a manifest with no test targets");
 }
 
 void testNativeManifestResolution() {
@@ -1067,6 +1184,7 @@ int main() {
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
   testTargetSelectionDiagnostics();
+  testTestTargetResolution();
   testNativeManifestResolution();
   testNativeManifestDiagnostics();
   testCleanSafety();

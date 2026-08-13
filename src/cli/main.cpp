@@ -45,6 +45,7 @@ enum class ProjectCommand {
   Build,
   Check,
   Run,
+  Test,
 };
 
 struct ProjectOptions {
@@ -91,6 +92,7 @@ void printUsage(std::ostream &stream) {
          "       gti build [target] [options]\n"
          "       gti check [target] [--profile <name> | --release]\n"
          "       gti run [target] [options] [-- <program arguments>]\n"
+         "       gti test [target] [options]\n"
          "       gti new <path> [--name <name>]\n"
          "       gti init [path] [--name <name>]\n"
          "       gti clean\n"
@@ -137,6 +139,8 @@ void printUsage(std::ostream &stream) {
          "native compilation.\n"
          "  run                  Build and run a target; arguments after -- "
          "belong to the program.\n"
+         "  test                 Build and run all test targets, or one named "
+         "test target.\n"
          "  clean                Remove only this package's build/gti "
          "subtree.\n"
          "  metadata             Print deterministic project metadata as "
@@ -336,12 +340,15 @@ std::string_view projectCommandName(ProjectCommand command) {
     return "check";
   case ProjectCommand::Run:
     return "run";
+  case ProjectCommand::Test:
+    return "test";
   }
   return "build";
 }
 
 bool buildsExecutable(ProjectCommand command) {
-  return command == ProjectCommand::Build || command == ProjectCommand::Run;
+  return command == ProjectCommand::Build || command == ProjectCommand::Run ||
+         command == ProjectCommand::Test;
 }
 
 ArgumentResult parseProjectArguments(int argc, char *argv[],
@@ -925,6 +932,29 @@ void reportProjectSuccess(std::ostream &stream, std::string_view action,
          << plan.output().string() << '\n';
 }
 
+int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
+                     const ProjectOptions &options,
+                     const lang::driver::ToolchainLayout &toolchain) {
+  std::optional<std::string> cCompiler;
+  if (!plan.nativeInputs().cSources.empty()) {
+    cCompiler = lang::driver::discoverCCompiler(options.cc);
+  }
+
+  const lang::driver::ExecutableBuildResult result =
+      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+          lang::driver::CompilationRequest(
+              plan.entry(), toolchain.standardLibrary, plan.target(),
+              plan.optimization(), plan.cppStandard()),
+          toolchain, plan.generatedSource(), plan.output(),
+          lang::driver::discoverNativeCompiler(options.cxx),
+          plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
+          lang::driver::ManagedOutputPolicy{.trustedRoot = plan.packageRoot(),
+                                            .outputRoot = plan.packageRoot() /
+                                                          "build" / "gti"},
+          std::move(cCompiler)));
+  return reportBuildResult(result, options.verbose);
+}
+
 int runProject(const ProjectOptions &options, const char *driver) {
   const std::optional<std::filesystem::path> currentDirectory =
       workingDirectory();
@@ -947,6 +977,13 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
 
   const lang::driver::ProjectBuildPlan &plan = *resolution.plan;
+  if (options.command == ProjectCommand::Run &&
+      plan.targetKind() != lang::driver::ProjectTargetKind::Executable) {
+    std::cerr << "gti: target '" << plan.targetName()
+              << "' is a test target; use gti test " << plan.targetName()
+              << "\n";
+    return exitCode(ExitStatus::Usage);
+  }
   if (options.verbose) {
     reportProjectPlan(plan, options.command);
   }
@@ -968,24 +1005,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
     return exitCode(ExitStatus::Success);
   }
 
-  std::optional<std::string> cCompiler;
-  if (!plan.nativeInputs().cSources.empty()) {
-    cCompiler = lang::driver::discoverCCompiler(options.cc);
-  }
-
-  const lang::driver::ExecutableBuildResult result =
-      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
-          lang::driver::CompilationRequest(
-              plan.entry(), toolchain.standardLibrary, plan.target(),
-              plan.optimization(), plan.cppStandard()),
-          toolchain, plan.generatedSource(), plan.output(),
-          lang::driver::discoverNativeCompiler(options.cxx),
-          plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
-          lang::driver::ManagedOutputPolicy{.trustedRoot = plan.packageRoot(),
-                                            .outputRoot = plan.packageRoot() /
-                                                          "build" / "gti"},
-          std::move(cCompiler)));
-  const int status = reportBuildResult(result, options.verbose);
+  const int status = buildProjectPlan(plan, options, toolchain);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
   }
@@ -1012,6 +1032,77 @@ int runProject(const ProjectOptions &options, const char *driver) {
     return process.exitCode;
   }
   return exitCode(ExitStatus::Success);
+}
+
+int runProjectTests(const ProjectOptions &options, const char *driver) {
+  const std::optional<std::filesystem::path> currentDirectory =
+      workingDirectory();
+  if (!currentDirectory) {
+    return exitCode(ExitStatus::Io);
+  }
+
+  lang::driver::ProjectBuildOverrides overrides;
+  overrides.optimization = options.optimization;
+  overrides.cppStandard = options.standard;
+  overrides.executionProfile = options.executionProfile;
+  overrides.keepCpp = options.keepCpp;
+  lang::driver::ProjectTestResolutionResult resolution =
+      lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
+          *currentDirectory, options.target, options.profile,
+          lang::TargetInfo::host(), std::move(overrides)));
+  if (!resolution.succeeded()) {
+    reportDiagnostics(resolution.diagnostics, resolution.sources);
+    return exitCode(ExitStatus::Compilation);
+  }
+
+  const lang::driver::ToolchainLayout toolchain =
+      lang::driver::discoverToolchainLayout(driver);
+  std::size_t passed = 0;
+  std::size_t failed = 0;
+  int firstFailure = exitCode(ExitStatus::Success);
+  for (const lang::driver::ProjectBuildPlan &plan : resolution.plans) {
+    if (options.verbose) {
+      reportProjectPlan(plan, ProjectCommand::Test);
+    }
+    std::cerr << "Building test " << plan.targetName() << '\n';
+    const int buildStatus = buildProjectPlan(plan, options, toolchain);
+    if (buildStatus != exitCode(ExitStatus::Success)) {
+      return buildStatus;
+    }
+
+    reportProjectSuccess(std::cerr, "Built", plan);
+    if (plan.keepCpp()) {
+      std::cerr << "Kept C++ " << plan.generatedSource().string() << '\n';
+    }
+    std::cerr << "Testing " << plan.targetName() << '\n';
+    const lang::driver::ProcessResult process = lang::driver::invokeProcess(
+        {plan.output().string()},
+        {.outputMode = lang::driver::ProcessOutputMode::Inherit,
+         .captureSuccessfulOutput = false,
+         .description = "test target '" + plan.targetName() + "'"});
+    if (process.driverDiagnostic) {
+      std::cerr << *process.driverDiagnostic << '\n';
+    }
+    if (process.succeeded()) {
+      ++passed;
+      std::cerr << "Passed " << plan.targetName() << '\n';
+      continue;
+    }
+
+    ++failed;
+    if (firstFailure == exitCode(ExitStatus::Success)) {
+      firstFailure = process.exitCode;
+    }
+    std::cerr << "Failed " << plan.targetName() << " (exit code "
+              << process.exitCode << ")\n";
+  }
+
+  std::cerr << "Test result: " << passed << " passed";
+  if (failed != 0) {
+    std::cerr << ", " << failed << " failed";
+  }
+  std::cerr << '\n';
+  return firstFailure;
 }
 
 int runClean() {
@@ -1075,7 +1166,7 @@ int runScaffold(const ScaffoldOptions &options) {
 }
 
 bool isReservedProjectCommand(std::string_view command) {
-  return command == "test" || command == "fetch";
+  return command == "fetch";
 }
 
 } // namespace
@@ -1084,11 +1175,13 @@ int main(int argc, char *argv[]) {
   lang::installCrashHandlers(argc > 0 ? argv[0] : "gti");
   const std::string_view command =
       argc > 1 ? std::string_view(argv[1]) : std::string_view{};
-  if (command == "build" || command == "check" || command == "run") {
+  if (command == "build" || command == "check" || command == "run" ||
+      command == "test") {
     ProjectOptions options;
-    options.command = command == "check" ? ProjectCommand::Check
-                      : command == "run" ? ProjectCommand::Run
-                                         : ProjectCommand::Build;
+    options.command = command == "check"  ? ProjectCommand::Check
+                      : command == "run"  ? ProjectCommand::Run
+                      : command == "test" ? ProjectCommand::Test
+                                          : ProjectCommand::Build;
     const ArgumentResult argumentResult =
         parseProjectArguments(argc, argv, options);
     if (argumentResult == ArgumentResult::ExitSuccess) {
@@ -1097,7 +1190,9 @@ int main(int argc, char *argv[]) {
     if (argumentResult == ArgumentResult::ExitFailure) {
       return exitCode(ExitStatus::Usage);
     }
-    return runProject(options, argv[0]);
+    return options.command == ProjectCommand::Test
+               ? runProjectTests(options, argv[0])
+               : runProject(options, argv[0]);
   }
 
   if (command == "clean") {

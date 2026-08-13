@@ -4,12 +4,14 @@
 > behavior is summarized in
 > [`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md).
 
-Status: implementation in progress; Milestones 0 through 3 complete
+Status: implementation in progress; Milestones 0 through 3 and the project-test
+portion of Milestone 5 are complete
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). At the current
-checkpoint project test targets precede caching, followed by workspace/path
-dependencies and then locked Git dependencies; the milestone numbers below
+checkpoint the completed project test targets are followed by caching, then
+workspace/path dependencies, and finally locked Git dependencies; the
+milestone numbers below
 remain the detailed domain decomposition rather than a competing live queue.
 
 This document proposes a staged project build system for GTI. It deliberately
@@ -46,11 +48,12 @@ CLI may override it. The default is single-threaded. This is C-GLOBAL-01
 language-policy selection, not a native thread flag or a public runtime
 capability.
 
-Project mode supports `gti build`, `gti check`, `gti run`, `gti clean`, and
-`gti metadata`. It discovers `gti.toml` upward from the working directory,
+Project mode supports `gti build`, `gti check`, `gti run`, `gti test`,
+`gti clean`, and `gti metadata`. It discovers `gti.toml` upward from the
+working directory,
 parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
-1 with exact source spans, resolves executable targets and named profiles, and
-writes uncached artifacts beneath
+1 with exact source spans, resolves executable/test targets and named profiles,
+and writes uncached artifacts beneath
 `build/gti/<profile>/<arch>-<vendor>-<os>/`. Plain project commands select the
 `dev` profile; `--release` is an exact alias for `--profile release`. Only the
 selected profile directory is created, existing symbolic-link components below
@@ -61,7 +64,11 @@ path.
 `check` stops after shared frontend analysis without emitting C++ or invoking a
 native compiler. `run` builds through the normal atomic publication path and
 then invokes the executable with inherited standard streams and the exact
-arguments after `--`. `clean` discovers a manifest without parsing it, removes
+arguments after `--`. `test` selects every test target in deterministic name
+order, or one named test, and builds each root as an independent whole program.
+Runtime failures do not prevent later tests from running; the command reports a
+summary and propagates the first failing status. `clean` discovers a manifest
+without parsing it, removes
 only the validated literal `<package>/build/gti` subtree, and refuses symbolic
 link or filesystem-root escapes. `metadata` enumerates all manifest targets,
 profiles, and planned output paths as deterministic schema-versioned JSON
@@ -85,7 +92,7 @@ compiled with a separately resolved C compiler; declared `.cpp`, `.cc`, and
 `.cxx` inputs use the existing resolved C++ compiler and profile policy. Both
 become managed link objects. Structured paths are validated within the package;
 exact argument arrays use the documented trusted escape-hatch policy. Caching,
-dependencies, `test`, and `fetch` are not implemented and are rejected rather
+dependencies, and `fetch` are not implemented and are rejected rather
 than silently ignored.
 
 ## Decision Summary
@@ -256,13 +263,15 @@ identity and from a future native ABI identity.
 
 ### Target
 
-The initial supported target kind is `executable`. Each executable has exactly
-one entry `.gti` source and therefore one existing whole-program source graph.
+The supported target kinds are `executable` and `test`. Each has exactly one
+entry `.gti` source and therefore one existing whole-program source graph. A
+test target differs in project intent and command selection, not in language
+semantics or native representation.
 
-The manifest schema may reserve `test` and `library`, but implementation must
-not claim native libraries until the compiler defines their exported surface,
-linkage, lifecycle ABI, generic-instantiation ownership, and cross-package
-visibility. Source dependencies can arrive before compiled-library targets.
+The manifest schema may reserve `library`, but implementation must not claim
+native libraries until the compiler defines their exported surface, linkage,
+lifecycle ABI, generic-instantiation ownership, and cross-package visibility.
+Source dependencies can arrive before compiled-library targets.
 
 ### Profile
 
@@ -326,6 +335,10 @@ frameworks = ["CoreFoundation"]
 kind = "executable"
 root = "src/main.gti"
 
+[targets.chip8-unit]
+kind = "test"
+root = "tests/unit.gti"
+
 [profiles.dev]
 optimization = 0
 cpp-standard = "c++23"
@@ -346,8 +359,13 @@ Rules for version 1:
 - paths are relative to the manifest directory unless explicitly documented;
 - roots must exist, be regular files, use `.gti`, and remain beneath the
   package root unless a declared dependency grants another root;
-- exactly one target may be inferred when a command omits its target name;
-- multiple targets require an explicit name;
+- `build`, `check`, and `run` infer the sole target, or the sole executable when
+  additional test targets exist; multiple executable targets require an
+  explicit name;
+- `build` and `check` may explicitly select either supported kind; `run`
+  accepts only `executable` and directs a named test to `gti test`;
+- `test` selects every test target when its target name is omitted and only the
+  named test target when one is supplied;
 - unknown fields are errors with source spans and a nearest-name suggestion;
 - duplicate tables or keys are errors, even if a TOML parser could merge them;
 - environment-variable interpolation is not performed in manifest strings;
@@ -453,13 +471,15 @@ gti metadata --format json
 ```
 
 For `run`, arguments after `--` belong to the built program and are passed as
-an argument vector without shell splitting. `build` and `check` reject `--`.
+an argument vector without shell splitting. `build`, `check`, and `test`
+reject `--`.
 Native compiler escape hatches in project mode require explicit repeatable
 options or manifest fields, avoiding an ambiguous second separator; their
 surface remains part of the structured-native-input design.
 
-Plain `build`, `check`, and `run` select `dev`. A profile declaration refines a
-named profile but does not select it. `--release` and `--profile release` are
+Plain `build`, `check`, `run`, and `test` select `dev`. A profile declaration
+refines a named profile but does not select it. `--release` and
+`--profile release` are
 exactly equivalent, and combining either spelling with another profile
 selection is a usage error.
 
@@ -727,12 +747,12 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
-profiles, sorted executable targets, and each target/profile output and
-generated-C++ path. Metadata schema version 5 also reports every declared
-execution profile plus every effective native category, C source, C++ source,
-C standard, C argument, and ordered link operand. It is deterministic, works
-for multi-target manifests without selecting one target, performs no
-compilation, and creates no output directories.
+profiles, sorted executable/test targets with their kinds, and each
+target/profile output and generated-C++ path. Metadata schema version 6 also
+reports every declared execution profile plus every effective native category,
+C source, C++ source, C standard, C argument, and ordered link operand. It is
+deterministic, works for multi-target manifests without selecting one target,
+performs no compilation, and creates no output directories.
 
 ## Dependency And Package Stages
 
@@ -916,7 +936,7 @@ Status: complete
 - Compile each selected source to an atomically published managed intermediate
   object, then place C objects followed by C++ objects before runtime and
   manifest libraries in the existing final C++ link.
-- Report the resolved C and C++ inputs through metadata schema version 5 while
+- Report the resolved C and C++ inputs through metadata schema version 6 while
   keeping `check` compiler-free and output-free.
 
 Acceptance criteria:
@@ -949,14 +969,15 @@ Acceptance criteria:
 
 ### Milestone 5: tests and workspaces
 
-- Define convention or manifest entries for test roots.
-- Build each test root as an independent whole program.
+- **Complete:** accept manifest `test` targets, build each selected root as an
+  independent whole program, execute them in deterministic target-name order,
+  continue after runtime failures, and propagate the first failing status.
 - Add workspace membership, shared output, and shared lockfile foundations.
 - Permit explicit local package overrides.
 
 Acceptance criteria:
 
-- tests execute independently and report their target names;
+- **Passed:** tests execute independently and report their target names;
 - workspace commands have deterministic package selection;
 - package cycles and duplicate identities are rejected before compilation.
 
@@ -1036,8 +1057,9 @@ The first project implementation fixes the following contracts:
 1. TOML is parsed by the vendored amalgamated header from toml++ v3.4.0. The
    upstream archive SHA-256 is recorded beside the header, TOML types remain
    private to `gti_driver`, and release archives carry its MIT license.
-2. Project `build` and `check` reject arguments after `--`; `run` reserves them
-   exclusively for the executed program. An explicit project-native argument
+2. Project `build`, `check`, and `test` reject arguments after `--`; `run`
+   reserves them exclusively for the executed program. An explicit
+   project-native argument
    contract must be designed before native arguments are accepted elsewhere.
 3. Package, target, and profile names match
    `[A-Za-z][A-Za-z0-9_-]*`; package versions use Semantic Versioning.
@@ -1057,7 +1079,7 @@ need them.
 1. `dev` remains the default profile. Declaring or refining a profile never
    selects it or creates its output directory.
 2. `--release` is an exact, tested alias for `--profile release` on `build`,
-   `check`, and `run`.
+   `check`, `run`, and `test`.
 3. `check` uses the shared frontend through typed HIR/MIR and stops before
    optimization, C++ emission, and native compilation.
 4. `run` inherits standard input, output, and error and returns the program's
@@ -1065,10 +1087,11 @@ need them.
 5. `clean` intentionally does not parse or resolve the manifest, so a broken
    project can still be cleaned. It validates and removes only
    `<package>/build/gti` and refuses symbolic-link boundaries.
-6. Metadata JSON schema version 5 is a read-only enumeration of every current
-   target/profile plan, including declared execution profiles, resolved native
-   C and C++ sources, C policy, other native inputs, and ordered link operands.
-   Platform selection and precedence use the resolved target.
+6. Metadata JSON schema version 6 is a read-only enumeration of every current
+   target/profile plan, including target kinds, declared execution profiles,
+   resolved native C and C++ sources, C policy, other native inputs, and
+   ordered link operands. Platform selection and precedence use the resolved
+   target.
 
 ## Recommended First Pull Requests
 

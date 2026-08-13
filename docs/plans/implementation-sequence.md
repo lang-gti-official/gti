@@ -141,7 +141,7 @@ start a later phase:
 | MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
-| Driver/build | Direct compilation and manifest `build`, `check`, `run`, `clean`, and `metadata` share compiled compiler/driver libraries; direct/project execution-profile selection resolves into one `TargetInfo`. |
+| Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
 | Tooling | Formatter, Tree-sitter shipped-source parsing, diagnostics, semantic tokens, hover, completion, and definition have tested foundations. |
 | Compiler-private capabilities | Source roles distinguish application, prelude, and physical standard-library units; `gti_internal` declarations and presentation are trusted-only, private types bind by exact prelude declaration identity, and application forging is `GTI-S2058`. |
 | Transfer/share capabilities | `SemanticTypeTraits` and HIR retain structural transfer/share facts for concrete types; C++-familiar nominal attributes implement safe opt-out, interface requirements, and unsafe positive assertions with `GTI-S2059`. |
@@ -1480,8 +1480,8 @@ The next order resolves drift between the build proposal and checkpoint:
 
 | ID | State | Scope and gate |
 | --- | --- | --- |
-| `B-PROJECT-01` | ready | Add project test targets and `gti test` through the existing immutable driver requests. Preserve direct mode; prove target selection, test failure propagation, and installed CLI/library behavior. |
-| `B-PROJECT-02` | blocked | After `B-PROJECT-01`, add a deterministic content-addressed whole-program cache with explicit compiler/target/profile/input identity, atomic publication, corruption recovery, and clean semantics. |
+| `B-PROJECT-01` | complete | Project test targets and `gti test` use driver-owned immutable build plans. Deterministic all/named selection, independent outputs, runtime-failure continuation/propagation, metadata kind publication, direct-mode preservation, and installed CLI/library coverage pass. |
+| `B-PROJECT-02` | ready | Add a deterministic content-addressed whole-program cache with explicit compiler/target/profile/input identity, atomic publication, corruption recovery, and clean semantics. |
 | `B-PROJECT-03` | blocked | After `B-PROJECT-02`, add workspace identity and path dependencies with canonical package roots, cycle diagnostics, deterministic target order, and no network access. |
 | `B-PROJECT-04` | blocked | After `B-PROJECT-03`, add exact Git resolution, lockfile, `fetch`, `--locked`, and `--offline`, with immutable checkouts and reproducible installed-toolchain tests. |
 | `B-PROJECT-05` | blocked | After `B-PROJECT-03`, publish a stable read-only driver `ProjectFacts` API and library tests. This row does not integrate the LSP, fetch, or build. |

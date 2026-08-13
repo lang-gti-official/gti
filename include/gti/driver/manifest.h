@@ -50,8 +50,16 @@ struct ProjectPackage {
   ProjectNativeSettings native;
 };
 
+enum class ProjectTargetKind {
+  Executable,
+  Test,
+};
+
+[[nodiscard]] std::string_view projectTargetKindName(ProjectTargetKind kind);
+
 struct ProjectTarget {
   std::string name;
+  ProjectTargetKind kind = ProjectTargetKind::Executable;
   std::filesystem::path root;
   SourceSpan declaration;
   ProjectNativeSettings native;
@@ -85,7 +93,7 @@ private:
   std::filesystem::path manifestPath;
   std::filesystem::path rootPath;
   ProjectPackage packageIdentity;
-  std::vector<ProjectTarget> executableTargets;
+  std::vector<ProjectTarget> projectTargets;
   std::vector<ProjectProfile> buildProfiles;
 };
 
