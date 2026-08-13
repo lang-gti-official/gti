@@ -53,8 +53,14 @@ callable/borrow summaries. Callable parameters and call values use an explicit
 boundary enum rather than a generic "non-escaping" boolean. The only boundary
 HIR currently produces is `Confined`; `Owned` is reserved vocabulary for a
 later slice that must also carry environment movement and cleanup. Confined
-signatures retain exact `void`, `bool`, or context-supplied owned value results
-after concrete generic substitution. A
+signatures retain exact `void`, `bool`, or context-supplied non-reference value
+results without tracked borrowed state or lambda identity after concrete
+generic substitution. Every signature carries its required read/mut
+invocation capability and the concrete selected lambda or class-operator
+capability. Callable call values carry the selected capability independently
+from their confined boundary. Callable parameter records are canonicalized by
+parameter index before crossing into MIR. `Once` remains absent from valid HIR
+until consuming callable state is implemented. A
 program-entry function additionally retains its semantic entry kind. The
 owned-argument form turns the exact resolved source-defined append
 `FunctionId` into a concrete `HirFunctionInstanceId` for the canonical

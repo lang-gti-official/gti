@@ -110,10 +110,13 @@ operation overloads use confined callables whose exact result is supplied by
 the accumulator assignment or a typed intermediate. GTI's current
 `transform_reduce` is deterministically sequential and invokes its transform
 and reduction operations once per element from left to right; unlike C++, it
-does not permit reordering. These overloads currently invoke operation objects
-through read-only access and require the element, intermediate, and accumulator
-types to be the same exact `T`. This establishes a
-bounded iterator/sentinel algorithm surface, not a complete range concept,
+does not permit reordering. The implemented predicate and reduction algorithms
+retain each callable by value in one confined mutable local. They may invoke it
+zero or more times, so both read-callable and mut-callable targets are valid,
+while a consuming once-callable is not. Numeric operation state can affect the
+current reduction but is not returned to the caller, and the element,
+intermediate, and accumulator types remain the same exact `T`. This establishes
+a bounded iterator/sentinel algorithm surface, not a complete range concept,
 heterogeneous accumulation, iterator category hierarchy, or C++20 ranges
 model.
 
@@ -154,10 +157,11 @@ iteration-specific loans remain later lifetime layers. Fixed arrays also do
 not yet expose
 `begin()` and `end()`; the structural protocol and range-for syntax do not need
 to change when they do. Confined generic `void` operations, exact `bool`
-predicates, exact context-supplied owned value results, and proven forwarding
-through other confined callable parameters are available for algorithm
-callbacks. Result inference through `auto`, borrowed results, and owned escape
-remain unavailable. The bounded input-iterator, sentinel, and exact
+predicates, exact context-supplied non-reference value results without tracked
+borrowed state or lambda identity, and proven forwarding through other
+confined callable parameters are available for algorithm callbacks. Result
+inference through `auto`, borrowed results, and owned escape remain
+unavailable. The bounded input-iterator, sentinel, and exact
 accumulation capabilities are implemented, but complete-range,
 readable/writable element, sized, and multi-pass capabilities are still
 missing. A public `std::for_each` over arbitrary structural ranges should wait

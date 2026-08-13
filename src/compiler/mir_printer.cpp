@@ -30,10 +30,23 @@ callableBoundaryName(CallableBoundary boundary) {
   return "invalid";
 }
 
+[[nodiscard]] constexpr std::string_view
+callableCapabilityName(CallableInvocationCapability capability) {
+  switch (capability) {
+  case CallableInvocationCapability::Read:
+    return "read";
+  case CallableInvocationCapability::Mutable:
+    return "mut";
+  case CallableInvocationCapability::Once:
+    return "once";
+  }
+  return "invalid";
+}
+
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v5 valid=" << program.valid() << '\n';
+    output << "mir-v6 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -140,7 +153,14 @@ public:
              << number(instance.returnBorrowAccess) << " linkage="
              << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
              << " symbol=" << instance.externalSymbol
-             << " virtual=" << instance.virtualMethod
+             << " receiver=" << number(instance.receiverMutability)
+             << " operator=";
+      if (instance.overloadedOperator) {
+        output << number(*instance.overloadedOperator);
+      } else {
+        output << '-';
+      }
+      output << " virtual=" << instance.virtualMethod
              << " pure=" << instance.pureVirtual
              << " override=" << instance.overrideMethod << " roots=[";
       list(instance.virtualRoots);
@@ -189,7 +209,9 @@ public:
     }
 
     for (const MirLambdaInstance &instance : program.lambdaInstances()) {
-      output << "lambda @" << instance.id << " parameters=[";
+      output << "lambda @" << instance.id << " returns=";
+      type(instance.returnType);
+      output << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
         separator(index);
@@ -214,7 +236,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v5\n";
+    output << "mir-body-v6\n";
     body(value, 0);
     return output.str();
   }
@@ -333,6 +355,13 @@ private:
     optional(value.functionTarget);
     output << ";lambda=";
     optional(value.lambdaTarget);
+    output << ";required=" << callableCapabilityName(value.requiredCapability)
+           << ";selected=";
+    if (value.selectedCapability) {
+      output << callableCapabilityName(*value.selectedCapability);
+    } else {
+      output << '-';
+    }
     output << ')';
   }
 
@@ -544,6 +573,12 @@ private:
     output << " callable-boundary=";
     if (value.callableBoundary) {
       output << callableBoundaryName(*value.callableBoundary);
+    } else {
+      output << '-';
+    }
+    output << " callable-invocation=";
+    if (value.callableInvocation) {
+      output << callableCapabilityName(*value.callableInvocation);
     } else {
       output << '-';
     }

@@ -1392,10 +1392,18 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitCallExpr(const Call &expr) override {
-    if (semantics != nullptr &&
-        semantics->findDeferredCallableCall(expr) != nullptr) {
+    if (const DeferredCallableCallInfo *deferred =
+            semantics == nullptr ? nullptr
+                                 : semantics->findDeferredCallableCall(expr);
+        deferred != nullptr) {
       output << "::gti_internal::backend::invoke(";
+      if (deferred->capability == CallableInvocationCapability::Read) {
+        output << "::gti_internal::backend::read_only_receiver(";
+      }
       emitExpression(expr.callee());
+      if (deferred->capability == CallableInvocationCapability::Read) {
+        output << ')';
+      }
       if (!expr.arguments().empty()) {
         output << ", ";
         emitArguments(expr.arguments());

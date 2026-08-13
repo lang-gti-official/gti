@@ -478,9 +478,11 @@ same invalidation tests, with no backend range lookup.
 Foundational algorithms need to accept predicates and operations. The current
 baseline supports both confined forms: a typed lambda or function object may
 bind to a direct by-value generic parameter, and concrete instantiation checks
-each exact void operation or bool predicate invocation before lowering. This is
-enough for the callback half of foundational algorithms, but not yet a general
-callable model or generic range algorithm surface.
+each exact operation or predicate invocation before lowering. Immutable
+parameters provide read-only invocation; parameters declared `mut` permit
+repeatable mutable invocation. This is enough for the callback half of
+foundational algorithms, but not yet a general callable model or generic range
+algorithm surface.
 
 ### Confined callables
 
@@ -496,19 +498,26 @@ confined until the lifecycle and owned-callable rows below land.
 - Semantics, HIR, and MIR record required calls, exact concrete signatures,
   selected lambda or `operator()` targets, and explicit confined call
   boundaries.
-- Required calls may return `void`, exact `bool`, or an exact owned value whose
-  type is supplied by an explicit initializer, assignment, condition, or
-  enclosing return.
+- Required calls may return `void`, exact `bool`, or an exact non-reference
+  value without tracked borrowed state or lambda identity whose type is
+  supplied by an explicit initializer, assignment, condition, or enclosing
+  return.
+- Immutable confined parameters require read-callable targets. A confined
+  parameter declared `mut` accepts read-callable or mut-callable targets for
+  repeatable invocation and retains the exact selected receiver capability
+  through MIR and backend emission.
 - Proven nested forwarding is implemented only through another direct by-value
   generic parameter whose selected callee contract is confined. Semantic
   analysis resolves chains independent of declaration order, and HIR/MIR retain
   each concrete forwarding target.
-- Keep `auto`-deduced, reference, borrowed-state, and callable-valued results
-  and callable references rejected, and do not allow lambdas to escape until
-  L-CALL-01 implements exact owned transport.
+- Keep `auto`-deduced, reference, tracked borrowed-state, and lambda-identity
+  results and callable references rejected, and do not allow lambdas to escape
+  until L-CALL-01 implements exact owned transport.
 - Permit move capture with explicit C++-familiar init-capture spelling only
   after capture ownership and closure moves are represented.
 - Keep implicit capture defaults and untracked reference capture unavailable.
+- Keep consuming once-callables unavailable until MIR can prove invocation
+  cardinality across control-flow joins.
 - Defer a general owning `std::function`-style type erasure facility until a
   demonstrated client justifies a separate design; the accepted bounded
   contract deliberately preserves exact concrete callable types.

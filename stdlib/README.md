@@ -201,10 +201,13 @@ program may parse and type-check against a declaration, but calling it before a
 definition is added will fail during native linking.
 
 Generic callable parameters support confined `void` operations, exact `bool`
-predicates, exact owned value results supplied by an explicit source context,
-and proven forwarding through other confined callable parameters. Result
-inference through `auto`, borrowed results, and owned callable escape remain
-unavailable.
+predicates, exact non-reference value results supplied by an explicit source
+context when they carry no tracked borrowed state or lambda identity, and
+proven forwarding through other confined callable parameters. Result inference
+through `auto`, borrowed results, and owned callable escape remain unavailable.
+Implemented predicate and numeric algorithms retain their callable by value in
+one confined mutable local. They accept read-callable and mut-callable targets,
+may invoke them repeatedly, and reject consuming once-callables.
 
 | Include | Scaffolded surface |
 | --- | --- |

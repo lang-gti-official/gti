@@ -57,6 +57,7 @@ own `main` function.
 | `49-native-bridge-header.gti` | one compiler-generated ABI header shared by C17 and C++20/C++23 shims |
 | `50-opaque-native-handles.gti` | nominal pointer-only handles for safe wrappers over C or C++ library state |
 | `51-callable-value-results.gti` | exact owned value results from confined generic lambdas and function objects |
+| `52-stateful-callables.gti` | reusable stateful call operators in source-defined algorithms |
 
 Build and run an example from the repository root:
 

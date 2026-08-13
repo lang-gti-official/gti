@@ -4047,7 +4047,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v5\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v6\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -18666,12 +18666,28 @@ void apply_twice<T, Operation>(mut T& value, Operation operation) {
   operation(value);
 }
 
+int apply_stateful<Operation>(mut Operation operation) {
+  int first = operation(1);
+  int second = operation(1);
+  return first + second;
+}
+
 class Replace<T> {
   T replacement;
 
 public:
   Replace(T replacement) : replacement(replacement) {}
   void operator()(mut T& value) { value = this.replacement; }
+};
+
+class Increasing {
+  mut int next = 0;
+
+public:
+  int operator()(int value) mut {
+    this.next++;
+    return value + this.next;
+  }
 };
 
 int main() {
@@ -18681,7 +18697,11 @@ int main() {
   mut int object_value = 2;
   Replace<int> object = Replace<int>(4);
   apply_twice(object_value, object);
-  return lambda_value + object_value - 7;
+  Increasing increasing = Increasing();
+  int stateful = apply_stateful(increasing);
+  auto doubled = [](int value) -> int { return value * 2; };
+  int read_only = apply_stateful(doubled);
+  return lambda_value + object_value + stateful + read_only - 16;
 }
 )";
 
@@ -18777,9 +18797,69 @@ int main() {
              hirCallsConfined && mirContractsPreserved,
          "concrete HIR and MIR instances should retain exact callable targets "
          "and confined invocation metadata");
+
+  std::size_t mutableCallableInstances = 0;
+  bool foundMutableSelection = false;
+  bool foundReadSelectionThroughMutableAccess = false;
+  bool mutableCallsPreserved = true;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "apply_stateful") {
+      continue;
+    }
+    ++mutableCallableInstances;
+    if (instance.callableParameters.size() != 1 ||
+        instance.callableParameters.front().access !=
+            lang::AccessMode::Mutable ||
+        instance.callableParameters.front().signatures.size() != 2) {
+      mutableCallsPreserved = false;
+      continue;
+    }
+    const lang::HirCallableParameter &contract =
+        instance.callableParameters.front();
+    for (const lang::HirCallableSignature &signature : contract.signatures) {
+      mutableCallsPreserved = mutableCallsPreserved &&
+                              signature.requiredCapability ==
+                                  lang::CallableInvocationCapability::Mutable &&
+                              signature.selectedCapability.has_value();
+      foundMutableSelection = foundMutableSelection ||
+                              signature.selectedCapability ==
+                                  lang::CallableInvocationCapability::Mutable;
+      foundReadSelectionThroughMutableAccess =
+          foundReadSelectionThroughMutableAccess ||
+          signature.selectedCapability ==
+              lang::CallableInvocationCapability::Read;
+    }
+    const std::size_t mutableCalls = static_cast<std::size_t>(std::count_if(
+        instance.body.values.begin(), instance.body.values.end(),
+        [](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::Call &&
+                 value.callableBoundary == lang::CallableBoundary::Confined &&
+                 value.callableInvocation ==
+                     lang::CallableInvocationCapability::Mutable;
+        }));
+    const std::size_t readCalls = static_cast<std::size_t>(std::count_if(
+        instance.body.values.begin(), instance.body.values.end(),
+        [](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::Call &&
+                 value.callableBoundary == lang::CallableBoundary::Confined &&
+                 value.callableInvocation ==
+                     lang::CallableInvocationCapability::Read;
+        }));
+    mutableCallsPreserved =
+        mutableCallsPreserved && (mutableCalls == 2 || readCalls == 2);
+  }
+  expect(mutableCallableInstances == 2 && foundMutableSelection &&
+             foundReadSelectionThroughMutableAccess && mutableCallsPreserved,
+         "mutable callable parameters should retain a mut-callable client "
+         "requirement while accepting read-callable and mut-callable targets");
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(mirDump.find("callables=[callable(parameter=1") != std::string::npos &&
-             mirDump.find("callable-boundary=confined") != std::string::npos,
+             mirDump.find("callable-boundary=confined") != std::string::npos &&
+             mirDump.find("required=mut;selected=mut") != std::string::npos &&
+             mirDump.find("required=mut;selected=read") != std::string::npos &&
+             mirDump.find("callable-invocation=mut") != std::string::npos,
          "canonical MIR dumps should expose callable contracts and confined "
          "invocations");
 
@@ -18817,8 +18897,9 @@ int main() {
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
-             "::gti_internal::backend::invoke(operation, value)") !=
-                 std::string::npos &&
+             "::gti_internal::backend::invoke("
+             "::gti_internal::backend::read_only_receiver(operation), "
+             "value)") != std::string::npos &&
              artifact.contents.find("friend void __gti_invoke(") !=
                  std::string::npos &&
              artifact.contents.find("___gti_operator_call") !=
@@ -18852,7 +18933,9 @@ int main() {
                         "parameter requires 'bool'") &&
           hasDiagnostic(invalidSignatures.diagnostics, "must return 'void'") &&
           hasDiagnostic(invalidSignatures.diagnostics,
-                        "operator() requires a mutable receiver") &&
+                        "permits only read-callable invocation") &&
+          hasDiagnosticHint(invalidSignatures.diagnostics,
+                            "parameter with 'mut'") &&
           hasRelatedDiagnostic(invalidSignatures.diagnostics,
                                "Concrete generic instance requested here"),
       "concrete callable instances should reject inexact arguments and "
@@ -18880,6 +18963,162 @@ int main() {
                             "Confined callable parameters"),
       "the first callable layer should reject references and escaping "
       "closure values explicitly");
+
+  const lang::FrontendResult escapingObject =
+      lang::Frontend().analyze("escaping-callable-object.gti", R"(
+class Action {
+public:
+  void operator()() {}
+};
+
+Operation invoke_and_return<Operation>(Operation operation) {
+  operation();
+  return operation;
+}
+
+int main() { return 0; }
+)");
+  const bool escapingObjectHasNoCallableIr =
+      std::none_of(escapingObject.hir.functionInstances().begin(),
+                   escapingObject.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &instance) {
+                     return !instance.callableParameters.empty();
+                   });
+  expect(!escapingObject.canGenerateCode() &&
+             countDiagnosticCode(escapingObject.diagnostics, "GTI-S2046") ==
+                 1 &&
+             hasDiagnostic(escapingObject.diagnostics,
+                           "cannot escape through the function return value") &&
+             hasRelatedDiagnostic(escapingObject.diagnostics,
+                                  "Confined callable parameter declared") &&
+             escapingObjectHasNoCallableIr,
+         "invoked nominal callable objects must not escape while their "
+         "compiler-owned boundary is confined");
+
+  const lang::FrontendResult storedObject =
+      lang::Frontend().analyze("stored-callable-object.gti", R"(
+class Action {
+public:
+  void operator()() {}
+};
+
+class Holder<T> {
+public:
+  mut T value;
+  Holder(T value) : value(value) {}
+};
+
+void invoke_and_assign<Operation>(mut Operation& target,
+                                  Operation operation) {
+  operation();
+  target = operation;
+}
+
+void invoke_and_store<Operation>(mut Holder<Operation>& target,
+                                 Operation operation) {
+  operation();
+  target.value = operation;
+}
+
+void invoke_and_copy<Operation>(Operation operation) {
+  operation();
+  Operation copy = operation;
+}
+
+void invoke_and_capture<Operation>(Operation operation) {
+  operation();
+  auto nested = [operation]() -> void {};
+}
+
+int main() { return 0; }
+)");
+  expect(
+      !storedObject.canGenerateCode() &&
+          countDiagnosticCode(storedObject.diagnostics, "GTI-S2046") == 4 &&
+          hasDiagnostic(storedObject.diagnostics,
+                        "cannot be used as an ordinary value") &&
+          hasRelatedDiagnostic(storedObject.diagnostics,
+                               "Confined callable parameter declared") &&
+          hasDiagnosticHint(storedObject.diagnostics,
+                            "assignment, storage, and other value transport") &&
+          !hasDiagnosticCode(storedObject.diagnostics, "GTI-B0001"),
+      "an invoked nominal callable must not escape through assignment, field "
+      "storage, local copying, or capture while its boundary is confined");
+
+  const lang::FrontendResult shadowedName =
+      lang::Frontend().analyze("shadowed-callable-name.gti", R"(
+void invoke<Operation>(Operation operation) {
+  operation();
+  {
+    mut int operation = 0;
+    operation = 1;
+  }
+}
+
+class Action {
+public:
+  void operator()() {}
+};
+
+int main() {
+  Action action = Action();
+  invoke(action);
+  return 0;
+}
+)");
+  expect(shadowedName.canGenerateCode(),
+         "confined callable use validation should follow resolved symbol "
+         "identity rather than rejecting an unrelated shadowed binding");
+
+  const lang::FrontendResult unprovenObjectForwarding =
+      lang::Frontend().analyze("unproven-callable-object-forwarding.gti", R"(
+void discard<Operation>(Operation operation) {}
+
+void invoke_and_forward<Operation>(Operation operation) {
+  operation();
+  discard(operation);
+}
+
+class Action {
+public:
+  void operator()() {}
+};
+
+int main() {
+  Action action = Action();
+  invoke_and_forward(action);
+  return 0;
+}
+)");
+  expect(
+      !unprovenObjectForwarding.canGenerateCode() &&
+          countDiagnosticCode(unprovenObjectForwarding.diagnostics,
+                              "GTI-S2046") == 1 &&
+          hasDiagnostic(unprovenObjectForwarding.diagnostics,
+                        "selected target parameter is not proven confined") &&
+          !hasDiagnosticCode(unprovenObjectForwarding.diagnostics, "GTI-B0001"),
+      "a confined nominal callable must not pass through an unproven "
+      "generic forwarding edge");
+
+  const lang::FrontendResult ordinaryObjectTransport =
+      lang::Frontend().analyze("ordinary-callable-object-transport.gti", R"(
+Operation relay<Operation>(Operation operation) { return operation; }
+
+class Action {
+public:
+  void operator()() {}
+};
+
+int main() {
+  Action action = Action();
+  Action relayed = relay(action);
+  relayed();
+  return 0;
+}
+)");
+  expect(ordinaryObjectTransport.canGenerateCode(),
+         "a nominal callable object that is never invoked through a generic "
+         "parameter should retain ordinary value transport semantics");
 
   const lang::FrontendResult forwarding =
       lang::Frontend().analyze("callable-forwarding.gti", R"(
@@ -19138,8 +19377,9 @@ int main() {
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
-             "return ::gti_internal::backend::invoke(predicate, value)") !=
-                 std::string::npos &&
+             "return ::gti_internal::backend::invoke("
+             "::gti_internal::backend::read_only_receiver(predicate), "
+             "value)") != std::string::npos &&
              artifact.contents.find("friend bool __gti_invoke(") !=
                  std::string::npos,
          "C++ lowering should preserve predicate values through the exact "
@@ -19182,13 +19422,31 @@ public:
   int operator()(int value) { return value + 1; }
 };
 
+class Counter {
+  int value;
+
+public:
+  Counter(int value) : value(value) {}
+  Counter(Counter& other) = delete;
+  Counter(Counter&& other) = default;
+
+  int read() { return this.value; }
+};
+
+class Advance {
+public:
+  Counter operator()(Counter value) { return Counter(value.read() + 1); }
+};
+
 int main() {
   auto increment = [](int value) -> int { return value + 1; };
   int mapped = map(1, increment);
   int mapped_twice = map_twice(1, increment);
   Increment object = Increment();
   int object_result = map(4, object);
-  return mapped + mapped_twice + object_result - 10;
+  Advance advance = Advance();
+  Counter advanced = map_twice(Counter(6), advance);
+  return mapped + mapped_twice + object_result + advanced.read() - 18;
 }
 )",
                                {standardLibraryPrelude()});
@@ -19204,6 +19462,14 @@ int main() {
 
   bool foundValueRequirement = false;
   bool foundConfinedValueCall = false;
+  bool foundMoveOnlyValueRequirement = false;
+  bool foundMoveOnlyMirRequirement = false;
+  const lang::ClassDecl *counterDeclaration =
+      findTopLevelClass(valueResults.program, "Counter");
+  const lang::ClassTypeInfo *counterInfo =
+      counterDeclaration == nullptr
+          ? nullptr
+          : valueResults.semantics.findClassType(*counterDeclaration);
   for (const lang::HirFunctionInstance &instance :
        valueResults.hir.functionInstances()) {
     if (instance.source == nullptr ||
@@ -19230,10 +19496,60 @@ int main() {
                                  lang::CallableBoundary::Confined &&
                              value.info.type == lang::SemanticType::Int32;
                     });
+    if (counterInfo != nullptr &&
+        instance.source->name().lexeme == "map_twice" &&
+        instance.callableParameters.size() == 1 &&
+        std::any_of(instance.callableParameters.front().signatures.begin(),
+                    instance.callableParameters.front().signatures.end(),
+                    [&](const lang::HirCallableSignature &signature) {
+                      return signature.returnType.kind ==
+                                 lang::SemanticType::Class &&
+                             signature.returnType.classId == counterInfo->id &&
+                             signature.functionTarget.has_value();
+                    })) {
+      foundMoveOnlyValueRequirement = true;
+      const lang::MirFunctionInstance *mir =
+          valueResults.mir.findFunctionInstance(instance.id);
+      foundMoveOnlyMirRequirement =
+          mir != nullptr && mir->callableParameters.size() == 1 &&
+          std::any_of(
+              mir->callableParameters.front().signatures.begin(),
+              mir->callableParameters.front().signatures.end(),
+              [&](const lang::MirCallableSignature &signature) {
+                return signature.returnType.kind == lang::SemanticType::Class &&
+                       signature.returnType.classId == counterInfo->id &&
+                       signature.functionTarget.has_value();
+              });
+    }
   }
-  expect(foundValueRequirement && foundConfinedValueCall,
+  expect(foundValueRequirement && foundConfinedValueCall &&
+             foundMoveOnlyValueRequirement && foundMoveOnlyMirRequirement,
          "HIR should retain exact value-result signatures and confined call "
-         "boundaries");
+         "boundaries for scalar and move-only class results");
+
+  const lang::FrontendResult wrongValueResult =
+      lang::Frontend().analyze("wrong-callable-value-result.gti", R"(
+int map<Operation>(int value, Operation operation) {
+  return operation(value);
+}
+
+class Fraction {
+public:
+  double operator()(int value) { return 0.5; }
+};
+
+int main() {
+  Fraction fraction = Fraction();
+  return map(1, fraction);
+}
+)");
+  expect(!wrongValueResult.canGenerateCode() &&
+             hasDiagnostic(wrongValueResult.diagnostics,
+                           "must return 'int32_t' for this invocation") &&
+             hasDiagnostic(wrongValueResult.diagnostics,
+                           "selected callable returns 'double'") &&
+             !hasDiagnosticCode(wrongValueResult.diagnostics, "GTI-B0001"),
+         "a confined callable must return the exact contextual value type");
 
   const lang::FrontendResult inferredResult =
       lang::Frontend().analyze("inferred-callable-result.gti", R"(
@@ -19251,6 +19567,32 @@ int main() { return 0; }
              inferredResult.diagnostics.size() == 1,
          "generic callable result inference should remain closed until the "
          "result type has an exact context");
+
+  const lang::FrontendResult borrowedResult =
+      lang::Frontend().analyze("borrowed-callable-result.gti", R"(
+class BorrowView {
+  int& value;
+
+public:
+  BorrowView(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+BorrowView apply<Operation>(int& source, Operation operation) {
+  return operation(source);
+}
+
+int main() { return 0; }
+)");
+  expect(
+      !borrowedResult.canGenerateCode() &&
+          countDiagnosticCode(borrowedResult.diagnostics, "GTI-S2046") == 1 &&
+          countDiagnosticCode(borrowedResult.diagnostics, "GTI-S2045") == 0 &&
+          hasDiagnostic(borrowedResult.diagnostics,
+                        "must be exact non-reference values") &&
+          !hasDiagnosticCode(borrowedResult.diagnostics, "GTI-B0001"),
+      "a rejected borrowed callable result should produce one focused "
+      "callable diagnostic without an owner-origin cascade");
 }
 
 void testDefaultNodiscard() {

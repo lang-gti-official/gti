@@ -31,7 +31,7 @@ T clamp<std::totally_ordered T>(T value, T low, T high) {
 }
 
 bool all_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
-                                           Predicate predicate)
+                                           mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> {
   for (; first != last; ++first) {
@@ -43,7 +43,7 @@ bool all_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
 }
 
 bool any_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
-                                           Predicate predicate)
+                                           mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> {
   for (; first != last; ++first) {
@@ -55,7 +55,7 @@ bool any_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
 }
 
 bool none_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
-                                            Predicate predicate)
+                                            mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> {
   for (; first != last; ++first) {
@@ -72,7 +72,7 @@ Function for_each<Iterator, Function>(Iterator first, Iterator last,
 Iterator find<Iterator, T>(Iterator first, Iterator last, T& value);
 Iterator find_if<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                 Sentinel last,
-                                                Predicate predicate)
+                                                mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> {
   for (; first != last; ++first) {
@@ -85,7 +85,7 @@ Iterator find_if<Iterator, Sentinel, Predicate>(mut Iterator first,
 
 Iterator find_if_not<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                     Sentinel last,
-                                                    Predicate predicate)
+                                                    mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> {
   for (; first != last; ++first) {
@@ -99,7 +99,7 @@ Iterator find_if_not<Iterator, Sentinel, Predicate>(mut Iterator first,
 ptrdiff_t count<Iterator, T>(Iterator first, Iterator last, T& value);
 ptrdiff_t count_if<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                   Sentinel last,
-                                                  Predicate predicate)
+                                                  mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> {
   mut ptrdiff_t result = 0;

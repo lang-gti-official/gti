@@ -165,9 +165,32 @@ confined parameter. Each call site records an exact parameter list, result
 type, required receiver access, and selected concrete lambda or `operator()`
 target. A call used as a `void` operation has a `void` result requirement. A
 condition supplies exact `bool`; an explicitly typed initializer, assignment,
-or enclosing return supplies any exact owned value type. `auto` cannot infer a
-result through an otherwise unknown generic callable, and reference,
-borrowed-state, and callable-valued results remain rejected.
+or enclosing return supplies an exact non-reference value type. Raw pointers
+remain non-owning values under their ordinary language rules, and the current
+`std::string_view` denotes static literal storage; the callable boundary does
+not reclassify either as ownership. `auto` cannot infer a result through an
+otherwise unknown generic callable, and reference, tracked borrowed-state, and
+lambda-identity results remain rejected.
+
+Confinement applies equally to lexical lambdas and nominal callable objects.
+Once a generic parameter is invoked, it cannot appear within that function's
+return type or pass through a target parameter without another proven
+`Confined` contract. A callable object that is never invoked through the
+generic parameter retains ordinary value-transport semantics. Invalid escape
+and forwarding edges are rejected before HIR, so later phases never receive a
+false confined fact.
+
+After forwarding contracts reach their declaration-order-independent fixed
+point, semantics audits every resolved use of an invoked parameter by parameter
+symbol identity. The callable expression of each recorded direct invocation and
+the exact argument of each proven confined forwarding edge are permitted;
+assignment, local copying, field storage, capture, and any other ordinary value
+transport are rejected. Expression uses carry their resolved symbol, while a
+lambda capture retains the canonical declaration symbol it captured. Pending
+unproven forwarding and callable return shapes keep their dedicated
+diagnostics, so this audit does not produce a second error for the same invalid
+edge. Same-spelling shadowed locals have distinct symbols and are not part of
+the callable contract.
 
 `CallableBoundary` and per-argument boundary records replace the former
 non-escaping booleans in semantics. Concrete generic reanalysis substitutes
@@ -176,6 +199,16 @@ a symbolic `T` requirement cannot leak into a concrete `int32_t` instance.
 `Owned` is reserved cross-phase vocabulary only; no source construct produces
 that boundary until callable environment movement, cleanup, and escape are
 implemented.
+
+Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
+invocation capability. An immutable by-value generic callable parameter
+requires read-callable invocation. A `mut` by-value parameter permits mutable
+invocation and accepts either a read-callable or mut-callable target; concrete
+reanalysis records which one was selected. Lambdas are read-callable because
+their current capture snapshots are immutable. A class `operator() ... mut`
+is mut-callable. `Once` is reserved vocabulary and is rejected until consuming
+receiver effects and path joins are represented. `GTI-S2046` reports a mutable
+target passed to an immutable callable parameter before HIR lowering.
 
 ## Concepts And Requirement Contracts
 

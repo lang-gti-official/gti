@@ -1898,6 +1898,35 @@ def main():
         )
         run([str(operator_cpp20)])
 
+        callable_dispatch_source = root / "callable-dispatch.gti"
+        callable_dispatch_source.write_text(
+            "int call_read<Operation>(Operation operation) { "
+            "return operation(); }\n"
+            "int call_mut<Operation>(mut Operation operation) { "
+            "return operation(); }\n"
+            "class Both { public: "
+            "int operator()() { return 3; } "
+            "int operator()() mut { return 7; } };\n"
+            "int main() { Both value = Both(); "
+            "int read = call_read(value); "
+            "int changed = call_mut(value); "
+            "if (read == 3 and changed == 7) { return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        for standard in ("c++20", "c++23"):
+            callable_dispatch_executable = root / f"callable-dispatch-{standard}"
+            run(
+                [
+                    gti,
+                    str(callable_dispatch_source),
+                    "-o",
+                    str(callable_dispatch_executable),
+                    "--std",
+                    standard,
+                ]
+            )
+            run([str(callable_dispatch_executable)])
+
         compound_source = root / "compound-assignments.gti"
         compound_executable = root / "compound-assignments"
         compound_source.write_text(

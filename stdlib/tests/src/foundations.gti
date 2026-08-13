@@ -45,6 +45,58 @@ public:
   }
 };
 
+class increasing_add {
+  mut int multiplier = 1;
+
+public:
+  int operator()(int total, int& value) mut {
+    int result = total + value * this.multiplier;
+    this.multiplier++;
+    return result;
+  }
+};
+
+class increasing_product {
+  mut int bonus = 0;
+
+public:
+  int operator()(int& left, int& right) mut {
+    this.bonus++;
+    return left * right + this.bonus;
+  }
+};
+
+class increasing_reduce {
+  mut int bonus = 0;
+
+public:
+  int operator()(int total, int& value) mut {
+    this.bonus++;
+    return total + value + this.bonus;
+  }
+};
+
+class increasing_transform {
+  mut int multiplier = 1;
+
+public:
+  int operator()(int& value) mut {
+    int result = value * this.multiplier;
+    this.multiplier++;
+    return result;
+  }
+};
+
+class alternating_predicate {
+  mut bool accept = false;
+
+public:
+  bool operator()(int& value) mut {
+    this.accept = !this.accept;
+    return this.accept;
+  }
+};
+
 float divide(float numerator, float denominator) {
   return numerator / denominator;
 }
@@ -66,6 +118,8 @@ int test_algorithms() {
   bool none_large = std::none_of(values.begin(), values.end(), large);
   std::ptrdiff_t even_count =
       std::count_if(values.begin(), values.end(), even);
+  std::ptrdiff_t alternating_count = std::count_if(
+      values.begin(), values.end(), alternating_predicate());
 
   auto first_even =
       std::find_if(integer_iterator(1), integer_sentinel(5), even);
@@ -85,6 +139,8 @@ int test_algorithms() {
   };
   int weighted = std::accumulate(
       integer_iterator(1), integer_sentinel(4), 0, weighted_add);
+  int stateful_weighted = std::accumulate(
+      integer_iterator(1), integer_sentinel(4), 0, increasing_add());
   auto add = [](int left, int& right) -> int { return left + right; };
   auto pair_sum = [](int& left, int& right) -> int {
     return left + right;
@@ -92,22 +148,40 @@ int test_algorithms() {
   int custom_product = std::inner_product(
       integer_iterator(1), integer_iterator(4), integer_iterator(2), 0, add,
       pair_sum);
+  int stateful_product = std::inner_product(
+      integer_iterator(1), integer_iterator(4), integer_iterator(2), 0,
+      increasing_reduce(), increasing_product());
   auto square = [](int& value) -> int { return value * value; };
   int squared = std::transform_reduce(
       integer_iterator(1), integer_sentinel(4), 0, add, square);
+  int stateful_reduce = std::transform_reduce(
+      integer_iterator(1), integer_sentinel(4), 0, increasing_reduce(),
+      increasing_transform());
   auto subtract = [](int left, int right) -> int { return left - right; };
   auto identity = [](int& value) -> int { return value; };
   int ordered_reduce = std::transform_reduce(
       integer_iterator(1), integer_sentinel(4), 10, subtract, identity);
+  int empty_accumulate = std::accumulate(
+      integer_iterator(1), integer_sentinel(1), 7, increasing_add());
+  int empty_product = std::inner_product(
+      integer_iterator(1), integer_iterator(1), integer_iterator(2), 7,
+      increasing_reduce(), increasing_product());
+  int empty_reduce = std::transform_reduce(
+      integer_iterator(1), integer_sentinel(1), 7, increasing_reduce(),
+      increasing_transform());
 
   bool ordered = std::min(5, 2) == 2 && std::max(5, 2) == 5 &&
                  std::clamp(8, 1, 6) == 6 &&
                  std::clamp(-1, 1, 6) == 1 &&
                  std::clamp(4, 1, 6) == 4;
   if (all_positive && any_even && none_large && even_count == 2 &&
+      alternating_count == 2 &&
       found_even && found_not_small && *advanced == 3 && *next == 2 &&
       length == 4 && product == 20 && weighted == 12 &&
-      custom_product == 15 && squared == 14 && ordered_reduce == 4 && ordered) {
+      stateful_weighted == 14 &&
+      custom_product == 15 && stateful_product == 32 && squared == 14 &&
+      stateful_reduce == 20 && ordered_reduce == 4 && empty_accumulate == 7 &&
+      empty_product == 7 && empty_reduce == 7 && ordered) {
     return 0;
   }
   return 1;

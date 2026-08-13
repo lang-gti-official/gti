@@ -696,14 +696,17 @@ specialization, or constrained-overload ranking. The concrete body is
 rechecked and resolves the ordinary operator declarations before HIR.
 
 The confined callable layer supports direct generic `void` operations, exact
-`bool` predicates, and exact context-supplied owned value results, including
+`bool` predicates, and exact context-supplied non-reference value results
+without tracked borrowed state or lambda identity, including
 declaration-order-independent forwarding through another parameter with a
 proven confined callable contract. Operation-based `std::accumulate` and
 `std::inner_product` plus unary `std::transform_reduce` are ordinary GTI
-clients. The
+clients. Predicate and numeric clients retain one mutable confined local, so
+they accept read-callable and mut-callable targets for zero-or-more invocation
+while rejecting once-callable targets. The
 accepted [owned-callable contract](callable-ownership-and-escape.md) fixes the
-later exact identity, read/mut/once capability, capture, and lifecycle model;
-this range plan does not invent another callable representation.
+remaining capture, lifecycle, and owned-escape model; this range plan does not
+invent another callable representation.
 `auto` result inference, borrowed results, and owned escape remain unavailable.
 No algorithm may force a lambda to escape or be stored merely to traverse a
 range.

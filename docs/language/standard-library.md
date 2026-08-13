@@ -76,7 +76,9 @@ The current implemented foundation includes:
   capabilities, plus forward-only `advance`, `distance`, and `next`; and
 - `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
   input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and
-  `count_if`; and
+  `count_if`; the predicate algorithms retain a confined mutable local and
+  therefore accept read-callable or mut-callable predicates but not consuming
+  once-callables; and
 - `<std/cmath>` binary32 `abs`, `isfinite`, `isinf`, and `isnan` implemented
   from specified GTI floating-point operations; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
@@ -85,10 +87,11 @@ The current implemented foundation includes:
   `std::transform_reduce` over transferable input-iterator values, exact
   dereference referents, numeric accumulators, and confined exact-result
   callables. The current reduction algorithms execute deterministically from
-  left to right rather than inheriting C++'s permission to reorder; their
-  callable access is read-only and their element/intermediate/result type is
-  the same exact numeric `T`,
-  plus exact fixed-width `wrapping_add/sub/mul` and
+  left to right rather than inheriting C++'s permission to reorder. Each
+  operation is retained by value in one confined mutable local, so read-callable
+  and mut-callable targets are accepted, consuming once-callables are rejected,
+  and the element/intermediate/result type is the same exact numeric `T`. The
+  unit also supplies exact fixed-width `wrapping_add/sub/mul` and
   `saturating_add/sub/mul` functions, and failure-free
   `checked_add/sub/mul` functions returning
   `expected<T, std::arithmetic_errc>`; and

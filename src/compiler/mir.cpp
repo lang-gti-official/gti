@@ -2087,10 +2087,44 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if ((callable && !targetlessBorrowProbe &&
          instruction.parameterTypes.size() != instruction.operands.size()) ||
         (!callable && !instruction.parameterTypes.empty()) ||
+        (instruction.kind != MirInstructionKind::Call &&
+         instruction.callableInvocation) ||
         (instruction.operation != MirOperation::Closure &&
          !instruction.closureCaptureTypes.empty())) {
       return false;
     }
+    const auto validCallableInvocation = [&]() {
+      if (!instruction.callableInvocation) {
+        return !instruction.callableBoundary;
+      }
+      if (*instruction.callableInvocation ==
+          CallableInvocationCapability::Once) {
+        return false;
+      }
+      if (!instruction.receiver) {
+        return false;
+      }
+      if (instruction.receiver->kind == MirOperandKind::Value ||
+          instruction.receiver->kind == MirOperandKind::Move ||
+          (*instruction.callableInvocation ==
+               CallableInvocationCapability::Read &&
+           (instruction.receiver->kind == MirOperandKind::BorrowRead ||
+            instruction.receiver->kind == MirOperandKind::BorrowWrite))) {
+        return true;
+      }
+      if (*instruction.callableInvocation ==
+              CallableInvocationCapability::Mutable &&
+          instruction.receiver->kind == MirOperandKind::BorrowWrite) {
+        return true;
+      }
+      if (instruction.receiver->kind != MirOperandKind::Loan) {
+        return false;
+      }
+      const MirLoan *loan = body.findLoan(instruction.receiver->loan);
+      return loan != nullptr && (*instruction.callableInvocation ==
+                                     CallableInvocationCapability::Read ||
+                                 loan->access == AccessMode::Mutable);
+    };
     switch (instruction.kind) {
     case MirInstructionKind::Compute:
       return !instruction.receiver && !instruction.loan &&
@@ -2139,6 +2173,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirInstructionKind::Call:
       return noOperation &&
              hasResult == (instruction.info.type.kind != SemanticType::Void) &&
+             validCallableInvocation() &&
              (!instruction.callableBoundary ||
               *instruction.callableBoundary == CallableBoundary::Confined) &&
              (!instruction.constructorTarget ||
@@ -3329,6 +3364,144 @@ borrowSourceForValue(const MirBody &body, MirValueId valueId,
   return std::nullopt;
 }
 
+[[nodiscard]] bool isCallOperatorTarget(const MirFunctionInstance *target) {
+  return target != nullptr &&
+         target->overloadedOperator == OverloadedOperator::Call;
+}
+
+[[nodiscard]] bool
+callableSignatureMatches(const MirCallableSignature &signature,
+                         const MirInstruction &instruction) {
+  const bool sameTarget =
+      (signature.functionTarget &&
+       signature.functionTarget == instruction.functionTarget &&
+       !instruction.lambdaTarget) ||
+      (signature.lambdaTarget &&
+       signature.lambdaTarget == instruction.lambdaTarget &&
+       !instruction.functionTarget);
+  return sameTarget && signature.selectedCapability &&
+         instruction.callableInvocation == signature.selectedCapability &&
+         signature.returnType == instruction.info.type &&
+         signature.parameterTypes == instruction.parameterTypes;
+}
+
+[[nodiscard]] MirVerificationResult
+verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
+                          std::size_t owner,
+                          const MirFunctionInstance *caller = nullptr) {
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Call) {
+        continue;
+      }
+
+      const MirFunctionInstance *functionTarget =
+          instruction.functionTarget
+              ? program.findFunctionInstance(*instruction.functionTarget)
+              : nullptr;
+      const MirLambdaInstance *lambdaTarget =
+          instruction.lambdaTarget
+              ? program.findLambda(*instruction.lambdaTarget)
+              : nullptr;
+      const bool exactFunctionCallable =
+          isCallOperatorTarget(functionTarget) && !instruction.lambdaTarget;
+      const bool exactLambdaCallable =
+          lambdaTarget != nullptr && !instruction.functionTarget;
+      const bool exactCallableTarget =
+          exactFunctionCallable != exactLambdaCallable;
+
+      if (instruction.callableInvocation.has_value() != exactCallableTarget) {
+        return failure(body, owner,
+                       "callable invocation capability does not match an "
+                       "exact lambda or operator() target",
+                       block.id, instruction.id);
+      }
+      if (instruction.callableInvocation) {
+        const CallableInvocationCapability expected =
+            exactFunctionCallable ? callableInvocationCapability(
+                                        functionTarget->receiverMutability)
+                                  : CallableInvocationCapability::Read;
+        if (*instruction.callableInvocation != expected) {
+          return failure(body, owner,
+                         "callable invocation capability does not match its "
+                         "exact target",
+                         block.id, instruction.id);
+        }
+      }
+      if (exactFunctionCallable &&
+          (instruction.info.type != functionTarget->returnType ||
+           !exactParameterRoles(instruction.parameterTypes,
+                                functionTarget->parameterTypes))) {
+        return failure(body, owner,
+                       "operator() invocation does not match its exact target "
+                       "signature",
+                       block.id, instruction.id);
+      }
+      if (exactLambdaCallable &&
+          (instruction.info.type != lambdaTarget->returnType ||
+           !exactParameterRoles(instruction.parameterTypes,
+                                lambdaTarget->parameterTypes))) {
+        return failure(body, owner,
+                       "lambda invocation does not match its exact target "
+                       "signature",
+                       block.id, instruction.id);
+      }
+
+      if (instruction.callableBoundary) {
+        const bool matchedContract =
+            caller != nullptr &&
+            std::any_of(
+                caller->callableParameters.begin(),
+                caller->callableParameters.end(),
+                [&](const MirCallableParameter &parameter) {
+                  return parameter.boundary == *instruction.callableBoundary &&
+                         std::any_of(
+                             parameter.signatures.begin(),
+                             parameter.signatures.end(),
+                             [&](const MirCallableSignature &signature) {
+                               return callableSignatureMatches(signature,
+                                                               instruction);
+                             });
+                });
+        if (!matchedContract) {
+          return failure(body, owner,
+                         "confined callable invocation does not match an "
+                         "enclosing parameter signature",
+                         block.id, instruction.id);
+        }
+      }
+
+      if (!instruction.callableArguments.empty() && functionTarget == nullptr) {
+        return failure(body, owner,
+                       "callable argument descriptors require an exact "
+                       "function target",
+                       block.id, instruction.id);
+      }
+      if (functionTarget != nullptr) {
+        const auto &expected = functionTarget->callableParameters;
+        if (instruction.callableArguments.size() != expected.size()) {
+          return failure(body, owner,
+                         "callable argument descriptors do not match the "
+                         "target function contract",
+                         block.id, instruction.id);
+        }
+        for (std::size_t index = 0; index < expected.size(); ++index) {
+          if (instruction.callableArguments[index].parameterIndex !=
+                  expected[index].parameterIndex ||
+              instruction.callableArguments[index].boundary !=
+                  expected[index].boundary) {
+            return failure(body, owner,
+                           "callable argument descriptor does not match the "
+                           "target parameter contract",
+                           block.id, instruction.id);
+          }
+        }
+      }
+    }
+  }
+  return {};
+}
+
 [[nodiscard]] MirVerificationResult
 verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          std::size_t owner) {
@@ -3729,14 +3902,22 @@ verifyMirConstructorBorrowSummary(const MirConstructorInstance &instance) {
 [[nodiscard]] MirVerificationResult
 verifyMirProgramBorrowContracts(const MirProgram &program) {
   MirVerificationResult result;
+  append(result,
+         verifyMirCallableMetadata(program, program.module(), 0, nullptr));
   append(result, verifyMirBorrowProducers(program, program.module(), 0));
   for (const MirClassInstance &instance : program.classInstances()) {
+    append(result, verifyMirCallableMetadata(
+                       program, instance.fieldInitializers, instance.id));
     append(result, verifyMirBorrowProducers(program, instance.fieldInitializers,
                                             instance.id));
+    append(result, verifyMirCallableMetadata(
+                       program, instance.staticFieldInitializers, instance.id));
     append(result, verifyMirBorrowProducers(
                        program, instance.staticFieldInitializers, instance.id));
   }
   for (const MirFunctionInstance &instance : program.functionInstances()) {
+    append(result, verifyMirCallableMetadata(program, instance.body,
+                                             instance.id, &instance));
     append(result,
            verifyMirBorrowProducers(program, instance.body, instance.id));
     append(result, verifyMirFunctionBorrowSummary(program, instance));
@@ -3744,14 +3925,20 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
   for (const MirConstructorInstance &instance :
        program.constructorInstances()) {
     append(result,
+           verifyMirCallableMetadata(program, instance.body, instance.id));
+    append(result,
            verifyMirBorrowProducers(program, instance.body, instance.id));
     append(result, verifyMirConstructorBorrowSummary(instance));
   }
   for (const MirDestructorInstance &instance : program.destructorInstances()) {
     append(result,
+           verifyMirCallableMetadata(program, instance.body, instance.id));
+    append(result,
            verifyMirBorrowProducers(program, instance.body, instance.id));
   }
   for (const MirLambdaInstance &instance : program.lambdaInstances()) {
+    append(result,
+           verifyMirCallableMetadata(program, instance.body, instance.id));
     append(result,
            verifyMirBorrowProducers(program, instance.body, instance.id));
   }
@@ -4108,6 +4295,173 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           {.bodyKind = MirBodyKind::Function,
            .owner = instance.id,
            .message = "GTI-linkage function has an external C symbol"});
+    }
+    bool validCallableContracts = true;
+    std::string callableContractError;
+    const auto rejectCallableContract = [&](std::string message) {
+      validCallableContracts = false;
+      if (callableContractError.empty()) {
+        callableContractError = std::move(message);
+      }
+    };
+    std::size_t previousCallableParameter = 0;
+    bool firstCallableParameter = true;
+    for (const MirCallableParameter &parameter : instance.callableParameters) {
+      const CallableInvocationCapability parameterCapability =
+          callableInvocationCapability(parameter.access);
+      if (parameter.parameterIndex >= instance.parameterTypes.size() ||
+          parameter.callableType !=
+              instance.parameterTypes[parameter.parameterIndex]) {
+        rejectCallableContract("parameter identity or type is invalid");
+      }
+      if (parameter.boundary != CallableBoundary::Confined) {
+        rejectCallableContract("owned boundary is premature");
+      }
+      if (!firstCallableParameter &&
+          previousCallableParameter >= parameter.parameterIndex) {
+        rejectCallableContract("parameter descriptors are not ordered");
+      }
+      firstCallableParameter = false;
+      previousCallableParameter = parameter.parameterIndex;
+
+      for (std::size_t signatureIndex = 0;
+           signatureIndex < parameter.signatures.size(); ++signatureIndex) {
+        const MirCallableSignature &signature =
+            parameter.signatures[signatureIndex];
+        const bool hasTarget = signature.functionTarget.has_value() !=
+                               signature.lambdaTarget.has_value();
+        const std::string prefix =
+            "signature " + std::to_string(signatureIndex) + " ";
+        if (!hasTarget) {
+          rejectCallableContract(prefix +
+                                 "does not name exactly one selected target");
+        }
+        if (signature.requiredCapability != parameterCapability) {
+          rejectCallableContract(
+              prefix + "does not match the callable parameter access");
+        }
+        if (signature.requiredCapability ==
+            CallableInvocationCapability::Once) {
+          rejectCallableContract(prefix + "uses premature once capability");
+        }
+        if (!signature.selectedCapability) {
+          rejectCallableContract(prefix + "has no selected capability");
+        } else if (*signature.selectedCapability ==
+                   CallableInvocationCapability::Once) {
+          rejectCallableContract(prefix + "selects premature once capability");
+        } else if (!callableCapabilitySatisfies(*signature.selectedCapability,
+                                                signature.requiredCapability)) {
+          rejectCallableContract(prefix +
+                                 "does not satisfy the required capability");
+        }
+        if (!hasTarget || !signature.selectedCapability) {
+          continue;
+        }
+
+        CallableInvocationCapability expected =
+            CallableInvocationCapability::Read;
+        if (signature.functionTarget) {
+          if (*signature.functionTarget == 0 ||
+              *signature.functionTarget > program.functionInstances().size()) {
+            rejectCallableContract(prefix + "has an invalid function target");
+            continue;
+          }
+          const MirFunctionInstance &target =
+              program.functionInstances().at(*signature.functionTarget - 1);
+          if (target.overloadedOperator != OverloadedOperator::Call ||
+              !target.owner || target.staticMember ||
+              signature.returnType != target.returnType ||
+              signature.parameterTypes != target.parameterTypes) {
+            rejectCallableContract(prefix +
+                                   "does not match an exact operator() target");
+          }
+          expected = callableInvocationCapability(target.receiverMutability);
+        } else if (signature.lambdaTarget) {
+          const MirLambdaInstance *target =
+              program.findLambda(*signature.lambdaTarget);
+          if (target == nullptr || target->returnType != signature.returnType ||
+              target->parameterTypes != signature.parameterTypes) {
+            rejectCallableContract(prefix +
+                                   "does not match an exact lambda target");
+          }
+        }
+        if (*signature.selectedCapability != expected) {
+          rejectCallableContract(
+              prefix + "disagrees with the selected target capability");
+        }
+      }
+
+      for (std::size_t forwardingIndex = 0;
+           forwardingIndex < parameter.forwardings.size(); ++forwardingIndex) {
+        const MirCallableForwarding &forwarding =
+            parameter.forwardings[forwardingIndex];
+        const std::string prefix =
+            "forwarding " + std::to_string(forwardingIndex) + " ";
+        const bool duplicate = std::any_of(
+            parameter.forwardings.begin(),
+            parameter.forwardings.begin() +
+                static_cast<std::ptrdiff_t>(forwardingIndex),
+            [&](const MirCallableForwarding &candidate) {
+              return candidate.functionTarget == forwarding.functionTarget &&
+                     candidate.parameterIndex == forwarding.parameterIndex;
+            });
+        if (duplicate) {
+          rejectCallableContract(prefix + "is duplicated");
+        }
+        if (!forwarding.functionTarget || *forwarding.functionTarget == 0 ||
+            *forwarding.functionTarget > program.functionInstances().size()) {
+          rejectCallableContract(prefix + "has an invalid function target");
+          continue;
+        }
+
+        const MirFunctionInstance &target =
+            program.functionInstances().at(*forwarding.functionTarget - 1);
+        const auto targetContract = std::find_if(
+            target.callableParameters.begin(), target.callableParameters.end(),
+            [&](const MirCallableParameter &candidate) {
+              return candidate.parameterIndex == forwarding.parameterIndex;
+            });
+        if (forwarding.parameterIndex >= target.parameterTypes.size() ||
+            targetContract == target.callableParameters.end() ||
+            targetContract->boundary != CallableBoundary::Confined ||
+            target.parameterTypes[forwarding.parameterIndex] !=
+                parameter.callableType) {
+          rejectCallableContract(prefix +
+                                 "does not match a confined target parameter");
+        }
+
+        const bool exactCallEdge = std::any_of(
+            instance.body.blocks.begin(), instance.body.blocks.end(),
+            [&](const MirBlock &block) {
+              return std::any_of(
+                  block.instructions.begin(), block.instructions.end(),
+                  [&](const MirInstruction &instruction) {
+                    return instruction.kind == MirInstructionKind::Call &&
+                           instruction.functionTarget ==
+                               forwarding.functionTarget &&
+                           std::any_of(
+                               instruction.callableArguments.begin(),
+                               instruction.callableArguments.end(),
+                               [&](const CallableArgumentBoundary &argument) {
+                                 return argument.parameterIndex ==
+                                            forwarding.parameterIndex &&
+                                        argument.boundary ==
+                                            CallableBoundary::Confined;
+                               });
+                  });
+            });
+        if (!exactCallEdge) {
+          rejectCallableContract(prefix +
+                                 "does not match a concrete call edge");
+        }
+      }
+    }
+    if (!validCallableContracts) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "function callable capability metadata is invalid: " +
+                      callableContractError});
     }
     if (instance.entryKind != ProgramEntryKind::None) {
       ++entryPoints;

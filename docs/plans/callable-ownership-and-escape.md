@@ -2,7 +2,9 @@
 
 > **Plan status:** D-CALL-01 decision complete. L-CALL-01 is partially
 > implemented through explicit confined-boundary records and exact
-> context-supplied owned value results; invocation capability and owned escape
+> context-supplied confined-safe value results. Repeated read-callable and
+> mut-callable selection is implemented for confined generic parameters;
+> consuming once-callable cardinality, callable environments, and owned escape
 > remain planned.
 
 Baseline: GTI 0.94.0.
@@ -86,12 +88,18 @@ GTI 0.94.0 already implements a deliberately confined first layer:
   only when concrete reanalysis proves every direct invocation or forwarding
   edge is non-escaping;
 - callable requirements cover exact `void` operations, exact `bool`
-  predicates, and exact owned value results supplied by a typed initializer,
-  assignment, condition, or enclosing return, including
+  predicates, and exact non-reference value results without tracked borrowed
+  state or lambda identity, supplied by a typed initializer, assignment,
+  condition, or enclosing return, including
   declaration-order-independent forwarding;
 - semantic, HIR, and MIR records retain exact concrete lambda or
   `operator()` targets and explicit confined argument/invocation boundaries;
-  and
+- an immutable confined parameter requires read-callable invocation, while a
+  `mut` confined parameter provides exclusive local access and accepts either
+  a read-callable or mut-callable target; current lambdas are read-callable and
+  a nominal `operator() mut` supplies the implemented mut-callable form;
+- source-defined predicate and numeric algorithms use that mutable local form
+  for zero-or-more invocation and reject the reserved once-callable form; and
 - the C++ backend emits a closure or exact `operator()` bridge only after the
   frontend has selected the callable.
 
@@ -155,8 +163,9 @@ generic parameter; it is not an erased interface object and does not affect
 overload ranking.
 
 Arbitrary owned value results are part of the accepted model. The implemented
-confined slice requires an exact contextual result type. Unconstrained `auto`
-result inference through an unknown generic callable remains rejected.
+confined slice is narrower: it requires an exact contextual non-reference type
+with no tracked borrowed state or lambda identity. Unconstrained `auto` result
+inference through an unknown generic callable remains rejected.
 Reference or borrowed-state results require an ordinary owner-dependency
 summary naming a receiver or argument origin; a closure capture is not an
 implicit lifetime origin. The initial bounded callable slice therefore keeps lambda
@@ -461,16 +470,18 @@ With M-LIFE-01 complete, implement bounded sub-slices in this order:
    GTI-owned exact signature and boundary vocabulary while preserving the
    confined policy;
 2. **Done in 0.122.0:** extend confined callable requirements from exact
-   `void`/`bool` to exact context-supplied owned value results, serving
+   `void`/`bool` to exact context-supplied confined-safe value results, serving
    operation-based numeric algorithms and unary `std::transform_reduce`;
-3. classify read-callable, mut-callable, and once-callable per concrete
-   signature and verify call cardinality/path joins;
-4. represent closure environment initialize/move/drop in HIR/MIR and add one
+3. **Done in 0.123.0:** classify read-callable and mut-callable
+   receiver access per concrete signature, preserve the required and selected
+   capability through HIR/MIR, and serve repeated confined algorithm clients;
+4. classify consuming once-callables and verify call cardinality/path joins;
+5. represent closure environment initialize/move/drop in HIR/MIR and add one
    explicit owned move-capture mode;
-5. permit exact generic owned transport and one concrete generic field owner;
-6. add public unary callable/predicate concepts using those same semantic
+6. permit exact generic owned transport and one concrete generic field owner;
+7. add public unary callable/predicate concepts using those same semantic
    requirements; and
-7. serve L-RANGE-04 without storing callables beyond the accepted exact owner.
+8. serve L-RANGE-04 without storing callables beyond the accepted exact owner.
 
 Each sub-slice must preserve the current confined bridge until its replacement
 has equivalent semantic/HIR/MIR tests. Do not add a general callable base

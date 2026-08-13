@@ -1,0 +1,38 @@
+#include <std/algorithm>
+#include <std/numeric>
+#include <std/vector>
+
+class increasing_add {
+  mut int multiplier = 1;
+
+public:
+  int operator()(int total, int& value) mut {
+    int result = total + value * this.multiplier;
+    this.multiplier++;
+    return result;
+  }
+};
+
+class alternating_predicate {
+  mut bool accept = false;
+
+public:
+  bool operator()(int& value) mut {
+    this.accept = !this.accept;
+    return this.accept;
+  }
+};
+
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  values.push_back(4);
+
+  int weighted = std::accumulate(values.begin(), values.end(), 0,
+                                 increasing_add());
+  std::ptrdiff_t selected = std::count_if(
+      values.begin(), values.end(), alternating_predicate());
+  return weighted + int(selected) - 32;
+}

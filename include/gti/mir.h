@@ -273,6 +273,7 @@ struct MirInstruction {
   std::optional<HirLambdaId> lambdaTarget;
   std::vector<CallableArgumentBoundary> callableArguments;
   std::optional<CallableBoundary> callableBoundary;
+  std::optional<CallableInvocationCapability> callableInvocation;
   ExpressionInfo info;
   std::optional<OwnershipEvent> ownership;
   std::vector<MirLifecycleEvent> lifecycle;
@@ -445,6 +446,9 @@ struct MirClassInstance {
 struct MirCallableSignature {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
+  CallableInvocationCapability requiredCapability =
+      CallableInvocationCapability::Read;
+  std::optional<CallableInvocationCapability> selectedCapability;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirLambdaId> lambdaTarget;
 };
@@ -472,6 +476,8 @@ struct MirFunctionInstance {
   ProgramEntryKind entryKind = ProgramEntryKind::None;
   std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;
   bool staticMember = false;
+  ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+  std::optional<OverloadedOperator> overloadedOperator;
   bool constexprFunction = false;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
@@ -520,6 +526,7 @@ struct MirDestructorInstance {
 struct MirLambdaInstance {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
+  SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<SemanticType> captureTypes;
   std::vector<bool> captureRequiresActiveCleanup;
@@ -2458,6 +2465,7 @@ private:
                         .lambdaTarget = value.lambdaTarget,
                         .callableArguments = value.callableArguments,
                         .callableBoundary = value.callableBoundary,
+                        .callableInvocation = value.callableInvocation,
                         .info = value.info};
 
     if (const std::optional<HirValueId> receiver = receiverValue(value)) {
@@ -4536,6 +4544,8 @@ public:
           lowered.signatures.push_back(
               {.returnType = signature.returnType,
                .parameterTypes = signature.parameterTypes,
+               .requiredCapability = signature.requiredCapability,
+               .selectedCapability = signature.selectedCapability,
                .functionTarget = signature.functionTarget,
                .lambdaTarget = signature.lambdaTarget});
         }
@@ -4556,6 +4566,13 @@ public:
            .entryKind = instance.entryKind,
            .entryArgumentAppendTarget = instance.entryArgumentAppendTarget,
            .staticMember = instance.staticMember,
+           .receiverMutability = instance.source == nullptr
+                                     ? ReceiverMutability::ReadOnly
+                                     : instance.source->receiverMutability(),
+           .overloadedOperator =
+               instance.source == nullptr || !instance.source->operatorName()
+                   ? std::nullopt
+                   : std::optional{instance.source->operatorName()->kind},
            .constexprFunction = instance.constexprFunction,
            .returnBorrowOrigin = instance.returnBorrowOrigin,
            .returnBorrowParameter = instance.returnBorrowParameter,
@@ -4617,6 +4634,7 @@ public:
     for (const HirLambda &instance : source.lambdaInstances()) {
       MirLambdaInstance lowered{.id = instance.id,
                                 .declaration = instance.declaration,
+                                .returnType = instance.returnType,
                                 .parameterTypes = instance.parameterTypes};
       lowered.captureTypes.reserve(instance.captures.size());
       lowered.captureRequiresActiveCleanup.reserve(instance.captures.size());

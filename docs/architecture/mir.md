@@ -19,10 +19,12 @@ it from host/backend flags. The current profile fact constrains frontend
 global/static validity; future synchronization and task operations will
 consume it only in their owning rows.
 
-The deterministic serialization is currently `mir-v5`/`mir-body-v5`. Version
-5 replaces callable-use booleans with explicit boundary records while retaining
-the version-4 body-local full-expression identities, exact ordered cleanup
-membership, standalone boundary markers, and active-cleanup metadata.
+The deterministic serialization is currently `mir-v6`/`mir-body-v6`. Version
+6 adds exact callable invocation requirements, selected capabilities,
+call-site capabilities, and concrete function receiver mutability. It retains
+the version-5 explicit callable boundaries and the version-4 body-local
+full-expression identities, exact ordered cleanup membership, standalone
+boundary markers, and active-cleanup metadata.
 
 A `MirBody` owns:
 
@@ -40,9 +42,19 @@ A `MirBody` owns:
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
 - exact confined-callable invocation and argument-boundary records. The
-  verifier requires descriptors to be ordered, unique, and within the call's
-  operand list. `Owned` remains representational vocabulary only and is
-  rejected until environment movement, cleanup, and escape invariants land;
+  verifier requires descriptors to be ordered, unique, within the call's
+  operand list, and identical to the concrete target contract. `Owned` remains
+  representational vocabulary only and is rejected until environment
+  movement, cleanup, and escape invariants land;
+- read- or mut-callable invocation on each concrete callable call, plus the
+  required and selected capability for each exact generic signature. Mutable
+  invocation requires an exclusive or owned receiver. Program verification
+  checks the required capability against formal parameter access, binds the
+  selected capability and full parameter/result signature to an exact lambda
+  or `operator()` target, and validates each forwarding target, parameter
+  index, and concrete call edge. `Once`
+  remains representational vocabulary only and is rejected until consuming
+  receiver state and CFG cardinality joins land;
 - the program-entry kind and exact concrete startup-append target for the owned
   command-line argument form;
 - after M-FAIL-01, an explicit compiler-generated hosted-startup operation/body
@@ -130,7 +142,7 @@ state-set union. A mismatched domain, forged move key, missing restoration, or
 unavailable operand makes the MIR candidate invalid rather than producing a
 late source diagnostic or relying on generated C++ behavior.
 
-`MirPrinter` version 4 includes each body domain, carried place key, constant
+`MirPrinter` version 6 includes each body domain, carried place key, constant
 or dynamic index metadata, ownership event, complete cleanup-relevant class
 lifecycle shape,
 exact class/lambda cleanup descriptor, typed drop obligation, call parameter

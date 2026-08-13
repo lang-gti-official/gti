@@ -99,7 +99,8 @@ namespace std {
   }
 
   T accumulate<Iterator, Sentinel, std::numeric T, BinaryOperation>(
-      mut Iterator first, Sentinel last, mut T init, BinaryOperation operation)
+      mut Iterator first, Sentinel last, mut T init,
+      mut BinaryOperation operation)
     requires std::input_iterator<Iterator> &&
              std::sentinel_for<Sentinel, Iterator> &&
              std::accumulates_into<Iterator, T> {
@@ -132,8 +133,8 @@ namespace std {
                   BinaryOperation1, BinaryOperation2>(
       mut InputIterator1 first1, InputIterator1 last1,
       mut InputIterator2 first2, mut T initial,
-      BinaryOperation1 accumulate_operation,
-      BinaryOperation2 product_operation)
+      mut BinaryOperation1 accumulate_operation,
+      mut BinaryOperation2 product_operation)
     requires std::input_iterator<InputIterator1> &&
              std::sentinel_for<InputIterator1, InputIterator1> &&
              std::input_iterator<InputIterator2> &&
@@ -152,7 +153,7 @@ namespace std {
   T transform_reduce<Iterator, Sentinel, std::numeric T, BinaryOperation,
                      UnaryOperation>(
       mut Iterator first, Sentinel last, mut T initial,
-      BinaryOperation reduce, UnaryOperation transform)
+      mut BinaryOperation reduce, mut UnaryOperation transform)
     requires std::input_iterator<Iterator> &&
              std::sentinel_for<Sentinel, Iterator> &&
              std::accumulates_into<Iterator, T> {

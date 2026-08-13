@@ -95,6 +95,29 @@ diagnostics or letting a backend message choose either identity.
 - Reserve `GTI-B0001` for internal MIR/backend integrity failure, not ordinary
   invalid source.
 
+`GTI-S2046` owns the confined-callable boundary. It points at the callable
+use, forwarding argument, or enclosing return type that lacks a proven exact
+contract. It rejects inexact arguments/results, `auto` result inference,
+reference or tracked-borrow results, invoked callable escape, and forwarding
+to a target parameter that is not itself proven confined. Relate escape and
+forwarding diagnostics to the generic parameter declaration where useful, and
+do not let an already-rejected callable result cascade into an unrelated
+stored-borrow-origin diagnostic. Invalid confinement must stop before HIR/MIR;
+those stages may verify compiler-owned boundary records but must never repair
+source semantics. The same code reports a mut-callable target selected through
+an immutable callable parameter, relates the parameter declaration, and
+suggests `mut` on the by-value generic parameter. This remains a callable
+contract error rather than the ordinary direct-call `GTI-S2022` mutable
+receiver diagnostic.
+
+Once a parameter has an invoked confined contract, an ordinary value use also
+reports `GTI-S2046`: only direct invocation or proven confined forwarding is
+permitted, and assignment, storage, or other transport requires an owned
+boundary. The check follows resolved symbol identity rather than identifier
+spelling; lambda captures retain the canonical declaration identity they
+captured. Return escape and unproven forwarding retain their more specific
+messages instead of cascading into a second ordinary-use diagnostic.
+
 `GTI-S2065` owns the opaque-native-handle boundary. It points at the invalid
 attribute, declaration name, native-facing name conflict, direct type use, or
 operation that would require the hidden pointee representation. It explains

@@ -132,6 +132,10 @@ Read-only symbolic calls pass the receiver through a generated const-view
 helper, so a mutable source binding cannot cause native overload resolution to
 prefer a mutable operator after GTI selected a read-only operation. Concrete
 restricted-method calls continue to name their resolved declaration directly.
+Deferred calls through confined generic callable parameters use the same rule:
+the semantic invocation capability selects either the const-view receiver for
+a read call or the writable local receiver for a mutable call. Native overload
+resolution therefore cannot replace the frontend-selected receiver capability.
 Native comparison methods are an existing transitional exception: they retain
 C++ `operator...` spellings, although the emitter pins their semantically
 selected dispatch owner and receiver mutability to prevent derived member

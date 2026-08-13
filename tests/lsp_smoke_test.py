@@ -917,7 +917,7 @@ def test_callable_contract_hover(executable, root):
         declaration_hover = hover(2, declared_map + 1)
         assert (
             "*confined callable parameter 'operation' (read-only access), "
-            "exact signature: (T) -> T*"
+            "exact signature: read-callable (T) -> T*"
             in declaration_hover
         )
 
@@ -925,16 +925,16 @@ def test_callable_contract_hover(executable, root):
         selected_hover = hover(3, selected_map + 1)
         assert (
             "*confined callable parameter 'operation' (read-only access), "
-            "exact signature: (int32_t) -> int32_t*"
+            "exact signature: read-callable (int32_t) -> int32_t*"
             in selected_hover
         )
-        assert "exact signature: (T) -> T" not in selected_hover
+        assert "exact signature: read-callable (T) -> T" not in selected_hover
 
         declared_member = source.index("apply<Operation>")
         declared_member_hover = hover(4, declared_member + 1)
         assert (
             "*confined callable parameter 'operation' (read-only access), "
-            "exact signature: (T) -> T*"
+            "exact signature: read-callable (T) -> T*"
             in declared_member_hover
         )
 
@@ -942,16 +942,19 @@ def test_callable_contract_hover(executable, root):
         selected_member_hover = hover(5, selected_member + 1)
         assert (
             "*confined callable parameter 'operation' (read-only access), "
-            "exact signature: (int32_t) -> int32_t*"
+            "exact signature: read-callable (int32_t) -> int32_t*"
             in selected_member_hover
         )
-        assert "exact signature: (T) -> T" not in selected_member_hover
+        assert (
+            "exact signature: read-callable (T) -> T"
+            not in selected_member_hover
+        )
 
         mutable_apply = source.index("apply_mut<Operation>")
         mutable_hover = hover(6, mutable_apply + 1)
         assert (
             "*confined callable parameter 'operation' (mutable access), "
-            "exact signature: (int32_t) -> int32_t*"
+            "exact signature: mut-callable (int32_t) -> int32_t*"
             in mutable_hover
         )
 
@@ -959,7 +962,8 @@ def test_callable_contract_hover(executable, root):
         dispatch_hover = hover(7, dispatch + 1)
         assert (
             "*confined callable parameter 'operation' (read-only access), "
-            "exact signatures: (int32_t) -> int32_t; (bool) -> int32_t*"
+            "exact signatures: read-callable (int32_t) -> int32_t; "
+            "read-callable (bool) -> int32_t*"
             in dispatch_hover
         )
     finally:

@@ -785,7 +785,18 @@ private:
       renderedSignatures.reserve(contract->signatures.size());
       for (const CallableSignatureRequirement &signature :
            contract->signatures) {
-        std::string rendered = "(";
+        std::string rendered;
+        switch (signature.capability) {
+        case CallableInvocationCapability::Read:
+          rendered = "read-callable (";
+          break;
+        case CallableInvocationCapability::Mutable:
+          rendered = "mut-callable (";
+          break;
+        case CallableInvocationCapability::Once:
+          rendered = "once-callable (";
+          break;
+        }
         for (std::size_t index = 0; index < signature.parameterTypes.size();
              ++index) {
           if (index != 0) {

@@ -3326,7 +3326,9 @@ int main() {
   expect(validOuter != nullptr && validOuter->callableArguments.size() == 2 &&
              validOuter->callableArguments[0].parameterIndex == 1 &&
              validOuter->callableArguments[1].parameterIndex == 2 &&
-             validInvocation != nullptr,
+             validInvocation != nullptr &&
+             validInvocation->callableInvocation ==
+                 lang::CallableInvocationCapability::Read,
          "MIR should retain ordered confined descriptors at the outer call "
          "and invocation sites");
   if (validOuter == nullptr || validOuter->callableArguments.size() != 2 ||
@@ -3370,6 +3372,234 @@ int main() {
   expect(!lang::verifyMirBody(prematureOwnedInvocation).valid(),
          "the MIR verifier should reject owned callable invocation metadata "
          "until its lifecycle contract lands");
+
+  lang::MirBody missingCapability = mirApply->body;
+  lang::MirInstruction *missingCapabilityInvocation =
+      confinedInvocation(missingCapability);
+  missingCapabilityInvocation->callableInvocation.reset();
+  expect(!lang::verifyMirBody(missingCapability).valid(),
+         "a confined MIR invocation must retain its callable capability");
+
+  lang::MirBody prematureOnce = mirApply->body;
+  lang::MirInstruction *onceInvocation = confinedInvocation(prematureOnce);
+  onceInvocation->callableInvocation = lang::CallableInvocationCapability::Once;
+  expect(!lang::verifyMirBody(prematureOnce).valid(),
+         "the MIR verifier should reject once-callable invocation until "
+         "consuming receiver state and joins are represented");
+
+  const auto mutableFunction =
+      [](lang::MirProgram &program,
+         lang::HirFunctionInstanceId id) -> lang::MirFunctionInstance * {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    return id == 0 || id > functions.size() ? nullptr : &functions[id - 1];
+  };
+
+  lang::MirProgram missingTargetCapability = frontend.mir;
+  lang::MirFunctionInstance *missingCapabilityApply =
+      mutableFunction(missingTargetCapability, apply->id);
+  lang::MirInstruction *missingTargetInvocation =
+      missingCapabilityApply == nullptr
+          ? nullptr
+          : confinedInvocation(missingCapabilityApply->body);
+  if (missingTargetInvocation != nullptr) {
+    missingTargetInvocation->callableBoundary.reset();
+    missingTargetInvocation->callableInvocation.reset();
+  }
+  expect(missingTargetInvocation != nullptr &&
+             !lang::verifyMirProgram(missingTargetCapability).valid(),
+         "a concrete lambda target must retain its selected invocation "
+         "capability even if its confined marker is forged away");
+
+  lang::MirProgram mismatchedRequiredCapability = frontend.mir;
+  lang::MirFunctionInstance *requiredApply =
+      mutableFunction(mismatchedRequiredCapability, apply->id);
+  if (requiredApply != nullptr && !requiredApply->callableParameters.empty() &&
+      !requiredApply->callableParameters.front().signatures.empty()) {
+    requiredApply->callableParameters.front()
+        .signatures.front()
+        .requiredCapability = lang::CallableInvocationCapability::Mutable;
+  }
+  expect(requiredApply != nullptr &&
+             !lang::verifyMirProgram(mismatchedRequiredCapability).valid(),
+         "a callable signature's required capability must match its formal "
+         "parameter access");
+
+  lang::MirProgram invalidLambdaTarget = frontend.mir;
+  lang::MirFunctionInstance *lambdaTargetApply =
+      mutableFunction(invalidLambdaTarget, apply->id);
+  if (lambdaTargetApply != nullptr &&
+      !lambdaTargetApply->callableParameters.empty() &&
+      !lambdaTargetApply->callableParameters.front().signatures.empty()) {
+    lambdaTargetApply->callableParameters.front()
+        .signatures.front()
+        .lambdaTarget = invalidLambdaTarget.lambdaInstances().size() + 1;
+  }
+  expect(lambdaTargetApply != nullptr &&
+             !lang::verifyMirProgram(invalidLambdaTarget).valid(),
+         "a callable signature must name an existing exact lambda target");
+
+  lang::MirProgram mismatchedLambdaResult = frontend.mir;
+  auto &mismatchedResultLambdas =
+      const_cast<std::vector<lang::MirLambdaInstance> &>(
+          mismatchedLambdaResult.lambdaInstances());
+  if (!mismatchedResultLambdas.empty()) {
+    mismatchedResultLambdas.front().returnType = lang::SemanticType::Int32;
+  }
+  expect(!mismatchedResultLambdas.empty() &&
+             !lang::verifyMirProgram(mismatchedLambdaResult).valid(),
+         "a callable signature must match its exact lambda result type");
+
+  lang::MirProgram missingTargetDescriptors = frontend.mir;
+  lang::MirFunctionInstance *missingDescriptorsMain =
+      mutableFunction(missingTargetDescriptors, main->id);
+  lang::MirInstruction *missingDescriptorsCall =
+      missingDescriptorsMain == nullptr
+          ? nullptr
+          : outerCall(missingDescriptorsMain->body);
+  if (missingDescriptorsCall != nullptr) {
+    missingDescriptorsCall->callableArguments.clear();
+  }
+  expect(missingDescriptorsCall != nullptr &&
+             !lang::verifyMirProgram(missingTargetDescriptors).valid(),
+         "a call must carry the exact callable argument descriptors required "
+         "by its concrete target");
+
+  const lang::FrontendResult stateful =
+      lang::Frontend().analyze("callable-capability-mir.gti", R"(
+void run_stateful<Operation>(mut Operation operation) {
+  operation();
+}
+
+class Stateful {
+public:
+  void operator()() mut {}
+};
+
+int main() {
+  Stateful stateful = Stateful();
+  run_stateful(stateful);
+  return 0;
+}
+)");
+  const lang::HirFunctionInstance *runStateful =
+      findHirFunction(stateful, "run_stateful");
+  const lang::MirFunctionInstance *mirRunStateful =
+      runStateful == nullptr
+          ? nullptr
+          : stateful.mir.findFunctionInstance(runStateful->id);
+  expect(stateful.canGenerateCode() && mirRunStateful != nullptr &&
+             lang::verifyMirProgram(stateful.mir).valid(),
+         "the mutable callable MIR fixture should retain a valid exact "
+         "operator() target");
+  if (runStateful != nullptr && mirRunStateful != nullptr) {
+    lang::MirProgram forgedSelectedCapability = stateful.mir;
+    lang::MirFunctionInstance *forgedRun =
+        mutableFunction(forgedSelectedCapability, runStateful->id);
+    lang::MirInstruction *forgedInvocation =
+        forgedRun == nullptr ? nullptr : confinedInvocation(forgedRun->body);
+    if (forgedInvocation != nullptr) {
+      forgedInvocation->callableInvocation =
+          lang::CallableInvocationCapability::Read;
+    }
+    expect(forgedInvocation != nullptr &&
+               lang::verifyMirBody(forgedRun->body).valid() &&
+               !lang::verifyMirProgram(forgedSelectedCapability).valid(),
+           "program verification must bind a call site's selected capability "
+           "to the concrete mutable operator() target");
+
+    lang::MirProgram missingOperatorIdentity = stateful.mir;
+    lang::MirFunctionInstance *identityRun =
+        mutableFunction(missingOperatorIdentity, runStateful->id);
+    lang::MirFunctionInstance *operatorTarget = nullptr;
+    if (identityRun != nullptr && !identityRun->callableParameters.empty() &&
+        !identityRun->callableParameters.front().signatures.empty()) {
+      const auto target = identityRun->callableParameters.front()
+                              .signatures.front()
+                              .functionTarget;
+      operatorTarget =
+          target ? mutableFunction(missingOperatorIdentity, *target) : nullptr;
+    }
+    if (operatorTarget != nullptr) {
+      operatorTarget->overloadedOperator.reset();
+    }
+    expect(operatorTarget != nullptr &&
+               !lang::verifyMirProgram(missingOperatorIdentity).valid(),
+           "a function-object capability must remain attached to an exact "
+           "operator() target identity");
+  }
+
+  const lang::FrontendResult forwarding =
+      lang::Frontend().analyze("callable-forwarding-mir.gti", R"(
+void outer<Operation>(Operation operation) { inner(operation); }
+void inner<Operation>(Operation operation) { operation(); }
+
+int main() {
+  auto operation = []() -> void {};
+  outer(operation);
+  return 0;
+}
+)");
+  const lang::HirFunctionInstance *outer = findHirFunction(forwarding, "outer");
+  const lang::MirFunctionInstance *mirOuter =
+      outer == nullptr ? nullptr
+                       : forwarding.mir.findFunctionInstance(outer->id);
+  expect(forwarding.canGenerateCode() && mirOuter != nullptr &&
+             !mirOuter->callableParameters.empty() &&
+             mirOuter->callableParameters.front().forwardings.size() == 1 &&
+             lang::verifyMirProgram(forwarding.mir).valid(),
+         "the forwarding MIR fixture should retain one exact confined edge");
+  if (outer != nullptr && mirOuter != nullptr &&
+      !mirOuter->callableParameters.empty() &&
+      !mirOuter->callableParameters.front().forwardings.empty()) {
+    lang::MirProgram invalidForwardingTarget = forwarding.mir;
+    lang::MirFunctionInstance *invalidTargetOuter =
+        mutableFunction(invalidForwardingTarget, outer->id);
+    invalidTargetOuter->callableParameters.front()
+        .forwardings.front()
+        .functionTarget.reset();
+    expect(!lang::verifyMirProgram(invalidForwardingTarget).valid(),
+           "a forwarding contract must retain its exact target identity");
+
+    lang::MirProgram invalidForwardingParameter = forwarding.mir;
+    lang::MirFunctionInstance *invalidParameterOuter =
+        mutableFunction(invalidForwardingParameter, outer->id);
+    invalidParameterOuter->callableParameters.front()
+        .forwardings.front()
+        .parameterIndex = std::numeric_limits<std::size_t>::max();
+    expect(!lang::verifyMirProgram(invalidForwardingParameter).valid(),
+           "a forwarding contract must name an in-range confined target "
+           "parameter");
+
+    lang::MirProgram duplicateForwarding = forwarding.mir;
+    lang::MirFunctionInstance *duplicateOuter =
+        mutableFunction(duplicateForwarding, outer->id);
+    duplicateOuter->callableParameters.front().forwardings.push_back(
+        duplicateOuter->callableParameters.front().forwardings.front());
+    expect(!lang::verifyMirProgram(duplicateForwarding).valid(),
+           "a forwarding contract must not duplicate one concrete edge");
+
+    lang::MirProgram missingForwardingCallDescriptor = forwarding.mir;
+    lang::MirFunctionInstance *missingEdgeOuter =
+        mutableFunction(missingForwardingCallDescriptor, outer->id);
+    bool clearedDescriptor = false;
+    for (lang::MirBlock &block : missingEdgeOuter->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (!instruction.callableArguments.empty()) {
+          instruction.callableArguments.clear();
+          clearedDescriptor = true;
+          break;
+        }
+      }
+      if (clearedDescriptor) {
+        break;
+      }
+    }
+    expect(clearedDescriptor &&
+               !lang::verifyMirProgram(missingForwardingCallDescriptor).valid(),
+           "a forwarding record and its concrete call descriptor must remain "
+           "consistent");
+  }
 }
 
 } // namespace

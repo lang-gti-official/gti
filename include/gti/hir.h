@@ -151,6 +151,7 @@ struct HirValue {
   std::optional<HirLambdaId> lambdaTarget;
   std::vector<CallableArgumentBoundary> callableArguments;
   std::optional<CallableBoundary> callableBoundary;
+  std::optional<CallableInvocationCapability> callableInvocation;
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
   std::optional<PlaceKey> place;
@@ -316,6 +317,9 @@ struct HirCallableSignature {
   const Call *source = nullptr;
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
+  CallableInvocationCapability requiredCapability =
+      CallableInvocationCapability::Read;
+  std::optional<CallableInvocationCapability> selectedCapability;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirLambdaId> lambdaTarget;
 };
@@ -1118,19 +1122,22 @@ private:
       lowered.signatures.reserve(parameter.signatures.size());
       for (const CallableSignatureRequirement &signature :
            parameter.signatures) {
-        HirCallableSignature concrete{.source = signature.source,
-                                      .returnType = signature.returnType,
-                                      .parameterTypes =
-                                          signature.parameterTypes};
+        HirCallableSignature concrete{
+            .source = signature.source,
+            .returnType = signature.returnType,
+            .parameterTypes = signature.parameterTypes,
+            .requiredCapability = signature.capability};
         if (signature.source != nullptr) {
           if (const ResolvedLambdaCallInfo *resolved =
                   model->findLambdaCall(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
+            concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedOperatorInfo *resolved =
                          model->findOperator(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
+            concrete.selectedCapability = resolved->capability;
           }
           const auto value =
               std::find_if(body.values.begin(), body.values.end(),
@@ -1164,6 +1171,11 @@ private:
       }
       callableParameters.emplace_back(std::move(lowered));
     }
+    std::sort(callableParameters.begin(), callableParameters.end(),
+              [](const HirCallableParameter &left,
+                 const HirCallableParameter &right) {
+                return left.parameterIndex < right.parameterIndex;
+              });
     output.program.functions[index].body = std::move(body);
     output.program.functions[index].parameterBindings =
         std::move(parameterBindings);
@@ -2277,6 +2289,7 @@ private:
               model.findLambdaCall(*call)) {
         value.parameterTypes = resolved->parameterTypes;
         value.callableBoundary = resolved->boundary;
+        value.callableInvocation = resolved->capability;
         if (const auto target = lambdaTargets.find(resolved->lambda);
             target != lambdaTargets.end()) {
           value.lambdaTarget = target->second;
@@ -2299,6 +2312,7 @@ private:
                 model.findDeferredCallableCall(*call)) {
           value.parameterTypes = deferred->parameterTypes;
           value.callableBoundary = deferred->boundary;
+          value.callableInvocation = deferred->capability;
         }
       }
     }
@@ -2335,11 +2349,13 @@ private:
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
       value.callableBoundary = resolved->boundary;
+      if (resolved->kind == OverloadedOperator::Call) {
+        value.callableInvocation = resolved->capability;
+      }
       value.borrowOrigin = resolved->borrowOrigin;
       value.borrowArgument = resolved->borrowArgument;
       value.borrowAccess = resolved->borrowAccess;
       if (resolved->kind == OverloadedOperator::Call &&
-          value.borrowOrigin == BorrowOriginKind::Receiver &&
           !value.operands.empty()) {
         value.receiver = value.operands.front();
       }

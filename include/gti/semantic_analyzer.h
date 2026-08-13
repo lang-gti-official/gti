@@ -815,10 +815,45 @@ struct StructuredBindingInfo {
   std::vector<StructuredBindingElementInfo> elements;
 };
 
+enum class CallableInvocationCapability {
+  Read,
+  Mutable,
+  Once,
+};
+
+[[nodiscard]] constexpr CallableInvocationCapability
+callableInvocationCapability(AccessMode access) {
+  return access == AccessMode::Mutable ? CallableInvocationCapability::Mutable
+                                       : CallableInvocationCapability::Read;
+}
+
+[[nodiscard]] constexpr CallableInvocationCapability
+callableInvocationCapability(ReceiverMutability mutability) {
+  return mutability == ReceiverMutability::Mutable
+             ? CallableInvocationCapability::Mutable
+             : CallableInvocationCapability::Read;
+}
+
+[[nodiscard]] constexpr bool
+callableCapabilitySatisfies(CallableInvocationCapability provided,
+                            CallableInvocationCapability required) {
+  switch (required) {
+  case CallableInvocationCapability::Read:
+    return provided == CallableInvocationCapability::Read;
+  case CallableInvocationCapability::Mutable:
+    return provided == CallableInvocationCapability::Read ||
+           provided == CallableInvocationCapability::Mutable;
+  case CallableInvocationCapability::Once:
+    return true;
+  }
+  return false;
+}
+
 struct CallableSignatureRequirement {
   const Call *source = nullptr;
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
 };
 
 struct CallableForwardingRequirement {
@@ -1208,6 +1243,7 @@ struct ResolvedLambdaCallInfo {
   LambdaId lambda = 0;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
 };
 
@@ -1216,6 +1252,7 @@ struct DeferredCallableCallInfo {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
   AccessMode access = AccessMode::ReadOnly;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   CallableBoundary boundary = CallableBoundary::Confined;
 };
 
@@ -1231,6 +1268,7 @@ struct ResolvedOperatorInfo {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
 };
 
@@ -2805,9 +2843,21 @@ private:
     for (const CallableParameterContract &parameter :
          function->callableParameters) {
       if (parameter.parameterIndex < call.parameterTypes.size()) {
-        call.callableArguments.push_back(
-            {.parameterIndex = parameter.parameterIndex,
-             .boundary = parameter.boundary});
+        const auto existing = std::find_if(
+            call.callableArguments.begin(), call.callableArguments.end(),
+            [&](const CallableArgumentBoundary &candidate) {
+              return candidate.parameterIndex == parameter.parameterIndex;
+            });
+        if (existing == call.callableArguments.end()) {
+          call.callableArguments.push_back(
+              {.parameterIndex = parameter.parameterIndex,
+               .boundary = parameter.boundary});
+        } else {
+          // The function contract is authoritative. The provisional lambda
+          // marker recorded at a call site must not mask a later, more
+          // precise boundary when owned callable transport is implemented.
+          existing->boundary = parameter.boundary;
+        }
       }
     }
     std::sort(call.callableArguments.begin(), call.callableArguments.end(),
@@ -3245,6 +3295,8 @@ public:
     analyze(program.declarations());
     endScope();
     semanticModel.finalizeCallableForwardings();
+    validateConfinedCallableContracts();
+    validateConfinedCallableUses();
     semanticModel.finalizeCallableArguments();
     semanticModel.finalizeOccurrences();
     return !hadError();
@@ -5854,15 +5906,18 @@ public:
                "operator() calls do not take explicit type arguments.",
                "GTI-S2022");
       }
+      const CallableParameterContract *contract =
+          callableParameterContract(expr.callee());
       const std::optional<CallableBoundary> boundary =
-          callableParameterContract(expr.callee()) != nullptr
-              ? std::optional{CallableBoundary::Confined}
-              : std::nullopt;
+          contract == nullptr ? std::nullopt
+                              : std::optional{contract->boundary};
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Call, expr.callee(), calleeType,
           expr.paren(), argumentTypes, expr.arguments(), false, boundary);
       const bool valid =
-          selected && validateCallableReturn(expr, selected->returnType);
+          selected && validateCallableReturn(expr, selected->returnType) &&
+          validateCallableCapability(
+              expr, callableInvocationCapability(selected->receiverMutability));
       currentType = valid ? callExpressionType(selected->returnType)
                           : SemanticType::Unknown;
       return;
@@ -6015,7 +6070,7 @@ public:
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
                                        expr.arguments()) &&
               valid;
-      valid = validateConfinedLambdaArguments(
+      valid = validateConfinedCallableArguments(
                   candidate, resolved, argumentTypes, expr.arguments()) &&
               valid;
       if (valid) {
@@ -6140,9 +6195,9 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
-    if (!validateConfinedLambdaArguments(*viable.front().source,
-                                         viable.front().function, argumentTypes,
-                                         expr.arguments())) {
+    if (!validateConfinedCallableArguments(*viable.front().source,
+                                           viable.front().function,
+                                           argumentTypes, expr.arguments())) {
       currentType = SemanticType::Unknown;
       return;
     }
@@ -13954,11 +14009,12 @@ private:
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2046", DiagnosticPhase::Semantics,
             expressionToken(call.callee()),
-            "Confined generic callable results must be exact owned values, but "
+            "Confined generic callable results must be exact non-reference "
+            "values without tracked borrowed state or lambda identity, but "
             "this context requires '" +
                 typeSpelling(returnType) + "'.");
         diagnostic.hints.emplace_back(
-            "Reference, borrowed-state, and callable-valued results require an "
+            "Reference, tracked borrowed-state, and lambda results require an "
             "escape-aware ownership contract that is not available yet.");
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;
@@ -14007,12 +14063,15 @@ private:
     const AccessMode access = parameter->mutability == Mutability::Mutable
                                   ? AccessMode::Mutable
                                   : AccessMode::ReadOnly;
+    const CallableInvocationCapability capability =
+        callableInvocationCapability(access);
     semanticModel.recordDeferredCallableCall(
         call, DeferredCallableCallInfo{.genericParameter =
                                            calleeType.genericParameterId,
                                        .returnType = returnType,
                                        .parameterTypes = argumentTypes,
-                                       .access = access});
+                                       .access = access,
+                                       .capability = capability});
     semanticModel.recordCallableRequirement(
         *function->declaration,
         CallableParameterContract{
@@ -14022,7 +14081,8 @@ private:
             .access = access,
             .signatures = {{.source = &call,
                             .returnType = returnType,
-                            .parameterTypes = argumentTypes}}});
+                            .parameterTypes = argumentTypes,
+                            .capability = capability}}});
     currentType = returnType;
   }
 
@@ -14055,6 +14115,38 @@ private:
     return false;
   }
 
+  [[nodiscard]] bool
+  validateCallableCapability(const Call &call,
+                             CallableInvocationCapability provided) {
+    const std::optional<CallableSignatureRequirement> requirement =
+        callableSignatureRequirement(call);
+    if (!requirement ||
+        callableCapabilitySatisfies(provided, requirement->capability)) {
+      return true;
+    }
+
+    const Token location = expressionToken(call.callee());
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2046", DiagnosticPhase::Semantics, location,
+        "Callable parameter '" + location.lexeme +
+            "' permits only read-callable invocation, but the selected "
+            "callable requires mutable invocation.");
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(call.callee().get())) {
+      if (const Symbol *symbol = resolve(variable->name());
+          symbol != nullptr && symbol->parameterDeclaration != nullptr) {
+        diagnostic.related.push_back(
+            {tokenSpan(symbol->parameterDeclaration->name),
+             "Read-only callable parameter declared here."});
+      }
+    }
+    diagnostic.hints.emplace_back(
+        "Declare the generic callable parameter with 'mut' when the function "
+        "may invoke a stateful mutable call operator.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
+
   void analyzeLambdaCall(const Call &call, const SemanticType &calleeType,
                          const std::vector<SemanticType> &argumentTypes) {
     const LambdaInfo *lambda = semanticModel.findLambda(calleeType.lambdaId);
@@ -14064,10 +14156,10 @@ private:
       return;
     }
     bool valid = true;
+    const CallableParameterContract *contract =
+        callableParameterContract(call.callee());
     const std::optional<CallableBoundary> boundary =
-        callableParameterContract(call.callee()) != nullptr
-            ? std::optional{CallableBoundary::Confined}
-            : std::nullopt;
+        contract == nullptr ? std::nullopt : std::optional{contract->boundary};
     if (!call.typeArguments().empty()) {
       report(call.paren(), "Lambdas do not take explicit generic arguments.",
              "GTI-S2027");
@@ -14106,11 +14198,16 @@ private:
     validateCallPlaceExclusivity(lambda->parameterTypes, call.arguments(),
                                  call.paren());
     valid = validateCallableReturn(call, lambda->returnType) && valid;
+    valid =
+        validateCallableCapability(call, CallableInvocationCapability::Read) &&
+        valid;
     if (valid) {
       semanticModel.recordLambdaCall(
           call, ResolvedLambdaCallInfo{.lambda = lambda->id,
                                        .returnType = lambda->returnType,
                                        .parameterTypes = lambda->parameterTypes,
+                                       .capability =
+                                           CallableInvocationCapability::Read,
                                        .boundary = boundary});
     }
     currentType =
@@ -15069,13 +15166,290 @@ private:
                        containsLambdaType);
   }
 
-  bool validateConfinedLambdaArguments(
+  [[nodiscard]] static bool containsExactType(const SemanticType &type,
+                                              const SemanticType &candidate) {
+    if (candidate != SemanticType::Unknown && type == candidate) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return containsExactType(argument, candidate);
+                       });
+  }
+
+  void validateConfinedCallableContracts() {
+    std::vector<Diagnostic> contractDiagnostics;
+    for (const auto &[_, function] : semanticModel.functions) {
+      if (function.declaration == nullptr) {
+        continue;
+      }
+      for (const CallableParameterContract &contract :
+           function.callableParameters) {
+        if (contract.boundary != CallableBoundary::Confined ||
+            !containsExactType(function.returnType, contract.callableType)) {
+          continue;
+        }
+        const Parameter *parameter =
+            contract.parameterIndex < function.declaration->parameters().size()
+                ? &function.declaration->parameters()[contract.parameterIndex]
+                : nullptr;
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2046", DiagnosticPhase::Semantics,
+            function.declaration->returnType().name.last(),
+            "Confined callable parameter" +
+                std::string(parameter == nullptr ? "" : " '") +
+                (parameter == nullptr ? std::string{}
+                                      : parameter->name.lexeme + "'") +
+                " cannot escape through the function return value.");
+        if (parameter != nullptr) {
+          diagnostic.related.push_back(
+              {tokenSpan(parameter->name),
+               "Confined callable parameter declared here."});
+        }
+        diagnostic.hints.emplace_back(
+            "Confined callable parameters may only be invoked or forwarded "
+            "through another proven confined parameter during the selected "
+            "call.");
+        contractDiagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+
+    for (const SemanticModel::PendingCallableForwarding &forwarding :
+         semanticModel.pendingCallableForwardings) {
+      const FunctionInfo *source =
+          forwarding.source == nullptr
+              ? nullptr
+              : semanticModel.findFunction(*forwarding.source);
+      if (source == nullptr || forwarding.call == nullptr) {
+        continue;
+      }
+      const CallableParameterContract *sourceContract =
+          callableParameterContract(source->id,
+                                    forwarding.sourceParameterIndex);
+      if (sourceContract == nullptr ||
+          sourceContract->boundary != CallableBoundary::Confined) {
+        continue;
+      }
+      const CallableParameterContract *targetContract =
+          callableParameterContract(forwarding.target,
+                                    forwarding.targetParameterIndex);
+      if (targetContract != nullptr &&
+          targetContract->boundary == CallableBoundary::Confined) {
+        continue;
+      }
+      const ExprList &arguments = forwarding.call->arguments();
+      if (forwarding.targetParameterIndex >= arguments.size()) {
+        continue;
+      }
+      const Parameter *sourceParameter =
+          source->declaration != nullptr &&
+                  forwarding.sourceParameterIndex <
+                      source->declaration->parameters().size()
+              ? &source->declaration
+                     ->parameters()[forwarding.sourceParameterIndex]
+              : nullptr;
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2046", DiagnosticPhase::Semantics,
+          expressionToken(arguments[forwarding.targetParameterIndex]),
+          "Confined callable parameter" +
+              std::string(sourceParameter == nullptr ? "" : " '") +
+              (sourceParameter == nullptr
+                   ? std::string{}
+                   : sourceParameter->name.lexeme + "'") +
+              " cannot be forwarded because the selected target parameter "
+              "is not proven confined.");
+      if (sourceParameter != nullptr) {
+        diagnostic.related.push_back(
+            {tokenSpan(sourceParameter->name),
+             "Confined callable parameter declared here."});
+      }
+      diagnostic.hints.emplace_back(
+          "Forward a confined callable only to a direct by-value generic "
+          "parameter whose visible body invokes or forwards it under a "
+          "confined contract.");
+      contractDiagnostics.emplace_back(std::move(diagnostic));
+    }
+
+    std::sort(contractDiagnostics.begin(), contractDiagnostics.end(),
+              [](const Diagnostic &left, const Diagnostic &right) {
+                if (left.primary.source != right.primary.source) {
+                  return left.primary.source < right.primary.source;
+                }
+                if (left.primary.start != right.primary.start) {
+                  return left.primary.start < right.primary.start;
+                }
+                if (left.primary.end != right.primary.end) {
+                  return left.primary.end < right.primary.end;
+                }
+                return left.message < right.message;
+              });
+    for (Diagnostic &diagnostic : contractDiagnostics) {
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+
+  void validateConfinedCallableUses() {
+    std::vector<Diagnostic> useDiagnostics;
+    for (const auto &[_, function] : semanticModel.functions) {
+      if (function.declaration == nullptr || !function.declaration->body()) {
+        continue;
+      }
+      for (const CallableParameterContract &contract :
+           function.callableParameters) {
+        if (contract.boundary != CallableBoundary::Confined ||
+            contract.parameterIndex >=
+                function.declaration->parameters().size()) {
+          continue;
+        }
+
+        // validateConfinedCallableContracts owns the one focused diagnostic
+        // when the declared result itself transports this callable. Avoid a
+        // second error at the return expression while code generation is
+        // already disabled for the declaration.
+        if (containsExactType(function.returnType, contract.callableType)) {
+          continue;
+        }
+
+        const Parameter &parameter =
+            function.declaration->parameters()[contract.parameterIndex];
+        const BindingInfo *binding = semanticModel.findBinding(parameter);
+        if (binding == nullptr || binding->symbol == 0) {
+          continue;
+        }
+
+        std::unordered_set<const Expr *> permittedUses;
+        for (const CallableSignatureRequirement &signature :
+             contract.signatures) {
+          if (signature.source == nullptr || !signature.source->callee()) {
+            continue;
+          }
+          const Expr *callee = signature.source->callee().get();
+          if (semanticModel.findResolvedSymbol(*callee) == binding->symbol) {
+            permittedUses.insert(callee);
+          }
+        }
+        for (const CallableForwardingRequirement &forwarding :
+             contract.forwardings) {
+          if (forwarding.source == nullptr ||
+              forwarding.parameterIndex >=
+                  forwarding.source->arguments().size()) {
+            continue;
+          }
+          const Expr *argument =
+              forwarding.source->arguments()[forwarding.parameterIndex].get();
+          if (argument != nullptr &&
+              semanticModel.findResolvedSymbol(*argument) == binding->symbol) {
+            permittedUses.insert(argument);
+          }
+        }
+
+        // A pending forwarding edge that did not acquire a confined target is
+        // diagnosed by validateConfinedCallableContracts. Treat its direct
+        // argument use as already owned so one invalid edge produces one
+        // diagnostic rather than an ordinary-transport cascade.
+        for (const SemanticModel::PendingCallableForwarding &forwarding :
+             semanticModel.pendingCallableForwardings) {
+          if (forwarding.source != function.declaration ||
+              forwarding.sourceParameterIndex != contract.parameterIndex ||
+              forwarding.call == nullptr ||
+              forwarding.targetParameterIndex >=
+                  forwarding.call->arguments().size()) {
+            continue;
+          }
+          const Expr *argument =
+              forwarding.call->arguments()[forwarding.targetParameterIndex]
+                  .get();
+          if (argument != nullptr &&
+              semanticModel.findResolvedSymbol(*argument) == binding->symbol) {
+            permittedUses.insert(argument);
+          }
+        }
+
+        for (const auto &[expression, symbol] : semanticModel.resolvedSymbols) {
+          if (expression == nullptr || symbol != binding->symbol ||
+              permittedUses.contains(expression)) {
+            continue;
+          }
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2046", DiagnosticPhase::Semantics,
+              expressionToken(*expression),
+              "Confined callable parameter '" + parameter.name.lexeme +
+                  "' cannot be used as an ordinary value outside direct "
+                  "invocation or proven confined forwarding.");
+          diagnostic.related.push_back(
+              {tokenSpan(parameter.name),
+               "Confined callable parameter declared here."});
+          diagnostic.hints.emplace_back(
+              "Invoke the callable directly or forward it to a direct "
+              "by-value generic parameter with a proven confined contract; "
+              "assignment, storage, and other value transport require an "
+              "owned callable boundary.");
+          useDiagnostics.emplace_back(std::move(diagnostic));
+        }
+
+        // Capture names are declaration-linked semantic uses rather than Expr
+        // nodes. Compare the captured declaration's canonical symbol so a
+        // same-spelling local cannot be mistaken for this parameter.
+        for (const auto &[_, lambda] : semanticModel.lambdas) {
+          for (const LambdaCaptureInfo &capture : lambda.captures) {
+            if (symbolForDeclaration(capture.declaration) != binding->symbol) {
+              continue;
+            }
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2046", DiagnosticPhase::Semantics, capture.capture,
+                "Confined callable parameter '" + parameter.name.lexeme +
+                    "' cannot be used as an ordinary value outside direct "
+                    "invocation or proven confined forwarding.");
+            diagnostic.related.push_back(
+                {tokenSpan(parameter.name),
+                 "Confined callable parameter declared here."});
+            diagnostic.hints.emplace_back(
+                "Invoke the callable directly or forward it to a direct "
+                "by-value generic parameter with a proven confined contract; "
+                "assignment, storage, capture, and other value transport "
+                "require an owned callable boundary.");
+            useDiagnostics.emplace_back(std::move(diagnostic));
+          }
+        }
+      }
+    }
+
+    std::sort(useDiagnostics.begin(), useDiagnostics.end(),
+              [](const Diagnostic &left, const Diagnostic &right) {
+                if (left.primary.source != right.primary.source) {
+                  return left.primary.source < right.primary.source;
+                }
+                if (left.primary.start != right.primary.start) {
+                  return left.primary.start < right.primary.start;
+                }
+                if (left.primary.end != right.primary.end) {
+                  return left.primary.end < right.primary.end;
+                }
+                return left.message < right.message;
+              });
+    for (Diagnostic &diagnostic : useDiagnostics) {
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+
+  bool validateConfinedCallableArguments(
       const FunctionCandidate &candidate, const FunctionCandidate &resolved,
       const std::vector<SemanticType> &argumentTypes,
       const ExprList &arguments) {
     bool valid = true;
     for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-      if (argumentTypes[index].kind != SemanticType::Lambda) {
+      const CallableParameterContract *sourceContract =
+          index < arguments.size() ? callableParameterContract(arguments[index])
+                                   : nullptr;
+      const CallableParameterContract *targetContract =
+          callableParameterContract(candidate.id, index);
+      const bool lexicalClosure = containsLambdaType(argumentTypes[index]);
+      const bool provenConfined =
+          (sourceContract != nullptr &&
+           sourceContract->boundary == CallableBoundary::Confined) ||
+          (targetContract != nullptr &&
+           targetContract->boundary == CallableBoundary::Confined);
+      if (!lexicalClosure && !provenConfined) {
         continue;
       }
       const Parameter *parameter =
@@ -15088,15 +15462,13 @@ private:
           candidate.parameterTypes[index].kind == SemanticType::TypeParameter &&
           !parameter->type.reference && !parameter->pack;
       if (instanceAnalysisActive) {
-        const CallableParameterContract *contract =
-            callableParameterContract(candidate.id, index);
         if (!directByValueGeneric || candidate.declaration == nullptr ||
-            !candidate.declaration->body() || contract == nullptr ||
-            contract->boundary != CallableBoundary::Confined) {
+            !candidate.declaration->body() || targetContract == nullptr ||
+            targetContract->boundary != CallableBoundary::Confined) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2046", DiagnosticPhase::Semantics,
               expressionToken(arguments[index]),
-              "Lambda argument " + std::to_string(index + 1) +
+              "Callable argument " + std::to_string(index + 1) +
                   " cannot be forwarded because the selected parameter is "
                   "not proven confined.");
           diagnostic.hints.emplace_back(
@@ -15106,8 +15478,9 @@ private:
           diagnostics.emplace_back(std::move(diagnostic));
           valid = false;
         }
-      } else if (!directByValueGeneric || candidate.declaration == nullptr ||
-                 !candidate.declaration->body()) {
+      } else if (lexicalClosure &&
+                 (!directByValueGeneric || candidate.declaration == nullptr ||
+                  !candidate.declaration->body())) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2046", DiagnosticPhase::Semantics,
             expressionToken(arguments[index]),
@@ -15120,7 +15493,12 @@ private:
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;
       }
-      if (containsLambdaType(resolved.returnType)) {
+      // A function with an established callable contract is diagnosed once at
+      // its declaration by validateConfinedCallableContracts. A lambda passed
+      // through an otherwise ordinary generic value path still needs the
+      // call-site check because lexical closures cannot escape at all yet.
+      if (lexicalClosure && targetContract == nullptr &&
+          containsLambdaType(resolved.returnType)) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2046", DiagnosticPhase::Semantics,
             expressionToken(arguments[index]),
@@ -15647,6 +16025,7 @@ private:
         .borrowOrigin = selected.returnBorrowOrigin,
         .borrowArgument = selected.returnBorrowParameter,
         .borrowAccess = selected.returnBorrowAccess,
+        .capability = callableInvocationCapability(selected.receiverMutability),
         .boundary = boundary};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
@@ -15745,10 +16124,18 @@ private:
         reportCompilerPrivateAccess(token,
                                     std::string(operatorSourceSpelling(kind)));
       } else if (viable.empty() && rejectedMutableReceiver) {
-        report(token,
-               std::string(operatorSourceSpelling(kind)) +
-                   " requires a mutable receiver.",
-               "GTI-S2022");
+        const auto *call = kind == OverloadedOperator::Call
+                               ? dynamic_cast<const Call *>(&site)
+                               : nullptr;
+        if (call != nullptr && boundary) {
+          (void)validateCallableCapability(
+              *call, CallableInvocationCapability::Mutable);
+        } else {
+          report(token,
+                 std::string(operatorSourceSpelling(kind)) +
+                     " requires a mutable receiver.",
+                 "GTI-S2022");
+        }
       } else if (viable.empty() && rejectedRequirements) {
         report(token,
                "Operator candidates with trailing requires clauses are "
@@ -15840,6 +16227,7 @@ private:
         .borrowOrigin = selected.returnBorrowOrigin,
         .borrowArgument = selected.returnBorrowParameter,
         .borrowAccess = selected.returnBorrowAccess,
+        .capability = callableInvocationCapability(selected.receiverMutability),
         .boundary = boundary};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
@@ -15897,8 +16285,7 @@ private:
     const FunctionInfo *targetInfo = semanticModel.findFunction(target.id);
     const FunctionInfo *sourceInfo = currentFunctionInfo();
     if (targetInfo == nullptr || targetInfo->declaration == nullptr ||
-        !targetInfo->declaration->body() || sourceInfo == nullptr ||
-        sourceInfo->declaration == nullptr) {
+        sourceInfo == nullptr || sourceInfo->declaration == nullptr) {
       return;
     }
 
@@ -17738,6 +18125,12 @@ private:
   void validateStoredBorrowReturn(const SemanticType &returnType,
                                   const SemanticType &valueType,
                                   const ExprPtr &value) {
+    // An earlier expression diagnostic owns an unknown result. In
+    // particular, a rejected confined callable result must not cascade into
+    // an unrelated owner-origin diagnostic for the enclosing return type.
+    if (valueType == SemanticType::Unknown) {
+      return;
+    }
     if (!isDirectStoredReferenceType(returnType)) {
       report(expressionToken(value),
              "A return type cannot nest borrowed state in the current "
@@ -17745,7 +18138,7 @@ private:
              "GTI-S2045");
       return;
     }
-    if (valueType != SemanticType::Unknown && valueType != returnType) {
+    if (valueType != returnType) {
       return;
     }
     if (rejectEscapingLocalChildLoan(value, "a stored-reference return")) {
