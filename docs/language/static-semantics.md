@@ -168,6 +168,14 @@ explicit write to a `mut` field through a mutable union value inside `unsafe`.
 Fixed arrays require complete initialization. Empty braces value-initialize all
 elements; a non-empty initializer supplies exactly one value per element.
 
+Inside an ordinary named function, method, or constructor call, the same brace
+syntax may initialize one exact by-value fixed-array parameter. It is a
+contextual owned `T[N]` value, not a `std::initializer_list` or a general
+untyped expression. The selected parameter supplies both `T` and `N`; elements
+are checked under `T`, and a non-empty brace count must equal `N`. `{}`
+value-initializes the selected extent. Braces do not infer a common element
+type, prefer an overload, perform CTAD, or add implicit conversions.
+
 Program-wide bindings initialize in the dependency/source order defined by
 [Execution Section 4.2.4](execution.md#424-program-wide-initialization). A safe
 initializer is well-formed only when the compiler proves that it cannot access,
@@ -196,6 +204,23 @@ qualification and null compatibility defined above. Return types, parameter
 names, and by-value parameter mutability do not distinguish overloads. GTI does
 not otherwise perform conversion ranking, return-type overloading, ADL, or a
 concrete-over-generic preference.
+
+An immutable `uint64_t` function, method, or constructor value parameter may be
+inferred when it is the complete extent of a by-value fixed-array parameter.
+A named array contributes its exact extent; a contextual brace argument
+contributes its written count. Other type parameters must be inferred from
+ordinary typed arguments. The inferred value is part of concrete HIR instance
+identity, but it does not distinguish alpha-equivalent overload declarations.
+Explicit function/constructor value arguments, arbitrary value expressions,
+defaults, and packs are not implemented. A constructor-local value parameter
+cannot shadow an enclosing class or struct generic parameter.
+
+Contextual braces participate only after candidate parameter shapes are known.
+Fixed extents may remove candidates with a different element count; if more
+than one exact contextual array type remains, the call is ambiguous. GTI has no
+initializer-list preference or C++ list-overload ranking. Generic `operator()`
+dispatch does not yet admit brace arguments because its callable contract has
+no contextual-array representation.
 
 Receiver mutability may distinguish method overloads. A read-only receiver can
 select only a read-only method; a mutable receiver prefers the otherwise exact

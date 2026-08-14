@@ -162,6 +162,16 @@ packs, selected construction, capabilities, callables, and borrowed-return
 origins. HIR is not a second type checker; it asks semantics for the concrete
 facts it needs.
 
+For an ordinary named call or construction, semantic analysis may defer a
+brace argument and every following argument until candidate parameter shapes
+are known. It infers an eligible `uint64_t` value parameter from the exact
+array extent or brace count, selects one exact candidate without list-overload
+preference, then analyzes the deferred arguments once in source order under
+the selected parameter types. `ResolvedCallInfo` and
+`ResolvedConstructionInfo` retain the separated type and value arguments plus
+the concrete fixed-array parameter types. Braces never acquire an independent
+semantic type.
+
 Each reanalysis runs on the one shared analyzer inside a detach/restore
 bracket (`InstanceAnalysisScope`): the accumulated model is detached, the
 instance is analyzed into an empty delta `SemanticModel` whose lookups fall
@@ -181,8 +191,10 @@ class/function type arguments and class value arguments. Concrete reanalysis
 reuses the lexical declaration and substitutes both parts. This distinction is
 required even for captureless lambdas with identical signatures: two enclosing
 generic instances may give the same source body different compile-time meaning.
-Function value-generic identity has reserved representation but no source
-producer while GTI continues to reject function value generics.
+Function and constructor instance identity now includes the bounded inferred
+`uint64_t` extent arguments used by contextual fixed-array parameters. Lambda
+identity retains enclosing function value arguments as a separate identity
+component rather than treating them as capture or signature types.
 
 Each lambda capture records its new binding symbol, original source symbol,
 exact type and traits, initialization mode, and initializer expression. Bare

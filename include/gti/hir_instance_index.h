@@ -35,20 +35,26 @@ public:
                    std::vector<CompileTimeValue> valueArguments,
                    std::size_t instance);
 
-  [[nodiscard]] std::optional<std::size_t>
-  findFunction(FunctionId declaration,
-               const std::vector<SemanticType> &classTypeArguments,
-               const std::vector<CompileTimeValue> &classValueArguments,
-               const std::vector<SemanticType> &functionTypeArguments) const;
+  [[nodiscard]] std::optional<std::size_t> findFunction(
+      FunctionId declaration,
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments,
+      const std::vector<SemanticType> &functionTypeArguments,
+      const std::vector<CompileTimeValue> &functionValueArguments) const;
   void recordFunction(FunctionId declaration,
                       std::vector<SemanticType> classTypeArguments,
                       std::vector<CompileTimeValue> classValueArguments,
                       std::vector<SemanticType> functionTypeArguments,
+                      std::vector<CompileTimeValue> functionValueArguments,
                       std::size_t instance);
 
   [[nodiscard]] std::optional<std::size_t>
-  findConstructor(ConstructorId declaration, std::size_t owner) const;
+  findConstructor(ConstructorId declaration, std::size_t owner,
+                  const std::vector<SemanticType> &typeArguments,
+                  const std::vector<CompileTimeValue> &valueArguments) const;
   void recordConstructor(ConstructorId declaration, std::size_t owner,
+                         std::vector<SemanticType> typeArguments,
+                         std::vector<CompileTimeValue> valueArguments,
                          std::size_t instance);
 
   [[nodiscard]] std::optional<std::size_t>

@@ -732,6 +732,10 @@ private:
   }
 
   StmtPtr constructorDeclaration(Token name) {
+    std::vector<GenericParameter> genericParameters;
+    if (check(TokenKind::LESS)) {
+      genericParameters = genericParameterList();
+    }
     consume(TokenKind::LEFT_PAREN, "Expect '(' after constructor name.");
     std::vector<Parameter> parameters = parameterList();
     if (match({TokenKind::MUT})) {
@@ -778,7 +782,8 @@ private:
       consume(TokenKind::SEMICOLON,
               "Expect ';' after special constructor declaration.");
       return std::make_unique<ConstructorDecl>(
-          std::move(name), std::move(parameters), std::move(initializers),
+          std::move(name), std::move(genericParameters), std::move(parameters),
+          std::move(initializers),
           SpecialMemberSpecifier{.equal = std::move(equal),
                                  .keyword = std::move(keyword),
                                  .kind = kind},
@@ -788,8 +793,8 @@ private:
     consume(TokenKind::LEFT_BRACE, "Expect '{' before constructor body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
     return std::make_unique<ConstructorDecl>(
-        std::move(name), std::move(parameters), std::move(initializers),
-        std::nullopt, std::move(body));
+        std::move(name), std::move(genericParameters), std::move(parameters),
+        std::move(initializers), std::nullopt, std::move(body));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
@@ -1763,7 +1768,8 @@ private:
     ExprList arguments;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
-        ExprPtr argument = assignment();
+        ExprPtr argument =
+            check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
         if (match({TokenKind::ELLIPSIS})) {
           const auto *variable = dynamic_cast<const Variable *>(argument.get());
           if (variable == nullptr) {
@@ -2107,9 +2113,27 @@ private:
   }
 
   [[nodiscard]] bool isConstructorStart() const {
-    return currentClassName && check(TokenKind::IDENTIFIER) &&
-           peek().lexeme == currentClassName->lexeme &&
-           peekAt(1).kind == TokenKind::LEFT_PAREN;
+    if (!currentClassName || !check(TokenKind::IDENTIFIER) ||
+        peek().lexeme != currentClassName->lexeme) {
+      return false;
+    }
+    if (peekAt(1).kind == TokenKind::LEFT_PAREN) {
+      return true;
+    }
+    if (peekAt(1).kind != TokenKind::LESS) {
+      return false;
+    }
+    std::size_t offset = 2;
+    std::size_t depth = 1;
+    while (peekAt(offset).kind != TokenKind::END_OF_FILE) {
+      if (peekAt(offset).kind == TokenKind::LESS) {
+        ++depth;
+      } else if (peekAt(offset).kind == TokenKind::GREATER && --depth == 0) {
+        return peekAt(offset + 1).kind == TokenKind::LEFT_PAREN;
+      }
+      ++offset;
+    }
+    return false;
   }
 
   [[nodiscard]] bool isDestructorStart() const {

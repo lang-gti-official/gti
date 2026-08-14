@@ -89,6 +89,9 @@ int main() {
   checked closure movement and cleanup. An exact direct generic parameter of a
   free function may also move a lambda through the same-type result or into the
   exact field of a bounded generic owner without type erasure.
+- Contextual brace arguments for any exact by-value fixed-array parameter,
+  including inferred array extents on functions, methods, and constructors;
+  these are owned arrays rather than C++ `std::initializer_list` values.
 - Independent source units, load-once `#include`, namespaces, aliases, and
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width

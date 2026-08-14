@@ -102,6 +102,13 @@ bounded application grammar and rejects disjunction; concept identity, arity,
 visible type-parameter arguments, capability composition, and call viability
 belong to semantic analysis.
 
+`ArrayInitializer` is reused for fixed-array declarations and for braces in a
+call argument list. The parser records only the written elements; it does not
+invent an element type, an extent type, or an initializer-list object.
+`ConstructorDecl` retains constructor-local generic parameters after the
+constructor name. Semantics decides whether a call supplies one exact
+fixed-array context and whether a constructor value parameter is inferable.
+
 `FunctionDecl` also retains one receiver mode. Ordinary members are read-only
 or use trailing `mut`; `operator()` alone may use trailing `&&` for the
 consuming mode. The parser recognizes `operator()() &&` structurally rather

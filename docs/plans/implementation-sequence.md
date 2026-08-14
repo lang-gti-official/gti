@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.128.0
+Checkpoint: 0.130.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,7 +134,7 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.128.0 |
+| Foundation | Evidence at 0.130.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -1176,6 +1176,26 @@ coroutines, lock-free guarantees, atomic aggregates, and reclamation schemes.
 These rows validate the execution/lifetime foundations in ordinary GTI. Public
 containers and algorithms remain source-defined and must not gain compiler
 name recognition.
+
+### L-INIT-01: Contextual Fixed-Array Arguments
+
+- **State/role:** done in 0.130.0; bounded generic initialization capability
+  for ordinary APIs and container clients.
+- **Implemented scope:** A brace argument to a named function, method, or
+  constructor initializes one exact by-value `T[N]`. An inferred-only
+  `uint64_t` function, method, or constructor value parameter may name that
+  complete extent. Exact type/value arguments survive semantic selection and
+  concrete HIR identity; the backend emits an explicit fixed-array value and
+  never delegates list-overload selection to C++.
+  `std::vector<int>({1, 2, 3})` is the first public client, not a
+  compiler-recognized special case.
+- **Non-goals:** `std::initializer_list`, common-type deduction, CTAD,
+  list-preferred overloads, explicit callable value arguments, generic
+  `operator()` brace context, or broader value-generic expressions.
+- **Exit evidence:** generic functions, methods, and constructors,
+  alpha-equivalent duplicate rejection, exact/ambiguous overloads, HIR/MIR
+  identities, formatter, Tree-sitter, LSP hover, C++20/C++23 runtime, stdlib,
+  and example coverage pass.
 
 ### L-RANGE-01: Dedicated Range And Element Loans
 

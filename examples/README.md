@@ -62,6 +62,7 @@ own `main` function.
 | `54-owned-move-captures.gti` | explicit ownership transfer into an immutable closure environment and closure movement |
 | `55-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport with exactly-once cleanup |
 | `56-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive matching |
+| `57-contextual-array-arguments.gti` | generic brace arguments as exact fixed-array values, including `std::vector<int>({1, 2, 3})` |
 
 Build and run an example from the repository root:
 

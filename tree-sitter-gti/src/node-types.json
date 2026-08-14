@@ -175,6 +175,10 @@
       "required": false,
       "types": [
         {
+          "type": "array_initializer",
+          "named": true
+        },
+        {
           "type": "assignment_expression",
           "named": true
         },
@@ -1421,6 +1425,16 @@
         "types": [
           {
             "type": "special_member_specifier",
+            "named": true
+          }
+        ]
+      },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "generic_parameter_clause",
             "named": true
           }
         ]

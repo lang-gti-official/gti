@@ -64,7 +64,12 @@ The emitter is responsible for choices such as:
   authority: semantic capture records and HIR/MIR move/drop facts decide source
   validity and lifecycle before emission;
 - representing fixed arrays, unique ownership, storage, classes, and virtual
-  dispatch in C++;
+  dispatch in C++. Every array initializer, including a contextual call
+  argument, is emitted as an explicit `std::array<Element, N>{...}` value so
+  native initializer-list overload resolution cannot select a different
+  target. Inferred source `uint64_t` extents use the target-equivalent
+  `std::size_t` non-type template parameter required by `std::array` deduction;
+  GTI's supported targets define both as 64-bit unsigned domains;
 - realizing checked arithmetic, conversion, indexing, pointer, and runtime
   operations;
 - isolating the hosted native `argc`/`char**` boundary in an adapter for the

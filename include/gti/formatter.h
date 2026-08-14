@@ -153,6 +153,7 @@ public:
             (previous != nullptr && previous->kind == Kind::Operator &&
              previous->text == "=") ||
             (previous != nullptr && previous->kind == Kind::LeftParen) ||
+            (previous != nullptr && previous->kind == Kind::Comma) ||
             (previous != nullptr && previous->kind == Kind::Word &&
              previous->text == "return") ||
             directInitializer) {

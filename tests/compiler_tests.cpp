@@ -18097,14 +18097,15 @@ int main() {
 
   lang::CppEmitter emitter(valid.semantics, valid.hir);
   const std::string generated = emitter.emit(valid.program);
-  expect(
-      generated.find(
-          "template <typename T, std::uint64_t N>\n  class StaticArray") !=
-              std::string::npos &&
-          generated.find("std::array<T, N> values = {}") != std::string::npos &&
-          generated.find("StaticArray<T, N> value") != std::string::npos &&
-          generated.find("StaticArray<std::int32_t, 4>") != std::string::npos,
-      "the C++ backend should preserve mixed type and value arguments");
+  expect(generated.find(
+             "template <typename T, std::size_t N>\n  class StaticArray") !=
+                 std::string::npos &&
+             generated.find("std::array<T, N> values = std::array<T, N>{}") !=
+                 std::string::npos &&
+             generated.find("StaticArray<T, N> value") != std::string::npos &&
+             generated.find("StaticArray<std::int32_t, 4>") !=
+                 std::string::npos,
+         "the C++ backend should preserve mixed type and value arguments");
 
   lang::Lexer lexer;
   lang::Parser invalidParser(lexer.scan(R"(
@@ -18132,7 +18133,7 @@ int invalid_extent[Missing] = {};
              hasDiagnostic(invalidSemantic,
                            "type parameters must appear before value") &&
              hasDiagnostic(invalidSemantic,
-                           "currently limited to classes and structs") &&
+                           "must be the extent of a by-value fixed-array") &&
              hasDiagnostic(invalidSemantic,
                            "requires a uint64_t compile-time value") &&
              hasDiagnostic(invalidSemantic, "requires a type argument") &&
@@ -18153,6 +18154,251 @@ int invalid_extent[Missing] = {};
                  std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "value generic syntax should format idempotently");
+}
+
+void testContextualArrayArguments() {
+  const std::string source = R"(
+int total<uint64_t N>(int values[N]) {
+  mut int result = 0;
+  for (mut uint64_t index = 0; index < N; index++) {
+    result += values[index];
+  }
+  return result;
+}
+
+T first<T, uint64_t N>(T fallback, T values[N]) { return values[0]; }
+
+int choose(int values[2]) { return 2; }
+int choose(int values[3]) { return 3; }
+
+class Total {
+  int stored;
+
+public:
+  Total<uint64_t N>(int values[N]) : stored(total(values)) {}
+  int read() { return this.stored; }
+  int add<uint64_t N>(int values[N]) { return this.stored + total(values); }
+};
+
+int main() {
+  int summed = total({1, 2, 3});
+  int selected = first(0, {4, 5});
+  int extent = choose({6, 7, 8});
+  Total object = Total({9, 10});
+  int method = object.add({2, 3});
+  int named_values[2] = {11, 12};
+  int named = total(named_values);
+  return summed + selected + extent + object.read() + method + named - 79;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("contextual-arrays.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected contextual-array diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mir.valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "brace call arguments should form exact contextual fixed-array "
+         "values through semantics, HIR, and MIR");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *summed = main == nullptr || main->body()->statements().empty()
+                           ? nullptr
+                           : dynamic_cast<const lang::VariableDecl *>(
+                                 main->body()->statements().front().get());
+  const auto *sumCall =
+      summed == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(summed->initializer().get());
+  const auto *sumInitializer =
+      sumCall == nullptr || sumCall->arguments().empty()
+          ? nullptr
+          : dynamic_cast<const lang::ArrayInitializer *>(
+                sumCall->arguments().front().get());
+  const lang::ResolvedCallInfo *resolvedSum =
+      sumCall == nullptr ? nullptr : frontend.semantics.findCall(*sumCall);
+  expect(sumInitializer != nullptr && sumInitializer->elements().size() == 3 &&
+             resolvedSum != nullptr &&
+             resolvedSum->valueArguments.size() == 1 &&
+             resolvedSum->valueArguments.front().kind ==
+                 lang::CompileTimeValue::UInt64 &&
+             resolvedSum->valueArguments.front().value == 3 &&
+             resolvedSum->parameterTypes.size() == 1 &&
+             resolvedSum->parameterTypes.front().kind ==
+                 lang::SemanticType::Array &&
+             resolvedSum->parameterTypes.front().arrayLength == 3,
+         "the AST and semantic call record should retain the brace elements "
+         "and inferred exact extent");
+
+  const auto *object = main == nullptr || main->body()->statements().size() < 4
+                           ? nullptr
+                           : dynamic_cast<const lang::VariableDecl *>(
+                                 main->body()->statements()[3].get());
+  const auto *objectCall =
+      object == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(object->initializer().get());
+  const lang::ResolvedConstructionInfo *resolvedObject =
+      objectCall == nullptr ? nullptr
+                            : frontend.semantics.findConstruction(*objectCall);
+  expect(resolvedObject != nullptr &&
+             resolvedObject->valueArguments.size() == 1 &&
+             resolvedObject->valueArguments.front().kind ==
+                 lang::CompileTimeValue::UInt64 &&
+             resolvedObject->valueArguments.front().value == 2 &&
+             resolvedObject->parameterTypes.size() == 1 &&
+             resolvedObject->parameterTypes.front().kind ==
+                 lang::SemanticType::Array &&
+             resolvedObject->parameterTypes.front().arrayLength == 2,
+         "generic constructors should infer and retain a brace argument's "
+         "fixed-array extent");
+
+  const lang::FunctionDecl *total =
+      findTopLevelFunction(frontend.program, "total");
+  bool foundTotalThree = false;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != total || instance.valueArguments.size() != 1) {
+      continue;
+    }
+    foundTotalThree =
+        foundTotalThree ||
+        (instance.valueArguments.front().kind ==
+             lang::CompileTimeValue::UInt64 &&
+         instance.valueArguments.front().value == 3 &&
+         instance.parameterTypes.size() == 1 &&
+         instance.parameterTypes.front().kind == lang::SemanticType::Array &&
+         instance.parameterTypes.front().arrayLength == 3);
+  }
+
+  bool foundConstructorTwo = false;
+  for (const lang::HirConstructorInstance &instance :
+       frontend.hir.constructorInstances()) {
+    foundConstructorTwo =
+        foundConstructorTwo ||
+        (instance.source != nullptr &&
+         instance.source->name().lexeme == "Total" &&
+         instance.valueArguments.size() == 1 &&
+         instance.valueArguments.front().kind ==
+             lang::CompileTimeValue::UInt64 &&
+         instance.valueArguments.front().value == 2 &&
+         instance.parameterTypes.size() == 1 &&
+         instance.parameterTypes.front().kind == lang::SemanticType::Array &&
+         instance.parameterTypes.front().arrayLength == 2);
+  }
+  bool foundMethodTwo = false;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    foundMethodTwo =
+        foundMethodTwo ||
+        (instance.source != nullptr &&
+         instance.source->name().lexeme == "add" &&
+         instance.valueArguments.size() == 1 &&
+         instance.valueArguments.front().kind ==
+             lang::CompileTimeValue::UInt64 &&
+         instance.valueArguments.front().value == 2 &&
+         instance.parameterTypes.size() == 1 &&
+         instance.parameterTypes.front().kind == lang::SemanticType::Array &&
+         instance.parameterTypes.front().arrayLength == 2);
+  }
+  expect(foundTotalThree && foundConstructorTwo && foundMethodTwo,
+         "HIR instance identity should include inferred function and "
+         "constructor value arguments, including methods");
+
+  const std::string generated =
+      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
+  expect(generated.find("std::initializer_list") == std::string::npos &&
+             generated.find("template <std::size_t N>") != std::string::npos &&
+             generated.find("std::array<std::int32_t, 3>{1, 2, 3}") !=
+                 std::string::npos &&
+             generated.find("std::array<std::int32_t, 2>{9, 10}") !=
+                 std::string::npos,
+         "the backend should materialize an explicit std::array value and "
+         "never delegate list semantics to C++ overload resolution");
+
+  const std::string invalidSource = R"(
+int scalar(int value) { return value; }
+int fixed(int values[2]) { return values[0]; }
+int ambiguous(int values[2]) { return 1; }
+int ambiguous(int64_t values[2]) { return 2; }
+int duplicate<uint64_t N>(int values[N]) { return 1; }
+int duplicate<uint64_t M>(int values[M]) { return 2; }
+int uninferable<uint64_t N>() { return int(N); }
+int explicit_extent<uint64_t N>(int values[N]) { return values[0]; }
+T no_common_type<T, uint64_t N>(T values[N]) { return values[0]; }
+
+class DuplicateConstructor {
+public:
+  DuplicateConstructor<uint64_t N>(int values[N]) {}
+  DuplicateConstructor<uint64_t M>(int values[M]) {}
+};
+
+class ShadowedConstructor<uint64_t N> {
+public:
+  ShadowedConstructor<uint64_t N>(int values[N]) {}
+};
+
+int main() {
+  int no_context = scalar({1});
+  int wrong_count = fixed({1, 2, 3});
+  int wrong_element = fixed({1, true});
+  int unresolved = uninferable();
+  int no_common = no_common_type({1, 2});
+  int explicit_value = explicit_extent<2>({1, 2});
+  int ambiguous_value = ambiguous({1, 2});
+  return 0;
+}
+)";
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-contextual-arrays.gti", invalidSource);
+  expect(
+      !invalid.canGenerateCode() &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2011") == 2 &&
+          hasDiagnostic(invalid.diagnostics,
+                        "must be the extent of a by-value fixed-array") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot infer generic type parameter 'T'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Function value generic arguments are not supported") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Constructor value parameters cannot shadow") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "A brace argument requires one exact fixed-array") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot initialize array element") &&
+          hasDiagnostic(invalid.diagnostics, "is ambiguous"),
+      "contextual arrays should reject duplicate generic shapes, missing "
+      "array context, invalid elements, and ambiguous overloads at the GTI "
+      "layer");
+
+  const auto wrongExtent =
+      std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2015" &&
+                            diagnostic.message.find("provides 3 elements") !=
+                                std::string::npos;
+                   });
+  expect(wrongExtent != invalid.diagnostics.end() &&
+             wrongExtent->primary.source.ends_with(
+                 "/invalid-contextual-arrays.gti") &&
+             wrongExtent->primary.start == invalidSource.find("{1, 2, 3}") &&
+             wrongExtent->primary.end == wrongExtent->primary.start + 1 &&
+             wrongExtent->fixes.empty(),
+         "a contextual-array extent diagnostic should point at the written "
+         "brace and avoid an unsafe mechanical conversion");
+
+  const std::string formatted = lang::Formatter().format(
+      "int total<uint64_t N>(int values[N]){return values[0];}int "
+      "main(){return total({1,2,3});}");
+  expect(formatted.find("total({1, 2, 3})") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "contextual brace arguments and inferred value generics should "
+         "format idempotently");
 }
 
 void testVariadicGenerics() {
@@ -18600,10 +18846,12 @@ int main() {
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
-  expect(artifact.contents.find("std::array<std::uint32_t, 2048> video = {}") !=
+  expect(artifact.contents.find("std::array<std::uint32_t, 2048> video = "
+                                "std::array<std::uint32_t, 2048>{}") !=
                  std::string::npos &&
              artifact.contents.find(
-                 "std::array<std::int32_t, 5> buffer = {1, 2, 3, 4, 5}") !=
+                 "std::array<std::int32_t, 5> buffer = "
+                 "std::array<std::int32_t, 5>{1, 2, 3, 4, 5}") !=
                  std::string::npos &&
              artifact.contents.find(
                  "std::array<std::array<std::int32_t, 3>, 2> matrix") !=
@@ -23358,6 +23606,7 @@ int main() {
   testSourceDefinedConcepts();
   testStructuralRequiresAndAccumulate();
   testValueGenerics();
+  testContextualArrayArguments();
   testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();

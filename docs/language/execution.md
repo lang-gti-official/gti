@@ -80,6 +80,12 @@ or receiver remains live through the invocation and until its enclosing
 full-expression ends unless ownership is transferred to a longer-lived
 destination.
 
+A contextual brace argument initializes its selected fixed-array parameter in
+place. Its elements run from left to right under the array element order below;
+the complete array parameter becomes live before evaluation advances to the
+next call argument. The braces add no initializer-list view or separate
+backing-array lifetime.
+
 Member access evaluates the object first. Indexing evaluates the object and
 then the index. Unary operations evaluate their operand before applying the
 operation. Binary operations evaluate the left operand, then the right
@@ -319,6 +325,10 @@ may still be used. Later M-EXEC-01 slices,
 M-FAIL-01 for failure edges, and matching M-BACK closed-body migrations must
 make those families executable before they are conforming or the conservative
 borrow restriction is narrowed.
+
+Contextual fixed-array arguments preserve element order by emitting an explicit
+array value, but they do not by themselves close this broader surrounding
+call-argument scheduling gap.
 
 ## 4.3 Numeric Execution
 

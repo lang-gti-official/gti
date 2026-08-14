@@ -100,6 +100,7 @@ module.exports = grammar({
     [$.expression, $.argument_list],
     [$.direct_initializer, $.expression],
     [$.constructor_initializer_argument_list, $.expression],
+    [$.constructor_declaration, $._qualified_identifier],
     [$._initializer_element, $.expression],
   ],
 
@@ -368,6 +369,7 @@ module.exports = grammar({
     constructor_declaration: ($) =>
       seq(
         field("name", $.identifier),
+        optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
         optional(field("initializers", $.constructor_initializer_list)),
         choice(
@@ -914,7 +916,7 @@ module.exports = grammar({
           choice(
             $.pack_expansion,
             seq(
-              commaSep1($._expression_not_comma),
+              commaSep1(choice($._expression_not_comma, $.array_initializer)),
               optional(seq(",", $.pack_expansion)),
             ),
           ),

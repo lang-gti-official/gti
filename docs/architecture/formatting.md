@@ -113,6 +113,12 @@ Generic parameter and argument clauses use compact angle brackets, such as
 syntax trivia while distinguishing those clauses from relational expressions;
 ordinary comparisons retain spaces around `<` and `>`.
 
+Constructor-local value parameters use the same compact clause, for example
+`Buffer<uint64_t N>(T values[N])`. A brace after `(` or `,` in a call remains
+an inline initializer (`make({1, 2}, {3, 4})`) rather than being formatted as a
+statement block. This is syntax formatting only; the formatter does not infer
+the selected fixed-array context.
+
 The same token distinction applies inside concept declarations and trailing
 `requires` clauses. Concept applications retain compact generic angles while
 their conjunction remains an ordinary spaced logical operator; formatting does

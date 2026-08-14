@@ -65,6 +65,15 @@ public:
     }
   }
 
+  vector<uint64_t N>(T initial[N])
+      : data(gti_internal::allocate_storage<T>(N)), reserved(N) {
+    while (this.count < N) {
+      gti_internal::storage_construct(this.data, this.count,
+                                     initial[this.count]);
+      this.count++;
+    }
+  }
+
   vector(vector<T>& other) = delete;
   vector(vector<T>&& other) = default;
 

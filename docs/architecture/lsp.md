@@ -51,8 +51,11 @@ notes instead identify the explicit ownership move and exact generic return or
 owner-field destination. All types use the canonical semantic type printer.
 Declaration hover retains the symbolic generic
 contract, while
-selected-call hover applies the compiler-recorded generic type arguments so
-the same contract is rendered with the selected call's concrete types. Method
+selected-call hover applies the compiler-recorded generic type and value
+arguments so the same contract is rendered with concrete types and inferred
+fixed-array extents. Generic-constructor declaration hover retains its
+constructor-local `uint64_t` parameter, while selected construction hover uses
+the exact value and parameter array type from `ResolvedConstructionInfo`. Method
 calls also apply the concrete receiver specialization retained in
 `ResolvedCallInfo::dispatchOwner`, including generic class type arguments.
 Forwarding-only parameters are identified without inventing a signature. The

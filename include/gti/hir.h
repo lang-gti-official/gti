@@ -390,6 +390,7 @@ struct HirFunctionInstance {
   const FunctionDecl *source = nullptr;
   std::optional<HirClassInstanceId> owner;
   std::vector<SemanticType> typeArguments;
+  std::vector<CompileTimeValue> valueArguments;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<HirBindingId> parameterBindings;
@@ -433,6 +434,8 @@ struct HirConstructorInstance {
   ConstructorId declaration = 0;
   const ConstructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
+  std::vector<SemanticType> typeArguments;
+  std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
   std::vector<HirBindingId> parameterBindings;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
@@ -661,6 +664,9 @@ private:
           found->second.kind == CompileTimeValue::UInt64) {
         result.arrayLength = found->second.value;
         result.arrayLengthParameterId = 0;
+      } else if (found != substitution.values.end() &&
+                 found->second.kind == CompileTimeValue::Parameter) {
+        result.arrayLengthParameterId = found->second.parameterId;
       }
     }
     return result;
@@ -735,6 +741,7 @@ private:
                   const std::vector<SemanticType> &classTypeArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   std::vector<SemanticType> functionTypeArguments,
+                  std::vector<CompileTimeValue> functionValueArguments,
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
@@ -745,7 +752,7 @@ private:
     if (const std::optional<std::size_t> existing = instanceIndex.findFunction(
             declaration.id, freeFunction ? noTypeArguments : classTypeArguments,
             freeFunction ? noValueArguments : classValueArguments,
-            functionTypeArguments)) {
+            functionTypeArguments, functionValueArguments)) {
       return *existing;
     }
 
@@ -766,7 +773,7 @@ private:
           declaration.id,
           freeFunction ? std::vector<SemanticType>{} : classTypeArguments,
           freeFunction ? std::vector<CompileTimeValue>{} : classValueArguments,
-          functionTypeArguments, id);
+          functionTypeArguments, functionValueArguments, id);
     }
     output.program.functions.push_back(
         {.id = id,
@@ -775,6 +782,7 @@ private:
          .source = declaration.declaration,
          .owner = owner,
          .typeArguments = std::move(functionTypeArguments),
+         .valueArguments = std::move(functionValueArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
          .entryKind = declaration.entryKind,
@@ -802,7 +810,7 @@ private:
         const SemanticType argumentType = argumentsType.arguments.front();
         const HirFunctionInstanceId appendTarget = enqueueFunction(
             *append, argumentsType.arguments, argumentsType.valueArguments, {},
-            SemanticType::Void, {argumentType});
+            {}, SemanticType::Void, {argumentType});
         output.program.functions[id - 1].entryArgumentAppendTarget =
             appendTarget;
       }
@@ -820,7 +828,9 @@ private:
       return 0;
     }
     if (const std::optional<std::size_t> existing =
-            instanceIndex.findConstructor(construction.constructor, *owner)) {
+            instanceIndex.findConstructor(construction.constructor, *owner,
+                                          construction.typeArguments,
+                                          construction.valueArguments)) {
       HirConstructorInstance &instance =
           output.program.constructors[*existing - 1];
       if (construction.borrowOrigin != BorrowOriginKind::None) {
@@ -837,12 +847,16 @@ private:
          .declaration = construction.constructor,
          .source = construction.declaration,
          .owner = *owner,
+         .typeArguments = construction.typeArguments,
+         .valueArguments = construction.valueArguments,
          .parameterTypes = construction.parameterTypes,
          .borrowOrigin = construction.borrowOrigin,
          .borrowParameter = construction.borrowArgument,
          .borrowAccess = construction.borrowAccess,
          .instantiationSite = std::move(site)});
-    instanceIndex.recordConstructor(construction.constructor, *owner, id);
+    instanceIndex.recordConstructor(construction.constructor, *owner,
+                                    construction.typeArguments,
+                                    construction.valueArguments, id);
     return id;
   }
 
@@ -945,8 +959,8 @@ private:
             continue;
           }
         }
-        (void)enqueueFunction(*info, classArguments, {}, {}, info->returnType,
-                              info->parameterTypes);
+        (void)enqueueFunction(*info, classArguments, {}, {}, {},
+                              info->returnType, info->parameterTypes);
         continue;
       }
       if (const auto *variable =
@@ -1182,15 +1196,15 @@ private:
               : AccessMode::ReadOnly;
     }
 
-    const bool concreteInstance = !classArguments.empty() ||
-                                  !classValueArguments.empty() ||
-                                  !snapshot.typeArguments.empty();
+    const bool concreteInstance =
+        !classArguments.empty() || !classValueArguments.empty() ||
+        !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty();
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (concreteInstance) {
       analysis = analyzer->analyzeFunctionInstance(
           declaration->id, classArguments, classValueArguments,
-          snapshot.typeArguments);
+          snapshot.typeArguments, snapshot.valueArguments);
       appendInstanceDiagnostics(std::move(analysis.diagnostics),
                                 snapshot.instantiationSite);
       model = &analysis.model;
@@ -1315,12 +1329,14 @@ private:
     currentReceiverType = owner.type;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis = analyzer->analyzeConstructorInstance(
-        snapshot.declaration, classArguments, classValueArguments);
+        snapshot.declaration, classArguments, classValueArguments,
+        snapshot.typeArguments, snapshot.valueArguments);
     appendInstanceDiagnostics(std::move(analysis.diagnostics),
                               snapshot.instantiationSite);
 
     lambdaTargets.clear();
     seedLambdaTargets(classArguments);
+    seedLambdaTargets(snapshot.typeArguments);
     HirBody body;
     std::vector<HirBindingId> parameterBindings;
     parameterBindings.reserve(snapshot.source->parameters().size());
@@ -2425,7 +2441,21 @@ private:
       kind = HirValueKind::Unexpected;
       lowerOperand(unexpected->error());
     } else if (dynamic_cast<const Variable *>(raw) != nullptr) {
-      kind = HirValueKind::Variable;
+      const ExpressionInfo *info = model.findExpression(*raw);
+      if (const std::optional<ConstantValue> constant =
+              model.findConstant(*raw);
+          info != nullptr && info->category == ValueCategory::Value &&
+          constant) {
+        if (const auto *integer = std::get_if<ConstantInteger>(&*constant);
+            integer != nullptr && !integer->negative) {
+          kind = HirValueKind::Literal;
+          literal = Literal{integer->magnitude};
+        } else {
+          kind = HirValueKind::Variable;
+        }
+      } else {
+        kind = HirValueKind::Variable;
+      }
     }
 
     HirValue value{.id = nextValueId++,
@@ -2478,8 +2508,9 @@ private:
                 receiverClassValueArguments(call->callee(), *target,
                                             resolved->dispatchOwner, model,
                                             classValueArguments),
-                resolved->typeArguments, resolved->returnType,
-                resolved->parameterTypes, tokenSpan(call->paren()));
+                resolved->typeArguments, resolved->valueArguments,
+                resolved->returnType, resolved->parameterTypes,
+                tokenSpan(call->paren()));
           }
         }
       }
@@ -2596,7 +2627,7 @@ private:
                 : classValueArguments;
         value.functionTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            resolved->returnType, resolved->parameterTypes);
+                            {}, resolved->returnType, resolved->parameterTypes);
       }
     }
     if (const ResolvedOperatorInfo *resolved =
@@ -2623,7 +2654,7 @@ private:
                 : classValueArguments;
         value.contextualBoolTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            resolved->returnType, resolved->parameterTypes);
+                            {}, resolved->returnType, resolved->parameterTypes);
       }
     }
     if (const auto *call = dynamic_cast<const Call *>(raw);

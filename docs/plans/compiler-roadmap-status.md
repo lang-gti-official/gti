@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.128.0
+Checkpoint version: 0.130.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -45,6 +45,16 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.130.0 checkpoint completes `L-INIT-01`. Braces in an ordinary named
+function, method, or constructor call now initialize one exact owned
+fixed-array parameter. A bounded inferred-only `uint64_t` value parameter may
+name that complete extent, and concrete function, method, and constructor HIR
+identity retains the inferred value. The first public client is the ordinary
+source-defined `std::vector<int>({1, 2, 3})`; ADR 015 excludes
+`std::initializer_list`, common-type inference, list-preferred overloads, CTAD,
+and native C++ overload authority. Formatter, Tree-sitter, LSP, stdlib runtime,
+examples, and the C++20/C++23 backend use the same exact-array contract.
 
 The 0.128.0 checkpoint extends the bounded M-EXEC-01 ordinary-call schedule to
 eligible non-borrowed class-value parameters. HIR distinguishes class-copy and

@@ -285,7 +285,7 @@ access-specifier       = ( "public" | "private" ) ":" ;
    unsupported. *)
 
 constructor-declaration
-                       = IDENTIFIER parameter-clause
+                       = IDENTIFIER [ generic-parameter-clause ] parameter-clause
                          [ constructor-initializer-list ] block
                        | IDENTIFIER special-constructor-parameter-clause
                          special-member-specifier ;
@@ -930,16 +930,26 @@ postfix-suffix         = call-suffix | member-suffix | index-suffix
 call-suffix            = [ generic-argument-clause ]
                          "(" [ argument-list ] ")" ;
 
-argument-list          = assignment-expression
-                         { "," assignment-expression }
-                       | { assignment-expression "," } pack-expansion ;
+argument-list          = call-argument { "," call-argument }
+                       | { call-argument "," } pack-expansion ;
+
+call-argument          = assignment-expression | array-initializer ;
 
 pack-expansion         = IDENTIFIER "..." ;
 
 (* A call evaluates its callable/receiver once, then initializes parameters
    from left to right. A concrete final pack contributes elements at its
    written position in pack order. Invocation begins only after every
-   parameter is live. *)
+   parameter is live.
+
+   A brace argument is not a general expression or `std::initializer_list`.
+   It requires one selected exact by-value fixed-array parameter `T[N]` and
+   initializes that owned value under the element type and extent supplied by
+   the parameter. It does not infer a common element type, prefer a list
+   overload, perform CTAD, or add implicit conversions. Empty braces
+   value-initialize the selected fixed array. Contextual braces are currently
+   available for named function/method calls and constructors, not generic
+   `operator()` dispatch. *)
 
 (* Generic declarations introduce named type parameters. A type parameter may
    have one namespace-resolved unary, non-structural concept before its name,
@@ -995,15 +1005,24 @@ pack-expansion         = IDENTIFIER "..." ;
    and specialization are not implemented.
 
    A class or struct may follow its type parameters with immutable `uint64_t`
-   value parameters, such as `class array<T, uint64_t N>`. Every value argument
-   is an integer literal or an in-scope value parameter. Value parameters
-   participate in exact class type identity and may be used as fixed-array
-   extents or nested generic arguments. Although an identifier in a generic
-   argument is syntactically also a type, semantic analysis resolves it from the
-   target declaration's parameter kind. Type parameters must precede value
-   parameters. Value parameters on functions and methods, value packs, defaults,
-   arbitrary constant expressions, and value types other than uint64_t are not
-   implemented.
+   value parameters, such as `class array<T, uint64_t N>`. Every class value
+   argument is an integer literal or an in-scope value parameter. Value
+   parameters participate in exact class type identity and may be used as
+   fixed-array extents or nested generic arguments. Although an identifier in
+   a generic argument is syntactically also a type, semantic analysis resolves
+   it from the target declaration's parameter kind. Type parameters must
+   precede value parameters.
+
+   A function, non-polymorphic method, or constructor may use the narrower
+   inferred form `uint64_t N` only when `N` is the complete extent of one
+   by-value fixed-array parameter. A named fixed array supplies its exact
+   extent and a contextual brace argument supplies its written element count.
+   Type parameters must be inferred from ordinary typed arguments; braces do
+   not synthesize a common type. Constructor-local parameters appear after the
+   constructor name. Inferred values participate in concrete function or
+   constructor instance identity. Explicit function/constructor value
+   arguments, other value types, arbitrary expressions, defaults, value packs,
+   and value-generic virtual/operator call surfaces are not implemented.
 
    A function or method
    may declare one final type pack with `Args...`, bound by one final named,

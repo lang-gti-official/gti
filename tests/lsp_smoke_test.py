@@ -3788,6 +3788,102 @@ def test_worker_survives_failed_analysis(executable, root):
         session.close()
 
 
+def test_contextual_array_hover(executable, root):
+    source = (
+        "int total<uint64_t N>(int values[N]) { return values[0]; }\n"
+        "class Total {\n"
+        "public:\n"
+        "  Total<uint64_t N>(int values[N]) {}\n"
+        "};\n"
+        "int main() {\n"
+        "  int value = total({1, 2, 3});\n"
+        "  Total object = Total({4, 5});\n"
+        "  return value - 1;\n"
+        "}\n"
+    )
+    path = root / "contextual-array-hover.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        def hover(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]["contents"]["value"]
+
+        declared_function = hover(2, source.index("total<uint64_t") + 1)
+        assert declared_function.startswith(
+            "```gti\nint32_t total<uint64_t N>(int32_t[N] values)\n```"
+        ), declared_function
+
+        selected_function = hover(3, source.index("total({") + 1)
+        assert selected_function.startswith(
+            "```gti\nint32_t total<3>(int32_t[3] values)\n```"
+        ), selected_function
+
+        declared_constructor = hover(4, source.index("Total<uint64_t") + 1)
+        assert declared_constructor.startswith(
+            "```gti\nTotal<uint64_t N>(int32_t[N] values)\n```"
+        ), declared_constructor
+
+        selected_constructor = hover(5, source.index("Total({") + 1)
+        assert selected_constructor.startswith(
+            "```gti\nTotal::Total<2>(int32_t[2] values)\n```"
+        ), selected_constructor
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -3816,6 +3912,7 @@ def main():
     test_semantic_hover(sys.argv[1], root)
     test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
+    test_contextual_array_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
     test_compiler_private_tooling_boundary(sys.argv[1], root)

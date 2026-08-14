@@ -87,13 +87,15 @@ field. It preserves exact value-generic identity and checked indexing without a
 compiler rule for the public class name. The first API supports default
 construction, construction from an exact `T[N]` value, `size`, `empty`, and
 read-only or mutable `front`, `back`, `at`, and `operator[]`, plus
-copyable-element `fill`. `swap` remains bodyless because GTI cannot yet move a
-value out through a mutable reference. Class list initialization and iterators
-remain later library layers. The language now defines the structural
-`begin`/`end` iterator protocol and range-based `for` independently of
-`std::array`; adding array iterators remains ordinary library work once
-fixed-array owner dependencies or the compiler-owned fixed-array iteration
-strategy are implemented. See
+copyable-element `fill`. The contextual fixed-array argument feature permits
+the ordinary constructor call `std::array<int, 3>({1, 2, 3})`; it does not add
+C++ class list-initialization or `std::initializer_list` semantics. `swap`
+remains bodyless because GTI cannot yet move a value out through a mutable
+reference. Iterators remain a later library layer. The language now defines
+the structural `begin`/`end` iterator protocol and range-based `for`
+independently of `std::array`; adding array iterators remains ordinary library
+work once fixed-array owner dependencies or the compiler-owned fixed-array
+iteration strategy are implemented. See
 [`docs/language/ranges.md`](../docs/language/ranges.md) for that
 lifetime boundary.
 
@@ -115,11 +117,16 @@ Front/back, mutable `at`, resize, shrink-to-fit, and pop-back are implemented;
 class over `gti_internal::storage<T>` and imported with
 `#include <std/vector>`. `T` must satisfy `std::movable`, and the vector itself is
 move-only. The first working surface includes default and size construction,
+construction from one contextual `T[N]` value,
 size/capacity observation, reserve, clear, push/pop, checked `at` and
 `operator[]`, front/back, both resize forms, shrink-to-fit, variadic
 `emplace_back`, explicit copyable-element `clone`, and read-only structural
 iteration. The size constructor value-initializes its elements; it is not a
-reserve-only constructor.
+reserve-only constructor. The fixed-array constructor is ordinary GTI source:
+`std::vector<int>({1, 2, 3})` infers `N` from the brace count and copies each
+element from the owned array parameter. It therefore requires a copyable
+element type when selected; there is no `std::initializer_list`, list-overload
+preference, or compiler recognition of `std::vector`.
 
 The hosted entry signature
 `int main(int, std::vector<std::string>)` is a narrow language boundary over

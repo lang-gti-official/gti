@@ -68,7 +68,10 @@ The current implemented foundation includes:
   and
 - `std::vector<T>` as a move-only dynamic owner with checked indexed access,
   reserve, resize, shrink-to-fit, clear, push/pop, read-only traversal,
-  in-place emplacement, and explicit copyable-element cloning; and
+  in-place emplacement, explicit copyable-element cloning, and construction
+  from one contextual fixed-array value such as
+  `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
+  owned array parameter and therefore requires copyable `T` when used; and
 - `std::forward_list<T>` as a move-only recursive unique owner with empty/front,
   clear, and constant-time front push/pop operations; and
 - `<std/iterator>` public `std::input_iterator<I>` and

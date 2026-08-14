@@ -61,6 +61,14 @@ diagnostics or letting a backend message choose either identity.
   token, retain a negative sign in the message, and emit only the range
   diagnostic rather than cascading with unary-unsigned or mixed-operand
   errors. No replacement is universally correct, so do not attach a fix-it.
+- `GTI-S2015` owns a brace call argument that has no one exact by-value
+  fixed-array context, has the wrong written extent, or cannot empty-initialize
+  its selected element type. Point at the opening brace and do not suggest an
+  initializer-list type or implicit conversion. An exact invalid element keeps
+  the ordinary `GTI-S2003` assignment diagnostic at that element. `GTI-S2026`
+  separately owns an invalid or uninferable `uint64_t` extent generic; point at
+  its declaration name or the call that cannot infer it. Neither family has a
+  universally correct fix-it.
 - `GTI-S2054` owns an invalid `extern "C"` declaration, including an exact
   symbol or parameter spelling that cannot be represented portably in the
   generated C17/C++ header. It also owns a containing namespace component that

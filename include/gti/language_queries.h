@@ -33,9 +33,12 @@ public:
         info.declaration != nullptr && info.declaration->isStatic() ? "static "
                                                                     : "";
     result += types.print(returnType) + " " + functionName(info);
-    if (selected != nullptr && !selected->typeArguments.empty()) {
+    if (selected != nullptr && (!selected->typeArguments.empty() ||
+                                !selected->valueArguments.empty())) {
       result += '<';
-      appendTypes(result, selected->typeArguments);
+      appendSelectedGenericArguments(result, info.genericParameters,
+                                     selected->typeArguments,
+                                     selected->valueArguments);
       result += '>';
     } else if (selected == nullptr && !info.genericParameters.empty()) {
       result += '<';
@@ -101,7 +104,22 @@ public:
       return constructedType + "(" + constructedType +
              (selected.kind == ConstructorKind::Move ? "&&)" : "&)");
     }
-    std::string result = constructedType + '(';
+    std::string result = constructedType;
+    if (!selected.typeArguments.empty() || !selected.valueArguments.empty()) {
+      const ConstructorInfo *constructor =
+          selected.declaration == nullptr
+              ? nullptr
+              : semantics.findConstructor(*selected.declaration);
+      if (constructor != nullptr) {
+        result += "::" + selected.declaration->name().lexeme;
+        result += '<';
+        appendSelectedGenericArguments(result, constructor->genericParameters,
+                                       selected.typeArguments,
+                                       selected.valueArguments);
+        result += '>';
+      }
+    }
+    result += '(';
     const std::vector<Parameter> *parameters =
         selected.declaration == nullptr ? nullptr
                                         : &selected.declaration->parameters();
@@ -116,7 +134,13 @@ public:
       return owner.qualifiedName + "(" + owner.qualifiedName +
              (info.kind == ConstructorKind::Move ? "&&)" : "&)");
     }
-    std::string result = owner.qualifiedName + '(';
+    std::string result = owner.qualifiedName;
+    if (!info.genericParameters.empty()) {
+      result += '<';
+      appendGenericParameters(result, info.genericParameters);
+      result += '>';
+    }
+    result += '(';
     appendParameters(
         result, info.parameterTypes,
         info.declaration == nullptr ? nullptr : &info.declaration->parameters(),
@@ -250,6 +274,42 @@ private:
         result += ", ";
       }
       result += types.print(arguments[index]);
+    }
+  }
+
+  void appendSelectedGenericArguments(
+      std::string &result, const std::vector<GenericParameterInfo> &parameters,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments) const {
+    std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
+    bool first = true;
+    for (const GenericParameterInfo &parameter : parameters) {
+      if (!first) {
+        result += ", ";
+      }
+      first = false;
+      if (!parameter.value) {
+        result += typeIndex < typeArguments.size()
+                      ? types.print(typeArguments[typeIndex++])
+                      : parameter.name.lexeme;
+        continue;
+      }
+      if (valueIndex >= valueArguments.size()) {
+        result += parameter.name.lexeme;
+        continue;
+      }
+      const CompileTimeValue &value = valueArguments[valueIndex++];
+      if (value.kind == CompileTimeValue::UInt64) {
+        result += std::to_string(value.value);
+      } else if (value.kind == CompileTimeValue::Parameter) {
+        const GenericParameterInfo *resolved =
+            semantics.findGenericParameter(value.parameterId);
+        result +=
+            resolved == nullptr ? parameter.name.lexeme : resolved->name.lexeme;
+      } else {
+        result += "unknown";
+      }
     }
   }
 

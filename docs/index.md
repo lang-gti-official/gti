@@ -77,6 +77,10 @@ for the current implementation when a document is stale or ambiguous.
 - [014: Native unions and payload enums](decisions/014-native-unions-and-payload-enums.md)
   — separates unsafe passive overlapping storage from safe closed tagged sums
   and defines the bounded first payload family.
+- [015: Contextual fixed-array arguments](decisions/015-contextual-fixed-array-arguments.md)
+  — gives call-site braces an exact generic `T[N]` meaning without importing
+  `std::initializer_list`, list-preferred overloads, common-type inference, or
+  CTAD.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

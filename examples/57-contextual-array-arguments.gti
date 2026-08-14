@@ -1,0 +1,30 @@
+#include <std/vector>
+
+int total<uint64_t N>(int values[N]) {
+  mut int result = 0;
+  for (mut uint64_t index = 0; index < N; index++) {
+    result += values[index];
+  }
+  return result;
+}
+
+class Extent {
+  uint64_t count;
+
+public:
+  Extent<uint64_t N>(int values[N]) : count(N) {}
+
+  uint64_t size() {
+    return this.count;
+  }
+};
+
+int main() {
+  int fixed_total = total({1, 2, 3});
+  Extent extent = Extent({7, 8});
+  std::vector<int> values = std::vector<int>({4, 5, 6});
+
+  int vector_total = values[std::size_t(0)] + values[std::size_t(1)] +
+                     values[std::size_t(2)];
+  return fixed_total + int(extent.size()) + vector_total - 23;
+}

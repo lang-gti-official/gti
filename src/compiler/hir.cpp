@@ -99,6 +99,7 @@ struct FunctionKey {
   std::vector<SemanticType> classTypeArguments;
   std::vector<CompileTimeValue> classValueArguments;
   std::vector<SemanticType> functionTypeArguments;
+  std::vector<CompileTimeValue> functionValueArguments;
 
   friend bool operator==(const FunctionKey &, const FunctionKey &) = default;
 };
@@ -109,6 +110,7 @@ struct FunctionKeyHash {
     result = hashSemanticTypes(key.classTypeArguments, result);
     result = hashCompileTimeValues(key.classValueArguments, result);
     result = hashSemanticTypes(key.functionTypeArguments, result);
+    result = hashCompileTimeValues(key.functionValueArguments, result);
     return finalize(result);
   }
 };
@@ -116,6 +118,8 @@ struct FunctionKeyHash {
 struct ConstructorKey {
   ConstructorId declaration = 0;
   std::size_t owner = 0;
+  std::vector<SemanticType> typeArguments;
+  std::vector<CompileTimeValue> valueArguments;
 
   friend bool operator==(const ConstructorKey &,
                          const ConstructorKey &) = default;
@@ -123,8 +127,11 @@ struct ConstructorKey {
 
 struct ConstructorKeyHash {
   [[nodiscard]] std::size_t operator()(const ConstructorKey &key) const {
-    return finalize(
-        combine(combine(0x67746943ULL, key.declaration), key.owner));
+    std::uint64_t result =
+        combine(combine(0x67746943ULL, key.declaration), key.owner);
+    result = hashSemanticTypes(key.typeArguments, result);
+    result = hashCompileTimeValues(key.valueArguments, result);
+    return finalize(result);
   }
 };
 
@@ -172,10 +179,11 @@ void HirInstanceIndex::recordClass(ClassId declaration,
 std::optional<std::size_t> HirInstanceIndex::findFunction(
     FunctionId declaration, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments,
-    const std::vector<SemanticType> &functionTypeArguments) const {
+    const std::vector<SemanticType> &functionTypeArguments,
+    const std::vector<CompileTimeValue> &functionValueArguments) const {
   const auto found = implementation->functions.find(
       FunctionKey{declaration, classTypeArguments, classValueArguments,
-                  functionTypeArguments});
+                  functionTypeArguments, functionValueArguments});
   if (found == implementation->functions.end()) {
     return std::nullopt;
   }
@@ -185,30 +193,37 @@ std::optional<std::size_t> HirInstanceIndex::findFunction(
 void HirInstanceIndex::recordFunction(
     FunctionId declaration, std::vector<SemanticType> classTypeArguments,
     std::vector<CompileTimeValue> classValueArguments,
-    std::vector<SemanticType> functionTypeArguments, std::size_t instance) {
+    std::vector<SemanticType> functionTypeArguments,
+    std::vector<CompileTimeValue> functionValueArguments,
+    std::size_t instance) {
   implementation->functions.emplace(
       FunctionKey{declaration, std::move(classTypeArguments),
                   std::move(classValueArguments),
-                  std::move(functionTypeArguments)},
+                  std::move(functionTypeArguments),
+                  std::move(functionValueArguments)},
       instance);
 }
 
-std::optional<std::size_t>
-HirInstanceIndex::findConstructor(ConstructorId declaration,
-                                  std::size_t owner) const {
-  const auto found =
-      implementation->constructors.find(ConstructorKey{declaration, owner});
+std::optional<std::size_t> HirInstanceIndex::findConstructor(
+    ConstructorId declaration, std::size_t owner,
+    const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &valueArguments) const {
+  const auto found = implementation->constructors.find(
+      ConstructorKey{declaration, owner, typeArguments, valueArguments});
   if (found == implementation->constructors.end()) {
     return std::nullopt;
   }
   return found->second;
 }
 
-void HirInstanceIndex::recordConstructor(ConstructorId declaration,
-                                         std::size_t owner,
-                                         std::size_t instance) {
-  implementation->constructors.emplace(ConstructorKey{declaration, owner},
-                                       instance);
+void HirInstanceIndex::recordConstructor(
+    ConstructorId declaration, std::size_t owner,
+    std::vector<SemanticType> typeArguments,
+    std::vector<CompileTimeValue> valueArguments, std::size_t instance) {
+  implementation->constructors.emplace(
+      ConstructorKey{declaration, owner, std::move(typeArguments),
+                     std::move(valueArguments)},
+      instance);
 }
 
 std::optional<std::size_t>

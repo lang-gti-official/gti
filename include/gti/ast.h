@@ -1091,11 +1091,14 @@ struct SpecialMemberSpecifier {
 
 class ConstructorDecl final : public Stmt {
 public:
-  ConstructorDecl(Token name, std::vector<Parameter> parameters,
+  ConstructorDecl(Token name, std::vector<GenericParameter> genericParameters,
+                  std::vector<Parameter> parameters,
                   std::vector<ConstructorInitializer> initializers,
                   std::optional<SpecialMemberSpecifier> specifier,
                   std::unique_ptr<BlockStmt> body)
-      : name_(std::move(name)), parameters_(std::move(parameters)),
+      : name_(std::move(name)),
+        genericParameters_(std::move(genericParameters)),
+        parameters_(std::move(parameters)),
         initializers_(std::move(initializers)),
         specifier_(std::move(specifier)), body_(std::move(body)) {}
 
@@ -1104,6 +1107,9 @@ public:
   }
 
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return genericParameters_;
+  }
   [[nodiscard]] const std::vector<Parameter> &parameters() const {
     return parameters_;
   }
@@ -1118,6 +1124,7 @@ public:
 
 private:
   Token name_;
+  std::vector<GenericParameter> genericParameters_;
   std::vector<Parameter> parameters_;
   std::vector<ConstructorInitializer> initializers_;
   std::optional<SpecialMemberSpecifier> specifier_;

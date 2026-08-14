@@ -1175,6 +1175,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (stmt.specifier() || !stmt.body()) {
       return;
     }
+    emitTemplateDeclaration(stmt.genericParameters());
     if (currentClass != nullptr && !emittingDeferredMember) {
       writeIndent();
       output << "explicit " << stmt.name().lexeme << '(';
@@ -1536,12 +1537,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
   void visitArrayInitializerExpr(const ArrayInitializer &expr) override {
     const SemanticType *arrayType = semantics.findType(expr);
-    const bool nested = arrayType != nullptr &&
-                        arrayType->kind == SemanticType::Array &&
-                        arrayType->arguments.size() == 1 &&
-                        arrayType->arguments[0].kind == SemanticType::Array;
-    if (nested) {
-      output << '{';
+    if (arrayType != nullptr && arrayType->kind == SemanticType::Array) {
+      emitSemanticType(*arrayType);
     }
     output << '{';
     for (std::size_t index = 0; index < expr.elements().size(); ++index) {
@@ -1551,9 +1548,6 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       emitExpression(expr.elements()[index]);
     }
     output << '}';
-    if (nested) {
-      output << '}';
-    }
   }
 
   void visitBinaryExpr(const Binary &expr) override {
@@ -4501,7 +4495,11 @@ private:
         output << ", ";
       }
       if (parameters[index].valueType) {
-        output << "std::uint64_t " << parameters[index].name.lexeme;
+        // GTI value generics are uint64_t. The supported native targets use
+        // a 64-bit size_t, and spelling an extent parameter as size_t keeps
+        // std::array deduction exact across C++ implementations where
+        // uint64_t and size_t are distinct underlying types.
+        output << "std::size_t " << parameters[index].name.lexeme;
       } else {
         output << "typename" << (parameters[index].pack ? "... " : " ")
                << parameters[index].name.lexeme;
@@ -4926,7 +4924,15 @@ private:
       } else {
         output << "void";
       }
-      output << ", " << type.arrayLength << '>';
+      output << ", ";
+      if (type.arrayLengthParameterId != 0) {
+        const GenericParameterInfo *parameter =
+            semantics.findGenericParameter(type.arrayLengthParameterId);
+        output << (parameter == nullptr ? "0" : parameter->name.lexeme);
+      } else {
+        output << type.arrayLength;
+      }
+      output << '>';
       return;
     case SemanticType::Class: {
       const ClassTypeInfo *classInfo = semantics.findClassType(type.classId);
@@ -5503,6 +5509,8 @@ private:
           break;
         case DeferredMemberKind::Constructor:
           if (definition.constructor != nullptr) {
+            emitTemplateDeclaration(
+                definition.constructor->genericParameters());
             writeIndent();
             emitCurrentClassSpecialization();
             output << "::" << definition.owner->name().lexeme << '(';

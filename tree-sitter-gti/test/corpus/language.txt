@@ -2321,6 +2321,105 @@ public:
                 (literal
                   (integer_literal))))))))))
 
+=============================================
+Contextual fixed-array arguments
+=============================================
+
+class Total {
+public:
+  Total<uint64_t N>(int values[N]) {}
+};
+
+int sum<uint64_t N>(int values[N]) { return values[0]; }
+
+int main() {
+  Total value = Total({1, 2});
+  return sum({3, 4, 5});
+}
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier)))
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)
+            (array_extent
+              (identifier))))
+        (block))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)
+        (array_extent
+          (identifier))))
+    (block
+      (return_statement
+        (initializer_expression
+          (index_expression
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (literal
+                (integer_literal))))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (identifier))
+            (argument_list
+              (array_initializer
+                (primary_expression
+                  (literal
+                    (integer_literal)))
+                (primary_expression
+                  (literal
+                    (integer_literal))))))))
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (identifier))
+            (argument_list
+              (array_initializer
+                (primary_expression
+                  (literal
+                    (integer_literal)))
+                (primary_expression
+                  (literal
+                    (integer_literal)))
+                (primary_expression
+                  (literal
+                    (integer_literal)))))))))))
+
 ==================
 Native unions and payload enums
 ==================

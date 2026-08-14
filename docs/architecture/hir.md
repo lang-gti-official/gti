@@ -183,6 +183,13 @@ emission. `HirProgram::sourceValueIds` may map one source expression to several
 concrete generic values; a source-level optimization replacement is valid only
 when all concrete instances agree.
 
+Function and constructor instance keys retain type arguments and `uint64_t`
+value arguments separately. Contextual braces have already become a concrete
+fixed-array `HirValue` under the selected parameter type; HIR does not infer
+their element type or extent. Forwarding one symbolic array extent to another
+generic declaration preserves the parameter identity until concrete
+substitution, so distinct extents cannot collapse into one instance.
+
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure)
 requires each concrete checked detector to retain an exact bounded set of local
 failure category/details and a canonical source anchor. Semantics remains the
