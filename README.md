@@ -131,7 +131,7 @@ approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and
 git clone https://github.com/LukeHHA/gti.git
 cd gti
 cmake -S . -B build
-cmake --build build
+cmake --build build --parallel 4
 
 ./build/gti examples/01-basics.gti -o /tmp/gti-basics
 /tmp/gti-basics
@@ -148,7 +148,17 @@ cmake --build build
 Run the test suite with:
 
 ```sh
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --parallel 4 --output-on-failure
+```
+
+Repeated local builds can use `sccache` or `ccache` through CMake's standard
+compiler-launcher interface. This caches compiler outputs without changing
+GTI's build graph or artifact semantics:
+
+```sh
+cmake -S . -B build \
+  -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+  -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 ```
 
 First-party C and C++ sources use the exact clang-format release recorded in

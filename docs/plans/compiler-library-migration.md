@@ -252,6 +252,31 @@ Keep small hot operations inline when profiles justify it. Evaluate release IPO
 or LTO separately; do not preserve a large inline implementation solely from an
 assumption that it is faster.
 
+#### Recorded baseline
+
+Issue [#50](https://github.com/LukeHHA/gti/issues/50) records the first
+reproducible baseline at `977879d` on Apple clang/arm64 with eight-way
+parallelism:
+
+- touching `semantic_analyzer.h` rebuilt 11 translation units in a Debug build,
+  taking 31.4 seconds wall and 208 seconds CPU;
+- compiling the 141-line `src/driver/compilation.cpp` at `-O2` took 20.6
+  seconds after preprocessing to 131,098 lines;
+- compiling the 22,702-line `tests/compiler_tests.cpp` at `-O1` took 27.0
+  seconds;
+- `semantic_analyzer.h` was 28,032 lines and 1.14 MB, making phase 3 the
+  highest-leverage remaining implementation migration.
+
+GitHub release run
+[31710836803](https://github.com/LukeHHA/gti/actions/runs/31710836803) supplies
+the corresponding workflow baseline for `977879d`. The `darwin-x64` package
+job took 30 minutes 17 seconds: configuration took 2 minutes 16 seconds, the
+cold bundled-LLVM and GTI build took 17 minutes 37 seconds, serial build-tree
+tests took 2 minutes 44 seconds, and installed-toolchain verification took 7
+minutes 26 seconds. The release workflow now uses an exact-input compiler cache
+and four-way CTest scheduling. Warm-cache improvement must be read from later
+workflow evidence; it is not treated as completion of phase 3.
+
 ## Phased Implementation
 
 ### Phase 0: freeze build and behavior contracts

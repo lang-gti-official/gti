@@ -57,6 +57,16 @@ GTI backend.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
+CI and release jobs run independent CTest targets with four workers. Their C
+and C++ compilation uses `sccache` through CMake's compiler-launcher contract;
+the cache is an exact-input build accelerator and is never an authority for
+test selection, compiler semantics, or release contents. A cold cache must
+therefore pass the same build, build-tree tests, staged-toolchain tests, and
+packaging gates as a warm cache. Release packages continue to build the pinned
+LLVM support libraries from their verified source archive on every platform;
+cached object reuse does not replace that source or alter the installed static
+archives.
+
 ## Cross-Phase Feature Coverage
 
 For a syntax or semantic feature, consider only applicable layers:
@@ -224,7 +234,7 @@ For a substantial compiler change, the broad local sequence is:
 
 ```sh
 cmake --build build -j4
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --parallel 4 --output-on-failure
 python3 scripts/local_language_audit.py --full
 git diff --check
 ```

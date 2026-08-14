@@ -77,6 +77,8 @@ jobs:
   build-and-test:
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -89,6 +91,11 @@ jobs:
     steps:
       - name: Check out GTI
         uses: actions/checkout@v6
+
+      - name: Set up compiler cache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.16.0"
 
       - name: Install LLVM 18
         if: runner.os == 'Linux'
@@ -107,12 +114,16 @@ jobs:
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: >-
+          ctest --test-dir build -C Release
+          --parallel 4 --output-on-failure
 
       - name: Stage system-LLVM toolchain
         run: >-
@@ -132,15 +143,22 @@ jobs:
             --config Release
           ctest \
             --test-dir "${{ runner.temp }}/gti-system-library-smoke" \
-            -C Release --output-on-failure
+            -C Release --parallel 4 --output-on-failure
 
   compiler-sanitizers:
     name: Compiler sanitizers
     runs-on: ubuntu-24.04
+    env:
+      SCCACHE_GHA_ENABLED: "true"
 
     steps:
       - name: Check out GTI
         uses: actions/checkout@v6
+
+      - name: Set up compiler cache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.16.0"
 
       - name: Install LLVM 18
         run: |
@@ -156,6 +174,8 @@ jobs:
           cmake -S . -B build-sanitized
           -DCMAKE_BUILD_TYPE=Debug
           -DGTI_BUILD_LSP=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 
@@ -168,4 +188,5 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build-sanitized --output-on-failure
+          --parallel 4
           -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline'

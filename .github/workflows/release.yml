@@ -46,6 +46,8 @@ jobs:
     name: Package ${{ matrix.platform }}
     needs: metadata
     runs-on: ${{ matrix.runner }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -63,17 +65,26 @@ jobs:
       - name: Check out GTI
         uses: actions/checkout@v6
 
+      - name: Set up compiler cache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: "v0.16.0"
+
       - name: Configure release build
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_RELEASE_BUILD=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
       - name: Test build tree
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: >-
+          ctest --test-dir build -C Release
+          --parallel 4 --output-on-failure
 
       - name: Stage toolchain
         run: >-
@@ -98,7 +109,7 @@ jobs:
             --config Release
           ctest \
             --test-dir "${{ runner.temp }}/gti-installed-library-smoke" \
-            -C Release --output-on-failure
+            -C Release --parallel 4 --output-on-failure
 
       - name: Create release archive
         run: >-
