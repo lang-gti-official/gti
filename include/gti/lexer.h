@@ -42,6 +42,7 @@ private:
   [[nodiscard]] char peekNext() const;
   void addToken(TokenKind token);
   void addToken(TokenKind kind, Literal literal);
+  void blockComment();
   void directive();
   void string();
   void character();

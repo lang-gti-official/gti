@@ -1,0 +1,26 @@
+==================
+Block comments
+==================
+
+/**/
+/* multiline
+ * block comment
+ */
+int main() { return 0; }
+
+---
+
+(source_file
+  (comment)
+  (comment)
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))

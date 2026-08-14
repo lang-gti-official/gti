@@ -28,6 +28,12 @@ Current phase prefixes are `GTI-L` (lexing), `GTI-I` (source/include loading),
 Use the existing local family and number rather than inventing a parallel code
 scheme.
 
+`GTI-L0011` owns an unterminated `/*` block comment. It points at the two-byte
+opening delimiter, reports exactly once at end of file, and does not offer a
+fix-it because inserting `*/` at an inferred location could silently comment
+out intended code. Source loading stops later phases so parser diagnostics do
+not cascade from the discarded comment body.
+
 `GTI-Rnnnn` identities are the distinct defined-runtime-failure vocabulary
 specified by [execution semantics](../language/execution.md#410-defined-runtime-failure).
 They are not frontend diagnostics: only a language-required constant context

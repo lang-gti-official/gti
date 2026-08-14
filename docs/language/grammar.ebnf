@@ -19,6 +19,11 @@
 
    One-level raw pointers use C++-familiar `T*`/`const T*` spelling. Operations
    that form or access raw addresses are gated by lexical `unsafe` blocks.
+
+   Whitespace, `//` line comments, and non-nesting `/* ... */` block comments
+   are discarded between tokens. A block comment may span lines and ends at
+   the first `*/`; an unterminated block comment is a lexical error. Comment
+   delimiters inside string and character literals are literal content.
 *)
 
 source-file            = { include-directive | declaration } END_OF_FILE ;

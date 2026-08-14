@@ -11,7 +11,7 @@ const executable = path.join(
 );
 const fixture = path.join(__dirname, "highlights.gti");
 const capturePattern =
-  /capture:\s+\d+ - ([^,]+), start: \((\d+), (\d+)\), end: .* text: `(.*)`$/;
+  /capture:\s+\d+ - ([^,]+), start: \((\d+), (\d+)\), end: \((\d+), (\d+)\), text: `(.*)$/;
 
 function queryCaptures(name, input = fixture) {
   const query = path.resolve(root, "..", "queries", "gti", `${name}.scm`);
@@ -35,7 +35,9 @@ function queryCaptures(name, input = fixture) {
         name: match[1],
         row: Number(match[2]),
         column: Number(match[3]),
-        text: match[4],
+        endRow: Number(match[4]),
+        endColumn: Number(match[5]),
+        text: match[6].endsWith("`") ? match[6].slice(0, -1) : match[6],
       });
     }
   }
@@ -194,6 +196,30 @@ requireCapture(209, "x", "variable.parameter");
 requireCapture(209, "y", "variable.parameter");
 requireCapture(212, "Event", "type");
 requireCapture(212, "event", "variable.parameter");
+
+const blockCommentFixture = path.join(__dirname, "block_comments.gti");
+const blockCommentCaptures = queryCaptures(
+  "highlights",
+  blockCommentFixture,
+);
+if (
+  !blockCommentCaptures.some(
+    (capture) =>
+      capture.name === "comment" &&
+      capture.row === 0 &&
+      capture.endRow === 0 &&
+      capture.endColumn === 4,
+  ) ||
+  !blockCommentCaptures.some(
+    (capture) =>
+      capture.name === "comment" &&
+      capture.row === 1 &&
+      capture.endRow === 3 &&
+      capture.endColumn === 3,
+  )
+) {
+  throw new Error("Missing @comment captures for block comment ranges");
+}
 
 const reservedFixture = path.join(__dirname, "reserved_identifiers.gti");
 const reservedCaptures = queryCaptures("highlights", reservedFixture);

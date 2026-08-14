@@ -92,9 +92,12 @@ The current formatter has three deliberately separate responsibilities:
 3. the LSP translates editor options, loads project configuration, reports
    configuration issues, and returns one whole-document edit.
 
-Comments and strings remain separate scanner concerns because the compiler
-lexer intentionally discards comments. Formatting does not consult emitted C++
-or delegate GTI syntax decisions to a native C++ tool.
+Line comments, block comments, and strings remain separate scanner concerns
+because the compiler lexer intentionally discards comments. The formatter
+preserves inline and multiline `/* ... */` contents, normalizes continuation
+indentation beneath the containing structure, and remains idempotent.
+Formatting does not consult emitted C++ or delegate GTI syntax decisions to a
+native C++ tool.
 
 A `return` followed by a parenthesized expression is always written as
 `return (expression)`. This separator is structural and remains present for

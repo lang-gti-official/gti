@@ -1088,7 +1088,13 @@ module.exports = grammar({
       ),
 
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
-    comment: () => token(seq("//", /[^\n]*/)),
+    comment: () =>
+      token(
+        choice(
+          seq("//", /[^\n]*/),
+          seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/"),
+        ),
+      ),
   },
 });
 

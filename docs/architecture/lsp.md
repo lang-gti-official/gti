@@ -24,8 +24,10 @@ pointers and snapshot-scoped symbol IDs valid while a request reads them.
 hover, completion, definition, and signature rendering compile in
 `src/compiler/language_queries.cpp`. Semantic tokens use compiler symbol and
 occurrence facts for identifiers and lexical facts for keywords, literals,
-operators, and comments. The protocol layer must not repeat name lookup,
-overload selection, type rendering, or declaration parsing.
+operators, and comments. Line and block comments are split into per-line LSP
+tokens with UTF-16 lengths; delimiters inside literals are excluded. The
+protocol layer must not repeat name lookup, overload selection, type rendering,
+or declaration parsing.
 
 The `sizeof` and `alignof` reserved words use the compiler's operator token
 classification, while invalid operands publish the shared `GTI-S2063`

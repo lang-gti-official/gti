@@ -73,9 +73,12 @@ spellings select binary32 and `d`/`D` selects binary64. The compiled lexer
 passes the original decimal digits directly to the private `APFloat`
 implementation; it never converts through host `double`.
 
-The lexer currently discards comments. The formatter and editor tooling scan
-comments separately. Documentation-comment retention is therefore not yet a
-compiler semantic capability.
+The lexer discards `//` line comments and non-nesting `/* ... */` block
+comments while preserving following token offsets and line numbers. An
+unterminated block comment produces `GTI-L0011` at its opening delimiter and
+stops later phases without parser cascades. The formatter and editor tooling
+scan comments separately. Documentation-comment retention is therefore not yet
+a compiler semantic capability.
 
 ## Parser And AST
 

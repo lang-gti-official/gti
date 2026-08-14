@@ -192,6 +192,8 @@ void Lexer::scanToken() {
       while (peek() != '\n' && !isAtEnd()) {
         advance();
       }
+    } else if (match('*')) {
+      blockComment();
     } else {
       addToken(match('=') ? TokenKind::SLASH_EQUAL : TokenKind::SLASH);
     }
@@ -259,6 +261,22 @@ void Lexer::addToken(TokenKind token) { addToken(token, std::monostate{}); }
 void Lexer::addToken(TokenKind kind, Literal literal) {
   std::string text = source.substr(start, current - start);
   tokens.emplace_back(kind, text, std::move(literal), start, line, sourceName);
+}
+
+void Lexer::blockComment() {
+  while (!isAtEnd()) {
+    if (peek() == '*' && peekNext() == '/') {
+      advance();
+      advance();
+      return;
+    }
+    if (advance() == '\n') {
+      ++line;
+    }
+  }
+
+  report("GTI-L0011", "Unterminated block comment.", start,
+         std::min(start + 2, source.size()));
 }
 
 void Lexer::directive() {

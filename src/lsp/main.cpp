@@ -886,29 +886,53 @@ void classifyStandardLibraryIncludes(
 void collectCommentTokens(std::string_view source,
                           const SourcePositionIndex &positions,
                           std::vector<SemanticToken> &result) {
+  const auto appendComment = [&](std::size_t start, std::size_t end) {
+    for (std::size_t segmentStart = start; segmentStart < end;) {
+      const std::size_t newline = source.find('\n', segmentStart);
+      const std::size_t segmentEnd =
+          newline == std::string_view::npos || newline > end ? end : newline;
+      if (segmentEnd > segmentStart) {
+        result.push_back({positions.at(segmentStart),
+                          utf16Length(source.substr(segmentStart,
+                                                    segmentEnd - segmentStart)),
+                          Comment, 0});
+      }
+      segmentStart = segmentEnd < end ? segmentEnd + 1 : end;
+    }
+  };
+
   for (std::size_t index = 0; index < source.size();) {
-    if (source[index] == '"') {
+    if (source[index] == '"' || source[index] == '\'') {
+      const char delimiter = source[index];
       for (++index; index < source.size();) {
         if (source[index] == '\\' && index + 1 < source.size()) {
           index += 2;
-        } else if (source[index++] == '"') {
+        } else if (source[index++] == delimiter) {
           break;
         }
       }
       continue;
     }
-    if (source[index] != '/' || index + 1 >= source.size() ||
-        source[index + 1] != '/') {
+    if (source[index] != '/' || index + 1 >= source.size()) {
       ++index;
       continue;
     }
 
-    const std::size_t start = index;
-    const std::size_t end = source.find('\n', start);
-    index = end == std::string_view::npos ? source.size() : end;
-    result.push_back({positions.at(start),
-                      utf16Length(source.substr(start, index - start)), Comment,
-                      0});
+    if (source[index + 1] == '/') {
+      const std::size_t start = index;
+      const std::size_t newline = source.find('\n', start);
+      index = newline == std::string_view::npos ? source.size() : newline;
+      appendComment(start, index);
+      continue;
+    }
+    if (source[index + 1] == '*') {
+      const std::size_t start = index;
+      const std::size_t close = source.find("*/", start + 2);
+      index = close == std::string_view::npos ? source.size() : close + 2;
+      appendComment(start, index);
+      continue;
+    }
+    ++index;
   }
 }
 

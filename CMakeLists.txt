@@ -457,6 +457,10 @@ if(BUILD_TESTING)
   target_link_libraries("gti_tests" PRIVATE gti_cpp_backend)
   add_test(NAME compiler_pipeline COMMAND gti_tests)
 
+  add_executable("gti_block_comment_tests" "tests/block_comment_tests.cpp")
+  target_link_libraries("gti_block_comment_tests" PRIVATE gti_compiler)
+  add_test(NAME block_comment_pipeline COMMAND gti_block_comment_tests)
+
   add_executable("gti_optimizer_tests" "tests/optimizer_tests.cpp")
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
@@ -608,9 +612,15 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsp_smoke_test.py"
                 "$<TARGET_FILE:gti_lsp>"
       )
+      add_test(
+        NAME block_comment_lsp
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
+                "$<TARGET_FILE:gti_lsp>"
+      )
       if(GTI_RELEASE_BUILD)
         set_tests_properties(
-          lsp_protocol
+          lsp_protocol block_comment_lsp
           PROPERTIES ENVIRONMENT
             "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
         )

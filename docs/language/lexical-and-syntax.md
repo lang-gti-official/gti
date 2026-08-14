@@ -91,6 +91,12 @@ contain zero code units.
 ## 2.5 Comments And Documentation
 
 Comments do not participate in ordinary expression or declaration semantics.
+`//` introduces a line comment that ends immediately before the next newline
+or at end of file. `/*` introduces a block comment that may span lines and ends
+at the first following `*/`. Block comments do not nest; another `/*` inside a
+block comment is ordinary comment text. Comment delimiters inside string and
+character literals remain literal content. An unterminated block comment is
+ill-formed and is diagnosed at its opening delimiter.
 
 **Specification gap:** Documentation-comment syntax and its attachment to
 declarations are planned but not yet specified. When introduced, documentation

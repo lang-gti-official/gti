@@ -58,12 +58,24 @@ public:
         state.directiveLine = true;
         state.includeLine = lexeme.text == "#include";
         break;
-      case Kind::Comment:
+      case Kind::LineComment:
         if (state.lineHasContent) {
           state.trailingCommentSpace();
         }
         state.append(lexeme.text);
         state.newline();
+        break;
+      case Kind::BlockComment:
+        if (state.lineHasContent) {
+          state.space();
+        }
+        state.appendBlockComment(lexeme.text);
+        if (index + 1 >= lexemes.size() ||
+            lexemes[index + 1].kind == Kind::Newline) {
+          state.newline();
+        } else {
+          state.space();
+        }
         break;
       case Kind::Word:
       case Kind::Number:
@@ -137,7 +149,7 @@ public:
                !(afterBrace->kind == Kind::Word &&
                  (afterBrace->text == "else" ||
                   (doBody && afterBrace->text == "while"))) &&
-               afterBrace->kind != Kind::Comment)) {
+               !isComment(afterBrace->kind))) {
             state.newline();
           }
           break;
@@ -175,7 +187,7 @@ public:
             (next->kind != Kind::Semicolon && next->kind != Kind::Comma &&
              !(next->kind == Kind::Word &&
                (next->text == "else" || (doBody && next->text == "while"))) &&
-             next->kind != Kind::Comment) ||
+             !isComment(next->kind)) ||
             (options.breakBeforeBraces == BraceBreakingStyle::Allman &&
              next->kind == Kind::Word && next->text == "else")) {
           state.newline();
@@ -258,7 +270,7 @@ public:
         state.trimSpaces();
         state.append(";");
         if (state.parenthesisDepth == 0 &&
-            (next == nullptr || next->kind != Kind::Comment)) {
+            (next == nullptr || !isComment(next->kind))) {
           state.newline();
         } else {
           state.space();
@@ -379,7 +391,8 @@ private:
     Word,
     Number,
     String,
-    Comment,
+    LineComment,
+    BlockComment,
     Directive,
     Newline,
     LeftParen,
@@ -401,6 +414,10 @@ private:
     ShiftRight,
     Operator,
   };
+
+  [[nodiscard]] static constexpr bool isComment(Kind kind) {
+    return kind == Kind::LineComment || kind == Kind::BlockComment;
+  }
 
   struct Lexeme {
     Kind kind;
@@ -544,6 +561,45 @@ private:
     void trailingCommentSpace() {
       trimSpaces();
       output.append(options.spacesBeforeTrailingComments, ' ');
+    }
+
+    void appendBlockComment(std::string_view text) {
+      std::size_t lineStart = 0;
+      while (lineStart < text.size()) {
+        const std::size_t newline = text.find('\n', lineStart);
+        const std::size_t lineEnd =
+            newline == std::string_view::npos ? text.size() : newline;
+        std::string_view segment = text.substr(lineStart, lineEnd - lineStart);
+        if (segment.ends_with('\r')) {
+          segment.remove_suffix(1);
+        }
+        if (lineStart == 0) {
+          append(segment);
+        } else {
+          while (!segment.empty() &&
+                 (segment.front() == ' ' || segment.front() == '\t')) {
+            segment.remove_prefix(1);
+          }
+          if (!segment.empty()) {
+            writeIndent();
+            output.push_back(' ');
+            output.append(segment);
+            lineHasContent = true;
+          }
+        }
+        if (newline == std::string_view::npos) {
+          return;
+        }
+
+        if (output.empty() || output.back() != '\n') {
+          output.push_back('\n');
+        }
+        atLineStart = true;
+        lineHasContent = false;
+        directiveLine = false;
+        includeLine = false;
+        lineStart = newline + 1;
+      }
     }
 
     void binaryOperator(std::string_view text) {
@@ -1010,7 +1066,22 @@ private:
         while (current < source.size() && source[current] != '\n') {
           ++current;
         }
-        add(Kind::Comment, source.substr(start, current - start));
+        add(Kind::LineComment, source.substr(start, current - start));
+        continue;
+      }
+      if (character == '/' && current < source.size() &&
+          source[current] == '*') {
+        ++current;
+        while (current + 1 < source.size() &&
+               !(source[current] == '*' && source[current + 1] == '/')) {
+          ++current;
+        }
+        if (current + 1 < source.size()) {
+          current += 2;
+        } else {
+          current = source.size();
+        }
+        add(Kind::BlockComment, source.substr(start, current - start));
         continue;
       }
       if (character == '"' || character == '\'') {
@@ -1195,7 +1266,7 @@ private:
     while (index > 0) {
       --index;
       if (lexemes[index].kind != Kind::Newline &&
-          lexemes[index].kind != Kind::Comment) {
+          !isComment(lexemes[index].kind)) {
         return &lexemes[index];
       }
     }
@@ -1206,7 +1277,7 @@ private:
                                         std::size_t index) {
     for (++index; index < lexemes.size(); ++index) {
       if (lexemes[index].kind != Kind::Newline &&
-          lexemes[index].kind != Kind::Comment) {
+          !isComment(lexemes[index].kind)) {
         return &lexemes[index];
       }
     }
@@ -1442,7 +1513,7 @@ private:
                                  std::size_t index) {
     for (std::size_t current = index; current-- > 0;) {
       const Lexeme &candidate = lexemes[current];
-      if (candidate.kind == Kind::Newline || candidate.kind == Kind::Comment) {
+      if (candidate.kind == Kind::Newline || isComment(candidate.kind)) {
         continue;
       }
       if (candidate.kind == Kind::Word &&
