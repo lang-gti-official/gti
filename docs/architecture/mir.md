@@ -25,8 +25,10 @@ The deterministic serialization is currently `mir-v17`/`mir-body-v17`.
 Version 17 adds bounded `Invoke`/`PropagateFailure` control flow, body-local
 fixed failure-record parameters, and deterministic failure cleanup for
 eligible full-expression-root scalar operations in function and lambda bodies.
-Version 16 added the immutable failure artifact descriptor and exact one-based
-detector-site mappings. Version 15 added exact local defined-failure origin
+Version 16 added the immutable failure artifact descriptor, exact one-based
+detector-site mappings, function-instance declaration identity, and an explicit
+`PackFold` operation with ordered exact element-call metadata. Version 15 added
+exact local defined-failure origin
 sets, snapshot-local source anchors, and call-like propagation channels. It
 also extended the ordered-input
 schedule to a concretely resolved class `operator()` receiver, using a
@@ -84,6 +86,12 @@ A `MirBody` owns:
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
+- an explicit `MirOperation::PackFold` for the bounded call fold. It retains
+  the source HIR fold identity, fixed named-place operands, selected generic
+  declaration, source pack identity and argument position, and one concrete
+  element type plus exact resolved call target per pack element in source
+  order. An empty pack retains an empty element sequence instead of
+  disappearing during lowering;
 - exact defined-failure identity on checked instructions. Each local detector
   origin retains a sorted unique outcome set and a snapshot-local
   `SourceUnitId` plus line/offset anchor and has one parallel artifact-local
@@ -405,10 +413,23 @@ Other calls and expression families still rely on recursive lowering order,
 which is not a verified materialization schedule and does not control
 production emission. Borrowed-state class parameter construction,
 generated/default and copy/move special construction, target-place formation,
-result storage, operators other than concrete `operator()`, packs, unresolved
-callables, conditional families, and failure rollback are incomplete. Module
+result storage, operators other than concrete `operator()`, whole-pack and
+general pack operations beyond `PackFold`, unresolved callables, conditional
+families, and failure rollback are incomplete. Module
 initializers and each class's static-field initializer body remain separate
 rather than one source-graph-derived hosted sequence.
+
+`PackFold` has its own bounded verifier contract rather than pretending its
+element calls are ordinary scheduled call syntax. Verification requires the
+recorded element count, source-pack order, concrete element types, parameter
+positions, and per-element function instances to agree with HIR and with the
+one semantic pattern declaration. It rejects a substituted target from a
+different overload/declaration, a missing or duplicated element, reordered
+types, a mutable/consuming element parameter, or fixed-operand drift. The
+operation executes its element calls left to right and keeps ordinary unknown-
+call conservative effects: it is not speculatable, removable, or reorderable.
+This metadata does not introduce general MIR pack iteration or ask a backend to
+perform semantic instantiation.
 
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations for the current

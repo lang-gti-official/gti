@@ -671,6 +671,15 @@ SemanticModel::findCall(const Call &call) const {
   return base == nullptr ? nullptr : base->findCall(call);
 }
 
+[[nodiscard]] const ResolvedPackFoldInfo *
+SemanticModel::findPackFold(const PackFold &fold) const {
+  const auto found = packFolds.find(&fold);
+  if (found != packFolds.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findPackFold(fold);
+}
+
 [[nodiscard]] const ResolvedLambdaCallInfo *
 SemanticModel::findLambdaCall(const Call &call) const {
   const auto found = lambdaCalls.find(&call);
@@ -893,6 +902,7 @@ void SemanticModel::clear() {
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
+  packFolds.clear();
   lambdaCalls.clear();
   deferredCallableCalls.clear();
   pendingCallableForwardings.clear();
@@ -1295,6 +1305,10 @@ void SemanticModel::recordPayloadPattern(const Expr &expression,
 
 void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
   calls.insert_or_assign(&call, std::move(info));
+}
+
+void SemanticModel::record(const PackFold &fold, ResolvedPackFoldInfo info) {
+  packFolds.insert_or_assign(&fold, std::move(info));
 }
 
 void SemanticModel::recordLambdaCall(const Call &call,

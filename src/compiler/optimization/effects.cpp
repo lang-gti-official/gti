@@ -59,6 +59,7 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
     harmless(), // ExpectedHasValue
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
+    unknownEffects(), // PackFold executes exact user-function instances.
     MirEffectTraits{.copiesValue = true}, // PackExpansion
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
     MirEffectTraits{.copiesValue = true}, // PayloadExtract
@@ -124,6 +125,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
     MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
     MirEffectTraits{.readsPlace = true, .removableWhenUnused = true},
+    // UniqueOwnerUpcast
+    MirEffectTraits{
+        .readsPlace = true, .writesPlace = true, .movesValue = true},
     MirEffectTraits{.writesUnknownMemory = true,
                     .allocates = true,
                     .invokesRuntime = true,
@@ -147,6 +151,21 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .dropsValue = true,
                     .invokesUserCode = true},
+    // StorageRelocate
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .movesValue = true,
+                    .invokesUserCode = true},
+    // StorageShiftRight
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .movesValue = true,
+                    .invokesUserCode = true},
+    // StorageShiftLeft
     MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .invokesRuntime = true,
@@ -231,6 +250,7 @@ constexpr auto operationNames = std::to_array<std::string_view>({
     "convert",
     "expected-value",
     "closure",
+    "pack-fold",
     "pack-expansion",
     "payload-construct",
     "payload-extract",
@@ -287,12 +307,15 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "unique-owner-borrow",
     "unique-owner-borrow-mut",
     "unique-owner-is-null",
+    "unique-owner-upcast",
     "allocate-storage",
     "storage-construct",
     "storage-read",
     "storage-read-mut",
     "storage-destroy",
     "storage-relocate",
+    "storage-shift-right",
+    "storage-shift-left",
     "integer-wrapping-add",
     "integer-wrapping-subtract",
     "integer-wrapping-multiply",

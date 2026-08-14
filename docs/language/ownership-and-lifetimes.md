@@ -14,6 +14,8 @@ The implemented unique ownership surface is:
 
 ```gti
 std::unique_ptr<Entity> entity = std::make_unique<Entity>(arguments);
+std::unique_ptr<Base> erased = std::upcast_unique<Base, Entity>(
+    std::move(entity));
 ```
 
 These names are standard-library API, not keywords. The current implementation
@@ -30,6 +32,13 @@ the nested allocation and constructor call, reporting both the stdlib body and
 the application instantiation site when that use is invalid. The backend invokes
 the resolved stdlib function rather than replacing the public API with a backend
 allocation call. `std::make_shared` remains planned.
+
+`std::upcast_unique<Base, Derived>(owner)` is an explicit, consuming ordinary
+stdlib operation. Semantics admits it only when `Base` is a public base of
+`Derived` and has polymorphic destruction. The private owner representation is
+converted without exposing an address or creating a second owner. Ordinary
+calls still perform exact matching: passing `unique_ptr<Derived>` where
+`unique_ptr<Base>` is required does not trigger this conversion implicitly.
 
 The safe ownership surface does not provide:
 
@@ -102,12 +111,15 @@ gti_internal::allocate_unique_owner<T>(arguments...)
 gti_internal::unique_owner_borrow(owner)
 gti_internal::unique_owner_borrow_mut(owner)
 gti_internal::unique_owner_is_null(owner)
+gti_internal::unique_owner_upcast<Base>(owner)
 ```
 
 They provide allocation, checked receiver-tied borrows, and observation of the
-handle's irreducible null representation. The source-defined `std::unique_ptr`
-operators decide what that state means for boolean conversion and comparison.
-They do not expose an address, manual deallocation, release, or unchecked
+handle's irreducible null representation. The upcast operation consumes one
+private owner only after semantics proves a public base relationship and safe
+polymorphic destruction. The source-defined `std::unique_ptr` operators decide
+what null state means for boolean conversion and comparison. These capabilities
+do not expose an address, manual deallocation, release, or unchecked
 dereference operation.
 
 ## Concurrency Transfer And Sharing
@@ -792,6 +804,10 @@ std::unique_ptr<T>
 std::make_unique<T>(arguments...)
 ```
 
+The checked private upcast lowers to a consuming native owner conversion only
+after frontend semantics has proved the public base relation and polymorphic
+destruction; C++ conversion rules never select the GTI operation.
+
 The planned shared-owner implementation may use the corresponding C++ RAII
 types in this backend, but that representation is not source-reachable yet.
 
@@ -833,6 +849,8 @@ gti_internal::storage_read(storage, uint64_t index)
 gti_internal::storage_read_mut(storage, uint64_t index)
 gti_internal::storage_destroy(storage, uint64_t index)
 gti_internal::storage_relocate(source, destination, uint64_t count)
+gti_internal::storage_shift_right(storage, uint64_t first, uint64_t last)
+gti_internal::storage_shift_left(storage, uint64_t first, uint64_t last)
 ```
 
 `storage<T>` is an aligned, move-only lexical owner. It tracks which slots
@@ -846,6 +864,10 @@ compiler-private C++ helper message.
 The allocation extent and initialized-slot map are private safety bookkeeping,
 not queryable source state. A container records its own logical size and
 capacity and updates those fields when it allocates or relocates storage.
+The shift operations move an initialized half-open slot range through one
+verified empty slot. They expose no container size or insertion policy;
+source-defined containers use them to preserve partial-initialization state
+while implementing indexed insertion and erasure.
 
 The element type must not contain borrowed state. An owner cannot safely keep a
 partially initialized element whose stored reference lifetime is independent of
@@ -924,8 +946,9 @@ separate hosted-entry rule validates the canonical
 parameter and retains the exact source-defined startup append callable.
 
 The initial surface provides default and size construction, `size`, `capacity`,
-`empty`, `reserve`, `clear`, `push_back`, `emplace_back`, `pop_back`, and checked
-`at` and `operator[]` access. The size constructor value-initializes each
+`empty`, `reserve`, `clear`, `push_back`, `emplace_back`, `pop_back`, indexed
+`insert` and `erase`, and checked `at` and `operator[]` access. The size
+constructor value-initializes each
 element and therefore succeeds only when the concrete element type is default
 initializable. Unlike C++, both `at` and `operator[]` retain GTI's checked
 storage failure rather than exposing an unchecked indexing path.
@@ -945,8 +968,9 @@ stable vector lvalue, and an active iterator prevents mutation, replacement, or
 movement of the vector. This is the same conservative one-owner carrier used by
 `std::string`, not complete iterator invalidation semantics. Mutable iteration,
 owned temporary ranges, nested/shared readers, precise per-element loans,
-iterator categories, insert/erase, allocator policy, and owner-tied `span`
-remain future work.
+iterator categories, iterator-position insertion/erasure, allocator policy,
+and owner-tied `span` remain future work. Indexed insertion and erasure are
+implemented without granting mutable iteration.
 
 ## Owning Text
 

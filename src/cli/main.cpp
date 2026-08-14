@@ -77,6 +77,10 @@ struct MetadataOptions {
   std::optional<std::string> package;
 };
 
+struct FormatConfigInitOptions {
+  std::filesystem::path destination = ".";
+};
+
 enum class ArgumentResult {
   Run,
   ExitSuccess,
@@ -104,6 +108,7 @@ void printUsage(std::ostream &stream) {
          "       gti init [path] [--name <name>]\n"
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
+         "       gti format init [directory]\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted artifact path.\n"
@@ -158,6 +163,8 @@ void printUsage(std::ostream &stream) {
          "subtree.\n"
          "  metadata             Print deterministic project metadata as "
          "JSON.\n"
+         "  format init          Create the default .gti-format in an "
+         "existing directory.\n"
          "\n"
          "General options:\n"
          "  -h, --help           Show this help text.\n"
@@ -616,6 +623,45 @@ ArgumentResult parseMetadataArguments(int argc, char *argv[],
     }
     std::cerr << "gti: unknown metadata option '" << argument << "'\n";
     return ArgumentResult::ExitFailure;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult
+parseFormatConfigInitArguments(int argc, char *argv[],
+                               FormatConfigInitOptions &options) {
+  if (argc < 3) {
+    std::cerr << "gti: gti format requires the 'init' subcommand\n";
+    return ArgumentResult::ExitFailure;
+  }
+  const std::string_view subcommand = argv[2];
+  if (subcommand == "-h" || subcommand == "--help") {
+    printUsage(std::cout);
+    return ArgumentResult::ExitSuccess;
+  }
+  if (subcommand != "init") {
+    std::cerr << "gti: unknown format subcommand '" << subcommand << "'\n";
+    return ArgumentResult::ExitFailure;
+  }
+
+  bool destinationSelected = false;
+  for (int index = 3; index < argc; ++index) {
+    const std::string argument = argv[index];
+    if (argument == "-h" || argument == "--help") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (!argument.empty() && argument.front() == '-') {
+      std::cerr << "gti: unknown format init option '" << argument << "'\n";
+      return ArgumentResult::ExitFailure;
+    }
+    if (destinationSelected) {
+      std::cerr << "gti: only one format configuration destination may be "
+                   "specified\n";
+      return ArgumentResult::ExitFailure;
+    }
+    options.destination = argument;
+    destinationSelected = true;
   }
   return ArgumentResult::Run;
 }
@@ -1294,6 +1340,22 @@ int runScaffold(const ScaffoldOptions &options) {
   return exitCode(ExitStatus::Success);
 }
 
+int runFormatConfigInit(const FormatConfigInitOptions &options) {
+  const lang::driver::FormatConfigScaffoldResult result =
+      lang::driver::scaffoldFormatConfig(options.destination);
+  if (!result.succeeded()) {
+    reportDiagnostics(result.diagnostics, {});
+    return result.status ==
+                   lang::driver::FormatConfigScaffoldStatus::FilesystemFailure
+               ? exitCode(ExitStatus::Io)
+               : exitCode(ExitStatus::Usage);
+  }
+
+  std::cout << "Created format configuration at " << result.configPath.string()
+            << '\n';
+  return exitCode(ExitStatus::Success);
+}
+
 bool isReservedProjectCommand(std::string_view command) {
   return command == "fetch";
 }
@@ -1362,6 +1424,19 @@ int main(int argc, char *argv[]) {
       return exitCode(ExitStatus::Usage);
     }
     return runScaffold(options);
+  }
+
+  if (command == "format") {
+    FormatConfigInitOptions options;
+    const ArgumentResult argumentResult =
+        parseFormatConfigInitArguments(argc, argv, options);
+    if (argumentResult == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (argumentResult == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    return runFormatConfigInit(options);
   }
 
   if (argc > 1 && isReservedProjectCommand(command)) {

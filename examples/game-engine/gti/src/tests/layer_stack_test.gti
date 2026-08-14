@@ -1,0 +1,78 @@
+#include "../core/layer.gti"
+#include "../core/layer_stack.gti"
+
+mut uint64_t observed_attach_order = 0;
+mut uint64_t observed_detach_order = 0;
+mut uint64_t observed_update_order = 0;
+mut uint64_t observed_render_order = 0;
+
+class RecordingLayer : public psych::Layer {
+  uint64_t identity;
+
+public:
+  RecordingLayer(uint64_t id) : identity(id) {}
+
+  uint64_t Id() override { return this.identity; }
+  void OnAttach() mut override {
+    observed_attach_order = observed_attach_order * 10 + this.identity;
+  }
+  void OnDetach() mut override {
+    observed_detach_order = observed_detach_order * 10 + this.identity;
+  }
+  void OnUpdate(uint64_t frame) mut override {
+    observed_update_order = observed_update_order * 10 + this.identity;
+  }
+  void OnRender() mut override {
+    observed_render_order = observed_render_order * 10 + this.identity;
+  }
+};
+
+int main() {
+  mut std::unique_ptr<psych::LayerStack> stack_owner =
+      std::make_unique<psych::LayerStack>();
+  mut psych::LayerStack& stack = *stack_owner;
+
+  if (!stack.PushOverlay(std::upcast_unique<psych::Layer, RecordingLayer>(
+          std::make_unique<RecordingLayer>(uint64_t(2))))) {
+    return 1;
+  }
+  if (!stack.PushLayer(std::upcast_unique<psych::Layer, RecordingLayer>(
+          std::make_unique<RecordingLayer>(uint64_t(1))))) {
+    return 2;
+  }
+  if (stack.Size() != 2 or stack.LayerCount() != 1) {
+    return 3;
+  }
+
+  stack.UpdateAll(uint64_t(0));
+  stack.RenderAll();
+  if (stack.LastUpdateOrder() != 12 or stack.LastRenderOrder() != 12 or
+      observed_update_order != 12 or observed_render_order != 12) {
+    return 4;
+  }
+
+  if (!stack.PopLayer(uint64_t(1)) or stack.Size() != 1 or
+      stack.LayerCount() != 0) {
+    return 5;
+  }
+  if (!stack.PopOverlay(uint64_t(2)) or stack.Size() != 0 or
+      observed_detach_order != 12) {
+    return 6;
+  }
+
+  if (!stack.PushOverlay(std::upcast_unique<psych::Layer, RecordingLayer>(
+          std::make_unique<RecordingLayer>(uint64_t(2))))) {
+    return 7;
+  }
+  if (!stack.PushLayer(std::upcast_unique<psych::Layer, RecordingLayer>(
+          std::make_unique<RecordingLayer>(uint64_t(1))))) {
+    return 8;
+  }
+  stack.DetachAll();
+  if (stack.LastDetachOrder() != 12 or observed_attach_order != 2121 or
+      observed_detach_order != 1212) {
+    return 9;
+  }
+
+  return 0;
+}

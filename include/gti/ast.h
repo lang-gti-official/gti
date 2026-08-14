@@ -275,6 +275,7 @@ class Lambda;
 class LayoutQuery;
 class LiteralExpr;
 class Logical;
+class PackFold;
 class PackExpansion;
 class Postfix;
 class QualifiedName;
@@ -336,6 +337,7 @@ public:
   virtual void visitLayoutQueryExpr(const LayoutQuery &expr) = 0;
   virtual void visitLiteralExpr(const LiteralExpr &expr) = 0;
   virtual void visitLogicalExpr(const Logical &expr) = 0;
+  virtual void visitPackFoldExpr(const PackFold &expr) = 0;
   virtual void visitPackExpansionExpr(const PackExpansion &expr) = 0;
   virtual void visitPostfixExpr(const Postfix &expr) = 0;
   virtual void visitQualifiedNameExpr(const QualifiedName &expr) = 0;
@@ -606,6 +608,37 @@ private:
   Token brace_;
   ExprList arguments_;
   Token closingBrace_;
+};
+
+class PackFold final : public Expr {
+public:
+  PackFold(Token leftParen, ExprPtr pattern, Token comma, Token ellipsis,
+           Token rightParen)
+      : leftParen_(std::move(leftParen)), pattern_(std::move(pattern)),
+        comma_(std::move(comma)), ellipsis_(std::move(ellipsis)),
+        rightParen_(std::move(rightParen)) {}
+  PackFold(PackFold &&) = default;
+  PackFold(const PackFold &) = delete;
+  PackFold &operator=(PackFold &&) = default;
+  PackFold &operator=(const PackFold &) = delete;
+  ~PackFold() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitPackFoldExpr(*this);
+  }
+
+  [[nodiscard]] const Token &leftParen() const { return leftParen_; }
+  [[nodiscard]] const ExprPtr &pattern() const { return pattern_; }
+  [[nodiscard]] const Token &comma() const { return comma_; }
+  [[nodiscard]] const Token &ellipsis() const { return ellipsis_; }
+  [[nodiscard]] const Token &rightParen() const { return rightParen_; }
+
+private:
+  Token leftParen_;
+  ExprPtr pattern_;
+  Token comma_;
+  Token ellipsis_;
+  Token rightParen_;
 };
 
 class PackExpansion final : public Expr {

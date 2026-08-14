@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 int32_t gti_rt_write_stdout(gti_c_string_view value);
+int32_t gti_rt_write_stdout_byte(uint8_t value);
 int32_t gti_rt_read_stdin_byte(void);
 int64_t gti_rt_open_file_read(gti_c_string_view path);
 int32_t gti_rt_read_file_byte(int64_t descriptor);

@@ -11,8 +11,12 @@ or call-site spelling recognized by the compiler.
 
 GTI loads `prelude.gti` automatically. Its public API lives under `std`, while
 compiler-owned declarations under `gti_internal` bind to the native runtime.
-`std::print(std::string_view)` and `std::println(std::string_view)` are
-implemented in GTI and end at the exact C symbol `gti_rt_write_stdout`. The
+`std::print` and `std::println` accept `std::string_view`, `char`, and every
+fixed-width integer type. `<std/string>` adds read-only owning-string
+overloads. These operations are implemented in GTI and end at the exact C
+symbols `gti_rt_write_stdout` and `gti_rt_write_stdout_byte`; integer output is
+ordinary source-defined base-10 conversion rather than a compiler or native
+formatting shortcut. The
 prelude's `std::string_view` is a transparent alias for a compiler-defined
 counted view; a C-linkage call lowers it to the public `gti_c_string_view`
 record from `<gti/c_abi.h>`. The native callee receives immutable bytes and an
@@ -103,13 +107,20 @@ lifetime boundary.
 `gti_internal::storage<char>` and imported with `#include <std/string>`. It is a
 move-only owner: construction and append accept `std::string_view`, mutable
 indexing requires a mutable receiver, and allocating duplication is explicit
-through `clone()`. Read-only `begin()`/`end()` iteration uses the language's
+through `clone()`. `std::to_string(integer)` constructs the canonical base-10
+owning representation for every fixed-width integer, including signed minima.
+Read-only `begin()`/`end()` iteration uses the language's
 structural range protocol and a source-defined iterator that retains a checked
 borrow of the backing storage. This avoids hidden allocation on an ordinary
 copy and prevents mutation or movement while an iterator remains live. Dynamic
 conversion back to `std::string_view` remains unavailable until views can
-retain an owner-tied lifetime. Formatting is a later standard-library layer
-and must not make the compiler recognize the public `std::string` name.
+retain an owner-tied lifetime. `<std/format>` implements sequential `{}`
+replacement for heterogeneous fixed-width integral packs, escaped `{{`/`}}`,
+and exact field counts. It builds an owning `std::string`; malformed patterns
+and count mismatches are returned through `std::format_errc` before output.
+Floating-point conversion and formatter customization remain later
+standard-library layers and must not make the compiler recognize the public
+`std::string` name.
 Front/back, mutable `at`, resize, shrink-to-fit, and pop-back are implemented;
 `swap` remains bodyless until moving through mutable references is expressible.
 
@@ -118,11 +129,12 @@ class over `gti_internal::storage<T>` and imported with
 `#include <std/vector>`. `T` must satisfy `std::movable`, and the vector itself is
 move-only. The first working surface includes default and size construction,
 construction from one contextual `T[N]` value,
-size/capacity observation, reserve, clear, push/pop, checked `at` and
-`operator[]`, front/back, both resize forms, shrink-to-fit, variadic
-`emplace_back`, explicit copyable-element `clone`, and read-only structural
-iteration. The size constructor value-initializes its elements; it is not a
-reserve-only constructor. The fixed-array constructor is ordinary GTI source:
+size/capacity observation, reserve, clear, push/pop, indexed insert/erase,
+checked `at` and `operator[]`, front/back, both resize forms, shrink-to-fit,
+variadic `emplace_back`, explicit copyable-element `clone`, and read-only
+structural iteration. The size constructor value-initializes its elements; it
+is not a reserve-only constructor. The fixed-array constructor is ordinary GTI
+source:
 `std::vector<int>({1, 2, 3})` infers `N` from the brace count and copies each
 element from the owned array parameter. It therefore requires a copyable
 element type when selected; there is no `std::initializer_list`, list-overload
@@ -143,8 +155,9 @@ the method receives an immutable by-value pack, so copyable arguments may be
 copied at that boundary and a pack containing a move-only argument is consumed
 by its first expansion. The read-only iterator retains one checked storage
 borrow and therefore prevents vector mutation or movement while live. Mutable
-iteration, precise invalidation effects, owned temporary ranges, insert/erase,
-allocator customization, and a complete C++ `vector` API remain future work.
+iteration, precise invalidation effects, owned temporary ranges,
+iterator-position mutation, allocator customization, and a complete C++
+`vector` API remain future work.
 `swap` remains bodyless because the current ownership model deliberately
 forbids moving an owner out through a mutable reference.
 
@@ -166,16 +179,19 @@ wrap `gti_internal::unique_owner<T>`, and `std::make_unique<T>(args...)` is a
 source-defined variadic factory resolved through the same generic machinery as
 application functions. Concrete HIR instantiation validates its nested owner
 allocation and constructor call; C++ emission calls the resolved stdlib
-function rather than recognizing the public factory name.
+function rather than recognizing the public factory name. Explicit
+`std::upcast_unique<Base, Derived>(owner)` consumes one derived owner only when
+the compiler-private capability proves a public polymorphic base with safe
+destruction; no ordinary call receives an implicit owner conversion.
 
 Container implementations may use the reserved
 `gti_internal::storage<T>` compiler facility documented in
 [`docs/language/ownership-and-lifetimes.md`](../docs/language/ownership-and-lifetimes.md).
 It owns partially initialized capacity and supports
 checked variadic in-place construction, receiver-tied read-only and mutable
-borrows, destruction, and movable-element relocation without making raw
-pointers or manual deallocation part of the public language. Storage element
-types containing borrowed state are rejected.
+borrows, destruction, movable-element relocation, and checked within-storage
+slot shifts without making raw pointers or manual deallocation part of the
+public language. Storage element types containing borrowed state are rejected.
 Storage does not expose its allocation extent or per-slot initialization state.
 Containers keep logical size and capacity as ordinary private GTI fields.
 One read-only `storage<T>&` may be retained by a validated stored-reference

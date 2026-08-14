@@ -1,0 +1,18 @@
+#include <std/format>
+#include <std/string>
+
+int main() {
+  mut auto message =
+      std::format("frame={} score={} bounds={{}}", uint64_t(12), int32_t(-40));
+  if (!message) {
+    return 1;
+  }
+  std::println(message.value());
+
+  auto written = std::try_println("lives={} coins={}", uint8_t(3),
+                                  uint16_t(65535));
+  if (!written) {
+    return 2;
+  }
+  return 0;
+}

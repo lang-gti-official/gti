@@ -34,7 +34,7 @@ enum class SpaceBeforeParensStyle {
 struct FormatOptions {
   std::size_t indentWidth = 2;
   bool insertSpaces = true;
-  ReferenceAlignment referenceAlignment = ReferenceAlignment::Middle;
+  ReferenceAlignment referenceAlignment = ReferenceAlignment::Left;
   BraceBreakingStyle breakBeforeBraces = BraceBreakingStyle::Attach;
   RequiresClausePosition requiresClausePosition =
       RequiresClausePosition::OwnLine;

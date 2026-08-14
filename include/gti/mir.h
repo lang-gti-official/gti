@@ -214,6 +214,7 @@ enum class MirOperation {
   Convert,
   ExpectedHasValue,
   Closure,
+  PackFold,
   PackExpansion,
   PayloadConstruct,
   PayloadExtract,
@@ -261,6 +262,12 @@ enum class MirOperation {
   Count,
 };
 
+struct MirPackFoldElement {
+  SemanticType elementType = SemanticType::Unknown;
+  HirFunctionInstanceId functionTarget = 0;
+  std::vector<SemanticType> parameterTypes;
+};
+
 struct MirInstruction {
   MirInstructionId id = 0;
   MirInstructionKind kind = MirInstructionKind::Compute;
@@ -279,6 +286,12 @@ struct MirInstruction {
   std::vector<SemanticType> parameterTypes;
   std::vector<SemanticType> closureCaptureTypes;
   std::vector<LambdaCaptureMode> closureCaptureModes;
+  SymbolId packFoldSymbol = 0;
+  GenericParameterId packFoldParameter = 0;
+  FunctionId packFoldFunction = 0;
+  std::size_t packFoldArgument = 0;
+  std::vector<MirPlaceId> packFoldFixedPlaces;
+  std::vector<MirPackFoldElement> packFoldElements;
   std::optional<MirLoanId> loan;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -523,6 +536,7 @@ struct MirCallableParameter {
 
 struct MirFunctionInstance {
   HirFunctionInstanceId id = 0;
+  FunctionId declaration = 0;
   std::optional<HirClassInstanceId> owner;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;

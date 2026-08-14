@@ -577,6 +577,104 @@ void forward<Args...>(Args... values) {
               (identifier))))))))
 
 ==================
+Bounded comma pack folds
+==================
+
+void emit_each<Args...>(Args... values) {
+  (emit(values), ...);
+  (sink.write(values), ...);
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type)
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (expression_statement
+        (primary_expression
+          (pack_fold_expression
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list
+                (primary_expression
+                  (identifier)))))))
+      (expression_statement
+        (primary_expression
+          (pack_fold_expression
+            (call_expression
+              (member_expression
+                (primary_expression
+                  (identifier))
+                (identifier))
+              (argument_list
+                (primary_expression
+                  (identifier))))))))))
+
+==================
+Malformed bounded comma pack fold recovery
+==================
+
+void invalid<Args...>(Args... values) {
+  (values, ...);
+  emit(values...);
+}
+
+int intact() { return 0; }
+
+---
+
+(source_file
+  (function_declaration
+    (type)
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (expression_statement
+        (primary_expression
+          (parenthesized_expression
+            (primary_expression
+              (identifier))
+            (ERROR))))
+      (expression_statement
+        (call_expression
+          (primary_expression
+            (identifier))
+          (argument_list
+            (pack_expansion
+              (identifier)))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))
+
+==================
 References and unique ownership
 ==================
 
@@ -2533,3 +2631,83 @@ int inspect(Event event) {
                   (identifier))
                 (primary_expression
                   (identifier))))))))))
+
+==================
+Generic member call and relational expressions
+==================
+
+int choose<Owner, Base>(Owner& owner, int left, int middle, int right) {
+  owner.upcast<Base>();
+  if (left < middle and middle > right) {
+    return 1;
+  }
+  return 0;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (expression_statement
+        (call_expression
+          (generic_function
+            (member_expression
+              (primary_expression
+                (identifier))
+              (identifier))
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier)))))
+          (argument_list)))
+      (if_statement
+        (binary_expression
+          (binary_expression
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (identifier)))
+          (binary_expression
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (identifier))))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal)))))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))

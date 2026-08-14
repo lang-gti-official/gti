@@ -22,6 +22,8 @@ struct FormatConfigResult {
   std::vector<FormatConfigIssue> issues;
 };
 
+[[nodiscard]] std::string_view defaultFormatConfig();
+
 FormatConfigResult parseFormatConfig(std::string_view source,
                                      FormatOptions baseOptions = {});
 

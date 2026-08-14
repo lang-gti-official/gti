@@ -45,9 +45,10 @@ public surface includes:
 | `std::size_t` | Transparent alias of `uint64_t` |
 | `std::ptrdiff_t` | Transparent alias of `int64_t` |
 | `std::string_view` | Counted read-only view over static literal storage |
-| `std::print` and `std::println` | Portable output operations over string views |
-| `std::unique_ptr<T>` | Nominal move-only unique owner with explicit null construction, reset, and null assignment |
+| `std::print` and `std::println` | Portable output over string views, `char`, and all fixed-width integers |
+| `std::unique_ptr<T>` | Nominal move-only unique owner with explicit null construction, reset, null assignment, and checked explicit base upcast |
 | `std::make_unique<T>` | Ordinary generic unique-owner factory |
+| `std::upcast_unique<Base, Derived>` | Explicit consuming conversion to a public polymorphic base owner |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
 
@@ -64,12 +65,14 @@ The current implemented foundation includes:
 - `std::array<T, N>` over checked fixed-array storage, including front/back
   access and copyable-element fill; and
 - `std::string` as a move-only owner over private character storage, including
-  front/back and mutable checked access, resize, shrink-to-fit, and pop-back;
+  front/back and mutable checked access, resize, shrink-to-fit, pop-back, and
+  source-defined base-10 `std::to_string` conversion for every fixed-width
+  integer, plus read-only `print`/`println` traversal;
   and
 - `std::vector<T>` as a move-only dynamic owner with checked indexed access,
-  reserve, resize, shrink-to-fit, clear, push/pop, read-only traversal,
-  in-place emplacement, explicit copyable-element cloning, and construction
-  from one contextual fixed-array value such as
+  reserve, resize, shrink-to-fit, clear, push/pop, indexed insertion/erasure,
+  read-only traversal, in-place emplacement, explicit copyable-element
+  cloning, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
   owned array parameter and therefore requires copyable `T` when used; and
 - `std::forward_list<T>` as a move-only recursive unique owner with empty/front,
@@ -102,6 +105,10 @@ The current implemented foundation includes:
 - `<std/cstdio>` unbuffered stdin and read-only file byte input through
   `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and a move-only
   `std::FILE` owner; and
+- `<std/format>` sequential integral replacement through source-defined
+  `std::format`, `std::try_print`, and `std::try_println`. The grammar is
+  limited to `{}`, `{{`, and `}}`; pattern and argument-count errors return
+  `expected<..., std::format_errc>` before output begins; and
 - `<std/tcp>` POSIX IPv4 stream-socket creation and close through a move-only
   `std::tcp::socket` owner with typed creation and close errors.
 
@@ -144,6 +151,11 @@ elements may be copied and noncopyable movable elements are consumed once.
 This is in-place construction, but it is not C++ perfect forwarding and does
 not preserve every source value category.
 
+`insert(index, value)` and `erase(index)` support movable, including move-only,
+elements. They use checked private slot shifts while the source-defined vector
+retains logical size, capacity growth, and API policy. Invalid indices take the
+defined storage failure path rather than performing unchecked memory access.
+
 The current vector iterator is read-only and retains one checked borrow of its
 owner. Mutable iteration, multiple retained cursors, complete invalidation
 semantics, temporary-range traversal, and general owner-dependent views remain
@@ -175,8 +187,13 @@ An infallible convenience wrapper over a fallible host service may use
 `GTI-R0012` when its host operation fails, but it shall not discard that
 failure. It should have a recoverable sibling when callers reasonably need to
 handle the condition. The current `std::print`/`std::println` implementation
-discards the status from `gti_rt_write_stdout`; this is an implementation gap
-owned by the hosted-service work, not a permitted hidden stream state.
+discards the status from the counted and scalar-byte stdout runtime entries;
+this is an implementation gap owned by the hosted-service work, not a
+permitted hidden stream state.
+`std::format` and the `try_print` family return `format_errc` only for malformed
+replacement syntax or an argument-count mismatch. The `try_` output names do
+not yet make a native stdout failure recoverable; they guarantee that a format
+error is reported before any bytes are written.
 
 Wrong-state `expected.value()` and `expected.error()` access is the checked
 `GTI-R0009` failure. Infallible allocation uses `GTI-R0011`; recoverable
@@ -215,10 +232,12 @@ The following component families remain planned or incomplete:
 - shared and weak ownership;
 - optional and general sum types;
 - owner-tied spans and dynamic string views;
-- complete vector insertion/erasure, copy, allocator, and iterator support;
+- complete vector copy, allocator, iterator-position mutation, and iterator
+  support;
 - the remaining callable, complete-range, heterogeneous accumulation, and hash
   generic-capability families;
-- formatting, buffered streams, file writes, seeking, and structured I/O;
+- indexed/named/specifier-based and floating-point formatting, formatter
+  customization, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, randomness, connected networking,
   traffic buffers, and threading;
 - recoverable allocation factories;

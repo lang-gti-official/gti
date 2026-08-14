@@ -219,6 +219,24 @@ struct ProjectScaffoldResult {
   }
 };
 
+enum class FormatConfigScaffoldStatus {
+  Success,
+  InvalidRequest,
+  Conflict,
+  FilesystemFailure,
+};
+
+struct FormatConfigScaffoldResult {
+  FormatConfigScaffoldStatus status =
+      FormatConfigScaffoldStatus::InvalidRequest;
+  std::filesystem::path configPath;
+  std::vector<Diagnostic> diagnostics;
+
+  [[nodiscard]] bool succeeded() const {
+    return status == FormatConfigScaffoldStatus::Success;
+  }
+};
+
 [[nodiscard]] std::string targetTriple(const TargetInfo &target);
 
 [[nodiscard]] ProjectResolutionResult
@@ -237,5 +255,8 @@ cleanProject(const std::filesystem::path &startDirectory);
 
 [[nodiscard]] ProjectScaffoldResult
 scaffoldProject(const ProjectScaffoldRequest &request);
+
+[[nodiscard]] FormatConfigScaffoldResult
+scaffoldFormatConfig(const std::filesystem::path &destinationDirectory);
 
 } // namespace lang::driver

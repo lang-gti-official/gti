@@ -1,0 +1,57 @@
+#include "../core/application.gti"
+#include "../core/layer.gti"
+#include "../core/layer_stack.gti"
+#include "app_layer.gti"
+
+namespace game {
+  class App : public psych::Application {
+    mut bool started = false;
+    mut bool stopped = false;
+
+  public:
+    App() : psych::Application() {}
+
+    bool Configure() mut override {
+      // Register the overlay first, then insert the ordinary layer before it.
+      // This exercises the same layer/overlay partition as the C++ LayerStack.
+      mut psych::LayerStack & layers = *this.Layers;
+      if (!layers.PushOverlay(
+              std::upcast_unique<psych::Layer, StatusOverlay>(
+                  std::make_unique<StatusOverlay>()))) {
+        return false;
+      }
+
+      if (!layers.PushLayer(std::upcast_unique<psych::Layer, AppLayer>(
+              std::make_unique<AppLayer>()))) {
+        layers.DetachAll();
+        return false;
+      }
+      return true;
+    }
+
+    void OnStarted() mut override {
+      this.started = true;
+      std::println("application started through psych::Application");
+    }
+
+    void OnFrame(uint64_t frame) mut override {
+      if (frame == 2) {
+        this.Stop();
+      }
+    }
+
+    void OnStopped() mut override {
+      this.stopped = true;
+      std::println("application stopped");
+    }
+
+    bool CompletedSuccessfully() {
+      return this.started and this.stopped and
+             this.State() == psych::ApplicationState::Stopped and
+             this.CompletedFrames() == 3 and this.Layers->Size() == 0 and
+             this.Layers->LastUpdateOrder() == 12 and
+             this.Layers->LastRenderOrder() == 12 and
+             this.Layers->LastDetachOrder() == 12;
+    }
+  };
+}

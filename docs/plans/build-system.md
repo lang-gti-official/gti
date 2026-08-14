@@ -1032,6 +1032,18 @@ Acceptance criteria:
 - invalid package names fail before filesystem mutation;
 - direct compilation remains manifest-independent.
 
+### Post-Milestone 3 addition: formatter configuration scaffolding
+
+Status: complete
+
+- Add `gti format init [directory]`, defaulting to the current directory.
+- Emit the compiler-owned GTI default `.gti-format` document and verify that it
+  parses back to the same style.
+- Refuse missing, non-directory, symbolic-link, filesystem-root, and existing
+  configuration destinations without replacing user data.
+- Keep source formatting and manifest discovery outside this initialization
+  command.
+
 ### Post-Milestone 3 addition: declared native C and C++ sources
 
 Status: complete

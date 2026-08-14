@@ -667,12 +667,15 @@ enum class IntrinsicKind {
   UniqueOwnerBorrow,
   UniqueOwnerBorrowMut,
   UniqueOwnerIsNull,
+  UniqueOwnerUpcast,
   AllocateStorage,
   StorageConstruct,
   StorageRead,
   StorageReadMut,
   StorageDestroy,
   StorageRelocate,
+  StorageShiftRight,
+  StorageShiftLeft,
   IntegerWrappingAdd,
   IntegerWrappingSubtract,
   IntegerWrappingMultiply,
@@ -1040,6 +1043,26 @@ struct ResolvedCallInfo {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::vector<CallableArgumentBoundary> callableArguments;
+};
+
+// A deliberately bounded comma-pack fold. The frontend retains the one
+// declaration selected by the symbolic pattern and, for concrete generic
+// instances, every exact element specialization in source-pack order.
+// Backends must not reopen overload resolution for these calls.
+struct ResolvedPackFoldElement {
+  SemanticType elementType = SemanticType::Unknown;
+  ResolvedCallInfo call;
+};
+
+struct ResolvedPackFoldInfo {
+  const Call *pattern = nullptr;
+  FunctionId function = 0;
+  const FunctionDecl *declaration = nullptr;
+  SymbolId packSymbol = 0;
+  GenericParameterId packParameter = 0;
+  std::size_t packArgument = 0;
+  std::vector<SemanticType> fixedArgumentTypes;
+  std::vector<ResolvedPackFoldElement> elements;
 };
 
 struct ResolvedLambdaCallInfo {
@@ -1488,6 +1511,9 @@ public:
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const;
 
+  [[nodiscard]] const ResolvedPackFoldInfo *
+  findPackFold(const PackFold &fold) const;
+
   [[nodiscard]] const ResolvedLambdaCallInfo *
   findLambdaCall(const Call &call) const;
 
@@ -1672,6 +1698,8 @@ private:
 
   void record(const Call &call, ResolvedCallInfo info);
 
+  void record(const PackFold &fold, ResolvedPackFoldInfo info);
+
   void recordLambdaCall(const Call &call, ResolvedLambdaCallInfo info);
 
   void recordDeferredCallableCall(const Call &call,
@@ -1779,6 +1807,7 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const PackFold *, ResolvedPackFoldInfo> packFolds;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
   std::unordered_map<const Call *, DeferredCallableCallInfo>
       deferredCallableCalls;

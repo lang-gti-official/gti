@@ -67,6 +67,13 @@ The emitter is responsible for choices such as:
   address or reference;
 - emitting already-selected mangled calls, C-linkage symbols, dispatch, and
   lifecycle operations;
+- representing `HirValueKind::PackFold`/`MirOperation::PackFold` as one C++
+  comma fold over the exact generic function identity selected by semantics.
+  The emitted pattern names that fixed target directly and substitutes only
+  the source pack element; it does not emit an overload set, use ADL, or ask
+  C++ template deduction to choose a GTI declaration. Native comma-fold order
+  realizes the retained left-to-right element sequence, including the empty
+  no-op case;
 - representing a validated lexical closure as a C++ lambda while preserving
   the frontend's ordered bare-copy or explicit
   `[target = std::move(source)]` capture spelling. C++ closure traits are not
@@ -234,6 +241,13 @@ ordered MIR. Production conformance then lands only through matching M-BACK
 closed-body migrations. The compatibility emitter remains conservative, and
 semantics must not relax the both-argument transient-loan restriction for an
 operation family until its production path consumes that MIR schedule.
+
+The bounded pack-fold family is narrower than that general gap. Its semantic
+contract admits only named fixed places and read-only pack-element access, HIR
+and MIR retain the exact ordered element calls, and the compatibility emitter's
+single selected C++ comma fold has the same left-to-right sequence. This does
+not make inline native argument lists conforming for any other call family or
+make MIR the production backend input.
 
 The emitter also currently chooses failure messages in seven generated helper
 families and terminates with `std::abort()`. Wrong-state `expected` observers

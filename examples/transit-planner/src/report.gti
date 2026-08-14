@@ -1,57 +1,6 @@
 #include "network.gti"
 #include "planner.gti"
 
-void print_digit(uint64_t digit) {
-  switch (digit) {
-  case uint64_t(0):
-    std::print("0");
-    break;
-  case uint64_t(1):
-    std::print("1");
-    break;
-  case uint64_t(2):
-    std::print("2");
-    break;
-  case uint64_t(3):
-    std::print("3");
-    break;
-  case uint64_t(4):
-    std::print("4");
-    break;
-  case uint64_t(5):
-    std::print("5");
-    break;
-  case uint64_t(6):
-    std::print("6");
-    break;
-  case uint64_t(7):
-    std::print("7");
-    break;
-  case uint64_t(8):
-    std::print("8");
-    break;
-  case uint64_t(9):
-    std::print("9");
-    break;
-  default:
-    std::print("?");
-    break;
-  }
-}
-
-void print_unsigned(mut uint64_t value) {
-  mut uint64_t divisor = 1;
-  while (divisor <= value / 10) {
-    divisor *= 10;
-  }
-
-  while (divisor > 0) {
-    print_digit(value / divisor);
-    value = value % divisor;
-    divisor = divisor / 10;
-  }
-}
-
 void print_station(uint64_t station) {
   switch (station) {
   case uint64_t(0):
@@ -113,7 +62,7 @@ void print_load_error(NetworkLoadError error) {
 void print_report(uint64_t links, RouteResult& route) {
   std::println("GTI Transit Planner");
   std::print("Loaded ");
-  print_unsigned(links);
+  std::print(links);
   std::println(" bidirectional links from data/network.txt");
   std::println("");
   std::println("Fastest route:");
@@ -127,9 +76,9 @@ void print_report(uint64_t links, RouteResult& route) {
   std::println("");
 
   std::print("Total travel time: ");
-  print_unsigned(route.total_minutes());
+  std::print(route.total_minutes());
   std::println(" minutes");
   std::print("Stations visited: ");
-  print_unsigned(route.size());
+  std::print(route.size());
   std::println("");
 }

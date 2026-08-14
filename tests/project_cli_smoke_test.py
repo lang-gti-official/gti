@@ -142,6 +142,45 @@ def main():
             == scaffold_source
         )
 
+        format_root = root / "format-root"
+        format_root.mkdir()
+        initialized_format = run([gti, "format", "init"], cwd=format_root)
+        format_config = format_root / ".gti-format"
+        assert "Created format configuration" in initialized_format.stdout
+        assert format_config.is_file()
+        format_contents = format_config.read_text(encoding="utf-8")
+        assert format_contents.startswith("BasedOnStyle: GTI\n")
+        assert "ReferenceAlignment: Left\n" in format_contents
+
+        explicit_format_root = root / "explicit-format-root"
+        explicit_format_root.mkdir()
+        run([gti, "format", "init", str(explicit_format_root)], cwd=root)
+        assert (explicit_format_root / ".gti-format").read_text(
+            encoding="utf-8"
+        ) == format_contents
+
+        repeated_format_init = run(
+            [gti, "format", "init"], expected=64, cwd=format_root
+        )
+        assert "error[GTI-B1503]" in repeated_format_init.stderr
+        assert format_config.read_text(encoding="utf-8") == format_contents
+
+        missing_format_destination = run(
+            [gti, "format", "init", str(root / "missing-format-root")],
+            expected=64,
+            cwd=root,
+        )
+        assert "error[GTI-B1502]" in missing_format_destination.stderr
+
+        missing_format_subcommand = run(
+            [gti, "format"], expected=64, cwd=root
+        )
+        assert "requires the 'init' subcommand" in missing_format_subcommand.stderr
+        unknown_format_option = run(
+            [gti, "format", "init", "--unknown"], expected=64, cwd=root
+        )
+        assert "unknown format init option" in unknown_format_option.stderr
+
         intermediate_project = root / "intermediate-target"
         intermediate_source = intermediate_project / "src/main.gti"
         intermediate_source.parent.mkdir(parents=True)
@@ -1088,6 +1127,52 @@ def main():
         )
         run([gti, "clean"], cwd=example_project / "src")
         assert not (example_project / "build/gti").exists()
+
+        engine_source = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "examples/game-engine/gti"
+        )
+        engine_project = root / "psych-core-example"
+        shutil.copytree(
+            engine_source,
+            engine_project,
+            ignore=shutil.ignore_patterns("build"),
+        )
+        engine_metadata = json.loads(
+            run([gti, "metadata", "--format", "json"], cwd=engine_project).stdout
+        )
+        assert engine_metadata["package"]["name"] == "psych-core-example"
+        assert {target["name"] for target in engine_metadata["targets"]} == {
+            "layer-stack-tests",
+            "psych-core",
+        }
+        run([gti, "check", "psych-core"], cwd=engine_project)
+        engine_tests = run([gti, "test", "--release"], cwd=engine_project)
+        assert "layer-stack-tests" in engine_tests.stderr
+        engine_run = run(
+            [gti, "run", "psych-core", "--release"], cwd=engine_project
+        )
+        assert engine_run.stdout == (
+            "Psych CLI game\n"
+            "----------------\n"
+            "status overlay attached\n"
+            "game layer attached\n"
+            "application started through psych::Application\n"
+            "turn 1: the player enters the ruins\n"
+            "status overlay: frame presented\n"
+            "turn 2: the player finds a brass key\n"
+            "status overlay: frame presented\n"
+            "turn 3: the player opens the old gate\n"
+            "status overlay: frame presented\n"
+            "game layer detached\n"
+            "status overlay detached\n"
+            "application stopped\n"
+            "----------------\n"
+            "session completed successfully\n"
+        )
+        assert "Built psych-core [release," in engine_run.stderr
+        run([gti, "clean"], cwd=engine_project)
+        assert not (engine_project / "build/gti").exists()
 
 
 if __name__ == "__main__":

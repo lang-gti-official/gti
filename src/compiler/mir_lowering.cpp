@@ -1861,6 +1861,8 @@ private:
       return MirOperation::Literal;
     case HirValueKind::Literal:
       return MirOperation::Literal;
+    case HirValueKind::PackFold:
+      return MirOperation::PackFold;
     case HirValueKind::PackExpansion:
       return MirOperation::PackExpansion;
     case HirValueKind::PayloadConstruction:
@@ -2932,6 +2934,32 @@ private:
                                .definedFailure = value->definedFailure,
                                .lambdaTarget = value->lambdaTarget,
                                .info = value->info};
+    if (instruction.operation == MirOperation::PackFold) {
+      instruction.packFoldSymbol = value->packFoldSymbol;
+      instruction.packFoldParameter = value->packFoldParameter;
+      instruction.packFoldFunction = value->packFoldFunction;
+      instruction.packFoldArgument = value->packFoldArgument;
+      if (value->operands.size() != value->packFoldArgument + 1) {
+        valid = false;
+      } else {
+        instruction.packFoldFixedPlaces.reserve(value->packFoldArgument);
+        for (std::size_t index = 0; index < value->packFoldArgument; ++index) {
+          emitPlaceDependencies(value->operands[index]);
+          const MirPlaceId place = placeForValue(value->operands[index]);
+          if (place == 0) {
+            valid = false;
+          }
+          instruction.packFoldFixedPlaces.push_back(place);
+        }
+      }
+      instruction.packFoldElements.reserve(value->packFoldElements.size());
+      for (const HirPackFoldElement &element : value->packFoldElements) {
+        instruction.packFoldElements.push_back(
+            {.elementType = element.elementType,
+             .functionTarget = element.functionTarget,
+             .parameterTypes = element.parameterTypes});
+      }
+    }
     if (instruction.operation == MirOperation::Closure &&
         instruction.lambdaTarget) {
       const HirLambda *lambda = program.findLambda(*instruction.lambdaTarget);
@@ -2949,7 +2977,10 @@ private:
     if (instruction.operation == MirOperation::None) {
       valid = false;
     }
-    for (std::size_t index = 0; index < value->operands.size(); ++index) {
+    for (std::size_t index = 0;
+         instruction.operation != MirOperation::PackFold &&
+         index < value->operands.size();
+         ++index) {
       const HirValueId operand = value->operands[index];
       if (instruction.operation == MirOperation::Closure &&
           index < instruction.closureCaptureModes.size() &&
@@ -4346,6 +4377,7 @@ MirLowerer::lower(const HirProgram &source,
     }
     result.program.functions.push_back(
         {.id = instance.id,
+         .declaration = instance.declaration,
          .owner = instance.owner,
          .returnType = instance.returnType,
          .parameterTypes = instance.parameterTypes,

@@ -44,6 +44,9 @@ allocate_unique_owner<T, Args...>(Args... args);
 T& unique_owner_borrow<T>(gti_internal::unique_owner<T>& owner);
 mut T& unique_owner_borrow_mut<T>(mut gti_internal::unique_owner<T>& owner);
 bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
+gti_internal::unique_owner<Base>
+unique_owner_upcast<Base, Derived>(
+    gti_internal::unique_owner<Derived> owner);
 
 gti_internal::storage<T> allocate_storage<T>(uint64_t count);
 void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage,
@@ -56,6 +59,10 @@ void storage_destroy<T>(mut gti_internal::storage<T>& storage,
 void storage_relocate<T>(mut gti_internal::storage<T>& source,
                          mut gti_internal::storage<T>& destination,
                          uint64_t count);
+void storage_shift_right<T>(mut gti_internal::storage<T>& storage,
+                            uint64_t first, uint64_t last);
+void storage_shift_left<T>(mut gti_internal::storage<T>& storage,
+                           uint64_t first, uint64_t last);
 
 T integer_wrapping_add<T>(T left, T right);
 T integer_wrapping_sub<T>(T left, T right);
@@ -91,6 +98,7 @@ public:
 namespace runtime {
 extern "C" {
 int32_t gti_rt_write_stdout(gti_internal::text_view value);
+int32_t gti_rt_write_stdout_byte(uint8_t value);
 int32_t gti_rt_read_stdin_byte();
 int64_t gti_rt_open_file_read(gti_internal::text_view path);
 int32_t gti_rt_read_file_byte(int64_t descriptor);
@@ -99,6 +107,10 @@ int32_t gti_rt_close_file(int64_t descriptor);
 
 void write_stdout(gti_internal::text_view value) {
   [[discard]] gti_rt_write_stdout(value);
+}
+
+int32_t write_stdout_byte(uint8_t value) {
+  return gti_rt_write_stdout_byte(value);
 }
 
 int32_t read_stdin_byte() { return gti_rt_read_stdin_byte(); }
@@ -169,6 +181,13 @@ public:
     this.reset();
   }
 
+  unique_ptr<Base> upcast<Base>() mut {
+    mut gti_internal::unique_owner<Base> converted =
+        gti_internal::unique_owner_upcast<Base>(std::move(this.owner));
+    this.owner = nullptr;
+    return unique_ptr<Base>(std::move(converted));
+  }
+
   T& operator*() {
     return gti_internal::unique_owner_borrow(this.owner);
   }
@@ -203,11 +222,105 @@ unique_ptr<T> make_unique<T, Args...>(Args... args) {
       gti_internal::allocate_unique_owner<T>(args...));
 }
 
+unique_ptr<Base> upcast_unique<Base, Derived>(
+    mut unique_ptr<Derived> owner) {
+  return owner.upcast<Base>();
+}
+
 void print(string_view value) {
   gti_internal::runtime::write_stdout(value);
 }
 
+void print(char value) {
+  [[discard]] gti_internal::runtime::write_stdout_byte(uint8_t(value));
+}
+
 void println(string_view value) {
+  print(value);
+  print("\n");
+}
+
+void println(char value) {
+  print(value);
+  print("\n");
+}
+}
+
+namespace gti_internal {
+void print_decimal_digit(uint8_t digit) {
+  switch (digit) {
+  case uint8_t(0):
+    runtime::write_stdout("0");
+    break;
+  case uint8_t(1):
+    runtime::write_stdout("1");
+    break;
+  case uint8_t(2):
+    runtime::write_stdout("2");
+    break;
+  case uint8_t(3):
+    runtime::write_stdout("3");
+    break;
+  case uint8_t(4):
+    runtime::write_stdout("4");
+    break;
+  case uint8_t(5):
+    runtime::write_stdout("5");
+    break;
+  case uint8_t(6):
+    runtime::write_stdout("6");
+    break;
+  case uint8_t(7):
+    runtime::write_stdout("7");
+    break;
+  case uint8_t(8):
+    runtime::write_stdout("8");
+    break;
+  case uint8_t(9):
+    runtime::write_stdout("9");
+    break;
+  default:
+    runtime::write_stdout("?");
+    break;
+  }
+}
+
+void print_integral<std::integral T>(T value) {
+  if (value == T(0)) {
+    runtime::write_stdout("0");
+    return;
+  }
+
+  if (value < T(0)) {
+    runtime::write_stdout("-");
+  }
+
+  mut uint8_t[20] digits = {};
+  mut std::size_t count = 0;
+  mut T remaining = value;
+  while (remaining != T(0)) {
+    mut int64_t digit = int64_t(remaining % T(10));
+    if (digit < 0) {
+      digit = -digit;
+    }
+    digits[count] = uint8_t(digit);
+    count++;
+    remaining = T(remaining / T(10));
+  }
+
+  while (count > 0) {
+    count--;
+    print_decimal_digit(digits[count]);
+  }
+}
+}
+
+namespace std {
+void print<std::integral T>(T value) {
+  gti_internal::print_integral(value);
+}
+
+void println<std::integral T>(T value) {
   print(value);
   print("\n");
 }

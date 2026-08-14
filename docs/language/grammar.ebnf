@@ -696,10 +696,12 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
 
 (* `char` is one exact unsigned 8-bit character code unit and remains distinct
    from `uint8_t`. It supports initialization, assignment, and equality with
-   another `char`; it does not participate in arithmetic, integer constraints,
-   or numeric conversions in this layer. A CHARACTER_LITERAL must decode to
-   exactly one code unit and supports `\\`, `\'`, `\"`, `\n`, `\r`, `\t`, and
-   `\0` escapes.
+   another `char`; it does not participate in arithmetic or integer
+   constraints. The explicit `uint8_t(character)` form extracts the same eight
+   code-unit bits and cannot fail. It does not make `char` numeric, is never
+   implicit, and does not add the inverse `char(uint8_t)` conversion. A
+   CHARACTER_LITERAL must decode to exactly one code unit and supports `\\`,
+   `\'`, `\"`, `\n`, `\r`, `\t`, and `\0` escapes.
 
    A STRING_LITERAL has type `std::string_view`. It is an immutable counted
    view over static literal storage, so embedded zero bytes are preserved and
@@ -1039,11 +1041,24 @@ pack-expansion         = IDENTIFIER "..." ;
    immutable, by-value parameter pack such as `Args... args`. The pack may be
    empty. `args...` is permitted only as the final argument of a call to another
    variadic function or method. This makes forwarding explicit without adding
-   arbitrary expansion contexts, folds, indexing, multiple packs, class packs,
+   arbitrary expansion contexts, indexing, multiple packs, class packs,
    reference packs, or C++ forwarding-reference deduction. Source-defined
    `std::vector::emplace_back` uses this bounded form: it constructs an element
    in place but does not promise C++ perfect forwarding, so copyable arguments
    may be copied on entry to the by-value pack.
+
+   One additional expression may iterate that same named pack:
+   `(function_call(fixed, args), ...)`. The pattern is exactly one ordinary
+   free-function or static-method call, contains the bare pack name exactly
+   once as its final argument, and has only named-place fixed arguments. The
+   selected target is one non-overloaded generic `void` declaration whose
+   final type parameter represents one pack element. Its corresponding value
+   parameter is read-only; the fold cannot move from or mutably borrow an
+   element. The target is selected symbolically, then every concrete pack
+   element is rechecked as one exact specialization. An empty pack is a
+   well-formed no-op. Binary/operator folds, member calls, overload selection
+   per element, arbitrary fold patterns, multiple pack occurrences, and
+   mutable or consuming element access are not implemented.
 
    Generic class and struct applications always provide every type argument,
    including at constructor calls. Generic function arguments may be explicit
@@ -1061,8 +1076,9 @@ pack-expansion         = IDENTIFIER "..." ;
    parameter pack containing any move-only element is one owned unit: its first
    whole-pack expansion consumes it, and a later expansion is a use-after-move
    error. Copyable packs may be expanded more than once. User generic type
-   arguments cannot be void. Pack iteration, partial pack movement, and
-   `auto`-driven generic deduction are not implemented. *)
+   arguments cannot be void. Pack indexing, partial pack movement, general
+   iteration beyond the bounded call fold, and `auto`-driven generic deduction
+   are not implemented. *)
 
 (* `std::unique_ptr<T>` is a nominal standard-library class over the
    compiler-private `gti_internal::unique_owner<T>` capability.
@@ -1079,7 +1095,10 @@ pack-expansion         = IDENTIFIER "..." ;
    `std::unique_ptr<T> owner = nullptr` initialization, while exact
    `operator=(nullptr_t)` and `reset()` empty an existing mutable owner. These
    rules do not add an implicit class conversion to call,
-   constructor-argument, or return-value overload resolution. *)
+   constructor-argument, or return-value overload resolution. Explicit
+   `std::upcast_unique<Base, Derived>(owner)` consumes a derived owner only
+   when `Base` is a public polymorphic base with safe destruction; it does not
+   add an implicit owner conversion to overload resolution. *)
 
 (* `std::move(value)` is a compiler-defined explicit move operation for a named
    movable local value, by-value parameter, writable named field path rooted in
@@ -1111,7 +1130,14 @@ primary-expression     = literal
                        | unexpected-expression
                        | "this"
                        | "nullptr"
+                       | pack-fold-expression
                        | "(" expression ")" ;
+
+pack-fold-expression   = "(" assignment-expression "," "..." ")" ;
+
+(* The assignment-expression in a pack fold is syntactically required to have
+   a call as its root. The semantic restrictions above make this a bounded
+   pack operation rather than the C++ fold-expression family. *)
 
 lambda-expression      = lambda-capture-list parameter-clause "->" type block ;
 

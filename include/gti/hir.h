@@ -78,6 +78,7 @@ enum class HirValueKind {
   LayoutQuery,
   Literal,
   Logical,
+  PackFold,
   PackExpansion,
   PayloadConstruction,
   PayloadExtraction,
@@ -153,6 +154,12 @@ struct HirCallPlan {
   std::vector<HirCallArgument> arguments;
 };
 
+struct HirPackFoldElement {
+  SemanticType elementType = SemanticType::Unknown;
+  HirFunctionInstanceId functionTarget = 0;
+  std::vector<SemanticType> parameterTypes;
+};
+
 struct HirValue {
   HirValueId id = 0;
   HirValueKind kind = HirValueKind::Literal;
@@ -177,6 +184,11 @@ struct HirValue {
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirValueId> receiver;
   std::optional<HirCallPlan> callPlan;
+  SymbolId packFoldSymbol = 0;
+  GenericParameterId packFoldParameter = 0;
+  FunctionId packFoldFunction = 0;
+  std::size_t packFoldArgument = 0;
+  std::vector<HirPackFoldElement> packFoldElements;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirFunctionInstanceId> contextualBoolTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;

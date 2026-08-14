@@ -1,0 +1,183 @@
+#include <std/string>
+
+namespace std {
+enum class format_errc {
+  invalid_format,
+  argument_count_mismatch,
+};
+
+namespace detail {
+void count_format_argument<std::integral T>(mut size_t& count, T& value) {
+  count++;
+}
+
+expected<void, format_errc> validate_format_pattern(string_view pattern,
+                                                     size_t argument_count) {
+  mut size_t cursor = 0;
+  mut size_t field_count = 0;
+  while (cursor < pattern.size()) {
+    char current = pattern[cursor];
+    if (current == '{') {
+      if (cursor + 1 >= pattern.size()) {
+        return unexpected(format_errc::invalid_format);
+      }
+      char next = pattern[cursor + 1];
+      if (next == '{') {
+        cursor += 2;
+        continue;
+      }
+      if (next == '}') {
+        field_count++;
+        cursor += 2;
+        continue;
+      }
+      return unexpected(format_errc::invalid_format);
+    }
+    if (current == '}') {
+      if (cursor + 1 >= pattern.size() or pattern[cursor + 1] != '}') {
+        return unexpected(format_errc::invalid_format);
+      }
+      cursor += 2;
+      continue;
+    }
+    cursor++;
+  }
+
+  if (field_count != argument_count) {
+    return unexpected(format_errc::argument_count_mismatch);
+  }
+  return;
+}
+
+void append_format_argument<std::integral T>(mut string& output,
+                                              string_view pattern,
+                                              mut size_t& cursor, T& value) {
+  while (cursor < pattern.size()) {
+    char current = pattern[cursor];
+    if (current == '{') {
+      char next = pattern[cursor + 1];
+      if (next == '{') {
+        output.push_back('{');
+        cursor += 2;
+        continue;
+      }
+
+      cursor += 2;
+      mut string replacement = to_string(value);
+      for (mut size_t index = 0; index < replacement.size(); index++) {
+        output.push_back(replacement[index]);
+      }
+      return;
+    }
+    if (current == '}') {
+      output.push_back('}');
+      cursor += 2;
+      continue;
+    }
+    output.push_back(current);
+    cursor++;
+  }
+}
+
+void append_format_tail(mut string& output, string_view pattern,
+                        mut size_t& cursor) {
+  while (cursor < pattern.size()) {
+    char current = pattern[cursor];
+    if (current == '{') {
+      output.push_back('{');
+      cursor += 2;
+      continue;
+    }
+    if (current == '}') {
+      output.push_back('}');
+      cursor += 2;
+      continue;
+    }
+    output.push_back(current);
+    cursor++;
+  }
+}
+}
+
+expected<string, format_errc> format(string_view pattern) {
+  expected<void, format_errc> validation =
+      detail::validate_format_pattern(pattern, size_t(0));
+  if (!validation) {
+    return unexpected(validation.error());
+  }
+
+  mut string output = string();
+  mut size_t cursor = 0;
+  detail::append_format_tail(output, pattern, cursor);
+  return std::move(output);
+}
+
+expected<string, format_errc>
+format<std::integral First, std::integral Args...>(string_view pattern,
+                                                   First first,
+                                                   Args... args) {
+  mut size_t argument_count = 1;
+  (detail::count_format_argument(argument_count, args), ...);
+
+  expected<void, format_errc> validation =
+      detail::validate_format_pattern(pattern, argument_count);
+  if (!validation) {
+    return unexpected(validation.error());
+  }
+
+  mut string output = string();
+  mut size_t cursor = 0;
+  detail::append_format_argument(output, pattern, cursor, first);
+  (detail::append_format_argument(output, pattern, cursor, args), ...);
+  detail::append_format_tail(output, pattern, cursor);
+  return std::move(output);
+}
+
+expected<void, format_errc>
+try_print(string_view pattern) {
+  mut expected<string, format_errc> formatted = format(pattern);
+  if (!formatted) {
+    return unexpected(formatted.error());
+  }
+  print(formatted.value());
+  return;
+}
+
+expected<void, format_errc>
+try_print<std::integral First, std::integral Args...>(string_view pattern,
+                                                      First first,
+                                                      Args... args) {
+  mut expected<string, format_errc> formatted =
+      format(pattern, first, args...);
+  if (!formatted) {
+    return unexpected(formatted.error());
+  }
+  print(formatted.value());
+  return;
+}
+
+expected<void, format_errc>
+try_println(string_view pattern) {
+  mut expected<string, format_errc> formatted = format(pattern);
+  if (!formatted) {
+    return unexpected(formatted.error());
+  }
+  print(formatted.value());
+  print('\n');
+  return;
+}
+
+expected<void, format_errc>
+try_println<std::integral First, std::integral Args...>(string_view pattern,
+                                                        First first,
+                                                        Args... args) {
+  mut expected<string, format_errc> formatted =
+      format(pattern, first, args...);
+  if (!formatted) {
+    return unexpected(formatted.error());
+  }
+  print(formatted.value());
+  print('\n');
+  return;
+}
+}

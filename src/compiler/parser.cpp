@@ -1856,7 +1856,32 @@ private:
                                           std::move(errorValue));
     }
     if (match({TokenKind::LEFT_PAREN})) {
-      ExprPtr expr = expression();
+      Token leftParen = previous();
+      ExprPtr expr = assignment();
+      if (match({TokenKind::COMMA})) {
+        Token comma = previous();
+        if (match({TokenKind::ELLIPSIS})) {
+          Token ellipsis = previous();
+          if (dynamic_cast<const Call *>(expr.get()) == nullptr) {
+            throw error(
+                ellipsis,
+                "A pack fold pattern must be a function or method call.");
+          }
+          Token rightParen =
+              consume(TokenKind::RIGHT_PAREN,
+                      "Expect ')' after the pack fold ellipsis.");
+          return std::make_unique<PackFold>(
+              std::move(leftParen), std::move(expr), std::move(comma),
+              std::move(ellipsis), std::move(rightParen));
+        }
+
+        expr = std::make_unique<Binary>(std::move(expr), comma, assignment());
+        while (match({TokenKind::COMMA})) {
+          Token oper = previous();
+          expr = std::make_unique<Binary>(std::move(expr), std::move(oper),
+                                          assignment());
+        }
+      }
       consume(TokenKind::RIGHT_PAREN, "Expect ')' after expression.");
       return std::make_unique<Grouping>(std::move(expr));
     }

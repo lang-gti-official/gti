@@ -218,3 +218,11 @@ int inspect_event(Event event) {
     return x + y;
   }
 }
+
+void fold_values<Values...>(Values... values) {
+  (consume(values), ...);
+}
+
+void call_member_generic<Owner, Base>(Owner& owner) {
+  owner.upcast<Base>();
+}

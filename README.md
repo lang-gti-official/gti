@@ -62,7 +62,9 @@ int main() {
 
 - Explicit fixed-width integer types, checked conversions and indexing, and
   immutable-by-default bindings, plus explicit wrapping, saturating, and
-  checked-result add/subtract/multiply operations.
+  checked-result add/subtract/multiply operations, direct base-10
+  `std::print`/`std::println`, owning `std::to_string` conversion, and
+  recoverable sequential integral formatting through `<std/format>`.
 - Exact IEEE-754 binary32 `float` and binary64 `double`, with width-selecting
   literals, deterministic promotion and conversion, frontend constant
   evaluation, and bit-exact native emission.
@@ -82,7 +84,8 @@ int main() {
   lexically gated one-level raw pointers for native wrappers.
 - Exact overloads, named and value generics, source-defined multi-parameter
   concepts, bounded validity-only trailing `requires`, confined variadic
-  forwarding, confined read/mut-callable parameters with exact contextual
+  forwarding and ordered read-only call-pack folds, confined read/mut-callable
+  parameters with exact contextual
   results, and cleanup-free consuming `operator() &&` callables with
   path-checked at-most-once invocation. Typed lambdas support immutable copy
   captures and explicit `[target = std::move(source)]` owned captures with
@@ -250,6 +253,15 @@ without preventing later tests from running.
 Use `gti init` to initialize an existing directory. It preserves an existing
 `src/main.gti` and refuses to replace an existing `gti.toml`; `--name <name>`
 overrides the package name derived from the directory.
+
+Create an editable formatter configuration in the current directory with
+`gti format init`, or pass an existing destination directory explicitly. The
+command refuses to replace an existing `.gti-format`:
+
+```sh
+gti format init
+gti format init path/to/project
+```
 
 ## Neovim and LazyVim
 

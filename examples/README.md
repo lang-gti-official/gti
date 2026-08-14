@@ -63,6 +63,7 @@ own `main` function.
 | `55-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport with exactly-once cleanup |
 | `56-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive matching |
 | `57-contextual-array-arguments.gti` | generic brace arguments as exact fixed-array values, including `std::vector<int>({1, 2, 3})` |
+| `58-formatted-output.gti` | sequential integral `{}` formatting with owned results and recoverable pattern errors |
 
 Build and run an example from the repository root:
 
@@ -156,3 +157,10 @@ shape and enforced guarantees with C++, see
 that loads an external graph, runs Dijkstra's shortest-path algorithm, validates
 the result, and prints a report. It demonstrates the language and `gti`
 project workflow working together beyond isolated syntax examples.
+
+[`game-engine/gti/`](game-engine/gti/README.md) ports the core/application
+architecture of the adjacent C++ Psych engine into a headless GTI project. It
+demonstrates state-bearing application inheritance, interface-based layers,
+ordered layer/overlay dispatch, explicit lifecycle management, and a small CLI
+game loop while deliberately excluding vendor-backed windowing, rendering,
+editor, logging, and native bindings.

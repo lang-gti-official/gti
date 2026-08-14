@@ -28,6 +28,7 @@ public:
   void visitLayoutQueryExpr(const LayoutQuery &expr) override;
   void visitLiteralExpr(const LiteralExpr &expr) override;
   void visitLogicalExpr(const Logical &expr) override;
+  void visitPackFoldExpr(const PackFold &expr) override;
   void visitPackExpansionExpr(const PackExpansion &expr) override;
   void visitPostfixExpr(const Postfix &expr) override;
   void visitQualifiedNameExpr(const QualifiedName &expr) override;

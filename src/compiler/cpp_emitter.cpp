@@ -249,6 +249,63 @@ public:
     }
   }
 
+  void shift_right(std::uint64_t first, std::uint64_t last) {
+    if (first > last || last >= capacity()) {
+      storage_error("storage right shift exceeds capacity or has an invalid range");
+    }
+    const std::size_t begin = static_cast<std::size_t>(first);
+    const std::size_t end = static_cast<std::size_t>(last);
+    if (initialized_[end] != 0) {
+      storage_error("storage right shift requires an empty destination slot");
+    }
+    for (std::size_t index = begin; index < end; ++index) {
+      if (initialized_[index] == 0) {
+        storage_error("storage right shift requires initialized source slots");
+      }
+    }
+    for (std::size_t destination = end; destination > begin; --destination) {
+      const std::size_t source = destination - 1;
+      try {
+        std::construct_at(slot(destination),
+                          std::move(*std::launder(slot(source))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      initialized_[destination] = 1;
+      std::destroy_at(std::launder(slot(source)));
+      initialized_[source] = 0;
+    }
+  }
+
+  void shift_left(std::uint64_t first, std::uint64_t last) {
+    if (first >= last || last > capacity()) {
+      storage_error("storage left shift exceeds capacity or has an invalid range");
+    }
+    const std::size_t begin = static_cast<std::size_t>(first);
+    const std::size_t end = static_cast<std::size_t>(last);
+    if (initialized_[begin] != 0) {
+      storage_error("storage left shift requires an empty destination slot");
+    }
+    for (std::size_t index = begin + 1; index < end; ++index) {
+      if (initialized_[index] == 0) {
+        storage_error("storage left shift requires initialized source slots");
+      }
+    }
+    for (std::size_t destination = begin; destination + 1 < end;
+         ++destination) {
+      const std::size_t source = destination + 1;
+      try {
+        std::construct_at(slot(destination),
+                          std::move(*std::launder(slot(source))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      initialized_[destination] = 1;
+      std::destroy_at(std::launder(slot(source)));
+      initialized_[source] = 0;
+    }
+  }
+
 private:
   void allocate(std::uint64_t requested) {
     if (requested > (std::numeric_limits<std::size_t>::max)() ||
@@ -359,6 +416,18 @@ inline void storage_relocate(storage<T> &source, storage<T> &destination,
   source.relocate_to(destination, count);
 }
 
+template <typename T>
+inline void storage_shift_right(storage<T> &value, std::uint64_t first,
+                                std::uint64_t last) {
+  value.shift_right(first, last);
+}
+
+template <typename T>
+inline void storage_shift_left(storage<T> &value, std::uint64_t first,
+                               std::uint64_t last) {
+  value.shift_left(first, last);
+}
+
 template <typename T, typename... Args>
 inline std::unique_ptr<T> make_unique(Args &&...args) {
   try {
@@ -387,6 +456,12 @@ inline const T &owner_access(const std::unique_ptr<T> &owner) {
 template <typename T>
 inline bool unique_owner_is_null(const std::unique_ptr<T> &owner) noexcept {
   return !owner;
+}
+
+template <typename Base, typename Derived>
+inline std::unique_ptr<Base>
+unique_owner_upcast(std::unique_ptr<Derived> &&owner) noexcept {
+  return std::unique_ptr<Base>(std::move(owner));
 }
 
 template <typename T>
@@ -1673,6 +1748,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << ')';
       return;
     }
+    if (resolved != nullptr &&
+        resolved->intrinsic == IntrinsicKind::UniqueOwnerUpcast) {
+      output << "::gti_internal::backend::unique_owner_upcast<";
+      if (!resolved->typeArguments.empty()) {
+        emitSemanticType(resolved->typeArguments.front());
+      }
+      output << ">(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
     if (resolved != nullptr && resolved->intrinsic == IntrinsicKind::Move) {
       output << "std::move(";
       emitArguments(expr.arguments());
@@ -2026,6 +2112,28 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     output << ')';
   }
 
+  void visitPackFoldExpr(const PackFold &expr) override {
+    const ResolvedPackFoldInfo *fold = semantics.findPackFold(expr);
+    const Call *pattern = fold == nullptr ? nullptr : fold->pattern;
+    const ResolvedCallInfo *resolved =
+        pattern == nullptr ? nullptr : semantics.findCall(*pattern);
+    if (pattern == nullptr || resolved == nullptr ||
+        resolved->declaration == nullptr || pattern->arguments().empty()) {
+      output << "/* invalid pack fold */";
+      return;
+    }
+    output << '(';
+    emitResolvedCallee(pattern->callee(), *resolved, false);
+    output << '(';
+    for (std::size_t index = 0; index < pattern->arguments().size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      emitExpression(pattern->arguments()[index]);
+    }
+    output << "), ...)";
+  }
+
   void visitPackExpansionExpr(const PackExpansion &expr) override {
     output << "::gti_internal::backend::forward_pack_argument("
            << expr.name().lexeme << ")...";
@@ -2265,9 +2373,11 @@ private:
         "Arguments",
         "Array",
         "Binding",
+        "Base",
         "Capability",
         "Callable",
         "Count",
+        "Derived",
         "Error",
         "Index",
         "Left",
@@ -2396,6 +2506,8 @@ private:
         "storage_read",
         "storage_read_mut",
         "storage_relocate",
+        "storage_shift_left",
+        "storage_shift_right",
         "string_view_at",
         "string_view_bounds_error",
         "subtract",
@@ -2406,6 +2518,7 @@ private:
         "to_c_string_view",
         "truncated",
         "unique_owner_is_null",
+        "unique_owner_upcast",
         "unsigned_count",
         "upper",
         "value",
@@ -5203,7 +5316,9 @@ private:
            intrinsic == IntrinsicKind::StorageRead ||
            intrinsic == IntrinsicKind::StorageReadMut ||
            intrinsic == IntrinsicKind::StorageDestroy ||
-           intrinsic == IntrinsicKind::StorageRelocate;
+           intrinsic == IntrinsicKind::StorageRelocate ||
+           intrinsic == IntrinsicKind::StorageShiftRight ||
+           intrinsic == IntrinsicKind::StorageShiftLeft;
   }
 
   [[nodiscard]] static std::string_view
@@ -5245,6 +5360,10 @@ private:
       return "storage_destroy";
     case IntrinsicKind::StorageRelocate:
       return "storage_relocate";
+    case IntrinsicKind::StorageShiftRight:
+      return "storage_shift_right";
+    case IntrinsicKind::StorageShiftLeft:
+      return "storage_shift_left";
     default:
       return "";
     }

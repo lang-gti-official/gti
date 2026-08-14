@@ -25,6 +25,12 @@ Formatting starts with the editor-supplied indentation width and space/tab
 choice. GTI then searches from the formatted file's directory toward the
 filesystem root and applies the nearest `.gti-format` file.
 
+`gti format init [directory]` creates a complete default `.gti-format` in an
+existing directory, defaulting to the current directory. Initialization never
+replaces an existing entry or follows a symbolic-link destination. The emitted
+document is owned by `format_config` and parses back to the same GTI defaults,
+so the CLI and LSP do not maintain separate style templates.
+
 The file uses top-level YAML-style `Option: Value` entries. Blank lines,
 comments beginning with `#`, and YAML document markers are accepted. A
 `BasedOnStyle` entry is applied before explicit options regardless of its
@@ -51,7 +57,7 @@ issues to non-LSP callers.
 | `MaxEmptyLinesToKeep` | integer `0` through `16` | `1` | Cap consecutive empty lines retained from the source |
 | `SpacesBeforeTrailingComments` | integer `0` through `16` | `1` | Spaces before a trailing `//` comment |
 | `SpaceBeforeAssignmentOperators` | `true`, `false` | `true` | Control the space before `=`, `+=`, and `-=` while retaining the space after |
-| `ReferenceAlignment` | `Left`, `Right`, `Middle` | `Middle` | Format GTI borrow markers as `T& name`, `T &name`, or `T & name` |
+| `ReferenceAlignment` | `Left`, `Right`, `Middle` | `Left` | Format GTI borrow markers as `T& name`, `T &name`, or `T & name` |
 | `DisableFormat` | `true`, `false` | `false` | Return the source unchanged |
 
 `UseTab: ForIndentation` and `UseTab: Always` currently have the same effect
@@ -84,13 +90,20 @@ ReferenceAlignment: Right
 
 The current formatter has three deliberately separate responsibilities:
 
-1. `format_config` discovers and validates configuration without knowing about
-   LSP or JSON-RPC;
+1. `format_config` owns the default document and discovers and validates
+   configuration without knowing about LSP or JSON-RPC;
 2. `Formatter` is declared in `include/gti/formatter.h`; its scanner and
    structural formatting policy compile once in `src/compiler/formatter.cpp`
    and produce idempotent text; and
-3. the LSP translates editor options, loads project configuration, reports
+3. the driver safely scaffolds the default document while the CLI owns command
+   arguments and presentation; and
+4. the LSP translates editor options, loads project configuration, reports
    configuration issues, and returns one whole-document edit.
+
+Reference markers are recognized from declaration structure rather than only
+from names declared in the formatted file. This keeps an included nominal
+return type such as `LayerStack& GetLayerStack()` aligned consistently while
+leaving expression-level bitwise `&` spacing unchanged.
 
 Line comments, block comments, and strings remain separate scanner concerns
 because the compiler lexer intentionally discards comments. The formatter

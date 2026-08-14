@@ -2436,6 +2436,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::Convert:
     case MirOperation::ExpectedHasValue:
     case MirOperation::Closure:
+    case MirOperation::PackFold:
     case MirOperation::PackExpansion:
     case MirOperation::PayloadConstruct:
     case MirOperation::PayloadExtract:
@@ -2528,6 +2529,90 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                 place->access == AccessMode::Mutable);
       };
   const auto validCompute = [&](const MirInstruction &instruction) {
+    if (instruction.operation == MirOperation::PackFold) {
+      if (body.kind != MirBodyKind::Function || instruction.result ||
+          instruction.info.type != SemanticType::Void ||
+          !instruction.operands.empty() || instruction.packFoldSymbol == 0 ||
+          instruction.packFoldParameter == 0 ||
+          instruction.packFoldFunction == 0 ||
+          instruction.packFoldFixedPlaces.size() !=
+              instruction.packFoldArgument) {
+        return false;
+      }
+
+      const MirPlace *packPlace = nullptr;
+      for (const MirPlace &place : body.places) {
+        if (place.root != MirPlaceRootKind::Binding ||
+            place.symbol != instruction.packFoldSymbol ||
+            place.sourceValue != 0 || !place.projections.empty()) {
+          continue;
+        }
+        if (packPlace != nullptr) {
+          return false;
+        }
+        packPlace = &place;
+      }
+      if (packPlace == nullptr || !packPlace->initiallyAvailable ||
+          packPlace->type.kind != SemanticType::TypePack ||
+          packPlace->type.genericParameterId != instruction.packFoldParameter ||
+          (!packPlace->type.concretePack &&
+           (!packPlace->type.arguments.empty() ||
+            !instruction.packFoldElements.empty())) ||
+          (packPlace->type.concretePack &&
+           packPlace->type.arguments.size() !=
+               instruction.packFoldElements.size())) {
+        return false;
+      }
+
+      const auto placeMatchesParameter = [&](MirPlaceId placeId,
+                                             const SemanticType &parameter) {
+        const MirPlace *place = body.findPlace(placeId);
+        if (place == nullptr) {
+          return false;
+        }
+        if (parameter.kind != SemanticType::Reference) {
+          return place->type == parameter;
+        }
+        return parameter.arguments.size() == 1 &&
+               place->type == parameter.arguments.front() &&
+               (parameter.referenceAccess == AccessMode::ReadOnly ||
+                place->access == AccessMode::Mutable);
+      };
+      if (std::any_of(instruction.packFoldFixedPlaces.begin(),
+                      instruction.packFoldFixedPlaces.end(),
+                      [&](MirPlaceId place) {
+                        return body.findPlace(place) == nullptr;
+                      })) {
+        return false;
+      }
+      for (std::size_t elementIndex = 0;
+           elementIndex < instruction.packFoldElements.size(); ++elementIndex) {
+        const MirPackFoldElement &element =
+            instruction.packFoldElements[elementIndex];
+        if (element.elementType == SemanticType::Unknown ||
+            element.functionTarget == 0 ||
+            element.parameterTypes.size() != instruction.packFoldArgument + 1 ||
+            (packPlace->type.concretePack &&
+             packPlace->type.arguments[elementIndex] != element.elementType)) {
+          return false;
+        }
+        for (std::size_t argument = 0; argument < instruction.packFoldArgument;
+             ++argument) {
+          if (!placeMatchesParameter(instruction.packFoldFixedPlaces[argument],
+                                     element.parameterTypes[argument])) {
+            return false;
+          }
+        }
+        const SemanticType &parameter = element.parameterTypes.back();
+        if (parameter.kind != SemanticType::Reference ||
+            parameter.referenceAccess != AccessMode::ReadOnly ||
+            parameter.arguments.size() != 1 ||
+            parameter.arguments.front() != element.elementType) {
+          return false;
+        }
+      }
+      return true;
+    }
     if (!instruction.result || instruction.operation == MirOperation::None ||
         instruction.operation == MirOperation::Count) {
       return false;
@@ -2594,6 +2679,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  instruction.operands.size() &&
              instruction.closureCaptureModes.size() ==
                  instruction.operands.size();
+    case MirOperation::PackFold:
+      return false;
     case MirOperation::PackExpansion:
       return instruction.operands.empty();
     case MirOperation::PayloadConstruct:
@@ -2645,7 +2732,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !instruction.callableArguments.empty())) ||
         (instruction.operation != MirOperation::Closure &&
          (!instruction.closureCaptureTypes.empty() ||
-          !instruction.closureCaptureModes.empty()))) {
+          !instruction.closureCaptureModes.empty())) ||
+        (instruction.operation != MirOperation::PackFold &&
+         (instruction.packFoldSymbol != 0 ||
+          instruction.packFoldParameter != 0 ||
+          instruction.packFoldFunction != 0 ||
+          instruction.packFoldArgument != 0 ||
+          !instruction.packFoldFixedPlaces.empty() ||
+          !instruction.packFoldElements.empty()))) {
       return false;
     }
     const auto validCallableInvocation = [&]() {
@@ -5781,6 +5875,30 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                  .instruction = instruction.id,
                  .message = "defined-failure origin does not retain its exact "
                             "artifact-local site"});
+          }
+        }
+        if (instruction.operation != MirOperation::PackFold) {
+          continue;
+        }
+        for (const MirPackFoldElement &element : instruction.packFoldElements) {
+          const MirFunctionInstance *target =
+              program.findFunctionInstance(element.functionTarget);
+          if (target == nullptr || target->returnType != SemanticType::Void ||
+              target->declaration != instruction.packFoldFunction ||
+              target->parameterTypes != element.parameterTypes ||
+              target->parameterTypes.size() !=
+                  instruction.packFoldArgument + 1 ||
+              target->parameterTypes.back().kind != SemanticType::Reference ||
+              target->parameterTypes.back().arguments.size() != 1 ||
+              target->parameterTypes.back().arguments.front() !=
+                  element.elementType) {
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .block = block.id,
+                 .instruction = instruction.id,
+                 .message = "pack-fold element does not name its exact "
+                            "void function specialization"});
           }
         }
       }

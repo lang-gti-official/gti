@@ -134,6 +134,12 @@ entry form, `int main(int argc, std::vector<std::string> argv)`, with the
 required standard string and vector includes. `init` continues to preserve an
 existing regular entry source rather than modernizing or replacing it.
 
+`gti format init [directory]` is the bounded formatter-configuration scaffold.
+It defaults to the current directory, requires an existing real directory,
+refuses filesystem roots, symbolic links, and an existing `.gti-format`, and
+writes the compiler-owned default configuration. It does not discover or
+modify a manifest and does not format source files.
+
 Selected `.c` inputs are compiled by a separately resolved C compiler into
 staged objects beside the generated C++ intermediate. Selected `.cpp`, `.cc`,
 and `.cxx` inputs follow the same managed-object path using the resolved C++

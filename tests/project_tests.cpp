@@ -1,5 +1,6 @@
 #include "gti/driver/manifest.h"
 #include "gti/driver/project.h"
+#include "gti/format_config.h"
 #include "gti/support.h"
 
 #include <algorithm>
@@ -1515,6 +1516,63 @@ int main(int argc, std::vector<std::string> argv) {
   }
 }
 
+void testFormatConfigScaffolding() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path destination = temporary.root() / "configured";
+  std::filesystem::create_directory(destination);
+
+  lang::driver::FormatConfigScaffoldResult scaffold =
+      lang::driver::scaffoldFormatConfig(destination);
+  const lang::FormatConfigResult parsed =
+      lang::parseFormatConfig(readFile(destination / ".gti-format"));
+  expect(scaffold.succeeded() &&
+             scaffold.configPath == destination / ".gti-format" &&
+             readFile(scaffold.configPath) == lang::defaultFormatConfig() &&
+             parsed.issues.empty() &&
+             parsed.options.referenceAlignment ==
+                 lang::ReferenceAlignment::Left,
+         "format configuration scaffolding should write the parseable GTI "
+         "defaults into an existing destination");
+
+  const std::string original = readFile(scaffold.configPath);
+  scaffold = lang::driver::scaffoldFormatConfig(destination);
+  expect(scaffold.status ==
+                 lang::driver::FormatConfigScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1503") != nullptr &&
+             readFile(destination / ".gti-format") == original,
+         "format configuration scaffolding should refuse to replace an "
+         "existing configuration");
+
+  scaffold = lang::driver::scaffoldFormatConfig(temporary.root() / "missing");
+  expect(scaffold.status ==
+                 lang::driver::FormatConfigScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1502") != nullptr,
+         "format configuration scaffolding should require an existing "
+         "directory");
+
+  scaffold = lang::driver::scaffoldFormatConfig(temporary.root().root_path());
+  expect(scaffold.status ==
+                 lang::driver::FormatConfigScaffoldStatus::InvalidRequest &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1500") != nullptr,
+         "format configuration scaffolding should refuse a filesystem root");
+
+  const std::filesystem::path symlinkTarget = temporary.root() / "target";
+  const std::filesystem::path symlinkDestination = temporary.root() / "link";
+  std::filesystem::create_directory(symlinkTarget);
+  std::error_code symlinkError;
+  std::filesystem::create_directory_symlink(symlinkTarget, symlinkDestination,
+                                            symlinkError);
+  if (!symlinkError) {
+    scaffold = lang::driver::scaffoldFormatConfig(symlinkDestination);
+    expect(scaffold.status ==
+                   lang::driver::FormatConfigScaffoldStatus::Conflict &&
+               findDiagnostic(scaffold.diagnostics, "GTI-B1502") != nullptr &&
+               !std::filesystem::exists(symlinkTarget / ".gti-format"),
+           "format configuration scaffolding should not follow a destination "
+           "symlink");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -1528,6 +1586,7 @@ int main() {
   testCleanSafety();
   testWorkspaceAndPathDependencies();
   testProjectScaffolding();
+  testFormatConfigScaffolding();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

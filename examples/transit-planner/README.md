@@ -15,7 +15,8 @@ The project exercises:
   enums;
 - checked fixed-width arithmetic, fixed arrays, indexing, and loops;
 - a real shortest-path algorithm and route reconstruction; and
-- reusable reporting functions over computed results.
+- reusable reporting functions over computed results, including direct
+  fixed-width integer output through `std::print`.
 
 From this directory, inspect and analyze the project without compiling:
 

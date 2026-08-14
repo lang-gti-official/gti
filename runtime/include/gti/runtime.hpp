@@ -12,6 +12,10 @@ inline void write_stdout(std::string_view value) {
       value.data(), static_cast<std::uint64_t>(value.size())});
 }
 
+inline std::int32_t write_stdout_byte(std::uint8_t value) {
+  return gti_rt_write_stdout_byte(value);
+}
+
 inline std::int32_t read_stdin_byte() { return gti_rt_read_stdin_byte(); }
 
 inline std::int64_t open_file_read(std::string_view path) {

@@ -461,6 +461,11 @@ if(BUILD_TESTING)
   target_link_libraries("gti_block_comment_tests" PRIVATE gti_compiler)
   add_test(NAME block_comment_pipeline COMMAND gti_block_comment_tests)
 
+  add_executable("gti_pack_fold_syntax_tests"
+                 "tests/pack_fold_syntax_tests.cpp")
+  target_link_libraries("gti_pack_fold_syntax_tests" PRIVATE gti_compiler)
+  add_test(NAME pack_fold_syntax COMMAND gti_pack_fold_syntax_tests)
+
   add_executable("gti_optimizer_tests" "tests/optimizer_tests.cpp")
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)

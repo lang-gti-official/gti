@@ -244,4 +244,76 @@ public:
     return !this.equals(other);
   }
 };
+
+void print(string& value) {
+  for (mut size_t index = 0; index < value.size(); index++) {
+    print(value[index]);
+  }
+}
+
+void println(string& value) {
+  print(value);
+  print("\n");
+}
+
+namespace detail {
+char decimal_digit_character(uint8_t digit) {
+  switch (digit) {
+  case uint8_t(0):
+    return '0';
+  case uint8_t(1):
+    return '1';
+  case uint8_t(2):
+    return '2';
+  case uint8_t(3):
+    return '3';
+  case uint8_t(4):
+    return '4';
+  case uint8_t(5):
+    return '5';
+  case uint8_t(6):
+    return '6';
+  case uint8_t(7):
+    return '7';
+  case uint8_t(8):
+    return '8';
+  case uint8_t(9):
+    return '9';
+  default:
+    return '?';
+  }
+}
+}
+
+string to_string<std::integral T>(T value) {
+  mut string result = string();
+  if (value == T(0)) {
+    result.push_back('0');
+    return std::move(result);
+  }
+
+  if (value < T(0)) {
+    result.push_back('-');
+  }
+
+  mut uint8_t[20] digits = {};
+  mut size_t count = 0;
+  mut T remaining = value;
+  while (remaining != T(0)) {
+    mut int64_t digit = int64_t(remaining % T(10));
+    if (digit < 0) {
+      digit = -digit;
+    }
+    digits[count] = uint8_t(digit);
+    count++;
+    remaining = T(remaining / T(10));
+  }
+
+  result.reserve(result.size() + count);
+  while (count > 0) {
+    count--;
+    result.push_back(detail::decimal_digit_character(digits[count]));
+  }
+  return std::move(result);
+}
 }

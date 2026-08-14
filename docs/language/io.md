@@ -1,4 +1,4 @@
-# Unbuffered byte I/O
+# Byte I/O And Bounded Formatting
 
 Status: Current contract
 
@@ -104,7 +104,80 @@ units but not to application lookup or language-server presentation. The
 complete bounded ABI and lifetime rules are in
 [`native-c-interop.md`](native-c-interop.md).
 
-Buffered streams, writes, seeking, filesystem operations, encoding conversion,
-standard error, and structured formatting remain future library layers. A
-future buffer/stream object may build on or supersede this byte-at-a-time
-surface without changing the runtime ABI into the public GTI ABI.
+## Stdout and bounded formatting
+
+The implicitly available `std::print` and `std::println` overloads write a
+counted string view, one `char`, or one fixed-width integer. `<std/string>` adds
+read-only overloads for an owning `std::string`. Integer output is canonical
+base-10 text with a leading minus sign for negative values, no locale,
+grouping, width, or alternate base, and complete coverage of signed minima and
+unsigned maxima. `<std/string>` supplies the same conversion as an owning
+`std::to_string(integer)` result.
+
+`<std/format>` adds the first replacement-field layer:
+
+```gti
+namespace std {
+  enum class format_errc {
+    invalid_format,
+    argument_count_mismatch,
+  };
+
+  expected<string, format_errc> format(string_view pattern);
+
+  expected<string, format_errc>
+  format<std::integral First, std::integral Args...>(
+      string_view pattern, First first, Args... args);
+
+  expected<void, format_errc> try_print(string_view pattern);
+
+  expected<void, format_errc>
+  try_print<std::integral First, std::integral Args...>(
+      string_view pattern, First first, Args... args);
+
+  expected<void, format_errc> try_println(string_view pattern);
+
+  expected<void, format_errc>
+  try_println<std::integral First, std::integral Args...>(
+      string_view pattern, First first, Args... args);
+}
+```
+
+`{}` consumes the next argument. `{{` and `}}` emit literal braces without
+consuming one. A lone opening or closing brace returns
+`invalid_format`; a valid pattern with too few or too many arguments returns
+`argument_count_mismatch`. Replacement is strictly sequential. Indexes,
+names, format specifiers, width, precision, bases other than decimal, locale,
+floating-point values, owning-string arguments, and user formatter
+customization are not part of this bounded surface.
+
+The overload family separates the zero-argument case from the nonempty
+`First, Args...` case; every supplied argument must independently satisfy
+`std::integral`, so a call may mix fixed-width signed and unsigned types.
+`std::format` returns a newly owned string. `try_print` and `try_println`
+validate the complete grammar and exact argument count, then construct the
+complete owning result before making any stdout write. Invalid input therefore
+produces no partial output, and `try_println` submits its newline only after
+successful formatting and after the formatted text has been submitted to
+stdout.
+
+These operations are ordinary GTI library code. The bounded language pack fold
+only supplies source-order iteration over the integral argument pack; it does
+not recognize a formatting function or interpret a pattern. Literal views use
+their counted runtime write. Dynamic owning strings and individual `char`
+values cross through the scalar `gti_rt_write_stdout_byte(uint8_t)` entry after
+the explicit lossless `uint8_t(char)` code-unit extraction, preserving embedded
+zero bytes.
+
+The `format_errc` result reports pattern and argument errors. Recoverable host
+stdout failure remains part of the wider hosted-service/failure work: the
+current output wrappers discard the runtime status just as the existing
+infallible `print` overloads do. Allocation failure while constructing an
+owning result follows the current defined-failure allocation policy rather than
+becoming a `format_errc` value.
+
+Buffered streams, file writes, seeking, filesystem operations, encoding
+conversion, standard error, floating-point formatting, and formatter
+customization remain future library layers. A future buffer/stream object may
+build on or supersede this byte-at-a-time surface without changing the runtime
+ABI into the public GTI ABI.

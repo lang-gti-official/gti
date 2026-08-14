@@ -1,0 +1,34 @@
+#include "app/app.gti"
+#include "core/application.gti"
+
+int main() {
+  mut std::unique_ptr<game::App> app_owner = std::make_unique<game::App>();
+  mut game::App& app = *app_owner;
+  mut psych::Application& application = app;
+
+  if (!application.Init()) {
+    std::println("application initialization failed");
+    return 1;
+  }
+
+  std::println("Psych CLI game");
+  std::println("----------------");
+  if (!application.Run(uint64_t(8))) {
+    std::println("application runtime failed");
+    return 2;
+  }
+
+  if (!application.Shutdown()) {
+    std::println("application shutdown failed");
+    return 3;
+  }
+
+  if (!app.CompletedSuccessfully()) {
+    std::println("application state validation failed");
+    return 4;
+  }
+
+  std::println("----------------");
+  std::println("session completed successfully");
+  return 0;
+}

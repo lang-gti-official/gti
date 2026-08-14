@@ -248,7 +248,8 @@ public:
     }
 
     for (const MirFunctionInstance &instance : program.functionInstances()) {
-      output << "function @" << instance.id << " owner=";
+      output << "function @" << instance.id
+             << " declaration=" << instance.declaration << " owner=";
       optional(instance.owner);
       output << " static=" << instance.staticMember
              << " entry=" << number(instance.entryKind) << ':'
@@ -747,6 +748,32 @@ private:
          ++index) {
       separator(index);
       output << lambdaCaptureModeName(value.closureCaptureModes[index]);
+    }
+    output << "] pack-fold-symbol=" << value.packFoldSymbol
+           << " pack-fold-parameter=" << value.packFoldParameter
+           << " pack-fold-function=" << value.packFoldFunction
+           << " pack-fold-argument=" << value.packFoldArgument
+           << " pack-fold-fixed-places=[";
+    for (std::size_t index = 0; index < value.packFoldFixedPlaces.size();
+         ++index) {
+      separator(index);
+      output << value.packFoldFixedPlaces[index];
+    }
+    output << "]"
+           << " pack-fold-elements=[";
+    for (std::size_t index = 0; index < value.packFoldElements.size();
+         ++index) {
+      separator(index);
+      const MirPackFoldElement &element = value.packFoldElements[index];
+      output << "{type=";
+      type(element.elementType);
+      output << ",function=" << element.functionTarget << ",parameters=[";
+      for (std::size_t parameter = 0; parameter < element.parameterTypes.size();
+           ++parameter) {
+        separator(parameter);
+        type(element.parameterTypes[parameter]);
+      }
+      output << "]}";
     }
     output << "] loan=";
     optional(value.loan);

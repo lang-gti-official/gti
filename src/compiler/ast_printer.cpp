@@ -126,6 +126,10 @@ void AstPrinter::visitLogicalExpr(const Logical &expr) {
       parenthesize(expr.oper().lexeme, {expr.left().get(), expr.right().get()});
 }
 
+void AstPrinter::visitPackFoldExpr(const PackFold &expr) {
+  result = "(pack-fold " + printPtr(expr.pattern()) + ")";
+}
+
 void AstPrinter::visitPackExpansionExpr(const PackExpansion &expr) {
   result = expr.name().lexeme + "...";
 }

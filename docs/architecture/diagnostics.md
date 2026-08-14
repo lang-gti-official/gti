@@ -75,6 +75,14 @@ diagnostics or letting a backend message choose either identity.
   separately owns an invalid or uninferable `uint64_t` extent generic; point at
   its declaration name or the call that cannot infer it. Neither family has a
   universally correct fix-it.
+- `GTI-S2023` owns a syntactically complete but semantically invalid bounded
+  comma pack fold. Point at the ellipsis for an invalid target or constraint,
+  at a repeated call argument that is not a named value, or at the final
+  argument that is not the current function's parameter pack. State the exact
+  bounded target-shape rule rather than implying general C++ fold support, and
+  do not attach a fix-it because choosing a target function, parameter access,
+  or pack is not mechanical. Parser-owned incomplete folds remain
+  `GTI-P0001` and must recover the surrounding function.
 - `GTI-S2054` owns an invalid `extern "C"` declaration, including an exact
   symbol or parameter spelling that cannot be represented portably in the
   generated C17/C++ header. It also owns a containing namespace component that

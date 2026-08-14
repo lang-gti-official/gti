@@ -80,6 +80,16 @@ or receiver remains live through the invocation and until its enclosing
 full-expression ends unless ownership is transferred to a longer-lived
 destination.
 
+A bounded comma-pack fold invokes its already selected call once for each
+concrete element in source-pack order. For each element, its fixed named-place
+arguments are evaluated and bound in written order, then the element is
+provided through the selected read-only parameter form, and that invocation
+completes before the next begins. The fold does not consume or mutate a pack
+element; a fixed named place may still be mutated when its selected parameter
+is a mutable reference. An empty pack performs no call and has no effect. The
+comma and ellipsis in this syntax do not admit another fold operator or
+delegate expansion order to the backend.
+
 A contextual brace argument initializes its selected fixed-array parameter in
 place. Its elements run from left to right under the array element order below;
 the complete array parameter becomes live before evaluation advances to the
@@ -339,6 +349,9 @@ call-argument scheduling gap.
 Checked explicit conversions reject out-of-range constants and produce a
 defined runtime failure when a dynamic value is outside the target range.
 Float-to-integer conversion truncates toward zero after its validity check.
+The explicit `uint8_t(char)` code-unit extraction is bit-preserving and cannot
+fail; it is not a numeric promotion or arithmetic operation. This slice adds no
+inverse `char(uint8_t)` conversion.
 
 Built-in integer arithmetic first applies GTI's integer promotions and exact
 common-type rules. The operation then executes in that fixed-width result

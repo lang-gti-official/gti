@@ -128,6 +128,10 @@
   function: (member_expression
     member: (identifier) @function.method.call))
 (call_expression
+  function: (generic_function
+    name: (member_expression
+      member: (identifier) @function.method.call)))
+(call_expression
   function: (primary_expression
     (identifier) @function.call))
 (call_expression

@@ -2126,6 +2126,10 @@
             "named": true
           },
           {
+            "type": "member_expression",
+            "named": true
+          },
+          {
             "type": "scoped_identifier",
             "named": true
           }
@@ -2547,10 +2551,6 @@
         "multiple": false,
         "required": true,
         "types": [
-          {
-            "type": "generic_function",
-            "named": true
-          },
           {
             "type": "identifier",
             "named": true
@@ -3088,6 +3088,42 @@
     }
   },
   {
+    "type": "pack_fold_expression",
+    "named": true,
+    "fields": {
+      "ellipsis": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "...",
+            "named": false
+          }
+        ]
+      },
+      "operator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": ",",
+            "named": false
+          }
+        ]
+      },
+      "pattern": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "call_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "parameter",
     "named": true,
     "fields": {
@@ -3208,6 +3244,10 @@
         },
         {
           "type": "numeric_conversion",
+          "named": true
+        },
+        {
+          "type": "pack_fold_expression",
           "named": true
         },
         {

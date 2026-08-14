@@ -131,7 +131,7 @@ metadata, typed HIR, and structural MIR:
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
-| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, exact global/static free-function and static-method borrow returns in the single-threaded profile, single-origin read-only owner dependencies through parameters and concrete generic carrier relays, shared read-only alias endpoints, bounded exclusive reborrows over stable places, MIR loans and drops |
+| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, explicit polymorphic unique-owner upcast, checked private storage, receiver-tied reference returns, exact global/static free-function and static-method borrow returns in the single-threaded profile, single-origin read-only owner dependencies through parameters and concrete generic carrier relays, shared read-only alias endpoints, bounded exclusive reborrows over stable places, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, trusted-only private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
 | Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, passive layout-stable `[[c_abi]]` records by value or one-level pointer, recursively pointer-gated unsafe calls, non-retained counted text inputs, a generated C17/C++20/C++23 bridge header, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C/C++ source compilation |
 | Tooling | source graphs with application/prelude/physical-standard-library roles, stable diagnostics including private-access `GTI-S2058`, formatter, Tree-sitter, compiler-filtered semantic tokens/hover/completion/definition, conservative synchronization effects, release packaging |
@@ -437,19 +437,19 @@ signature is a bounded program-boundary type check, not container magic.
 The first source-defined `std::vector<T>` slice is implemented over checked
 private storage. It is move-only, constrains elements to `std::movable`, and
 provides default/size construction, observation, reserve, clear, push/pop,
-checked indexed access, variadic exact in-place `emplace_back`, and conservative
-read-only iteration. Storage rejects element types containing borrowed state.
-Its by-value pack avoids an intermediate `T` but is not C++ perfect forwarding:
-copyable arguments may be copied at the method boundary and a move-only pack is
-consumed by its first expansion.
+checked indexed access, indexed insertion/erasure, variadic exact in-place
+`emplace_back`, and conservative read-only iteration. Storage rejects element
+types containing borrowed state. Its by-value pack avoids an intermediate `T`
+but is not C++ perfect forwarding: copyable arguments may be copied at the
+method boundary and a move-only pack is consumed by its first expansion.
 
 The remaining first-wave work is:
 
 - Complete `std::array<T, N>` with `front`, `back`, fill operations, and
   read-only/mutable iteration.
-- Extend `std::vector<T>` with mutable iteration, precise invalidation,
-  insert/erase, richer construction, and the remaining reviewed foundational
-  surface.
+- Extend `std::vector<T>` with mutable iteration, precise invalidation, richer
+  construction, iterator-position mutation, and the remaining reviewed
+  foundational surface. Indexed insert/erase is implemented.
 - Add an owner-tied `std::span<T>`-style borrowed view rather than exposing
   `.data()` or pointer-and-length pairs.
 - Add read-only iteration to `std::string_view` and mutable iteration to

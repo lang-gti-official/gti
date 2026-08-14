@@ -9,6 +9,10 @@ _Static_assert(
         int32_t (*)(gti_c_string_view): 1,
         default: 0),
     "the stdout runtime entry must consume the public counted-text record");
+_Static_assert(_Generic(&gti_rt_write_stdout_byte,
+                   int32_t (*)(uint8_t): 1,
+                   default: 0),
+               "the stdout-byte runtime entry must retain its C prototype");
 _Static_assert(
     _Generic(&gti_rt_open_file_read,
         int64_t (*)(gti_c_string_view): 1,

@@ -10534,6 +10534,128 @@ int main() {
          "idempotently");
 }
 
+void testPolymorphicUniqueOwnerUpcast() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("polymorphic-unique-owner-upcast.gti", R"(
+interface Layer {
+  uint64_t id();
+  void update() mut;
+};
+
+class DemoLayer : public Layer {
+  mut uint64_t updates = 0;
+
+public:
+  DemoLayer() {}
+  uint64_t id() override { return 7; }
+  void update() mut override { this.updates++; }
+};
+
+int main() {
+  mut std::unique_ptr<Layer> layer =
+      std::upcast_unique<Layer, DemoLayer>(
+          std::make_unique<DemoLayer>());
+  layer->update();
+  return layer->id() == 7 ? 0 : 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected unique-owner upcast diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "an explicit unique owner upcast should preserve one polymorphic "
+         "owner through MIR");
+
+  const bool hirUpcast = std::any_of(
+      frontend.hir.functionInstances().begin(),
+      frontend.hir.functionInstances().end(),
+      [](const lang::HirFunctionInstance &function) {
+        return std::any_of(
+            function.body.values.begin(), function.body.values.end(),
+            [](const lang::HirValue &value) {
+              return value.intrinsic == lang::IntrinsicKind::UniqueOwnerUpcast;
+            });
+      });
+  const bool mirUpcast = std::any_of(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [](const lang::MirFunctionInstance &function) {
+        return std::any_of(
+            function.body.blocks.begin(), function.body.blocks.end(),
+            [](const lang::MirBlock &block) {
+              return std::any_of(
+                  block.instructions.begin(), block.instructions.end(),
+                  [](const lang::MirInstruction &instruction) {
+                    return instruction.intrinsic ==
+                           lang::IntrinsicKind::UniqueOwnerUpcast;
+                  });
+            });
+      });
+  expect(hirUpcast && mirUpcast,
+         "HIR and MIR should retain the trusted ownership-preserving upcast "
+         "identity");
+
+  const lang::BackendArtifact artifact = lang::CppBackend().generate(
+      {.program = frontend.program,
+       .semantics = frontend.semantics,
+       .hir = frontend.hir,
+       .mir = frontend.mir,
+       .optimizations = lang::OptimizationPipeline().run(
+           frontend.hir, lang::OptimizationLevel::O0)});
+  expect(artifact.contents.find("unique_owner_upcast<") != std::string::npos &&
+             artifact.contents.find("virtual ~Layer() noexcept = default;") !=
+                 std::string::npos,
+         "the backend should lower the private owner conversion and preserve "
+         "polymorphic destruction");
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-polymorphic-unique-owner-upcast.gti", R"(
+class PlainBase {};
+class PlainDerived : public PlainBase {};
+class Unrelated {};
+
+int main() {
+  [[discard]] std::upcast_unique<PlainBase, PlainDerived>(
+      std::make_unique<PlainDerived>());
+  [[discard]] std::upcast_unique<PlainBase, Unrelated>(
+      std::make_unique<Unrelated>());
+  return 0;
+}
+)",
+      {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must have polymorphic destruction") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "the target must be a public base"),
+         "unique-owner upcasts should reject unsafe destruction and "
+         "unrelated target types before backend generation");
+
+  const lang::FrontendResult implicit =
+      lang::Frontend().analyze("implicit-polymorphic-owner-conversion.gti", R"(
+interface Layer { void update() mut; };
+class DemoLayer : public Layer {
+public:
+  void update() mut override {}
+};
+void consume(std::unique_ptr<Layer> layer) {}
+int main() {
+  consume(std::make_unique<DemoLayer>());
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!implicit.canGenerateCode() &&
+             hasDiagnostic(implicit.diagnostics,
+                           "parameter requires 'std::unique_ptr<Layer>'"),
+         "owner upcasts should remain explicit and must not enter ordinary "
+         "call overload resolution");
+}
+
 void testTypedHirGenericInstances() {
   const lang::FrontendResult valid =
       lang::Frontend().analyze("hir-generics.gti",
@@ -11040,9 +11162,16 @@ int main() {
   mut std::vector<int32_t> zeros =
       std::vector<int32_t>(std::size_t(2));
   zeros[std::size_t(1)] = 11;
+
+  mut std::vector<std::unique_ptr<Reading>> owned =
+      std::vector<std::unique_ptr<Reading>>();
+  owned.push_back(std::make_unique<Reading>(1, 1));
+  owned.insert(std::size_t(0), std::make_unique<Reading>(4, 5));
+  owned.erase(std::size_t(0));
   if (observed == 5 and total == 17 and readings.size() == 2 and
       readings.capacity() == 2 and zeros[std::size_t(0)] == 0 and
-      zeros[std::size_t(1)] == 11) {
+      zeros[std::size_t(1)] == 11 and owned.size() == 1 and
+      owned[std::size_t(0)]->total() == 2) {
     return 0;
   }
   return 1;
@@ -11057,7 +11186,57 @@ int main() {
   }
   expect(vectorFrontend.canGenerateCode() && vectorFrontend.mir.valid(),
          "std::vector should exercise multi-argument emplace, growth, "
-         "read-only iteration, and value-initialized size construction");
+         "read-only iteration, value-initialized size construction, and "
+         "move-only indexed insertion and erasure");
+
+  const auto hasHirIntrinsic = [&](lang::IntrinsicKind intrinsic) {
+    return std::any_of(vectorFrontend.hir.functionInstances().begin(),
+                       vectorFrontend.hir.functionInstances().end(),
+                       [&](const lang::HirFunctionInstance &function) {
+                         return std::any_of(function.body.values.begin(),
+                                            function.body.values.end(),
+                                            [&](const lang::HirValue &value) {
+                                              return value.intrinsic ==
+                                                     intrinsic;
+                                            });
+                       });
+  };
+  const auto hasMirIntrinsic = [&](lang::IntrinsicKind intrinsic) {
+    return std::any_of(
+        vectorFrontend.mir.functionInstances().begin(),
+        vectorFrontend.mir.functionInstances().end(),
+        [&](const lang::MirFunctionInstance &function) {
+          return std::any_of(
+              function.body.blocks.begin(), function.body.blocks.end(),
+              [&](const lang::MirBlock &block) {
+                return std::any_of(
+                    block.instructions.begin(), block.instructions.end(),
+                    [&](const lang::MirInstruction &instruction) {
+                      return instruction.intrinsic == intrinsic;
+                    });
+              });
+        });
+  };
+  expect(hasHirIntrinsic(lang::IntrinsicKind::StorageShiftRight) &&
+             hasHirIntrinsic(lang::IntrinsicKind::StorageShiftLeft) &&
+             hasMirIntrinsic(lang::IntrinsicKind::StorageShiftRight) &&
+             hasMirIntrinsic(lang::IntrinsicKind::StorageShiftLeft),
+         "HIR and MIR should retain both exact storage-shift operations used "
+         "by source-defined vector insertion and erasure");
+
+  const lang::BackendArtifact vectorArtifact = lang::CppBackend().generate(
+      {.program = vectorFrontend.program,
+       .semantics = vectorFrontend.semantics,
+       .hir = vectorFrontend.hir,
+       .mir = vectorFrontend.mir,
+       .optimizations = lang::OptimizationPipeline().run(
+           vectorFrontend.hir, lang::OptimizationLevel::O0)});
+  expect(vectorArtifact.contents.find("storage_shift_right") !=
+                 std::string::npos &&
+             vectorArtifact.contents.find("storage_shift_left") !=
+                 std::string::npos,
+         "the backend should lower vector shifts through private checked "
+         "storage helpers rather than public vector recognition");
 
   const lang::FrontendResult forwardedPointers = lang::Frontend().analyze(
       "standard-vector-forwarded-pointers.gti", R"(
@@ -12674,10 +12853,13 @@ std::size_t text_size = text.size();
 bool text_not_empty = !text.empty();
 char first = text[0];
 char embedded_zero = text[3];
+uint8_t letter_code = uint8_t(letter);
 
 int main() {
   if (chars_match and text_matches and text_size == 8 and text_not_empty and
-      first == 'G' and embedded_zero == '\0') { return 0; }
+      first == 'G' and embedded_zero == '\0' and letter_code == 71) {
+    return 0;
+  }
   return 1;
 }
 )",
@@ -12710,16 +12892,20 @@ int main() {
       lang::CppEmitter(valid.semantics, valid.hir, lang::CppStandard::Cpp23,
                        lang::TargetInfo::host(), &optimized)
           .emit(valid.program);
-  expect(generated.find("using string_view = std::string_view;") !=
-                 std::string::npos &&
-             generated.find("std::uint8_t{71}") != std::string::npos &&
-             generated.find("std::string_view{\"GTI\\000text\", 8}") !=
-                 std::string::npos &&
-             generated.find("::gti_internal::backend::string_view_at") !=
-                 std::string::npos &&
-             generated.find("const bool literal_chars_match = true") !=
-                 std::string::npos,
-         "the C++ backend should preserve counted text and exact code units");
+  expect(
+      generated.find("using string_view = std::string_view;") !=
+              std::string::npos &&
+          generated.find("std::uint8_t{71}") != std::string::npos &&
+          generated.find("std::string_view{\"GTI\\000text\", 8}") !=
+              std::string::npos &&
+          generated.find("::gti_internal::backend::string_view_at") !=
+              std::string::npos &&
+          generated.find(
+              "::gti_internal::backend::numeric_cast<std::uint8_t>(letter)") !=
+              std::string::npos &&
+          generated.find("const bool literal_chars_match = true") !=
+              std::string::npos,
+      "the C++ backend should preserve counted text and exact code units");
 
   const lang::FrontendResult invalidView = lang::Frontend().analyze(
       "invalid-string-view.gti",
@@ -12765,6 +12951,14 @@ int main() {
              hasDiagnostic(numeric.diagnostics, "requires numeric operands"),
          "char should not inherit integer arithmetic or conversions");
 
+  lang::Lexer reverseCodeUnitLexer;
+  lang::Parser reverseCodeUnitParser(reverseCodeUnitLexer.scan(
+      "int main() { char value = char(uint8_t(65)); return 0; }"));
+  (void)reverseCodeUnitParser.parse();
+  expect(reverseCodeUnitParser.hadError(),
+         "the byte bridge should expose one-way char-to-uint8 code-unit "
+         "extraction rather than making char a bidirectionally numeric type");
+
   const lang::FrontendResult obsolete = lang::Frontend().analyze(
       "obsolete-string.gti", "int main() { string text = \"old\"; return 0; }",
       {standardLibraryPrelude()});
@@ -12798,12 +12992,18 @@ int main() {
   value.push_back(' ');
   value.append("runtime");
   mut std::string copy = value.clone();
+  mut std::string signed_text =
+      std::to_string(int64_t(-9223372036854775807 - 1));
+  mut std::string unsigned_text =
+      std::to_string(uint64_t(18446744073709551615));
   bool cloned = value == copy;
   copy[0] = 'E';
   char first = copy.at(0);
   copy.clear();
   if (literal.size() == 6 and !literal.empty() and literal[0] == 'e' and
-      cloned and value == "engine runtime" and first == 'E' and copy.empty()) {
+      cloned and value == "engine runtime" and first == 'E' and copy.empty() and
+      signed_text == "-9223372036854775808" and
+      unsigned_text == "18446744073709551615") {
     return 0;
   }
   return 1;
@@ -12853,6 +13053,80 @@ int main() {
                                "Move-only owners cannot be copied"),
          "std::string copies should require explicit allocating clone() rather "
          "than hidden allocation");
+
+  const lang::FrontendResult integerOutput = lang::Frontend().analyze(
+      entry, R"(
+int main() {
+  std::print(int8_t(-128));
+  std::println(uint64_t(18446744073709551615));
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(integerOutput.canGenerateCode() && integerOutput.diagnostics.empty(),
+         "std::print and std::println should accept every type satisfying the "
+         "fixed-width integral constraint");
+
+  const lang::FrontendResult formattedOutput = lang::Frontend().analyze(
+      entry, R"(
+#include <std/format>
+#include <std/string>
+int main() {
+  mut auto formatted =
+      std::format("left={} right={} count={}", int8_t(-8), uint64_t(9), 3);
+  if (!formatted) { return 1; }
+  if (formatted.value() != "left=-8 right=9 count=3") { return 2; }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!formattedOutput.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : formattedOutput.diagnostics) {
+      std::cerr << "Unexpected formatted-output diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  std::size_t concreteFoldValues = 0;
+  std::size_t concreteFoldElements = 0;
+  for (const lang::HirFunctionInstance &function :
+       formattedOutput.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      if (value.kind != lang::HirValueKind::PackFold ||
+          value.packFoldElements.empty()) {
+        continue;
+      }
+      concreteFoldValues++;
+      concreteFoldElements += value.packFoldElements.size();
+    }
+  }
+  expect(formattedOutput.canGenerateCode() &&
+             lang::verifyMirProgram(formattedOutput.mir).valid() &&
+             concreteFoldValues == 2 && concreteFoldElements == 4,
+         "source-defined formatting should use two verified ordered folds for "
+         "counting and appending the concrete trailing integral pack after "
+         "handling the first argument directly");
+  const std::string formattedGenerated =
+      lang::CppEmitter(formattedOutput.semantics, formattedOutput.hir)
+          .emit(formattedOutput.program);
+  expect(formattedGenerated.find("std::format(") == std::string::npos &&
+             formattedGenerated.find("std::vformat") == std::string::npos &&
+             formattedGenerated.find("count_format_argument") !=
+                 std::string::npos &&
+             formattedGenerated.find("append_format_argument") !=
+                 std::string::npos,
+         "formatting should lower as ordinary GTI library calls rather than a "
+         "native C++ formatting shortcut");
+
+  const lang::FrontendResult invalidFloatOutput = lang::Frontend().analyze(
+      entry, "int main() { std::print(1.5); return 0; }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !invalidFloatOutput.canGenerateCode() &&
+          hasDiagnosticCode(invalidFloatOutput.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(invalidFloatOutput.diagnostics,
+                        "does not satisfy generic constraint 'std::integral'"),
+      "the bounded integer-output slice should not silently claim "
+      "floating-point formatting");
 }
 
 void testLogicalOperatorSpellings() {
@@ -14783,9 +15057,9 @@ int main() {
       "int read(){return this.value;}void reset()mut{this.value=0;}};");
   expect(formatted.find("Counter(int initial) : value(initial) {}") !=
                  std::string::npos &&
-             formatted.find("Counter(Counter & other) = default;") !=
+             formatted.find("Counter(Counter& other) = default;") !=
                  std::string::npos &&
-             formatted.find("Counter(Counter && other) = delete;") !=
+             formatted.find("Counter(Counter&& other) = delete;") !=
                  std::string::npos &&
              formatted.find("void reset() mut {") != std::string::npos,
          "formatter should distinguish constructor policies from logical "
@@ -15867,8 +16141,8 @@ int main() {
       "class Handle{public:mut int& operator*()mut{return this.value;}"
       "bool operator<(Handle& other){return false;}"
       "operator bool(){return true;}};");
-  expect(formatted.find("mut int & operator*() mut {") != std::string::npos &&
-             formatted.find("bool operator<(Handle & other) {") !=
+  expect(formatted.find("mut int& operator*() mut {") != std::string::npos &&
+             formatted.find("bool operator<(Handle& other) {") !=
                  std::string::npos &&
              formatted.find("operator bool() {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
@@ -16781,7 +17055,7 @@ int main() {
       "int sum(Range& values){mut int total=0;"
       "for(auto& value:values){total+=value;}return total;}");
   expect(formatted.find("void operator++() mut {") != std::string::npos &&
-             formatted.find("for (auto & value : values) {") !=
+             formatted.find("for (auto& value : values) {") !=
                  std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "prefix increment and range-based for syntax should format "
@@ -19550,6 +19824,198 @@ int okay = 1;
                       "}\n" &&
              lang::Formatter().format(formatted) == formatted,
          "formatter should preserve compact, idempotent pack syntax");
+
+  const std::string foldSource = R"(
+void touch<T>(mut int& count, T& value) { count++; }
+void other<T>(mut int& count, T& value) { count += 10; }
+
+int visit_all<Values...>(Values... values) {
+  mut int count = 0;
+  (touch(count, values), ...);
+  return count;
+}
+
+int main() {
+  mut int count = 0;
+  int value = 1;
+  other(count, value);
+  return visit_all(1, true, uint64_t(3)) - 3;
+}
+)";
+  const lang::FrontendResult foldFrontend =
+      lang::Frontend().analyze("pack-fold.gti", foldSource);
+  if (!foldFrontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : foldFrontend.diagnostics) {
+      std::cerr << "Unexpected pack-fold diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(foldFrontend.canGenerateCode() &&
+             lang::verifyMirProgram(foldFrontend.mir).valid(),
+         "a bounded call pack fold should select and lower every concrete "
+         "element in source order");
+
+  const lang::FunctionDecl *visitAll =
+      findTopLevelFunction(foldFrontend.program, "visit_all");
+  const auto *foldStatement =
+      visitAll == nullptr ? nullptr
+                          : dynamic_cast<const lang::ExpressionStmt *>(
+                                visitAll->body()->statements().at(1).get());
+  const auto *fold = foldStatement == nullptr
+                         ? nullptr
+                         : dynamic_cast<const lang::PackFold *>(
+                               foldStatement->expression().get());
+  const lang::ResolvedPackFoldInfo *resolvedFold =
+      fold == nullptr ? nullptr : foldFrontend.semantics.findPackFold(*fold);
+  expect(resolvedFold != nullptr && resolvedFold->function != 0 &&
+             resolvedFold->packSymbol != 0 &&
+             resolvedFold->packParameter != 0 &&
+             resolvedFold->packArgument == 1,
+         "semantic pack-fold metadata should retain its one selected "
+         "function, pack identity, and argument position");
+
+  const lang::HirFunctionInstance *concreteFold = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       foldFrontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "visit_all" &&
+        instance.parameterTypes.size() == 3) {
+      concreteFold = &instance;
+      break;
+    }
+  }
+  const lang::HirValue *hirFold = nullptr;
+  if (concreteFold != nullptr) {
+    const auto found = std::find_if(
+        concreteFold->body.values.begin(), concreteFold->body.values.end(),
+        [](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::PackFold;
+        });
+    if (found != concreteFold->body.values.end()) {
+      hirFold = &*found;
+    }
+  }
+  expect(hirFold != nullptr && hirFold->packFoldFunction != 0 &&
+             hirFold->packFoldElements.size() == 3 &&
+             std::all_of(hirFold->packFoldElements.begin(),
+                         hirFold->packFoldElements.end(),
+                         [](const lang::HirPackFoldElement &element) {
+                           return element.functionTarget != 0 &&
+                                  element.parameterTypes.size() == 2 &&
+                                  element.parameterTypes.back().kind ==
+                                      lang::SemanticType::Reference;
+                         }),
+         "HIR should retain one exact selected call target for every concrete "
+         "pack element");
+
+  const lang::MirInstruction *mirFold = nullptr;
+  if (concreteFold != nullptr) {
+    const lang::MirFunctionInstance *mirFunction =
+        foldFrontend.mir.findFunctionInstance(concreteFold->id);
+    if (mirFunction != nullptr) {
+      for (const lang::MirBlock &block : mirFunction->body.blocks) {
+        const auto found = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [](const lang::MirInstruction &instruction) {
+              return instruction.operation == lang::MirOperation::PackFold;
+            });
+        if (found != block.instructions.end()) {
+          mirFold = &*found;
+          break;
+        }
+      }
+    }
+  }
+  expect(mirFold != nullptr && mirFold->packFoldFunction != 0 &&
+             mirFold->packFoldElements.size() == 3,
+         "MIR should preserve the pack identity and ordered exact element "
+         "specializations without reopening overload resolution");
+
+  lang::MirProgram forgedFold = foldFrontend.mir;
+  bool changedFoldTarget = false;
+  auto &forgedFoldFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forgedFold.functionInstances());
+  for (lang::MirFunctionInstance &function : forgedFoldFunctions) {
+    for (lang::MirBlock &block : function.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.operation == lang::MirOperation::PackFold &&
+            !instruction.packFoldElements.empty()) {
+          const auto otherTarget = std::find_if(
+              forgedFoldFunctions.begin(), forgedFoldFunctions.end(),
+              [&](const lang::MirFunctionInstance &candidate) {
+                return candidate.declaration != instruction.packFoldFunction &&
+                       candidate.parameterTypes ==
+                           instruction.packFoldElements.front().parameterTypes;
+              });
+          if (otherTarget != forgedFoldFunctions.end()) {
+            instruction.packFoldElements.front().functionTarget =
+                otherTarget->id;
+            changedFoldTarget = true;
+          }
+          break;
+        }
+      }
+    }
+  }
+  expect(changedFoldTarget && !lang::verifyMirProgram(forgedFold).valid(),
+         "MIR verification should reject a pack-fold element retargeted to a "
+         "different same-shaped generic declaration");
+
+  const std::string foldGenerated =
+      lang::CppEmitter(foldFrontend.semantics, foldFrontend.hir)
+          .emit(foldFrontend.program);
+  expect(resolvedFold != nullptr &&
+             foldGenerated.find(
+                 "__gti_fn_" + std::to_string(resolvedFold->function) +
+                 "_touch(count, values), ...") != std::string::npos,
+         "the C++ backend should emit the one compiler-selected fold target "
+         "instead of asking native overload resolution to choose per element");
+
+  const std::string invalidFoldSource = R"(
+void overloaded<T>(T& value) {}
+void overloaded<U>(U& value) {}
+int returns_value<T>(T& value) { return 0; }
+void takes_value<T>(T value) {}
+int make_value() { return 1; }
+
+void invalid<Values...>(Values... values) {
+  (overloaded(values), ...);
+  (returns_value(values), ...);
+  (takes_value(values), ...);
+  (takes_value(make_value()), ...);
+}
+
+void not_a_pack(int value) { (takes_value(value), ...); }
+)";
+  const lang::FrontendResult invalidFold =
+      lang::Frontend().analyze("invalid-pack-fold.gti", invalidFoldSource);
+  const auto invalidArgument = std::find_if(
+      invalidFold.diagnostics.begin(), invalidFold.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2023" &&
+               diagnostic.message.find("must be named local values") !=
+                   std::string::npos;
+      });
+  expect(
+      !invalidFold.canGenerateCode() &&
+          hasDiagnosticCode(invalidFold.diagnostics, "GTI-S2023") &&
+          hasDiagnostic(invalidFold.diagnostics,
+                        "must name exactly one function declaration") &&
+          hasDiagnostic(invalidFold.diagnostics,
+                        "returning void, with one inferred type parameter") &&
+          hasDiagnostic(invalidFold.diagnostics,
+                        "must be named local values") &&
+          hasDiagnostic(invalidFold.diagnostics,
+                        "must name the current function's parameter pack") &&
+          invalidArgument != invalidFold.diagnostics.end() &&
+          invalidArgument->primary.start ==
+              invalidFoldSource.find("make_value()), ...") +
+                  std::string("make_value(").size() &&
+          invalidArgument->primary.end == invalidArgument->primary.start + 1 &&
+          invalidArgument->fixes.empty(),
+      "invalid pack folds should fail with bounded shape diagnostics before "
+      "HIR or native emission and point at the non-repeatable argument");
 }
 
 void testExactFunctionOverloadsAndConversions() {
@@ -23715,21 +24181,46 @@ int choice() {
   const std::string rightReferences =
       lang::Formatter({.referenceAlignment = lang::ReferenceAlignment::Right})
           .format(referenceSource);
-  const std::string middleReferences = lang::Formatter().format(
+  const std::string defaultReferences = lang::Formatter().format(
       "class Box{};void use(int& value,Box& box){int bits=value&value;}"
       "int min(int left,int right){if(left> right){return right;}return "
-      "left;}");
+      "left;}int invoke(){return 1;}int expression(){mut int A=1;"
+      "A&invoke();return A;}");
+  const std::string middleReferences =
+      lang::Formatter({.referenceAlignment = lang::ReferenceAlignment::Middle})
+          .format(referenceSource);
   expect(leftReferences.find("int& value") != std::string::npos &&
              leftReferences.find("Box<int>& box") != std::string::npos &&
              rightReferences.find("int &value") != std::string::npos &&
              rightReferences.find("Box<int> &box") != std::string::npos &&
              leftReferences.find("A & value") != std::string::npos &&
              rightReferences.find("A & value") != std::string::npos &&
+             defaultReferences.find("int& value") != std::string::npos &&
+             defaultReferences.find("Box& box") != std::string::npos &&
+             defaultReferences.find("A & invoke();") != std::string::npos &&
              middleReferences.find("int & value") != std::string::npos,
-         "reference alignment should recognize declared generic types "
-         "without changing bitwise-and spacing for capitalized values");
-  expect(middleReferences.find("if (left > right)") != std::string::npos,
+         "reference alignment should default left, preserve explicit styles, "
+         "and recognize declared generic types without changing bitwise-and "
+         "spacing for capitalized values or call expressions");
+  expect(defaultReferences.find("if (left > right)") != std::string::npos,
          "comparison operators should retain binary spacing");
+
+  const std::string importedReturnReferences = lang::Formatter().format(
+      "class Application{public:mut LayerStack & GetLayerStack()mut{"
+      "return this.m_LayerStack;}LayerStack & PeekLayerStack(){return "
+      "this.m_LayerStack;}static mut Application & GetApplication(){unsafe{"
+      "return *Application::app;}}};");
+  expect(importedReturnReferences.find(
+             "mut LayerStack& GetLayerStack() mut {") != std::string::npos &&
+             importedReturnReferences.find("LayerStack& PeekLayerStack() {") !=
+                 std::string::npos &&
+             importedReturnReferences.find(
+                 "static mut Application& GetApplication() {") !=
+                 std::string::npos &&
+             lang::Formatter().format(importedReturnReferences) ==
+                 importedReturnReferences,
+         "default left alignment should cover included nominal return types "
+         "and remain idempotent");
 
   const std::string pointerFormatted = lang::Formatter().format(
       "class Byte{};void use(mut uint8_t * data,const uint8_t*read_only){"
@@ -23813,6 +24304,14 @@ class RawBox<T> {
                  lang::ReferenceAlignment::Left,
          "format configuration should apply a base style before explicit "
          "clang-format-compatible overrides");
+
+  const lang::FormatConfigResult defaultStyle =
+      lang::parseFormatConfig(lang::defaultFormatConfig());
+  expect(defaultStyle.issues.empty() &&
+             defaultStyle.options.referenceAlignment ==
+                 lang::ReferenceAlignment::Left,
+         "the generated default format configuration should parse back to "
+         "the GTI default style");
 
   const std::string configuredSource =
       "class Example{public:int run(int value){if(value>0){value+=1;"
@@ -24529,6 +25028,7 @@ int main() {
   testSwitchAndBreakLoanFlow();
   testSharedReadOnlyLoanAliases();
   testUniqueOwnershipAndAllocation();
+  testPolymorphicUniqueOwnerUpcast();
   testTypedHirGenericInstances();
   testCompilerPrivateStorage();
   testVariadicStorageConstructionAndVector();

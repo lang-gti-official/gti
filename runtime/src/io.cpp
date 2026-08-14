@@ -59,6 +59,10 @@ extern "C" std::int32_t gti_rt_write_stdout(gti_c_string_view value) {
   return std::fwrite(value.data, 1, length, stdout) == length ? 0 : 1;
 }
 
+extern "C" std::int32_t gti_rt_write_stdout_byte(std::uint8_t value) {
+  return std::fwrite(&value, 1, 1, stdout) == 1 ? 0 : 1;
+}
+
 extern "C" std::int32_t gti_rt_read_stdin_byte(void) {
 #if defined(_WIN32)
   return readByte(_fileno(stdin));

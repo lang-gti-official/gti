@@ -1,6 +1,6 @@
-// The storage-backed value, capacity, and indexed operations are implemented.
-// Insertion/erasure and mutable iteration still require stronger owner-loan
-// invalidation support.
+// The storage-backed value, capacity, indexed operations, and move-aware
+// insertion/erasure are implemented. Mutable iteration still requires
+// stronger owner-loan invalidation support.
 namespace std {
 namespace detail {
 class vector_sentinel {
@@ -184,6 +184,13 @@ public:
     this.count++;
   }
 
+  void insert(size_t index, T value) mut {
+    this.ensure_capacity_for_one();
+    gti_internal::storage_shift_right(this.data, index, this.count);
+    gti_internal::storage_construct(this.data, index, std::move(value));
+    this.count++;
+  }
+
   mut T& emplace_back<Args...>(Args... args) mut {
     this.ensure_capacity_for_one();
     size_t index = this.count;
@@ -198,6 +205,12 @@ public:
     }
     this.count--;
     gti_internal::storage_destroy(this.data, this.count);
+  }
+
+  void erase(size_t index) mut {
+    gti_internal::storage_destroy(this.data, index);
+    gti_internal::storage_shift_left(this.data, index, this.count);
+    this.count--;
   }
 
   void clear() mut {

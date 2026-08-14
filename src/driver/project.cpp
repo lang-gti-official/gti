@@ -1,5 +1,7 @@
 #include "gti/driver/project.h"
 
+#include "gti/format_config.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -1153,6 +1155,93 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
   }
 
   result.status = ProjectScaffoldStatus::Success;
+  return result;
+}
+
+FormatConfigScaffoldResult
+scaffoldFormatConfig(const std::filesystem::path &destinationDirectory) {
+  FormatConfigScaffoldResult result;
+  if (destinationDirectory.empty()) {
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        {}, "GTI-B1500", "A format configuration destination is required."));
+    return result;
+  }
+
+  std::error_code error;
+  std::filesystem::path destination =
+      std::filesystem::absolute(destinationDirectory, error).lexically_normal();
+  if (error) {
+    result.status = FormatConfigScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        destinationDirectory, "GTI-B1504",
+        "Failed to resolve the format configuration destination: " +
+            error.message() + "."));
+    return result;
+  }
+  if (destination.filename().empty() &&
+      destination != destination.root_path()) {
+    destination = destination.parent_path();
+  }
+  if (destination.empty() || destination == destination.root_path()) {
+    result.status = FormatConfigScaffoldStatus::InvalidRequest;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        destination, "GTI-B1500",
+        "Refusing to initialize format configuration at a filesystem root."));
+    return result;
+  }
+
+  const ScaffoldEntryKind destinationKind =
+      inspectScaffoldEntry(destination, error);
+  if (destinationKind == ScaffoldEntryKind::Failure) {
+    result.status = FormatConfigScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        destination, "GTI-B1504",
+        "Failed to inspect the format configuration destination: " +
+            error.message() + "."));
+    return result;
+  }
+  if (destinationKind != ScaffoldEntryKind::Directory) {
+    result.status = FormatConfigScaffoldStatus::Conflict;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        destination, "GTI-B1502",
+        destinationKind == ScaffoldEntryKind::Missing
+            ? "Cannot initialize format configuration because the destination "
+              "does not exist."
+            : "Cannot initialize format configuration because the destination "
+              "is not a directory."));
+    return result;
+  }
+
+  result.configPath = destination / ".gti-format";
+  const ScaffoldEntryKind configKind =
+      inspectScaffoldEntry(result.configPath, error);
+  if (configKind == ScaffoldEntryKind::Failure) {
+    result.status = FormatConfigScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        result.configPath, "GTI-B1504",
+        "Failed to inspect the format configuration path: " + error.message() +
+            "."));
+    return result;
+  }
+  if (configKind != ScaffoldEntryKind::Missing) {
+    result.status = FormatConfigScaffoldStatus::Conflict;
+    result.diagnostics.push_back(
+        scaffoldDiagnostic(result.configPath, "GTI-B1503",
+                           "A .gti-format configuration already exists."));
+    return result;
+  }
+
+  if (!writeScaffoldFile(result.configPath, defaultFormatConfig())) {
+    std::error_code rollbackError;
+    std::filesystem::remove(result.configPath, rollbackError);
+    result.status = FormatConfigScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(
+        scaffoldDiagnostic(result.configPath, "GTI-B1504",
+                           "Failed to write the format configuration."));
+    return result;
+  }
+
+  result.status = FormatConfigScaffoldStatus::Success;
   return result;
 }
 

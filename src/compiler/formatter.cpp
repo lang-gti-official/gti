@@ -239,7 +239,11 @@ public:
         }
         break;
       case Kind::Ellipsis:
-        state.trimSpaces();
+        if (previous != nullptr && previous->kind == Kind::Comma) {
+          state.space();
+        } else {
+          state.trimSpaces();
+        }
         state.append("...");
         if (next != nullptr && next->kind == Kind::Word) {
           state.space();
@@ -1013,7 +1017,8 @@ private:
     const std::size_t previousIndex =
         static_cast<std::size_t>(previous - lexemes.data());
     const bool typeBefore = typeEndsAt(lexemes, previousIndex, declaredTypes);
-    if (!typeBefore) {
+    if (!typeBefore &&
+        !isUndeclaredFunctionReturnReference(lexemes, previousIndex, index)) {
       return false;
     }
 
@@ -1033,12 +1038,97 @@ private:
     if (afterName == nullptr) {
       return true;
     }
-    return afterName->kind == Kind::Comma ||
+    return afterName->kind == Kind::Comma || afterName->kind == Kind::Colon ||
            afterName->kind == Kind::LeftBracket ||
            afterName->kind == Kind::LeftParen ||
+           afterName->kind == Kind::LeftBrace ||
            afterName->kind == Kind::RightParen ||
            afterName->kind == Kind::Semicolon ||
            (afterName->kind == Kind::Operator && afterName->text == "=");
+  }
+
+  static bool isDeclarationModifier(const Lexeme &lexeme) {
+    return lexeme.kind == Kind::Word &&
+           (lexeme.text == "virtual" || lexeme.text == "static" ||
+            lexeme.text == "constexpr" || lexeme.text == "mut");
+  }
+
+  static bool isDeclarationBoundary(const Lexeme *lexeme) {
+    return lexeme == nullptr || lexeme->kind == Kind::LeftBrace ||
+           lexeme->kind == Kind::RightBrace ||
+           lexeme->kind == Kind::Semicolon || lexeme->kind == Kind::Colon ||
+           lexeme->kind == Kind::Directive;
+  }
+
+  static bool isDeclarationBodyStart(const std::vector<Lexeme> &lexemes,
+                                     std::size_t brace) {
+    while (brace > 0) {
+      --brace;
+      const Lexeme &candidate = lexemes[brace];
+      if (candidate.kind == Kind::LeftBrace ||
+          candidate.kind == Kind::RightBrace ||
+          candidate.kind == Kind::Semicolon) {
+        return false;
+      }
+      if (candidate.kind == Kind::Word &&
+          (candidate.text == "class" || candidate.text == "interface" ||
+           candidate.text == "struct" || candidate.text == "union" ||
+           candidate.text == "enum" || candidate.text == "namespace")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool isDeclarationScope(const std::vector<Lexeme> &lexemes,
+                                 std::size_t before) {
+    std::size_t closedBraces = 0;
+    while (before > 0) {
+      --before;
+      if (lexemes[before].kind == Kind::RightBrace) {
+        ++closedBraces;
+      } else if (lexemes[before].kind == Kind::LeftBrace) {
+        if (closedBraces > 0) {
+          --closedBraces;
+        } else {
+          return isDeclarationBodyStart(lexemes, before);
+        }
+      }
+    }
+    return true;
+  }
+
+  static bool
+  isUndeclaredFunctionReturnReference(const std::vector<Lexeme> &lexemes,
+                                      std::size_t typeEnd,
+                                      std::size_t reference) {
+    if (lexemes[typeEnd].kind != Kind::Word) {
+      return false;
+    }
+
+    const Lexeme *name = nextSyntaxLexeme(lexemes, reference);
+    if (name == nullptr || name->kind != Kind::Word) {
+      return false;
+    }
+    const Lexeme *parameters = nextSyntaxLexeme(
+        lexemes, static_cast<std::size_t>(name - lexemes.data()));
+    if (parameters == nullptr || parameters->kind != Kind::LeftParen) {
+      return false;
+    }
+
+    std::size_t typeStart = typeEnd;
+    while (typeStart >= 2 && lexemes[typeStart - 1].kind == Kind::Scope &&
+           lexemes[typeStart - 2].kind == Kind::Word) {
+      typeStart -= 2;
+    }
+
+    const Lexeme *beforeType = previousSyntaxLexeme(lexemes, typeStart);
+    while (beforeType != nullptr && isDeclarationModifier(*beforeType)) {
+      typeStart = static_cast<std::size_t>(beforeType - lexemes.data());
+      beforeType = previousSyntaxLexeme(lexemes, typeStart);
+    }
+    return isDeclarationBoundary(beforeType) &&
+           isDeclarationScope(lexemes, typeStart);
   }
 
   static std::vector<Lexeme> scan(std::string_view source) {

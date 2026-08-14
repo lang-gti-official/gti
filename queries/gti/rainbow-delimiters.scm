@@ -130,6 +130,10 @@
   "(" @delimiter
   ")" @delimiter) @container
 
+(pack_fold_expression
+  "(" @delimiter
+  ")" @delimiter) @container
+
 (unexpected_expression
   "(" @delimiter
   ")" @delimiter) @container

@@ -196,6 +196,8 @@ requireCapture(209, "x", "variable.parameter");
 requireCapture(209, "y", "variable.parameter");
 requireCapture(212, "Event", "type");
 requireCapture(212, "event", "variable.parameter");
+requireCapture(226, "upcast", "function.method.call");
+requireCapture(226, "Base", "type");
 
 const blockCommentFixture = path.join(__dirname, "block_comments.gti");
 const blockCommentCaptures = queryCaptures(
@@ -334,6 +336,16 @@ requireLocalCapture(moveCaptureRow, "owned", "local.definition.var");
 requireLocalCapture(moveCaptureRow, "value", "local.reference");
 requireLocalCapture(moveCaptureRow, "owned", "local.reference");
 
+const foldLine = "  (consume(values), ...);";
+const foldRow = highlightLines.indexOf(foldLine);
+if (foldRow < 0) {
+  throw new Error("Missing bounded pack-fold fixture line");
+}
+requireCapture(foldRow, "consume", "function.call");
+requireCapture(foldRow, "values", "variable");
+requireCapture(foldRow, "...", "punctuation.special");
+requireLocalCapture(foldRow, "values", "local.reference");
+
 const rainbowCaptures = queryCaptures("rainbow-delimiters");
 
 function requireRainbowDelimiter(lineText, token, occurrence = 1) {
@@ -395,6 +407,7 @@ requireRainbowDelimiter(
   "constexpr uint64_t scalar_layout = sizeof(int32_t);",
   "(",
 );
+requireRainbowDelimiter(foldLine, "(");
 
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",

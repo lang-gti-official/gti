@@ -1,0 +1,126 @@
+#include "layer.gti"
+#include <std/vector>
+
+namespace psych {
+// LayerStack owns every registered layer. Indexed mutable access is sufficient
+// for lifecycle dispatch while mutable range iteration remains unavailable.
+// Ordinary layers occupy [0, layer_insert_index); overlays follow them.
+class LayerStack {
+  mut std::vector<std::unique_ptr<Layer>> entries =
+      std::vector<std::unique_ptr<Layer>>();
+  mut uint64_t layer_insert_index = 0;
+  mut uint64_t last_update_order = 0;
+  mut uint64_t last_render_order = 0;
+  mut uint64_t last_detach_order = 0;
+
+  void UpdateAt(uint64_t index, uint64_t frame) mut {
+    this.last_update_order =
+        this.last_update_order * 10 + this.entries[index]->Id();
+    this.entries[index]->OnUpdate(frame);
+  }
+
+  void RenderAt(uint64_t index) mut {
+    this.last_render_order =
+        this.last_render_order * 10 + this.entries[index]->Id();
+    this.entries[index]->OnRender();
+  }
+
+  void DetachAt(uint64_t index) mut {
+    this.last_detach_order =
+        this.last_detach_order * 10 + this.entries[index]->Id();
+    this.entries[index]->OnDetach();
+  }
+
+  void RemoveAt(uint64_t index) mut {
+    this.entries.erase(index);
+  }
+
+public:
+  LayerStack() {}
+  LayerStack(LayerStack& other) = delete;
+  LayerStack(LayerStack&& other) = delete;
+
+  bool PushLayer(mut std::unique_ptr<Layer> layer) mut {
+    if (layer == nullptr) {
+      return false;
+    }
+
+    layer->OnAttach();
+    this.entries.insert(this.layer_insert_index, std::move(layer));
+    this.layer_insert_index++;
+    return true;
+  }
+
+  bool PushOverlay(mut std::unique_ptr<Layer> overlay) mut {
+    if (overlay == nullptr) {
+      return false;
+    }
+
+    overlay->OnAttach();
+    this.entries.push_back(std::move(overlay));
+    return true;
+  }
+
+  bool PopLayer(uint64_t identity) mut {
+    mut uint64_t index = 0;
+    while (index < this.layer_insert_index) {
+      if (this.entries[index]->Id() == identity) {
+        this.DetachAt(index);
+        this.RemoveAt(index);
+        this.layer_insert_index--;
+        return true;
+      }
+      index++;
+    }
+    return false;
+  }
+
+  bool PopOverlay(uint64_t identity) mut {
+    mut uint64_t index = this.layer_insert_index;
+    while (index < this.entries.size()) {
+      if (this.entries[index]->Id() == identity) {
+        this.DetachAt(index);
+        this.RemoveAt(index);
+        return true;
+      }
+      index++;
+    }
+    return false;
+  }
+
+  void UpdateAll(uint64_t frame) mut {
+    this.last_update_order = 0;
+    mut uint64_t index = 0;
+    while (index < this.entries.size()) {
+      this.UpdateAt(index, frame);
+      index++;
+    }
+  }
+
+  void RenderAll() mut {
+    this.last_render_order = 0;
+    mut uint64_t index = 0;
+    while (index < this.entries.size()) {
+      this.RenderAt(index);
+      index++;
+    }
+  }
+
+  void DetachAll() mut {
+    this.last_detach_order = 0;
+    mut uint64_t index = 0;
+    while (index < this.entries.size()) {
+      this.DetachAt(index);
+      index++;
+    }
+    this.entries.clear();
+    this.layer_insert_index = 0;
+  }
+
+  uint64_t Size() { return this.entries.size(); }
+  uint64_t LayerCount() { return this.layer_insert_index; }
+  uint64_t LastUpdateOrder() { return this.last_update_order; }
+  uint64_t LastRenderOrder() { return this.last_render_order; }
+  uint64_t LastDetachOrder() { return this.last_detach_order; }
+};
+}

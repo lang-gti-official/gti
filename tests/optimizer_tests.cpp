@@ -2341,6 +2341,24 @@ void testMirEffectClassification() {
            "every intrinsic should have a stable classification");
     (void)lang::effects(intrinsic);
   }
+
+  const lang::MirEffectTraits ownerUpcast =
+      lang::effects(lang::IntrinsicKind::UniqueOwnerUpcast);
+  expect(ownerUpcast.readsPlace && ownerUpcast.writesPlace &&
+             ownerUpcast.movesValue && !ownerUpcast.speculatable &&
+             !ownerUpcast.removableWhenUnused && !ownerUpcast.reorderable,
+         "a unique-owner upcast should remain an exact consuming operation");
+
+  for (const lang::IntrinsicKind shift :
+       {lang::IntrinsicKind::StorageShiftRight,
+        lang::IntrinsicKind::StorageShiftLeft}) {
+    const lang::MirEffectTraits effect = lang::effects(shift);
+    expect(effect.readsUnknownMemory && effect.writesUnknownMemory &&
+               effect.invokesRuntime && effect.mayTrap && effect.movesValue &&
+               effect.invokesUserCode && !effect.speculatable &&
+               !effect.removableWhenUnused && !effect.reorderable,
+           "a storage shift should remain a checked move barrier");
+  }
   for (std::size_t index = 0; index < lang::synchronizationOperationKindCount;
        ++index) {
     const auto kind = static_cast<lang::SynchronizationOperationKind>(index);
@@ -2385,6 +2403,16 @@ void testMirEffectClassification() {
       "ordinary calls should conservatively remain synchronization barriers");
   expect(lang::effects(lang::MirInstructionKind::Call).maySynchronize,
          "instruction-kind summaries should expose possible synchronization");
+
+  const lang::MirEffectTraits packFold = lang::effects(
+      lang::MirInstruction{.kind = lang::MirInstructionKind::Compute,
+                           .operation = lang::MirOperation::PackFold});
+  expect(packFold.readsUnknownMemory && packFold.writesUnknownMemory &&
+             packFold.invokesUserCode && packFold.mayTrap &&
+             packFold.maySynchronize && !packFold.speculatable &&
+             !packFold.removableWhenUnused && !packFold.reorderable,
+         "a pack fold should retain conservative effects for its exact user "
+         "function specializations");
 
   const lang::MirEffectTraits callInput =
       lang::effects(lang::MirInstructionKind::CallInput);
@@ -5213,6 +5241,268 @@ int main() {
          "parameter-to-field move evidence");
 }
 
+void testPackFoldMirMetadata() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("pack-fold-mir.gti", R"(
+void touch<T>(mut int& count, bool& enabled, T& value) {
+  if (enabled) {
+    count++;
+  }
+}
+
+void other<T>(mut int& count, bool& enabled, T& value) {
+  if (enabled) {
+    count += 10;
+  }
+}
+
+int visit_all<Values...>(mut int& count, bool& enabled, Values... values) {
+  (touch(count, enabled, values), ...);
+  return count;
+}
+
+int main() {
+  mut int count = 0;
+  bool enabled = true;
+  int empty = visit_all(count, enabled);
+  int8_t seeded = int8_t(1);
+  other(count, enabled, seeded);
+  count -= 10;
+  return visit_all(count, enabled, int8_t(1), uint16_t(2), int64_t(3)) - 3 +
+         empty;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected pack-fold MIR diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "frontend-produced empty and non-empty pack folds should verify");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto mutableFold = [](lang::MirProgram &program,
+                              bool empty) -> lang::MirInstruction * {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    for (lang::MirFunctionInstance &function : functions) {
+      for (lang::MirBlock &block : function.body.blocks) {
+        const auto found = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const lang::MirInstruction &instruction) {
+              return instruction.operation == lang::MirOperation::PackFold &&
+                     instruction.packFoldElements.empty() == empty;
+            });
+        if (found != block.instructions.end()) {
+          return &*found;
+        }
+      }
+    }
+    return nullptr;
+  };
+  const auto firstOrdinaryInstruction =
+      [](lang::MirProgram &program) -> lang::MirInstruction * {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    for (lang::MirFunctionInstance &function : functions) {
+      for (lang::MirBlock &block : function.body.blocks) {
+        const auto found = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [](const lang::MirInstruction &instruction) {
+              return instruction.operation != lang::MirOperation::PackFold;
+            });
+        if (found != block.instructions.end()) {
+          return &*found;
+        }
+      }
+    }
+    return nullptr;
+  };
+
+  lang::MirProgram baseline = frontend.mir;
+  const lang::MirInstruction *fold = mutableFold(baseline, false);
+  const lang::MirInstruction *emptyFold = mutableFold(baseline, true);
+  const bool orderedTypes =
+      fold != nullptr && fold->packFoldElements.size() == 3 &&
+      fold->packFoldElements[0].elementType == lang::SemanticType::Int8 &&
+      fold->packFoldElements[1].elementType == lang::SemanticType::UInt16 &&
+      fold->packFoldElements[2].elementType == lang::SemanticType::Int64;
+  expect(orderedTypes && fold->packFoldArgument == 2 &&
+             fold->packFoldFixedPlaces.size() == 2 && emptyFold != nullptr &&
+             emptyFold->packFoldElements.empty() &&
+             emptyFold->packFoldFixedPlaces.size() == 2,
+         "pack-fold MIR should retain fixed places and concrete elements in "
+         "source-pack order, including the empty-pack identity");
+  if (!orderedTypes || emptyFold == nullptr) {
+    return;
+  }
+
+  lang::MirProgram missing = frontend.mir;
+  lang::MirInstruction *missingFold = mutableFold(missing, false);
+  if (missingFold != nullptr) {
+    missingFold->packFoldElements.erase(missingFold->packFoldElements.begin() +
+                                        1);
+  }
+  expect(missingFold != nullptr && !lang::verifyMirProgram(missing).valid(),
+         "MIR verification should reject a missing pack-fold element");
+
+  lang::MirProgram duplicated = frontend.mir;
+  lang::MirInstruction *duplicatedFold = mutableFold(duplicated, false);
+  if (duplicatedFold != nullptr) {
+    duplicatedFold->packFoldElements.insert(
+        duplicatedFold->packFoldElements.begin() + 1,
+        duplicatedFold->packFoldElements.front());
+  }
+  expect(duplicatedFold != nullptr &&
+             !lang::verifyMirProgram(duplicated).valid(),
+         "MIR verification should reject a duplicated pack-fold element");
+
+  lang::MirProgram reordered = frontend.mir;
+  lang::MirInstruction *reorderedFold = mutableFold(reordered, false);
+  if (reorderedFold != nullptr) {
+    std::swap(reorderedFold->packFoldElements[0],
+              reorderedFold->packFoldElements[1]);
+  }
+  expect(reorderedFold != nullptr && !lang::verifyMirProgram(reordered).valid(),
+         "MIR verification should reject reordered pack-fold elements");
+
+  lang::MirProgram wrongDeclaration = frontend.mir;
+  lang::MirInstruction *wrongDeclarationFold =
+      mutableFold(wrongDeclaration, false);
+  bool changedDeclaration = false;
+  if (wrongDeclarationFold != nullptr) {
+    const auto other =
+        std::find_if(wrongDeclaration.functionInstances().begin(),
+                     wrongDeclaration.functionInstances().end(),
+                     [&](const lang::MirFunctionInstance &candidate) {
+                       return candidate.declaration !=
+                                  wrongDeclarationFold->packFoldFunction &&
+                              candidate.parameterTypes ==
+                                  wrongDeclarationFold->packFoldElements.front()
+                                      .parameterTypes;
+                     });
+    if (other != wrongDeclaration.functionInstances().end()) {
+      wrongDeclarationFold->packFoldElements.front().functionTarget = other->id;
+      changedDeclaration = true;
+    }
+  }
+  expect(changedDeclaration &&
+             !lang::verifyMirProgram(wrongDeclaration).valid(),
+         "MIR verification should reject a same-shaped specialization from "
+         "another generic declaration");
+
+  lang::MirProgram mutableElement = frontend.mir;
+  lang::MirInstruction *mutableElementFold = mutableFold(mutableElement, false);
+  if (mutableElementFold != nullptr) {
+    mutableElementFold->packFoldElements.front()
+        .parameterTypes.back()
+        .referenceAccess = lang::AccessMode::Mutable;
+  }
+  expect(mutableElementFold != nullptr &&
+             !lang::verifyMirProgram(mutableElement).valid(),
+         "MIR verification should reject a consuming or mutable element "
+         "parameter shape");
+
+  lang::MirProgram wrongPackIdentity = frontend.mir;
+  lang::MirInstruction *wrongPackFold = mutableFold(wrongPackIdentity, false);
+  if (wrongPackFold != nullptr) {
+    ++wrongPackFold->packFoldParameter;
+  }
+  expect(wrongPackFold != nullptr &&
+             !lang::verifyMirProgram(wrongPackIdentity).valid(),
+         "MIR verification should retain the concrete source-pack identity");
+
+  lang::MirProgram forgedEmpty = frontend.mir;
+  lang::MirInstruction *forgedEmptyFold = mutableFold(forgedEmpty, true);
+  lang::MirInstruction *forgedSourceFold = mutableFold(forgedEmpty, false);
+  if (forgedEmptyFold != nullptr && forgedSourceFold != nullptr) {
+    forgedEmptyFold->packFoldElements.push_back(
+        forgedSourceFold->packFoldElements.front());
+  }
+  expect(forgedEmptyFold != nullptr && forgedSourceFold != nullptr &&
+             !lang::verifyMirProgram(forgedEmpty).valid(),
+         "MIR verification should preserve an empty fold as an empty ordered "
+         "element sequence");
+
+  lang::MirProgram invalidEmptyPlace = frontend.mir;
+  lang::MirInstruction *invalidEmptyFold = mutableFold(invalidEmptyPlace, true);
+  if (invalidEmptyFold != nullptr) {
+    invalidEmptyFold->packFoldFixedPlaces.front() =
+        std::numeric_limits<lang::MirPlaceId>::max();
+  }
+  expect(invalidEmptyFold != nullptr &&
+             !lang::verifyMirProgram(invalidEmptyPlace).valid(),
+         "MIR verification should require fixed places even when the source "
+         "pack is empty");
+
+  lang::MirProgram fixedDrift = frontend.mir;
+  lang::MirInstruction *fixedDriftFold = mutableFold(fixedDrift, false);
+  if (fixedDriftFold != nullptr) {
+    fixedDriftFold->packFoldFixedPlaces[0] =
+        fixedDriftFold->packFoldFixedPlaces[1];
+  }
+  expect(fixedDriftFold != nullptr &&
+             !lang::verifyMirProgram(fixedDrift).valid(),
+         "MIR verification should reject a fixed fold argument retargeted to "
+         "an incompatible place");
+
+  lang::MirProgram immutableFixed = frontend.mir;
+  bool weakenedFixedAccess = false;
+  auto &immutableFixedFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          immutableFixed.functionInstances());
+  for (lang::MirFunctionInstance &function : immutableFixedFunctions) {
+    for (lang::MirBlock &block : function.body.blocks) {
+      const auto candidate = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.operation == lang::MirOperation::PackFold &&
+                   !instruction.packFoldElements.empty();
+          });
+      if (candidate == block.instructions.end() ||
+          candidate->packFoldFixedPlaces.empty()) {
+        continue;
+      }
+      const lang::MirPlaceId fixedPlace =
+          candidate->packFoldFixedPlaces.front();
+      if (fixedPlace != 0 && fixedPlace <= function.body.places.size()) {
+        function.body.places[fixedPlace - 1].access =
+            lang::AccessMode::ReadOnly;
+        weakenedFixedAccess = true;
+      }
+      break;
+    }
+    if (weakenedFixedAccess) {
+      break;
+    }
+  }
+  expect(weakenedFixedAccess && !lang::verifyMirProgram(immutableFixed).valid(),
+         "MIR verification should require mutable fixed places for mutable "
+         "reference parameters");
+
+  lang::MirProgram missingFixed = frontend.mir;
+  lang::MirInstruction *missingFixedFold = mutableFold(missingFixed, false);
+  if (missingFixedFold != nullptr) {
+    missingFixedFold->packFoldFixedPlaces.pop_back();
+  }
+  expect(missingFixedFold != nullptr &&
+             !lang::verifyMirProgram(missingFixed).valid(),
+         "MIR verification should reject a missing fixed pack-fold place");
+
+  lang::MirProgram leaked = frontend.mir;
+  lang::MirInstruction *ordinary = firstOrdinaryInstruction(leaked);
+  if (ordinary != nullptr) {
+    ordinary->packFoldFixedPlaces.push_back(fold->packFoldFixedPlaces.front());
+  }
+  expect(ordinary != nullptr && !lang::verifyMirProgram(leaked).valid(),
+         "MIR verification should reject pack-fold metadata on another "
+         "operation");
+}
+
 } // namespace
 
 void testCrossAnalysisDeterminism() {
@@ -5271,6 +5561,7 @@ int main() {
   testReturnEdgeLoanIdentity();
   testCallableBoundaryMirMetadata();
   testOwnedCallableTransportMirMetadata();
+  testPackFoldMirMetadata();
 
   if (failures != 0) {
     std::cerr << failures << " optimizer test(s) failed\n";

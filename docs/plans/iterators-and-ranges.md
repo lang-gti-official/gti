@@ -638,7 +638,7 @@ algorithms. It provides:
 - default and size construction, with value initialization of each sized
   element;
 - `size`, `capacity`, and `empty`;
-- `reserve`, `clear`, push, and pop operations;
+- `reserve`, `clear`, push, pop, and indexed insert/erase operations;
 - checked `at` and `operator[]`;
 - variadic exact in-place `emplace_back` over a by-value pack;
 - move-only lifecycle over `gti_internal::storage<T>`; and
@@ -655,8 +655,9 @@ behavior. The hosted-entry signature's exact
 protocol.
 
 This is a container milestone checkpoint rather than completion of the range
-proposal. Mutable iteration, precise structural-invalidation effects, nested
-readers, owned temporary ranges, and dedicated range/element loan scopes remain
+proposal. Indexed insertion and erasure use checked private slot shifts, while
+mutable iteration, precise structural-invalidation effects, nested readers,
+owned temporary ranges, and dedicated range/element loan scopes remain
 required before vector can claim the full iteration contract below.
 
 `std::array<T, N>`, `std::string`, and `std::string_view` should adopt the same
@@ -835,7 +836,8 @@ authoritative until a dedicated optimization architecture is adopted.
 ### Phase 3: Standard containers
 
 - The first source-defined `std::vector<T>` slice is implemented for movable
-  elements, including variadic in-place construction and read-only iteration.
+  elements, including variadic in-place construction, indexed insertion and
+  erasure, and read-only iteration.
 - Read-only iterators are implemented for `std::vector` and owning strings;
   `std::array` iteration and mutable container iterators remain.
 - Add read-only iteration to `std::string_view`.

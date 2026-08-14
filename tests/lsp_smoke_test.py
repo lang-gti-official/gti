@@ -271,7 +271,7 @@ def test_inheritance_tooling(executable, root):
         assert "class Sprite : public Base, public Renderable {" in formatted
         assert "int render(int frame) override {" in formatted
         assert "void operator++() mut override {" in formatted
-        assert "for (auto & value : values) {" in formatted
+        assert "for (auto& value : values) {" in formatted
 
         invalid_source = (
             "interface Invalid { int state = 0; "
@@ -4124,6 +4124,174 @@ def test_contextual_array_hover(executable, root):
         session.close()
 
 
+def test_pack_fold_tooling(executable, root):
+    source = (
+        "void visit<Value>(uint64_t& fixed, Value& value) {}\n"
+        "void visit_all<Values...>(uint64_t& fixed, Values... values) {\n"
+        "  (visit(fixed, values), ...);\n"
+        "}\n"
+    )
+    path = root / "pack-fold-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"]["semanticTokensProvider"][
+            "legend"
+        ]["tokenTypes"]
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        pack_declaration = source.index(
+            "values)", source.index("void visit_all")
+        )
+        pack_occurrence = source.index("values), ...")
+
+        def request(request_id, method, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        hover = request(2, "textDocument/hover", pack_occurrence + 1)
+        assert hover is not None, hover
+        assert hover["contents"] == {
+            "kind": "plaintext",
+            "value": "Values...",
+        }, hover
+        assert hover["range"] == {
+            "start": lsp_position(source, pack_occurrence),
+            "end": lsp_position(source, pack_occurrence + len("values")),
+        }
+
+        definition = request(3, "textDocument/definition", pack_occurrence + 1)
+        assert definition == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, pack_declaration),
+                "end": lsp_position(source, pack_declaration + len("values")),
+            },
+        }, definition
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 4)[
+                "result"
+            ]["data"]
+        )
+        occurrence_position = lsp_position(source, pack_occurrence)
+        occurrence_token = tokens[
+            (occurrence_position["line"], occurrence_position["character"])
+        ]
+        assert token_types[occurrence_token["type"]] == "parameter", (
+            token_types,
+            occurrence_token,
+        )
+
+        truncated = source.replace("), ...);", "), ...;")
+        truncated_occurrence = truncated.index("values), ...")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": truncated}],
+                },
+            }
+        )
+        diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]["diagnostics"]
+        assert any(
+            item.get("code") == "GTI-P0001"
+            and "after the pack fold ellipsis" in item.get("message", "")
+            for item in diagnostics
+        ), diagnostics
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(truncated, truncated_occurrence + 1),
+                },
+            }
+        )
+        assert session.receive_until(lambda message: message.get("id") == 5)[
+            "result"
+        ] is None
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        recovered_tokens = session.receive_until(
+            lambda message: message.get("id") == 6
+        )["result"]["data"]
+        assert recovered_tokens
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -4166,6 +4334,7 @@ def main():
     test_native_record_tooling(sys.argv[1], root)
     test_integer_arithmetic_tooling(sys.argv[1], root)
     test_owned_move_capture_tooling(sys.argv[1], root)
+    test_pack_fold_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
@@ -4932,7 +5101,7 @@ def main():
     formatted = formatting_edits[0]["newText"]
     assert "namespace engine {\n    namespace graphics" in formatted
     assert "class Box<T> {" in formatted
-    assert "T & get() {" in formatted
+    assert "T& get() {" in formatted
     assert "Box<int> box = Box<int>(identity(1));" in formatted
     assert "class StaticArray<T, uint64_t N> {" in formatted
     assert "// Generic iterator access.\n    Box<T> begin();" in formatted
@@ -4957,7 +5126,7 @@ def main():
     assert "StaticArray<int, 4> fixed = StaticArray<int, 4>();" in formatted
     assert "Box<int> direct_box{identity(1)};" in formatted
     assert "std::array<int, 3> standard_array = std::array<int, 3>();" in formatted
-    assert "int & box_value = box.get();" in formatted
+    assert "int& box_value = box.get();" in formatted
     assert "identity<int>(1)" in formatted
     assert "T constrained<std::numeric T>(T value) {" in formatted
     assert "int bits = ((identity(0b1) << 0x3) | 0x2) ^ 0b1;" in formatted
@@ -4975,7 +5144,7 @@ def main():
     assert "expected<int, int> calculate(bool fail) {" in formatted
     assert "uint64_t exact = overloaded(uint64_t(1));" in formatted
     assert "mut int buffer[1 + 2] = {1, 2, 3};" in formatted
-    assert "int inspect_pixel(Pixel & pixel) {" in formatted
+    assert "int inspect_pixel(Pixel& pixel) {" in formatted
     assert "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1);" in formatted
     assert "auto copied_owner = moved;" in formatted
     assert "int moved_value = owner->x;" in formatted
@@ -4984,9 +5153,9 @@ def main():
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        this.x = 0;\n    }" in formatted
     assert "~Pixel() {\n        this.reset();\n    }\nprivate:" in formatted
-    assert "mut Pixel & operator->() mut {" in formatted
-    assert "mut int & operator*() mut {" in formatted
-    assert "mut int & operator[](uint64_t index) mut {" in formatted
+    assert "mut Pixel& operator->() mut {" in formatted
+    assert "mut int& operator*() mut {" in formatted
+    assert "mut int& operator[](uint64_t index) mut {" in formatted
     assert "uint64_t operator()(uint64_t value) {" in formatted
     assert "operator bool() {" in formatted
     assert "void relay<Args...>(Args... values) {" in formatted

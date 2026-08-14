@@ -1,0 +1,81 @@
+#include "../core/layer.gti"
+
+namespace game {
+class AppLayer : public psych::Layer {
+  mut bool attached = false;
+  mut uint64_t updates = 0;
+  mut uint64_t renders = 0;
+  mut uint64_t player_position = 0;
+  mut uint64_t treasure = 0;
+
+public:
+  AppLayer() {}
+
+  uint64_t Id() override { return 1; }
+
+  void OnAttach() mut override {
+    this.attached = true;
+    std::println("game layer attached");
+  }
+
+  void OnUpdate(uint64_t frame) mut override {
+    this.updates++;
+    this.player_position++;
+
+    if (frame == 0) {
+      std::println("turn 1: the player enters the ruins");
+    } else if (frame == 1) {
+      this.treasure++;
+      std::println("turn 2: the player finds a brass key");
+    } else if (frame == 2) {
+      std::println("turn 3: the player opens the old gate");
+    }
+  }
+
+  void OnRender() mut override { this.renders++; }
+
+  void OnDetach() mut override {
+    this.attached = false;
+    std::println("game layer detached");
+  }
+
+  bool Valid(uint64_t expected_frames) {
+    return !this.attached and this.updates == expected_frames and
+           this.renders == expected_frames and
+           this.player_position == expected_frames and this.treasure == 1;
+  }
+};
+
+class StatusOverlay : public psych::Layer {
+  mut bool attached = false;
+  mut uint64_t updates = 0;
+  mut uint64_t renders = 0;
+
+public:
+  StatusOverlay() {}
+
+  uint64_t Id() override { return 2; }
+
+  void OnAttach() mut override {
+    this.attached = true;
+    std::println("status overlay attached");
+  }
+
+  void OnUpdate(uint64_t frame) mut override { this.updates++; }
+
+  void OnRender() mut override {
+    this.renders++;
+    std::println("status overlay: frame presented");
+  }
+
+  void OnDetach() mut override {
+    this.attached = false;
+    std::println("status overlay detached");
+  }
+
+  bool Valid(uint64_t expected_frames) {
+    return !this.attached and this.updates == expected_frames and
+           this.renders == expected_frames;
+  }
+};
+}

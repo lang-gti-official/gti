@@ -264,6 +264,22 @@ void applyEntry(const Entry &entry, FormatConfigResult &result) {
 
 } // namespace
 
+std::string_view defaultFormatConfig() {
+  return R"(BasedOnStyle: GTI
+IndentWidth: 2
+UseTab: Never
+BreakBeforeBraces: Attach
+RequiresClausePosition: OwnLine
+SpaceBeforeParens: ControlStatements
+IndentCaseLabels: false
+MaxEmptyLinesToKeep: 1
+SpacesBeforeTrailingComments: 1
+SpaceBeforeAssignmentOperators: true
+ReferenceAlignment: Left
+DisableFormat: false
+)";
+}
+
 FormatConfigResult parseFormatConfig(std::string_view source,
                                      FormatOptions baseOptions) {
   FormatConfigResult result{.options = std::move(baseOptions)};

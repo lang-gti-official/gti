@@ -1,0 +1,89 @@
+#include "layer_stack.gti"
+
+namespace psych {
+enum class ApplicationState : uint8_t {
+  Created,
+  Initialized,
+  Running,
+  Stopped,
+};
+
+// This is the headless core of PsychEngine. Platform windows, native events,
+// rendering APIs, editor UI, logging, profiling, assets, and filesystem
+// adapters remain outside this port. The base class still owns lifecycle and
+// frame dispatch while the concrete App supplies layers and app hooks.
+class Application {
+public:
+  // Public so a derived App can transfer concrete layers into the owning
+  // stack without a mutable-reference-returning protected accessor. GTI does
+  // not currently have a protected access tier.
+  mut std::unique_ptr<LayerStack> Layers;
+
+private:
+  mut ApplicationState state = ApplicationState::Created;
+  mut bool running = false;
+  mut uint64_t completed_frames = 0;
+
+public:
+  Application() : Layers(std::make_unique<LayerStack>()) {}
+  Application(Application& other) = delete;
+  Application(Application&& other) = delete;
+
+  virtual bool Configure() mut = 0;
+  virtual void OnStarted() mut = 0;
+  virtual void OnFrame(uint64_t frame) mut = 0;
+  virtual void OnStopped() mut = 0;
+
+  bool Init() mut {
+    if (this.state != ApplicationState::Created) {
+      return false;
+    }
+    this.state = ApplicationState::Initialized;
+    return true;
+  }
+
+  bool Run(uint64_t maximum_frames) mut {
+    if (this.state != ApplicationState::Initialized) {
+      return false;
+    }
+    if (!this.Configure()) {
+      this.Layers->DetachAll();
+      return false;
+    }
+
+    this.state = ApplicationState::Running;
+    this.running = true;
+    this.completed_frames = 0;
+    this.OnStarted();
+
+    while (this.running and this.completed_frames < maximum_frames) {
+      uint64_t frame = this.completed_frames;
+      this.Layers->UpdateAll(frame);
+      this.Layers->RenderAll();
+      this.completed_frames++;
+      this.OnFrame(frame);
+    }
+    this.running = false;
+    this.Layers->DetachAll();
+    this.state = ApplicationState::Initialized;
+    return true;
+  }
+
+  void Stop() mut { this.running = false; }
+
+  bool Shutdown() mut {
+    if (this.state != ApplicationState::Running and
+        this.state != ApplicationState::Initialized) {
+      return false;
+    }
+
+    this.running = false;
+    this.OnStopped();
+    this.state = ApplicationState::Stopped;
+    return true;
+  }
+
+  ApplicationState State() { return this.state; }
+  uint64_t CompletedFrames() { return this.completed_frames; }
+};
+}

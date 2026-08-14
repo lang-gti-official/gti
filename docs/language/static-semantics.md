@@ -126,6 +126,12 @@ conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list and do not define implicit
 conversions.
 
+The source-defined `std::upcast_unique<Base, Derived>` operation is an explicit
+ownership conversion, not an overload conversion. Its trusted private step is
+well-formed only when `Base` is a public base of `Derived` and has polymorphic
+destruction. Calls never convert `unique_ptr<Derived>` to `unique_ptr<Base>`
+implicitly.
+
 One bounded target-typed rule applies to an explicitly declared class or
 struct binding: when its initializer is exactly `nullptr`, the destination may
 select one accessible constructor whose sole parameter is exactly
@@ -164,6 +170,14 @@ explicit `IntegerType(value)` syntax and the checked range/truncation rule in
 [execution semantics](execution.md#43-numeric-execution). Explicit
 `float(value)` and `double(value)` accept integers or either floating width;
 converting to `float` is the required explicit narrowing operation.
+
+`char` remains a distinct nonnumeric unsigned eight-bit code-unit type. One
+explicit lossless extraction bridges byte-oriented output code:
+`uint8_t(character)` preserves the character's code-unit bits. No range check
+is required because every character code unit fits. The conversion is not
+implicit, does not admit any other integer destination, does not add the
+inverse `char(uint8_t)` form, and does not make `char` satisfy an integer or
+numeric constraint.
 
 `Type name{arguments};` directly constructs a declared class or struct. It is
 not C++ aggregate initialization, list conversion, initializer-list preference,
@@ -290,6 +304,32 @@ Class and struct type parameters may be followed by immutable `uint64_t` value
 parameters. Their arguments and expression contexts are restricted by the
 incorporated grammar. Concrete generic bodies are rechecked after substitution;
 generic validity is not delegated to C++ template instantiation.
+
+A function or method may own one final type pack and one matching final named,
+immutable, by-value parameter pack. Whole-pack forwarding remains available
+only as the final argument of another variadic call. The bounded comma-pack
+fold `(call(fixed, pack), ...)` additionally applies one call pattern to each
+concrete pack element. It is well-formed only when:
+
+- the bare parameter-pack name occurs exactly once and is the pattern call's
+  final argument;
+- every other argument is a named place, so the fold does not conceal an
+  effectful expression that would be reevaluated per element;
+- the target is one directly named, non-overloaded ordinary free function with
+  `void` result;
+- that target has one generic type parameter supplied by the element and an
+  exact final read-only reference parameter to that element type; and
+- the source pack's constraint facts imply the target element parameter's
+  constraints while the generic body is checked.
+
+Semantics selects that one declaration before expansion. Concrete generic
+reanalysis then substitutes each source-pack element in order, validates its
+constraints and exact parameter types, and records one resolved call identity
+per element. It does not reopen an overload set for each type. The expression
+has type `void`, including for an empty pack. This rule adds neither a general
+fold-expression algebra nor pack indexing, multiple packs, mutable element
+iteration, partial movement, member-call patterns, or backend-selected
+template behavior.
 
 ## 3.8 Classes, Interfaces, And Lifecycle
 
@@ -482,7 +522,8 @@ The evaluator accepts fixed-width integer, `float`, `double`, `bool`, `char`,
 `std::string_view`, and `nullptr_t` literals; layout-query constants; earlier
 constexpr bindings; grouping; supported scalar unary, binary, comparison, and
 short-circuit logical operations; lazy conditional expressions; and explicit
-numeric conversions. Integer operations use the language's checked domains.
+numeric conversions plus lossless `uint8_t(char)` code-unit extraction.
+Integer operations use the language's checked domains.
 Floating literals, arithmetic, comparisons, integer conversions, signed zero,
 infinities, and NaNs use the selected binary32 or binary64 rules in execution
 semantics. Evaluation has a shared 4096-step budget and a 64-call-depth limit

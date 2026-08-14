@@ -149,11 +149,22 @@ a class value is eligible only when it can be moved. The legacy operand vector
 remains source provenance and compatibility-backend input; MIR consumes the
 plan as schedule authority for these slices.
 
+`HirValueKind::PackFold` is a separate bounded schedule, not a request for HIR
+to interpret a general fold expression. Semantics has already selected one
+non-overloaded free generic `void` target and proved that the source
+pack occurs once in the target's read-only element position. The concrete HIR
+value retains that declaration identity, the source pack and argument
+position, its fixed named-place operands, and one exact resolved element-call
+record per substituted pack type in source order. Each element record carries
+its concrete type and selected function-instance identity. An empty pack is an
+explicit fold value with an empty element sequence. HIR neither reopens
+overload resolution nor derives element calls from emitted template behavior.
+
 This is not yet a complete executable schedule. Borrowed-state class values,
-packs, unresolved callable calls, operators other than `operator()`,
-special/default construction, conditionals, target-place formation, result
-destinations, and module/static initializer bodies remain outside the bounded
-plan.
+whole-pack forwarding and general pack expressions beyond the bounded fold,
+unresolved callable calls, operators other than `operator()`, special/default
+construction, conditionals, target-place formation, result destinations, and
+module/static initializer bodies remain outside the bounded plan.
 
 M-LIFE-01 maps each AST full-expression root selected by `SemanticModel` to a
 snapshot-local `HirFullExpressionId`; HIR does not infer endpoints from

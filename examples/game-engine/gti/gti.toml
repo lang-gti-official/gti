@@ -1,0 +1,23 @@
+manifest-version = 1
+
+[package]
+name = "psych-core-example"
+version = "0.1.0"
+
+[targets.psych-core]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.layer-stack-tests]
+kind = "test"
+root = "src/tests/layer_stack_test.gti"
+
+[profiles.dev]
+optimization = 0
+cpp-standard = "c++23"
+keep-cpp = true
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"
+keep-cpp = false

@@ -138,7 +138,7 @@ start a later phase:
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
-| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. MIR v17 adds bounded scalar `Invoke`/`PropagateFailure` edges, fixed-record parameters, and deterministic failure cleanup while retaining ordered invocation inputs, exact borrow origins, synchronization records, and artifact-local failure identity. |
+| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. MIR v17 adds bounded scalar `Invoke`/`PropagateFailure` edges, fixed-record parameters, and deterministic failure cleanup while retaining ordered invocation inputs, exact borrow origins, synchronization records, conservative `PackFold`, and artifact-local failure identity. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
@@ -1266,7 +1266,8 @@ name recognition.
   fixed arrays and `std::vector` before widening it.
 - **Exit gate:** mutation in place, `continue`, `break`, nested read-only loops,
   reserve/push/clear invalidation, and owner move/drop tests agree across
-  semantics, MIR verification, and runtime. New insertion/erasure APIs remain
+  semantics, MIR verification, and runtime. Indexed insertion/erasure is
+  implemented; iterator-position forms and their range interactions remain
   owned by `L-CONT-01`.
 
 ### L-RANGE-03: Spans And Dynamic Views
@@ -1441,16 +1442,29 @@ name recognition.
 
 ### L-TEXT-01: Formatting, Parsing, And Text Policy
 
-- **State/role:** the source-text contract sub-slice is ready; library
-  formatting/parsing remains blocked on `L-RANGE-03` and `L-CALL-01`. All are
-  systems-readiness work. Each implemented float width joins formatting/parsing in its
-  own numeric sub-slice rather than blocking the whole text layer.
+- **State/role:** in progress. Canonical base-10 conversion and direct stdout
+  output are implemented for every fixed-width integer. Bounded sequential
+  `{}` replacement for heterogeneous integral packs is also implemented in
+  ordinary GTI through `std::format`, `std::try_print`, and
+  `std::try_println`; malformed patterns and argument-count mismatches return
+  `format_errc` before output. The source-text contract sub-slice is ready.
+  This integral replacement slice is no longer blocked on `L-RANGE-03` or the
+  remaining `L-CALL-01` work: indexed counted text, a bounded call-pack fold,
+  and scalar byte output are sufficient. Dynamic borrowed views, generalized
+  formatter customization, and range-oriented text algorithms still take
+  their applicable range/callable prerequisites rather than being inferred
+  from this fold. All are systems-readiness work. Each implemented float width
+  joins formatting/parsing in its own numeric sub-slice rather than blocking
+  the whole text layer.
 - **Scope:** First specify source encoding, BOM/newline handling, Unicode
   identifiers/normalization, and source-offset behavior across the lexer,
   formatter, Tree-sitter, and LSP. Then state the public byte/UTF-8 policy,
   owning/view conversions, numeric parsing, formatting, and explicit failure.
   Prefer ordinary GTI algorithms and narrow host calls over exposing C buffers.
-  Stderr remains a hosted service owned by `L-HOST-01`.
+  The current formatter recognizes sequential `{}` plus `{{`/`}}`, accepts
+  integral arguments only, and validates before stdout; indexing, names,
+  specifiers, floats, and customization remain later breadth. Stderr remains a
+  hosted service owned by `L-HOST-01`.
 - **Exit gate:** the selected byte/UTF-8 policy is normative; owning/view and
   numeric round trips cover valid, invalid, boundary, and allocation-failure
   cases; APIs expose no native buffer lifetime and behave identically at O0/O3.
@@ -1473,12 +1487,14 @@ name recognition.
 
 ### L-CONT-01: Vector And String Completion
 
-- **State/role:** blocked; prerequisite is `L-RANGE-03`; systems-readiness
-  implementation for the renderer/game workload.
-- **Scope:** Complete vector insertion/erasure and the corresponding string
-  operations with exact invalidation, owner-dependency, failure, and range
-  behavior. Range sorting/search/partition/copy/move algorithms remain owned by
-  `L-RANGE-04`.
+- **State/role:** active bounded vector slice; complete range integration still
+  depends on `L-RANGE-03`; systems-readiness implementation for the
+  renderer/game workload.
+- **Scope:** Indexed vector insertion/erasure for move-only elements is
+  implemented through checked private slot shifts. Complete iterator-position
+  forms and corresponding string operations still require exact invalidation,
+  owner-dependency, failure, and range behavior. Range
+  sorting/search/partition/copy/move algorithms remain owned by `L-RANGE-04`.
 - **Non-goals:** associative containers, allocator customization, or container
   proliferation before the shared protocol and benchmark evidence exist.
 - **Exit gate:** insertion/erasure/string operations have exact invalidation

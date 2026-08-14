@@ -71,6 +71,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    analyzingPackFoldElement = false;
     allowPayloadEnumeratorReference = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
@@ -189,6 +190,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    analyzingPackFoldElement = false;
     allowPayloadEnumeratorReference = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
@@ -3327,6 +3329,12 @@ public:
     currentType = callExpressionType(viable.front().function.returnType);
   }
 
+  [[nodiscard]] static bool
+  isCharacterCodeConversion(const SemanticType &source,
+                            const SemanticType &target) {
+    return source == SemanticType::Char && target == SemanticType::UInt8;
+  }
+
   void analyzeTypeParameterCall(const Call &expr,
                                 const SemanticType &targetType) {
     bool valid = true;
@@ -3373,14 +3381,17 @@ public:
     }
 
     const SemanticType valueType = analyze(expr.arguments().front());
-    if (!isNumeric(targetType)) {
+    const bool characterCodeConversion =
+        isCharacterCodeConversion(valueType, targetType);
+    if (!isNumeric(targetType) && !characterCodeConversion) {
       report(expressionToken(expr.callee()),
              "Generic conversion target '" + typeSpelling(targetType) +
                  "' requires the numeric capability.",
              "GTI-S2029");
       valid = false;
     }
-    if (valueType != SemanticType::Unknown && !isNumeric(valueType)) {
+    if (valueType != SemanticType::Unknown && !isNumeric(valueType) &&
+        !characterCodeConversion) {
       report(expressionToken(expr.arguments().front()),
              "Cannot explicitly convert '" + typeSpelling(valueType) +
                  "' to '" + typeSpelling(targetType) +
@@ -3415,7 +3426,10 @@ public:
     }
 
     const SemanticType valueType = analyze(expr.arguments().front());
-    if (valueType != SemanticType::Unknown && !isNumeric(valueType)) {
+    const bool characterCodeConversion =
+        isCharacterCodeConversion(valueType, targetType);
+    if (valueType != SemanticType::Unknown && !isNumeric(valueType) &&
+        !characterCodeConversion) {
       report(expressionToken(expr.arguments().front()),
              "Cannot explicitly convert '" + typeSpelling(valueType) +
                  "' to '" + aliasName +
@@ -3554,14 +3568,17 @@ public:
     validateType(expr.targetType());
     const SemanticType targetType = typeOf(expr.targetType());
     const SemanticType valueType = analyze(expr.value());
-    if (!isNumeric(targetType)) {
+    const bool characterCodeConversion =
+        isCharacterCodeConversion(valueType, targetType);
+    if (!isNumeric(targetType) && !characterCodeConversion) {
       report(expr.targetType().name.last(),
              "Explicit conversions currently require a numeric target type.",
              "GTI-S2014");
       currentType = SemanticType::Unknown;
       return;
     }
-    if (valueType != SemanticType::Unknown && !isNumeric(valueType)) {
+    if (valueType != SemanticType::Unknown && !isNumeric(valueType) &&
+        !characterCodeConversion) {
       report(expressionToken(expr.value()),
              "Cannot explicitly convert '" + typeSpelling(valueType) +
                  "' to '" + typeSpelling(targetType) +
@@ -4688,6 +4705,237 @@ public:
     currentType = SemanticType::Bool;
   }
 
+  void visitPackFoldExpr(const PackFold &expr) override {
+    const auto *call = dynamic_cast<const Call *>(expr.pattern().get());
+    if (call == nullptr) {
+      report(expr.ellipsis(),
+             "A pack fold requires one ordinary function-call pattern.",
+             "GTI-S2023");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    bool valid = true;
+    if (!call->typeArguments().empty()) {
+      for (const TypeRef &argument : call->typeArguments()) {
+        validateType(argument);
+      }
+      report(call->paren(),
+             "A pack-fold target infers its one element type and does not "
+             "take explicit generic arguments.",
+             "GTI-S2023");
+      valid = false;
+    }
+    if (call->arguments().empty()) {
+      report(expr.ellipsis(),
+             "A pack-fold call must contain one named parameter-pack "
+             "argument.",
+             "GTI-S2023");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const bool enclosingCallCallee = analyzingCallCallee;
+    analyzingCallCallee = true;
+    const SemanticType calleeType = analyze(call->callee());
+    analyzingCallCallee = enclosingCallCallee;
+    const std::optional<Symbol> callee =
+        resolveExpressionSymbol(call->callee());
+
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(call->arguments().size());
+    const std::size_t packIndex = call->arguments().size() - 1;
+    const Variable *packVariable = nullptr;
+    const Symbol *packSymbol = nullptr;
+    for (std::size_t index = 0; index < call->arguments().size(); ++index) {
+      const ExprPtr &argument = call->arguments()[index];
+      const auto *variable = dynamic_cast<const Variable *>(argument.get());
+      if (variable == nullptr) {
+        report(expressionToken(argument),
+               "Pack-fold call arguments must be named local values so the "
+               "fold cannot repeat expression side effects.",
+               "GTI-S2023");
+        argumentTypes.emplace_back(analyze(argument));
+        valid = false;
+        continue;
+      }
+      if (index == packIndex) {
+        packVariable = variable;
+        packSymbol = resolve(variable->name());
+        const bool enclosingPackElement = analyzingPackFoldElement;
+        analyzingPackFoldElement = true;
+        argumentTypes.emplace_back(analyze(argument));
+        analyzingPackFoldElement = enclosingPackElement;
+      } else {
+        argumentTypes.emplace_back(analyze(argument));
+      }
+    }
+
+    if (calleeType != SemanticType::Function || !callee ||
+        callee->type != SemanticType::Function || callee->overloads.empty()) {
+      if (calleeType != SemanticType::Unknown) {
+        report(call->paren(),
+               "A pack fold can call only one ordinary free function.",
+               "GTI-S2023");
+      }
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (callee->overloads.size() != 1) {
+      report(call->paren(),
+             "A pack-fold target must name exactly one function declaration; "
+             "overload selection is not deferred to individual elements.",
+             "GTI-S2023");
+      valid = false;
+    }
+    if (packVariable == nullptr || packSymbol == nullptr ||
+        packSymbol->type.kind != SemanticType::TypePack) {
+      report(expressionToken(call->arguments().back()),
+             "The final pack-fold argument must name the current function's "
+             "parameter pack.",
+             "GTI-S2023");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const FunctionCandidate &candidate = callee->overloads.front();
+    const bool exactGenericShape =
+        candidate.genericParameters.size() == 1 &&
+        !candidate.genericParameters.front().pack &&
+        !candidate.genericParameters.front().value &&
+        !candidate.parameterPack && candidate.ownerClass == 0 &&
+        !candidate.staticMember && candidate.intrinsic == IntrinsicKind::None &&
+        candidate.returnType == SemanticType::Void &&
+        candidate.requirements.empty() &&
+        candidate.parameterTypes.size() == argumentTypes.size();
+    const SemanticType *elementParameter =
+        exactGenericShape && !candidate.parameterTypes.empty()
+            ? &candidate.parameterTypes.back()
+            : nullptr;
+    const bool exactElementShape =
+        elementParameter != nullptr &&
+        elementParameter->kind == SemanticType::Reference &&
+        elementParameter->referenceAccess == AccessMode::ReadOnly &&
+        elementParameter->arguments.size() == 1 &&
+        elementParameter->arguments.front().kind ==
+            SemanticType::TypeParameter &&
+        elementParameter->arguments.front().genericParameterId ==
+            candidate.genericParameters.front().id;
+    if (!exactGenericShape || !exactElementShape) {
+      report(call->paren(),
+             "A pack-fold target must be one non-overloaded free generic "
+             "function returning void, with one inferred type parameter and "
+             "a final read-only reference to that element type.",
+             "GTI-S2023");
+      valid = false;
+    }
+    if (candidate.compilerPrivate &&
+        !isCompilerTrustedRequester(call->paren())) {
+      reportCompilerPrivateAccess(call->paren(), "pack-fold target");
+      valid = false;
+    }
+    if (valid &&
+        !satisfiesConstraint(packSymbol->type,
+                             candidate.genericParameters.front().constraints)) {
+      report(expr.ellipsis(),
+             "The source parameter pack does not prove the constraints "
+             "required by the pack-fold target.",
+             "GTI-S2023");
+      valid = false;
+    }
+
+    ResolvedPackFoldInfo fold{
+        .pattern = call,
+        .function = candidate.id,
+        .declaration = candidate.declaration,
+        .packSymbol = toolingSymbolFor(*packSymbol),
+        .packParameter = packSymbol->type.genericParameterId,
+        .packArgument = packIndex,
+        .fixedArgumentTypes = std::vector<SemanticType>(
+            argumentTypes.begin(),
+            argumentTypes.begin() + static_cast<std::ptrdiff_t>(packIndex))};
+
+    if (valid && packSymbol->type.concretePack) {
+      fold.elements.reserve(packSymbol->type.arguments.size());
+      for (const SemanticType &element : packSymbol->type.arguments) {
+        std::vector<SemanticType> concreteArguments = argumentTypes;
+        concreteArguments.back() = element;
+        FunctionCandidate resolved;
+        std::vector<SemanticType> typeArguments;
+        std::vector<CompileTimeValue> valueArguments;
+        ConstraintFailure failure;
+        if (!tryInstantiateFunction(candidate, {}, concreteArguments,
+                                    call->arguments(), resolved, typeArguments,
+                                    valueArguments, &failure)) {
+          if (hasConstraintFailure(failure)) {
+            reportConstraintFailure(expr.ellipsis(), failure);
+          } else {
+            report(expr.ellipsis(),
+                   "Pack element type '" + typeSpelling(element) +
+                       "' cannot instantiate the pack-fold target.",
+                   "GTI-S2023");
+          }
+          valid = false;
+          continue;
+        }
+        bool argumentsMatch = true;
+        for (std::size_t index = 0; index < concreteArguments.size(); ++index) {
+          if (!callArgumentMatches(resolved.parameterTypes[index],
+                                   concreteArguments[index],
+                                   call->arguments()[index])) {
+            reportCallArgumentMismatch(index, resolved.parameterTypes[index],
+                                       concreteArguments[index],
+                                       call->arguments()[index], "Pack fold");
+            argumentsMatch = false;
+          }
+        }
+        if (!argumentsMatch ||
+            !validateSelectedFunction(resolved, call->callee(), call->paren(),
+                                      call->arguments()) ||
+            !validateConfinedCallableArguments(
+                candidate, resolved, concreteArguments, call->arguments())) {
+          valid = false;
+          continue;
+        }
+        fold.elements.push_back(
+            {.elementType = element,
+             .call = ResolvedCallInfo{
+                 .function = resolved.id,
+                 .declaration = resolved.declaration,
+                 .returnType = resolved.returnType,
+                 .parameterTypes = resolved.parameterTypes,
+                 .typeArguments = std::move(typeArguments),
+                 .valueArguments = std::move(valueArguments),
+                 .requirements = resolved.requirements,
+                 .borrowOrigin = resolved.returnBorrowOrigin,
+                 .borrowArgument = resolved.returnBorrowParameter,
+                 .borrowAccess = resolved.returnBorrowAccess,
+                 .borrowPlace = resolved.returnBorrowPlace,
+                 .dispatch = CallDispatch::Static,
+                 .dispatchOwner = resolved.dispatchOwner}});
+      }
+    }
+
+    if (valid) {
+      semanticModel.record(expr, std::move(fold));
+      ResolvedCallInfo symbolic{.function = candidate.id,
+                                .declaration = candidate.declaration,
+                                .returnType = candidate.returnType,
+                                .parameterTypes = candidate.parameterTypes,
+                                .requirements = candidate.requirements,
+                                .borrowOrigin = candidate.returnBorrowOrigin,
+                                .borrowArgument =
+                                    candidate.returnBorrowParameter,
+                                .borrowAccess = candidate.returnBorrowAccess,
+                                .borrowPlace = candidate.returnBorrowPlace,
+                                .dispatch = CallDispatch::Static,
+                                .dispatchOwner = candidate.dispatchOwner};
+      semanticModel.record(*call, symbolic);
+      recordSelectedCallOccurrence(*call, std::move(symbolic));
+    }
+    currentType = valid ? SemanticType::Void : SemanticType::Unknown;
+  }
+
   void visitPackExpansionExpr(const PackExpansion &expr) override {
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
@@ -5233,7 +5481,8 @@ public:
              "Function names must be called; function values are not "
              "supported yet.");
     }
-    if (symbol->type.kind == SemanticType::TypePack) {
+    if (symbol->type.kind == SemanticType::TypePack &&
+        !analyzingPackFoldElement) {
       report(expr.name(),
              "Parameter pack '" + expr.name().lexeme +
                  "' must be expanded as the final call argument with '...'.",
@@ -8182,6 +8431,9 @@ private:
     if (name == "unique_owner_is_null") {
       return IntrinsicKind::UniqueOwnerIsNull;
     }
+    if (name == "unique_owner_upcast") {
+      return IntrinsicKind::UniqueOwnerUpcast;
+    }
     if (name == "allocate_storage") {
       return IntrinsicKind::AllocateStorage;
     }
@@ -8199,6 +8451,12 @@ private:
     }
     if (name == "storage_relocate") {
       return IntrinsicKind::StorageRelocate;
+    }
+    if (name == "storage_shift_right") {
+      return IntrinsicKind::StorageShiftRight;
+    }
+    if (name == "storage_shift_left") {
+      return IntrinsicKind::StorageShiftLeft;
     }
     if (name == "integer_wrapping_add") {
       return IntrinsicKind::IntegerWrappingAdd;
@@ -10474,7 +10732,8 @@ private:
     if (intrinsic == IntrinsicKind::AllocateUniqueOwner ||
         intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
         intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
-        intrinsic == IntrinsicKind::UniqueOwnerIsNull) {
+        intrinsic == IntrinsicKind::UniqueOwnerIsNull ||
+        intrinsic == IntrinsicKind::UniqueOwnerUpcast) {
       analyzeUniqueOwnerIntrinsicCall(expr, intrinsic);
       bindIntrinsicCallDeclaration(expr, declaration);
       return;
@@ -10867,6 +11126,65 @@ private:
       return;
     }
 
+    if (intrinsic == IntrinsicKind::UniqueOwnerUpcast) {
+      for (const TypeRef &argument : expr.typeArguments()) {
+        validateType(argument);
+      }
+      if (expr.typeArguments().size() != 1) {
+        report(expr.paren(),
+               "gti_internal::unique_owner_upcast<Base> requires exactly "
+               "one target base type.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (argumentTypes.size() != 1 ||
+          argumentTypes.front().kind != SemanticType::UniqueOwner ||
+          argumentTypes.front().arguments.size() != 1) {
+        report(expr.paren(),
+               "unique_owner_upcast expects exactly one "
+               "gti_internal::unique_owner<Derived> value.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+
+      const SemanticType targetType = typeOf(expr.typeArguments().front());
+      const SemanticType sourceType = argumentTypes.front().arguments.front();
+      if (targetType.kind != SemanticType::Class &&
+          targetType.kind != SemanticType::TypeParameter) {
+        report(expr.typeArguments().front().name.last(),
+               "A unique owner can only be upcast to a class or interface "
+               "base type.",
+               "GTI-S2018");
+      } else if (sourceType.kind != SemanticType::TypeParameter &&
+                 targetType.kind != SemanticType::TypeParameter) {
+        if (!isPublicBaseConversion(sourceType, targetType)) {
+          report(expr.paren(),
+                 "Cannot upcast unique ownership from '" +
+                     typeSpelling(sourceType) + "' to '" +
+                     typeSpelling(targetType) +
+                     "'; the target must be a public base.",
+                 "GTI-S2018");
+        } else if (const ClassInfo *target = classInfo(targetType);
+                   target == nullptr || !target->polymorphic) {
+          report(expr.typeArguments().front().name.last(),
+                 "Unique-owner upcast target '" + typeSpelling(targetType) +
+                     "' must have polymorphic destruction.",
+                 "GTI-S2018");
+        }
+      }
+
+      currentType = SemanticType::uniqueOwnerOf(targetType);
+      semanticModel.record(
+          expr,
+          ResolvedCallInfo{.returnType = currentType,
+                           .parameterTypes = std::move(argumentTypes),
+                           .typeArguments = {targetType, sourceType},
+                           .intrinsic = IntrinsicKind::UniqueOwnerUpcast});
+      return;
+    }
+
     for (const TypeRef &argument : expr.typeArguments()) {
       validateType(argument);
     }
@@ -10971,8 +11289,11 @@ private:
                "GTI-S2019");
       }
     } else {
-      const std::size_t expectedArguments =
-          intrinsic == IntrinsicKind::StorageRelocate ? 3 : 2;
+      const bool rangeOperation =
+          intrinsic == IntrinsicKind::StorageRelocate ||
+          intrinsic == IntrinsicKind::StorageShiftRight ||
+          intrinsic == IntrinsicKind::StorageShiftLeft;
+      const std::size_t expectedArguments = rangeOperation ? 3 : 2;
       if (expr.arguments().size() != expectedArguments) {
         reportStorageArity(expr, intrinsic, expectedArguments);
       }
@@ -10997,7 +11318,9 @@ private:
     const bool mutatesFirst = intrinsic == IntrinsicKind::StorageConstruct ||
                               intrinsic == IntrinsicKind::StorageReadMut ||
                               intrinsic == IntrinsicKind::StorageDestroy ||
-                              intrinsic == IntrinsicKind::StorageRelocate;
+                              intrinsic == IntrinsicKind::StorageRelocate ||
+                              intrinsic == IntrinsicKind::StorageShiftRight ||
+                              intrinsic == IntrinsicKind::StorageShiftLeft;
     if (mutatesFirst) {
       requireMutableStorage(expr.arguments().front(),
                             storageIntrinsicName(intrinsic));
@@ -11042,7 +11365,7 @@ private:
         requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
       }
       currentType = SemanticType::Void;
-    } else {
+    } else if (intrinsic == IntrinsicKind::StorageRelocate) {
       if (!satisfiesConstraint(elementType,
                                constraintBit(GenericConstraintKind::Movable))) {
         report(expr.paren(),
@@ -11061,6 +11384,23 @@ private:
         } else {
           requireMutableStorage(expr.arguments()[1], "storage_relocate");
         }
+      }
+      if (argumentTypes.size() >= 3) {
+        requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
+      }
+      currentType = SemanticType::Void;
+    } else {
+      if (!satisfiesConstraint(elementType,
+                               constraintBit(GenericConstraintKind::Movable))) {
+        report(expr.paren(),
+               storageIntrinsicName(intrinsic) +
+                   " requires a movable element type, but '" +
+                   typeSpelling(elementType) +
+                   "' does not guarantee move construction.",
+               "GTI-S2019");
+      }
+      if (argumentTypes.size() >= 2) {
+        requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
       }
       if (argumentTypes.size() >= 3) {
         requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
@@ -11248,6 +11588,8 @@ private:
       return "unique_owner_borrow_mut";
     case IntrinsicKind::UniqueOwnerIsNull:
       return "unique_owner_is_null";
+    case IntrinsicKind::UniqueOwnerUpcast:
+      return "unique_owner_upcast";
     default:
       return "unique-owner operation";
     }
@@ -11268,6 +11610,10 @@ private:
       return "storage_destroy";
     case IntrinsicKind::StorageRelocate:
       return "storage_relocate";
+    case IntrinsicKind::StorageShiftRight:
+      return "storage_shift_right";
+    case IntrinsicKind::StorageShiftLeft:
+      return "storage_shift_left";
     default:
       return "storage operation";
     }
@@ -22985,6 +23331,8 @@ private:
                               DefinedFailureDetail::UninitializedAccess);
             break;
           case IntrinsicKind::StorageRelocate:
+          case IntrinsicKind::StorageShiftRight:
+          case IntrinsicKind::StorageShiftLeft:
             anchor(token);
             addFailureOutcome(operation,
                               DefinedFailureCode::InvalidStorageState,
@@ -22999,6 +23347,7 @@ private:
           case IntrinsicKind::DefaultTypeParameterConstruction:
           case IntrinsicKind::Move:
           case IntrinsicKind::UniqueOwnerIsNull:
+          case IntrinsicKind::UniqueOwnerUpcast:
           case IntrinsicKind::IntegerWrappingAdd:
           case IntrinsicKind::IntegerWrappingSubtract:
           case IntrinsicKind::IntegerWrappingMultiply:
@@ -23216,6 +23565,8 @@ private:
         staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
       }
+    } else if (const auto *fold = dynamic_cast<const PackFold *>(&expr)) {
+      token = fold->ellipsis();
     } else if (const auto *qualified =
                    dynamic_cast<const QualifiedName *>(&expr)) {
       if (const Symbol *symbol = resolveQualified(qualified->name())) {
@@ -27279,6 +27630,9 @@ private:
     if (const auto *pack = dynamic_cast<const PackExpansion *>(&expression)) {
       return pack->ellipsis();
     }
+    if (const auto *fold = dynamic_cast<const PackFold *>(&expression)) {
+      return fold->ellipsis();
+    }
     if (const auto *unary = dynamic_cast<const Unary *>(&expression)) {
       return unary->oper();
     }
@@ -27426,6 +27780,7 @@ private:
   bool analyzingFieldInitializer = false;
   bool analyzingConstructorInitializer = false;
   bool analyzingCallCallee = false;
+  bool analyzingPackFoldElement = false;
   bool allowPayloadEnumeratorReference = false;
   bool currentStaticMemberFunction = false;
   bool allowPackTypeReference = false;

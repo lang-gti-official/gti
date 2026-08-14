@@ -214,6 +214,8 @@ int test_values_and_containers() {
   }
   dynamic.resize(std::size_t(5), 8);
   dynamic.resize(std::size_t(4));
+  dynamic.insert(std::size_t(1), 5);
+  dynamic.erase(std::size_t(2));
   dynamic.shrink_to_fit();
   std::vector<int> cloned = dynamic.clone();
   std::vector<int> listed = std::vector<int>({7, 8, 9});
@@ -235,18 +237,26 @@ int test_values_and_containers() {
     mut char& text_front = text.front();
     text_front = 'A';
   }
+  mut std::string zero_text = std::to_string(int8_t(0));
+  mut std::string signed_min_text =
+      std::to_string(int64_t(-9223372036854775807 - 1));
+  mut std::string unsigned_max_text =
+      std::to_string(uint64_t(18446744073709551615));
 
   bool array_ok = first.front() == 8 && first[1] == 9 &&
                   first.back() == 10 && second_values[0] == 4 &&
                   pair.first == 4 && pair.second == 5;
   bool vector_ok = dynamic.size() == 4 && dynamic.capacity() == 4 &&
                    dynamic.front() == 4 && dynamic.back() == 8 &&
-                   cloned.size() == 4 && cloned[std::size_t(1)] == 0 &&
+                   cloned.size() == 4 && cloned[std::size_t(1)] == 5 &&
                    cloned[std::size_t(2)] == 6 && listed.size() == 3 &&
                    listed[std::size_t(0)] == 7 &&
                    listed[std::size_t(2)] == 9 && empty_listed.empty();
   bool string_ok = text.size() == 3 && text.capacity() == 3 &&
-                   text.front() == 'A' && text.back() == 'c';
+                   text.front() == 'A' && text.back() == 'c' &&
+                   zero_text == "0" &&
+                   signed_min_text == "-9223372036854775808" &&
+                   unsigned_max_text == "18446744073709551615";
 
   mut std::forward_list<int> linked{};
   bool linked_started_empty = linked.empty();

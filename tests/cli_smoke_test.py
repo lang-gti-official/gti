@@ -2480,15 +2480,177 @@ def main():
         )
         assert "help: Move-only owners cannot be copied" in rejected_auto.stderr
 
-        invalid_print = root / "invalid_print.gti"
-        invalid_print.write_text(
-            "int main() { std::print(1); return 0; }\n", encoding="utf-8"
+        integer_print = root / "integer-print.gti"
+        integer_print.write_text(
+            "#include <std/string>\n"
+            "int main() { "
+            'if (std::to_string(int8_t(0)) != "0") { return 9; } '
+            'if (std::to_string(int8_t(-128)) != "-128") { return 1; } '
+            'if (std::to_string(int16_t(-32768)) != "-32768") { return 2; } '
+            'if (std::to_string(int32_t(-2147483647 - 1)) != "-2147483648") '
+            "{ return 3; } "
+            "if (std::to_string(int64_t(-9223372036854775807 - 1)) != "
+            '"-9223372036854775808") { return 4; } '
+            'if (std::to_string(uint8_t(255)) != "255") { return 5; } '
+            'if (std::to_string(uint16_t(65535)) != "65535") { return 6; } '
+            'if (std::to_string(uint32_t(4294967295)) != "4294967295") '
+            "{ return 7; } "
+            "if (std::to_string(uint64_t(18446744073709551615)) != "
+            '"18446744073709551615") { return 8; } '
+            'std::print(0); std::print("|"); '
+            'std::print(int8_t(-128)); std::print("|"); '
+            'std::print(int16_t(-32768)); std::print("|"); '
+            'std::print(int32_t(-2147483647 - 1)); std::print("|"); '
+            'std::print(int64_t(-9223372036854775807 - 1)); std::print("|"); '
+            'std::print(uint8_t(255)); std::print("|"); '
+            'std::print(uint16_t(65535)); std::print("|"); '
+            'std::print(uint32_t(4294967295)); std::print("|"); '
+            "std::println(uint64_t(18446744073709551615)); return 0; }\n",
+            encoding="utf-8",
         )
-        rejected_print = run(
-            [gti, str(invalid_print), "-o", str(root / "invalid_print")], 65
+        integer_print_executable = root / "integer-print"
+        run(
+            [
+                gti,
+                str(integer_print),
+                "-o",
+                str(integer_print_executable),
+            ]
         )
-        assert "Argument 1 has type 'int32_t'" in rejected_print.stderr
-        assert "parameter requires 'std::string_view'" in rejected_print.stderr
+        assert run([str(integer_print_executable)]).stdout == (
+            "0|-128|-32768|-2147483648|-9223372036854775808|"
+            "255|65535|4294967295|18446744073709551615\n"
+        )
+
+        formatted_output = root / "formatted-output.gti"
+        formatted_output.write_text(
+            "#include <std/format>\n"
+            "#include <std/string>\n"
+            "int main() { "
+            "mut std::string bytes = std::string(); "
+            "bytes.push_back('A'); bytes.push_back('\\0'); "
+            "bytes.push_back('B'); std::print(bytes); std::print('|'); "
+            'mut auto empty_print = std::try_print(""); '
+            "if (!empty_print) { return 1; } "
+            'mut auto plain = std::format("escaped={{}}" ); '
+            'if (!plain or plain.value() != "escaped={}") { return 2; } '
+            'mut auto braces = std::format("{{}}|{{{{|}}}}|{{{}}}", '
+            "int32_t(-7)); "
+            'if (!braces or braces.value() != "{}|{{|}}|{-7}") '
+            "{ return 3; } "
+            'mut auto nul = std::format("A\\0{}B", uint8_t(7)); '
+            "if (!nul or nul.value().size() != std::size_t(4) or "
+            "nul.value()[std::size_t(0)] != 'A' or "
+            "nul.value()[std::size_t(1)] != '\\0' or "
+            "nul.value()[std::size_t(2)] != '7' or "
+            "nul.value()[std::size_t(3)] != 'B') { return 4; } "
+            'mut auto all = std::format("{}|{}|{}|{}|{}|{}|{}|{}", '
+            "int8_t(-128), uint8_t(255), int16_t(-32768), "
+            "uint16_t(65535), int32_t(-2147483647 - 1), "
+            "uint32_t(4294967295), int64_t(-9223372036854775807 - 1), "
+            "uint64_t(18446744073709551615)); "
+            "if (!all or all.value() != "
+            '"-128|255|-32768|65535|-2147483648|4294967295|'
+            '-9223372036854775808|18446744073709551615") { return 5; } '
+            "mut expected<std::string, std::format_errc> moved = "
+            "std::move(all); "
+            'if (!moved or moved.value() != "-128|255|-32768|65535|'
+            '-2147483648|4294967295|-9223372036854775808|'
+            '18446744073709551615") { return 6; } '
+            'mut auto malformed = std::try_print("LEAK {", int32_t(1)); '
+            "if (malformed or malformed.error() != "
+            "std::format_errc::invalid_format) { return 7; } "
+            'mut auto malformed_zero = std::try_println("LEAK}"); '
+            "if (malformed_zero or malformed_zero.error() != "
+            "std::format_errc::invalid_format) { return 8; } "
+            'mut auto invalid_field = std::try_print("LEAK{x}"); '
+            "if (invalid_field or invalid_field.error() != "
+            "std::format_errc::invalid_format) { return 9; } "
+            'mut auto invalid_escape = std::try_print("LEAK{{}"); '
+            "if (invalid_escape or invalid_escape.error() != "
+            "std::format_errc::invalid_format) { return 10; } "
+            'mut auto invalid_close = std::try_print("LEAK}}}"); '
+            "if (invalid_close or invalid_close.error() != "
+            "std::format_errc::invalid_format) { return 11; } "
+            'mut auto too_few = std::try_print("{} {}", int32_t(1)); '
+            "if (too_few or too_few.error() != "
+            "std::format_errc::argument_count_mismatch) { return 12; } "
+            'mut auto too_many = std::try_print("{}", int32_t(1), int32_t(2)); '
+            "if (too_many or too_many.error() != "
+            "std::format_errc::argument_count_mismatch) { return 13; } "
+            "std::print(nul.value()); "
+            'mut auto first = std::try_print("signed={} unsigned={} braces={{}}", '
+            "int64_t(-9223372036854775807 - 1), "
+            "uint64_t(18446744073709551615)); "
+            "if (!first) { return 14; } "
+            'mut auto second = std::try_println(" mixed={} {}", int8_t(-8), '
+            "uint16_t(65535)); "
+            "if (!second) { return 15; } return 0; }\n",
+            encoding="utf-8",
+        )
+        for standard in ("c++20", "c++23"):
+            for optimization in ("-O0", "-O3"):
+                formatted_executable = (
+                    root / f"formatted-output-{standard}-{optimization[1:]}"
+                )
+                run(
+                    [
+                        gti,
+                        str(formatted_output),
+                        "-o",
+                        str(formatted_executable),
+                        "--std",
+                        standard,
+                        optimization,
+                    ]
+                )
+                assert run([str(formatted_executable)]).stdout == (
+                    "A\x00B|A\x007Bsigned=-9223372036854775808 "
+                    "unsigned=18446744073709551615 braces={} mixed=-8 65535\n"
+                )
+
+        invalid_formatted_type = root / "invalid-formatted-type.gti"
+        invalid_formatted_type.write_text(
+            "#include <std/format>\n"
+            "int main() { "
+            '[[discard]] std::try_print("{}", 1.5); '
+            '[[discard]] std::try_print("{}", true); '
+            '[[discard]] std::try_print("{}", \'A\'); '
+            "return 0; }\n",
+            encoding="utf-8",
+        )
+        rejected_formatted_type = run(
+            [
+                gti,
+                str(invalid_formatted_type),
+                "-o",
+                str(root / "invalid-formatted-type"),
+            ],
+            65,
+        )
+        assert rejected_formatted_type.stderr.count(
+            "does not satisfy generic constraint 'std::integral'"
+        ) == 3
+        assert "Type 'float'" in rejected_formatted_type.stderr
+        assert "Type 'bool'" in rejected_formatted_type.stderr
+        assert "Type 'char'" in rejected_formatted_type.stderr
+
+        invalid_float_print = root / "invalid-float-print.gti"
+        invalid_float_print.write_text(
+            "int main() { std::print(1.5); return 0; }\n", encoding="utf-8"
+        )
+        rejected_float_print = run(
+            [
+                gti,
+                str(invalid_float_print),
+                "-o",
+                str(root / "invalid-float-print"),
+            ],
+            65,
+        )
+        assert "does not satisfy generic constraint 'std::integral'" in (
+            rejected_float_print.stderr
+        )
 
         ignored_result = root / "ignored_result.gti"
         ignored_result.write_text(

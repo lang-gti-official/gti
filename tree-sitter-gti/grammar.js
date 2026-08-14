@@ -102,6 +102,8 @@ module.exports = grammar({
     [$.constructor_initializer_argument_list, $.expression],
     [$.constructor_declaration, $._qualified_identifier],
     [$._initializer_element, $.expression],
+    [$._expression_not_comma, $._generic_member_function],
+    [$._postfix_expression, $._generic_member_function],
   ],
 
   rules: {
@@ -902,12 +904,30 @@ module.exports = grammar({
       ),
 
     call_expression: ($) =>
-      prec(
-        PREC.postfix,
-        seq(
-          field("function", $._postfix_expression),
-          field("arguments", $.argument_list),
+      choice(
+        prec.dynamic(
+          1,
+          seq(
+            field(
+              "function",
+              alias($._generic_member_function, $.generic_function),
+            ),
+            field("arguments", $.argument_list),
+          ),
         ),
+        prec(
+          PREC.postfix,
+          seq(
+            field("function", $._postfix_expression),
+            field("arguments", $.argument_list),
+          ),
+        ),
+      ),
+
+    _generic_member_function: ($) =>
+      seq(
+        field("name", $.member_expression),
+        field("type_arguments", $.type_argument_clause),
       ),
 
     argument_list: ($) =>
@@ -928,13 +948,25 @@ module.exports = grammar({
     pack_expansion: ($) =>
       seq(field("name", $.identifier), field("operator", "...")),
 
+    pack_fold_expression: ($) =>
+      prec(
+        PREC.postfix,
+        seq(
+          "(",
+          field("pattern", $.call_expression),
+          field("operator", ","),
+          field("ellipsis", "..."),
+          ")",
+        ),
+      ),
+
     member_expression: ($) =>
       prec.left(
         PREC.postfix,
         seq(
           field("object", $._postfix_expression),
           field("operator", choice(".", "->")),
-          field("member", choice($.identifier, $.generic_function)),
+          field("member", $.identifier),
         ),
       ),
 
@@ -1004,6 +1036,7 @@ module.exports = grammar({
         $.layout_query_expression,
         $.this_expression,
         $.nullptr_literal,
+        $.pack_fold_expression,
         $.parenthesized_expression,
       ),
 

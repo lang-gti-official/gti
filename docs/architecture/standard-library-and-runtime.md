@@ -20,6 +20,15 @@ under `std` own API policy, logical state, error handling, and RAII. The
 compiler must not recognize public wrapper names such as `std::vector` or
 `std::make_unique` as shortcuts for container or ownership behavior.
 
+Integer `std::print`/`std::println` overloads, `<std/string>`'s integer
+`std::to_string`, and `<std/format>`'s bounded sequential replacement are a
+deliberate boundary example. Digit extraction, brace validation, exact
+argument counting, owning-string construction, and format errors are ordinary
+GTI source. The frontend's bounded comma-pack fold supplies only exact ordered
+calls over a pack; it does not recognize any public formatting name or parse a
+format string. Counted literal writes and scalar dynamic-code-unit writes are
+the only host operations.
+
 The hosted program-entry signature is one deliberately narrow exception to
 name-independent library evolution: semantics validates the canonical
 installed `std::vector<std::string>` declaration identities as the exact
@@ -50,6 +59,13 @@ recognizing a source name before choosing its representation.
 Capabilities should expose only an irreducible invariant. Public engagement,
 size, capacity, allocation policy, or container behavior belongs in ordinary
 GTI wrappers.
+
+The unique-owner upcast capability consumes one private owner after semantics
+has proved an exact public derived-to-base relationship and polymorphic
+destruction. The storage shift capabilities move initialized slots through a
+verified empty slot. Public `std::upcast_unique`, `vector::insert`, and
+`vector::erase` remain ordinary GTI policy; neither public name is recognized
+by the compiler or backend.
 
 The same identity boundary applies to generic constraints. The prelude binds
 private unary and structural concept declarations to compiler facts, and
@@ -93,6 +109,15 @@ than being approximated with C++ `std::thread` behavior.
 record. `runtime/include/gti/runtime.h` defines runtime entry prototypes, and
 `runtime/src/` implements host behavior. Bounded `extern "C"` GTI declarations
 carry exact external symbols and an allowlisted ABI selected in semantics.
+
+Stdout has two deliberately small entries. `gti_rt_write_stdout` accepts one
+non-retained counted literal/view, while
+`gti_rt_write_stdout_byte(uint8_t)` writes one exact byte from dynamically
+owned text. The source library reaches the latter through the explicit
+lossless `uint8_t(char)` code-unit extraction. Neither entry knows about
+`std::string`, a format grammar, a variadic argument, or a formatter object,
+and the scalar entry preserves byte zero rather than relying on C-string
+termination.
 
 `@runtime` remains a closed compiler-validated compatibility surface. New host
 APIs should prefer ordinary GTI wrappers over the bounded native boundary when

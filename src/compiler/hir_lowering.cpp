@@ -1056,6 +1056,7 @@ private:
     case HirValueKind::Lambda:
     case HirValueKind::Literal:
     case HirValueKind::Logical:
+    case HirValueKind::PackFold:
     case HirValueKind::PackExpansion:
     case HirValueKind::PayloadConstruction:
     case HirValueKind::Postfix:
@@ -1988,6 +1989,14 @@ private:
       operation = logical->oper().kind;
       lowerOperand(logical->left());
       lowerOperand(logical->right());
+    } else if (const auto *fold = dynamic_cast<const PackFold *>(raw)) {
+      kind = HirValueKind::PackFold;
+      if (const auto *pattern =
+              dynamic_cast<const Call *>(fold->pattern().get())) {
+        for (const ExprPtr &argument : pattern->arguments()) {
+          lowerOperand(argument);
+        }
+      }
     } else if (dynamic_cast<const PackExpansion *>(raw) != nullptr) {
       kind = HirValueKind::PackExpansion;
     } else if (const auto *postfix = dynamic_cast<const Postfix *>(raw)) {
@@ -2136,6 +2145,34 @@ private:
           value.parameterTypes = deferred->parameterTypes;
           value.callableBoundary = deferred->boundary;
           value.callableInvocation = deferred->capability;
+        }
+      }
+    }
+    if (const auto *fold = dynamic_cast<const PackFold *>(raw)) {
+      if (const ResolvedPackFoldInfo *resolved = model.findPackFold(*fold)) {
+        value.packFoldSymbol = resolved->packSymbol;
+        value.packFoldParameter = resolved->packParameter;
+        value.packFoldFunction = resolved->function;
+        value.packFoldArgument = resolved->packArgument;
+        value.packFoldElements.reserve(resolved->elements.size());
+        for (const ResolvedPackFoldElement &element : resolved->elements) {
+          const FunctionInfo *target =
+              baseModel->findFunction(element.call.function);
+          const HirFunctionInstanceId functionTarget =
+              target == nullptr
+                  ? 0
+                  : enqueueFunction(*target, {}, {}, element.call.typeArguments,
+                                    element.call.valueArguments,
+                                    element.call.returnType,
+                                    element.call.parameterTypes,
+                                    tokenSpan(fold->ellipsis()));
+          if (functionTarget == 0) {
+            lifecycleValid = false;
+          }
+          value.packFoldElements.push_back(
+              {.elementType = element.elementType,
+               .functionTarget = functionTarget,
+               .parameterTypes = element.call.parameterTypes});
         }
       }
     }
