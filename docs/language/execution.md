@@ -922,10 +922,13 @@ site mappings plus distinct direct, virtual, constructor, and callable
 propagation channels. MIR now gives eligible full-expression-root scalar
 operations in function and lambda bodies explicit normal/failure successors,
 one fixed-record parameter, reverse-construction failure cleanup, and an exact
-record-preserving propagation endpoint. This is a verified IR slice only.
-Nested expression and staged owning-argument failures, nontrivial or borrowed
-results, constructors and partial initialization, double failure, hosted
-containment, runtime records, and backend execution remain open.
+record-preserving propagation endpoint. An exact later scalar ordinary-call
+argument may also branch after earlier owning parameters have been staged when
+it is either a local detector or an un-sited static direct-call propagation with
+no nested owning parameter or result state. This is a verified IR slice only.
+Other nested expressions, nested calls with owning parameter or result state,
+nontrivial or borrowed results, constructors and partial initialization, double
+failure, hosted containment, runtime records, and backend execution remain open.
 The frontend rejects recursively cleanup-owning namespace globals and static
 fields, but the C++ backend may execute cleanup-free GTI static initialization
 before its native `main`.
@@ -950,7 +953,8 @@ order, but these executable-authority gaps remain:
 - one source-graph-derived program-initialization plan inside the hosted
   boundary;
 - complete executable representation of Section 4.10 beyond the bounded
-  full-expression-root scalar MIR cleanup family; and
+  full-expression-root and prepared-call-argument scalar MIR cleanup
+  families; and
 - cleanup interaction with any future manual object-lifetime operations.
 
 The first four are release blockers for backend-independent 1.0 execution.

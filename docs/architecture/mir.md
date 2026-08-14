@@ -28,9 +28,10 @@ inputs reparent the exact source obligation when one exists, and the final
 `Call` transfers each stage exactly once when the callee begins. It also adds
 normal-success lifecycle events for one bounded cleanup-owning ordinary-call
 result shape, leaving that result uninitialized on the failure edge. The same
-schema now supports an exact local scalar argument detector after one or more
-prepared stages without adding duplicate failure or cleanup metadata. Version 17
-added bounded `Invoke`/`PropagateFailure` control flow, body-local
+schema now supports an exact local scalar argument detector or un-sited static
+direct-call propagation after one or more prepared stages without adding
+duplicate failure or cleanup metadata. Version 17 added bounded
+`Invoke`/`PropagateFailure` control flow, body-local
 fixed failure-record parameters, and deterministic failure cleanup for
 eligible full-expression-root scalar operations in function and lambda bodies.
 Version 16 added the immutable failure artifact descriptor, exact one-based
@@ -115,10 +116,12 @@ A `MirBody` owns:
   propagation that disagrees with the exact target and dispatch;
 - one bounded failure-control-flow family for a failure-capable scalar
   `Compute`, `Load`, or `Call` that is itself a selected full-expression root,
-  plus an exact local scalar `Compute` or `Load` selected as an indexed ordinary
-  call argument after at least one earlier owning parameter has been prepared,
-  has no destination, loan, ownership event, lifecycle event, reference
-  result, or active-drop result, and occurs in a function or lambda body. The
+  plus an exact scalar selected as an indexed ordinary-call argument after at
+  least one earlier owning parameter has been prepared. The nested operation is
+  either a local `Compute`/`Load` detector or a static direct `Call` propagation
+  with no local site, nested owning-parameter transfer, or owning result. Every
+  eligible operation has no destination, loan, ownership event, reference
+  result, or active-drop result and occurs in a function or lambda body. The
   operation is the final instruction in an `Invoke` block. Its normal
   successor has no failure state; its dedicated failure successor receives one
   body-local `MirFailureRecord` parameter, ends active loans, destroys active
@@ -470,14 +473,14 @@ descriptor, and direct/virtual/constructor/callable propagation identity. Any
 such operation projects conservatively to `mayTrap`, making it
 non-speculatable, non-removable, and non-reorderable, but the structured
 identity remains the authority. Eligible full-expression-root scalar operations,
-exact local scalar ordinary-call arguments after a prepared owner, and ordinary
-calls with one cleanup-owning class result in function and lambda bodies
-additionally carry verified fixed record, normal/failure successor, LIFO
-cleanup, and propagation edges. Other nested detectors, assignment destinations,
-borrowed and remaining owning results, constructors, field/module
-initialization, destructors and double failure, partial construction,
-caller-to-callee record ABI, and containment remain outside that bounded family
-and are still required by
+exact local scalar detectors or static direct-call propagations used as ordinary
+call arguments after a prepared owner, and ordinary calls with one
+cleanup-owning class result in function and lambda bodies additionally carry
+verified fixed record, normal/failure successor, LIFO cleanup, and propagation
+edges. Other nested operations, assignment destinations, borrowed and remaining
+owning results, constructors, field/module initialization, destructors and
+double failure, partial construction, caller-to-callee record ABI, and
+containment remain outside that bounded family and are still required by
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure).
 
 The bounded `Invoke` family accepts either a trivial scalar result or the exact
@@ -487,14 +490,16 @@ uninitialized on the failure edge and is initialized by an explicit lifecycle
 event only on the normal edge; the verifier rejects failure cleanup or use that
 assumes otherwise. Eligible class-value parameters are independently staged in
 caller-owned storage before the call and transferred only when the callee
-begins. If a later exact scalar argument root detects a local failure, its
-`Invoke` failure edge destroys every earlier prepared stage exactly once; the
-normal path continues argument setup and only the final call transfers those
-stages. The verifier derives this relationship from the detector result, exact
-indexed `CallInput`, dominance, and prepared obligations rather than trusting
-new serialized metadata. Nested call propagation, borrowed results,
-constructors, assignments, and general normal-result block parameters remain
-separate work.
+begins. If a later exact scalar argument root detects a local failure or
+propagates through an otherwise ownership-free static direct call, its `Invoke`
+failure edge destroys every earlier prepared stage exactly once. Direct-call
+propagation has no local site and forwards its existing fixed record unchanged.
+The normal path continues argument setup and only the final outer call transfers
+those earlier stages. The verifier derives this relationship from the operation
+result, exact indexed `CallInput`, dominance, failure identity, and prepared
+obligations rather than trusting new serialized metadata. Nested calls with
+their own owning parameter or result state, borrowed results, constructors,
+assignments, and general normal-result block parameters remain separate work.
 
 Cleanup blocks forward the same record through supported initialized and
 partially initialized shapes to the hosted-program boundary. A second origin

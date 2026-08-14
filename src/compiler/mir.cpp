@@ -2331,12 +2331,25 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
   }
-  if (position == MirFailureControlFlowPosition::PreparedCallArgumentRoot &&
-      (instruction.definedFailure.propagation != FailurePropagationKind::None ||
-       instruction.definedFailure.localOrigins.empty() ||
-       (instruction.kind != MirInstructionKind::Compute &&
-        instruction.kind != MirInstructionKind::Load))) {
-    return false;
+  if (position == MirFailureControlFlowPosition::PreparedCallArgumentRoot) {
+    const bool localScalarDetector =
+        instruction.definedFailure.propagation ==
+            FailurePropagationKind::None &&
+        !instruction.definedFailure.localOrigins.empty() &&
+        (instruction.kind == MirInstructionKind::Compute ||
+         instruction.kind == MirInstructionKind::Load);
+    const bool directScalarCall =
+        instruction.kind == MirInstructionKind::Call &&
+        instruction.callSite != 0 &&
+        instruction.dispatch == CallDispatch::Static &&
+        instruction.functionTarget.has_value() &&
+        instruction.definedFailure.propagation ==
+            FailurePropagationKind::DirectCall &&
+        instruction.definedFailure.localOrigins.empty() &&
+        instruction.lifecycle.empty() && !instruction.successResultDrop;
+    if (!localScalarDetector && !directScalarCall) {
+      return false;
+    }
   }
   if (instruction.kind == MirInstructionKind::Compute ||
       instruction.kind == MirInstructionKind::Load) {
