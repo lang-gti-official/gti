@@ -1,7 +1,7 @@
 # GTI Compiled Compiler Library Migration
 
-> **Plan status:** Accepted incremental migration. Current compiled/header
-> boundaries are documented in
+> **Plan status:** Implemented. Current compiled/header boundaries are
+> documented in
 > [`docs/architecture/overview.md`](../architecture/overview.md).
 
 Status: implemented; phases 1 through 7 are complete
@@ -303,6 +303,38 @@ operations. Touching `semantic_model.cpp` rebuilt one compiler object and
 relinked consumers in 2.89 seconds without recompiling CLI, LSP, driver, or test
 sources. Formatter-only changes likewise rebuild one object; the recorded local
 path took 1.15 seconds before relinking.
+
+### Completion validation
+
+The final local validation on Apple clang 21/arm64 used four build workers and
+the exact pre-migration `d4c80cb` checkpoint as its controlled comparison. Both
+comparison builds used Release mode, system LLVM 22.1.8, disabled tests and LSP,
+and built the `gti` target from an empty object tree:
+
+- the clean `gti` build fell from 33.34 seconds to 20.54 seconds, a 38 percent
+  wall-time reduction;
+- touching the public `semantic_analyzer.h` boundary and rebuilding fell from
+  30.28 seconds to 18.36 seconds, a 39 percent wall-time reduction;
+- the Release executable changed from 6,430,528 bytes to 6,429,520 bytes, so
+  the migration introduced no binary-size growth;
+- ten alternating `examples/56-sum-types.gti` frontend traces measured 2.155 ms
+  before and 2.084 ms after at the median across source loading, parsing,
+  semantics, HIR lowering, and MIR lowering. Emitted C++ was byte-identical.
+
+A separate empty Debug tree configured in 1.41 seconds, built all 86 compiler,
+tooling, and test steps in 20.29 seconds, and completed a no-op build in 0.01
+seconds. An empty self-contained Release tree configured against the already
+downloaded pinned LLVM 20.1.0 source in 8.44 seconds, built LLVM's required
+support subset plus all 294 GTI/tooling/test steps in 57.88 seconds, and
+completed a no-op build in 0.04 seconds. Source download time is deliberately
+not included in those build measurements.
+
+Both clean trees passed all 29 CTest targets. The staged Release toolchain then
+passed the direct CLI, project CLI, and LSP smoke suites; an external
+`find_package(GTI CONFIG)` consumer passed all six installed-library tests; and
+`PackageRelease.cmake` produced the expected `v0.130.0` darwin-arm64 archive.
+The full optional language audit, Tree-sitter corpus, capture tests, shipped
+source parse, format check, and generated-parser cleanliness checks also passed.
 
 ## Phased Implementation
 
