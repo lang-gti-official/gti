@@ -273,6 +273,7 @@ struct MirInstruction {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::optional<BorrowOriginPlace> borrowPlace;
   MirOperation operation = MirOperation::None;
   std::optional<Literal> literal;
   std::optional<EnumId> enumOwner;
@@ -499,6 +500,7 @@ struct MirFunctionInstance {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::optional<BorrowOriginPlace> returnBorrowPlace;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   bool virtualMethod = false;

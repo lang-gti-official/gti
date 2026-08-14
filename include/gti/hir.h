@@ -168,6 +168,7 @@ struct HirValue {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::optional<BorrowOriginPlace> borrowPlace;
   bool storedReferenceAccess = false;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
@@ -382,6 +383,7 @@ struct HirFunctionInstance {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::optional<BorrowOriginPlace> returnBorrowPlace;
   HirBody body;
   std::optional<SourceSpan> instantiationSite;
   bool staticMember = false;

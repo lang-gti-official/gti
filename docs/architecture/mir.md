@@ -19,8 +19,10 @@ it from host/backend flags. The current profile fact constrains frontend
 global/static validity; future synchronization and task operations will
 consume it only in their owning rows.
 
-The deterministic serialization is currently `mir-v11`/`mir-body-v11`.
-Version 11 adds exact class-copy and class-move parameter checkpoints to the
+The deterministic serialization is currently `mir-v12`/`mir-body-v12`.
+Version 12 adds exact global/static borrow-origin places to function summaries
+and call instructions. Version 11 added exact class-copy and class-move
+parameter checkpoints to the
 ordered ordinary-call stage. A copy checkpoint retains the source place; a
 move checkpoint retains the already materialized value and transfers any exact
 active temporary obligation at that checkpoint rather than at the final call.
@@ -284,6 +286,16 @@ transform that needs it.
 Semantic analysis chooses proven borrow endpoints; HIR carries them; MIR emits
 and verifies them. Verification is an integrity gate, not an alias or last-use
 analysis that invents missing semantics.
+
+A global-origin function summary and every matching call instruction retain
+one `BorrowOriginPlace`. Lowering materializes a symbol-rooted MIR place with
+the summarized projections and creates the call-result loan from it. The
+verifier rejects missing, forged, mismatched, receiver/argument-attached, or
+wrong-return places. Unretained loans must still reach their selected
+full-expression `EndBorrow`; retained mutable loans follow the semantic lexical
+endpoint. The MIR profile remains metadata: mutable process-wide storage is
+rejected by semantics in the concurrent profile rather than reinterpreted by
+lowering.
 
 One MIR loan may name multiple carrier bindings for a shared read-only
 semantic loan. It still has exactly one producer and one path-sensitive loan

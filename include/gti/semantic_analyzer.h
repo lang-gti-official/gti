@@ -711,6 +711,19 @@ enum class BorrowOriginKind {
   None,
   Receiver,
   Argument,
+  Global,
+};
+
+// An exact, domain-independent global/static storage origin. Callers qualify
+// this place into their own semantic/HIR/MIR body domain.
+struct BorrowOriginPlace {
+  SymbolId root = 0;
+  std::vector<PlaceProjection> projections;
+
+  [[nodiscard]] bool valid() const { return root != 0; }
+
+  friend bool operator==(const BorrowOriginPlace &,
+                         const BorrowOriginPlace &) = default;
 };
 
 struct FunctionInfo {
@@ -740,6 +753,7 @@ struct FunctionInfo {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::optional<BorrowOriginPlace> returnBorrowPlace;
   std::vector<FunctionId> virtualRoots;
   std::vector<CallableParameterContract> callableParameters;
   bool compilerPrivate = false;
@@ -1021,6 +1035,7 @@ struct ResolvedCallInfo {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::optional<BorrowOriginPlace> borrowPlace;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::vector<CallableArgumentBoundary> callableArguments;

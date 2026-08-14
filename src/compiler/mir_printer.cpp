@@ -96,7 +96,7 @@ callInputKindName(HirCallInputKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v11 valid=" << program.valid() << '\n';
+    output << "mir-v12 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -230,7 +230,9 @@ public:
       }
       output << "] return-borrow=" << number(instance.returnBorrowOrigin) << ':'
              << instance.returnBorrowParameter << ':'
-             << number(instance.returnBorrowAccess) << " linkage="
+             << number(instance.returnBorrowAccess) << " return-borrow-place=";
+      borrowOriginPlace(instance.returnBorrowPlace);
+      output << " linkage="
              << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
              << " symbol=" << instance.externalSymbol
              << " receiver=" << number(instance.receiverMutability)
@@ -326,7 +328,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v11\n";
+    output << "mir-body-v12\n";
     body(value, 0);
     return output.str();
   }
@@ -554,6 +556,19 @@ private:
     output << "])";
   }
 
+  void borrowOriginPlace(const std::optional<BorrowOriginPlace> &value) {
+    if (!value) {
+      output << '-';
+      return;
+    }
+    output << "origin(root=" << value->root << ";projections=[";
+    for (std::size_t index = 0; index < value->projections.size(); ++index) {
+      separator(index);
+      placeProjection(value->projections[index]);
+    }
+    output << "])";
+  }
+
   void ownershipEvent(const OwnershipEvent &value) {
     output << "event(kind=" << number(value.kind) << ";place=";
     placeKey(value.place);
@@ -696,7 +711,9 @@ private:
     output << " borrow-origin=" << number(value.borrowOrigin)
            << " borrow-argument=" << value.borrowArgument
            << " borrow-access=" << number(value.borrowAccess)
-           << " operation=" << name(value.operation) << " literal=";
+           << " borrow-place=";
+    borrowOriginPlace(value.borrowPlace);
+    output << " operation=" << name(value.operation) << " literal=";
     literal(value.literal);
     output << " enum-owner=";
     optional(value.enumOwner);

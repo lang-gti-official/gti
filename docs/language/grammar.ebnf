@@ -347,12 +347,11 @@ requires-clause        = "requires" concept-application
                          { ( "&&" | "and" ) concept-application } ;
 
 (* A leading `mut` on a function declaration requires a reference return.
-   Ordinary free functions still reject writable reference returns in semantic
-   analysis because GTI cannot prove their exclusive lifetime origin. A
-   read-only free/static borrowed return is accepted only when every reachable
-   return derives from one eligible read-only parameter. The leading form is
-   parsed so trusted bodyless prelude capabilities can declare their exact
-   checked borrow result without adding an intrinsic-only source construct. *)
+   A free/static borrowed return is accepted when every reachable return
+   derives either from one eligible read-only parameter (read-only result only)
+   or from one exact namespace-global/non-generic-static place. The latter may
+   be writable in the single-threaded profile and retains its exact projection
+   path for caller-side conflict checking. *)
 
 generic-parameter-clause
                        = "<" generic-parameter
@@ -433,8 +432,10 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    class or struct rather than an object, require an in-class initializer, and
    are accessed as `Type::member`; object access is rejected. The current
    qualified-expression grammar does not support static members on generic
-   classes or structs. Static members do not participate in object layout,
-   construction, generated special members, or destruction. *)
+   classes or structs. A static method may return a reference from one exact
+   global/static place under the reference rules below. Static members do not
+   participate in object layout, construction, generated special members, or
+   destruction. *)
 
 (* Operator overloads are class or struct members and cannot have method type
    parameters or runtime bindings. `operator*` and `operator->` take no
@@ -650,12 +651,15 @@ expected-type          = "expected" "<" type "," type ">" ;
    place. A method may return `T&` only when every returned value is derived
    from `this`; the resulting borrow is tied to the receiver and cannot be
    retained from a temporary receiver. A free function or static method may
-   return a read-only reference derived from one eligible `T&` parameter. A
-   move-only owner with a retained borrow cannot be moved, replaced, or passed
-   to a mutable method until the loan ends. Mutable free/static returns,
-   multi-origin and nested references, reference fields outside the confined
-   carrier above, globals, references over arrays, and references to raw
-   pointers remain unsupported.
+   return a read-only reference derived from one eligible `T&` parameter, or a
+   read-only/writable reference derived from one exact global/static place in
+   the single-threaded profile. Temporary global call borrows end at the full
+   expression; retained writable aliases conflict until their lexical scope
+   ends. A move-only owner with a retained borrow cannot be moved, replaced, or
+   passed to a mutable method until the loan ends. Multi-origin and nested
+   references, reference fields outside the confined carrier above, reference
+   globals, references over arrays, and references to raw pointers remain
+   unsupported.
 
    `gti_internal::storage<T>` parses through `user-type` but has
    compiler-defined semantics. It is a reserved move-only owner for standard

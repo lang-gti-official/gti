@@ -49,10 +49,14 @@ Concrete class instances retain substituted bases, fields, kind,
 abstract/polymorphic state, transfer/share facts and nominal policies, virtual
 roots, and structured base/field initializers. Function instances retain exact
 linkage, external symbol where applicable, resolved dispatch identities, and
-callable/borrow summaries. Each `HirLambda` retains its exact concrete semantic
-type, including the lexical declaration, physical signature/captures, and
-enclosing generic identity. Function-instance indexing and callable-target
-selection compare this full type; matching only a lexical lambda ID or closure
+callable/borrow summaries. A global borrow summary carries its symbol root and
+projection path in `BorrowOriginPlace`; call values copy the same metadata and
+qualify the corresponding `PlaceKey` into their concrete body domain. HIR does
+not infer this place from the callee body. Each `HirLambda` retains its exact
+concrete semantic type, including the lexical declaration, physical
+signature/captures, and enclosing generic identity. Function-instance indexing
+and callable-target selection compare this full type; matching only a lexical
+lambda ID or closure
 shape would merge distinct generic bodies. Capture records retain the source
 and environment-binding symbols, copy/move mode, type, traits, and initializer.
 Each closure-producing `HirValue` carries its initializer operands in written
@@ -163,6 +167,11 @@ set into each concrete body. It does not rediscover place conflicts, decide
 whether sibling children are disjoint, or decide when a suspended parent has
 no active children remaining; those are resolved semantic facts carried for
 MIR lowering and verification.
+
+Global-origin call values likewise carry the exact semantic place and access.
+The semantic full-expression or retained-loan endpoint remains authoritative;
+HIR neither treats static storage as a receiver nor replaces its symbol with a
+backend address.
 
 M-OWN-02 gives every concrete HIR body a `PlaceDomain` with one process-local
 frontend-snapshot generation and a deterministic body ordinal, then lets

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.130.0
+Checkpoint version: 0.131.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -45,6 +45,16 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.131.0 checkpoint admits free-function and static-method reference returns
+from one exact namespace-global or non-generic static-field place. The default
+single-threaded profile permits `mut T&`; unsafe pointer dereference remains
+inside the accessor, safe callers receive symbol-rooted checked loans,
+temporary calls end at their full expression, and retained mutable aliases are
+lexical and conflict. Semantic summaries flow through HIR and MIR v12, whose
+verifier and deterministic serialization bind every call and return to the
+same exact place. The existing concurrent-profile `GTI-S2060` rule continues
+to reject unsynchronized mutable process-wide storage.
 
 The 0.130.0 checkpoint completes `L-INIT-01`. Braces in an ordinary named
 function, method, or constructor call now initialize one exact owned

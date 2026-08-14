@@ -2315,6 +2315,132 @@ def test_current_language_diagnostics(executable, root):
         session.close()
 
 
+def test_global_borrow_return_diagnostics(executable, root):
+    valid_source = (
+        "class Application { public: "
+        "static mut Application& Get() { "
+        "unsafe { return *Application::app; } } "
+        "void Update() mut {} private: "
+        "static mut Application* app = nullptr; };\n"
+        "void update() { Application::Get().Update(); }\n"
+        "int main() { update(); return 0; }\n"
+    )
+    invalid_source = (
+        "class Application { public: "
+        "static mut Application& Get() { "
+        "unsafe { return *Application::app; } } private: "
+        "static mut Application* app = nullptr; };\n"
+        "int main() {\n"
+        "  mut Application& first = Application::Get();\n"
+        "  mut Application& second = Application::Get();\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "global-borrow-return.gti"
+    path.write_text(valid_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": valid_source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        conflicts = [
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2017"
+            and "Cannot create a mutable borrow" in diagnostic.get("message", "")
+        ]
+        assert len(conflicts) == 1, publication
+        conflict = conflicts[0]
+        second_call = invalid_source.rindex("Application::Get()") + len(
+            "Application::Get("
+        )
+        assert conflict["range"]["start"] == lsp_position(
+            invalid_source, second_call
+        ), conflict
+        assert conflict["data"]["phase"] == "semantics", conflict
+        assert conflict["data"]["hints"], conflict
+        assert conflict["relatedInformation"], conflict
+        assert "Retained borrow originates here" in conflict[
+            "relatedInformation"
+        ][0]["message"]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+            and not message["params"]["diagnostics"]
+        )
+    finally:
+        session.close()
+
+
 def test_cpp_reserved_identifier_diagnostic(executable, root):
     source = "int main() { int template = 1; return 0; }\n"
     path = root / "reserved-identifier.gti"
@@ -3918,6 +4044,7 @@ def main():
     test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
+    test_global_borrow_return_diagnostics(sys.argv[1], root)
     test_cpp_reserved_identifier_diagnostic(sys.argv[1], root)
     test_contextual_signed_integer_diagnostic(sys.argv[1], root)
     test_layout_query_tooling(sys.argv[1], root)

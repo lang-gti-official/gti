@@ -191,6 +191,16 @@ and predecessor-state agreement.
 The example and emitted C++ confirm composition but do not replace either
 layer's assertions.
 
+Global/static borrow-return coverage is also cross-phase.
+`compiler_pipeline` owns exact static-field and namespace-global summaries,
+safe containment of an accessor's raw-pointer `unsafe`, full-expression
+temporary endpoints, lexical retained mutable conflicts, explicit nested-scope
+release, source-order lookup preservation, concurrent-profile rejection,
+HIR/MIR place retention, deterministic MIR v12 serialization, backend shape,
+and a forged-return-place verifier mutation. `lsp_protocol` owns publication
+and clearing of the shared `GTI-S2017` overlap diagnostic with its related
+origin and hint. No LSP-specific borrow inference is permitted.
+
 The first shadow optimizer slice is similarly split by authority. The legacy
 HIR constant result still controls C++ emission. `optimizer_foundation` proves
 that primitive literal grouping identities produce the same constant by

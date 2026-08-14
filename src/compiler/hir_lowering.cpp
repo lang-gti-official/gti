@@ -207,6 +207,7 @@ private:
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .returnBorrowParameter = declaration.returnBorrowParameter,
          .returnBorrowAccess = declaration.returnBorrowAccess,
+         .returnBorrowPlace = declaration.returnBorrowPlace,
          .instantiationSite = std::move(site),
          .staticMember = declaration.staticMember,
          .internalLinkage = declaration.internalLinkage,
@@ -972,6 +973,12 @@ private:
                                              PlaceDomain domain) {
     place.domain = domain;
     return place;
+  }
+
+  [[nodiscard]] static PlaceKey
+  qualifyBorrowPlace(const BorrowOriginPlace &place, PlaceDomain domain) {
+    return {
+        .domain = domain, .root = place.root, .projections = place.projections};
   }
 
   [[nodiscard]] static OwnershipEvent
@@ -1913,6 +1920,13 @@ private:
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowAccess = resolved->borrowAccess;
+        value.borrowPlace = resolved->borrowPlace;
+        if (value.borrowOrigin == BorrowOriginKind::Global &&
+            value.borrowPlace) {
+          ensurePlaceDomain(body);
+          value.place =
+              qualifyBorrowPlace(*value.borrowPlace, body.placeDomain);
+        }
         value.callableArguments = resolved->callableArguments;
         if (resolved->intrinsic == IntrinsicKind::None &&
             resolved->function != 0 && resolved->declaration != nullptr) {

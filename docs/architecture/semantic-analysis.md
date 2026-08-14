@@ -25,7 +25,8 @@ on declaration-wide registration. It currently:
 1. registers namespaces, aliases, type aliases, enums, concepts, and classes;
 2. resolves concepts, aliases, and inheritance;
 3. registers function generic parameters and namespace symbols;
-4. collects root native-storage symbols and class members;
+4. collects root native-storage symbols, class members, and summary-only
+   namespace-global storage identities;
 5. resolves inherited members, stored-reference contracts, and function borrow
    summaries;
 6. derives transfer/share facts and validates inherited interface capability
@@ -71,7 +72,8 @@ compiler IDs. Important facts include:
   traits, and source symbol;
 - functions, classes, enums, aliases, concepts, constructors, and lifecycle;
 - exact selected calls, operators, conversions, constructors, contextual
-  integer operands, intrinsic identity, dispatch mode, and borrow origin;
+  integer operands, intrinsic identity, dispatch mode, borrow origin, and any
+  exact global/static borrow place;
 - AST-selected full-expression roots for statements and constructor
   initializers;
 - class bases, override roots, abstract/polymorphic state, and destruction;
@@ -402,6 +404,14 @@ Addressable namespace bindings and non-generic static data members use the
 same symbol-rooted place whether their source spelling is qualified or
 unqualified. Function-local borrows from that storage therefore participate in
 the ordinary loan-conflict analysis and lower to exact HIR/MIR symbol places.
+Function borrow-summary resolution uses a separate declaration registry for
+namespace storage because summaries precede lexical body analysis. It reuses
+the eventual tooling `SymbolId` without publishing the variable into ordinary
+lookup, so this support does not make namespace variables forward-declarable.
+When every return in a free/static function resolves to one identical global
+or static root and projection path, the summary records `Global` plus that
+exact place. Calls substitute the same place directly instead of deriving an
+owner from a receiver or argument.
 This does not introduce program-wide move-state inference: consuming global or
 static storage with `std::move` remains rejected because its initialization
 state is not locally provable.
@@ -433,6 +443,14 @@ slice.
 Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted
 C++ references.
+
+An unretained global-origin call loan is a temporary and receives the ordinary
+full-expression endpoint. Retaining a mutable result creates a symbol-rooted
+lexical loan that is deliberately not shortened by local last-use planning;
+this makes two aliases from repeated singleton accessors conflict until an
+explicit nested scope ends the first. The concurrent profile rejects the
+underlying mutable global/static binding before this single-threaded loan rule
+can authorize unsynchronized process-wide mutation.
 
 ## Defined Integer Arithmetic
 

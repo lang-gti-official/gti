@@ -335,6 +335,46 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
       });
 }
 
+[[nodiscard]] bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,
+                                         const MirCanonicalPlace &actual) {
+  if (!expected.valid() || actual.ambiguous ||
+      actual.root != MirPlaceRootKind::Symbol ||
+      actual.symbol != expected.root ||
+      actual.projections.size() != expected.projections.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < expected.projections.size(); ++index) {
+    const PlaceProjection &semantic = expected.projections[index];
+    const MirPlaceProjection &mir = actual.projections[index];
+    switch (semantic.kind) {
+    case PlaceProjectionKind::Field:
+      if (mir.kind != MirProjectionKind::Field || mir.field != semantic.field) {
+        return false;
+      }
+      break;
+    case PlaceProjectionKind::Dereference:
+      if (mir.kind != MirProjectionKind::Dereference &&
+          mir.kind != MirProjectionKind::RawDereference) {
+        return false;
+      }
+      break;
+    case PlaceProjectionKind::ConstantIndex:
+      if (mir.kind != MirProjectionKind::Index ||
+          mir.constantIndex != semantic.index) {
+        return false;
+      }
+      break;
+    case PlaceProjectionKind::DynamicIndex:
+      if (mir.kind != MirProjectionKind::Index || mir.constantIndex ||
+          mir.selection != semantic.selection) {
+        return false;
+      }
+      break;
+    }
+  }
+  return true;
+}
+
 [[nodiscard]] bool canonicalPlacesOverlap(const MirCanonicalPlace &left,
                                           const MirCanonicalPlace &right) {
   if (left.ambiguous || right.ambiguous) {
@@ -4707,7 +4747,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         }
         if (instruction.borrowOrigin != target->returnBorrowOrigin ||
             instruction.borrowArgument != target->returnBorrowParameter ||
-            instruction.borrowAccess != target->returnBorrowAccess) {
+            instruction.borrowAccess != target->returnBorrowAccess ||
+            instruction.borrowPlace != target->returnBorrowPlace) {
           return failure(body, owner,
                          "call-result borrow origin does not match the target "
                          "function summary",
@@ -4763,7 +4804,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
 
       if (instruction.borrowOrigin == BorrowOriginKind::None) {
-        if (instruction.loan) {
+        if (instruction.loan || instruction.borrowPlace) {
           return failure(body, owner,
                          "call or construct produces a loan without a borrow "
                          "origin",
@@ -4810,6 +4851,21 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
               : MirCanonicalPlace{.ambiguous = true};
       const MirCanonicalPlace actualPlace =
           canonicalBorrowOriginPlace(body, loan->source, bindingLoans);
+      if (instruction.borrowOrigin == BorrowOriginKind::Global) {
+        if (!instruction.borrowPlace ||
+            !sameGlobalBorrowPlace(*instruction.borrowPlace, actualPlace)) {
+          return failure(body, owner,
+                         "global call-result loan does not preserve its "
+                         "summarized static storage place",
+                         block.id, instruction.id);
+        }
+        continue;
+      }
+      if (instruction.borrowPlace) {
+        return failure(body, owner,
+                       "non-global call-result carries a global origin place",
+                       block.id, instruction.id);
+      }
       if (!sameCanonicalPlace(expectedPlace, actualPlace)) {
         const std::string expected =
             expectedSource ? std::to_string(*expectedSource) : "unresolved";
@@ -4834,7 +4890,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
   };
   switch (instance.returnBorrowOrigin) {
   case BorrowOriginKind::None:
-    if (instance.returnBorrowParameter != 0) {
+    if (instance.returnBorrowParameter != 0 || instance.returnBorrowPlace) {
       return invalidSummary(
           "function without a return dependency has a nonzero origin index");
     }
@@ -4842,7 +4898,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
   case BorrowOriginKind::Receiver:
     if (!instance.owner || instance.staticMember ||
         *instance.owner > program.classInstances().size() ||
-        instance.returnBorrowParameter != 0) {
+        instance.returnBorrowParameter != 0 || instance.returnBorrowPlace) {
       return invalidSummary(
           "receiver return dependency requires a non-static class method");
     }
@@ -4856,6 +4912,19 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
         instance.returnBorrowAccess != AccessMode::ReadOnly) {
       return invalidSummary(
           "ordinary free or static return dependency must be read-only");
+    }
+    if (instance.returnBorrowPlace) {
+      return invalidSummary(
+          "argument return dependency carries a global origin place");
+    }
+    break;
+  case BorrowOriginKind::Global:
+    if ((instance.owner && !instance.staticMember) ||
+        instance.returnBorrowParameter != 0 || !instance.returnBorrowPlace ||
+        !instance.returnBorrowPlace->valid()) {
+      return invalidSummary(
+          "global return dependency requires a free or static function and "
+          "one exact static storage place");
     }
     break;
   }
@@ -4912,6 +4981,18 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
                      "summarized formal parameter",
                      block.id);
     }
+    if (instance.returnBorrowOrigin == BorrowOriginKind::Global) {
+      const MirCanonicalPlace actual = canonicalBorrowOriginPlace(
+          body, loan->source,
+          std::unordered_map<HirBindingId, std::vector<MirLoanId>>{});
+      if (!instance.returnBorrowPlace ||
+          !sameGlobalBorrowPlace(*instance.returnBorrowPlace, actual)) {
+        return failure(body, instance.id,
+                       "global-dependent return does not originate from the "
+                       "summarized static storage place",
+                       block.id);
+      }
+    }
     returnedLoans.insert(loan->id);
   }
   for (const MirLoan &loan : body.loans) {
@@ -4960,6 +5041,8 @@ verifyMirConstructorBorrowSummary(const MirConstructorInstance &instance) {
           "reference formal parameter");
     }
     break;
+  case BorrowOriginKind::Global:
+    return invalidSummary("constructor result cannot depend on global storage");
   }
 
   std::unordered_set<MirLoanId> initializerLoans;

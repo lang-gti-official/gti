@@ -861,6 +861,46 @@ private:
     return place;
   }
 
+  [[nodiscard]] MirPlaceId placeForBorrowOrigin(const BorrowOriginPlace &origin,
+                                                const HirValue &value) {
+    if (!origin.valid()) {
+      return 0;
+    }
+    MirPlace lowered{.root = MirPlaceRootKind::Symbol,
+                     .symbol = origin.root,
+                     .type = value.info.type,
+                     .access = value.info.access,
+                     .traits = value.info.traits,
+                     .sourceValue = value.id,
+                     .key = PlaceKey{.domain = output.placeDomain,
+                                     .root = origin.root,
+                                     .projections = origin.projections}};
+    for (const PlaceProjection &projection : origin.projections) {
+      switch (projection.kind) {
+      case PlaceProjectionKind::Field:
+        if (projection.field == 0) {
+          valid = false;
+          return 0;
+        }
+        lowered.projections.push_back(
+            {.kind = MirProjectionKind::Field, .field = projection.field});
+        break;
+      case PlaceProjectionKind::Dereference:
+        lowered.projections.push_back({.kind = MirProjectionKind::Dereference});
+        break;
+      case PlaceProjectionKind::ConstantIndex:
+        lowered.projections.push_back({.kind = MirProjectionKind::Index,
+                                       .constantIndex = projection.index});
+        break;
+      case PlaceProjectionKind::DynamicIndex:
+        lowered.projections.push_back({.kind = MirProjectionKind::Index,
+                                       .selection = projection.selection});
+        break;
+      }
+    }
+    return appendPlace(std::move(lowered));
+  }
+
   [[nodiscard]] const HirLoan *loanForBinding(HirBindingId binding) const {
     const HirBinding *resolved = findBinding(binding);
     return resolved == nullptr || resolved->info.retainedLoan == 0
@@ -1835,6 +1875,9 @@ private:
             placeForValue(arguments[value.borrowArgument]));
       }
     }
+    if (value.borrowOrigin == BorrowOriginKind::Global && value.borrowPlace) {
+      return placeForBorrowOrigin(*value.borrowPlace, value);
+    }
     return 0;
   }
 
@@ -2014,6 +2057,7 @@ private:
     call.borrowOrigin = value.borrowOrigin;
     call.borrowArgument = value.borrowArgument;
     call.borrowAccess = value.borrowAccess;
+    call.borrowPlace = value.borrowPlace;
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
       const MirLoanKind kind = value.info.traits.containsBorrowedState
                                    ? MirLoanKind::Stored
@@ -3874,7 +3918,8 @@ private:
               summarizedEntry = found == bindingLoans.end() ? 0 : found->second;
             }
             const bool validTail =
-                function->returnBorrowOrigin == BorrowOriginKind::Receiver
+                function->returnBorrowOrigin == BorrowOriginKind::Receiver ||
+                        function->returnBorrowOrigin == BorrowOriginKind::Global
                     ? transient == 0
                     : summarizedEntry != 0 && transient == summarizedEntry;
             if (!validTail || transientChain.empty()) {
@@ -4115,6 +4160,7 @@ MirLoweringResult MirLowerer::lower(const HirProgram &source) const {
          .returnBorrowOrigin = instance.returnBorrowOrigin,
          .returnBorrowParameter = instance.returnBorrowParameter,
          .returnBorrowAccess = instance.returnBorrowAccess,
+         .returnBorrowPlace = instance.returnBorrowPlace,
          .linkage = instance.linkage,
          .externalSymbol = instance.externalSymbol,
          .virtualMethod = instance.virtualMethod,

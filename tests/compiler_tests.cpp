@@ -1137,10 +1137,10 @@ int main() {
          "class values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v11\n") &&
+  expect(dump.starts_with("mir-body-v12\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos,
-         "MIR v11 should serialize the exact class-value parameter modes");
+         "MIR v12 should serialize the exact class-value parameter modes");
 }
 
 void testMirTemporaryAndDropObligations() {
@@ -4530,7 +4530,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v11\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v12\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -6365,6 +6365,298 @@ int main() {
              !hasDiagnosticCode(conflictingRead.diagnostics, "GTI-B0001"),
          "a conflicting unqualified-global read should be rejected by "
          "semantic loan analysis before MIR lowering");
+}
+
+void testGlobalBorrowReturns() {
+  const std::string source = R"(
+class LayerStack {
+public:
+  void Update() mut {}
+};
+
+class Application {
+public:
+  static mut Application& Get() {
+    unsafe {
+      return *Application::app;
+    }
+  }
+
+  mut LayerStack& GetLayerStack() mut { return this.layers; }
+
+private:
+  mut LayerStack layers = LayerStack();
+  static mut Application* app = nullptr;
+};
+
+mut int global_value = 1;
+mut int& global_value_ref() { return global_value; }
+
+void update_application() {
+  Application::Get().GetLayerStack().Update();
+  Application::Get().GetLayerStack().Update();
+}
+
+void update_application_in_scopes() {
+  {
+    mut Application& first = Application::Get();
+    first.GetLayerStack().Update();
+  }
+  mut Application& second = Application::Get();
+  second.GetLayerStack().Update();
+}
+
+int main() {
+  mut int& value = global_value_ref();
+  value += 1;
+  return value - 2;
+}
+)";
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("global-borrow-returns.gti", source);
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected global-borrow-return diagnostic: "
+                << diagnostic.primary.start << ": " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && valid.mirValid && valid.mir.valid() &&
+             !hasDiagnosticCode(valid.diagnostics, "GTI-S2055"),
+         "an unsafe global/static dereference should be contained by its "
+         "accessor while safe callers receive a checked mutable borrow");
+
+  const lang::ClassDecl *application =
+      findTopLevelClass(valid.program, "Application");
+  const lang::FunctionDecl *get = nullptr;
+  if (application != nullptr) {
+    for (const lang::StmtPtr &member : application->members()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(member.get());
+      if (function != nullptr && function->name().lexeme == "Get") {
+        get = function;
+        break;
+      }
+    }
+  }
+  const lang::FunctionInfo *getInfo =
+      get == nullptr ? nullptr : valid.semantics.findFunction(*get);
+  const bool exactSemanticOrigin =
+      getInfo != nullptr &&
+      getInfo->returnBorrowOrigin == lang::BorrowOriginKind::Global &&
+      getInfo->returnBorrowAccess == lang::AccessMode::Mutable &&
+      getInfo->returnBorrowPlace && getInfo->returnBorrowPlace->root != 0 &&
+      getInfo->returnBorrowPlace->projections.size() == 1 &&
+      getInfo->returnBorrowPlace->projections.front().kind ==
+          lang::PlaceProjectionKind::Dereference;
+  expect(exactSemanticOrigin,
+         "semantic function metadata should retain the exact dereferenced "
+         "static-field origin");
+  const std::optional<lang::BorrowOriginPlace> getPlace =
+      getInfo == nullptr ? std::nullopt : getInfo->returnBorrowPlace;
+
+  const lang::HirFunctionInstance *getHir = nullptr;
+  if (getInfo != nullptr) {
+    for (const lang::HirFunctionInstance &instance :
+         valid.hir.functionInstances()) {
+      if (instance.declaration == getInfo->id) {
+        getHir = &instance;
+        break;
+      }
+    }
+  }
+  const lang::MirFunctionInstance *getMir =
+      getHir == nullptr ? nullptr : valid.mir.findFunctionInstance(getHir->id);
+  expect(getHir != nullptr && getMir != nullptr &&
+             getHir->returnBorrowOrigin == lang::BorrowOriginKind::Global &&
+             getHir->returnBorrowPlace == getInfo->returnBorrowPlace &&
+             getMir->returnBorrowOrigin == lang::BorrowOriginKind::Global &&
+             getMir->returnBorrowPlace == getInfo->returnBorrowPlace,
+         "HIR and MIR function contracts should preserve the exact global "
+         "borrow origin");
+
+  if (getHir != nullptr && getMir != nullptr && getMir->returnBorrowPlace) {
+    lang::MirProgram forged = valid.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    lang::MirFunctionInstance &forgedGet = functions.at(getHir->id - 1);
+    ++forgedGet.returnBorrowPlace->root;
+    const lang::MirVerificationResult forgedResult =
+        lang::verifyMirProgram(forged);
+    expect(!forgedResult.valid() &&
+               std::any_of(forgedResult.errors.begin(),
+                           forgedResult.errors.end(),
+                           [](const lang::MirVerificationError &error) {
+                             return error.message.find(
+                                        "summarized static storage place") !=
+                                    std::string::npos;
+                           }),
+           "the MIR verifier should reject a forged global return origin");
+  }
+
+  std::size_t globalCalls = 0;
+  std::size_t endedGlobalCalls = 0;
+  for (const lang::MirFunctionInstance &instance :
+       valid.mir.functionInstances()) {
+    std::vector<lang::MirLoanId> callLoans;
+    for (const lang::MirBlock &block : instance.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.borrowOrigin == lang::BorrowOriginKind::Global &&
+            instruction.borrowPlace == getPlace && instruction.loan) {
+          ++globalCalls;
+          callLoans.push_back(*instruction.loan);
+        }
+      }
+    }
+    for (const lang::MirLoanId loan : callLoans) {
+      const bool ended = std::any_of(
+          instance.body.blocks.begin(), instance.body.blocks.end(),
+          [&](const lang::MirBlock &block) {
+            return std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const lang::MirInstruction &instruction) {
+                  return instruction.kind ==
+                             lang::MirInstructionKind::EndBorrow &&
+                         instruction.loan == loan;
+                });
+          });
+      endedGlobalCalls += ended ? 1 : 0;
+    }
+  }
+  expect(globalCalls >= 2 && endedGlobalCalls == globalCalls,
+         "unretained global call-result loans should end at their enclosing "
+         "full-expression boundary");
+
+  const std::string mirDump = lang::MirPrinter().print(valid.mir);
+  expect(mirDump.starts_with("mir-v12 ") &&
+             mirDump.find("return-borrow-place=origin(root=") !=
+                 std::string::npos &&
+             mirDump.find("borrow-place=origin(root=") != std::string::npos,
+         "deterministic MIR should serialize global function and call origin "
+         "places");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = valid.program,
+                                   .semantics = valid.semantics,
+                                   .hir = valid.hir,
+                                   .mir = valid.mir,
+                                   .optimizations = optimizations});
+  const std::string emittedGet =
+      getInfo == nullptr ? std::string{}
+                         : "static Application &__gti_fn_" +
+                               std::to_string(getInfo->id) + "_Get()";
+  expect(!emittedGet.empty() &&
+             artifact.contents.find(emittedGet) != std::string::npos &&
+             artifact.contents.find("return (*Application::app);") !=
+                 std::string::npos,
+         "the C++ backend should emit the static mutable-reference accessor "
+         "without exposing unsafe syntax at its call sites");
+
+  const lang::FrontendResult overlapping =
+      lang::Frontend().analyze("overlapping-global-borrow-returns.gti", R"(
+class Application {
+public:
+  static mut Application& Get() {
+    unsafe { return *Application::app; }
+  }
+private:
+  static mut Application* app = nullptr;
+};
+int main() {
+  mut Application& first = Application::Get();
+  mut Application& second = Application::Get();
+  return 0;
+}
+)");
+  expect(!overlapping.canGenerateCode() &&
+             countDiagnosticCode(overlapping.diagnostics, "GTI-S2017") == 1 &&
+             hasDiagnostic(overlapping.diagnostics,
+                           "Cannot create a mutable borrow while an "
+                           "overlapping borrow") &&
+             hasRelatedDiagnostic(overlapping.diagnostics,
+                                  "Retained borrow originates here"),
+         "two retained mutable borrows from one global accessor should "
+         "conflict even when the first carrier is otherwise unused");
+
+  const lang::FrontendResult missingUnsafe =
+      lang::Frontend().analyze("unsafe-global-borrow-return.gti", R"(
+class Application {
+public:
+  static mut Application& Get() { return *Application::app; }
+private:
+  static mut Application* app = nullptr;
+};
+int main() { return 0; }
+)");
+  expect(!missingUnsafe.canGenerateCode() &&
+             countDiagnosticCode(missingUnsafe.diagnostics, "GTI-S2055") == 1 &&
+             !hasDiagnostic(missingUnsafe.diagnostics,
+                            "A free or static borrowed return requires"),
+         "the accessor body should still require unsafe for its raw "
+         "dereference while retaining a valid global borrow summary");
+
+  const lang::FrontendResult mixedOrigins =
+      lang::Frontend().analyze("mixed-global-borrow-returns.gti", R"(
+class Values {
+public:
+  static mut int left = 1;
+  static mut int right = 2;
+  static mut int& pick(bool choose) {
+    if (choose) { return Values::left; }
+    return Values::right;
+  }
+};
+int main() { return 0; }
+)");
+  expect(!mixedOrigins.canGenerateCode() &&
+             hasDiagnosticCode(mixedOrigins.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(mixedOrigins.diagnostics,
+                           "requires either one exact global/static storage "
+                           "origin"),
+         "a global borrow accessor should reject differing return roots");
+
+  const lang::FrontendResult noForwardLookup =
+      lang::Frontend().analyze("forward-global-borrow-return.gti", R"(
+mut int& value_ref() { return value; }
+mut int value = 1;
+int main() { return 0; }
+)");
+  expect(
+      !noForwardLookup.canGenerateCode() &&
+          hasDiagnosticCode(noForwardLookup.diagnostics, "GTI-S2001") &&
+          !hasDiagnosticCode(noForwardLookup.diagnostics, "GTI-S2017") &&
+          hasDiagnostic(noForwardLookup.diagnostics, "Undefined name 'value'"),
+      "global borrow summary registration must not make namespace storage "
+      "forward-declarable or cascade an ownership diagnostic in ordinary "
+      "source lookup");
+
+  lang::FrontendOptions concurrentOptions;
+  concurrentOptions.target = lang::TargetInfo::host();
+  concurrentOptions.target.executionProfile =
+      lang::ExecutionProfile::Concurrent;
+  const lang::FrontendResult concurrent =
+      lang::Frontend(concurrentOptions)
+          .analyze("concurrent-global-borrow-return.gti", R"(
+class Application {
+public:
+  static mut Application& Get() {
+    unsafe { return *Application::app; }
+  }
+private:
+  static mut Application* app = nullptr;
+};
+int main() { return 0; }
+)");
+  expect(!concurrent.canGenerateCode() &&
+             hasDiagnosticCode(concurrent.diagnostics, "GTI-S2060") &&
+             hasDiagnostic(concurrent.diagnostics,
+                           "Concurrent execution profile requires static "
+                           "field 'app'"),
+         "the concurrent profile should reject unsynchronized mutable "
+         "global/static accessor storage");
 }
 
 void testReceiverTiedReferenceReturns() {
@@ -21546,7 +21838,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v11 ") &&
+             mirDump.starts_with("mir-v12 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -23556,6 +23848,7 @@ int main() {
   testTrustedIntrinsicDeclarations();
   testNonNullReferences();
   testGlobalReferencePlaces();
+  testGlobalBorrowReturns();
   testExclusiveReborrowLoanGraph();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();

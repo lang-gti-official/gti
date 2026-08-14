@@ -41,6 +41,7 @@ public:
     constexprDefinitionsAnalyzed.clear();
     externCSymbols.clear();
     rootNativeStorageSymbols.clear();
+    globalBorrowStorage.clear();
     genericConstraints.clear();
     requirementScopes.clear();
     classes.clear();
@@ -105,6 +106,7 @@ public:
     registerNamespaceSymbols(program.declarations(), {});
     collectRootNativeStorageSymbols(program.declarations());
     collectClassMembers(program.declarations(), {});
+    registerGlobalBorrowStorage(program.declarations(), {});
     resolveInheritedMembers();
     validateNativeRecords();
     validateNativeFacingNamespaces(program.declarations());
@@ -157,6 +159,7 @@ public:
     constexprDefinitionsAnalyzed.clear();
     externCSymbols.clear();
     rootNativeStorageSymbols.clear();
+    globalBorrowStorage.clear();
     genericConstraints.clear();
     requirementScopes.clear();
     classes.clear();
@@ -1181,17 +1184,19 @@ public:
                "A mutable function return must be a reference type.",
                "GTI-S2017");
       } else if (!methodDeclaration && !intrinsicDeclaration) {
-        if (hasReturnBorrowSummary) {
+        if (hasReturnBorrowSummary &&
+            functionInfo->returnBorrowOrigin != BorrowOriginKind::Global) {
           report(stmt.name(),
-                 "Mutable reference returns are currently limited to class "
-                 "and struct methods.",
+                 "A mutable free-function reference return must derive from "
+                 "one exact global or static storage place.",
                  "GTI-S2017");
         }
       } else if (methodDeclaration && stmt.isStatic()) {
-        if (hasReturnBorrowSummary) {
+        if (hasReturnBorrowSummary &&
+            functionInfo->returnBorrowOrigin != BorrowOriginKind::Global) {
           report(stmt.name(),
-                 "Static methods cannot return a mutable reference in the "
-                 "current lifetime model.",
+                 "A mutable static-method reference return must derive from "
+                 "one exact global or static storage place.",
                  "GTI-S2017");
         }
       } else if (methodDeclaration &&
@@ -5276,6 +5281,7 @@ private:
     BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
     std::size_t returnBorrowParameter = 0;
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+    std::optional<BorrowOriginPlace> returnBorrowPlace;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
     bool compilerPrivate = false;
@@ -5285,6 +5291,7 @@ private:
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
     AccessMode access = AccessMode::ReadOnly;
+    std::optional<BorrowOriginPlace> place;
     std::size_t eligibleParameters = 0;
     bool hasMutableCandidate = false;
   };
@@ -8001,12 +8008,6 @@ private:
       return summary;
     }
 
-    if (returnType.kind == SemanticType::Reference &&
-        returnType.referenceAccess == AccessMode::Mutable) {
-      summary.hasMutableCandidate = true;
-      return summary;
-    }
-
     for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
       const SemanticType &parameter = parameterTypes[index];
       const Parameter *syntax =
@@ -8047,6 +8048,7 @@ private:
     function.returnBorrowOrigin = summary.origin;
     function.returnBorrowParameter = summary.parameter;
     function.returnBorrowAccess = summary.access;
+    function.returnBorrowPlace = summary.place;
   }
 
   void reportMissingFunctionReturnBorrowSummary(const FunctionDecl &function,
@@ -8096,12 +8098,13 @@ private:
     } else {
       diagnostic = makeDiagnostic(
           code, DiagnosticPhase::Semantics, function.name(),
-          "A free or static borrowed return requires exactly one read-only "
-          "reference or direct borrowed-value parameter that outlives the "
-          "result.");
+          "A free or static borrowed return requires either one exact "
+          "global/static storage origin or exactly one read-only reference "
+          "or direct borrowed-value parameter that outlives the result.");
       diagnostic.hints.emplace_back(
-          "Add one read-only source parameter or make this an instance "
-          "method whose result borrows from its receiver.");
+          "Return the same global/static place on every path, add one "
+          "read-only source parameter, or make this an instance method whose "
+          "result borrows from its receiver.");
     }
     diagnostics.emplace_back(std::move(diagnostic));
   }
@@ -8542,10 +8545,25 @@ private:
     return result;
   }
 
+  [[nodiscard]] SemanticLoanPlace
+  loanPlace(const BorrowOriginPlace &place) const {
+    return {.domain = {.snapshot = semanticModel.placeSnapshot()},
+            .root = place.root,
+            .projections = place.projections};
+  }
+
   [[nodiscard]] SemanticLoanPlace loanPlace(const ExprPtr &expression) {
     SemanticPlace place = semanticPlace(expression);
     if (place.root != nullptr) {
       return loanPlace(std::move(place));
+    }
+    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      if (resolved != nullptr &&
+          resolved->borrowOrigin == BorrowOriginKind::Global &&
+          resolved->borrowPlace) {
+        return loanPlace(*resolved->borrowPlace);
+      }
     }
     if (const Variable *owner = borrowedOwnerVariable(expression)) {
       if (Symbol *symbol = resolveMutable(owner->name())) {
@@ -8719,6 +8737,7 @@ private:
   struct TransientBorrowProduction {
     SemanticLoanPlace place;
     AccessMode access = AccessMode::ReadOnly;
+    bool globalStorage = false;
   };
 
   [[nodiscard]] std::optional<TransientBorrowProduction>
@@ -8745,12 +8764,20 @@ private:
       if (place.root == 0 && !place.receiver) {
         return std::nullopt;
       }
+      const SemanticPlace sourcePlace = semanticPlace(source);
+      const bool globalStorage =
+          (nested && nested->globalStorage) ||
+          (sourcePlace.root != nullptr &&
+           (sourcePlace.root->bindingKind ==
+                SemanticBindingKind::GlobalVariable ||
+            sourcePlace.root->bindingKind == SemanticBindingKind::StaticField));
       return TransientBorrowProduction{
           .place = std::move(place),
           .access = producerMutable || resultAccess == AccessMode::Mutable ||
                             (nested && nested->access == AccessMode::Mutable)
                         ? AccessMode::Mutable
-                        : AccessMode::ReadOnly};
+                        : AccessMode::ReadOnly,
+          .globalStorage = globalStorage};
     };
 
     if (const ResolvedOperatorInfo *resolved =
@@ -8837,6 +8864,13 @@ private:
                                 : AccessMode::ReadOnly};
             }
           }
+        }
+        if (resolved->borrowOrigin == BorrowOriginKind::Global &&
+            resolved->borrowPlace) {
+          return TransientBorrowProduction{
+              .place = loanPlace(*resolved->borrowPlace),
+              .access = resolved->borrowAccess,
+              .globalStorage = true};
         }
       }
     }
@@ -9450,6 +9484,11 @@ private:
         expression ? semanticModel.findExpression(*expression) : nullptr;
     const bool retainedStoredBorrow =
         info != nullptr && info->traits.containsBorrowedState;
+    const std::optional<TransientBorrowProduction> retainedProduction =
+        transientBorrowProduction(expression);
+    const bool lexicalGlobalMutableBorrow =
+        carrierAccess == AccessMode::Mutable && retainedProduction &&
+        retainedProduction->globalStorage;
     if (const auto source = retainedLoanSource(expression)) {
       const SemanticLoanInfo *sourceLoan = semanticModel.findLoan(source->loan);
       if (sourceLoan == nullptr) {
@@ -9554,6 +9593,9 @@ private:
                                                 : SemanticLoanKind::Reference,
                            expression.get(), std::move(place), ownerId,
                            receiverOrigin, carrierAccess, protectsStorage);
+    if (lexicalGlobalMutableBorrow) {
+      loanFlow.records.at(id).confinedToRegion = false;
+    }
     semanticModel.recordBindingLoan(binding, id);
   }
 
@@ -14580,6 +14622,9 @@ private:
     const AccessMode returnBorrowAccess =
         declarationInfo == nullptr ? function.returnBorrowAccess
                                    : declarationInfo->returnBorrowAccess;
+    const std::optional<BorrowOriginPlace> returnBorrowPlace =
+        declarationInfo == nullptr ? function.returnBorrowPlace
+                                   : declarationInfo->returnBorrowPlace;
     ResolvedCallInfo resolved{
         .function = function.id,
         .declaration = function.declaration,
@@ -14591,6 +14636,7 @@ private:
         .borrowOrigin = returnBorrowOrigin,
         .borrowArgument = returnBorrowParameter,
         .borrowAccess = returnBorrowAccess,
+        .borrowPlace = returnBorrowPlace,
         .dispatch = function.virtualMethod ? CallDispatch::Virtual
                                            : CallDispatch::Static,
         .dispatchOwner = function.dispatchOwner,
@@ -16530,6 +16576,11 @@ private:
         function->returnBorrowOrigin == BorrowOriginKind::None) {
       return;
     }
+    const ExpressionInfo *valueInfo =
+        value == nullptr ? nullptr : semanticModel.findExpression(*value);
+    if (valueInfo == nullptr || valueInfo->type == SemanticType::Unknown) {
+      return;
+    }
     if (function->returnBorrowOrigin == BorrowOriginKind::Receiver) {
       if (!isReceiverDerivedBorrow(value)) {
         Diagnostic diagnostic = makeDiagnostic(
@@ -16541,6 +16592,29 @@ private:
             "temporaries, and global storage cannot provide this result.");
         diagnostics.emplace_back(std::move(diagnostic));
       }
+      return;
+    }
+    if (function->returnBorrowOrigin == BorrowOriginKind::Global) {
+      const SemanticPlace source = semanticPlace(value);
+      const BorrowOriginPlace actual{
+          .root = source.root == nullptr ? 0
+                                         : (source.rootIdentity == 0
+                                                ? toolingSymbolFor(*source.root)
+                                                : source.rootIdentity),
+          .projections = source.projections};
+      if (function->returnBorrowPlace &&
+          *function->returnBorrowPlace == actual) {
+        return;
+      }
+      Diagnostic diagnostic = makeDiagnostic(
+          std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
+          "Returned " + std::string(description) +
+              " must derive from this function's exact summarized "
+              "global/static storage place.");
+      diagnostic.hints.emplace_back(
+          "Return the same global or static place on every path; locals, "
+          "parameters, temporaries, and unrelated storage cannot escape.");
+      diagnostics.emplace_back(std::move(diagnostic));
       return;
     }
 
@@ -16709,6 +16783,11 @@ private:
     }
     if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      if (resolved != nullptr &&
+          resolved->borrowOrigin == BorrowOriginKind::Global &&
+          resolved->borrowPlace && resolved->borrowPlace->valid()) {
+        return true;
+      }
       if (resolved != nullptr &&
           resolved->borrowOrigin == BorrowOriginKind::Receiver &&
           dynamic_cast<const Get *>(call->callee().get()) == nullptr) {
@@ -17930,6 +18009,149 @@ private:
         rootNativeStorageSymbols.emplace(variable->name().lexeme, variable);
       }
     }
+  }
+
+  struct GlobalBorrowStorageInfo {
+    const VariableDecl *declaration = nullptr;
+    SourceUnitId sourceUnit = 0;
+    SemanticType type = SemanticType::Unknown;
+    SymbolId symbol = 0;
+    bool internalLinkage = false;
+  };
+
+  void registerGlobalBorrowStorage(const StmtList &statements,
+                                   std::vector<std::string> scope) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerGlobalBorrowStorage(*branch, scope);
+        }
+        continue;
+      }
+      if (const auto *externC =
+              dynamic_cast<const ExternCDecl *>(statement.get())) {
+        registerGlobalBorrowStorage(externC->declarations(), scope);
+        continue;
+      }
+      if (const auto *namespaceDecl =
+              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        scope.emplace_back(namespaceDecl->name().lexeme);
+        registerGlobalBorrowStorage(namespaceDecl->declarations(), scope);
+        scope.pop_back();
+        continue;
+      }
+      const auto *variable =
+          dynamic_cast<const VariableDecl *>(statement.get());
+      if (variable == nullptr) {
+        continue;
+      }
+
+      const SourceUnitId sourceUnit = sourceUnitFor(variable->name());
+      const SemanticType type = typeOf(
+          variable->type(),
+          variable->isMutable() ? Mutability::Mutable : Mutability::Immutable,
+          scope);
+      const std::string name = qualifiedName(scope, variable->name().lexeme);
+      SymbolId symbol = symbolForDeclaration(variable->name());
+      if (symbol == 0) {
+        symbol = recordToolingSymbol(
+            variable->name(), SymbolKind::GlobalVariable, name, type,
+            variable->isMutable(), true, AccessModifier::Public, false,
+            variable->isStatic());
+      }
+      globalBorrowStorage[name].push_back(
+          {.declaration = variable,
+           .sourceUnit = sourceUnit,
+           .type = type,
+           .symbol = symbol,
+           .internalLinkage = variable->isStatic()});
+    }
+  }
+
+  [[nodiscard]] const GlobalBorrowStorageInfo *
+  findGlobalBorrowStorage(std::string_view qualified) const {
+    const auto found = globalBorrowStorage.find(std::string(qualified));
+    if (found == globalBorrowStorage.end()) {
+      return nullptr;
+    }
+    const GlobalBorrowStorageInfo *result = nullptr;
+    for (const GlobalBorrowStorageInfo &candidate : found->second) {
+      const bool visible = candidate.internalLinkage
+                               ? candidate.sourceUnit == currentSourceUnit
+                               : sourceVisible(candidate.sourceUnit);
+      if (!visible || candidate.symbol == 0) {
+        continue;
+      }
+      if (result != nullptr) {
+        return nullptr;
+      }
+      result = &candidate;
+    }
+    return result;
+  }
+
+  [[nodiscard]] const GlobalBorrowStorageInfo *
+  resolveGlobalBorrowStorage(const ExprPtr &expression) const {
+    if (!expression) {
+      return nullptr;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return resolveGlobalBorrowStorage(grouping->expression());
+    }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      for (std::size_t depth = currentNamespace.size() + 1; depth > 0;
+           --depth) {
+        if (const GlobalBorrowStorageInfo *storage =
+                findGlobalBorrowStorage(qualifiedName(
+                    currentNamespace, depth - 1, variable->name().lexeme))) {
+          return storage;
+        }
+      }
+      return nullptr;
+    }
+    const auto *qualified =
+        dynamic_cast<const QualifiedName *>(expression.get());
+    if (qualified == nullptr || qualified->name().segments.size() < 2) {
+      return nullptr;
+    }
+    const NamePath namespacePath(
+        std::vector<Token>(qualified->name().segments.begin(),
+                           qualified->name().segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePath(namespacePath, currentNamespace);
+    return resolvedNamespace
+               ? findGlobalBorrowStorage(*resolvedNamespace +
+                                         "::" + qualified->name().last().lexeme)
+               : nullptr;
+  }
+
+  [[nodiscard]] std::optional<BorrowOriginPlace>
+  predeclaredGlobalBorrowPlace(const ExprPtr &expression) const {
+    if (!expression) {
+      return std::nullopt;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return predeclaredGlobalBorrowPlace(grouping->expression());
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      std::optional<BorrowOriginPlace> result =
+          predeclaredGlobalBorrowPlace(unary->right());
+      if (result) {
+        result->projections.push_back(
+            {.kind = PlaceProjectionKind::Dereference});
+      }
+      return result;
+    }
+    const GlobalBorrowStorageInfo *storage =
+        resolveGlobalBorrowStorage(expression);
+    return storage == nullptr ? std::nullopt
+                              : std::optional<BorrowOriginPlace>(
+                                    BorrowOriginPlace{.root = storage->symbol});
   }
 
   [[nodiscard]] SourceUnitId sourceUnitFor(const Token &token) const {
@@ -21226,6 +21448,7 @@ private:
       candidate.returnBorrowOrigin = function.returnBorrowOrigin;
       candidate.returnBorrowParameter = function.returnBorrowParameter;
       candidate.returnBorrowAccess = function.returnBorrowAccess;
+      candidate.returnBorrowPlace = function.returnBorrowPlace;
     }
   }
 
@@ -21238,11 +21461,130 @@ private:
         updateFunctionCandidateBorrowSummary(symbol, function);
       }
     }
+    for (auto &[_, symbols] : internalNamespaceSymbols) {
+      for (auto &[__, symbol] : symbols) {
+        updateFunctionCandidateBorrowSummary(symbol, function);
+      }
+    }
     for (ClassInfo &owner : classes) {
       for (auto &[_, member] : owner.members) {
         updateFunctionCandidateBorrowSummary(member.symbol, function);
       }
     }
+  }
+
+  void
+  collectBorrowReturnExpressions(const Stmt *statement,
+                                 std::vector<const ExprPtr *> &returns) const {
+    if (statement == nullptr) {
+      return;
+    }
+    if (const auto *returned = dynamic_cast<const ReturnStmt *>(statement)) {
+      returns.push_back(&returned->value());
+      return;
+    }
+    if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+      for (const StmtPtr &nested : block->statements()) {
+        collectBorrowReturnExpressions(nested.get(), returns);
+      }
+      return;
+    }
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(statement)) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        for (const StmtPtr &nested : *branch) {
+          collectBorrowReturnExpressions(nested.get(), returns);
+        }
+      }
+      return;
+    }
+    if (const auto *branch = dynamic_cast<const IfStmt *>(statement)) {
+      collectBorrowReturnExpressions(branch->thenBranch().get(), returns);
+      collectBorrowReturnExpressions(branch->elseBranch().get(), returns);
+      return;
+    }
+    if (const auto *selection = dynamic_cast<const SwitchStmt *>(statement)) {
+      for (const SwitchArm &arm : selection->arms()) {
+        for (const StmtPtr &nested : arm.statements) {
+          collectBorrowReturnExpressions(nested.get(), returns);
+        }
+      }
+      return;
+    }
+    if (const auto *loop = dynamic_cast<const ForStmt *>(statement)) {
+      collectBorrowReturnExpressions(loop->body().get(), returns);
+      return;
+    }
+    if (const auto *loop = dynamic_cast<const RangeForStmt *>(statement)) {
+      collectBorrowReturnExpressions(loop->lowered().get(), returns);
+      return;
+    }
+    if (const auto *loop = dynamic_cast<const DoWhileStmt *>(statement)) {
+      collectBorrowReturnExpressions(loop->body().get(), returns);
+      return;
+    }
+    if (const auto *loop = dynamic_cast<const WhileStmt *>(statement)) {
+      collectBorrowReturnExpressions(loop->body().get(), returns);
+    }
+  }
+
+  [[nodiscard]] std::optional<BorrowOriginPlace>
+  globalReturnBorrowPlace(const FunctionInfo &function) {
+    if (function.declaration == nullptr ||
+        function.declaration->body() == nullptr ||
+        (function.ownerClass != 0 && !function.staticMember)) {
+      return std::nullopt;
+    }
+
+    std::vector<const ExprPtr *> returns;
+    collectBorrowReturnExpressions(function.declaration->body().get(), returns);
+    if (returns.empty()) {
+      return std::nullopt;
+    }
+
+    const std::vector<std::string> enclosingNamespace = currentNamespace;
+    const SourceUnitId enclosingSourceUnit = currentSourceUnit;
+    const std::optional<ClassId> enclosingClass = currentClass;
+    currentNamespace = function.namespaceScope;
+    currentSourceUnit = function.sourceUnit;
+    currentClass = function.ownerClass == 0
+                       ? std::nullopt
+                       : std::optional<ClassId>{function.ownerClass};
+
+    std::optional<BorrowOriginPlace> result;
+    bool valid = true;
+    for (const ExprPtr *returned : returns) {
+      if (returned == nullptr || !*returned) {
+        valid = false;
+        break;
+      }
+      SemanticPlace place = semanticPlace(*returned);
+      std::optional<BorrowOriginPlace> candidate;
+      if (place.root != nullptr && !place.receiver &&
+          (place.root->bindingKind == SemanticBindingKind::GlobalVariable ||
+           place.root->bindingKind == SemanticBindingKind::StaticField)) {
+        candidate = BorrowOriginPlace{
+            .root = place.rootIdentity == 0 ? toolingSymbolFor(*place.root)
+                                            : place.rootIdentity,
+            .projections = place.projections};
+      } else {
+        candidate = predeclaredGlobalBorrowPlace(*returned);
+      }
+      if (!candidate) {
+        valid = false;
+        break;
+      }
+      if (!candidate->valid() || (result && *result != *candidate)) {
+        valid = false;
+        break;
+      }
+      result = std::move(candidate);
+    }
+
+    currentNamespace = enclosingNamespace;
+    currentSourceUnit = enclosingSourceUnit;
+    currentClass = enclosingClass;
+    return valid ? result : std::nullopt;
   }
 
   void resolveFunctionBorrowSummaries() {
@@ -21255,12 +21597,22 @@ private:
         continue;
       }
       FunctionInfo updated = *existing;
-      const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
+      FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
           updated.returnType, updated.parameterTypes, declaration,
           updated.ownerClass, updated.staticMember, updated.intrinsic);
+      if (isBorrowReturningType(updated.returnType) &&
+          updated.intrinsic == IntrinsicKind::None) {
+        if (std::optional<BorrowOriginPlace> place =
+                globalReturnBorrowPlace(updated)) {
+          summary.origin = BorrowOriginKind::Global;
+          summary.parameter = 0;
+          summary.place = std::move(place);
+        }
+      }
       updated.returnBorrowOrigin = summary.origin;
       updated.returnBorrowParameter = summary.parameter;
       updated.returnBorrowAccess = summary.access;
+      updated.returnBorrowPlace = summary.place;
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated);
     }
@@ -21821,6 +22173,7 @@ private:
                      .returnBorrowOrigin = candidate.returnBorrowOrigin,
                      .returnBorrowParameter = candidate.returnBorrowParameter,
                      .returnBorrowAccess = candidate.returnBorrowAccess,
+                     .returnBorrowPlace = candidate.returnBorrowPlace,
                      .virtualRoots = candidate.virtualRoots,
                      .compilerPrivate = candidate.compilerPrivate});
   }
@@ -26506,6 +26859,8 @@ private:
   std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
   std::unordered_map<std::string, const VariableDecl *>
       rootNativeStorageSymbols;
+  std::unordered_map<std::string, std::vector<GlobalBorrowStorageInfo>>
+      globalBorrowStorage;
   std::unordered_map<GenericParameterId, GenericConstraintSet>
       genericConstraints;
   std::vector<ClassInfo> classes;

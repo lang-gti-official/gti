@@ -464,11 +464,6 @@ private:
           throw error(name,
                       "A mutable function return must be a reference type.");
         }
-        if (staticKeyword) {
-          throw error(name,
-                      "Static functions cannot return a mutable reference in "
-                      "the current lifetime model.");
-        }
       }
       if (operatorName && staticKeyword) {
         throw error(*staticKeyword,

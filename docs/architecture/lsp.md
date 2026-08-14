@@ -109,6 +109,12 @@ compiler-owned symbol/type occurrences; the protocol layer neither recognizes
 patterns nor recomputes exhaustiveness. Shared `GTI-S2066`/`GTI-S2067`
 diagnostics are published unchanged.
 
+Mutable reference results backed by global or static storage likewise use the
+compiler's exact borrow-origin place and loan endpoints. The LSP publishes
+overlapping retained-borrow diagnostics and related origin ranges from the
+shared semantic model; it does not infer storage duration or temporary-loan
+boundaries from call syntax.
+
 ## Document State
 
 `LanguageServer` currently owns protocol handling and document lifecycle in one

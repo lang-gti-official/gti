@@ -293,6 +293,39 @@ This is implicit single-origin lifetime inference, not a general lifetime
 parameter system. Other parameters may contribute ordinary values, but a
 returned borrow may not choose between owners or combine dependencies.
 
+Under the default single-threaded execution profile, a free function or static
+method may instead return `T&` or `mut T&` from one exact namespace-global or
+non-generic static-field place. Every reachable return must name the same
+symbol root and the same field, fixed-index, or dereference projection path.
+The function summary retains that place, and each call creates a checked loan
+against it. Unsafe raw-pointer dereference remains lexical to the accessor body;
+it does not make a successfully checked call site unsafe:
+
+```gti
+class Application {
+public:
+  static mut Application& Get() {
+    unsafe {
+      return *Application::app;
+    }
+  }
+
+private:
+  static mut Application* app = nullptr;
+};
+
+Application::Get().Update();
+```
+
+An unretained call-result loan ends at its enclosing full-expression. A result
+retained in a local reference remains live to its lexical scope boundary, so a
+second overlapping mutable borrow is rejected even when the first carrier is
+otherwise unused. A nested block is the explicit way to end such a retained
+global borrow earlier. The concurrent execution profile does not admit this
+unsynchronized mutable process-wide storage: its existing `GTI-S2060` rule
+requires immutable, share-capable globals/statics until an atomic, mutex, or
+guard contract provides synchronization.
+
 Retaining a borrow from a move-only receiver prevents moving or replacing that
 receiver and calling its mutable methods while the semantic loan remains live.
 A read-only loan may have multiple local aliases. Every alias is a carrier of
@@ -321,8 +354,10 @@ named fields and different in-range constant elements are disjoint. Dynamic
 index selections remain potentially overlapping with every element of their
 array. The whole root therefore conflicts with every descendant, while exact
 sibling fields or elements do not conflict merely because they share an owner.
-Raw pointer provenance, opaque storage sources, globals, and captured storage
-do not receive this precise treatment.
+Raw pointer provenance, opaque storage sources, and captured storage do not
+receive this precise treatment. Namespace globals and non-generic static data
+members do have stable symbol-rooted places; a free/static return may expose
+one only through the exact-origin rule above.
 
 A receiver- or argument-tied call result preserves the stable place of the
 selected source expression, so calls on `parent.left` and `parent.right` remain
@@ -394,24 +429,23 @@ This is not general nested switch/loop flow, and unproven nesting remains
 conservative. A nested block can always provide an explicit earlier lexical
 end.
 
-A receiver- or argument-tied call result that is consumed without being stored
-ends its MIR loan at the enclosing full-expression boundary. This includes a
-borrow used to compute an `if`, loop, or switch condition. Retaining the result
-in a reference or borrowed-state value still uses the conservative lexical
-rule above.
+A receiver-, argument-, or global-tied call result that is consumed without
+being stored ends its MIR loan at the enclosing full-expression boundary. This
+includes a borrow used to compute an `if`, loop, or switch condition. Retaining
+the result in a reference or borrowed-state value still uses the applicable
+retained-loan rule above.
 
 Nested owner projections remain outside this checkpoint. In particular, a
 borrow reached through `expected<owner, E>.value()` may be consumed immediately
 within the same full expression, but it cannot be retained or returned through
 another helper yet.
 
-Mutable free/static reference returns, reference globals, nested references,
-and references over fixed arrays or compiler-private owner handles remain
-unavailable to ordinary source. A read-only free/static reference return is
-accepted only under the single-parameter rule above. A non-escaping local
-reference may borrow the public `std::unique_ptr<T>` class itself, but
-conservatively prevents transfer or mutation of that owner for the rest of the
-function.
+Reference globals, nested references, and references over fixed arrays or
+compiler-private owner handles remain unavailable to ordinary source. A
+free/static reference return is accepted only under the exact global/static
+origin or single read-only parameter rule above. A non-escaping local reference
+may borrow the public `std::unique_ptr<T>` class itself, but conservatively
+prevents transfer or mutation of that owner for the rest of the function.
 
 One deliberately confined stored-reference form is available for owner-tied
 library values such as iterators. A class or struct may contain one direct
