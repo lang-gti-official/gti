@@ -303,17 +303,19 @@ library state.
 **Implementation gap:** semantic analysis still conservatively rejects a
 transient borrow and overlapping mutation in either call-argument order. HIR
 maps semantic-selected full-expression roots to concrete drop identities. Its
-first bounded ordered-call plan now names the receiver and exact
-scalar/reference arguments for concrete non-intrinsic ordinary calls. MIR
-turns those roles into one-use checkpoints and verifies the strict receiver,
-source-ordered arguments, then invocation chain while preserving normal-exit
-temporary/drop obligations.
+bounded ordered-call plan now names the receiver and exact scalar, reference,
+and eligible non-borrowed class-value arguments for concrete non-intrinsic
+ordinary calls. MIR turns those roles into one-use checkpoints and verifies the
+strict receiver, source-ordered arguments, then invocation chain. Class places
+are copied at their checkpoint; owned class values are moved there, and an
+exact active temporary obligation is transferred at that same checkpoint.
 
 That schedule is not yet production authority: the transitional C++ emitter
 still emits calls and helper operands inline. Class-value parameter
-construction, packs and other call forms, target places, compound expressions,
-failure rollback, and one merged program-initialization body remain incomplete,
-and native static initialization may still be used. Later M-EXEC-01 slices,
+construction for borrowed-state carriers, packs and other call forms, result
+and target places, compound expressions, failure rollback, and one merged
+program-initialization body remain incomplete, and native static initialization
+may still be used. Later M-EXEC-01 slices,
 M-FAIL-01 for failure edges, and matching M-BACK closed-body migrations must
 make those families executable before they are conforming or the conservative
 borrow restriction is narrowed.

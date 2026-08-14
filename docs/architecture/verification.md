@@ -139,14 +139,20 @@ cleanup trace at O0/O3 in the default and C++20 compatibility modes, while
 `optimizer_foundation` keeps lifecycle-only events non-removable
 and non-reorderable. The trace deliberately uses indistinguishable call
 argument cleanup so it does not depend on native C++ argument evaluation order.
-The first bounded M-EXEC-01 gate is split across `compiler_pipeline` and
-`optimizer_foundation`. The compiler test retains exact HIR receiver/argument
-roles and the MIR receiver, indexed arguments, then invocation chain for
-ordinary scalar/reference calls. Optimizer mutations reject wrong call-site,
+The bounded M-EXEC-01 gate is split across `compiler_pipeline` and
+`optimizer_foundation`. Compiler tests retain exact HIR receiver/argument roles
+and the MIR receiver, indexed arguments, then invocation chain for ordinary
+scalar/reference calls and eligible non-borrowed class values. They prove a
+class lvalue is copied from its exact place, an owned class value is moved, and
+each active temporary obligation transfers at its own checkpoint rather than
+at the final call. Optimizer mutations reject wrong call-site,
 duplicate/abandoned or directly bypassed inputs, selected-parameter type drift,
-and receiver/argument reordering; effect coverage keeps each checkpoint
-non-removable and non-reorderable. Later M-EXEC-01 slices still own class-value
-parameter setup, place/operator/initializer schedules, and cleanup composition.
+receiver/argument reordering, copy/move role forgery, missing or misplaced
+transfer, and lost exact call targets. Effect coverage treats class copy/move
+construction as conservative user-code barriers and keeps every checkpoint
+non-removable and non-reorderable. Later M-EXEC-01 slices still own
+borrowed-state class values, remaining call forms, place/operator/initializer
+schedules, and cleanup composition.
 Matching M-BACK migrations own production authority, the full supported-mode
 matrix, and native-compiler runtime traces before any conservative semantic
 restriction is removed. A compatibility emitter trace is evidence for

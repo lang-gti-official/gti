@@ -81,6 +81,10 @@ callInputKindName(HirCallInputKind kind) {
   switch (kind) {
   case HirCallInputKind::Value:
     return "value";
+  case HirCallInputKind::CopyValue:
+    return "copy-value";
+  case HirCallInputKind::MoveValue:
+    return "move-value";
   case HirCallInputKind::ReadBorrow:
     return "read-borrow";
   case HirCallInputKind::MutableBorrow:
@@ -92,7 +96,7 @@ callInputKindName(HirCallInputKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v10 valid=" << program.valid() << '\n';
+    output << "mir-v11 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -322,7 +326,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v10\n";
+    output << "mir-body-v11\n";
     body(value, 0);
     return output.str();
   }

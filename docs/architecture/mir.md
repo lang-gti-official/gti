@@ -19,9 +19,13 @@ it from host/backend flags. The current profile fact constrains frontend
 global/static validity; future synchronization and task operations will
 consume it only in their owning rows.
 
-The deterministic serialization is currently `mir-v10`/`mir-body-v10`.
-Version 10 adds explicit call-input roles and materialization order for the
-bounded ordinary-call stage. It also includes exact owned-callable
+The deterministic serialization is currently `mir-v11`/`mir-body-v11`.
+Version 11 adds exact class-copy and class-move parameter checkpoints to the
+ordered ordinary-call stage. A copy checkpoint retains the source place; a
+move checkpoint retains the already materialized value and transfers any exact
+active temporary obligation at that checkpoint rather than at the final call.
+It retains version 10's explicit call-input roles and materialization order,
+including exact owned-callable
 return/field transport, complete declared-field metadata, and constructor
 parameter-to-field move evidence introduced alongside that stage. It retains
 version 8's ordered closure capture operands, copy/move modes, exact environment
@@ -46,13 +50,16 @@ A `MirBody` owns:
   the corresponding value-owned `PlaceKey`;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
-- for the bounded ordinary scalar/reference-call slice, one non-removable,
+- for the bounded ordinary-call slices, one non-removable,
   non-reorderable `CallInput` checkpoint per receiver and argument. Each
   checkpoint retains the source HIR value, call-site identity, receiver or
-  exact argument-index role, selected parameter type, and value/read-borrow/
-  mutable-borrow mode. Its single result has exactly one executable use by the
-  matching call, so the call consumes only prepared inputs rather than
-  reevaluating a source operand;
+  exact argument-index role, selected parameter type, and value/class-copy/
+  class-move/read-borrow/mutable-borrow mode. A class-copy checkpoint consumes
+  one exact copy operand rooted in the source place. A class-move checkpoint
+  consumes one exact materialized value and carries its `TransferOut` event
+  when that value has an active drop obligation. Its single result has exactly
+  one executable use by the matching call, so the call consumes only prepared
+  inputs rather than reevaluating a source operand;
 - typed lexical/value drop obligations and per-instruction initialize, move,
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
@@ -187,9 +194,9 @@ state-set union. A mismatched domain, forged move key, missing restoration, or
 unavailable operand makes the MIR candidate invalid rather than producing a
 late source diagnostic or relying on generated C++ behavior.
 
-`MirPrinter` version 8 includes each body domain, carried place key, constant
-or dynamic index metadata, ownership event, complete cleanup-relevant class
-lifecycle shape,
+The current `MirPrinter` schema includes each body domain, carried place key,
+constant or dynamic index metadata, ownership event, complete cleanup-relevant
+class lifecycle shape,
 exact class/lambda cleanup descriptor, typed drop obligation, call parameter
 roles, full-expression and lexical cleanup-boundary tables, and lifecycle
 event, so deterministic snapshots observe the same facts the verifier consumes.
@@ -311,25 +318,28 @@ operation.
 
 It also does not yet completely implement
 [Execution Section 4.2](../language/execution.md#42-evaluation-order). For the
-bounded ordinary scalar/reference-call slice, the verifier requires the
+bounded ordinary-call slices, the verifier requires the
 receiver input, argument inputs in exact source/parameter order, and final call
 to form a strict dominance/order chain. It rejects a direct unprepared operand,
 wrong call-site, duplicate or abandoned checkpoint, swapped argument index,
-type/role drift, and invocation before setup. Borrow-source, callable-source,
+type/role drift, and invocation before setup. Class-copy inputs additionally
+require the exact copyable, non-borrowed source place. Class-move inputs require
+the exact movable, non-borrowed materialized value and transfer its unique
+active obligation at the checkpoint. Borrow-source, callable-source, ownership,
 and loan-flow checks trace through the checkpoint's one underlying operand.
 
 Other calls and expression families still rely on recursive lowering order,
 which is not a verified materialization schedule and does not control
-production emission. Class-value parameter construction, target-place
-formation, parameter/result storage, operators, packs, conditional families,
-and failure rollback are incomplete. Module initializers and each class's
-static-field initializer body remain separate rather than one
+production emission. Borrowed-state class parameter construction, target-place
+formation, result storage, operators, packs, callable/overloaded calls,
+conditional families, and failure rollback are incomplete. Module initializers
+and each class's static-field initializer body remain separate rather than one
 source-graph-derived hosted sequence.
 
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations for the current
 failure-free place slice. Later M-EXEC-01 slices must extend the ordered input
-representation to class-value parameter construction, remaining call forms,
+representation to borrowed-state class values, remaining call forms, result and
 target places, operators, branches, and program initialization, with a
 `ProgramInitializationStepId` where applicable.
 The verifier must reject use before materialization, duplicate target

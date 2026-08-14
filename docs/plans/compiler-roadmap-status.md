@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.127.0
+Checkpoint version: 0.128.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -45,6 +45,17 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.128.0 checkpoint extends the bounded M-EXEC-01 ordinary-call schedule to
+eligible non-borrowed class-value parameters. HIR distinguishes class-copy and
+class-move inputs from scalar values and reference borrows. MIR v11 copies an
+lvalue from its exact place or consumes an exact materialized value, transfers
+that value's active temporary obligation at its source-ordered checkpoint, and
+keeps the final call free of undifferentiated ownership setup. Verifier
+mutations reject forged copy/move roles, missing or misplaced transfer, and an
+erased exact target. Borrowed-state class values, remaining call forms, result
+and target places, and production M-BACK emission remain open; semantic call-
+borrow restrictions are therefore unchanged.
 
 The 0.127.0 checkpoint implements two deliberately separate aggregate
 families. A passive native `union` supplies C++-familiar overlapping storage,
@@ -809,10 +820,11 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-unowned task is the next bounded `M-EXEC-01` family; the scalar/reference
-ordinary-call schedule has landed, while M-OWN-01/M-OWN-02/M-LIFE-01, I-CAP-01,
-C-TYPE-01/C-GLOBAL-01, and the evaluation, memory-model, callable, failure, and
-compatibility decisions are complete. The executable compiler critical path
+unowned task is the next bounded `M-EXEC-01` family; the scalar/reference and
+eligible non-borrowed class-value ordinary-call schedules have landed, while
+M-OWN-01/M-OWN-02/M-LIFE-01, I-CAP-01, C-TYPE-01/C-GLOBAL-01, and the
+evaluation, memory-model, callable, failure, and compatibility decisions are
+complete. The executable compiler critical path
 now continues ordered MIR expression lowering, then the co-delivered
 failure/runtime substrate, the first MIR-emitted
 body family, and complete M-BACK-02 body-family migration.

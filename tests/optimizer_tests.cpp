@@ -1431,6 +1431,16 @@ int main() {
     return;
   }
 
+  lang::MirBody missingTarget = baseline;
+  lang::MirInstruction *missingTargetCall = callTo(missingTarget, member->id);
+  if (missingTargetCall != nullptr) {
+    missingTargetCall->functionTarget.reset();
+  }
+  expect(missingTargetCall != nullptr &&
+             hasMessage(missingTarget, "invalid shape or reference"),
+         "the verifier should reject an ordered ordinary call that loses its "
+         "exact function target");
+
   lang::MirBody wrongSite = baseline;
   lang::MirInstruction *wrongSiteCall = callTo(wrongSite, member->id);
   lang::MirInstruction *wrongSiteReceiver =
@@ -1524,6 +1534,220 @@ int main() {
                         "argument, invocation chain"),
          "the verifier should reject a receiver/argument schedule reordered "
          "before invocation");
+}
+
+void testOrderedClassValueCallInputVerification() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "ordered-class-call-verification.gti", R"(
+class Copyable {
+public:
+  int value;
+  Copyable(int input) : value(input) {}
+};
+
+class Movable {
+public:
+  int value;
+  Movable(int input) : value(input) {}
+  Movable(Movable& other) = delete;
+  Movable(Movable&& other) = default;
+  ~Movable() {}
+};
+
+int accept(Copyable copied, Copyable other, Movable moved) {
+  return copied.value + other.value + moved.value;
+}
+
+int main() {
+  Copyable copied = Copyable(1);
+  Copyable other = Copyable(2);
+  Movable moved = Movable(3);
+  return accept(copied, other, std::move(moved)) - 6;
+}
+)",
+      {std::filesystem::path(__FILE__).parent_path().parent_path() /
+       "stdlib/prelude.gti"});
+  const lang::HirFunctionInstance *accept = findHirFunction(frontend, "accept");
+  const lang::HirFunctionInstance *main = findHirFunction(frontend, "main");
+  const lang::MirFunctionInstance *mirMain =
+      main == nullptr ? nullptr : frontend.mir.findFunctionInstance(main->id);
+  expect(frontend.canGenerateCode() && accept != nullptr && main != nullptr &&
+             mirMain != nullptr && lang::verifyMirProgram(frontend.mir).valid(),
+         "the class-value call-input verifier fixture should produce valid "
+         "MIR");
+  if (!frontend.canGenerateCode() || accept == nullptr || main == nullptr ||
+      mirMain == nullptr) {
+    return;
+  }
+
+  const auto callTo = [](lang::MirBody &body,
+                         lang::HirFunctionInstanceId target) {
+    for (lang::MirBlock &block : body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == target;
+          });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+  const auto inputFor = [](lang::MirBody &body,
+                           const lang::MirOperand &operand) {
+    if (operand.kind != lang::MirOperandKind::Value) {
+      return static_cast<lang::MirInstruction *>(nullptr);
+    }
+    const lang::MirValue *value = body.findValue(operand.value);
+    lang::MirBlock *block = nullptr;
+    if (value != nullptr) {
+      const auto foundBlock =
+          std::find_if(body.blocks.begin(), body.blocks.end(),
+                       [&](const lang::MirBlock &candidate) {
+                         return candidate.id == value->definitionBlock;
+                       });
+      block = foundBlock == body.blocks.end() ? nullptr : &*foundBlock;
+    }
+    if (block == nullptr) {
+      return static_cast<lang::MirInstruction *>(nullptr);
+    }
+    const auto found =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const lang::MirInstruction &instruction) {
+                       return instruction.id == value->definition;
+                     });
+    return found == block->instructions.end() ? nullptr : &*found;
+  };
+  const auto hasMessage = [](const lang::MirBody &body, std::string_view text) {
+    const lang::MirVerificationResult result = lang::verifyMirBody(body);
+    return std::any_of(result.errors.begin(), result.errors.end(),
+                       [&](const lang::MirVerificationError &error) {
+                         return error.message.find(text) != std::string::npos;
+                       });
+  };
+
+  lang::MirBody baseline = mirMain->body;
+  lang::MirInstruction *baselineCall = callTo(baseline, accept->id);
+  lang::MirInstruction *baselineCopy =
+      baselineCall == nullptr || baselineCall->operands.size() != 3
+          ? nullptr
+          : inputFor(baseline, baselineCall->operands[0]);
+  lang::MirInstruction *baselineOtherCopy =
+      baselineCall == nullptr || baselineCall->operands.size() != 3
+          ? nullptr
+          : inputFor(baseline, baselineCall->operands[1]);
+  lang::MirInstruction *baselineMove =
+      baselineCall == nullptr || baselineCall->operands.size() != 3
+          ? nullptr
+          : inputFor(baseline, baselineCall->operands[2]);
+  expect(baselineCall != nullptr && baselineCopy != nullptr &&
+             baselineOtherCopy != nullptr && baselineMove != nullptr &&
+             baselineCopy->callInputKind == lang::HirCallInputKind::CopyValue &&
+             baselineOtherCopy->callInputKind ==
+                 lang::HirCallInputKind::CopyValue &&
+             baselineMove->callInputKind == lang::HirCallInputKind::MoveValue &&
+             baselineMove->lifecycle.size() == 1 &&
+             lang::verifyMirBody(baseline).valid(),
+         "the baseline should expose exact class copy and move checkpoints");
+  if (baselineCall == nullptr || baselineCopy == nullptr ||
+      baselineOtherCopy == nullptr || baselineMove == nullptr ||
+      baselineMove->lifecycle.empty()) {
+    return;
+  }
+
+  lang::MirBody substitutedCopyPlace = baseline;
+  lang::MirInstruction *substitutedCall =
+      callTo(substitutedCopyPlace, accept->id);
+  lang::MirInstruction *substitutedCopy =
+      substitutedCall == nullptr
+          ? nullptr
+          : inputFor(substitutedCopyPlace, substitutedCall->operands[0]);
+  lang::MirInstruction *substituteSource =
+      substitutedCall == nullptr
+          ? nullptr
+          : inputFor(substitutedCopyPlace, substitutedCall->operands[1]);
+  if (substitutedCopy != nullptr && substituteSource != nullptr) {
+    substitutedCopy->operands.front().place =
+        substituteSource->operands.front().place;
+  }
+  expect(substitutedCopy != nullptr && substituteSource != nullptr &&
+             hasMessage(substitutedCopyPlace, "invalid shape or reference"),
+         "the verifier should reject substituting another same-typed place "
+         "for the exact class-copy source");
+
+  lang::MirBody forgedCopyMode = baseline;
+  lang::MirInstruction *forgedCopyCall = callTo(forgedCopyMode, accept->id);
+  lang::MirInstruction *forgedCopy =
+      forgedCopyCall == nullptr
+          ? nullptr
+          : inputFor(forgedCopyMode, forgedCopyCall->operands[0]);
+  if (forgedCopy != nullptr) {
+    forgedCopy->callInputKind = lang::HirCallInputKind::MoveValue;
+  }
+  expect(forgedCopy != nullptr &&
+             hasMessage(forgedCopyMode, "invalid shape or reference"),
+         "the verifier should reject a class place relabeled as a move-value "
+         "checkpoint");
+
+  lang::MirBody forgedMoveMode = baseline;
+  lang::MirInstruction *forgedMoveCall = callTo(forgedMoveMode, accept->id);
+  lang::MirInstruction *forgedMove =
+      forgedMoveCall == nullptr
+          ? nullptr
+          : inputFor(forgedMoveMode, forgedMoveCall->operands[2]);
+  if (forgedMove != nullptr) {
+    forgedMove->callInputKind = lang::HirCallInputKind::CopyValue;
+  }
+  expect(forgedMove != nullptr &&
+             hasMessage(forgedMoveMode, "invalid shape or reference"),
+         "the verifier should reject an owned value relabeled as a class "
+         "copy checkpoint");
+
+  lang::MirBody missingTransfer = baseline;
+  lang::MirInstruction *missingTransferCall =
+      callTo(missingTransfer, accept->id);
+  lang::MirInstruction *missingTransferInput =
+      missingTransferCall == nullptr
+          ? nullptr
+          : inputFor(missingTransfer, missingTransferCall->operands[2]);
+  if (missingTransferInput != nullptr) {
+    missingTransferInput->lifecycle.clear();
+  }
+  expect(missingTransferInput != nullptr &&
+             hasMessage(missingTransfer, "invalid shape or reference"),
+         "the verifier should reject a move-value checkpoint that leaves its "
+         "exact temporary obligation active");
+
+  lang::MirBody transferOnCopy = baseline;
+  lang::MirInstruction *transferOnCopyCall = callTo(transferOnCopy, accept->id);
+  lang::MirInstruction *transferOnCopyInput =
+      transferOnCopyCall == nullptr
+          ? nullptr
+          : inputFor(transferOnCopy, transferOnCopyCall->operands[0]);
+  if (transferOnCopyInput != nullptr) {
+    transferOnCopyInput->lifecycle = baselineMove->lifecycle;
+  }
+  expect(transferOnCopyInput != nullptr &&
+             hasMessage(transferOnCopy, "invalid shape or reference"),
+         "the verifier should reject ownership transfer forged onto a class "
+         "copy checkpoint");
+
+  lang::MirBody legacyCallTransfer = baseline;
+  lang::MirInstruction *legacyCall = callTo(legacyCallTransfer, accept->id);
+  lang::MirInstruction *legacyMove =
+      legacyCall == nullptr
+          ? nullptr
+          : inputFor(legacyCallTransfer, legacyCall->operands[2]);
+  if (legacyCall != nullptr && legacyMove != nullptr) {
+    legacyCall->lifecycle = legacyMove->lifecycle;
+    legacyMove->lifecycle.clear();
+  }
+  expect(legacyMove != nullptr &&
+             hasMessage(legacyCallTransfer, "invalid shape or reference"),
+         "the verifier should reject moving class-parameter transfer back to "
+         "the undifferentiated call instruction");
 }
 
 void testMirLiteralIdentityFoldAndEditor() {
@@ -2149,6 +2373,26 @@ void testMirEffectClassification() {
              !callInput.invokesUserCode,
          "call-input checkpoints should be non-reorderable schedule barriers "
          "without claiming that input preparation invokes code itself");
+
+  const lang::MirEffectTraits copyValueInput = lang::effects(
+      lang::MirInstruction{.kind = lang::MirInstructionKind::CallInput,
+                           .callInputKind = lang::HirCallInputKind::CopyValue});
+  expect(copyValueInput.copiesValue && copyValueInput.initializesValue &&
+             copyValueInput.invokesUserCode && copyValueInput.mayTrap &&
+             copyValueInput.maySynchronize && !copyValueInput.speculatable &&
+             !copyValueInput.removableWhenUnused && !copyValueInput.reorderable,
+         "a class copy-value checkpoint should conservatively expose the "
+         "selected copy construction effects");
+
+  const lang::MirEffectTraits moveValueInput = lang::effects(
+      lang::MirInstruction{.kind = lang::MirInstructionKind::CallInput,
+                           .callInputKind = lang::HirCallInputKind::MoveValue});
+  expect(moveValueInput.movesValue && moveValueInput.initializesValue &&
+             moveValueInput.invokesUserCode && moveValueInput.mayTrap &&
+             moveValueInput.maySynchronize && !moveValueInput.speculatable &&
+             !moveValueInput.removableWhenUnused && !moveValueInput.reorderable,
+         "a class move-value checkpoint should conservatively expose the "
+         "selected move construction effects");
 
   const lang::MirEffectTraits lifecycle =
       lang::effects(lang::MirInstructionKind::Lifecycle);
@@ -3972,6 +4216,24 @@ int main() { return outer_once(Once()) - 1; }
           : mutableFunction(copiedOnceForwarding, outerOnce->id);
   bool replacedOnceMoveWithLoad = false;
   if (copiedOuterOnce != nullptr) {
+    const auto definitionFor = [&](lang::MirValueId valueId) {
+      const lang::MirValue *value = copiedOuterOnce->body.findValue(valueId);
+      if (value == nullptr) {
+        return static_cast<lang::MirInstruction *>(nullptr);
+      }
+      for (lang::MirBlock &block : copiedOuterOnce->body.blocks) {
+        if (block.id != value->definitionBlock) {
+          continue;
+        }
+        const auto found =
+            std::find_if(block.instructions.begin(), block.instructions.end(),
+                         [&](const lang::MirInstruction &instruction) {
+                           return instruction.id == value->definition;
+                         });
+        return found == block.instructions.end() ? nullptr : &*found;
+      }
+      return static_cast<lang::MirInstruction *>(nullptr);
+    };
     for (lang::MirBlock &block : copiedOuterOnce->body.blocks) {
       for (lang::MirInstruction &call : block.instructions) {
         if (call.kind != lang::MirInstructionKind::Call ||
@@ -3979,7 +4241,14 @@ int main() { return outer_once(Once()) - 1; }
             call.operands.front().kind != lang::MirOperandKind::Value) {
           continue;
         }
-        const lang::MirValueId forwarded = call.operands.front().value;
+        lang::MirValueId forwarded = call.operands.front().value;
+        lang::MirInstruction *prepared = definitionFor(forwarded);
+        if (prepared != nullptr &&
+            prepared->kind == lang::MirInstructionKind::CallInput &&
+            prepared->operands.size() == 1 &&
+            prepared->operands.front().kind == lang::MirOperandKind::Value) {
+          forwarded = prepared->operands.front().value;
+        }
         for (lang::MirBlock &definitionBlock : copiedOuterOnce->body.blocks) {
           for (lang::MirInstruction &definition :
                definitionBlock.instructions) {
@@ -4003,18 +4272,10 @@ int main() { return outer_once(Once()) - 1; }
   const lang::MirVerificationResult copiedOnceForwardingResult =
       lang::verifyMirProgram(copiedOnceForwarding);
   expect(replacedOnceMoveWithLoad && copiedOuterOnce != nullptr &&
-             lang::verifyMirBody(copiedOuterOnce->body).valid() &&
-             !copiedOnceForwardingResult.valid() &&
-             std::any_of(
-                 copiedOnceForwardingResult.errors.begin(),
-                 copiedOnceForwardingResult.errors.end(),
-                 [](const lang::MirVerificationError &error) {
-                   return error.message.find(
-                              "once-confined target is not rooted in an exact "
-                              "ownership move") != std::string::npos;
-                 }),
-         "program verification must reject a copied callable on a transitive "
-         "once-confined forwarding edge even when the body is locally valid");
+             !lang::verifyMirBody(copiedOuterOnce->body).valid() &&
+             !copiedOnceForwardingResult.valid(),
+         "class call-input verification must reject a copied callable before "
+         "it can forge a transitive once-confined forwarding edge");
 
   const lang::FrontendResult linearOnce = lang::Frontend().analyze(
       "linear-once-callable-mir.gti", R"(
@@ -4377,6 +4638,7 @@ int main() {
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();
   testOrderedCallInputVerification();
+  testOrderedClassValueCallInputVerification();
   testMirLiteralIdentityFoldAndEditor();
   testMirDominanceAndValueAvailability();
   testMirEffectClassification();

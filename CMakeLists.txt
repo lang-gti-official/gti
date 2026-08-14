@@ -549,7 +549,7 @@ if(BUILD_TESTING)
       # test-only resource layout.
       set_tests_properties(
         driver_pipeline
-        output_determinism defined_integer_runtime binary64_runtime
+        output_determinism defined_integer_runtime binary64_runtime sum_types_runtime
         native_record_c_oracle native_header_c_cpp_oracle
         cli_workflow project_cli_workflow
         PROPERTIES ENVIRONMENT

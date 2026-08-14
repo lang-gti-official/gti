@@ -390,6 +390,17 @@ MirEffectTraits effects(const MirInstruction &instruction) {
     result.copiesValue |= instruction.constructorKind == ConstructorKind::Copy;
     result.movesValue |= instruction.constructorKind == ConstructorKind::Move;
   }
+  if (instruction.kind == MirInstructionKind::CallInput &&
+      (instruction.callInputKind == HirCallInputKind::CopyValue ||
+       instruction.callInputKind == HirCallInputKind::MoveValue)) {
+    result = merge(result, unknownEffects());
+    result.copiesValue |=
+        instruction.callInputKind == HirCallInputKind::CopyValue;
+    result.movesValue |=
+        instruction.callInputKind == HirCallInputKind::MoveValue;
+    result.initializesValue = true;
+    result.maySynchronize = true;
+  }
   if (!instruction.lifecycle.empty()) {
     result = merge(result, effects(MirInstructionKind::Lifecycle));
     if (std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),

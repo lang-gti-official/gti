@@ -129,6 +129,8 @@ struct HirLoan {
 
 enum class HirCallInputKind {
   Value,
+  CopyValue,
+  MoveValue,
   ReadBorrow,
   MutableBorrow,
 };
@@ -2631,7 +2633,7 @@ private:
         model.findLambdaCall(*call) == nullptr &&
         model.findDeferredCallableCall(*call) == nullptr &&
         value.parameterTypes.size() == call->arguments().size()) {
-      const auto orderedParameterType = [](const SemanticType &type) {
+      const auto orderedValueParameterType = [](const SemanticType &type) {
         switch (type.kind) {
         case SemanticType::Int8:
         case SemanticType::Int16:
@@ -2649,7 +2651,6 @@ private:
         case SemanticType::NullPtr:
         case SemanticType::RawPointer:
         case SemanticType::Enum:
-        case SemanticType::Reference:
           return true;
         default:
           return false;
@@ -2663,16 +2664,46 @@ private:
                              static_cast<std::ptrdiff_t>(argumentCount),
                          value.operands.end());
       }
-      const bool supportedArguments =
-          exactOperands &&
-          std::all_of(value.parameterTypes.begin(), value.parameterTypes.end(),
-                      orderedParameterType) &&
-          std::none_of(arguments.begin(), arguments.end(),
-                       [&](HirValueId argument) {
-                         const HirValue *input = body.findValue(argument);
-                         return input == nullptr ||
-                                input->kind == HirValueKind::PackExpansion;
-                       });
+      std::vector<HirCallInputKind> argumentKinds;
+      argumentKinds.reserve(arguments.size());
+      bool supportedArguments = exactOperands;
+      for (std::size_t index = 0;
+           supportedArguments && index < arguments.size(); ++index) {
+        const HirValue *input = body.findValue(arguments[index]);
+        const SemanticType &parameter = value.parameterTypes[index];
+        if (input == nullptr || input->kind == HirValueKind::PackExpansion) {
+          supportedArguments = false;
+          break;
+        }
+        if (parameter.kind == SemanticType::Reference) {
+          argumentKinds.push_back(parameter.referenceAccess ==
+                                          AccessMode::Mutable
+                                      ? HirCallInputKind::MutableBorrow
+                                      : HirCallInputKind::ReadBorrow);
+          continue;
+        }
+        if (orderedValueParameterType(parameter)) {
+          argumentKinds.push_back(HirCallInputKind::Value);
+          continue;
+        }
+        if (parameter.kind != SemanticType::Class ||
+            input->info.type != parameter ||
+            input->info.traits.containsBorrowedState) {
+          supportedArguments = false;
+          break;
+        }
+        if (input->info.category == ValueCategory::Place &&
+            input->info.traits.copyable) {
+          argumentKinds.push_back(HirCallInputKind::CopyValue);
+          continue;
+        }
+        if (input->info.category == ValueCategory::Value &&
+            input->info.traits.movable) {
+          argumentKinds.push_back(HirCallInputKind::MoveValue);
+          continue;
+        }
+        supportedArguments = false;
+      }
       const ResolvedCallInfo *resolved = model.findCall(*call);
       const FunctionInfo *resolvedTarget =
           resolved == nullptr || resolved->function == 0
@@ -2717,15 +2748,10 @@ private:
         plan.arguments.reserve(arguments.size());
         for (std::size_t index = 0; index < arguments.size(); ++index) {
           const SemanticType &parameter = value.parameterTypes[index];
-          plan.arguments.push_back(
-              {.parameterIndex = index,
-               .value = arguments[index],
-               .parameterType = parameter,
-               .kind = parameter.kind != SemanticType::Reference
-                           ? HirCallInputKind::Value
-                           : (parameter.referenceAccess == AccessMode::Mutable
-                                  ? HirCallInputKind::MutableBorrow
-                                  : HirCallInputKind::ReadBorrow)});
+          plan.arguments.push_back({.parameterIndex = index,
+                                    .value = arguments[index],
+                                    .parameterType = parameter,
+                                    .kind = argumentKinds[index]});
         }
         value.callPlan = std::move(plan);
       }

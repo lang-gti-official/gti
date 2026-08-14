@@ -921,6 +921,228 @@ int main() {
          "argument-two, invocation chain");
 }
 
+void testOrderedClassValueCallInputs() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("ordered-class-value-inputs.gti", R"(
+class CopiedValue {
+  int value;
+
+public:
+  CopiedValue(int input) : value(input) {}
+  int read() { return this.value; }
+};
+
+class MovedValue {
+  int value;
+
+public:
+  MovedValue(int input) : value(input) {}
+  MovedValue(MovedValue& other) = delete;
+  MovedValue(MovedValue&& other) = default;
+  ~MovedValue() {}
+  int read() { return this.value; }
+};
+
+class BorrowedValue {
+  int& value;
+
+public:
+  BorrowedValue(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+
+int ordered_values(CopiedValue copied, MovedValue moved,
+                   MovedValue temporary) {
+  return copied.read() + moved.read() + temporary.read();
+}
+
+int observe_borrowed(BorrowedValue view) { return view.read(); }
+
+int main() {
+  mut int observed = 4;
+  CopiedValue copied = CopiedValue(1);
+  MovedValue moved = MovedValue(2);
+  int total = ordered_values(copied, std::move(moved), MovedValue(3));
+  return total + observe_borrowed(BorrowedValue(observed)) - 10;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected class-value call diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "copyable and explicitly moved class arguments should lower to "
+         "verified ordered parameter inputs");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto function = [&](std::string_view name) {
+    const auto found =
+        std::find_if(frontend.hir.functionInstances().begin(),
+                     frontend.hir.functionInstances().end(),
+                     [&](const lang::HirFunctionInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->name().lexeme == name;
+                     });
+    return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
+  };
+  const lang::HirFunctionInstance *ordered = function("ordered_values");
+  const lang::HirFunctionInstance *observe = function("observe_borrowed");
+  const lang::HirFunctionInstance *main = function("main");
+  const lang::MirFunctionInstance *mirMain =
+      main == nullptr ? nullptr : frontend.mir.findFunctionInstance(main->id);
+  expect(ordered != nullptr && observe != nullptr && main != nullptr &&
+             mirMain != nullptr,
+         "the class-value fixture should retain exact HIR and MIR functions");
+  if (ordered == nullptr || observe == nullptr || main == nullptr ||
+      mirMain == nullptr) {
+    return;
+  }
+
+  const auto hirCallTo = [&](lang::HirFunctionInstanceId target) {
+    const auto found =
+        std::find_if(main->body.values.begin(), main->body.values.end(),
+                     [&](const lang::HirValue &value) {
+                       return value.kind == lang::HirValueKind::Call &&
+                              value.functionTarget == target;
+                     });
+    return found == main->body.values.end() ? nullptr : &*found;
+  };
+  const lang::HirValue *orderedCall = hirCallTo(ordered->id);
+  const lang::HirValue *borrowedCall = hirCallTo(observe->id);
+  const std::array expectedKinds{lang::HirCallInputKind::CopyValue,
+                                 lang::HirCallInputKind::MoveValue,
+                                 lang::HirCallInputKind::MoveValue};
+  bool exactHirPlan =
+      orderedCall != nullptr && orderedCall->callPlan &&
+      !orderedCall->callPlan->receiver &&
+      orderedCall->callPlan->arguments.size() == expectedKinds.size();
+  for (std::size_t index = 0; exactHirPlan && index < expectedKinds.size();
+       ++index) {
+    const lang::HirCallArgument &argument =
+        orderedCall->callPlan->arguments[index];
+    const lang::HirValue *source = main->body.findValue(argument.value);
+    exactHirPlan =
+        argument.parameterIndex == index &&
+        argument.kind == expectedKinds[index] &&
+        argument.parameterType == orderedCall->parameterTypes[index] &&
+        source != nullptr &&
+        source->info.category == (index == 0 ? lang::ValueCategory::Place
+                                             : lang::ValueCategory::Value);
+  }
+  expect(exactHirPlan && borrowedCall != nullptr && !borrowedCall->callPlan,
+         "HIR should distinguish class copy and move parameter setup while "
+         "leaving borrowed-state carriers on the conservative legacy path");
+
+  const auto definitionFor = [&](const lang::MirOperand &operand) {
+    if (operand.kind != lang::MirOperandKind::Value) {
+      return static_cast<const lang::MirInstruction *>(nullptr);
+    }
+    const lang::MirValue *value = mirMain->body.findValue(operand.value);
+    const lang::MirBlock *block =
+        value == nullptr ? nullptr
+                         : mirMain->body.findBlock(value->definitionBlock);
+    if (block == nullptr) {
+      return static_cast<const lang::MirInstruction *>(nullptr);
+    }
+    const auto found =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const lang::MirInstruction &instruction) {
+                       return instruction.id == value->definition;
+                     });
+    return found == block->instructions.end() ? nullptr : &*found;
+  };
+  const auto mirCallTo = [&](lang::HirFunctionInstanceId target) {
+    for (const lang::MirBlock &block : mirMain->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == target;
+          });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<const lang::MirInstruction *>(nullptr);
+  };
+  const lang::MirInstruction *call = mirCallTo(ordered->id);
+  const lang::MirInstruction *borrowedMirCall = mirCallTo(observe->id);
+  std::array<const lang::MirInstruction *, 3> inputs{};
+  if (call != nullptr && call->operands.size() == inputs.size()) {
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+      inputs[index] = definitionFor(call->operands[index]);
+    }
+  }
+  const auto exactTransfer = [&](const lang::MirInstruction *input) {
+    if (input == nullptr || input->operands.size() != 1 ||
+        input->operands.front().kind != lang::MirOperandKind::Value ||
+        input->lifecycle.size() != 1 ||
+        input->lifecycle.front().kind !=
+            lang::MirLifecycleEventKind::TransferOut) {
+      return false;
+    }
+    const lang::MirValue *source =
+        mirMain->body.findValue(input->operands.front().value);
+    const lang::MirDropObligation *obligation =
+        mirMain->body.findDropObligation(input->lifecycle.front().source);
+    return source != nullptr && obligation != nullptr &&
+           obligation->kind == lang::MirDropObligationKind::Value &&
+           obligation->value == source->sourceValue &&
+           obligation->dropType.type == input->info.type;
+  };
+  const lang::MirPlace *copySource =
+      inputs[0] == nullptr || inputs[0]->operands.empty()
+          ? nullptr
+          : mirMain->body.findPlace(inputs[0]->operands.front().place);
+  const lang::MirInstruction *explicitMoveSource =
+      inputs[1] == nullptr || inputs[1]->operands.empty()
+          ? nullptr
+          : definitionFor(inputs[1]->operands.front());
+  const lang::MirInstruction *temporarySource =
+      inputs[2] == nullptr || inputs[2]->operands.empty()
+          ? nullptr
+          : definitionFor(inputs[2]->operands.front());
+  const bool callTransfers =
+      call != nullptr &&
+      std::any_of(call->lifecycle.begin(), call->lifecycle.end(),
+                  [](const lang::MirLifecycleEvent &event) {
+                    return event.kind ==
+                           lang::MirLifecycleEventKind::TransferOut;
+                  });
+  expect(call != nullptr && call->callSite != 0 &&
+             call->operands.size() == inputs.size() && inputs[0] != nullptr &&
+             inputs[1] != nullptr && inputs[2] != nullptr &&
+             inputs[0]->callInputKind == lang::HirCallInputKind::CopyValue &&
+             inputs[0]->operands.size() == 1 &&
+             inputs[0]->operands.front().kind == lang::MirOperandKind::Copy &&
+             copySource != nullptr && inputs[0]->lifecycle.empty() &&
+             inputs[1]->callInputKind == lang::HirCallInputKind::MoveValue &&
+             inputs[2]->callInputKind == lang::HirCallInputKind::MoveValue &&
+             exactTransfer(inputs[1]) && exactTransfer(inputs[2]) &&
+             explicitMoveSource != nullptr &&
+             explicitMoveSource->kind == lang::MirInstructionKind::Move &&
+             temporarySource != nullptr &&
+             temporarySource->kind == lang::MirInstructionKind::Construct &&
+             inputs[0]->id < inputs[1]->id && inputs[1]->id < inputs[2]->id &&
+             inputs[2]->id < call->id && !callTransfers &&
+             borrowedMirCall != nullptr && borrowedMirCall->callSite == 0,
+         "MIR should copy from a place at the first checkpoint, transfer each "
+         "owned temporary at its move checkpoint, and keep borrowed-state "
+         "class values outside the bounded schedule");
+
+  const std::string dump = lang::MirPrinter().print(mirMain->body);
+  expect(dump.starts_with("mir-body-v11\n") &&
+             dump.find("call-input-kind=copy-value") != std::string::npos &&
+             dump.find("call-input-kind=move-value") != std::string::npos,
+         "MIR v11 should serialize the exact class-value parameter modes");
+}
+
 void testMirTemporaryAndDropObligations() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("mir-lifetimes.gti", R"(
@@ -2078,31 +2300,29 @@ int main() { return lifetime(true) - 13; }
   if (forgedCallParameterLifetime != nullptr) {
     for (lang::MirBlock &block : forgedCallParameterLifetime->body.blocks) {
       for (lang::MirInstruction &instruction : block.instructions) {
-        if ((instruction.kind != lang::MirInstructionKind::Call &&
-             instruction.kind != lang::MirInstructionKind::Construct) ||
-            instruction.parameterTypes.empty()) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputRole != lang::MirCallInputRole::Argument ||
+            instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+            instruction.lifecycle.empty() || instruction.operands.size() != 1) {
           continue;
         }
-        const auto transfer = std::find_if(
-            instruction.lifecycle.begin(), instruction.lifecycle.end(),
-            [](const lang::MirLifecycleEvent &event) {
-              return event.kind == lang::MirLifecycleEventKind::TransferOut;
-            });
-        if (transfer == instruction.lifecycle.end()) {
-          continue;
-        }
-        for (std::size_t index = 0; index < instruction.operands.size();
-             ++index) {
-          if (instruction.operands[index].kind != lang::MirOperandKind::Value) {
-            continue;
+        for (lang::MirBlock &callBlock :
+             forgedCallParameterLifetime->body.blocks) {
+          for (lang::MirInstruction &call : callBlock.instructions) {
+            if (call.kind != lang::MirInstructionKind::Call ||
+                call.callSite != instruction.callSite ||
+                instruction.callInputIndex >= call.parameterTypes.size()) {
+              continue;
+            }
+            call.parameterTypes[instruction.callInputIndex] =
+                lang::SemanticType::referenceTo(
+                    instruction.operands.front().type);
+            changedCallParameterRole = true;
+            break;
           }
-          instruction.parameterTypes[index] =
-              lang::SemanticType::referenceTo(instruction.operands[index].type);
-          changedCallParameterRole = true;
-          break;
-        }
-        if (changedCallParameterRole) {
-          break;
+          if (changedCallParameterRole) {
+            break;
+          }
         }
       }
       if (changedCallParameterRole) {
@@ -2116,7 +2336,9 @@ int main() { return lifetime(true) - 13; }
              (hasVerificationMessage(forgedCallParameterRoleResult,
                                      "parameter roles") ||
               hasVerificationMessage(forgedCallParameterRoleResult,
-                                     "does not match its instruction")),
+                                     "does not match its instruction") ||
+              hasVerificationMessage(forgedCallParameterRoleResult,
+                                     "ordered call argument")),
          "MIR verification should bind ownership consumption to the exact "
          "resolved by-value parameter role");
 
@@ -4308,7 +4530,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v10\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v11\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -9477,6 +9699,7 @@ int main() {
 
   bool foundMoveOnlyTransfer = false;
   bool foundResolvedTransferCall = false;
+  lang::HirFunctionInstanceId transferTarget = 0;
   for (const lang::HirFunctionInstance &instance :
        valid.hir.functionInstances()) {
     if (instance.source != nullptr &&
@@ -9492,6 +9715,7 @@ int main() {
         if (target != nullptr && target->source != nullptr &&
             target->source->name().lexeme == "transfer") {
           foundResolvedTransferCall = true;
+          transferTarget = target->id;
         }
       }
     }
@@ -9507,13 +9731,9 @@ int main() {
            missingCallTarget.functionInstances())) {
     for (lang::MirBlock &block : instance.body.blocks) {
       for (lang::MirInstruction &instruction : block.instructions) {
-        if (instruction.kind == lang::MirInstructionKind::Call &&
-            instruction.functionTarget &&
-            std::any_of(
-                instruction.lifecycle.begin(), instruction.lifecycle.end(),
-                [](const lang::MirLifecycleEvent &event) {
-                  return event.kind == lang::MirLifecycleEventKind::TransferOut;
-                })) {
+        if (transferTarget != 0 &&
+            instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget == transferTarget) {
           instruction.functionTarget.reset();
           erasedCallTarget = true;
           break;
@@ -21078,7 +21298,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v10 ") &&
+             mirDump.starts_with("mir-v11 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -23071,6 +23291,7 @@ int main() {
   testFrontendBackendAndOptimizationPipeline();
   testMirControlFlowAndOwnershipEffects();
   testOrderedOrdinaryCallInputs();
+  testOrderedClassValueCallInputs();
   testMirTemporaryAndDropObligations();
   testDefiniteReturnAnalysis();
   testProgramArgumentsEntryPoint();

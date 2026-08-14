@@ -2089,6 +2089,25 @@ private:
             .type = parameter};
   }
 
+  [[nodiscard]] MirOperand copyArgumentOperand(HirValueId id,
+                                               const SemanticType &parameter) {
+    emitPlaceDependencies(id);
+    const HirValue *value = findValue(id);
+    MirPlaceId place = placeForValue(id);
+    const MirPlace *resolved = output.findPlace(place);
+    if (value == nullptr || resolved == nullptr) {
+      valid = false;
+      return {.kind = MirOperandKind::Copy, .type = parameter};
+    }
+    if (resolved->sourceValue != id) {
+      place = clonePlace(place, *value);
+    }
+    if (place == 0) {
+      valid = false;
+    }
+    return {.kind = MirOperandKind::Copy, .place = place, .type = parameter};
+  }
+
   [[nodiscard]] std::vector<HirValueId>
   callArgumentValues(const HirValue &value) const {
     std::size_t argumentCount = value.parameterTypes.size();
@@ -2512,15 +2531,19 @@ private:
       info.traits = sourceValueInfo->info.traits;
     }
     const MirValueId result = appendValue(sourceValue, info);
-    (void)appendInstruction({.kind = MirInstructionKind::CallInput,
-                             .hirValue = sourceValue,
-                             .callSite = callSite,
-                             .callInputRole = role,
-                             .callInputIndex = index,
-                             .callInputKind = inputKind,
-                             .result = result,
-                             .operands = {std::move(operand)},
-                             .info = info});
+    MirInstruction input{.kind = MirInstructionKind::CallInput,
+                         .hirValue = sourceValue,
+                         .callSite = callSite,
+                         .callInputRole = role,
+                         .callInputIndex = index,
+                         .callInputKind = inputKind,
+                         .result = result,
+                         .operands = {std::move(operand)},
+                         .info = info};
+    if (inputKind == HirCallInputKind::MoveValue) {
+      transferTemporaryOut(input, sourceValue);
+    }
+    (void)appendInstruction(std::move(input));
     return {.kind = MirOperandKind::Value, .value = result, .type = type};
   }
 
@@ -2581,7 +2604,9 @@ private:
       for (const HirCallArgument &argument : value.callPlan->arguments) {
         call.parameterTypes.push_back(argument.parameterType);
         sourceArguments.push_back(
-            argumentOperand(argument.value, argument.parameterType));
+            argument.kind == HirCallInputKind::CopyValue
+                ? copyArgumentOperand(argument.value, argument.parameterType)
+                : argumentOperand(argument.value, argument.parameterType));
         call.operands.push_back(
             prepareCallInput(value.id, argument.value, argument.parameterType,
                              argument.kind, MirCallInputRole::Argument,
@@ -2671,15 +2696,17 @@ private:
         scopes.back().loans.push_back(loan);
       }
     }
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-      const SemanticType parameter =
-          index < value.parameterTypes.size()
-              ? value.parameterTypes[index]
-              : (findValue(arguments[index]) == nullptr
-                     ? SemanticType::Unknown
-                     : findValue(arguments[index])->info.type);
-      if (parameter.kind != SemanticType::Reference) {
-        transferTemporaryOut(call, arguments[index]);
+    if (!value.callPlan) {
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const SemanticType parameter =
+            index < value.parameterTypes.size()
+                ? value.parameterTypes[index]
+                : (findValue(arguments[index]) == nullptr
+                       ? SemanticType::Unknown
+                       : findValue(arguments[index])->info.type);
+        if (parameter.kind != SemanticType::Reference) {
+          transferTemporaryOut(call, arguments[index]);
+        }
       }
     }
     (void)initializeValueLifecycle(call, value);

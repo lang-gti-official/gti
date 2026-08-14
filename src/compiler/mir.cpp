@@ -1934,6 +1934,12 @@ namespace {
            definition->ownership->before == OwnershipStateSet::Available &&
            definition->ownership->after == OwnershipStateSet::Moved;
   }
+  if (definition->kind == MirInstructionKind::CallInput &&
+      definition->callInputKind == HirCallInputKind::MoveValue) {
+    return consumedCallableReceiver(body, definition->operands.front(),
+                                    MirValueUseKind::InstructionOperand,
+                                    definition->id, 0, depth + 1);
+  }
   return definition->kind == MirInstructionKind::Compute &&
          definition->operation == MirOperation::Identity &&
          consumedCallableReceiver(body, definition->operands.front(),
@@ -2392,6 +2398,69 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              parameter.pointerAccess == AccessMode::ReadOnly &&
              source.pointerAccess == AccessMode::Mutable;
     };
+    const auto sameCallInputTraits = [](const SemanticTypeTraits &left,
+                                        const SemanticTypeTraits &right) {
+      return left.ownership == right.ownership && left.drop == right.drop &&
+             left.copyable == right.copyable && left.movable == right.movable &&
+             left.copyAssignable == right.copyAssignable &&
+             left.moveAssignable == right.moveAssignable &&
+             left.containsBorrowedState == right.containsBorrowedState &&
+             left.transferCapable == right.transferCapable &&
+             left.shareCapable == right.shareCapable;
+    };
+    const auto validClassCopyInput = [&](const MirInstruction &input,
+                                         const MirOperand &operand) {
+      const MirPlace *place = body.findPlace(operand.place);
+      return input.info.type.kind == SemanticType::Class &&
+             input.info.traits.copyable &&
+             !input.info.traits.containsBorrowedState &&
+             input.lifecycle.empty() && operand.kind == MirOperandKind::Copy &&
+             place != nullptr && place->type == input.info.type &&
+             place->sourceValue == input.hirValue && place->traits.copyable &&
+             !place->traits.containsBorrowedState &&
+             sameCallInputTraits(place->traits, input.info.traits);
+    };
+    const auto validClassMoveInput = [&](const MirInstruction &input,
+                                         const MirOperand &operand) {
+      if (input.info.type.kind != SemanticType::Class ||
+          !input.info.traits.movable ||
+          input.info.traits.containsBorrowedState ||
+          operand.kind != MirOperandKind::Value) {
+        return false;
+      }
+      const MirValue *source = body.findValue(operand.value);
+      const MirInstruction *definition =
+          source == nullptr ? nullptr
+                            : linearValueDefinition(body, operand.value);
+      if (source == nullptr || definition == nullptr ||
+          source->sourceValue != input.hirValue ||
+          source->info.type != input.info.type ||
+          source->info.category != ValueCategory::Value ||
+          definition->hirValue != input.hirValue ||
+          definition->kind == MirInstructionKind::Load ||
+          definition->kind == MirInstructionKind::CallInput ||
+          !sameCallInputTraits(source->info.traits, input.info.traits) ||
+          !sameCallInputTraits(definition->info.traits, input.info.traits)) {
+        return false;
+      }
+      std::vector<MirDropObligationId> obligations;
+      for (const MirDropObligation &obligation : body.dropObligations) {
+        if (obligation.kind == MirDropObligationKind::Value &&
+            obligation.value == source->sourceValue &&
+            obligation.dropType.type == input.info.type) {
+          obligations.push_back(obligation.id);
+        }
+      }
+      if (obligations.empty()) {
+        return input.lifecycle.empty();
+      }
+      return obligations.size() == 1 && input.lifecycle.size() == 1 &&
+             input.lifecycle.front().kind ==
+                 MirLifecycleEventKind::TransferOut &&
+             input.lifecycle.front().source == obligations.front() &&
+             input.lifecycle.front().target == 0 &&
+             !input.lifecycle.front().conditional;
+    };
     switch (instruction.kind) {
     case MirInstructionKind::Compute:
       return !instruction.receiver && !instruction.loan &&
@@ -2441,25 +2510,35 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (!noOperation || !hasResult || instruction.destination ||
           instruction.receiver || instruction.loan ||
           instruction.functionTarget || instruction.constructorTarget ||
-          instruction.lambdaTarget || !instruction.lifecycle.empty() ||
-          instruction.fullExpressionEnd != 0 ||
+          instruction.lambdaTarget || instruction.fullExpressionEnd != 0 ||
           instruction.cleanupBoundaryEnd != 0 ||
           instruction.operands.size() != 1 ||
           !validCallInputType(instruction.operands.front().type,
                               instruction.info.type,
                               instruction.callInputKind) ||
           (*instruction.callInputRole == MirCallInputRole::Receiver &&
-           instruction.callInputIndex != 0)) {
+           (instruction.callInputIndex != 0 ||
+            instruction.callInputKind == HirCallInputKind::CopyValue ||
+            instruction.callInputKind == HirCallInputKind::MoveValue))) {
         return false;
       }
       const MirOperand &operand = instruction.operands.front();
       switch (instruction.callInputKind) {
       case HirCallInputKind::Value:
-        return operand.kind == MirOperandKind::Value;
+        return instruction.lifecycle.empty() &&
+               operand.kind == MirOperandKind::Value;
+      case HirCallInputKind::CopyValue:
+        return validClassCopyInput(instruction, operand);
+      case HirCallInputKind::MoveValue:
+        return validClassMoveInput(instruction, operand);
       case HirCallInputKind::ReadBorrow:
-        return operand.kind == MirOperandKind::BorrowRead ||
-               operand.kind == MirOperandKind::Loan;
+        return instruction.lifecycle.empty() &&
+               (operand.kind == MirOperandKind::BorrowRead ||
+                operand.kind == MirOperandKind::Loan);
       case HirCallInputKind::MutableBorrow:
+        if (!instruction.lifecycle.empty()) {
+          return false;
+        }
         if (operand.kind == MirOperandKind::BorrowWrite) {
           return true;
         }
@@ -2474,6 +2553,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirInstructionKind::Call:
       return noOperation &&
              hasResult == (instruction.info.type.kind != SemanticType::Void) &&
+             (instruction.callSite == 0 ||
+              (instruction.functionTarget &&
+               instruction.intrinsic == IntrinsicKind::None &&
+               !instruction.constructorTarget && !instruction.lambdaTarget)) &&
              validCallableInvocation() &&
              (!instruction.callableBoundary ||
               *instruction.callableBoundary == CallableBoundary::Confined) &&
@@ -2765,6 +2848,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                           instruction.parameterTypes[index].kind !=
                               SemanticType::Reference;
               break;
+            case MirInstructionKind::CallInput:
+              consuming = index == 0 && instruction.callInputKind ==
+                                            HirCallInputKind::MoveValue;
+              break;
             case MirInstructionKind::Compute:
               consuming = instruction.operation == MirOperation::Aggregate ||
                           instruction.operation == MirOperation::Unexpected ||
@@ -2998,6 +3085,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                 instruction.hirValue == source->value) ||
                ((instruction.kind == MirInstructionKind::Compute ||
                  instruction.kind == MirInstructionKind::Initialize ||
+                 instruction.kind == MirInstructionKind::CallInput ||
                  instruction.kind == MirInstructionKind::Call ||
                  instruction.kind == MirInstructionKind::Construct) &&
                 instructionConsumesObligation(instruction, *source)));
@@ -3400,17 +3488,21 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       for (std::size_t index = 0; index < call.operands.size(); ++index) {
         const MirInstruction *argument = callInputFor(call.operands[index]);
-        const HirCallInputKind expectedKind =
-            call.parameterTypes[index].kind != SemanticType::Reference
-                ? HirCallInputKind::Value
-                : (call.parameterTypes[index].referenceAccess ==
-                           AccessMode::Mutable
-                       ? HirCallInputKind::MutableBorrow
-                       : HirCallInputKind::ReadBorrow);
+        const SemanticType &parameter = call.parameterTypes[index];
+        const bool exactKind =
+            argument != nullptr &&
+            (parameter.kind == SemanticType::Class
+                 ? (argument->callInputKind == HirCallInputKind::CopyValue ||
+                    argument->callInputKind == HirCallInputKind::MoveValue)
+                 : argument->callInputKind ==
+                       (parameter.kind != SemanticType::Reference
+                            ? HirCallInputKind::Value
+                            : (parameter.referenceAccess == AccessMode::Mutable
+                                   ? HirCallInputKind::MutableBorrow
+                                   : HirCallInputKind::ReadBorrow)));
         if (argument == nullptr || argument->callSite != call.callSite ||
             *argument->callInputRole != MirCallInputRole::Argument ||
-            argument->callInputIndex != index ||
-            argument->callInputKind != expectedKind ||
+            argument->callInputIndex != index || !exactKind ||
             argument->info.type != call.parameterTypes[index]) {
           return failure(body, owner,
                          "ordered call argument is not prepared by its exact "
@@ -4530,11 +4622,29 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         continue;
       }
 
-      const bool transfersOwnership = std::any_of(
-          instruction.lifecycle.begin(), instruction.lifecycle.end(),
-          [](const MirLifecycleEvent &event) {
-            return event.kind == MirLifecycleEventKind::TransferOut;
-          });
+      const auto transfersOut = [](const MirInstruction &candidate) {
+        return std::any_of(
+            candidate.lifecycle.begin(), candidate.lifecycle.end(),
+            [](const MirLifecycleEvent &event) {
+              return event.kind == MirLifecycleEventKind::TransferOut;
+            });
+      };
+      const bool preparedOwnershipTransfer =
+          instruction.kind == MirInstructionKind::Call &&
+          std::any_of(
+              instruction.operands.begin(), instruction.operands.end(),
+              [&](const MirOperand &operand) {
+                const MirInstruction *prepared =
+                    operand.kind == MirOperandKind::Value
+                        ? definitionFor(body, operand.value)
+                        : nullptr;
+                return prepared != nullptr &&
+                       prepared->kind == MirInstructionKind::CallInput &&
+                       prepared->callInputKind == HirCallInputKind::MoveValue &&
+                       transfersOut(*prepared);
+              });
+      const bool transfersOwnership =
+          transfersOut(instruction) || preparedOwnershipTransfer;
       if (instruction.kind == MirInstructionKind::Call && transfersOwnership &&
           instruction.intrinsic == IntrinsicKind::None &&
           !instruction.functionTarget && !instruction.lambdaTarget) {
