@@ -4,8 +4,8 @@
 > boundaries are documented in
 > [`docs/architecture/overview.md`](../architecture/overview.md).
 
-Status: accepted; phases 1 and 7 implemented, phase 2 in progress, and phases 4
-and 5 partially implemented
+Status: accepted; phases 1, 2, and 7 implemented, and phases 4 and 5 partially
+implemented
 
 Prompt-sized migration ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below
@@ -27,7 +27,8 @@ Phase 2 now has its first complete subsystem slice. `SourceLoader` keeps its
 declaration and request-owned state in `include/gti/source_loader.h`, while its
 filesystem, include-resolution, cycle, visibility-edge, provenance, and
 source-manager algorithms live in `src/compiler/source_loader.cpp`. Parser
-algorithms remain header-defined.
+algorithms and request-local state now live behind the `Parser` facade in
+`src/compiler/parser.cpp`.
 
 Later optimizer groundwork has also moved coherent non-template utilities into
 the library without completing the intervening migration phases. MIR
@@ -331,12 +332,12 @@ Acceptance criteria:
 
 ### Phase 2: compile source loading and parsing
 
-Status: in progress; source loading is compiled, parsing remains header-defined
+Status: implemented
 
 - `SourceLoader` filesystem, include-resolution, cycle, visibility-edge,
   provenance, and source-manager algorithms now live behind its existing API.
-- Move non-template parser algorithms out of `parser.h` while keeping AST
-  declarations and parser result types visible.
+- Parser algorithms now compile in `src/compiler/parser.cpp`; `parser.h` keeps
+  only the facade, AST result types, diagnostics, and ownership contract.
 - Preserve per-source-unit parsing and dependency-ordered program assembly.
 - Keep completion recovery and exact diagnostic spans unchanged.
 

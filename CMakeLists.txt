@@ -192,6 +192,7 @@ add_library(
   "src/compiler/optimization/effects.cpp"
   "src/compiler/optimization/rewrite.cpp"
   "src/compiler/optimizer.cpp"
+  "src/compiler/parser.cpp"
   "src/compiler/source_loader.cpp"
   "src/compiler/support.cpp"
   "src/compiler/target.cpp"

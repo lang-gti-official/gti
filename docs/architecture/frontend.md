@@ -70,7 +70,10 @@ compiler semantic capability.
 ## Parser And AST
 
 `Parser` in `include/gti/parser.h` owns grammar, precedence, AST construction,
-and synchronization. `include/gti/ast.h` owns syntax node and visitor contracts.
+recovery, and synchronization through a narrow facade. Its algorithms and
+request-local parser state are compiled once in `src/compiler/parser.cpp`;
+consumers depend only on the facade, AST, token, and diagnostic contracts.
+`include/gti/ast.h` owns syntax node and visitor contracts.
 AST children own their subtrees. Syntax nodes preserve written forms and source
 tokens; they do not own resolved types or selected declarations.
 
