@@ -237,7 +237,7 @@ update it rather than copying a new sequence elsewhere.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `M-EXEC-01` | **in progress** | `D-EXEC-01` and `M-LIFE-01` done | Extend the landed ordinary-call schedule to the next bounded call/materialization family after eligible class-value parameter setup. | The selected family has deterministic HIR/MIR order, balanced obligations, and verifier mutations. |
 | 2 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 3 | `C-MIG-05` | **in progress** | `C-MIG-02/03/04` done; parallel lane | Compile the remaining optimizer editors, passes, and analyses behind public MIR contracts. | Optimizer behavior and verification remain unchanged while implementation edits stop recompiling consumers. |
+| 3 | `C-MIG-06` | **in progress** | `C-MIG-02/03/04/05` done; parallel lane | Compile C++ emission behind `BackendInput` and isolate it from frontend/LSP consumers. | C++20/C++23 output and native behavior remain unchanged while frontend-only targets stop compiling emitter implementation. |
 
 Do not bypass named prerequisites by beginning `C-ATOM-01`, `C-THREAD-01`,
 public allocator APIs, native callbacks/out-parameter families, or an
@@ -1554,8 +1554,8 @@ The accepted detailed plan remains
 | `C-MIG-02` | done | SourceLoader and parser algorithms compile behind their existing public contracts with recovery and diagnostics preserved. | Completed without a language behavior change. |
 | `C-MIG-03` | done | Semantic records remain public while semantic analysis and concrete-instance reanalysis compile behind `SemanticVisitor`. | Completed without changing semantic authority. |
 | `C-MIG-04` | done | HIR instance discovery/lowering and MIR body/CFG lowering compile behind public IR contracts. | Completed without changing lowering behavior. |
-| `C-MIG-05` | in progress | Move remaining optimizer editors, passes, and analyses into compiled sources. | Preserve O0 identity, deterministic passes, verification, and bounded rebuilds. |
-| `C-MIG-06` | blocked | After a sufficient `BackendInput` and MIR body family exist, isolate `gti_cpp_backend`. | The library split must not become the backend migration itself. |
+| `C-MIG-05` | done | MIR editing, analyses, effects, verification, printing, and current pass implementations compile behind public contracts. | Completed without changing O0/O1 behavior or pass verification. |
+| `C-MIG-06` | in progress | Compile C++ emission behind the existing sufficient `BackendInput` and isolate `gti_cpp_backend`. | The library split must not become the backend migration itself. |
 
 ### A-ID: Frontend Identity And Recovery
 

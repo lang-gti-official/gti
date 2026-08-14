@@ -4,8 +4,8 @@
 > boundaries are documented in
 > [`docs/architecture/overview.md`](../architecture/overview.md).
 
-Status: accepted; phases 1, 2, 3, 4, and 7 implemented, and phase 5
-partially implemented
+Status: accepted; phases 1 through 5 and phase 7 implemented; phase 6 remains
+in progress
 
 Prompt-sized migration ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below
@@ -414,14 +414,19 @@ Acceptance criteria:
 
 ### Phase 5: compile optimization infrastructure
 
-Status: in progress; identity ownership, verification, deterministic printing,
-and effects are compiled, while editors, passes, and analyses remain proposed
+Status: implemented
 
 - Keep the optimization-level and pipeline facade small.
 - Put pass implementations, analysis caches, invalidation, effect
   classification, and verification in compiled sources.
 - Follow the MIR ownership and capability milestones rather than freezing the
   current HIR replacement mechanism into a library boundary.
+
+MIR editing, dominance, effects, verification, deterministic printing, the
+MIR identity-folding pass, and the compatibility HIR constant-folding pass now
+compile in `src/compiler/`. Touching `optimizer.cpp` on the migration machine
+rebuilt one compiler object and relinked consumers in 2.21 seconds without
+recompiling consumer sources.
 
 Acceptance criteria:
 
@@ -432,7 +437,7 @@ Acceptance criteria:
 
 ### Phase 6: compile and isolate the C++ backend
 
-Status: proposed
+Status: in progress
 
 - Introduce `gti_cpp_backend` when `BackendInput` is sufficient to prevent
   reverse dependency on CLI policy.
