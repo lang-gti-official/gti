@@ -12,10 +12,12 @@ M-FAIL-01 now supplies compiler-owned `FailureMetadata` through
 detector-to-`FailureSiteId` mapping are built before MIR optimization. Building
 it consumes `SourceGraph`, `SourceManager`, and source-loader logical-root
 provenance; a backend must not reconstruct those inputs from absolute token
-paths. MIR v17 also carries the bounded full-expression-root scalar
-`Invoke`/cleanup/`PropagateFailure` family. The transitional C++ backend does
-not execute either the metadata or those edges yet; they cannot be mixed into
-an AST/HIR-emitted caller before a closed M-BACK migration reaches containment.
+paths. MIR v18 also carries the bounded full-expression-root
+`Invoke`/cleanup/`PropagateFailure` family, caller-owned ordinary-call parameter
+stages, and success-edge initialization for an eligible cleanup-owning call
+result. The transitional C++ backend does not execute either the metadata or
+those edges yet; they cannot be mixed into an AST/HIR-emitted caller before a
+closed M-BACK migration reaches containment.
 
 ## C++ Backend
 

@@ -121,6 +121,11 @@ private:
                            const TemporaryDrop &) = default;
   };
 
+  struct PreparedCallInput {
+    MirOperand operand;
+    MirDropObligationId parameterDrop = 0;
+  };
+
   [[nodiscard]] static bool sameScopeState(const std::vector<Scope> &left,
                                            const std::vector<Scope> &right) {
     return left.size() == right.size() &&
@@ -217,7 +222,7 @@ private:
     output.dropObligations.push_back(
         {.id = id,
          .hirObligation = obligation.id,
-         .constructionOrder = obligation.constructionOrder,
+         .constructionOrder = id,
          .kind = obligation.kind == HirDropObligationKind::Binding
                      ? MirDropObligationKind::Binding
                      : MirDropObligationKind::Value,
@@ -254,6 +259,55 @@ private:
     const HirDropObligation *obligation =
         source.findDropObligation(*value->dropObligation);
     return obligation == nullptr ? 0 : ensureDropObligation(*obligation, place);
+  }
+
+  [[nodiscard]] std::optional<MirDropType>
+  preparedParameterDropType(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class) {
+      return std::nullopt;
+    }
+    const auto instance = std::find_if(program.classInstances().begin(),
+                                       program.classInstances().end(),
+                                       [&](const HirClassInstance &candidate) {
+                                         return candidate.type == type;
+                                       });
+    if (instance == program.classInstances().end()) {
+      return std::nullopt;
+    }
+    return MirDropType{.type = type,
+                       .classInstance = instance->id,
+                       .destructor = instance->destructor,
+                       .requiresActiveCleanup =
+                           instance->requiresActiveCleanup};
+  }
+
+  [[nodiscard]] MirDropObligationId
+  appendPreparedParameterDrop(HirValueId callSite, HirValueId sourceValue,
+                              MirValueId result, const ExpressionInfo &info,
+                              const MirDropType &dropType) {
+    const HirValue *call = findValue(callSite);
+    if (call == nullptr || call->fullExpression == 0 || result == 0) {
+      valid = false;
+      return 0;
+    }
+    const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Temporary,
+                                          .temporary = nextTemporary++,
+                                          .type = info.type,
+                                          .access = AccessMode::Mutable,
+                                          .traits = info.traits,
+                                          .sourceValue = sourceValue});
+    const MirDropObligationId id = output.dropObligations.size() + 1;
+    output.dropObligations.push_back(
+        {.id = id,
+         .constructionOrder = id,
+         .kind = MirDropObligationKind::PreparedParameter,
+         .place = place,
+         .hirFullExpression = call->fullExpression,
+         .fullExpression = fullExpressionIds.contains(call->fullExpression)
+                               ? fullExpressionIds.at(call->fullExpression)
+                               : 0,
+         .dropType = dropType});
+    return id;
   }
 
   [[nodiscard]] MirDropObligationId
@@ -542,7 +596,8 @@ private:
     appendFailureCleanupBoundary(std::move(cleanup));
   }
 
-  void appendFailureControlFlow(MirInstructionId producerInstruction) {
+  void appendFailureControlFlow(MirInstructionId producerInstruction,
+                                MirDropObligationId successResultDrop) {
     const MirBlockId producerBlock = current;
     const MirBlock *producer = currentBlock();
     if (producer == nullptr || producer->instructions.empty() ||
@@ -560,11 +615,17 @@ private:
                                      .parameterBlock = failureBlock});
     output.blocks[failureBlock - 1].failureParameter = failureRecord;
     current = producerBlock;
-    terminate({.kind = MirTerminatorKind::Invoke,
-               .invokeInstruction = producerInstruction,
-               .failureRecord = failureRecord,
-               .target = normalBlock,
-               .elseTarget = failureBlock});
+    MirTerminator invoke{.kind = MirTerminatorKind::Invoke,
+                         .invokeInstruction = producerInstruction,
+                         .failureRecord = failureRecord,
+                         .target = normalBlock,
+                         .elseTarget = failureBlock};
+    if (successResultDrop != 0) {
+      invoke.successLifecycle.push_back(
+          {.kind = MirLifecycleEventKind::Initialize,
+           .target = successResultDrop});
+    }
+    terminate(std::move(invoke));
 
     current = failureBlock;
     emitFailureTemporaryCleanup(temporaryDrops);
@@ -651,11 +712,14 @@ private:
       }
     }
     block->instructions.push_back(std::move(instruction));
+    const MirInstruction &appended = block->instructions.back();
     if (supportsMirFailureControlFlow(output.kind) &&
         requiresMirFailureControlFlow(
-            block->instructions.back(),
-            isFullExpressionRoot(block->instructions.back().hirValue))) {
-      appendFailureControlFlow(id);
+            appended, isFullExpressionRoot(appended.hirValue))) {
+      const MirDropObligationId successResultDrop =
+          appended.successResultDrop.value_or(0);
+      appendFailureControlFlow(id, successResultDrop);
+      registerTemporary(successResultDrop);
     }
     return id;
   }
@@ -2051,11 +2115,11 @@ private:
     return operation;
   }
 
-  [[nodiscard]] MirOperand
+  [[nodiscard]] PreparedCallInput
   prepareCallInput(HirValueId callSite, HirValueId sourceValue,
                    const SemanticType &type, HirCallInputKind inputKind,
-                   MirCallInputRole role, std::size_t index,
-                   MirOperand operand) {
+                   MirCallInputRole role, std::size_t index, MirOperand operand,
+                   bool stageOwningParameter) {
     ExpressionInfo info{.type = type,
                         .category = ValueCategory::Value,
                         .access = AccessMode::ReadOnly,
@@ -2082,11 +2146,44 @@ private:
     if (materializesCheckedPlace) {
       input.definedFailure = localDefinedFailure(sourceValueInfo);
     }
-    if (inputKind == HirCallInputKind::MoveValue) {
+    MirDropObligationId parameterDrop = 0;
+    const std::optional<MirDropType> dropType =
+        stageOwningParameter ? preparedParameterDropType(type) : std::nullopt;
+    if (dropType && (inputKind == HirCallInputKind::CopyValue ||
+                     inputKind == HirCallInputKind::MoveValue)) {
+      parameterDrop = appendPreparedParameterDrop(callSite, sourceValue, result,
+                                                  info, *dropType);
+      const MirDropObligation *prepared =
+          output.findDropObligation(parameterDrop);
+      if (prepared == nullptr) {
+        valid = false;
+      } else {
+        input.preparedParameterDrop = parameterDrop;
+        input.destination = prepared->place;
+        if (inputKind == HirCallInputKind::CopyValue) {
+          appendLifecycle(input, {.kind = MirLifecycleEventKind::Initialize,
+                                  .target = parameterDrop});
+        } else {
+          const MirDropObligationId sourceDrop =
+              dropObligationForValue(sourceValue);
+          if (temporaryIsActive(sourceDrop)) {
+            appendReparentOrTypedTransfer(input, sourceDrop, parameterDrop);
+            (void)removeTemporary(sourceDrop);
+          } else {
+            appendLifecycle(input, {.kind = MirLifecycleEventKind::Initialize,
+                                    .target = parameterDrop});
+          }
+        }
+      }
+    } else if (inputKind == HirCallInputKind::MoveValue) {
       transferTemporaryOut(input, sourceValue);
     }
     (void)appendInstruction(std::move(input));
-    return {.kind = MirOperandKind::Value, .value = result, .type = type};
+    registerTemporary(parameterDrop);
+    return {.operand = {.kind = MirOperandKind::Value,
+                        .value = result,
+                        .type = type},
+            .parameterDrop = parameterDrop};
   }
 
   void emitCall(const HirValue &value) {
@@ -2111,7 +2208,9 @@ private:
     const std::vector<HirValueId> arguments = callArgumentValues(value);
     std::optional<MirOperand> sourceReceiver;
     std::vector<MirOperand> sourceArguments;
+    std::vector<MirDropObligationId> preparedParameterDrops;
     sourceArguments.reserve(arguments.size());
+    preparedParameterDrops.reserve(arguments.size() + 1);
 
     if (value.callPlan) {
       if (value.callPlan->receiver) {
@@ -2121,9 +2220,13 @@ private:
                 ? AccessMode::Mutable
                 : AccessMode::ReadOnly;
         sourceReceiver = receiverOperand(receiver.value, access);
-        call.receiver = prepareCallInput(
+        PreparedCallInput prepared = prepareCallInput(
             value.id, receiver.value, receiver.type, receiver.kind,
-            MirCallInputRole::Receiver, 0, *sourceReceiver);
+            MirCallInputRole::Receiver, 0, *sourceReceiver, true);
+        call.receiver = std::move(prepared.operand);
+        if (prepared.parameterDrop != 0) {
+          preparedParameterDrops.push_back(prepared.parameterDrop);
+        }
       }
     } else if (const std::optional<HirValueId> receiver =
                    receiverValue(value)) {
@@ -2151,10 +2254,14 @@ private:
             argument.kind == HirCallInputKind::CopyValue
                 ? copyArgumentOperand(argument.value, argument.parameterType)
                 : argumentOperand(argument.value, argument.parameterType));
-        call.operands.push_back(
-            prepareCallInput(value.id, argument.value, argument.parameterType,
-                             argument.kind, MirCallInputRole::Argument,
-                             argument.parameterIndex, sourceArguments.back()));
+        PreparedCallInput prepared = prepareCallInput(
+            value.id, argument.value, argument.parameterType, argument.kind,
+            MirCallInputRole::Argument, argument.parameterIndex,
+            sourceArguments.back(), true);
+        call.operands.push_back(std::move(prepared.operand));
+        if (prepared.parameterDrop != 0) {
+          preparedParameterDrops.push_back(prepared.parameterDrop);
+        }
       }
     } else {
       for (std::size_t index = 0; index < arguments.size(); ++index) {
@@ -2254,7 +2361,23 @@ private:
         }
       }
     }
-    (void)initializeValueLifecycle(call, value);
+    for (const MirDropObligationId parameterDrop : preparedParameterDrops) {
+      if (!removeTemporary(parameterDrop)) {
+        valid = false;
+      }
+      appendLifecycle(call, {.kind = MirLifecycleEventKind::TransferOut,
+                             .source = parameterDrop});
+    }
+    const MirDropObligationId resultDrop = dropObligationForValue(value.id);
+    const bool successEdgeResult =
+        resultDrop != 0 && supportsMirFailureControlFlow(output.kind) &&
+        isFullExpressionRoot(value.id) && !call.definedFailure.empty() &&
+        !call.destination && !call.loan && !value.ownership;
+    if (successEdgeResult) {
+      call.successResultDrop = resultDrop;
+    } else {
+      (void)initializeValueLifecycle(call, value);
+    }
     (void)appendInstruction(std::move(call));
   }
 
@@ -2285,7 +2408,9 @@ private:
         construct.operands.push_back(
             prepareCallInput(value.id, argument.value, argument.parameterType,
                              argument.kind, MirCallInputRole::Argument,
-                             argument.parameterIndex, sourceArguments.back()));
+                             argument.parameterIndex, sourceArguments.back(),
+                             false)
+                .operand);
       }
     } else {
       for (std::size_t index = 0; index < arguments.size(); ++index) {

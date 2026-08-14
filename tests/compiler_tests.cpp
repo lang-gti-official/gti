@@ -1079,23 +1079,37 @@ int main() {
       inputs[index] = definitionFor(call->operands[index]);
     }
   }
-  const auto exactTransfer = [&](const lang::MirInstruction *input) {
-    if (input == nullptr || input->operands.size() != 1 ||
-        input->operands.front().kind != lang::MirOperandKind::Value ||
-        input->lifecycle.size() != 1 ||
-        input->lifecycle.front().kind !=
-            lang::MirLifecycleEventKind::TransferOut) {
-      return false;
-    }
-    const lang::MirValue *source =
-        mirMain->body.findValue(input->operands.front().value);
-    const lang::MirDropObligation *obligation =
-        mirMain->body.findDropObligation(input->lifecycle.front().source);
-    return source != nullptr && obligation != nullptr &&
-           obligation->kind == lang::MirDropObligationKind::Value &&
-           obligation->value == source->sourceValue &&
-           obligation->dropType.type == input->info.type;
-  };
+  const auto exactPreparedParameter =
+      [&](const lang::MirInstruction *input,
+          lang::MirLifecycleEventKind expectedLifecycle) {
+        if (input == nullptr || !input->preparedParameterDrop ||
+            !input->destination || input->lifecycle.size() != 1 ||
+            input->lifecycle.front().kind != expectedLifecycle ||
+            input->lifecycle.front().target != *input->preparedParameterDrop) {
+          return false;
+        }
+        const lang::MirDropObligation *obligation =
+            mirMain->body.findDropObligation(*input->preparedParameterDrop);
+        const lang::MirPlace *place =
+            obligation == nullptr ? nullptr
+                                  : mirMain->body.findPlace(obligation->place);
+        const std::size_t transfers =
+            call == nullptr
+                ? 0
+                : static_cast<std::size_t>(std::count_if(
+                      call->lifecycle.begin(), call->lifecycle.end(),
+                      [&](const lang::MirLifecycleEvent &event) {
+                        return event.kind ==
+                                   lang::MirLifecycleEventKind::TransferOut &&
+                               event.source == *input->preparedParameterDrop;
+                      }));
+        return obligation != nullptr && place != nullptr &&
+               obligation->kind ==
+                   lang::MirDropObligationKind::PreparedParameter &&
+               obligation->dropType.type == input->info.type &&
+               place->root == lang::MirPlaceRootKind::Temporary &&
+               *input->destination == place->id && transfers == 1;
+      };
   const lang::MirPlace *copySource =
       inputs[0] == nullptr || inputs[0]->operands.empty()
           ? nullptr
@@ -1108,39 +1122,38 @@ int main() {
       inputs[2] == nullptr || inputs[2]->operands.empty()
           ? nullptr
           : definitionFor(inputs[2]->operands.front());
-  const bool callTransfers =
-      call != nullptr &&
-      std::any_of(call->lifecycle.begin(), call->lifecycle.end(),
-                  [](const lang::MirLifecycleEvent &event) {
-                    return event.kind ==
-                           lang::MirLifecycleEventKind::TransferOut;
-                  });
   expect(call != nullptr && call->callSite != 0 &&
              call->operands.size() == inputs.size() && inputs[0] != nullptr &&
              inputs[1] != nullptr && inputs[2] != nullptr &&
              inputs[0]->callInputKind == lang::HirCallInputKind::CopyValue &&
              inputs[0]->operands.size() == 1 &&
              inputs[0]->operands.front().kind == lang::MirOperandKind::Copy &&
-             copySource != nullptr && inputs[0]->lifecycle.empty() &&
+             copySource != nullptr &&
+             exactPreparedParameter(inputs[0],
+                                    lang::MirLifecycleEventKind::Initialize) &&
              inputs[1]->callInputKind == lang::HirCallInputKind::MoveValue &&
              inputs[2]->callInputKind == lang::HirCallInputKind::MoveValue &&
-             exactTransfer(inputs[1]) && exactTransfer(inputs[2]) &&
+             exactPreparedParameter(inputs[1],
+                                    lang::MirLifecycleEventKind::Reparent) &&
+             exactPreparedParameter(inputs[2],
+                                    lang::MirLifecycleEventKind::Reparent) &&
              explicitMoveSource != nullptr &&
              explicitMoveSource->kind == lang::MirInstructionKind::Move &&
              temporarySource != nullptr &&
              temporarySource->kind == lang::MirInstructionKind::Construct &&
              inputs[0]->id < inputs[1]->id && inputs[1]->id < inputs[2]->id &&
-             inputs[2]->id < call->id && !callTransfers &&
+             inputs[2]->id < call->id && call->lifecycle.size() == 3 &&
              borrowedMirCall != nullptr && borrowedMirCall->callSite == 0,
-         "MIR should copy from a place at the first checkpoint, transfer each "
-         "owned temporary at its move checkpoint, and keep borrowed-state "
-         "class values outside the bounded schedule");
+         "MIR should stage each class-value parameter in caller-owned storage, "
+         "transfer it when the callee begins, and keep borrowed-state class "
+         "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v17\n") &&
+  expect(dump.starts_with("mir-body-v18\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
-             dump.find("call-input-kind=move-value") != std::string::npos,
-         "MIR v15 should serialize the exact class-value parameter modes");
+             dump.find("call-input-kind=move-value") != std::string::npos &&
+             dump.find("prepared-parameter-drop=") != std::string::npos,
+         "MIR v18 should serialize staged class-value parameter ownership");
 }
 
 void testOrderedOrdinaryConstructorInputs() {
@@ -2505,22 +2518,27 @@ int main() { return lifetime(true) - 13; }
           : mutableFunction(wrongLifecycleType, hirLifetime->id);
   bool changedLifecycleType = false;
   if (wrongLifecycleTypeLifetime != nullptr) {
-    lang::MirDropObligationId markerObligation = 0;
-    for (const lang::MirDropObligation &obligation :
-         wrongLifecycleTypeLifetime->body.dropObligations) {
-      if (token != nullptr &&
-          obligation.dropType.type.kind == lang::SemanticType::Class &&
-          obligation.dropType.type.classId != token->type.classId) {
-        markerObligation = obligation.id;
-        break;
-      }
-    }
     for (lang::MirBlock &block : wrongLifecycleTypeLifetime->body.blocks) {
       for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput) {
+          continue;
+        }
         for (lang::MirLifecycleEvent &event : instruction.lifecycle) {
-          if (markerObligation != 0 &&
-              event.kind == lang::MirLifecycleEventKind::Reparent) {
-            event.target = markerObligation;
+          if (event.kind != lang::MirLifecycleEventKind::Reparent) {
+            continue;
+          }
+          const lang::MirDropObligation *source =
+              wrongLifecycleTypeLifetime->body.findDropObligation(event.source);
+          const auto alternate = std::find_if(
+              wrongLifecycleTypeLifetime->body.dropObligations.begin(),
+              wrongLifecycleTypeLifetime->body.dropObligations.end(),
+              [&](const lang::MirDropObligation &obligation) {
+                return source != nullptr && obligation.id != event.target &&
+                       obligation.dropType.type != source->dropType.type;
+              });
+          if (alternate !=
+              wrongLifecycleTypeLifetime->body.dropObligations.end()) {
+            event.target = alternate->id;
             changedLifecycleType = true;
             break;
           }
@@ -4901,7 +4919,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v17\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v18\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -6900,7 +6918,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v17 ") &&
+  expect(mirDump.starts_with("mir-v18 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -22976,7 +22994,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v17 ") &&
+             mirDump.starts_with("mir-v18 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

@@ -211,7 +211,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v17 ") &&
+      snapshot.starts_with("mir-v18 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -253,6 +253,13 @@ int consume(Token token, int value) { return value; }
 int deferred_nested_argument(mut int value) {
   return consume(Token(4), value + 1);
 }
+
+Token produce(mut int value) {
+  int checked = value + 1;
+  return Token(checked);
+}
+
+Token owning_result(mut int value) { return produce(value); }
 
 int main() { return caller(1); }
 )");
@@ -316,12 +323,35 @@ int main() { return caller(1); }
   const lang::MirBody *deferred =
       functionBody(frontend, "deferred_nested_argument");
   std::size_t deferredLocalOrigins = 0;
+  std::size_t deferredPreparedParameters = 0;
+  bool deferredPreparedTransfer = false;
   bool deferredInvokePropagates = false;
   if (deferred != nullptr) {
     for (const lang::MirBlock &block : deferred->blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
         deferredLocalOrigins +=
             !instruction.definedFailure.localOrigins.empty();
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            !instruction.preparedParameterDrop) {
+          continue;
+        }
+        ++deferredPreparedParameters;
+        for (const lang::MirBlock &candidateBlock : deferred->blocks) {
+          for (const lang::MirInstruction &candidate :
+               candidateBlock.instructions) {
+            deferredPreparedTransfer =
+                deferredPreparedTransfer ||
+                (candidate.kind == lang::MirInstructionKind::Call &&
+                 std::any_of(
+                     candidate.lifecycle.begin(), candidate.lifecycle.end(),
+                     [&](const lang::MirLifecycleEvent &event) {
+                       return event.kind ==
+                                  lang::MirLifecycleEventKind::TransferOut &&
+                              event.source ==
+                                  *instruction.preparedParameterDrop;
+                     }));
+          }
+        }
       }
     }
     if (deferred->failureRecords.size() == 1) {
@@ -338,9 +368,51 @@ int main() { return caller(1); }
     }
   }
   expect(deferred != nullptr && deferredLocalOrigins != 0 &&
+             deferredPreparedParameters == 1 && deferredPreparedTransfer &&
              deferredInvokePropagates,
-         "nested argument detectors should remain identity-only until owned "
-         "parameter staging is represented, while the root call propagates");
+         "nested argument detectors should remain identity-only in this "
+         "bounded slice while owning parameter staging and root-call "
+         "propagation remain explicit");
+
+  const lang::MirBody *owningResult = functionBody(frontend, "owning_result");
+  bool exactOwningResultEdge = false;
+  if (owningResult != nullptr && owningResult->failureRecords.size() == 1) {
+    const lang::MirFailureRecord &record = owningResult->failureRecords.front();
+    const lang::MirBlock *producer =
+        owningResult->findBlock(record.producerBlock);
+    const lang::MirBlock *cleanup =
+        owningResult->findBlock(record.parameterBlock);
+    const lang::MirInstruction *call =
+        producer == nullptr || producer->instructions.empty()
+            ? nullptr
+            : &producer->instructions.back();
+    const lang::MirDropObligation *result =
+        call == nullptr || !call->successResultDrop
+            ? nullptr
+            : owningResult->findDropObligation(*call->successResultDrop);
+    const bool failureDropsResult =
+        cleanup != nullptr && result != nullptr &&
+        std::any_of(cleanup->instructions.begin(), cleanup->instructions.end(),
+                    [&](const lang::MirInstruction &instruction) {
+                      return instruction.kind ==
+                                 lang::MirInstructionKind::Drop &&
+                             instruction.lifecycle.size() == 1 &&
+                             instruction.lifecycle.front().source == result->id;
+                    });
+    exactOwningResultEdge =
+        producer != nullptr && cleanup != nullptr && call != nullptr &&
+        result != nullptr &&
+        producer->terminator.kind == lang::MirTerminatorKind::Invoke &&
+        producer->terminator.successLifecycle.size() == 1 &&
+        producer->terminator.successLifecycle.front().kind ==
+            lang::MirLifecycleEventKind::Initialize &&
+        producer->terminator.successLifecycle.front().target == result->id &&
+        result->kind == lang::MirDropObligationKind::Value &&
+        result->dropType.requiresActiveCleanup && !failureDropsResult;
+  }
+  expect(exactOwningResultEdge,
+         "a cleanup-owning call result should initialize only on the invoke "
+         "success edge and remain absent from failure cleanup");
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   expect(snapshot.find("failure-records 1") != std::string::npos &&
@@ -414,6 +486,28 @@ int main() { return caller(1); }
   expect(!reorderedCleanupResult.valid() &&
              hasVerificationError(reorderedCleanupResult, "cleanup sequence"),
          "MIR verification should reject reordered failure cleanup");
+
+  const std::optional<lang::HirFunctionInstanceId> owningResultId =
+      functionInstance(frontend, "owning_result");
+  lang::MirProgram missingSuccessInitialization = frontend.mir;
+  lang::MirBody *missingSuccessInitializationBody =
+      owningResultId
+          ? functionBody(missingSuccessInitialization, *owningResultId)
+          : nullptr;
+  if (missingSuccessInitializationBody != nullptr &&
+      !missingSuccessInitializationBody->failureRecords.empty()) {
+    const lang::MirFailureRecord &record =
+        missingSuccessInitializationBody->failureRecords.front();
+    missingSuccessInitializationBody->blocks[record.producerBlock - 1]
+        .terminator.successLifecycle.clear();
+  }
+  const lang::MirVerificationResult missingSuccessInitializationResult =
+      lang::verifyMirProgram(missingSuccessInitialization);
+  expect(!missingSuccessInitializationResult.valid() &&
+             hasVerificationError(missingSuccessInitializationResult,
+                                  "success edge"),
+         "MIR verification should reject an owning call result omitted from "
+         "the invoke success edge");
 }
 
 void testEmptyDescriptorContract() {

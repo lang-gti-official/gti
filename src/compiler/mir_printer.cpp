@@ -117,7 +117,7 @@ failurePropagationName(FailurePropagationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v17 valid=" << program.valid() << '\n';
+    output << "mir-v18 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -370,7 +370,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v17\n";
+    output << "mir-body-v18\n";
     body(value, 0);
     return output.str();
   }
@@ -716,7 +716,11 @@ private:
     }
     output << " call-input-index=" << value.callInputIndex
            << " call-input-kind=" << callInputKindName(value.callInputKind)
-           << " unsafe-operation=" << number(value.unsafeOperation)
+           << " prepared-parameter-drop=";
+    optional(value.preparedParameterDrop);
+    output << " success-result-drop=";
+    optional(value.successResultDrop);
+    output << " unsafe-operation=" << number(value.unsafeOperation)
            << " raw-memory=" << value.rawMemoryAccess << " result=";
     optional(value.result);
     output << " destination=";
@@ -904,7 +908,13 @@ private:
     optional(value.returnLoan);
     output << " invoke=i" << value.invokeInstruction << " failure=fail"
            << value.failureRecord << " target=bb" << value.target << " else=bb"
-           << value.elseTarget << " switches=[";
+           << value.elseTarget << " success-lifecycle=[";
+    for (std::size_t index = 0; index < value.successLifecycle.size();
+         ++index) {
+      separator(index);
+      lifecycleEvent(value.successLifecycle[index]);
+    }
+    output << "] switches=[";
     for (std::size_t index = 0; index < value.switchTargets.size(); ++index) {
       separator(index);
       const MirSwitchTarget &target = value.switchTargets[index];

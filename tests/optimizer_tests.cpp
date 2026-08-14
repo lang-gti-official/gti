@@ -1643,15 +1643,42 @@ int main() {
       baselineCall == nullptr || baselineCall->operands.size() != 3
           ? nullptr
           : inputFor(baseline, baselineCall->operands[2]);
+  const auto transfersPreparedParameter =
+      [](const lang::MirInstruction &call, const lang::MirInstruction &input) {
+        return input.preparedParameterDrop &&
+               std::count_if(
+                   call.lifecycle.begin(), call.lifecycle.end(),
+                   [&](const lang::MirLifecycleEvent &event) {
+                     return event.kind ==
+                                lang::MirLifecycleEventKind::TransferOut &&
+                            event.source == *input.preparedParameterDrop;
+                   }) == 1;
+      };
   expect(baselineCall != nullptr && baselineCopy != nullptr &&
              baselineOtherCopy != nullptr && baselineMove != nullptr &&
              baselineCopy->callInputKind == lang::HirCallInputKind::CopyValue &&
              baselineOtherCopy->callInputKind ==
                  lang::HirCallInputKind::CopyValue &&
              baselineMove->callInputKind == lang::HirCallInputKind::MoveValue &&
+             baselineCopy->preparedParameterDrop &&
+             baselineOtherCopy->preparedParameterDrop &&
+             baselineMove->preparedParameterDrop &&
+             baselineCopy->lifecycle.size() == 1 &&
+             baselineCopy->lifecycle.front().kind ==
+                 lang::MirLifecycleEventKind::Initialize &&
+             baselineOtherCopy->lifecycle.size() == 1 &&
+             baselineOtherCopy->lifecycle.front().kind ==
+                 lang::MirLifecycleEventKind::Initialize &&
              baselineMove->lifecycle.size() == 1 &&
+             baselineMove->lifecycle.front().kind ==
+                 lang::MirLifecycleEventKind::Reparent &&
+             baselineCall->lifecycle.size() == 3 &&
+             transfersPreparedParameter(*baselineCall, *baselineCopy) &&
+             transfersPreparedParameter(*baselineCall, *baselineOtherCopy) &&
+             transfersPreparedParameter(*baselineCall, *baselineMove) &&
              lang::verifyMirBody(baseline).valid(),
-         "the baseline should expose exact class copy and move checkpoints");
+         "the baseline should expose exact caller-owned class parameter "
+         "stages and call-boundary transfers");
   if (baselineCall == nullptr || baselineCopy == nullptr ||
       baselineOtherCopy == nullptr || baselineMove == nullptr ||
       baselineMove->lifecycle.empty()) {
@@ -1713,13 +1740,19 @@ int main() {
       missingTransferCall == nullptr
           ? nullptr
           : inputFor(missingTransfer, missingTransferCall->operands[2]);
-  if (missingTransferInput != nullptr) {
-    missingTransferInput->lifecycle.clear();
+  if (missingTransferCall != nullptr && missingTransferInput != nullptr &&
+      missingTransferInput->preparedParameterDrop) {
+    std::erase_if(
+        missingTransferCall->lifecycle,
+        [&](const lang::MirLifecycleEvent &event) {
+          return event.kind == lang::MirLifecycleEventKind::TransferOut &&
+                 event.source == *missingTransferInput->preparedParameterDrop;
+        });
   }
   expect(missingTransferInput != nullptr &&
-             hasMessage(missingTransfer, "invalid shape or reference"),
-         "the verifier should reject a move-value checkpoint that leaves its "
-         "exact temporary obligation active");
+             hasMessage(missingTransfer, "transfer exactly once"),
+         "the verifier should reject a prepared parameter stage that is not "
+         "transferred when the callee begins");
 
   lang::MirBody transferOnCopy = baseline;
   lang::MirInstruction *transferOnCopyCall = callTo(transferOnCopy, accept->id);
@@ -1732,23 +1765,33 @@ int main() {
   }
   expect(transferOnCopyInput != nullptr &&
              hasMessage(transferOnCopy, "invalid shape or reference"),
-         "the verifier should reject ownership transfer forged onto a class "
-         "copy checkpoint");
+         "the verifier should reject move-style reparenting forged onto a "
+         "class copy stage");
 
-  lang::MirBody legacyCallTransfer = baseline;
-  lang::MirInstruction *legacyCall = callTo(legacyCallTransfer, accept->id);
-  lang::MirInstruction *legacyMove =
-      legacyCall == nullptr
+  lang::MirBody misplacedCallTransfer = baseline;
+  lang::MirInstruction *misplacedCall =
+      callTo(misplacedCallTransfer, accept->id);
+  lang::MirInstruction *misplacedMove =
+      misplacedCall == nullptr
           ? nullptr
-          : inputFor(legacyCallTransfer, legacyCall->operands[2]);
-  if (legacyCall != nullptr && legacyMove != nullptr) {
-    legacyCall->lifecycle = legacyMove->lifecycle;
-    legacyMove->lifecycle.clear();
+          : inputFor(misplacedCallTransfer, misplacedCall->operands[2]);
+  if (misplacedCall != nullptr && misplacedMove != nullptr &&
+      misplacedMove->preparedParameterDrop) {
+    const auto transfer = std::find_if(
+        misplacedCall->lifecycle.begin(), misplacedCall->lifecycle.end(),
+        [&](const lang::MirLifecycleEvent &event) {
+          return event.kind == lang::MirLifecycleEventKind::TransferOut &&
+                 event.source == *misplacedMove->preparedParameterDrop;
+        });
+    if (transfer != misplacedCall->lifecycle.end()) {
+      misplacedMove->lifecycle.push_back(*transfer);
+      misplacedCall->lifecycle.erase(transfer);
+    }
   }
-  expect(legacyMove != nullptr &&
-             hasMessage(legacyCallTransfer, "invalid shape or reference"),
-         "the verifier should reject moving class-parameter transfer back to "
-         "the undifferentiated call instruction");
+  expect(misplacedMove != nullptr &&
+             hasMessage(misplacedCallTransfer, "invalid shape or reference"),
+         "the verifier should reject moving the callee-boundary transfer back "
+         "onto the parameter preparation instruction");
 }
 
 void testMirLiteralIdentityFoldAndEditor() {
@@ -2715,12 +2758,12 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v17\n") &&
+  expect(dump.starts_with("mir-body-v18\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
              dump.find("failure-propagation=direct-call") != std::string::npos,
-         "MIR v15 should serialize exact failure identities deterministically");
+         "MIR v18 should serialize exact failure identities deterministically");
 
   const auto firstOriginInstruction = [](lang::MirBody &body) {
     for (lang::MirBlock &block : body.blocks) {

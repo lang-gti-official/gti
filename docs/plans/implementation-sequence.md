@@ -134,11 +134,11 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.137.0 |
+| Foundation | Evidence at 0.140.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
-| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. MIR v17 adds bounded scalar `Invoke`/`PropagateFailure` edges, fixed-record parameters, and deterministic failure cleanup while retaining ordered invocation inputs, exact borrow origins, synchronization records, conservative `PackFold`, and artifact-local failure identity. |
+| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. MIR v18 retains bounded `Invoke`/`PropagateFailure` edges, fixed-record parameters, and deterministic failure cleanup while adding caller-owned ordinary-call parameter stages and normal-edge-only initialization for one cleanup-owning result shape. It retains exact borrow origins, synchronization records, conservative `PackFold`, and artifact-local failure identity. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
@@ -642,11 +642,13 @@ analysis, HIR, MIR, and the backend.
   fixed-record failure parameter, active-loan ending, reverse-construction
   temporary/lexical cleanup, and an exact `PropagateFailure` endpoint. The
   verifier rejects normal predecessors, missing/forged invokes, record rewrite,
-  failure-result use, misplaced cleanup, and cleanup-order drift. Nested
-  argument evaluation, staged owner parameters, assignment destinations,
-  owning/borrowed results, constructors, partial rollback, double failure,
-  hosted/generated origins, containment, reporting, and executable backend use
-  remain open.
+  failure-result use, misplaced cleanup, and cleanup-order drift. MIR v18 adds
+  caller-owned class-value parameter stages to ordinary calls and initializes
+  one eligible cleanup-owning call result only on the invoke success edge; the
+  failure edge neither owns nor drops that unconstructed result. Nested argument
+  evaluation, assignment destinations, borrowed and remaining owning results,
+  constructors, partial rollback, double failure, hosted/generated origins,
+  containment, reporting, and executable backend use remain open.
   This row does not claim that the compatibility emitter executes those edges.
 - **Exit gate:** every current failure family has exact semantic/HIR
   local-origin and source-anchor snapshots plus MIR outcome/site snapshots;
@@ -686,9 +688,12 @@ analysis, HIR, MIR, and the backend.
   roles. MIR emits
   one-use `CallInput` checkpoints and verifies call-site, role, index, type,
   dominance, and strict receiver-when-applicable, arguments, then `Call` or
-  `Construct` order. A class copy consumes the exact copyable place; a class
-  move consumes the exact movable materialized value and transfers any active
-  temporary obligation at that checkpoint. Mutation tests cover wrong sites,
+  `Construct` order. For ordinary calls, each eligible class copy or move
+  materializes one distinct caller-owned prepared-parameter obligation. Copy
+  initializes the stage, move reparents its exact active source obligation when
+  present, and the final call transfers every stage exactly once as the callee
+  begins. Constructors retain direct checkpoint transfer until their partial-
+  construction model lands. Mutation tests cover wrong sites,
   duplicate/abandoned and bypassed inputs, type drift, reordering, forged
   receiver/copy/move modes, missing or misplaced transfer, and erased target
   identity. Generated/default zero-argument and copy/move special construction,
@@ -1786,17 +1791,16 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended unowned prompt is the bounded `M-EXEC-01` parameter/result
-staging family needed by M-FAIL-01. Give an already ordered ordinary call one
-explicit caller-owned obligation for each prepared owning parameter until the
-callee begins, then transfer it exactly once on the invoke normal/failure
-contract. Add edge-specific result initialization for one owning-result shape.
-This is the nearest prerequisite for extending failure edges into nested
-arguments and owning calls without leaking a prepared owner. Assignment
-targets, broader borrowed-state values, remaining construction forms, compound
-expressions, and hosted initialization stay separate. Keep the next prompt to
-one coherent family; every accepted readiness workload consumes this result,
-but lowering machinery is not independently the product.
+The next recommended unowned prompt is the bounded `M-FAIL-01` nested-argument
+slice now enabled by MIR v18 parameter/result staging. Give one source-ordered
+ordinary-call argument detector an explicit failure edge after at least one
+class-value parameter has been prepared. Prove that failure drops already
+prepared caller-owned stages in reverse construction order, does not transfer
+them to a callee that never began, preserves the exact fixed record, and resumes
+normal setup without duplicating argument evaluation. Keep constructors,
+assignment destinations, borrowed results, double failure, backend execution,
+and general compound-expression CFG separate. This is the nearest step toward a
+cleanup-correct fallible pipeline and hosted task invocation.
 After the row's remaining families land, select the smallest newly unblocked
 vertical slice from an outcome lane.
 `D-COMPAT-01` is complete on the independent release-policy lane. Stop after

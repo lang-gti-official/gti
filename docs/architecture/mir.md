@@ -21,8 +21,14 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v17`/`mir-body-v17`.
-Version 17 adds bounded `Invoke`/`PropagateFailure` control flow, body-local
+The deterministic serialization is currently `mir-v18`/`mir-body-v18`.
+Version 18 adds caller-owned `PreparedParameter` obligations for eligible
+class-value inputs to ordinary calls. Copy inputs initialize their stage, move
+inputs reparent the exact source obligation when one exists, and the final
+`Call` transfers each stage exactly once when the callee begins. It also adds
+normal-success lifecycle events for one bounded cleanup-owning ordinary-call
+result shape, leaving that result uninitialized on the failure edge. Version 17
+added bounded `Invoke`/`PropagateFailure` control flow, body-local
 fixed failure-record parameters, and deterministic failure cleanup for
 eligible full-expression-root scalar operations in function and lambda bodies.
 Version 16 added the immutable failure artifact descriptor, exact one-based
@@ -76,12 +82,16 @@ A `MirBody` owns:
   non-reorderable `CallInput` checkpoint per receiver and argument. Each
   checkpoint retains the source HIR value, call-site identity, receiver or
   exact argument-index role, selected parameter type, and value/class-copy/
-  class-move/read-borrow/mutable-borrow mode. A class-copy checkpoint consumes
-  one exact copy operand rooted in the source place. A class-move checkpoint
-  consumes one exact materialized value and carries its `TransferOut` event
-  when that value has an active drop obligation. Its single result has exactly
-  one executable use by the matching `Call` or `Construct`, so the invocation
-  consumes only prepared inputs rather than reevaluating a source operand;
+  class-move/read-borrow/mutable-borrow mode. For an ordinary `Call`, a
+  class-copy checkpoint initializes one exact caller-owned prepared-parameter
+  place and a class-move checkpoint reparents the exact materialized source
+  obligation into such a place, or initializes it when the type has trivial
+  cleanup. The prepared owner remains active until the final `Call` transfers
+  it exactly once. Scheduled constructors retain the earlier bounded checkpoint
+  contract and do not yet use prepared-parameter places. Every checkpoint's
+  single result has exactly one executable use by the matching `Call` or
+  `Construct`, so the invocation consumes only prepared inputs rather than
+  reevaluating a source operand;
 - typed lexical/value drop obligations and per-instruction initialize, move,
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
@@ -405,9 +415,13 @@ Verification rejects a direct unprepared operand, wrong
 call-site, duplicate or abandoned checkpoint, swapped argument index,
 type/role drift, and invocation before setup. Class-copy inputs additionally
 require the exact copyable, non-borrowed source place. Class-move inputs require
-the exact movable, non-borrowed materialized value and transfer its unique
-active obligation at the checkpoint. Borrow-source, callable-source, ownership,
-and loan-flow checks trace through the checkpoint's one underlying operand.
+the exact movable, non-borrowed materialized value. For ordinary calls, both
+forms require a distinct caller-owned prepared-parameter obligation: copy
+initializes it, move reparents the exact active source obligation when present,
+and the final call transfers every stage exactly once. Constructors retain the
+older direct checkpoint transfer until their partial-construction model lands.
+Borrow-source, callable-source, ownership, and loan-flow checks trace through
+the checkpoint's one underlying operand.
 
 Other calls and expression families still rely on recursive lowering order,
 which is not a verified materialization schedule and does not control
@@ -433,9 +447,11 @@ perform semantic instantiation.
 
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations for the current
-failure-free place slice. Later M-EXEC-01 slices must extend the ordered input
-representation to borrowed-state class values, remaining call forms, result and
-target places, operators, branches, and program initialization, with a
+failure-free place slice. MIR v18 extends that model with caller-owned ordinary
+call parameter stages and one edge-initialized cleanup-owning call-result shape.
+Later M-EXEC-01 slices must extend the ordered input representation to
+borrowed-state class values, remaining call forms, other result and target
+places, operators, branches, and program initialization, with a
 `ProgramInitializationStepId` where applicable.
 The verifier must reject use before materialization, duplicate target
 evaluation, invocation before parameter setup, cleanup-state mismatch at an
@@ -448,23 +464,27 @@ anchors, their verified artifact-local site IDs, the immutable artifact
 descriptor, and direct/virtual/constructor/callable propagation identity. Any
 such operation projects conservatively to `mayTrap`, making it
 non-speculatable, non-removable, and non-reorderable, but the structured
-identity remains the authority. Eligible full-expression-root scalar
-operations in function and lambda bodies additionally carry verified fixed
-record, normal/failure successor, LIFO cleanup, and propagation edges. Nested
-detectors, assignment destinations, owning or borrowed results, constructors,
-field/module initialization, destructors and double failure, partial
-construction, caller-to-callee record ABI, and containment remain outside that
-bounded family and are still required by
+identity remains the authority. Eligible full-expression-root scalar operations
+and ordinary calls with one cleanup-owning class result in function and lambda
+bodies additionally carry verified fixed record, normal/failure successor,
+LIFO cleanup, and propagation edges. Nested detectors, assignment destinations,
+borrowed and remaining owning results, constructors, field/module
+initialization, destructors and double failure, partial construction,
+caller-to-callee record ABI, and containment remain outside that bounded family
+and are still required by
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure).
 
-The bounded `Invoke` family deliberately requires a trivial scalar result, so
-the existing instruction-defined value is usable only from the normal
-successor and the verifier rejects any use in the dedicated failure block. The
-next M-EXEC-01/M-FAIL-01 slice must represent staged parameter ownership and
-edge-specific result initialization before extending `Invoke` to nested
-arguments, owning/borrowed results, constructors, or assignments. That later
-family can introduce normal result block parameters without changing the
-fixed-record failure parameter or record-preservation rule.
+The bounded `Invoke` family accepts either a trivial scalar result or the exact
+cleanup-owning result obligation of an eligible ordinary call. Scalar values
+remain usable only from the normal successor. An owning result stays
+uninitialized on the failure edge and is initialized by an explicit lifecycle
+event only on the normal edge; the verifier rejects failure cleanup or use that
+assumes otherwise. Eligible class-value parameters are independently staged in
+caller-owned storage before the call and transferred only when the callee
+begins. The next M-FAIL-01 slice can therefore add nested argument detector edges
+whose cleanup includes already prepared owners, without changing fixed-record
+identity. Borrowed results, constructors, assignments, and general normal-result
+block parameters remain separate work.
 
 Cleanup blocks forward the same record through supported initialized and
 partially initialized shapes to the hosted-program boundary. A second origin

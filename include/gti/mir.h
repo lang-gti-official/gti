@@ -141,6 +141,7 @@ struct MirLoan {
 enum class MirDropObligationKind {
   Binding,
   Value,
+  PreparedParameter,
 };
 
 struct MirDropType {
@@ -277,6 +278,8 @@ struct MirInstruction {
   std::optional<MirCallInputRole> callInputRole;
   std::size_t callInputIndex = 0;
   HirCallInputKind callInputKind = HirCallInputKind::Value;
+  std::optional<MirDropObligationId> preparedParameterDrop;
+  std::optional<MirDropObligationId> successResultDrop;
   UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None;
   bool rawMemoryAccess = false;
   std::optional<MirValueId> result;
@@ -351,6 +354,7 @@ struct MirTerminator {
   MirBlockId target = 0;
   MirBlockId elseTarget = 0;
   std::vector<MirSwitchTarget> switchTargets;
+  std::vector<MirLifecycleEvent> successLifecycle;
 };
 
 struct MirBlock {

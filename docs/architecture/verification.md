@@ -22,7 +22,7 @@ assertions.
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
 | `binary64_runtime` | example 47 at O0/O3 under C++20/C++23 plus emitted strict-IEEE policy evidence |
-| `failure_metadata` | deterministic artifact sites plus bounded scalar `Invoke`, fixed-record failure parameters, reverse cleanup, and record-preserving propagation |
+| `failure_metadata` | deterministic artifact sites plus bounded scalar/cleanup-owning-call `Invoke`, fixed-record failure parameters, success-edge result initialization, reverse cleanup, and record-preserving propagation |
 | `optimizer_foundation` | MIR verification/printing/effects; dominance; controlled editor atomicity, repair, and invalidation; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
@@ -160,9 +160,11 @@ scalar/reference calls, eligible non-borrowed class values, and concrete
 ordinary constructors with supported arguments. Constructor coverage proves
 there is no receiver, the exact constructor target survives, and copy/move
 special construction remains outside the bounded schedule. The tests prove a
-class lvalue is copied from its exact place, an owned class value is moved, and
-each active temporary obligation transfers at its own checkpoint rather than
-at the final call or construct. Optimizer mutations reject wrong call-site,
+class lvalue is copied from its exact place and an owned class value is moved.
+For ordinary calls, each input creates one caller-owned parameter stage, source
+ownership is initialized or reparented there, and the final call transfers each
+stage exactly once; constructors retain the bounded direct-checkpoint model.
+Optimizer mutations reject wrong call-site,
 duplicate/abandoned or directly bypassed inputs, selected-parameter type drift,
 receiver/argument reordering, copy/move role forgery, missing or misplaced
 transfer, lost exact targets, a constructor receiver role, and constructor
@@ -180,10 +182,12 @@ The bounded M-FAIL-01 control-flow gate is owned by `failure_metadata`. It
 checks exact producer records, dedicated fixed-record failure successors,
 active-loan ending, reverse-construction temporary and lexical cleanup, and
 byte-for-byte record propagation for eligible full-expression-root scalar
-operations. Verifier mutations reject removed invokes, rewritten records, and
-reordered cleanup. Nested argument failures, owning or borrowed results,
-constructors, containment, runtime records, and backend execution remain
-outside this gate.
+operations. It also checks caller-owned class-value stages and normal-edge-only
+initialization for one cleanup-owning ordinary-call result. Verifier mutations
+reject removed invokes, rewritten records, reordered cleanup, missing parameter
+transfer, and missing success initialization. Nested argument failures,
+borrowed and remaining owning results, constructors, containment, runtime
+records, and backend execution remain outside this gate.
 
 M-OWN-02 now supplies indexed-place implementation evidence for the directly
 owned fixed-array slice. `compiler_pipeline` covers equal and both prefix
