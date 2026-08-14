@@ -462,9 +462,14 @@ struct MirVerificationResult {
 void rebuildMirReachability(MirBody &body);
 [[nodiscard]] bool rebuildMirValueUses(MirBody &body);
 [[nodiscard]] bool supportsMirFailureControlFlow(MirBodyKind kind);
+enum class MirFailureControlFlowPosition {
+  None,
+  FullExpressionRoot,
+  PreparedCallArgumentRoot,
+};
 [[nodiscard]] bool
 requiresMirFailureControlFlow(const MirInstruction &instruction,
-                              bool fullExpressionRoot);
+                              MirFailureControlFlowPosition position);
 [[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
                                                   std::size_t owner = 0);
 

@@ -126,6 +126,10 @@ private:
     MirDropObligationId parameterDrop = 0;
   };
 
+  struct PreparedCallArgumentFailure {
+    HirValueId argument = 0;
+  };
+
   [[nodiscard]] static bool sameScopeState(const std::vector<Scope> &left,
                                            const std::vector<Scope> &right) {
     return left.size() == right.size() &&
@@ -713,9 +717,17 @@ private:
     }
     block->instructions.push_back(std::move(instruction));
     const MirInstruction &appended = block->instructions.back();
+    const bool fullExpressionRoot = isFullExpressionRoot(appended.hirValue);
+    const bool preparedCallArgumentRoot =
+        preparedCallArgumentFailure &&
+        preparedCallArgumentFailure->argument == appended.hirValue;
+    const MirFailureControlFlowPosition failurePosition =
+        fullExpressionRoot ? MirFailureControlFlowPosition::FullExpressionRoot
+        : preparedCallArgumentRoot
+            ? MirFailureControlFlowPosition::PreparedCallArgumentRoot
+            : MirFailureControlFlowPosition::None;
     if (supportsMirFailureControlFlow(output.kind) &&
-        requiresMirFailureControlFlow(
-            appended, isFullExpressionRoot(appended.hirValue))) {
+        requiresMirFailureControlFlow(appended, failurePosition)) {
       const MirDropObligationId successResultDrop =
           appended.successResultDrop.value_or(0);
       appendFailureControlFlow(id, successResultDrop);
@@ -2250,10 +2262,18 @@ private:
     if (value.callPlan) {
       for (const HirCallArgument &argument : value.callPlan->arguments) {
         call.parameterTypes.push_back(argument.parameterType);
-        sourceArguments.push_back(
+        const std::optional<PreparedCallArgumentFailure> enclosingFailure =
+            preparedCallArgumentFailure;
+        if (!preparedParameterDrops.empty()) {
+          preparedCallArgumentFailure =
+              PreparedCallArgumentFailure{.argument = argument.value};
+        }
+        MirOperand sourceArgument =
             argument.kind == HirCallInputKind::CopyValue
                 ? copyArgumentOperand(argument.value, argument.parameterType)
-                : argumentOperand(argument.value, argument.parameterType));
+                : argumentOperand(argument.value, argument.parameterType);
+        preparedCallArgumentFailure = enclosingFailure;
+        sourceArguments.push_back(std::move(sourceArgument));
         PreparedCallInput prepared = prepareCallInput(
             value.id, argument.value, argument.parameterType, argument.kind,
             MirCallInputRole::Argument, argument.parameterIndex,
@@ -4395,6 +4415,7 @@ private:
   std::unordered_set<HirValueId> emittedValues;
   std::vector<Scope> scopes;
   std::vector<TemporaryDrop> temporaryDrops;
+  std::optional<PreparedCallArgumentFailure> preparedCallArgumentFailure;
   std::vector<BreakContext> breakContexts;
   std::vector<ContinueContext> continueContexts;
 };

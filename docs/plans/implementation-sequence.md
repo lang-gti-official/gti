@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.137.0
+Checkpoint: 0.141.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,11 +134,11 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.140.0 |
+| Foundation | Evidence at 0.141.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
-| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. MIR v18 retains bounded `Invoke`/`PropagateFailure` edges, fixed-record parameters, and deterministic failure cleanup while adding caller-owned ordinary-call parameter stages and normal-edge-only initialization for one cleanup-owning result shape. It retains exact borrow origins, synchronization records, conservative `PackFold`, and artifact-local failure identity. |
+| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. MIR v18 retains bounded `Invoke`/`PropagateFailure` edges, fixed-record parameters, and deterministic failure cleanup while adding caller-owned ordinary-call parameter stages, normal-edge-only initialization for one cleanup-owning result shape, and an exact local scalar argument failure edge after an earlier prepared owner. It retains exact borrow origins, synchronization records, conservative `PackFold`, and artifact-local failure identity. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
@@ -154,13 +154,14 @@ start a later phase:
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move environments plus exact generic return and one-field owner transport implement its current bounded lifecycle. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
-| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. Landed M-FAIL-01 slices provide exact outcome/propagation identity, deterministic artifact descriptors and detector sites, plus verified fixed-record failure edges and cleanup for eligible full-expression-root scalar operations. |
+| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. Landed M-FAIL-01 slices provide exact outcome/propagation identity, deterministic artifact descriptors and detector sites, plus verified fixed-record failure edges and cleanup for eligible full-expression-root scalar operations and exact later scalar call arguments after prepared owners. |
 
 MIR is not yet the sole executable authority. It owns the supported
 failure-free temporary/drop slice, bounded ordinary call/constructor/concrete
-call-operator input schedules, defined-failure identity, and one bounded
-full-expression-root scalar `Invoke`/cleanup family. It does not yet own
-complete ordered parameter/result materialization, nested or owning failure
+call-operator input schedules, defined-failure identity, and bounded
+full-expression-root plus exact prepared-call-argument scalar `Invoke`/cleanup
+families. It does not yet own complete ordered parameter/result materialization,
+other nested or owning failure
 edges, partial-constructor rollback, object layout, ABI, runtime containment,
 or executable failure handling. The C++ backend still emits bodies from
 checked AST/HIR facts.
@@ -645,8 +646,14 @@ analysis, HIR, MIR, and the backend.
   failure-result use, misplaced cleanup, and cleanup-order drift. MIR v18 adds
   caller-owned class-value parameter stages to ordinary calls and initializes
   one eligible cleanup-owning call result only on the invoke success edge; the
-  failure edge neither owns nor drops that unconstructed result. Nested argument
-  evaluation, assignment destinations, borrowed and remaining owning results,
+  failure edge neither owns nor drops that unconstructed result. An exact local
+  scalar `Compute` or `Load` used as a later indexed ordinary-call argument now
+  receives an `Invoke` after any earlier class-value stages: failure destroys
+  each stage once in reverse construction order before propagation, while only
+  the final normal-path call transfers them. The verifier derives eligibility
+  from exact value/input identity, dominance, and prepared obligations and
+  rejects detached arguments or omitted stage cleanup. Nested call propagation,
+  other compound argument evaluation, assignment destinations, borrowed and remaining owning results,
   constructors, partial rollback, double failure, hosted/generated origins,
   containment, reporting, and executable backend use remain open.
   This row does not claim that the compatibility emitter executes those edges.
@@ -1791,13 +1798,14 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended unowned prompt is the bounded `M-FAIL-01` nested-argument
-slice now enabled by MIR v18 parameter/result staging. Give one source-ordered
-ordinary-call argument detector an explicit failure edge after at least one
-class-value parameter has been prepared. Prove that failure drops already
-prepared caller-owned stages in reverse construction order, does not transfer
-them to a callee that never began, preserves the exact fixed record, and resumes
-normal setup without duplicating argument evaluation. Keep constructors,
+The next recommended unowned prompt is the bounded `M-FAIL-01` nested-call
+propagation slice enabled by MIR v18 parameter staging. Give one direct
+scalar-returning ordinary call, used as an exact later argument after at least
+one class-value parameter has been prepared, its own propagation `Invoke`.
+Preserve the callee record unchanged, destroy earlier caller-owned stages in
+reverse construction order on failure, and feed the normal result into exactly
+one indexed outer `CallInput` without duplicate evaluation. Keep nested calls
+with owning parameters/results, virtual/callable dispatch, constructors,
 assignment destinations, borrowed results, double failure, backend execution,
 and general compound-expression CFG separate. This is the nearest step toward a
 cleanup-correct fallible pipeline and hosted task invocation.

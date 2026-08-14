@@ -2324,10 +2324,18 @@ bool supportsMirFailureControlFlow(MirBodyKind kind) {
 }
 
 bool requiresMirFailureControlFlow(const MirInstruction &instruction,
-                                   bool fullExpressionRoot) {
-  if (!fullExpressionRoot || instruction.definedFailure.empty() ||
-      instruction.destination || instruction.loan || instruction.ownership ||
+                                   MirFailureControlFlowPosition position) {
+  if (position == MirFailureControlFlowPosition::None ||
+      instruction.definedFailure.empty() || instruction.destination ||
+      instruction.loan || instruction.ownership ||
       instruction.info.type.kind == SemanticType::Reference) {
+    return false;
+  }
+  if (position == MirFailureControlFlowPosition::PreparedCallArgumentRoot &&
+      (instruction.definedFailure.propagation != FailurePropagationKind::None ||
+       instruction.definedFailure.localOrigins.empty() ||
+       (instruction.kind != MirInstructionKind::Compute &&
+        instruction.kind != MirInstructionKind::Load))) {
     return false;
   }
   if (instruction.kind == MirInstructionKind::Compute ||
@@ -3841,7 +3849,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           block.instructions.empty() ||
           block.instructions.back().id != block.terminator.invokeInstruction ||
           !supportsMirFailureControlFlow(body.kind) ||
-          !requiresMirFailureControlFlow(*invocation->second, true)) {
+          !requiresMirFailureControlFlow(
+              *invocation->second,
+              MirFailureControlFlowPosition::FullExpressionRoot)) {
         return failure(body, owner,
                        "invoke terminator does not match its exact operation, "
                        "record, or successors",
@@ -3958,25 +3968,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return failure(body, owner,
                      "failure record must have one invoke, predecessor, "
                      "parameter, and propagation endpoint");
-    }
-  }
-  for (const auto &[instructionId, instruction] : instructionsById) {
-    const std::size_t invokeCount = invokedInstructions[instructionId];
-    const bool fullExpressionRoot = std::any_of(
-        body.fullExpressions.begin(), body.fullExpressions.end(),
-        [&](const MirFullExpression &expression) {
-          return std::find(expression.roots.begin(), expression.roots.end(),
-                           instruction->hirValue) != expression.roots.end();
-        });
-    const bool requiresEdge =
-        supportsMirFailureControlFlow(body.kind) &&
-        requiresMirFailureControlFlow(*instruction, fullExpressionRoot);
-    if ((requiresEdge && invokeCount != 1) ||
-        (!requiresEdge && invokeCount != 0)) {
-      return failure(body, owner,
-                     "failure-capable scalar operation does not have exactly "
-                     "one invoke edge",
-                     instructionBlocks.at(instructionId), instructionId);
     }
   }
   if (std::any_of(fullExpressionMarkers.begin(), fullExpressionMarkers.end(),
@@ -4161,6 +4152,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return beforeOrder->second < afterOrder->second;
     }
     return dominance->dominates(beforeBlock->second, afterBlock->second);
+  };
+  const auto isFullExpressionRoot = [&](const MirInstruction &instruction) {
+    return std::any_of(
+        body.fullExpressions.begin(), body.fullExpressions.end(),
+        [&](const MirFullExpression &expression) {
+          return std::find(expression.roots.begin(), expression.roots.end(),
+                           instruction.hirValue) != expression.roots.end();
+        });
   };
   std::unordered_map<HirValueId, std::size_t> orderedInvocationCounts;
   std::vector<std::size_t> preparedParameterCounts(body.dropObligations.size(),
@@ -4365,6 +4364,102 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                          "different invocation",
                          block.id, invocation.id);
         }
+      }
+    }
+  }
+  struct PreparedCallArgumentContext {
+    std::vector<MirDropObligationId> priorPreparedDrops;
+  };
+  const auto preparedCallArgumentContext = [&](const MirInstruction &detector)
+      -> std::optional<PreparedCallArgumentContext> {
+    if (!detector.result || isFullExpressionRoot(detector)) {
+      return std::nullopt;
+    }
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &invocation : block.instructions) {
+        if (invocation.kind != MirInstructionKind::Call ||
+            invocation.callSite == 0) {
+          continue;
+        }
+        for (std::size_t index = 0; index < invocation.operands.size();
+             ++index) {
+          const MirInstruction *argument =
+              callInputFor(invocation.operands[index]);
+          if (argument == nullptr || argument->hirValue != detector.hirValue ||
+              argument->callInputKind != HirCallInputKind::Value ||
+              argument->operands.size() != 1 ||
+              argument->operands.front().kind != MirOperandKind::Value ||
+              argument->operands.front().value != *detector.result ||
+              !strictlyPrecedes(detector, *argument)) {
+            continue;
+          }
+          PreparedCallArgumentContext context;
+          const auto addPriorStage = [&](const MirInstruction *input) {
+            if (input != nullptr && input->preparedParameterDrop &&
+                strictlyPrecedes(*input, detector)) {
+              context.priorPreparedDrops.push_back(
+                  *input->preparedParameterDrop);
+            }
+          };
+          if (invocation.receiver) {
+            addPriorStage(callInputFor(*invocation.receiver));
+          }
+          for (std::size_t prior = 0; prior < index; ++prior) {
+            addPriorStage(callInputFor(invocation.operands[prior]));
+          }
+          if (!context.priorPreparedDrops.empty()) {
+            return context;
+          }
+        }
+      }
+    }
+    return std::nullopt;
+  };
+  for (const auto &[instructionId, instruction] : instructionsById) {
+    const std::size_t invokeCount = invokedInstructions[instructionId];
+    const bool fullExpressionRoot = isFullExpressionRoot(*instruction);
+    const std::optional<PreparedCallArgumentContext> argumentContext =
+        preparedCallArgumentContext(*instruction);
+    const MirFailureControlFlowPosition position =
+        fullExpressionRoot ? MirFailureControlFlowPosition::FullExpressionRoot
+        : argumentContext.has_value()
+            ? MirFailureControlFlowPosition::PreparedCallArgumentRoot
+            : MirFailureControlFlowPosition::None;
+    const bool requiresEdge =
+        supportsMirFailureControlFlow(body.kind) &&
+        requiresMirFailureControlFlow(*instruction, position);
+    if ((requiresEdge && invokeCount != 1) ||
+        (!requiresEdge && invokeCount != 0)) {
+      return failure(body, owner,
+                     "failure-capable operation does not have exactly one "
+                     "eligible invoke edge",
+                     instructionBlocks.at(instructionId), instructionId);
+    }
+    if (!argumentContext || invokeCount != 1) {
+      continue;
+    }
+    const MirBlock &producer =
+        body.blocks[instructionBlocks.at(instructionId) - 1];
+    const MirBlock &failureBlock =
+        body.blocks[producer.terminator.elseTarget - 1];
+    for (const MirDropObligationId prepared :
+         argumentContext->priorPreparedDrops) {
+      const std::size_t cleanupCount = static_cast<std::size_t>(std::count_if(
+          failureBlock.instructions.begin(), failureBlock.instructions.end(),
+          [&](const MirInstruction &cleanup) {
+            return cleanup.kind == MirInstructionKind::Drop &&
+                   cleanup.lifecycle.size() == 1 &&
+                   cleanup.lifecycle.front().kind ==
+                       MirLifecycleEventKind::Drop &&
+                   cleanup.lifecycle.front().source == prepared &&
+                   cleanup.lifecycle.front().failureCleanup;
+          }));
+      if (cleanupCount != 1) {
+        return failure(
+            body, owner,
+            "nested call-argument failure cleanup must drop every earlier "
+            "prepared owning parameter exactly once",
+            producer.id, instructionId);
       }
     }
   }

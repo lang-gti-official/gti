@@ -248,10 +248,10 @@ int caller(mut int value) {
   return leaf(value);
 }
 
-int consume(Token token, int value) { return value; }
+int consume(Token first, Token second, int value) { return value; }
 
 int deferred_nested_argument(mut int value) {
-  return consume(Token(4), value + 1);
+  return consume(Token(4), Token(5), value + 1);
 }
 
 Token produce(mut int value) {
@@ -322,57 +322,121 @@ int main() { return caller(1); }
 
   const lang::MirBody *deferred =
       functionBody(frontend, "deferred_nested_argument");
-  std::size_t deferredLocalOrigins = 0;
-  std::size_t deferredPreparedParameters = 0;
-  bool deferredPreparedTransfer = false;
-  bool deferredInvokePropagates = false;
+  std::vector<lang::MirDropObligationId> deferredPreparedParameters;
+  const lang::MirInstruction *nestedDetector = nullptr;
+  const lang::MirInstruction *deferredCall = nullptr;
+  const lang::MirFailureRecord *nestedRecord = nullptr;
+  const lang::MirFailureRecord *deferredCallRecord = nullptr;
   if (deferred != nullptr) {
     for (const lang::MirBlock &block : deferred->blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
-        deferredLocalOrigins +=
-            !instruction.definedFailure.localOrigins.empty();
-        if (instruction.kind != lang::MirInstructionKind::CallInput ||
-            !instruction.preparedParameterDrop) {
-          continue;
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.preparedParameterDrop) {
+          deferredPreparedParameters.push_back(
+              *instruction.preparedParameterDrop);
         }
-        ++deferredPreparedParameters;
-        for (const lang::MirBlock &candidateBlock : deferred->blocks) {
-          for (const lang::MirInstruction &candidate :
-               candidateBlock.instructions) {
-            deferredPreparedTransfer =
-                deferredPreparedTransfer ||
-                (candidate.kind == lang::MirInstructionKind::Call &&
-                 std::any_of(
-                     candidate.lifecycle.begin(), candidate.lifecycle.end(),
-                     [&](const lang::MirLifecycleEvent &event) {
-                       return event.kind ==
-                                  lang::MirLifecycleEventKind::TransferOut &&
-                              event.source ==
-                                  *instruction.preparedParameterDrop;
-                     }));
-          }
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            !instruction.definedFailure.localOrigins.empty() &&
+            instruction.definedFailure.propagation ==
+                lang::FailurePropagationKind::None) {
+          nestedDetector = &instruction;
+        }
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.operands.size() == 3) {
+          deferredCall = &instruction;
         }
       }
     }
-    if (deferred->failureRecords.size() == 1) {
-      const lang::MirFailureRecord &record = deferred->failureRecords.front();
+    for (const lang::MirFailureRecord &record : deferred->failureRecords) {
       const lang::MirBlock *producer =
           deferred->findBlock(record.producerBlock);
-      const lang::MirInstruction *invocation =
+      const lang::MirInstruction *instruction =
           producer == nullptr || producer->instructions.empty()
               ? nullptr
               : &producer->instructions.back();
-      deferredInvokePropagates =
-          invocation != nullptr && invocation->definedFailure.propagation ==
-                                       lang::FailurePropagationKind::DirectCall;
+      if (instruction == nestedDetector) {
+        nestedRecord = &record;
+      }
+      if (instruction == deferredCall) {
+        deferredCallRecord = &record;
+      }
     }
   }
-  expect(deferred != nullptr && deferredLocalOrigins != 0 &&
-             deferredPreparedParameters == 1 && deferredPreparedTransfer &&
-             deferredInvokePropagates,
-         "nested argument detectors should remain identity-only in this "
-         "bounded slice while owning parameter staging and root-call "
-         "propagation remain explicit");
+  std::vector<lang::MirDropObligationId> nestedFailureDrops;
+  if (deferred != nullptr && nestedRecord != nullptr) {
+    const lang::MirBlock *cleanup =
+        deferred->findBlock(nestedRecord->parameterBlock);
+    if (cleanup != nullptr) {
+      for (const lang::MirInstruction &instruction : cleanup->instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Drop ||
+            instruction.lifecycle.size() != 1 ||
+            !instruction.lifecycle.front().failureCleanup) {
+          continue;
+        }
+        const lang::MirDropObligation *obligation =
+            deferred->findDropObligation(instruction.lifecycle.front().source);
+        if (obligation != nullptr &&
+            obligation->kind ==
+                lang::MirDropObligationKind::PreparedParameter) {
+          nestedFailureDrops.push_back(obligation->id);
+        }
+      }
+    }
+  }
+  const bool reversePreparedCleanup =
+      nestedFailureDrops.size() == deferredPreparedParameters.size() &&
+      std::equal(nestedFailureDrops.begin(), nestedFailureDrops.end(),
+                 deferredPreparedParameters.rbegin());
+  const bool allPreparedTransferAtCall =
+      deferredCall != nullptr &&
+      std::all_of(
+          deferredPreparedParameters.begin(), deferredPreparedParameters.end(),
+          [&](lang::MirDropObligationId prepared) {
+            return std::count_if(
+                       deferredCall->lifecycle.begin(),
+                       deferredCall->lifecycle.end(),
+                       [&](const lang::MirLifecycleEvent &event) {
+                         return event.kind ==
+                                    lang::MirLifecycleEventKind::TransferOut &&
+                                event.source == prepared;
+                       }) == 1;
+          });
+  bool nestedFeedsFinalArgument = false;
+  if (deferred != nullptr && nestedDetector != nullptr &&
+      nestedDetector->result && deferredCall != nullptr &&
+      deferredCall->operands.size() == 3) {
+    const lang::MirValue *argumentValue =
+        deferred->findValue(deferredCall->operands[2].value);
+    const lang::MirBlock *argumentBlock =
+        argumentValue == nullptr
+            ? nullptr
+            : deferred->findBlock(argumentValue->definitionBlock);
+    const auto argumentInput =
+        argumentBlock == nullptr
+            ? std::vector<lang::MirInstruction>::const_iterator{}
+            : std::find_if(argumentBlock->instructions.begin(),
+                           argumentBlock->instructions.end(),
+                           [&](const lang::MirInstruction &instruction) {
+                             return instruction.id == argumentValue->definition;
+                           });
+    nestedFeedsFinalArgument =
+        argumentBlock != nullptr &&
+        argumentInput != argumentBlock->instructions.end() &&
+        argumentInput->kind == lang::MirInstructionKind::CallInput &&
+        argumentInput->callInputIndex == 2 &&
+        argumentInput->operands.size() == 1 &&
+        argumentInput->operands.front().kind == lang::MirOperandKind::Value &&
+        argumentInput->operands.front().value == *nestedDetector->result;
+  }
+  expect(deferred != nullptr && deferred->failureRecords.size() == 2 &&
+             deferredPreparedParameters.size() == 2 &&
+             nestedDetector != nullptr && nestedRecord != nullptr &&
+             deferredCall != nullptr && deferredCallRecord != nullptr &&
+             nestedFeedsFinalArgument && reversePreparedCleanup &&
+             allPreparedTransferAtCall,
+         "a later scalar argument failure should branch before the callee, "
+         "drop earlier prepared owners in reverse order, and reserve transfer "
+         "for the normal call path");
 
   const lang::MirBody *owningResult = functionBody(frontend, "owning_result");
   bool exactOwningResultEdge = false;
@@ -508,6 +572,123 @@ int main() { return caller(1); }
                                   "success edge"),
          "MIR verification should reject an owning call result omitted from "
          "the invoke success edge");
+
+  const std::optional<lang::HirFunctionInstanceId> deferredId =
+      functionInstance(frontend, "deferred_nested_argument");
+  lang::MirProgram forgedArgumentRelation = frontend.mir;
+  lang::MirBody *forgedArgumentBody =
+      deferredId ? functionBody(forgedArgumentRelation, *deferredId) : nullptr;
+  bool rewiredArgument = false;
+  if (forgedArgumentBody != nullptr) {
+    lang::MirInstruction *detector = nullptr;
+    for (lang::MirBlock &block : forgedArgumentBody->blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            !instruction.definedFailure.localOrigins.empty() &&
+            instruction.definedFailure.propagation ==
+                lang::FailurePropagationKind::None) {
+          detector = &instruction;
+          break;
+        }
+      }
+      if (detector != nullptr) {
+        break;
+      }
+    }
+    if (detector != nullptr && detector->result) {
+      const auto replacement =
+          std::find_if(detector->operands.begin(), detector->operands.end(),
+                       [](const lang::MirOperand &operand) {
+                         return operand.kind == lang::MirOperandKind::Value;
+                       });
+      for (lang::MirBlock &block : forgedArgumentBody->blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (replacement != detector->operands.end() &&
+              instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callInputIndex == 2 &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind ==
+                  lang::MirOperandKind::Value &&
+              instruction.operands.front().value == *detector->result) {
+            instruction.operands.front() = *replacement;
+            rewiredArgument = true;
+            break;
+          }
+        }
+        if (rewiredArgument) {
+          break;
+        }
+      }
+    }
+    (void)lang::rebuildMirValueUses(*forgedArgumentBody);
+  }
+  const lang::MirVerificationResult forgedArgumentRelationResult =
+      lang::verifyMirProgram(forgedArgumentRelation);
+  expect(rewiredArgument && !forgedArgumentRelationResult.valid() &&
+             hasVerificationError(forgedArgumentRelationResult,
+                                  "eligible invoke edge"),
+         "MIR verification should reject a nested invoke detached from its "
+         "exact indexed call argument");
+
+  lang::MirProgram missingPreparedCleanup = frontend.mir;
+  lang::MirBody *missingPreparedCleanupBody =
+      deferredId ? functionBody(missingPreparedCleanup, *deferredId) : nullptr;
+  bool removedPreparedCleanup = false;
+  if (missingPreparedCleanupBody != nullptr) {
+    lang::MirBlock *cleanup = nullptr;
+    for (const lang::MirFailureRecord &record :
+         missingPreparedCleanupBody->failureRecords) {
+      const lang::MirBlock *producer =
+          missingPreparedCleanupBody->findBlock(record.producerBlock);
+      const lang::MirInstruction *instruction =
+          producer == nullptr || producer->instructions.empty()
+              ? nullptr
+              : &producer->instructions.back();
+      if (instruction != nullptr &&
+          instruction->kind == lang::MirInstructionKind::Compute &&
+          !instruction->definedFailure.localOrigins.empty()) {
+        cleanup =
+            &missingPreparedCleanupBody->blocks[record.parameterBlock - 1];
+        break;
+      }
+    }
+    if (cleanup != nullptr) {
+      const auto drop = std::find_if(
+          cleanup->instructions.begin(), cleanup->instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            if (instruction.kind != lang::MirInstructionKind::Drop ||
+                instruction.lifecycle.size() != 1) {
+              return false;
+            }
+            const lang::MirDropObligation *obligation =
+                missingPreparedCleanupBody->findDropObligation(
+                    instruction.lifecycle.front().source);
+            return obligation != nullptr &&
+                   obligation->kind ==
+                       lang::MirDropObligationKind::PreparedParameter;
+          });
+      if (drop != cleanup->instructions.end()) {
+        const lang::MirDropObligationId removed =
+            drop->lifecycle.front().source;
+        cleanup->instructions.erase(drop);
+        for (lang::MirCleanupBoundary &boundary :
+             missingPreparedCleanupBody->cleanupBoundaries) {
+          if (boundary.kind == lang::MirCleanupBoundaryKind::Failure) {
+            std::erase(boundary.obligations, removed);
+          }
+        }
+        removedPreparedCleanup = true;
+      }
+    }
+    (void)lang::rebuildMirValueUses(*missingPreparedCleanupBody);
+  }
+  const lang::MirVerificationResult missingPreparedCleanupResult =
+      lang::verifyMirProgram(missingPreparedCleanup);
+  expect(removedPreparedCleanup && !missingPreparedCleanupResult.valid() &&
+             hasVerificationError(missingPreparedCleanupResult,
+                                  "nested call-argument failure cleanup"),
+         "MIR verification should reject a nested argument failure that omits "
+         "an earlier prepared owner from cleanup");
 }
 
 void testEmptyDescriptorContract() {
