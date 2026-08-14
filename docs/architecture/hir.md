@@ -111,23 +111,27 @@ unsafe, move, and borrow facts to explicit values and statements. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
-The bounded M-EXEC-01 ordinary-call slices give an eligible call a
-`HirCallPlan`. Eligibility is deliberately narrow: the call is a concrete,
-non-intrinsic, non-construction, non-operator function call; source argument
-cardinality exactly matches the selected parameters; no pack expansion is
-present; and every parameter is either a supported scalar/reference form or
-an exact class value without borrowed state. The plan names the receiver, when
-present, once and records each argument in source order with its exact concrete
-parameter type. Its input role is value, class-copy value, class-move value,
-read borrow, or mutable borrow. A class place is eligible only when it can be
-copied; a class value is eligible only when it can be moved. The legacy operand
-vector remains source provenance and compatibility-backend input; MIR consumes
-the plan as schedule authority for these slices.
+The bounded M-EXEC-01 invocation slices give an eligible ordinary call or
+ordinary constructor a `HirCallPlan`. Eligibility is deliberately narrow: the
+target is concrete and non-intrinsic; source argument cardinality exactly
+matches the selected parameters; no pack expansion is present; and every
+parameter is either a supported scalar/reference form or an exact class value
+without borrowed state. Ordinary function calls exclude operators, lambdas,
+deferred callables, and construction. Ordinary constructors require an exact
+constructor target and at least one parameter; generated/default zero-argument
+construction and copy/move special construction remain unscheduled. The plan
+names a function receiver, when present, once and records each argument in
+source order with its exact concrete parameter type. Constructors have no
+receiver. An input role is value, class-copy value, class-move value, read
+borrow, or mutable borrow. A class place is eligible only when it can be copied;
+a class value is eligible only when it can be moved. The legacy operand vector
+remains source provenance and compatibility-backend input; MIR consumes the
+plan as schedule authority for these slices.
 
 This is not yet a complete executable schedule. Borrowed-state class values,
-packs, overloaded/callable calls, operators, conditionals, target-place
-formation, result destinations, and module/static initializer bodies remain
-outside the bounded plan.
+packs, overloaded/callable calls, operators, special/default construction,
+conditionals, target-place formation, result destinations, and module/static
+initializer bodies remain outside the bounded plan.
 
 M-LIFE-01 maps each AST full-expression root selected by `SemanticModel` to a
 snapshot-local `HirFullExpressionId`; HIR does not infer endpoints from

@@ -1137,10 +1137,384 @@ int main() {
          "class values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v12\n") &&
+  expect(dump.starts_with("mir-body-v13\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos,
-         "MIR v12 should serialize the exact class-value parameter modes");
+         "MIR v13 should serialize the exact class-value parameter modes");
+}
+
+void testOrderedOrdinaryConstructorInputs() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("ordered-constructor-inputs.gti", R"(
+class CopiedValue {
+  int value;
+public:
+  CopiedValue(int input) : value(input) {}
+};
+
+class MovedValue {
+  int value;
+public:
+  MovedValue(int input) : value(input) {}
+  MovedValue(MovedValue& other) = delete;
+  MovedValue(MovedValue&& other) = default;
+  ~MovedValue() {}
+};
+
+class Product {
+public:
+  Product(int scalar, int& observed, mut int& changed, CopiedValue copied,
+          MovedValue moved, MovedValue temporary) {
+    changed += scalar;
+  }
+};
+
+class Empty {
+public:
+  Empty() {}
+};
+
+int main() {
+  mut int observed = 2;
+  mut int changed = 3;
+  CopiedValue copied = CopiedValue(1);
+  CopiedValue copied_again = CopiedValue(copied);
+  MovedValue moved = MovedValue(2);
+  Product product = Product(4, observed, changed, copied_again,
+                            std::move(moved), MovedValue(3));
+  Empty empty = Empty();
+  return changed - 7;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected ordered-constructor diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "ordinary constructors should lower supported arguments through a "
+         "verified ordered parameter schedule");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::HirConstructorInstance *productTarget = nullptr;
+  const lang::HirConstructorInstance *emptyTarget = nullptr;
+  for (const lang::HirConstructorInstance &constructor :
+       frontend.hir.constructorInstances()) {
+    if (constructor.source != nullptr &&
+        constructor.source->name().lexeme == "Product") {
+      productTarget = &constructor;
+    }
+    if (constructor.source != nullptr &&
+        constructor.source->name().lexeme == "Empty") {
+      emptyTarget = &constructor;
+    }
+  }
+  const lang::HirFunctionInstance *mainTarget = nullptr;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source != nullptr &&
+        function.source->name().lexeme == "main") {
+      mainTarget = &function;
+      break;
+    }
+  }
+  const lang::HirValue *productConstruction = nullptr;
+  const lang::HirValue *copyConstruction = nullptr;
+  const lang::HirValue *emptyConstruction = nullptr;
+  if (mainTarget != nullptr && productTarget != nullptr) {
+    for (const lang::HirValue &value : mainTarget->body.values) {
+      if (value.constructorTarget == productTarget->id) {
+        productConstruction = &value;
+      }
+      if (value.constructorKind == lang::ConstructorKind::Copy) {
+        copyConstruction = &value;
+      }
+      if (emptyTarget != nullptr &&
+          value.constructorTarget == emptyTarget->id) {
+        emptyConstruction = &value;
+      }
+    }
+  }
+
+  const std::array expectedKinds{
+      lang::HirCallInputKind::Value,         lang::HirCallInputKind::ReadBorrow,
+      lang::HirCallInputKind::MutableBorrow, lang::HirCallInputKind::CopyValue,
+      lang::HirCallInputKind::MoveValue,     lang::HirCallInputKind::MoveValue};
+  bool exactHirPlan =
+      productConstruction != nullptr && productConstruction->callPlan &&
+      !productConstruction->callPlan->receiver &&
+      productConstruction->callPlan->arguments.size() == expectedKinds.size();
+  for (std::size_t index = 0; exactHirPlan && index < expectedKinds.size();
+       ++index) {
+    const lang::HirCallArgument &argument =
+        productConstruction->callPlan->arguments[index];
+    exactHirPlan =
+        argument.parameterIndex == index &&
+        argument.kind == expectedKinds[index] &&
+        argument.parameterType == productConstruction->parameterTypes[index] &&
+        mainTarget->body.findValue(argument.value) != nullptr;
+  }
+  expect(productTarget != nullptr && mainTarget != nullptr && exactHirPlan &&
+             copyConstruction != nullptr && !copyConstruction->callPlan &&
+             emptyConstruction != nullptr && !emptyConstruction->callPlan,
+         "HIR should retain source-ordered ordinary-constructor inputs while "
+         "leaving special and zero-argument construction outside this bounded "
+         "schedule");
+
+  const lang::MirFunctionInstance *mirMain =
+      mainTarget == nullptr ? nullptr
+                            : frontend.mir.findFunctionInstance(mainTarget->id);
+  const lang::MirInstruction *construct = nullptr;
+  if (mirMain != nullptr && productTarget != nullptr) {
+    for (const lang::MirBlock &block : mirMain->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            instruction.constructorTarget == productTarget->id) {
+          construct = &instruction;
+          break;
+        }
+      }
+      if (construct != nullptr) {
+        break;
+      }
+    }
+  }
+  const auto definitionFor =
+      [&](const lang::MirOperand &operand) -> const lang::MirInstruction * {
+    if (mirMain == nullptr || operand.kind != lang::MirOperandKind::Value) {
+      return nullptr;
+    }
+    const lang::MirValue *value = mirMain->body.findValue(operand.value);
+    const lang::MirBlock *block =
+        value == nullptr ? nullptr
+                         : mirMain->body.findBlock(value->definitionBlock);
+    if (block == nullptr) {
+      return nullptr;
+    }
+    const auto found =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const lang::MirInstruction &instruction) {
+                       return instruction.id == value->definition;
+                     });
+    return found == block->instructions.end() ? nullptr : &*found;
+  };
+
+  std::array<const lang::MirInstruction *, 6> inputs{};
+  if (construct != nullptr && construct->operands.size() == inputs.size()) {
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+      inputs[index] = definitionFor(construct->operands[index]);
+    }
+  }
+  const auto exactTransfer = [&](const lang::MirInstruction *input) {
+    return input != nullptr && input->operands.size() == 1 &&
+           input->operands.front().kind == lang::MirOperandKind::Value &&
+           input->lifecycle.size() == 1 &&
+           input->lifecycle.front().kind ==
+               lang::MirLifecycleEventKind::TransferOut;
+  };
+  bool exactMirPlan =
+      construct != nullptr && productConstruction != nullptr &&
+      construct->callSite == productConstruction->id &&
+      construct->parameterTypes == productConstruction->parameterTypes &&
+      construct->operands.size() == inputs.size();
+  const lang::MirInstruction *previous = nullptr;
+  for (std::size_t index = 0; exactMirPlan && index < inputs.size(); ++index) {
+    const lang::MirInstruction *input = inputs[index];
+    exactMirPlan = input != nullptr &&
+                   input->kind == lang::MirInstructionKind::CallInput &&
+                   input->callSite == construct->callSite &&
+                   input->callInputRole == lang::MirCallInputRole::Argument &&
+                   input->callInputIndex == index &&
+                   input->callInputKind == expectedKinds[index] &&
+                   input->info.type == construct->parameterTypes[index] &&
+                   input->operands.size() == 1 &&
+                   mirMain->body.usesOf(*input->result).size() == 1 &&
+                   (previous == nullptr || previous->id < input->id);
+    previous = input;
+  }
+  const bool constructTransfers =
+      construct != nullptr &&
+      std::any_of(construct->lifecycle.begin(), construct->lifecycle.end(),
+                  [](const lang::MirLifecycleEvent &event) {
+                    return event.kind ==
+                           lang::MirLifecycleEventKind::TransferOut;
+                  });
+  expect(exactMirPlan && previous != nullptr && previous->id < construct->id &&
+             inputs[0]->operands.front().kind == lang::MirOperandKind::Value &&
+             inputs[1]->operands.front().kind ==
+                 lang::MirOperandKind::BorrowRead &&
+             inputs[2]->operands.front().kind ==
+                 lang::MirOperandKind::BorrowWrite &&
+             inputs[3]->operands.front().kind == lang::MirOperandKind::Copy &&
+             exactTransfer(inputs[4]) && exactTransfer(inputs[5]) &&
+             !constructTransfers,
+         "MIR should prepare constructor arguments left to right and transfer "
+         "owned temporaries at their parameter checkpoints");
+
+  const auto mutableMain = [&](lang::MirProgram &program) {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    return mainTarget == nullptr || mainTarget->id == 0 ||
+                   mainTarget->id > functions.size()
+               ? static_cast<lang::MirFunctionInstance *>(nullptr)
+               : &functions[mainTarget->id - 1];
+  };
+  const auto hasVerificationMessage =
+      [](const lang::MirVerificationResult &result, std::string_view text) {
+        return std::any_of(result.errors.begin(), result.errors.end(),
+                           [&](const lang::MirVerificationError &error) {
+                             return error.message.find(text) !=
+                                    std::string::npos;
+                           });
+      };
+  const auto mutableProductConstruction =
+      [&](lang::MirFunctionInstance &function) -> lang::MirInstruction * {
+    for (lang::MirBlock &block : function.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            productTarget != nullptr &&
+            instruction.constructorTarget == productTarget->id) {
+          return &instruction;
+        }
+      }
+    }
+    return nullptr;
+  };
+
+  lang::MirProgram forgedEmptySchedule = frontend.mir;
+  lang::MirFunctionInstance *forgedEmptyMain = mutableMain(forgedEmptySchedule);
+  lang::MirInstruction *forgedEmptyConstruct = nullptr;
+  if (forgedEmptyMain != nullptr && emptyTarget != nullptr) {
+    for (lang::MirBlock &block : forgedEmptyMain->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            instruction.constructorTarget == emptyTarget->id) {
+          forgedEmptyConstruct = &instruction;
+          break;
+        }
+      }
+      if (forgedEmptyConstruct != nullptr) {
+        break;
+      }
+    }
+  }
+  if (forgedEmptyConstruct != nullptr) {
+    forgedEmptyConstruct->callSite = forgedEmptyConstruct->hirValue;
+  }
+  const lang::MirVerificationResult forgedEmptyResult =
+      lang::verifyMirProgram(forgedEmptySchedule);
+  expect(forgedEmptyConstruct != nullptr && !forgedEmptyResult.valid() &&
+             hasVerificationMessage(forgedEmptyResult,
+                                    "invalid shape or reference"),
+         "MIR verification should reject an ordered marker on zero-argument "
+         "construction");
+
+  lang::MirProgram bypassed = frontend.mir;
+  lang::MirFunctionInstance *bypassedMain = mutableMain(bypassed);
+  lang::MirInstruction *bypassedConstruct =
+      bypassedMain == nullptr ? nullptr
+                              : mutableProductConstruction(*bypassedMain);
+  bool bypassedInput = false;
+  if (bypassedMain != nullptr && bypassedConstruct != nullptr &&
+      !bypassedConstruct->operands.empty()) {
+    const lang::MirOperand prepared = bypassedConstruct->operands.front();
+    const lang::MirValue *preparedValue =
+        prepared.kind == lang::MirOperandKind::Value
+            ? bypassedMain->body.findValue(prepared.value)
+            : nullptr;
+    lang::MirInstruction *input = nullptr;
+    if (preparedValue != nullptr) {
+      for (lang::MirBlock &block : bypassedMain->body.blocks) {
+        const auto found =
+            std::find_if(block.instructions.begin(), block.instructions.end(),
+                         [&](const lang::MirInstruction &instruction) {
+                           return instruction.id == preparedValue->definition;
+                         });
+        if (found != block.instructions.end()) {
+          input = &*found;
+          break;
+        }
+      }
+    }
+    if (input != nullptr && !input->operands.empty()) {
+      bypassedConstruct->operands.front() = input->operands.front();
+      bypassedInput = lang::rebuildMirValueUses(bypassedMain->body);
+    }
+  }
+  const lang::MirVerificationResult bypassedResult =
+      lang::verifyMirProgram(bypassed);
+  expect(
+      bypassedInput && !bypassedResult.valid() &&
+          hasVerificationMessage(bypassedResult, "exactly one executable use"),
+      "MIR verification should reject a constructor that bypasses its "
+      "prepared argument checkpoint");
+
+  lang::MirProgram wrongRole = frontend.mir;
+  lang::MirFunctionInstance *wrongRoleMain = mutableMain(wrongRole);
+  lang::MirInstruction *wrongRoleConstruct =
+      wrongRoleMain == nullptr ? nullptr
+                               : mutableProductConstruction(*wrongRoleMain);
+  bool changedRole = false;
+  if (wrongRoleMain != nullptr && wrongRoleConstruct != nullptr) {
+    for (lang::MirBlock &block : wrongRoleMain->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callSite == wrongRoleConstruct->callSite &&
+            instruction.callInputIndex == 0) {
+          instruction.callInputRole = lang::MirCallInputRole::Receiver;
+          changedRole = true;
+          break;
+        }
+      }
+      if (changedRole) {
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult wrongRoleResult =
+      lang::verifyMirProgram(wrongRole);
+  expect(changedRole && !wrongRoleResult.valid() &&
+             hasVerificationMessage(wrongRoleResult,
+                                    "does not match its ordered invocation"),
+         "MIR verification should reject a constructor argument forged into "
+         "a receiver checkpoint");
+
+  lang::MirProgram reordered = frontend.mir;
+  lang::MirFunctionInstance *reorderedMain = mutableMain(reordered);
+  lang::MirInstruction *reorderedConstruct =
+      reorderedMain == nullptr ? nullptr
+                               : mutableProductConstruction(*reorderedMain);
+  bool reorderedInputs = false;
+  if (reorderedMain != nullptr && reorderedConstruct != nullptr) {
+    for (lang::MirBlock &block : reorderedMain->body.blocks) {
+      std::vector<std::size_t> indices;
+      for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+        const lang::MirInstruction &instruction = block.instructions[index];
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callSite == reorderedConstruct->callSite) {
+          indices.push_back(index);
+        }
+      }
+      if (indices.size() >= 2) {
+        std::iter_swap(block.instructions.begin() +
+                           static_cast<std::ptrdiff_t>(indices[0]),
+                       block.instructions.begin() +
+                           static_cast<std::ptrdiff_t>(indices[1]));
+        reorderedInputs = true;
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult reorderedResult =
+      lang::verifyMirProgram(reordered);
+  expect(reorderedInputs && !reorderedResult.valid(),
+         "MIR verification should reject reordered constructor parameter "
+         "checkpoints");
 }
 
 void testMirTemporaryAndDropObligations() {
@@ -4530,7 +4904,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v12\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v13\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -6529,7 +6903,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v12 ") &&
+  expect(mirDump.starts_with("mir-v13 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -21838,7 +22212,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v12 ") &&
+             mirDump.starts_with("mir-v13 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -23832,6 +24206,7 @@ int main() {
   testMirControlFlowAndOwnershipEffects();
   testOrderedOrdinaryCallInputs();
   testOrderedClassValueCallInputs();
+  testOrderedOrdinaryConstructorInputs();
   testMirTemporaryAndDropObligations();
   testDefiniteReturnAnalysis();
   testProgramArgumentsEntryPoint();

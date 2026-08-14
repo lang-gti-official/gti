@@ -905,10 +905,11 @@ defined-failure, and compatibility decisions, restriction ledger, I-CAP-01,
 C-TYPE-01, C-GLOBAL-01, the target/data-layout contract, and M-OWN-01/M-OWN-02
 place authority and M-LIFE-01's normal-exit temporary/drop authority are
 complete. The scalar/reference and eligible non-borrowed class-value ordinary-
-call M-EXEC-01 slices now have verified HIR/MIR input order; the first
-recommended unowned task is the next bounded M-EXEC-01 family because every
-readiness workload needs authoritative ordered materialization, not because
-lowering machinery is independently the product.
+call and concrete ordinary-constructor M-EXEC-01 slices now have verified
+HIR/MIR input order; the first recommended unowned task is the operator and
+one-time assignment-place family because every readiness workload needs
+authoritative ordered materialization, not because lowering machinery is
+independently the product.
 `D-COMPAT-01` is complete on the independent release-policy lane. The executable
 compiler critical path starts with ordered MIR lowering, then co-delivered
 failure/runtime lowering, the first

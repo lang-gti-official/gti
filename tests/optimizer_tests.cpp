@@ -1452,7 +1452,7 @@ int main() {
   }
   expect(wrongSiteReceiver != nullptr &&
              hasMessage(wrongSite,
-                        "call input use does not match its ordered call site"),
+                        "call input use does not match its ordered invocation"),
          "the verifier should reject a receiver checkpoint assigned to a "
          "different call site");
 
@@ -1489,13 +1489,13 @@ int main() {
   if (wrongTypeCall != nullptr && !wrongTypeCall->parameterTypes.empty()) {
     wrongTypeCall->parameterTypes.front() = lang::SemanticType::Bool;
   }
-  expect(wrongTypeCall != nullptr &&
-             hasMessage(
-                 wrongType,
-                 "ordered call argument is not prepared by its exact indexed "
-                 "input"),
-         "the verifier should reject a prepared argument whose exact selected "
-         "parameter type changes");
+  expect(
+      wrongTypeCall != nullptr &&
+          hasMessage(wrongType,
+                     "ordered invocation argument is not prepared by its exact "
+                     "indexed input"),
+      "the verifier should reject a prepared argument whose exact selected "
+      "parameter type changes");
 
   lang::MirBody reordered = baseline;
   lang::MirInstruction *reorderedCall = callTo(reordered, member->id);
@@ -1528,12 +1528,13 @@ int main() {
       }
     }
   }
-  expect(swapped &&
-             hasMessage(reordered,
-                        "ordered call inputs must form a strict receiver, "
-                        "argument, invocation chain"),
-         "the verifier should reject a receiver/argument schedule reordered "
-         "before invocation");
+  expect(
+      swapped &&
+          hasMessage(reordered,
+                     "ordered invocation inputs must form a strict receiver, "
+                     "argument, invocation chain"),
+      "the verifier should reject a receiver/argument schedule reordered "
+      "before invocation");
 }
 
 void testOrderedClassValueCallInputVerification() {

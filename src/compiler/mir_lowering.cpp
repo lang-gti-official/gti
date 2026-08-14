@@ -2099,25 +2099,51 @@ private:
   void emitConstruct(const HirValue &value) {
     MirInstruction construct{.kind = MirInstructionKind::Construct,
                              .hirValue = value.id,
+                             .callSite = value.callPlan ? value.id : 0,
                              .result = resultFor(value),
                              .constructorTarget = value.constructorTarget,
                              .constructorKind = value.constructorKind,
                              .info = value.info};
     const std::vector<HirValueId> arguments = callArgumentValues(value);
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-      const SemanticType parameter =
-          index < value.parameterTypes.size()
-              ? value.parameterTypes[index]
-              : (findValue(arguments[index]) == nullptr
-                     ? SemanticType::Unknown
-                     : findValue(arguments[index])->info.type);
-      construct.parameterTypes.push_back(parameter);
-      construct.operands.push_back(
-          value.constructorKind == ConstructorKind::Ordinary
-              ? argumentOperand(arguments[index], parameter)
-              : valueOperand(arguments[index]));
+    std::vector<MirOperand> sourceArguments;
+    sourceArguments.reserve(arguments.size());
+    if (value.callPlan) {
+      if (value.callPlan->receiver ||
+          value.callPlan->arguments.size() != arguments.size()) {
+        valid = false;
+        return;
+      }
+      for (const HirCallArgument &argument : value.callPlan->arguments) {
+        construct.parameterTypes.push_back(argument.parameterType);
+        sourceArguments.push_back(
+            argument.kind == HirCallInputKind::CopyValue
+                ? copyArgumentOperand(argument.value, argument.parameterType)
+                : argumentOperand(argument.value, argument.parameterType));
+        construct.operands.push_back(
+            prepareCallInput(value.id, argument.value, argument.parameterType,
+                             argument.kind, MirCallInputRole::Argument,
+                             argument.parameterIndex, sourceArguments.back()));
+      }
+    } else {
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const SemanticType parameter =
+            index < value.parameterTypes.size()
+                ? value.parameterTypes[index]
+                : (findValue(arguments[index]) == nullptr
+                       ? SemanticType::Unknown
+                       : findValue(arguments[index])->info.type);
+        construct.parameterTypes.push_back(parameter);
+        construct.operands.push_back(
+            value.constructorKind == ConstructorKind::Ordinary
+                ? argumentOperand(arguments[index], parameter)
+                : valueOperand(arguments[index]));
+      }
     }
-    const MirPlaceId origin = borrowOriginPlace(value, construct);
+    MirInstruction originConstruct = construct;
+    if (!sourceArguments.empty()) {
+      originConstruct.operands = sourceArguments;
+    }
+    const MirPlaceId origin = borrowOriginPlace(value, originConstruct);
     construct.borrowOrigin = value.borrowOrigin;
     construct.borrowArgument = value.borrowArgument;
     construct.borrowAccess = value.borrowAccess;
@@ -2130,15 +2156,17 @@ private:
         scopes.back().loans.push_back(loan);
       }
     }
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-      const SemanticType parameter =
-          index < value.parameterTypes.size()
-              ? value.parameterTypes[index]
-              : (findValue(arguments[index]) == nullptr
-                     ? SemanticType::Unknown
-                     : findValue(arguments[index])->info.type);
-      if (parameter.kind != SemanticType::Reference) {
-        transferTemporaryOut(construct, arguments[index]);
+    if (!value.callPlan) {
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const SemanticType parameter =
+            index < value.parameterTypes.size()
+                ? value.parameterTypes[index]
+                : (findValue(arguments[index]) == nullptr
+                       ? SemanticType::Unknown
+                       : findValue(arguments[index])->info.type);
+        if (parameter.kind != SemanticType::Reference) {
+          transferTemporaryOut(construct, arguments[index]);
+        }
       }
     }
     (void)initializeValueLifecycle(construct, value);

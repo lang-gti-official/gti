@@ -153,17 +153,21 @@ argument cleanup so it does not depend on native C++ argument evaluation order.
 The bounded M-EXEC-01 gate is split across `compiler_pipeline` and
 `optimizer_foundation`. Compiler tests retain exact HIR receiver/argument roles
 and the MIR receiver, indexed arguments, then invocation chain for ordinary
-scalar/reference calls and eligible non-borrowed class values. They prove a
+scalar/reference calls, eligible non-borrowed class values, and concrete
+ordinary constructors with supported arguments. Constructor coverage proves
+there is no receiver, the exact constructor target survives, and copy/move
+special construction remains outside the bounded schedule. The tests prove a
 class lvalue is copied from its exact place, an owned class value is moved, and
 each active temporary obligation transfers at its own checkpoint rather than
-at the final call. Optimizer mutations reject wrong call-site,
+at the final call or construct. Optimizer mutations reject wrong call-site,
 duplicate/abandoned or directly bypassed inputs, selected-parameter type drift,
 receiver/argument reordering, copy/move role forgery, missing or misplaced
-transfer, and lost exact call targets. Effect coverage treats class copy/move
-construction as conservative user-code barriers and keeps every checkpoint
-non-removable and non-reorderable. Later M-EXEC-01 slices still own
-borrowed-state class values, remaining call forms, place/operator/initializer
-schedules, and cleanup composition.
+transfer, lost exact targets, a constructor receiver role, and constructor
+argument reordering. Effect coverage treats class copy/move construction as
+conservative user-code barriers and keeps every checkpoint non-removable and
+non-reorderable. Later M-EXEC-01 slices still own borrowed-state class values,
+remaining call and construction forms, place/operator/initializer schedules,
+and cleanup composition.
 Matching M-BACK migrations own production authority, the full supported-mode
 matrix, and native-compiler runtime traces before any conservative semantic
 restriction is removed. A compatibility emitter trace is evidence for

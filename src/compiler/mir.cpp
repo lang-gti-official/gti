@@ -2407,8 +2407,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (!callInput && instruction.callInputRole) ||
         (instruction.kind != MirInstructionKind::CallInput &&
          instruction.kind != MirInstructionKind::Call &&
+         instruction.kind != MirInstructionKind::Construct &&
          instruction.callSite != 0) ||
-        (instruction.kind == MirInstructionKind::Call &&
+        ((instruction.kind == MirInstructionKind::Call ||
+          instruction.kind == MirInstructionKind::Construct) &&
          instruction.callSite != 0 &&
          instruction.callSite != instruction.hirValue) ||
         (instruction.kind != MirInstructionKind::Call &&
@@ -2660,10 +2662,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                instruction.dispatchOwner.kind == SemanticType::Class)) &&
              validRawMemberCallReceiver(instruction);
     case MirInstructionKind::Construct:
-      return noOperation && hasResult &&
+      return noOperation && hasResult && !instruction.receiver &&
              instruction.info.type.kind == SemanticType::Class &&
              instruction.intrinsic == IntrinsicKind::None &&
              !instruction.functionTarget && !instruction.lambdaTarget &&
+             (instruction.callSite == 0 ||
+              (instruction.constructorTarget &&
+               instruction.constructorKind == ConstructorKind::Ordinary &&
+               !instruction.operands.empty())) &&
              (instruction.constructorKind == ConstructorKind::Ordinary ||
               (!instruction.constructorTarget &&
                instruction.operands.size() == 1));
@@ -3489,15 +3495,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     return dominance->dominates(beforeBlock->second, afterBlock->second);
   };
-  std::unordered_map<HirValueId, std::size_t> orderedCallCounts;
+  std::unordered_map<HirValueId, std::size_t> orderedInvocationCounts;
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.kind == MirInstructionKind::Call &&
+      if ((instruction.kind == MirInstructionKind::Call ||
+           instruction.kind == MirInstructionKind::Construct) &&
           instruction.callSite != 0 &&
-          ++orderedCallCounts[instruction.callSite] != 1) {
+          ++orderedInvocationCounts[instruction.callSite] != 1) {
         return failure(body, owner,
-                       "ordered call site is invoked more than once", block.id,
-                       instruction.id);
+                       "ordered invocation site is executed more than once",
+                       block.id, instruction.id);
       }
       if (instruction.kind != MirInstructionKind::CallInput) {
         continue;
@@ -3510,7 +3517,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       const MirValueUse &use = uses.front();
       const auto callEntry = instructionsById.find(use.instruction);
-      const MirInstruction *call =
+      const MirInstruction *invocation =
           callEntry == instructionsById.end() ? nullptr : callEntry->second;
       const bool receiverUse =
           *instruction.callInputRole == MirCallInputRole::Receiver &&
@@ -3519,11 +3526,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           *instruction.callInputRole == MirCallInputRole::Argument &&
           use.kind == MirValueUseKind::InstructionOperand &&
           use.operandIndex == instruction.callInputIndex;
-      if (call == nullptr || call->kind != MirInstructionKind::Call ||
-          call->callSite != instruction.callSite ||
+      const bool callLike = invocation != nullptr &&
+                            (invocation->kind == MirInstructionKind::Call ||
+                             invocation->kind == MirInstructionKind::Construct);
+      if (!callLike || invocation->callSite != instruction.callSite ||
+          (invocation->kind == MirInstructionKind::Construct && receiverUse) ||
           (!receiverUse && !argumentUse)) {
         return failure(body, owner,
-                       "call input use does not match its ordered call site",
+                       "call input use does not match its ordered invocation",
                        block.id, instruction.id);
       }
     }
@@ -3544,26 +3554,29 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                : definition->second;
   };
   for (const MirBlock &block : body.blocks) {
-    for (const MirInstruction &call : block.instructions) {
-      if (call.kind != MirInstructionKind::Call || call.callSite == 0) {
+    for (const MirInstruction &invocation : block.instructions) {
+      if ((invocation.kind != MirInstructionKind::Call &&
+           invocation.kind != MirInstructionKind::Construct) ||
+          invocation.callSite == 0) {
         continue;
       }
       std::vector<const MirInstruction *> inputs;
-      if (call.receiver) {
-        const MirInstruction *receiver = callInputFor(*call.receiver);
-        if (receiver == nullptr || receiver->callSite != call.callSite ||
+      if (invocation.receiver) {
+        const MirInstruction *receiver = callInputFor(*invocation.receiver);
+        if (receiver == nullptr || receiver->callSite != invocation.callSite ||
             *receiver->callInputRole != MirCallInputRole::Receiver ||
-            receiver->info.type != call.receiver->type) {
+            receiver->info.type != invocation.receiver->type) {
           return failure(body, owner,
                          "ordered call receiver is not prepared by its exact "
                          "receiver input",
-                         block.id, call.id);
+                         block.id, invocation.id);
         }
         inputs.push_back(receiver);
       }
-      for (std::size_t index = 0; index < call.operands.size(); ++index) {
-        const MirInstruction *argument = callInputFor(call.operands[index]);
-        const SemanticType &parameter = call.parameterTypes[index];
+      for (std::size_t index = 0; index < invocation.operands.size(); ++index) {
+        const MirInstruction *argument =
+            callInputFor(invocation.operands[index]);
+        const SemanticType &parameter = invocation.parameterTypes[index];
         const bool exactKind =
             argument != nullptr &&
             (parameter.kind == SemanticType::Class
@@ -3575,25 +3588,26 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                             : (parameter.referenceAccess == AccessMode::Mutable
                                    ? HirCallInputKind::MutableBorrow
                                    : HirCallInputKind::ReadBorrow)));
-        if (argument == nullptr || argument->callSite != call.callSite ||
+        if (argument == nullptr || argument->callSite != invocation.callSite ||
             *argument->callInputRole != MirCallInputRole::Argument ||
             argument->callInputIndex != index || !exactKind ||
-            argument->info.type != call.parameterTypes[index]) {
+            argument->info.type != invocation.parameterTypes[index]) {
           return failure(body, owner,
-                         "ordered call argument is not prepared by its exact "
+                         "ordered invocation argument is not prepared by its "
+                         "exact "
                          "indexed input",
-                         block.id, call.id);
+                         block.id, invocation.id);
         }
         inputs.push_back(argument);
       }
       const MirInstruction *previous = nullptr;
       for (const MirInstruction *input : inputs) {
         if ((previous != nullptr && !strictlyPrecedes(*previous, *input)) ||
-            !strictlyPrecedes(*input, call)) {
+            !strictlyPrecedes(*input, invocation)) {
           return failure(body, owner,
-                         "ordered call inputs must form a strict receiver, "
-                         "argument, invocation chain",
-                         block.id, call.id);
+                         "ordered invocation inputs must form a strict "
+                         "receiver, argument, invocation chain",
+                         block.id, invocation.id);
         }
         previous = input;
       }
@@ -4705,7 +4719,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             });
       };
       const bool preparedOwnershipTransfer =
-          instruction.kind == MirInstructionKind::Call &&
+          (instruction.kind == MirInstructionKind::Call ||
+           instruction.kind == MirInstructionKind::Construct) &&
           std::any_of(
               instruction.operands.begin(), instruction.operands.end(),
               [&](const MirOperand &operand) {

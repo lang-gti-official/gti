@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.131.0
+Checkpoint: 0.132.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,11 +134,11 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.131.0 |
+| Foundation | Evidence at 0.132.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
-| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v12 retains ordered scalar/reference and eligible class-value call inputs plus exact global/static borrow-origin places. |
+| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v13 retains ordered scalar/reference and eligible class-value inputs for ordinary calls and concrete ordinary constructors, plus exact global/static borrow-origin places. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
@@ -156,10 +156,10 @@ start a later phase:
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. |
 
 MIR is not yet the sole executable authority. It owns the supported
-failure-free temporary/drop slice but not ordered parameter/result
-materialization, partial-constructor rollback, object layout, ABI, or every
-checked-failure edge, and the C++ backend still emits bodies from checked
-AST/HIR facts.
+failure-free temporary/drop slice and bounded ordinary call/constructor input
+schedules, but not complete ordered parameter/result materialization,
+partial-constructor rollback, object layout, ABI, or every checked-failure edge,
+and the C++ backend still emits bodies from checked AST/HIR facts.
 
 ## Dependency Map
 
@@ -235,7 +235,7 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `M-EXEC-01` | **in progress** | `D-EXEC-01` and `M-LIFE-01` done | Extend the landed ordinary-call schedule to the next bounded call/materialization family after eligible class-value parameter setup. | The selected family has deterministic HIR/MIR order, balanced obligations, and verifier mutations. |
+| 1 | `M-EXEC-01` | **in progress** | `D-EXEC-01` and `M-LIFE-01` done | Extend the landed ordinary call/constructor schedule to operators and one-time assignment places. | The selected family has deterministic HIR/MIR order, balanced obligations, and verifier mutations. |
 | 2 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
 | 3 | `A-CACHE-01` | **ready** | `C-MIG-02` done; parallel lane | Define snapshot-safe parsed-unit cache ownership so unchanged standard-library units need not be lexed and parsed per edit. | Cache identity and invalidation are explicit, with no AST pointer crossing incompatible snapshots. |
 
@@ -376,7 +376,8 @@ make the proposal feel concrete.
   and production emission to M-BACK. Current conservative semantics and the
   compatibility emitter remain explicit implementation gaps.
 - **Unlocked:** `D-COMPAT-01`, `M-OWN-02`, and `M-LIFE-01` are complete, and
-  the first bounded `M-EXEC-01` ordinary-call schedule is implemented. The
+  the bounded `M-EXEC-01` ordinary-call and ordinary-constructor input
+  schedules are implemented. The
   conservative
   both-argument overlap restriction may be removed per operation family only
   after ordered MIR and its matching production backend migration are
@@ -631,9 +632,10 @@ analysis, HIR, MIR, and the backend.
 ### M-EXEC-01: Ordered Expression And Call Lowering
 
 - **State/role:** in progress; `M-LIFE-01` and `D-EXEC-01` are done. Concrete
-  non-intrinsic ordinary calls with scalar/reference parameters and eligible
-  non-borrowed class-value parameters now retain exact HIR input roles and
-  verified MIR receiver/argument/invocation order; the remaining families are
+  non-intrinsic ordinary calls and concrete ordinary constructors with
+  scalar/reference parameters and eligible non-borrowed class-value parameters
+  now retain exact HIR input roles and verified MIR
+  receiver/argument/invocation order; the remaining families are
   systems-readiness implementation.
 - **Scope:** Decompose one complete expression family into ordered MIR values
   and temporaries, including receivers, arguments, transient loans, and cleanup.
@@ -645,17 +647,21 @@ analysis, HIR, MIR, and the backend.
   observe a later step. Add structural verifier mutations for ordering,
   materialization, full-expression boundaries, and cleanup.
 - **Landed bounded slices:** Eligible ordinary calls retain one HIR receiver
-  and source-ordered arguments with exact selected parameter types and
+  and source-ordered arguments; eligible ordinary constructors retain no
+  receiver, one exact constructor target, and at least one source-ordered
+  argument. Both use exact selected parameter types and
   value/class-copy/class-move/read-borrow/mutable-borrow roles. MIR emits
   one-use `CallInput` checkpoints and verifies call-site, role, index, type,
-  dominance, and strict receiver-then-arguments-then-invocation order. A class
-  copy consumes the exact copyable place; a class move consumes the exact
-  movable materialized value and transfers any active temporary obligation at
-  that checkpoint. Mutation tests cover wrong sites, duplicate/abandoned and
-  bypassed inputs, type drift, reordering, forged copy/move modes, missing or
-  misplaced transfer, and erased target identity. Borrowed-state class values,
-  packs, overloaded/callable calls, failure rollback, backend emission, and
-  semantic borrow relaxation remain out of these slices.
+  dominance, and strict receiver-when-applicable, arguments, then `Call` or
+  `Construct` order. A class copy consumes the exact copyable place; a class
+  move consumes the exact movable materialized value and transfers any active
+  temporary obligation at that checkpoint. Mutation tests cover wrong sites,
+  duplicate/abandoned and bypassed inputs, type drift, reordering, forged
+  receiver/copy/move modes, missing or misplaced transfer, and erased target
+  identity. Generated/default zero-argument and copy/move special construction,
+  borrowed-state class values, packs, overloaded/callable calls, failure
+  rollback, backend emission, and semantic borrow relaxation remain out of
+  these slices.
 - **Non-goals:** broad AST emitter rewrite, production body emission, or an
   IIFE workaround. M-BACK owns production C++ consumption of this schedule.
 - **Exit gate:** deterministic HIR/MIR snapshots and verifier mutations prove
@@ -1653,7 +1659,7 @@ owned by the rows and domain plans above.
 | Concurrency memory model | **adopted durable decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
 | Transfer/share facts and concurrent globals | **complete policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; bounded public concurrency is systems-ready work |
 | Public threads/atomics/mutex | **systems-readiness work-queue profile** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
-| Evaluation order | **contract adopted; bounded ordinary-call schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference plus eligible class-copy/class-move ordinary-call HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
+| Evaluation order | **contract adopted; bounded ordinary call/constructor schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference plus eligible class-copy/class-move ordinary-call and concrete ordinary-constructor HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` done -> `M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
 | Source text and documentation comments | **systems-readiness contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
 | Target/data-layout facts and `sizeof`/`alignof` | **complete bounded systems-readiness substrate** | `S-LAYOUT-01` and `S-LAYOUT-02` done; aggregate/native layout remains client-driven |
@@ -1728,10 +1734,11 @@ canonical docs and status evidence, then stop. Do not begin a successor row.
 The next recommended unowned prompt remains the next bounded `M-EXEC-01`
 family. M-LIFE-01 makes the supported normal-exit temporary and active-drop
 obligations authoritative in HIR and MIR, and ordinary scalar/reference plus
-eligible non-borrowed class-value calls now prove the schedule shape. Borrowed-
-state class values, remaining call forms, result and target places, operators,
-compound expressions, and hosted initialization still need the same
-executable-lifetime treatment. Keep
+eligible non-borrowed class-value calls and concrete ordinary constructors now
+prove the schedule shape. The next planned family is operators and one-time
+assignment places. Borrowed-state class values, remaining call and construction
+forms, result places, compound expressions, and hosted initialization still
+need the same executable-lifetime treatment. Keep
 the next prompt to one coherent family; every accepted readiness workload
 consumes this result, but lowering machinery is not independently the product.
 After the row's remaining families land, select the smallest newly unblocked

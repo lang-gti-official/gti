@@ -1690,6 +1690,77 @@ private:
     return id;
   }
 
+  [[nodiscard]] static bool
+  orderedValueParameterType(const SemanticType &type) {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::Bool:
+    case SemanticType::Char:
+    case SemanticType::StringView:
+    case SemanticType::NullPtr:
+    case SemanticType::RawPointer:
+    case SemanticType::Enum:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  [[nodiscard]] std::optional<std::vector<HirCallArgument>>
+  orderedArguments(const std::vector<HirValueId> &arguments,
+                   const std::vector<SemanticType> &parameterTypes,
+                   const HirBody &body) const {
+    if (arguments.size() != parameterTypes.size()) {
+      return std::nullopt;
+    }
+
+    std::vector<HirCallArgument> result;
+    result.reserve(arguments.size());
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const HirValue *input = body.findValue(arguments[index]);
+      const SemanticType &parameter = parameterTypes[index];
+      if (input == nullptr || input->kind == HirValueKind::PackExpansion) {
+        return std::nullopt;
+      }
+
+      HirCallInputKind kind = HirCallInputKind::Value;
+      if (parameter.kind == SemanticType::Reference) {
+        kind = parameter.referenceAccess == AccessMode::Mutable
+                   ? HirCallInputKind::MutableBorrow
+                   : HirCallInputKind::ReadBorrow;
+      } else if (orderedValueParameterType(parameter)) {
+        kind = HirCallInputKind::Value;
+      } else if (parameter.kind != SemanticType::Class ||
+                 input->info.type != parameter ||
+                 input->info.traits.containsBorrowedState) {
+        return std::nullopt;
+      } else if (input->info.category == ValueCategory::Place &&
+                 input->info.traits.copyable) {
+        kind = HirCallInputKind::CopyValue;
+      } else if (input->info.category == ValueCategory::Value &&
+                 input->info.traits.movable) {
+        kind = HirCallInputKind::MoveValue;
+      } else {
+        return std::nullopt;
+      }
+
+      result.push_back({.parameterIndex = index,
+                        .value = arguments[index],
+                        .parameterType = parameter,
+                        .kind = kind});
+    }
+    return result;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const ExprPtr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
@@ -2096,29 +2167,6 @@ private:
         model.findLambdaCall(*call) == nullptr &&
         model.findDeferredCallableCall(*call) == nullptr &&
         value.parameterTypes.size() == call->arguments().size()) {
-      const auto orderedValueParameterType = [](const SemanticType &type) {
-        switch (type.kind) {
-        case SemanticType::Int8:
-        case SemanticType::Int16:
-        case SemanticType::Int32:
-        case SemanticType::Int64:
-        case SemanticType::UInt8:
-        case SemanticType::UInt16:
-        case SemanticType::UInt32:
-        case SemanticType::UInt64:
-        case SemanticType::Float:
-        case SemanticType::Double:
-        case SemanticType::Bool:
-        case SemanticType::Char:
-        case SemanticType::StringView:
-        case SemanticType::NullPtr:
-        case SemanticType::RawPointer:
-        case SemanticType::Enum:
-          return true;
-        default:
-          return false;
-        }
-      };
       const std::size_t argumentCount = call->arguments().size();
       const bool exactOperands = argumentCount <= value.operands.size();
       std::vector<HirValueId> arguments;
@@ -2127,46 +2175,10 @@ private:
                              static_cast<std::ptrdiff_t>(argumentCount),
                          value.operands.end());
       }
-      std::vector<HirCallInputKind> argumentKinds;
-      argumentKinds.reserve(arguments.size());
-      bool supportedArguments = exactOperands;
-      for (std::size_t index = 0;
-           supportedArguments && index < arguments.size(); ++index) {
-        const HirValue *input = body.findValue(arguments[index]);
-        const SemanticType &parameter = value.parameterTypes[index];
-        if (input == nullptr || input->kind == HirValueKind::PackExpansion) {
-          supportedArguments = false;
-          break;
-        }
-        if (parameter.kind == SemanticType::Reference) {
-          argumentKinds.push_back(parameter.referenceAccess ==
-                                          AccessMode::Mutable
-                                      ? HirCallInputKind::MutableBorrow
-                                      : HirCallInputKind::ReadBorrow);
-          continue;
-        }
-        if (orderedValueParameterType(parameter)) {
-          argumentKinds.push_back(HirCallInputKind::Value);
-          continue;
-        }
-        if (parameter.kind != SemanticType::Class ||
-            input->info.type != parameter ||
-            input->info.traits.containsBorrowedState) {
-          supportedArguments = false;
-          break;
-        }
-        if (input->info.category == ValueCategory::Place &&
-            input->info.traits.copyable) {
-          argumentKinds.push_back(HirCallInputKind::CopyValue);
-          continue;
-        }
-        if (input->info.category == ValueCategory::Value &&
-            input->info.traits.movable) {
-          argumentKinds.push_back(HirCallInputKind::MoveValue);
-          continue;
-        }
-        supportedArguments = false;
-      }
+      const std::optional<std::vector<HirCallArgument>> plannedArguments =
+          exactOperands
+              ? orderedArguments(arguments, value.parameterTypes, body)
+              : std::nullopt;
       const ResolvedCallInfo *resolved = model.findCall(*call);
       const FunctionInfo *resolvedTarget =
           resolved == nullptr || resolved->function == 0
@@ -2191,7 +2203,7 @@ private:
         supportedReceiver = supportedReceiver && callReceiver.has_value() &&
                             body.findValue(*callReceiver) != nullptr;
       }
-      if (supportedArguments && supportedReceiver) {
+      if (plannedArguments && supportedReceiver) {
         HirCallPlan plan;
         if (callReceiver) {
           const HirValue &input = *body.findValue(*callReceiver);
@@ -2208,15 +2220,23 @@ private:
               .type = input.info.type,
           };
         }
-        plan.arguments.reserve(arguments.size());
-        for (std::size_t index = 0; index < arguments.size(); ++index) {
-          const SemanticType &parameter = value.parameterTypes[index];
-          plan.arguments.push_back({.parameterIndex = index,
-                                    .value = arguments[index],
-                                    .parameterType = parameter,
-                                    .kind = argumentKinds[index]});
-        }
+        plan.arguments = *plannedArguments;
         value.callPlan = std::move(plan);
+      }
+    }
+    if (model.findConstruction(*raw) != nullptr && value.constructorTarget &&
+        value.constructorKind == ConstructorKind::Ordinary &&
+        value.intrinsic == IntrinsicKind::None &&
+        !value.parameterTypes.empty() &&
+        value.parameterTypes.size() <= value.operands.size()) {
+      std::vector<HirValueId> arguments(
+          value.operands.end() -
+              static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
+          value.operands.end());
+      if (std::optional<std::vector<HirCallArgument>> plannedArguments =
+              orderedArguments(arguments, value.parameterTypes, body)) {
+        value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                     .arguments = std::move(*plannedArguments)};
       }
     }
     const HirValueId id = value.id;
