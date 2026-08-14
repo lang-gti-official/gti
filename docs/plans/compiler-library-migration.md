@@ -4,8 +4,8 @@
 > boundaries are documented in
 > [`docs/architecture/overview.md`](../architecture/overview.md).
 
-Status: accepted; phases 1, 2, and 7 implemented, and phases 4 and 5 partially
-implemented
+Status: accepted; phases 1, 2, 3, and 7 implemented, and phases 4 and 5
+partially implemented
 
 Prompt-sized migration ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below
@@ -29,6 +29,12 @@ filesystem, include-resolution, cycle, visibility-edge, provenance, and
 source-manager algorithms live in `src/compiler/source_loader.cpp`. Parser
 algorithms and request-local state now live behind the `Parser` facade in
 `src/compiler/parser.cpp`.
+
+Phase 3 is implemented through the same behavior-preserving boundary.
+`SemanticModel` and semantic records remain visible snapshot contracts, while
+the mutable visitor, declaration registration, resolution, flow/lifecycle
+analysis, and concrete-instance reanalysis compile in
+`src/compiler/semantic_analyzer.cpp` behind the `SemanticVisitor` facade.
 
 Later optimizer groundwork has also moved coherent non-template utilities into
 the library without completing the intervening migration phases. MIR
@@ -265,8 +271,8 @@ parallelism:
   seconds after preprocessing to 131,098 lines;
 - compiling the 22,702-line `tests/compiler_tests.cpp` at `-O1` took 27.0
   seconds;
-- `semantic_analyzer.h` was 28,032 lines and 1.14 MB, making phase 3 the
-  highest-leverage remaining implementation migration.
+- `semantic_analyzer.h` was 28,032 lines and 1.14 MB, which identified phase 3
+  as the highest-leverage implementation migration.
 
 GitHub release run
 [31710836803](https://github.com/LukeHHA/gti/actions/runs/31710836803) supplies
@@ -277,6 +283,14 @@ tests took 2 minutes 44 seconds, and installed-toolchain verification took 7
 minutes 26 seconds. The release workflow now uses an exact-input compiler cache
 and four-way CTest scheduling. Warm-cache improvement must be read from later
 workflow evidence; it is not treated as completion of phase 3.
+
+After phase 3, the public semantic header is 3,479 lines and an
+implementation-only edit compiles `semantic_analyzer.cpp` once, then relinks
+consumers. On the same local arm64 development machine used for migration that
+path took 5.89 seconds wall, with no CLI, LSP, driver, or test source
+recompilation. These numbers are directional rather than a cross-machine
+comparison with issue #50; clean Release workflow measurements remain the
+release evidence.
 
 ## Phased Implementation
 
@@ -352,13 +366,13 @@ Acceptance criteria:
 
 ### Phase 3: separate semantic data from semantic algorithms
 
-Status: proposed
+Status: implemented
 
-- Keep semantic record types, IDs, query facades, and snapshot ownership in
+- Semantic record types, IDs, query facades, and snapshot ownership remain in
   declarations visible to HIR, backend, and language queries.
-- Move registration, inheritance, lookup, overload selection, flow analysis,
-  lifecycle calculation, occurrence finalization, and generic reanalysis into
-  responsibility-focused sources.
+- Registration, inheritance, lookup, overload selection, flow analysis,
+  lifecycle calculation, occurrence finalization, and generic reanalysis now
+  compile behind `SemanticVisitor` in `semantic_analyzer.cpp`.
 - Preserve the documented semantic prepass order exactly.
 - Add private implementation headers only beneath `src/compiler/`; do not make
   downstream phases depend on semantic visitor internals.

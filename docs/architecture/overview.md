@@ -53,7 +53,8 @@ validity together, which keeps AST-address semantic side tables alive.
   replacements. `CppBackend` currently emits by traversing the AST with
   semantic/HIR side data and does not consume MIR bodies.
 - Much compiler implementation remains in headers. `gti_compiler` currently
-  compiles the lexer, parser, formatter configuration, MIR repair/verification,
+  compiles the lexer, parser, semantic analysis, formatter configuration,
+  MIR repair/verification,
   MIR printer, effect classification, the optimizer facade, checked integer
   arithmetic, HIR concrete-instance de-duplication, target-triple parsing,
   and tool-process support (crash handling and compile-time telemetry).
@@ -73,7 +74,9 @@ must store durable summaries rather than pointers into a discarded snapshot.
 - `include/gti/frontend.h`: phase orchestration and owned result.
 - `include/gti/{token,lexer,parser,ast}.h`,
   `src/compiler/{lexer,parser}.cpp`: frontend syntax layers.
-- `include/gti/semantic_analyzer.h`: semantic model and analysis.
+- `include/gti/semantic_analyzer.h`,
+  `src/compiler/semantic_analyzer.cpp`: semantic model contract and compiled
+  analysis.
 - `include/gti/hir.h`, `include/gti/mir.h`, `src/compiler/mir.cpp`: IRs and
   lowering/verification.
 - `include/gti/optimizer.h`, `src/compiler/optimizer.cpp`: current optimizer

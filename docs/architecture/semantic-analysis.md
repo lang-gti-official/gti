@@ -7,6 +7,13 @@ over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
 backends, and language queries consume those facts rather than repeating
 lookup or type inference.
 
+`include/gti/semantic_analyzer.h` exposes snapshot-owned semantic records,
+`SemanticModel`, and the narrow `SemanticVisitor` analysis/query facade.
+Declaration registration, lookup, overload selection, flow/lifecycle analysis,
+generic reanalysis, and AST visitor algorithms compile once in
+`src/compiler/semantic_analyzer.cpp`. Consumers cannot depend on mutable
+analysis state or visitor internals.
+
 ## Analysis Order
 
 `SemanticVisitor::check(const Program&)` is staged because later facts depend
