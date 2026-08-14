@@ -522,6 +522,15 @@ GTI has an adopted concurrency and memory-model boundary, with rationale in
 not yet expose public threads, atomics, mutexes, or foreign-thread entry. The
 single-threaded profile is the default executable profile.
 
+The compiler now has backend-independent HIR/MIR identities for thread
+spawn/join, atomic load/store/read-modify-write/compare-exchange, and mutex
+lock/unlock. Atomic records retain operation-specific memory orders and MIR
+rejects illegal order combinations or any synchronization operation in the
+single-threaded profile. These internal records are not source operations and
+do not make a public API available; a future ordinary `std::jthread` wrapper
+must reach them through trusted private capabilities after task transfer,
+failure containment, runtime, and backend requirements are met.
+
 The reference toolchain accepts an explicit concurrent-profile selection
 before semantic analysis and retains it in semantic, HIR, and MIR program
 facts. Direct mode spells it `--execution-profile concurrent`; a project

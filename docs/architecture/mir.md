@@ -1,7 +1,7 @@
 # MIR
 
-Status: Implemented structural CFG, ownership/effect, and normal-exit lifecycle
-foundation; not yet the sole backend input.
+Status: Implemented structural CFG, ownership/effect, synchronization, and
+normal-exit lifecycle foundation; not yet the sole backend input.
 
 MIR lowers each concrete HIR body into body-local control flow, values, places,
 resolved calls, ownership operations, and cleanup. It is the intended
@@ -16,12 +16,15 @@ verification, and deterministic printing live in `src/compiler/mir.cpp` and
 `MirProgram` copies the selected execution profile from `HirProgram` as
 immutable program metadata. Body lowering and optimization do not rediscover
 it from host/backend flags. The current profile fact constrains frontend
-global/static validity; future synchronization and task operations will
-consume it only in their owning rows.
+global/static validity. MIR verification also rejects represented
+synchronization operations in the single-threaded profile, so a backend or
+transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v13`/`mir-body-v13`.
-Version 13 extends the exact ordered-input schedule to concrete ordinary
-constructor invocations with supported arguments. A scheduled constructor has
+The deterministic serialization is currently `mir-v14`/`mir-body-v14`.
+Version 14 adds exact synchronization operation identity and atomic order
+metadata to call instructions. It retains version 13's exact ordered-input
+schedule for concrete ordinary constructor invocations with supported
+arguments. A scheduled constructor has
 one exact constructor target, no receiver, source-ordered argument checkpoints,
 and a final `Construct` that consumes only those one-use prepared values.
 Version 12 added exact global/static borrow-origin places to function summaries
@@ -70,6 +73,13 @@ A `MirBody` owns:
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
+- exact backend-independent synchronization records on resolved calls. The
+  verifier accepts thread spawn/join and mutex lock/unlock without an atomic
+  order; requires a legal operation-specific order for atomic load, store, and
+  read-modify-write; and requires a legal success/failure order pair for
+  compare-exchange. Release loads, acquire stores, release/acquire-release
+  failure orders, and a failure order stronger than success are rejected.
+  Synchronization metadata on a non-call instruction is invalid;
 - exact confined invocation and confined/owned argument-boundary records. The
   verifier permits this metadata only on calls; requires descriptors to be
   ordered, unique, within the call's operand list, and identical to the
@@ -154,7 +164,8 @@ and verifies the selection but does not derive arithmetic mode from the public
 function name.
 
 `verifyMirProgram` checks identity ranges, definitions and uses, terminators,
-call/constructor metadata, native-linkage invariants, program-entry adapter
+call/constructor and synchronization metadata, native-linkage invariants,
+program-entry adapter
 metadata, value availability, reachable loan state, and lifecycle state. It
 also requires each lambda instance's exact type to reproduce its declaration,
 result, parameters, and captures, and requires callable targets to match that
@@ -167,6 +178,13 @@ dominated by the definition; this includes values referenced through place
 roots and index projections. Current MIR has no block-parameter values: every
 `MirValue` has one instruction definition, while constants, parameter
 bindings, and entry loans use their own representations.
+
+The program verifier additionally rejects every synchronization operation
+when `MirProgram` selects the default single-threaded profile. The concurrent
+profile permits the records but does not by itself make a public concurrency
+API available. Public wrapper semantics, trusted capability selection,
+task-transfer proof, runtime support, and backend lowering remain separate
+prerequisites.
 
 The owned-entry append target is a module-root call edge for reachability and
 dead-code decisions even though it is not represented by an instruction in the

@@ -164,6 +164,47 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // IntegerCheckedMultiply
 });
 
+constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
+    harmless(), // None
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .movesValue = true,
+                    .invokesUserCode = true,
+                    .maySynchronize = true}, // ThreadSpawn
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .maySynchronize = true}, // ThreadJoin
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .targetDependent = true,
+                    .maySynchronize = true}, // AtomicLoad
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .targetDependent = true,
+                    .maySynchronize = true}, // AtomicStore
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .targetDependent = true,
+                    .maySynchronize = true}, // AtomicReadModifyWrite
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .targetDependent = true,
+                    .maySynchronize = true}, // AtomicCompareExchange
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .maySynchronize = true}, // MutexLock
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .maySynchronize = true}, // MutexUnlock
+});
+
 constexpr auto instructionNames = std::to_array<std::string_view>({
     "compute",
     "load",
@@ -263,12 +304,36 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "integer-checked-multiply",
 });
 
+constexpr auto synchronizationNames = std::to_array<std::string_view>({
+    "none",
+    "thread-spawn",
+    "thread-join",
+    "atomic-load",
+    "atomic-store",
+    "atomic-read-modify-write",
+    "atomic-compare-exchange",
+    "mutex-lock",
+    "mutex-unlock",
+});
+
+constexpr auto atomicMemoryOrderNames = std::to_array<std::string_view>({
+    "relaxed",
+    "acquire",
+    "release",
+    "acquire-release",
+    "sequentially-consistent",
+});
+
 static_assert(instructionEffects.size() == mirInstructionKindCount);
 static_assert(operationEffects.size() == mirOperationCount);
 static_assert(intrinsicEffects.size() == intrinsicKindCount);
+static_assert(synchronizationEffects.size() ==
+              synchronizationOperationKindCount);
 static_assert(instructionNames.size() == mirInstructionKindCount);
 static_assert(operationNames.size() == mirOperationCount);
 static_assert(intrinsicNames.size() == intrinsicKindCount);
+static_assert(synchronizationNames.size() == synchronizationOperationKindCount);
+static_assert(atomicMemoryOrderNames.size() == atomicMemoryOrderCount);
 
 template <typename Enum, std::size_t Size>
 [[nodiscard]] constexpr std::size_t
@@ -335,6 +400,14 @@ std::string_view name(IntrinsicKind intrinsic) {
   return enumName(intrinsic, intrinsicNames);
 }
 
+std::string_view name(SynchronizationOperationKind kind) {
+  return enumName(kind, synchronizationNames);
+}
+
+std::string_view name(AtomicMemoryOrder order) {
+  return enumName(order, atomicMemoryOrderNames);
+}
+
 MirEffectTraits effects(MirInstructionKind kind) {
   return enumEffects(kind, instructionEffects);
 }
@@ -347,15 +420,24 @@ MirEffectTraits effects(IntrinsicKind intrinsic) {
   return enumEffects(intrinsic, intrinsicEffects);
 }
 
+MirEffectTraits effects(SynchronizationOperationKind kind) {
+  return enumEffects(kind, synchronizationEffects);
+}
+
 MirEffectTraits effects(const MirInstruction &instruction) {
   MirEffectTraits result;
   if (instruction.kind == MirInstructionKind::Call &&
       instruction.intrinsic != IntrinsicKind::None) {
     result = effects(instruction.intrinsic);
+  } else if (instruction.kind == MirInstructionKind::Call &&
+             instruction.synchronization.kind !=
+                 SynchronizationOperationKind::None) {
+    result = effects(instruction.synchronization.kind);
   } else {
     result = effects(instruction.kind);
   }
   result = merge(result, effects(instruction.operation));
+  result = merge(result, effects(instruction.synchronization.kind));
 
   for (const MirOperand &operand : instruction.operands) {
     switch (operand.kind) {

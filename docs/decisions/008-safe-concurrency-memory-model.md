@@ -12,10 +12,12 @@ Status: Accepted
 
 GTI already defines ownership, local loans, exclusive reborrows, movement,
 deterministic cleanup, raw-pointer obligations, and conservative synchronizing
-effects. It does not yet expose threads, atomics, mutexes, or entry from a
-foreign-created thread. The current executable language is therefore
-single-threaded even though generated C++ or a native dependency may internally
-use host threads.
+effects. C-MIR-01 now also represents exact thread, atomic, and mutex operation
+categories and atomic ordering dimensions in HIR/MIR while retaining ordinary
+unknown calls as conservative barriers. It does not yet expose threads,
+atomics, mutexes, or entry from a foreign-created thread. The current public
+executable language is therefore single-threaded even though generated C++ or
+a native dependency may internally use host threads.
 
 That implementation accident cannot become the language memory model. Before
 the ownership and compatibility contracts freeze, GTI needs one answer for:

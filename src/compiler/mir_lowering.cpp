@@ -1935,6 +1935,7 @@ private:
                         .callSite = value.callPlan ? value.id : 0,
                         .result = resultFor(value),
                         .intrinsic = value.intrinsic,
+                        .synchronization = value.synchronization,
                         .dispatch = value.dispatch,
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,

@@ -65,9 +65,16 @@ tree crosses the compiled implementation boundary; CFG changes require full
 recomputation. Loop analysis and incremental dominator updates are not present.
 
 `optimization/effects.h` provides exhaustive conservative effect tables for
-MIR instructions, scalar operations, and intrinsics. New enum values must add a
-classification. Effects are a safety boundary for future passes, not a report
-of what the current C++ compiler happens to optimize.
+MIR instructions, scalar operations, intrinsics, and exact synchronization
+operations. New enum values must add a classification and stable name. A
+trusted synchronization record supplies the precise memory footprint for an
+atomic load or store and explicit task/runtime effects for spawn, join, and
+mutex operations. Every such instruction is synchronizing, non-speculatable,
+non-removable, and non-reorderable. Calls without an exact trusted operation
+remain conservative unknown-memory/user-code synchronization barriers; that
+fallback is not promoted into a happens-before proof. Effects are a safety
+boundary for future passes, not a report of what the current C++ compiler
+happens to optimize.
 
 ## Ownership Rules
 

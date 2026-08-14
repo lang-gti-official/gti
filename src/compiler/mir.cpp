@@ -2108,6 +2108,84 @@ movedValueIntoInstruction(const MirBody &body, const MirOperand &operand,
   return executableUses == 1 && matched;
 }
 
+[[nodiscard]] constexpr bool validAtomicMemoryOrder(AtomicMemoryOrder order) {
+  return static_cast<std::size_t>(order) <
+         static_cast<std::size_t>(AtomicMemoryOrder::Count);
+}
+
+[[nodiscard]] constexpr bool validLoadOrder(AtomicMemoryOrder order) {
+  return order == AtomicMemoryOrder::Relaxed ||
+         order == AtomicMemoryOrder::Acquire ||
+         order == AtomicMemoryOrder::SequentiallyConsistent;
+}
+
+[[nodiscard]] constexpr bool validStoreOrder(AtomicMemoryOrder order) {
+  return order == AtomicMemoryOrder::Relaxed ||
+         order == AtomicMemoryOrder::Release ||
+         order == AtomicMemoryOrder::SequentiallyConsistent;
+}
+
+[[nodiscard]] constexpr bool
+validCompareExchangeFailureOrder(AtomicMemoryOrder success,
+                                 AtomicMemoryOrder failure) {
+  if (failure == AtomicMemoryOrder::Release ||
+      failure == AtomicMemoryOrder::AcquireRelease) {
+    return false;
+  }
+  switch (success) {
+  case AtomicMemoryOrder::Relaxed:
+  case AtomicMemoryOrder::Release:
+    return failure == AtomicMemoryOrder::Relaxed;
+  case AtomicMemoryOrder::Acquire:
+  case AtomicMemoryOrder::AcquireRelease:
+    return failure == AtomicMemoryOrder::Relaxed ||
+           failure == AtomicMemoryOrder::Acquire;
+  case AtomicMemoryOrder::SequentiallyConsistent:
+    return failure == AtomicMemoryOrder::Relaxed ||
+           failure == AtomicMemoryOrder::Acquire ||
+           failure == AtomicMemoryOrder::SequentiallyConsistent;
+  case AtomicMemoryOrder::Count:
+    return false;
+  }
+  return false;
+}
+
+[[nodiscard]] constexpr bool
+validSynchronizationOperation(const SynchronizationOperation &operation) {
+  if (static_cast<std::size_t>(operation.kind) >=
+      static_cast<std::size_t>(SynchronizationOperationKind::Count)) {
+    return false;
+  }
+  if ((operation.order && !validAtomicMemoryOrder(*operation.order)) ||
+      (operation.failureOrder &&
+       !validAtomicMemoryOrder(*operation.failureOrder))) {
+    return false;
+  }
+  switch (operation.kind) {
+  case SynchronizationOperationKind::None:
+  case SynchronizationOperationKind::ThreadSpawn:
+  case SynchronizationOperationKind::ThreadJoin:
+  case SynchronizationOperationKind::MutexLock:
+  case SynchronizationOperationKind::MutexUnlock:
+    return !operation.order && !operation.failureOrder;
+  case SynchronizationOperationKind::AtomicLoad:
+    return operation.order && validLoadOrder(*operation.order) &&
+           !operation.failureOrder;
+  case SynchronizationOperationKind::AtomicStore:
+    return operation.order && validStoreOrder(*operation.order) &&
+           !operation.failureOrder;
+  case SynchronizationOperationKind::AtomicReadModifyWrite:
+    return operation.order && !operation.failureOrder;
+  case SynchronizationOperationKind::AtomicCompareExchange:
+    return operation.order && operation.failureOrder &&
+           validCompareExchangeFailureOrder(*operation.order,
+                                            *operation.failureOrder);
+  case SynchronizationOperationKind::Count:
+    return false;
+  }
+  return false;
+}
+
 } // namespace
 
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
@@ -2398,7 +2476,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         instruction.parameterTypes.empty() && instruction.lifecycle.empty() &&
         !instruction.functionTarget && !instruction.constructorTarget &&
         !instruction.lambdaTarget;
-    if ((callable && !targetlessBorrowProbe &&
+    if (!validSynchronizationOperation(instruction.synchronization) ||
+        (instruction.synchronization.kind !=
+             SynchronizationOperationKind::None &&
+         instruction.kind != MirInstructionKind::Call) ||
+        (callable && !targetlessBorrowProbe &&
          instruction.parameterTypes.size() != instruction.operands.size()) ||
         (!callable && !instruction.parameterTypes.empty()) ||
         (callInput != instruction.callInputRole.has_value()) ||
@@ -5246,7 +5328,29 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                              .message = "MIR program is marked invalid"});
   }
 
-  append(result, verifyMirBody(program.module()));
+  const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
+    append(result, verifyMirBody(body, owner));
+    if (program.executionProfile() != ExecutionProfile::SingleThreaded) {
+      return;
+    }
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.synchronization.kind ==
+            SynchronizationOperationKind::None) {
+          continue;
+        }
+        result.errors.push_back(
+            {.bodyKind = body.kind,
+             .owner = owner,
+             .block = block.id,
+             .instruction = instruction.id,
+             .message = "synchronization operation is unavailable in the "
+                        "single-threaded execution profile"});
+      }
+    }
+  };
+
+  verifyBody(program.module(), 0);
   const auto typeRequiresActiveCleanup =
       [&](const SemanticType &type, const auto &query) -> std::optional<bool> {
     switch (type.kind) {
@@ -5563,9 +5667,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
            .owner = instance.id,
            .message = "non-union class carries union layout metadata"});
     }
-    append(result, verifyMirBody(instance.fieldInitializers, instance.id));
-    append(result,
-           verifyMirBody(instance.staticFieldInitializers, instance.id));
+    verifyBody(instance.fieldInitializers, instance.id);
+    verifyBody(instance.staticFieldInitializers, instance.id);
   }
   std::size_t entryPoints = 0;
   for (std::size_t index = 0; index < program.functionInstances().size();
@@ -5860,7 +5963,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                         "metadata"});
       }
     }
-    append(result, verifyMirBody(instance.body, instance.id));
+    verifyBody(instance.body, instance.id);
   }
   if (entryPoints > 1) {
     result.errors.push_back(
@@ -5927,7 +6030,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
                         "constructor parameter move"});
       }
     }
-    append(result, verifyMirBody(instance.body, instance.id));
+    verifyBody(instance.body, instance.id);
   }
   for (std::size_t index = 0; index < program.destructorInstances().size();
        ++index) {
@@ -5940,7 +6043,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
            .owner = instance.id,
            .message = "destructor instance identity or owner is invalid"});
     }
-    append(result, verifyMirBody(instance.body, instance.id));
+    verifyBody(instance.body, instance.id);
   }
   for (std::size_t index = 0; index < program.lambdaInstances().size();
        ++index) {
@@ -6031,7 +6134,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
         }
       }
     }
-    append(result, verifyMirBody(instance.body, instance.id));
+    verifyBody(instance.body, instance.id);
   }
   const auto exactActiveCleanup = [&](const SemanticType &type) {
     return typeRequiresActiveCleanup(type, typeRequiresActiveCleanup);

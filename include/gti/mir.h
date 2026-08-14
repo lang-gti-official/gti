@@ -281,6 +281,7 @@ struct MirInstruction {
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  SynchronizationOperation synchronization;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;

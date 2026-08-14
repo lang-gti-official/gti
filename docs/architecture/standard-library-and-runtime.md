@@ -61,6 +61,32 @@ declaration and its exact type relationship. It does not recognize those public
 names or `std::accumulate`, and application source cannot name the underlying
 `gti_internal` capability.
 
+## Managed Concurrency Boundary
+
+The public managed-thread type will be an ordinary source-defined
+`std::jthread` class. The compiler must not recognize that class, its
+constructors, `join`, or its destructor by qualified spelling. Its move-only
+handle state, automatic-join policy, and eventual stop-token policy belong in
+GTI source and use the ordinary class lifecycle rules.
+
+Only the irreducible host boundary is compiler-private. The planned capability
+surface consists of an opaque owning native-thread state plus identity-bound
+spawn and join operations. A compiler-generated, type-specific task-entry
+adapter may erase the exact closure only after semantic analysis has proved a
+consumed `void()` callable and transfer-capable captures. The runtime owns the
+native thread and fixed worker-failure handoff; it does not own public class
+policy or know a GTI standard-library type.
+
+The implemented C-MIR-01 groundwork gives a resolved private capability call
+an exact backend-independent synchronization record. HIR and MIR distinguish
+thread spawn/join, atomic operation families, and mutex lock/unlock; atomic
+records retain legal order dimensions. MIR rejects these records in the
+single-threaded execution profile, and optimizer effects preserve every record
+as a barrier. No public thread declaration, native task adapter, runtime thread
+handle, or backend lowering is implemented yet. Those remain gated on the
+owned-task, defined-failure, ordered-execution, runtime, and backend rows rather
+than being approximated with C++ `std::thread` behavior.
+
 ## Native And Runtime Boundary
 
 `runtime/include/gti/c_abi.h` defines the public C-compatible counted-text

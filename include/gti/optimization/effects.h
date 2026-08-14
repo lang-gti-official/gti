@@ -36,14 +36,21 @@ inline constexpr std::size_t mirOperationCount =
     static_cast<std::size_t>(MirOperation::Count);
 inline constexpr std::size_t intrinsicKindCount =
     static_cast<std::size_t>(IntrinsicKind::Count);
+inline constexpr std::size_t synchronizationOperationKindCount =
+    static_cast<std::size_t>(SynchronizationOperationKind::Count);
+inline constexpr std::size_t atomicMemoryOrderCount =
+    static_cast<std::size_t>(AtomicMemoryOrder::Count);
 
 [[nodiscard]] std::string_view name(MirInstructionKind kind);
 [[nodiscard]] std::string_view name(MirOperation operation);
 [[nodiscard]] std::string_view name(IntrinsicKind intrinsic);
+[[nodiscard]] std::string_view name(SynchronizationOperationKind kind);
+[[nodiscard]] std::string_view name(AtomicMemoryOrder order);
 
 [[nodiscard]] MirEffectTraits effects(MirInstructionKind kind);
 [[nodiscard]] MirEffectTraits effects(MirOperation operation);
 [[nodiscard]] MirEffectTraits effects(IntrinsicKind intrinsic);
+[[nodiscard]] MirEffectTraits effects(SynchronizationOperationKind kind);
 [[nodiscard]] MirEffectTraits effects(const MirInstruction &instruction);
 
 } // namespace lang

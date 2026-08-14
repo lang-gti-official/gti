@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/ast.h"
+#include "gti/concurrency.h"
 #include "gti/diagnostic.h"
 #include "gti/hir_instance_index.h"
 #include "gti/semantic_analyzer.h"
@@ -165,6 +166,7 @@ struct HirValue {
   std::optional<Literal> literal;
   std::optional<ConstantValue> constant;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  SynchronizationOperation synchronization;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;

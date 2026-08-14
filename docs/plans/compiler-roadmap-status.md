@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.132.0
+Checkpoint version: 0.133.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -45,6 +45,18 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.133.0 checkpoint completes C-MIR-01 without exposing a public
+concurrency API. HIR and MIR v14 carry exact thread spawn/join, atomic
+load/store/read-modify-write/compare-exchange, and mutex lock/unlock identities
+plus operation-specific atomic orders. MIR rejects malformed order pairs,
+misplaced synchronization metadata, and every synchronization operation under
+the single-threaded profile. Exhaustive effects keep recognized operations
+non-speculatable, non-removable, and non-reorderable while ordinary unknown
+calls remain conservative barriers. The future `std::jthread` remains an
+ordinary source-defined class over identity-bound private capabilities;
+task-transfer, worker-failure, runtime, ordered execution, and backend work
+remain explicit prerequisites.
 
 The 0.132.0 checkpoint extends M-EXEC-01's bounded ordered-input schedule from
 ordinary functions to concrete ordinary constructors with at least one
@@ -632,7 +644,8 @@ Implemented:
 - IEEE-754 binary32 and binary64 literals, arithmetic, comparisons,
   conversions, signed-zero/NaN behavior, no-contraction execution, and
   compiler-owned constant evaluation through exact stored bits;
-- centralized MIR instruction, operation, and intrinsic effect tables;
+- centralized MIR instruction, operation, intrinsic, and synchronization
+  effect tables;
 - trusted declaration-bound intrinsic registration with no call-site spelling
   recognition;
 - trusted source roles, exact compiler-private type identity, application
@@ -852,7 +865,7 @@ The sole maintained work queue is
 unowned task is the operator and one-time assignment-place `M-EXEC-01` family;
 the scalar/reference and eligible non-borrowed class-value ordinary-call and
 ordinary-constructor schedules have landed, while M-OWN-01/M-OWN-02/M-LIFE-01,
-I-CAP-01, C-TYPE-01/C-GLOBAL-01, and the
+I-CAP-01, C-TYPE-01/C-GLOBAL-01/C-MIR-01, and the
 evaluation, memory-model, callable, failure, and compatibility decisions are
 complete. The executable compiler critical path
 now continues ordered MIR expression lowering, then the co-delivered

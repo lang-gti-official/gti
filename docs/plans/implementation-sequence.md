@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.132.0
+Checkpoint: 0.133.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,11 +134,11 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.132.0 |
+| Foundation | Evidence at 0.133.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
-| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v13 retains ordered scalar/reference and eligible class-value inputs for ordinary calls and concrete ordinary constructors, plus exact global/static borrow-origin places. |
+| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v14 retains ordered scalar/reference and eligible class-value inputs for ordinary calls and concrete ordinary constructors, exact global/static borrow-origin places, and exact synchronization operation/order records. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
@@ -146,6 +146,7 @@ start a later phase:
 | Compiler-private capabilities | Source roles distinguish application, prelude, and physical standard-library units; `gti_internal` declarations and presentation are trusted-only, private types bind by exact prelude declaration identity, and application forging is `GTI-S2058`. |
 | Transfer/share capabilities | `SemanticTypeTraits` and HIR retain structural transfer/share facts for concrete types; C++-familiar nominal attributes implement safe opt-out, interface requirements, and unsafe positive assertions with `GTI-S2059`. |
 | Concurrent global policy | Explicit single-threaded/concurrent selection reaches semantics, HIR, and MIR; `GTI-S2060` enforces immutable share-capable process-wide storage only in the concurrent profile. |
+| Synchronization IR | C-MIR-01 gives HIR/MIR backend-independent thread spawn/join, atomic load/store/RMW/compare-exchange, and mutex lock/unlock identities with validated atomic orders, concurrent-profile enforcement, deterministic serialization, and exhaustive non-speculatable/non-removable/non-reorderable effects. |
 | Place/ownership authority | M-OWN-01 defines one snapshot/body-scoped value key, exhaustive equal/prefix/disjoint/may-alias relation, finite ownership-state transfer, and semantics -> HIR -> MIR authority/invalidation contract. |
 | Temporary/drop authority | M-LIFE-01 gives supported lexical storage and materializing values typed HIR/MIR obligations, exact cleanup descriptors, lifecycle transitions, normal-edge verification, and recursive cleanup-owning global/static rejection. |
 | Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
@@ -1048,8 +1049,7 @@ or MIR prerequisite.
 
 ### C-MIR-01: Synchronization Operations And Effects
 
-- **State/role:** systems-readiness concurrency work; its design prerequisite
-  `D-MEM-02` is done.
+- **State/role:** done in 0.133.0; systems-readiness concurrency foundation.
 - **Scope:** Represent atomic and synchronization operation categories in HIR
   and MIR, including the ordering dimensions selected by the memory-model
   decision. Extend the existing conservative operation-effect table first.
@@ -1061,12 +1061,19 @@ or MIR prerequisite.
 - **Exit gate:** exhaustive enum/effect tables, HIR/MIR verifier tests, and
   optimizer tests proving synchronization operations are never speculated,
   removed, or reordered. Summary propagation tests remain owned by `O-MIR-02`.
+- **Evidence:** `SynchronizationOperation` is carried from HIR calls into MIR
+  v14 with thread spawn/join, atomic load/store/RMW/compare-exchange, and mutex
+  lock/unlock identities. The MIR verifier enforces operation-specific order
+  legality and rejects every represented operation under the single-threaded
+  profile. Exhaustive names/effects and mutation tests cover propagation,
+  malformed orders, misplaced metadata, profile rejection, and optimizer
+  barriers. No public wrapper or backend lowering was introduced.
 
 ### C-ATOM-01: Sequentially Consistent Atomic Scalars
 
-- **State/role:** blocked; prerequisites are `C-MIR-01`, `C-GLOBAL-01`,
-  `C-RUNTIME-01`, and an `M-EXEC-01` sub-slice covering ordered atomic
-  operations; systems-readiness implementation.
+- **State/role:** blocked; `C-MIR-01` and `C-GLOBAL-01` are done. Remaining
+  prerequisites are `C-RUNTIME-01` and an `M-EXEC-01` sub-slice covering
+  ordered atomic operations; systems-readiness implementation.
 - **Scope:** Introduce an ordinary GTI standard-library atomic wrapper over a
   closed scalar allowlist with construction, load, store, exchange, and one
   compare-exchange shape. The first executable contract is sequentially
@@ -1080,8 +1087,8 @@ or MIR prerequisite.
 
 ### C-CALL-01: Thread-Task Transfer Contract
 
-- **State/role:** blocked; `D-CALL-01`, `D-FAIL-01`, and `M-LIFE-01` are done;
-  remaining prerequisites are `M-FAIL-01` and `C-TYPE-01`;
+- **State/role:** blocked; `D-CALL-01`, `D-FAIL-01`, `M-LIFE-01`, and
+  `C-TYPE-01` are done; the remaining prerequisite is `M-FAIL-01`;
   systems-readiness implementation.
 - **Scope:** Bind the GTI-owned callable representation to one consumed task
   shape. Prove transfer/share capabilities for the callable and every capture,
@@ -1099,10 +1106,10 @@ or MIR prerequisite.
 
 ### C-THREAD-01: Joined Owned Thread With Owned Arguments
 
-- **State/role:** blocked; `M-LIFE-01` is done; remaining prerequisites are
-  `C-TYPE-01`, `C-GLOBAL-01`, `C-MIR-01`, `M-FAIL-01`, `M-EXEC-01`,
-  `C-RUNTIME-01`, and `C-CALL-01`, plus the matching closed-call-graph
-  `M-BACK-02` slice;
+- **State/role:** blocked; `M-LIFE-01`, `C-TYPE-01`, `C-GLOBAL-01`, and
+  `C-MIR-01` are done. Remaining prerequisites are `M-FAIL-01`, the required
+  `M-EXEC-01` slice, `C-RUNTIME-01`, and `C-CALL-01`, plus the matching
+  closed-call-graph `M-BACK-02` slice;
   systems-readiness implementation.
 - **Scope:** Start with a join-required thread handle. Move a transfer-capable
   callable and arguments into the thread, define join result/failure, and make

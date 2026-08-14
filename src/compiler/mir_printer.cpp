@@ -96,7 +96,7 @@ callInputKindName(HirCallInputKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v13 valid=" << program.valid() << '\n';
+    output << "mir-v14 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -328,7 +328,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v13\n";
+    output << "mir-body-v14\n";
     body(value, 0);
     return output.str();
   }
@@ -728,7 +728,20 @@ private:
     output << " payload-index=";
     optional(value.payloadIndex);
     output << " intrinsic=" << name(value.intrinsic)
-           << " dispatch=" << number(value.dispatch) << " dispatch-owner=";
+           << " synchronization=" << name(value.synchronization.kind)
+           << " atomic-order=";
+    if (value.synchronization.order) {
+      output << name(*value.synchronization.order);
+    } else {
+      output << '-';
+    }
+    output << " failure-order=";
+    if (value.synchronization.failureOrder) {
+      output << name(*value.synchronization.failureOrder);
+    } else {
+      output << '-';
+    }
+    output << " dispatch=" << number(value.dispatch) << " dispatch-owner=";
     type(value.dispatchOwner);
     output << " function=";
     optional(value.functionTarget);

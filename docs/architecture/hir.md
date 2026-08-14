@@ -106,8 +106,14 @@ construction and final left-to-right parameter transfer.
 ## Executable Values
 
 HIR bodies retain source operand vectors and attach semantic type/category,
-access, ownership, selected call/operator/constructor, intrinsic, dispatch,
-unsafe, move, and borrow facts to explicit values and statements. Generated
+access, ownership, selected call/operator/constructor, intrinsic,
+synchronization, dispatch, unsafe, move, and borrow facts to explicit values
+and statements. A synchronization record names a thread spawn/join, atomic
+load/store/read-modify-write/compare-exchange, or mutex lock/unlock operation.
+Atomic records additionally retain the selected success/general order and,
+for compare-exchange, failure order. The record is backend independent and is
+attached only after semantics resolves a trusted private capability; HIR does
+not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 

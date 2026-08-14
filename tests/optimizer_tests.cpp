@@ -2341,6 +2341,25 @@ void testMirEffectClassification() {
            "every intrinsic should have a stable classification");
     (void)lang::effects(intrinsic);
   }
+  for (std::size_t index = 0; index < lang::synchronizationOperationKindCount;
+       ++index) {
+    const auto kind = static_cast<lang::SynchronizationOperationKind>(index);
+    expect(lang::name(kind) != "invalid",
+           "every synchronization operation should have a stable "
+           "classification");
+    const lang::MirEffectTraits effect = lang::effects(kind);
+    if (kind != lang::SynchronizationOperationKind::None) {
+      expect(effect.maySynchronize && !effect.speculatable &&
+                 !effect.removableWhenUnused && !effect.reorderable,
+             "every synchronization operation should be a retained optimizer "
+             "barrier");
+    }
+  }
+  for (std::size_t index = 0; index < lang::atomicMemoryOrderCount; ++index) {
+    const auto order = static_cast<lang::AtomicMemoryOrder>(index);
+    expect(lang::name(order) != "invalid",
+           "every atomic memory order should have a stable spelling");
+  }
 
   const lang::MirEffectTraits literal = lang::effects(
       lang::MirInstruction{.kind = lang::MirInstructionKind::Compute,
@@ -2441,6 +2460,246 @@ void testMirEffectClassification() {
   expect(drop.dropsValue && drop.invokesUserCode && drop.writesPlace &&
              drop.maySynchronize && !drop.reorderable,
          "user cleanup should remain observable and a synchronization barrier");
+
+  const lang::MirEffectTraits spawn = lang::effects(lang::MirInstruction{
+      .kind = lang::MirInstructionKind::Call,
+      .synchronization = {
+          .kind = lang::SynchronizationOperationKind::ThreadSpawn}});
+  expect(spawn.allocates && spawn.invokesRuntime && spawn.invokesUserCode &&
+             spawn.movesValue && spawn.maySynchronize && !spawn.speculatable &&
+             !spawn.removableWhenUnused && !spawn.reorderable,
+         "thread spawn should remain an observable task-transfer and "
+         "synchronization barrier");
+
+  const lang::MirEffectTraits atomicLoad = lang::effects(lang::MirInstruction{
+      .kind = lang::MirInstructionKind::Call,
+      .synchronization = {.kind =
+                              lang::SynchronizationOperationKind::AtomicLoad,
+                          .order = lang::AtomicMemoryOrder::Acquire}});
+  expect(atomicLoad.readsUnknownMemory && !atomicLoad.writesUnknownMemory &&
+             atomicLoad.targetDependent && atomicLoad.maySynchronize &&
+             !atomicLoad.speculatable && !atomicLoad.removableWhenUnused &&
+             !atomicLoad.reorderable,
+         "an acquire atomic load should remain a non-reorderable read "
+         "barrier");
+
+  const lang::MirEffectTraits atomicStore = lang::effects(lang::MirInstruction{
+      .kind = lang::MirInstructionKind::Call,
+      .synchronization = {.kind =
+                              lang::SynchronizationOperationKind::AtomicStore,
+                          .order = lang::AtomicMemoryOrder::Release}});
+  expect(!atomicStore.readsUnknownMemory && atomicStore.writesUnknownMemory &&
+             atomicStore.targetDependent && atomicStore.maySynchronize &&
+             !atomicStore.speculatable && !atomicStore.removableWhenUnused &&
+             !atomicStore.reorderable,
+         "a release atomic store should remain a non-reorderable write "
+         "barrier");
+}
+
+void testSynchronizationMirContract() {
+  const std::string source = R"(
+void work() {}
+int main() {
+  work();
+  return 0;
+}
+)";
+
+  lang::FrontendOptions concurrentOptions;
+  concurrentOptions.target = lang::TargetInfo::host();
+  concurrentOptions.target.executionProfile =
+      lang::ExecutionProfile::Concurrent;
+  const lang::FrontendResult concurrent =
+      lang::Frontend(concurrentOptions)
+          .analyze("synchronization-mir.gti", source);
+  expect(concurrent.canGenerateCode(),
+         "the synchronization MIR fixture should reach code generation");
+  if (!concurrent.canGenerateCode()) {
+    return;
+  }
+
+  lang::HirProgram stagedHir = concurrent.hir;
+  auto &hirFunctions = const_cast<std::vector<lang::HirFunctionInstance> &>(
+      stagedHir.functionInstances());
+  const auto hirMain =
+      std::find_if(hirFunctions.begin(), hirFunctions.end(),
+                   [](const lang::HirFunctionInstance &function) {
+                     return function.source != nullptr &&
+                            function.source->name().lexeme == "main";
+                   });
+  lang::HirValue *spawnValue = nullptr;
+  if (hirMain != hirFunctions.end()) {
+    const auto call =
+        std::find_if(hirMain->body.values.begin(), hirMain->body.values.end(),
+                     [](const lang::HirValue &value) {
+                       return value.kind == lang::HirValueKind::Call &&
+                              value.functionTarget.has_value();
+                     });
+    if (call != hirMain->body.values.end()) {
+      spawnValue = &*call;
+      spawnValue->synchronization.kind =
+          lang::SynchronizationOperationKind::ThreadSpawn;
+    }
+  }
+
+  const lang::MirLoweringResult lowered = lang::MirLowerer().lower(stagedHir);
+  const lang::MirFunctionInstance *loweredMain =
+      hirMain == hirFunctions.end()
+          ? nullptr
+          : lowered.program.findFunctionInstance(hirMain->id);
+  const lang::MirInstruction *spawnInstruction = nullptr;
+  if (loweredMain != nullptr && spawnValue != nullptr) {
+    for (const lang::MirBlock &block : loweredMain->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.hirValue == spawnValue->id &&
+                   instruction.kind == lang::MirInstructionKind::Call;
+          });
+      if (found != block.instructions.end()) {
+        spawnInstruction = &*found;
+        break;
+      }
+    }
+  }
+  expect(spawnInstruction != nullptr && lowered.valid() &&
+             lowered.program.executionProfile() ==
+                 lang::ExecutionProfile::Concurrent &&
+             spawnInstruction->synchronization.kind ==
+                 lang::SynchronizationOperationKind::ThreadSpawn &&
+             lang::verifyMirProgram(lowered.program).valid(),
+         "HIR synchronization identity should lower exactly into verified "
+         "concurrent MIR");
+  if (loweredMain == nullptr || spawnInstruction == nullptr) {
+    return;
+  }
+
+  const auto mutableInstruction =
+      [](lang::MirBody &body,
+         lang::MirInstructionId id) -> lang::MirInstruction * {
+    for (lang::MirBlock &block : body.blocks) {
+      const auto found =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const lang::MirInstruction &instruction) {
+                         return instruction.id == id;
+                       });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return nullptr;
+  };
+
+  const std::vector<lang::SynchronizationOperation> validOperations = {
+      {.kind = lang::SynchronizationOperationKind::ThreadSpawn},
+      {.kind = lang::SynchronizationOperationKind::ThreadJoin},
+      {.kind = lang::SynchronizationOperationKind::AtomicLoad,
+       .order = lang::AtomicMemoryOrder::Acquire},
+      {.kind = lang::SynchronizationOperationKind::AtomicStore,
+       .order = lang::AtomicMemoryOrder::Release},
+      {.kind = lang::SynchronizationOperationKind::AtomicReadModifyWrite,
+       .order = lang::AtomicMemoryOrder::AcquireRelease},
+      {.kind = lang::SynchronizationOperationKind::AtomicCompareExchange,
+       .order = lang::AtomicMemoryOrder::SequentiallyConsistent,
+       .failureOrder = lang::AtomicMemoryOrder::Acquire},
+      {.kind = lang::SynchronizationOperationKind::MutexLock},
+      {.kind = lang::SynchronizationOperationKind::MutexUnlock},
+  };
+  for (const lang::SynchronizationOperation &operation : validOperations) {
+    lang::MirBody candidate = loweredMain->body;
+    lang::MirInstruction *instruction =
+        mutableInstruction(candidate, spawnInstruction->id);
+    if (instruction != nullptr) {
+      instruction->synchronization = operation;
+    }
+    expect(instruction != nullptr && lang::verifyMirBody(candidate).valid(),
+           "every well-formed synchronization operation should pass MIR "
+           "verification");
+  }
+
+  lang::MirBody invalidLoad = loweredMain->body;
+  lang::MirInstruction *load =
+      mutableInstruction(invalidLoad, spawnInstruction->id);
+  if (load != nullptr) {
+    load->synchronization = {.kind =
+                                 lang::SynchronizationOperationKind::AtomicLoad,
+                             .order = lang::AtomicMemoryOrder::Release};
+  }
+  expect(load != nullptr && !lang::verifyMirBody(invalidLoad).valid(),
+         "MIR should reject a release order on an atomic load");
+
+  lang::MirBody invalidCompareExchange = loweredMain->body;
+  lang::MirInstruction *compareExchange =
+      mutableInstruction(invalidCompareExchange, spawnInstruction->id);
+  if (compareExchange != nullptr) {
+    compareExchange->synchronization = {
+        .kind = lang::SynchronizationOperationKind::AtomicCompareExchange,
+        .order = lang::AtomicMemoryOrder::Acquire,
+        .failureOrder = lang::AtomicMemoryOrder::SequentiallyConsistent};
+  }
+  expect(compareExchange != nullptr &&
+             !lang::verifyMirBody(invalidCompareExchange).valid(),
+         "MIR should reject a compare-exchange failure order stronger than "
+         "its success order");
+
+  lang::MirBody misplaced = loweredMain->body;
+  lang::MirInstruction *literal = nullptr;
+  for (lang::MirBlock &block : misplaced.blocks) {
+    const auto found = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::Compute &&
+                 instruction.operation == lang::MirOperation::Literal;
+        });
+    if (found != block.instructions.end()) {
+      literal = &*found;
+      break;
+    }
+  }
+  if (literal != nullptr) {
+    literal->synchronization.kind =
+        lang::SynchronizationOperationKind::MutexLock;
+  }
+  expect(literal != nullptr && !lang::verifyMirBody(misplaced).valid(),
+         "MIR should reject synchronization metadata on a non-call "
+         "instruction");
+
+  const lang::FrontendResult single = lang::Frontend().analyze(
+      "single-threaded-synchronization-mir.gti", source);
+  lang::MirProgram forgedSingle = single.mir;
+  auto &singleFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedSingle.functionInstances());
+  lang::MirInstruction *singleCall = nullptr;
+  const lang::HirFunctionInstance *singleMain = findHirFunction(single, "main");
+  if (singleMain != nullptr && singleMain->id <= singleFunctions.size()) {
+    for (lang::MirBlock &block :
+         singleFunctions[singleMain->id - 1].body.blocks) {
+      const auto call = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget.has_value();
+          });
+      if (call != block.instructions.end()) {
+        singleCall = &*call;
+        break;
+      }
+    }
+  }
+  if (singleCall != nullptr) {
+    singleCall->synchronization.kind =
+        lang::SynchronizationOperationKind::ThreadSpawn;
+  }
+  const lang::MirVerificationResult singleResult =
+      lang::verifyMirProgram(forgedSingle);
+  expect(singleCall != nullptr && !singleResult.valid() &&
+             std::any_of(singleResult.errors.begin(), singleResult.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find("single-threaded") !=
+                                  std::string::npos;
+                         }),
+         "the MIR program verifier should reject synchronization operations "
+         "in the single-threaded profile");
 }
 
 void testExclusiveReborrowMirFlow() {
@@ -4643,6 +4902,7 @@ int main() {
   testMirLiteralIdentityFoldAndEditor();
   testMirDominanceAndValueAvailability();
   testMirEffectClassification();
+  testSynchronizationMirContract();
   testExclusiveReborrowMirFlow();
   testTransientBorrowNormalization();
   testReturnEdgeLoanIdentity();
