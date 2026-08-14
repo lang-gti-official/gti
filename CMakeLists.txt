@@ -219,6 +219,20 @@ target_include_directories(
 )
 target_compile_features("gti_compiler" PUBLIC cxx_std_20)
 
+add_library(
+  "gti_cpp_backend" STATIC
+  "src/compiler/cpp_backend.cpp"
+  "src/compiler/cpp_emitter.cpp"
+)
+target_include_directories(
+  "gti_cpp_backend"
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_compile_features("gti_cpp_backend" PUBLIC cxx_std_20)
+target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
+
 add_library("gti_runtime" STATIC "runtime/src/io.cpp")
 target_include_directories(
   "gti_runtime"
@@ -249,7 +263,7 @@ target_include_directories(
   "gti_driver" SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus"
 )
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
-target_link_libraries("gti_driver" PUBLIC gti_compiler)
+target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend)
 add_dependencies("gti_driver" "gti_runtime")
 target_compile_definitions(
   "gti_driver"
@@ -304,10 +318,11 @@ endif()
 install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT gti_toolchain)
 set_target_properties(gti_compiler PROPERTIES EXPORT_NAME compiler)
+set_target_properties(gti_cpp_backend PROPERTIES EXPORT_NAME cpp_backend)
 set_target_properties(gti_driver PROPERTIES EXPORT_NAME driver)
 set_target_properties(gti_runtime PROPERTIES EXPORT_NAME runtime)
 install(
-  TARGETS gti_compiler gti_driver gti_runtime
+  TARGETS gti_compiler gti_cpp_backend gti_driver gti_runtime
   EXPORT GTITargets
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   COMPONENT gti_toolchain
@@ -405,6 +420,13 @@ if(BUILD_TESTING)
   target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)
   add_test(NAME compiler_library_boundary COMMAND gti_compiler_library_smoke)
 
+  add_executable("gti_cpp_backend_library_smoke"
+                 "tests/cpp_backend_library_smoke.cpp")
+  target_link_libraries("gti_cpp_backend_library_smoke"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME cpp_backend_library_boundary
+           COMMAND gti_cpp_backend_library_smoke)
+
   add_executable("gti_driver_library_smoke" "tests/driver_library_smoke.cpp")
   target_link_libraries("gti_driver_library_smoke" PRIVATE gti_driver)
   add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
@@ -418,7 +440,7 @@ if(BUILD_TESTING)
   add_test(NAME project_model COMMAND gti_project_tests)
 
   add_executable("gti_tests" "tests/compiler_tests.cpp")
-  target_link_libraries("gti_tests" PRIVATE gti_compiler)
+  target_link_libraries("gti_tests" PRIVATE gti_cpp_backend)
   add_test(NAME compiler_pipeline COMMAND gti_tests)
 
   add_executable("gti_optimizer_tests" "tests/optimizer_tests.cpp")
@@ -426,32 +448,32 @@ if(BUILD_TESTING)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
 
   add_executable("gti_raw_pointer_tests" "tests/raw_pointer_tests.cpp")
-  target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_compiler)
+  target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_cpp_backend)
   add_test(NAME raw_pointer_pipeline COMMAND gti_raw_pointer_tests)
 
   add_executable("gti_layout_query_tests" "tests/layout_query_tests.cpp")
-  target_link_libraries("gti_layout_query_tests" PRIVATE gti_compiler)
+  target_link_libraries("gti_layout_query_tests" PRIVATE gti_cpp_backend)
   add_test(NAME layout_query_pipeline COMMAND gti_layout_query_tests)
 
   add_executable("gti_native_record_tests" "tests/native_record_tests.cpp")
-  target_link_libraries("gti_native_record_tests" PRIVATE gti_compiler)
+  target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend)
   add_test(NAME native_record_pipeline COMMAND gti_native_record_tests)
 
   add_executable("gti_native_header_tests" "tests/native_header_tests.cpp")
-  target_link_libraries("gti_native_header_tests" PRIVATE gti_compiler)
+  target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend)
   add_test(NAME native_header_pipeline COMMAND gti_native_header_tests)
 
   add_executable("gti_defined_integer_tests"
                  "tests/defined_integer_tests.cpp")
-  target_link_libraries("gti_defined_integer_tests" PRIVATE gti_compiler)
+  target_link_libraries("gti_defined_integer_tests" PRIVATE gti_cpp_backend)
   add_test(NAME defined_integer_arithmetic COMMAND gti_defined_integer_tests)
 
   add_executable("gti_binary64_tests" "tests/binary64_tests.cpp")
-  target_link_libraries("gti_binary64_tests" PRIVATE gti_compiler)
+  target_link_libraries("gti_binary64_tests" PRIVATE gti_cpp_backend)
   add_test(NAME binary64_pipeline COMMAND gti_binary64_tests)
 
   add_executable("gti_sum_type_tests" "tests/sum_type_tests.cpp")
-  target_link_libraries("gti_sum_type_tests" PRIVATE gti_compiler)
+  target_link_libraries("gti_sum_type_tests" PRIVATE gti_cpp_backend)
   add_test(NAME sum_type_pipeline COMMAND gti_sum_type_tests)
 
   add_executable("gti_layout_query_native_smoke"

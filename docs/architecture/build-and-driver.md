@@ -21,6 +21,9 @@ gti build|check|run|test|clean|metadata project mode
 - `gti_compiler` contains reusable frontend, IR, optimizer, backend contracts,
   and compiler-owned language queries. It does not depend on manifests, TOML,
   native processes, or project output policy.
+- `gti_cpp_backend` contains the compiled C++ emitter and consumes the immutable
+  compiler-owned `BackendInput` contract. It depends on `gti_compiler`; the LSP
+  does not depend on it.
 - `gti_driver` in `include/gti/driver/` and `src/driver/` owns immutable
   compilation/build requests, resources, manifests, project plans, artifacts,
   native command construction, and process execution.
@@ -59,18 +62,19 @@ assembles `TargetInfo` directly is checked against the same OS, vendor,
 architecture, and layout vocabulary; assigning a canonical layout to an
 unknown target name does not bypass the boundary.
 
-`gti_driver` depends on `gti_compiler`; the reverse dependency is forbidden.
-Both are installed static exact-version libraries without a stable cross-version
+`gti_cpp_backend` depends on `gti_compiler`, and `gti_driver` depends privately
+on the backend for the default native path; reverse dependencies are forbidden.
+All are installed static exact-version libraries without a stable cross-version
 compiler ABI promise. Installed consumers use `find_package(GTI CONFIG)` and
-the `GTI::compiler`, `GTI::driver`, and `GTI::runtime` targets rather than
-linking archive paths by hand. Those targets carry the required LLVM support
-link dependencies. Self-contained release packages include the pinned LLVM
-archives; a package produced against system LLVM requires that exact LLVM CMake
-package on the consumer machine. A CMake project consuming a system-LLVM GTI
-package must enable both C and C++ before `find_package(GTI CONFIG)`, because
-some supported LLVM distributions run C feature probes while loading their
-package configuration. The bundled release package does not load a downstream
-LLVM package.
+the `GTI::compiler`, `GTI::cpp_backend`, `GTI::driver`, and `GTI::runtime`
+targets rather than linking archive paths by hand. Those targets carry the
+required LLVM support link dependencies. Self-contained release packages
+include the pinned LLVM archives; a package produced against system LLVM
+requires that exact LLVM CMake package on the consumer machine. A CMake project
+consuming a system-LLVM GTI package must enable both C and C++ before
+`find_package(GTI CONFIG)`, because some supported LLVM distributions run C
+feature probes while loading their package configuration. The bundled release
+package does not load a downstream LLVM package.
 
 ## Direct Mode
 

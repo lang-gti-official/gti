@@ -4,8 +4,7 @@
 > boundaries are documented in
 > [`docs/architecture/overview.md`](../architecture/overview.md).
 
-Status: accepted; phases 1 through 5 and phase 7 implemented; phase 6 remains
-in progress
+Status: implemented; phases 1 through 7 are complete
 
 Prompt-sized migration ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below
@@ -49,9 +48,9 @@ Target-triple parsing lives in `src/compiler/target.cpp`, and tool-process
 support in `src/compiler/support.cpp`. Phase 4 is complete: concrete instance
 de-duplication is compiled in `src/compiler/hir.cpp`, HIR lowering lives in
 `src/compiler/hir_lowering.cpp`, and MIR body/CFG lowering lives in
-`src/compiler/mir_lowering.cpp`. Pass management, remaining optimization
-editors and analyses, backend emission, and several tooling algorithms remain
-header-defined.
+`src/compiler/mir_lowering.cpp`. Optimization and C++ emission algorithms are
+also compiled; only intentionally small value operations and separate tooling
+surfaces remain header-defined.
 
 ## Decision Summary
 
@@ -202,15 +201,17 @@ lifetime, and debugging complexity.
 
 Release archives historically install `include/gti/`. Once a declaration calls
 compiled code, those headers must not be shipped without the matching archive.
-Therefore the `gti_toolchain` component installs `libgti_compiler.a` and release
-packaging requires it.
+Therefore the `gti_toolchain` component installs `libgti_compiler.a`,
+`libgti_cpp_backend.a`, and `libgti_driver.a`, and release packaging requires
+them.
 
 The contract is deliberately narrow:
 
 - installed `gti`, `gti_lsp`, headers, and static libraries come from one
   `VERSION` and build configuration;
 - installed consumers use the exact-version `GTIConfig.cmake` package and its
-  `GTI::compiler`, `GTI::driver`, and `GTI::runtime` targets;
+  `GTI::compiler`, `GTI::cpp_backend`, `GTI::driver`, and `GTI::runtime`
+  targets;
 - release smoke coverage configures, compiles, and runs external compiler and
   driver clients against those staged imported targets;
 - bundled releases install the pinned LLVM support archives required by the
@@ -437,7 +438,7 @@ Acceptance criteria:
 
 ### Phase 6: compile and isolate the C++ backend
 
-Status: in progress
+Status: implemented
 
 - Introduce `gti_cpp_backend` when `BackendInput` is sufficient to prevent
   reverse dependency on CLI policy.
@@ -445,6 +446,13 @@ Status: in progress
   headers.
 - Continue the planned migration from AST traversal toward optimized MIR
   without making the library split itself a backend rewrite.
+
+`CppEmitter` now exposes a narrow compiled facade, `CppBackend` generates only
+from `BackendInput`, and representation algorithms live in the separately
+installed `gti_cpp_backend` archive. `gti_driver` privately links that target;
+`gti_lsp` links only `gti_compiler`. Touching `cpp_emitter.cpp` on the migration
+machine rebuilt one backend object and relinked backend consumers in 2.52
+seconds without rebuilding the compiler archive or LSP.
 
 Acceptance criteria:
 

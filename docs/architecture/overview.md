@@ -52,12 +52,11 @@ validity together, which keeps AST-address semantic side tables alive.
 - `BackendInput` carries AST, semantics, HIR, optimized MIR, and HIR
   replacements. `CppBackend` currently emits by traversing the AST with
   semantic/HIR side data and does not consume MIR bodies.
-- Much compiler implementation remains in headers. `gti_compiler` currently
-  compiles source loading, lexing, parsing, semantic analysis, HIR/MIR
-  lowering, formatter configuration, MIR repair/verification and printing,
-  effect classification, the optimizer facade, checked integer arithmetic,
-  HIR concrete-instance de-duplication, target-triple parsing, and tool-process
-  support (crash handling and compile-time telemetry).
+- Substantial compiler algorithms compile behind public declarations.
+  `gti_compiler` owns source loading through optimization and compiler support;
+  the separate `gti_cpp_backend` archive owns C++ representation and emission.
+  Headers retain data models, templates, abstract contracts, and small value
+  operations.
 
 Those are implemented limitations, not permission for later stages to invent
 semantics. Their future work is tracked under [`docs/plans/`](../plans/).
@@ -81,8 +80,9 @@ must store durable summaries rather than pointers into a discarded snapshot.
   public IR records plus compiled HIR/MIR lowering and MIR verification.
 - `include/gti/optimizer.h`, `src/compiler/optimizer.cpp`: current optimizer
   entry points.
-- `include/gti/{backend,cpp_backend,cpp_emitter}.h`: backend contract and C++
-  representation.
+- `include/gti/{backend,cpp_backend,cpp_emitter}.h`,
+  `src/compiler/{cpp_backend,cpp_emitter}.cpp`: backend contracts and compiled
+  C++ representation.
 - `include/gti/driver/`, `src/driver/`: build and native orchestration.
 
 Read the focused architecture document before modifying a layer. Use

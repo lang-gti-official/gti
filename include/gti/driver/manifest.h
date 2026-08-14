@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gti/cpp_emitter.h"
+#include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/optimizer.h"

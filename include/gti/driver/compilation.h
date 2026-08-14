@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gti/backend.h"
-#include "gti/cpp_emitter.h"
+#include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
 #include "gti/mir.h"
 #include "gti/optimizer.h"

@@ -16,6 +16,12 @@ product is not present in `BackendInput` today.
 
 ## C++ Backend
 
+The C++ representation layer is the compiled `gti_cpp_backend` target.
+`CppEmitter` is a narrow facade whose implementation is private to
+`src/compiler/cpp_emitter.cpp`; `CppBackend` consumes only `BackendInput`.
+The compiler frontend and LSP do not link this target. The driver links it
+privately, and installed exact-version consumers may link `GTI::cpp_backend`.
+
 `CppBackend` currently creates `CppEmitter`, which traverses the checked AST and
 consults semantic facts, HIR, optimization replacements, and the target. It
 does not currently consume `BackendInput::mir`. The generated C++ is a

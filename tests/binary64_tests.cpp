@@ -4,6 +4,8 @@
 #include "gti/frontend.h"
 #include "gti/lexer.h"
 #include "gti/mir_printer.h"
+#include "gti/optimization/rewrite.h"
+#include "gti/optimizer.h"
 
 #include <algorithm>
 #include <cstdint>

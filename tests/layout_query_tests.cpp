@@ -1,5 +1,6 @@
 #include "gti/ast_printer.h"
 #include "gti/cpp_backend.h"
+#include "gti/cpp_emitter.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
