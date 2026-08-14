@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.136.0
+Checkpoint: 0.137.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,11 +134,11 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.136.0 |
+| Foundation | Evidence at 0.137.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
-| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v16 retains v15's ordered scalar/reference and eligible class-value inputs for ordinary calls, concrete ordinary constructors, and concretely resolved class `operator()` calls, including consuming-receiver moves; exact global/static borrow-origin places; synchronization operation/order records; and exact defined-failure origin, propagation, artifact descriptor, and detector-site identity. |
+| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. MIR v17 adds bounded scalar `Invoke`/`PropagateFailure` edges, fixed-record parameters, and deterministic failure cleanup while retaining ordered invocation inputs, exact borrow origins, synchronization records, and artifact-local failure identity. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
@@ -154,14 +154,16 @@ start a later phase:
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move environments plus exact generic return and one-field owner transport implement its current bounded lifecycle. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
-| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. The first two M-FAIL-01 slices give semantics, HIR, and MIR one exact outcome vocabulary, multi-origin snapshot-local source anchors, distinct propagation channels, conservative optimizer barriers, deterministic artifact descriptors, and exact local detector-site IDs. |
+| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. Landed M-FAIL-01 slices provide exact outcome/propagation identity, deterministic artifact descriptors and detector sites, plus verified fixed-record failure edges and cleanup for eligible full-expression-root scalar operations. |
 
 MIR is not yet the sole executable authority. It owns the supported
 failure-free temporary/drop slice, bounded ordinary call/constructor/concrete
-call-operator input schedules, and defined-failure identity, but not complete
-ordered parameter/result materialization, explicit failure/cleanup edges,
-partial-constructor rollback, object layout, ABI, or runtime containment. The
-C++ backend still emits bodies from checked AST/HIR facts.
+call-operator input schedules, defined-failure identity, and one bounded
+full-expression-root scalar `Invoke`/cleanup family. It does not yet own
+complete ordered parameter/result materialization, nested or owning failure
+edges, partial-constructor rollback, object layout, ABI, runtime containment,
+or executable failure handling. The C++ backend still emits bodies from
+checked AST/HIR facts.
 
 ## Dependency Map
 
@@ -597,9 +599,11 @@ analysis, HIR, MIR, and the backend.
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
 - **State/role:** active; `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` are done.
-  The semantic/HIR identity and artifact metadata/site slices are implemented.
-  Remaining work depends on the checked-expression and program/module
-  initialization slices of `M-EXEC-01`; systems-readiness implementation.
+  The semantic/HIR identity, artifact metadata/site, and bounded
+  full-expression-root scalar control-flow slices are implemented. Remaining
+  work depends on staged parameter/result, checked-expression, and
+  program/module initialization slices of `M-EXEC-01`; systems-readiness
+  implementation.
 - **Scope:** Represent exact local categories/details and canonical frontend
   source anchors in HIR, then assign deterministic artifact-local site IDs for
   MIR through the failure-metadata builder. Represent call-like propagation
@@ -632,9 +636,17 @@ analysis, HIR, MIR, and the backend.
   external-unit route identities, definition-site coalescing, one-based
   `FailureSiteId` assignments, canonical descriptor bytes, and the SHA-256
   artifact identity before optimization. MIR retains and verifies exact local
-  detector sites while propagation remains un-sited. Hosted/generated origins,
-  explicit failure successors, cleanup unwinding, fixed records, containment,
-  reporting, and executable backend use remain open.
+  detector sites while propagation remains un-sited. MIR v17 additionally
+  gives eligible full-expression-root scalar operations in function and lambda
+  bodies one `Invoke` with distinct normal/failure successors, a body-local
+  fixed-record failure parameter, active-loan ending, reverse-construction
+  temporary/lexical cleanup, and an exact `PropagateFailure` endpoint. The
+  verifier rejects normal predecessors, missing/forged invokes, record rewrite,
+  failure-result use, misplaced cleanup, and cleanup-order drift. Nested
+  argument evaluation, staged owner parameters, assignment destinations,
+  owning/borrowed results, constructors, partial rollback, double failure,
+  hosted/generated origins, containment, reporting, and executable backend use
+  remain open.
   This row does not claim that the compatibility emitter executes those edges.
 - **Exit gate:** every current failure family has exact semantic/HIR
   local-origin and source-anchor snapshots plus MIR outcome/site snapshots;
@@ -1758,16 +1770,17 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended unowned prompt remains the next bounded `M-EXEC-01`
-family. M-LIFE-01 makes the supported normal-exit temporary and active-drop
-obligations authoritative in HIR and MIR, and ordinary scalar/reference plus
-eligible non-borrowed class-value calls and concrete ordinary constructors now
-prove the schedule shape. The next planned family is operators and one-time
-assignment places. Borrowed-state class values, remaining call and construction
-forms, result places, compound expressions, and hosted initialization still
-need the same executable-lifetime treatment. Keep
-the next prompt to one coherent family; every accepted readiness workload
-consumes this result, but lowering machinery is not independently the product.
+The next recommended unowned prompt is the bounded `M-EXEC-01` parameter/result
+staging family needed by M-FAIL-01. Give an already ordered ordinary call one
+explicit caller-owned obligation for each prepared owning parameter until the
+callee begins, then transfer it exactly once on the invoke normal/failure
+contract. Add edge-specific result initialization for one owning-result shape.
+This is the nearest prerequisite for extending failure edges into nested
+arguments and owning calls without leaking a prepared owner. Assignment
+targets, broader borrowed-state values, remaining construction forms, compound
+expressions, and hosted initialization stay separate. Keep the next prompt to
+one coherent family; every accepted readiness workload consumes this result,
+but lowering machinery is not independently the product.
 After the row's remaining families land, select the smallest newly unblocked
 vertical slice from an outcome lane.
 `D-COMPAT-01` is complete on the independent release-policy lane. Stop after

@@ -220,7 +220,12 @@ successorsForDominance(const MirBody &body, const MirTerminator &terminator) {
       result.push_back(target.target);
     }
     break;
+  case MirTerminatorKind::Invoke:
+    result.push_back(terminator.target);
+    result.push_back(terminator.elseTarget);
+    break;
   case MirTerminatorKind::Return:
+  case MirTerminatorKind::PropagateFailure:
   case MirTerminatorKind::Unreachable:
   case MirTerminatorKind::Exit:
     break;

@@ -11,6 +11,8 @@ assertions.
 | CTest target | Owns |
 | --- | --- |
 | `compiler_pipeline` | lexer/parser, semantics, language queries, HIR/MIR integration, formatter features |
+| `block_comment_pipeline` | line tracking, literal exclusion, non-nesting block-comment lexing, unterminated diagnostics, frontend composition, and formatter preservation/idempotence |
+| `block_comment_lsp` | multiline UTF-16 semantic tokens, literal exclusion, formatting, and publication of the shared unterminated-comment diagnostic |
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
 | `native_record_pipeline` | `[[c_abi]]` declaration rules, computed field layout, diagnostics, extern-C signatures, unsafe classification, HIR/MIR retention, formatter, and backend assertions |
@@ -20,6 +22,7 @@ assertions.
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
 | `binary64_runtime` | example 47 at O0/O3 under C++20/C++23 plus emitted strict-IEEE policy evidence |
+| `failure_metadata` | deterministic artifact sites plus bounded scalar `Invoke`, fixed-record failure parameters, reverse cleanup, and record-preserving propagation |
 | `optimizer_foundation` | MIR verification/printing/effects; dominance; controlled editor atomicity, repair, and invalidation; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
@@ -172,6 +175,15 @@ Matching M-BACK migrations own production authority, the full supported-mode
 matrix, and native-compiler runtime traces before any conservative semantic
 restriction is removed. A compatibility emitter trace is evidence for
 lifecycle composition, not proof that ordered MIR controls that family.
+
+The bounded M-FAIL-01 control-flow gate is owned by `failure_metadata`. It
+checks exact producer records, dedicated fixed-record failure successors,
+active-loan ending, reverse-construction temporary and lexical cleanup, and
+byte-for-byte record propagation for eligible full-expression-root scalar
+operations. Verifier mutations reject removed invokes, rewritten records, and
+reordered cleanup. Nested argument failures, owning or borrowed results,
+constructors, containment, runtime records, and backend execution remain
+outside this gate.
 
 M-OWN-02 now supplies indexed-place implementation evidence for the directly
 owned fixed-array slice. `compiler_pipeline` covers equal and both prefix

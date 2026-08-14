@@ -97,8 +97,13 @@ failure(const MirBody &body, std::size_t owner, std::string message,
         enqueue(target.target);
       }
       break;
+    case MirTerminatorKind::Invoke:
+      enqueue(terminator.target);
+      enqueue(terminator.elseTarget);
+      break;
     case MirTerminatorKind::None:
     case MirTerminatorKind::Return:
+    case MirTerminatorKind::PropagateFailure:
     case MirTerminatorKind::Unreachable:
     case MirTerminatorKind::Exit:
       break;
@@ -648,8 +653,13 @@ ownershipSuccessors(const MirTerminator &terminator) {
       append(target.target);
     }
     break;
+  case MirTerminatorKind::Invoke:
+    append(terminator.target);
+    append(terminator.elseTarget);
+    break;
   case MirTerminatorKind::None:
   case MirTerminatorKind::Return:
+  case MirTerminatorKind::PropagateFailure:
   case MirTerminatorKind::Unreachable:
   case MirTerminatorKind::Exit:
     break;
@@ -931,8 +941,11 @@ successors(const MirTerminator &terminator) {
     }
     return result;
   }
+  case MirTerminatorKind::Invoke:
+    return {terminator.target, terminator.elseTarget};
   case MirTerminatorKind::None:
   case MirTerminatorKind::Return:
+  case MirTerminatorKind::PropagateFailure:
   case MirTerminatorKind::Unreachable:
   case MirTerminatorKind::Exit:
     return {};
@@ -1610,15 +1623,22 @@ successors(const MirTerminator &terminator) {
       }
     }
     if (block.terminator.kind == MirTerminatorKind::Return ||
+        block.terminator.kind == MirTerminatorKind::PropagateFailure ||
         block.terminator.kind == MirTerminatorKind::Exit) {
       for (const MirLoan &loan : body.loans) {
         if (active[loan.id - 1] == MirLoanFlowState::Inactive) {
           continue;
         }
+        if (block.terminator.kind == MirTerminatorKind::PropagateFailure) {
+          return failure(body, owner,
+                         "loan " + std::to_string(loan.id) +
+                             " remains active at a failure exit",
+                         block.id);
+        }
         if (!loan.escapes) {
           return failure(body, owner,
                          "non-escaping loan " + std::to_string(loan.id) +
-                             " remains active at a normal body exit",
+                             " remains active at a body exit",
                          block.id);
         }
         if (loan.kind != MirLoanKind::Stored &&
@@ -1818,6 +1838,7 @@ joinLifecycleState(const MirLifecycleState &left,
     }
 
     if (block.terminator.kind == MirTerminatorKind::Return ||
+        block.terminator.kind == MirTerminatorKind::PropagateFailure ||
         block.terminator.kind == MirTerminatorKind::Exit) {
       const auto live = std::find_if(
           state.begin(), state.end(), [](OwnershipStateSet candidate) {
@@ -1826,7 +1847,7 @@ joinLifecycleState(const MirLifecycleState &left,
       if (live != state.end()) {
         return failure(
             body, owner,
-            "normal exit retains active drop obligation " +
+            "body exit retains active drop obligation " +
                 std::to_string(std::distance(state.begin(), live) + 1),
             block.id);
       }
@@ -2281,6 +2302,24 @@ validFailureInstructionShape(const MirInstruction &instruction) {
 
 } // namespace
 
+bool supportsMirFailureControlFlow(MirBodyKind kind) {
+  return kind == MirBodyKind::Function || kind == MirBodyKind::Lambda;
+}
+
+bool requiresMirFailureControlFlow(const MirInstruction &instruction,
+                                   bool fullExpressionRoot) {
+  if (!fullExpressionRoot || instruction.definedFailure.empty() ||
+      instruction.destination || instruction.loan || instruction.ownership ||
+      !instruction.lifecycle.empty() ||
+      instruction.info.type.kind == SemanticType::Reference ||
+      instruction.info.traits.drop != DropKind::Trivial) {
+    return false;
+  }
+  return instruction.kind == MirInstructionKind::Compute ||
+         instruction.kind == MirInstructionKind::Load ||
+         instruction.kind == MirInstructionKind::Call;
+}
+
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   if (body.entry == 0 || body.entry > body.blocks.size()) {
     return failure(body, owner, "entry block is outside the body");
@@ -2314,7 +2353,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   for (std::size_t index = 0; index < body.cleanupBoundaries.size(); ++index) {
     const MirCleanupBoundary &boundary = body.cleanupBoundaries[index];
     std::size_t previous = std::numeric_limits<std::size_t>::max();
-    if (boundary.id != index + 1 || boundary.obligations.empty()) {
+    if (boundary.id != index + 1 || boundary.obligations.empty() ||
+        boundary.kind >= MirCleanupBoundaryKind::Count) {
       return failure(body, owner,
                      "cleanup-boundary table has an invalid identity");
     }
@@ -2322,13 +2362,25 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const MirDropObligation *obligation =
           body.findDropObligation(obligationId);
       if (obligation == nullptr ||
-          obligation->kind != MirDropObligationKind::Binding ||
+          (boundary.kind == MirCleanupBoundaryKind::Normal &&
+           obligation->kind != MirDropObligationKind::Binding) ||
           obligation->constructionOrder >= previous) {
         return failure(body, owner,
                        "cleanup-boundary obligations are not an exact "
                        "reverse construction sequence");
       }
       previous = obligation->constructionOrder;
+    }
+  }
+  for (std::size_t index = 0; index < body.failureRecords.size(); ++index) {
+    const MirFailureRecord &record = body.failureRecords[index];
+    if (record.id != index + 1 || record.producerBlock == 0 ||
+        record.producerBlock > body.blocks.size() ||
+        record.producerInstruction == 0 || record.parameterBlock == 0 ||
+        record.parameterBlock > body.blocks.size() ||
+        record.producerBlock == record.parameterBlock) {
+      return failure(body, owner,
+                     "failure-record table has an invalid identity or edge");
     }
   }
   const auto validOperand = [&](const MirOperand &operand) {
@@ -3193,15 +3245,64 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                                                  0);
   std::vector<std::size_t> cleanupBoundaryMarkers(body.cleanupBoundaries.size(),
                                                   0);
+  std::vector<std::size_t> failureParameterCounts(body.failureRecords.size(),
+                                                  0);
+  std::vector<std::size_t> failureInvokeCounts(body.failureRecords.size(), 0);
+  std::vector<std::size_t> failurePropagationCounts(body.failureRecords.size(),
+                                                    0);
+  std::unordered_map<MirInstructionId, std::size_t> invokedInstructions;
   for (std::size_t index = 0; index < body.blocks.size(); ++index) {
     const MirBlock &block = body.blocks[index];
     if (block.id != index + 1) {
       return failure(body, owner,
                      "block identity does not match stored block order");
     }
+    if (block.failureParameter != 0) {
+      const MirFailureRecord *record =
+          body.findFailureRecord(block.failureParameter);
+      if (record == nullptr || record->parameterBlock != block.id ||
+          block.id == body.entry) {
+        return failure(body, owner,
+                       "failure block has an invalid fixed-record parameter",
+                       block.id);
+      }
+      ++failureParameterCounts[block.failureParameter - 1];
+    }
+    std::size_t previousFailureDrop = std::numeric_limits<std::size_t>::max();
     for (std::size_t instructionIndex = 0;
          instructionIndex < block.instructions.size(); ++instructionIndex) {
       const MirInstruction &instruction = block.instructions[instructionIndex];
+      if (block.failureParameter != 0) {
+        const bool failureDrop =
+            instruction.kind == MirInstructionKind::Drop &&
+            instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle.front().kind == MirLifecycleEventKind::Drop &&
+            instruction.lifecycle.front().failureCleanup;
+        const bool failureBoundary =
+            instruction.kind == MirInstructionKind::Lifecycle &&
+            instruction.cleanupBoundaryEnd != 0 &&
+            instruction.cleanupBoundaryEnd <= body.cleanupBoundaries.size() &&
+            body.cleanupBoundaries[instruction.cleanupBoundaryEnd - 1].kind ==
+                MirCleanupBoundaryKind::Failure;
+        if (instruction.kind != MirInstructionKind::EndBorrow && !failureDrop &&
+            !failureBoundary) {
+          return failure(body, owner,
+                         "failure block contains a non-cleanup instruction",
+                         block.id, instruction.id);
+        }
+        if (failureDrop) {
+          const MirDropObligation *obligation =
+              body.findDropObligation(instruction.lifecycle.front().source);
+          if (obligation == nullptr ||
+              obligation->constructionOrder >= previousFailureDrop) {
+            return failure(body, owner,
+                           "failure cleanup sequence is not in reverse "
+                           "construction order",
+                           block.id, instruction.id);
+          }
+          previousFailureDrop = obligation->constructionOrder;
+        }
+      }
       if (!validFailureInstructionShape(instruction)) {
         const DefinedFailureOrigin *firstOrigin =
             instruction.definedFailure.localOrigins.empty()
@@ -3267,6 +3368,15 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                          "cleanup marker names an invalid boundary", block.id,
                          instruction.id);
         }
+        const MirCleanupBoundary &boundary =
+            body.cleanupBoundaries[instruction.cleanupBoundaryEnd - 1];
+        if ((boundary.kind == MirCleanupBoundaryKind::Failure) !=
+            (block.failureParameter != 0)) {
+          return failure(body, owner,
+                         "cleanup boundary is attached to the wrong control "
+                         "flow kind",
+                         block.id, instruction.id);
+        }
         ++cleanupBoundaryMarkers[instruction.cleanupBoundaryEnd - 1];
       }
       const auto validLifecycleObligation = [&](MirDropObligationId id) {
@@ -3275,22 +3385,24 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       for (const MirLifecycleEvent &event : instruction.lifecycle) {
         const bool hasSource = event.source != 0;
         const bool hasTarget = event.target != 0;
-        bool validEvent = !event.conditional;
+        bool validEvent = !event.conditional && !event.failureCleanup;
         switch (event.kind) {
         case MirLifecycleEventKind::Initialize:
-          validEvent = !hasSource && hasTarget && !event.conditional;
+          validEvent = !hasSource && hasTarget && !event.conditional &&
+                       !event.failureCleanup;
           break;
         case MirLifecycleEventKind::Move:
         case MirLifecycleEventKind::Reparent:
           validEvent = hasSource && hasTarget && event.source != event.target &&
-                       !event.conditional;
+                       !event.conditional && !event.failureCleanup;
           break;
         case MirLifecycleEventKind::Replace:
-          validEvent =
-              hasSource && event.source != event.target && !event.conditional;
+          validEvent = hasSource && event.source != event.target &&
+                       !event.conditional && !event.failureCleanup;
           break;
         case MirLifecycleEventKind::TransferOut:
-          validEvent = hasSource && !hasTarget && !event.conditional;
+          validEvent = hasSource && !hasTarget && !event.conditional &&
+                       !event.failureCleanup;
           break;
         case MirLifecycleEventKind::Drop:
           validEvent = hasSource && !hasTarget;
@@ -3385,7 +3497,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         if (event.kind == MirLifecycleEventKind::Drop) {
           const MirDropObligation &obligation =
               *body.findDropObligation(event.source);
-          if (!instruction.destination ||
+          if (event.failureCleanup != (block.failureParameter != 0) ||
+              !instruction.destination ||
               *instruction.destination != obligation.place) {
             return failure(body, owner,
                            "drop lifecycle event names a different place",
@@ -3486,6 +3599,74 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return failure(body, owner, "switch value or target is invalid",
                      block.id);
     }
+    const bool hasFailureTerminatorState =
+        block.terminator.invokeInstruction != 0 ||
+        block.terminator.failureRecord != 0;
+    if (block.terminator.kind != MirTerminatorKind::Invoke &&
+        block.terminator.kind != MirTerminatorKind::PropagateFailure &&
+        hasFailureTerminatorState) {
+      return failure(body, owner,
+                     "non-failure terminator retains failure-edge state",
+                     block.id);
+    }
+    if (block.terminator.kind == MirTerminatorKind::Invoke) {
+      const MirFailureRecord *record =
+          body.findFailureRecord(block.terminator.failureRecord);
+      const auto invocation =
+          instructionsById.find(block.terminator.invokeInstruction);
+      if (!validTarget(block.terminator.target) ||
+          !validTarget(block.terminator.elseTarget) ||
+          block.terminator.target == block.terminator.elseTarget ||
+          block.terminator.value || block.terminator.returnLoan ||
+          !block.terminator.switchTargets.empty() || record == nullptr ||
+          record->producerBlock != block.id ||
+          record->producerInstruction != block.terminator.invokeInstruction ||
+          record->parameterBlock != block.terminator.elseTarget ||
+          body.blocks[block.terminator.target - 1].failureParameter != 0 ||
+          body.blocks[block.terminator.elseTarget - 1].failureParameter !=
+              block.terminator.failureRecord ||
+          invocation == instructionsById.end() ||
+          instructionBlocks.at(block.terminator.invokeInstruction) !=
+              block.id ||
+          block.instructions.empty() ||
+          block.instructions.back().id != block.terminator.invokeInstruction ||
+          !supportsMirFailureControlFlow(body.kind) ||
+          !requiresMirFailureControlFlow(*invocation->second, true)) {
+        return failure(body, owner,
+                       "invoke terminator does not match its exact operation, "
+                       "record, or successors",
+                       block.id);
+      }
+      if (invocation->second->result &&
+          std::any_of(body.usesOf(*invocation->second->result).begin(),
+                      body.usesOf(*invocation->second->result).end(),
+                      [&](const MirValueUse &use) {
+                        return use.block == block.terminator.elseTarget;
+                      })) {
+        return failure(body, owner,
+                       "invoke result is used on its failure successor",
+                       block.id, block.terminator.invokeInstruction);
+      }
+      ++failureInvokeCounts[block.terminator.failureRecord - 1];
+      ++invokedInstructions[block.terminator.invokeInstruction];
+    }
+    if (block.terminator.kind == MirTerminatorKind::PropagateFailure) {
+      const MirFailureRecord *record =
+          body.findFailureRecord(block.terminator.failureRecord);
+      if (record == nullptr || block.failureParameter == 0 ||
+          block.failureParameter != block.terminator.failureRecord ||
+          record->parameterBlock != block.id ||
+          block.terminator.invokeInstruction != 0 || block.terminator.value ||
+          block.terminator.returnLoan || block.terminator.target != 0 ||
+          block.terminator.elseTarget != 0 ||
+          !block.terminator.switchTargets.empty()) {
+        return failure(body, owner,
+                       "failure propagation does not preserve its exact "
+                       "fixed record",
+                       block.id);
+      }
+      ++failurePropagationCounts[block.terminator.failureRecord - 1];
+    }
     if ((block.terminator.returnLoan &&
          block.terminator.kind != MirTerminatorKind::Return) ||
         (block.terminator.returnLoan &&
@@ -3509,6 +3690,56 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     expectedUseCount += static_cast<std::size_t>(block.terminator.value &&
                                                  block.terminator.value->kind ==
                                                      MirOperandKind::Value);
+  }
+  std::vector<std::size_t> failurePredecessorCounts(body.failureRecords.size(),
+                                                    0);
+  for (const MirBlock &block : body.blocks) {
+    for (const MirBlockId successor : successors(block.terminator)) {
+      const MirFailureRecordId parameter =
+          body.blocks[successor - 1].failureParameter;
+      if (parameter == 0) {
+        continue;
+      }
+      const bool exactFailureEdge =
+          block.terminator.kind == MirTerminatorKind::Invoke &&
+          block.terminator.elseTarget == successor &&
+          block.terminator.failureRecord == parameter;
+      if (!exactFailureEdge) {
+        return failure(body, owner,
+                       "failure-record parameter has a non-failure "
+                       "predecessor",
+                       successor);
+      }
+      ++failurePredecessorCounts[parameter - 1];
+    }
+  }
+  for (std::size_t index = 0; index < body.failureRecords.size(); ++index) {
+    if (failureParameterCounts[index] != 1 || failureInvokeCounts[index] != 1 ||
+        failurePredecessorCounts[index] != 1 ||
+        failurePropagationCounts[index] != 1) {
+      return failure(body, owner,
+                     "failure record must have one invoke, predecessor, "
+                     "parameter, and propagation endpoint");
+    }
+  }
+  for (const auto &[instructionId, instruction] : instructionsById) {
+    const std::size_t invokeCount = invokedInstructions[instructionId];
+    const bool fullExpressionRoot = std::any_of(
+        body.fullExpressions.begin(), body.fullExpressions.end(),
+        [&](const MirFullExpression &expression) {
+          return std::find(expression.roots.begin(), expression.roots.end(),
+                           instruction->hirValue) != expression.roots.end();
+        });
+    const bool requiresEdge =
+        supportsMirFailureControlFlow(body.kind) &&
+        requiresMirFailureControlFlow(*instruction, fullExpressionRoot);
+    if ((requiresEdge && invokeCount != 1) ||
+        (!requiresEdge && invokeCount != 0)) {
+      return failure(body, owner,
+                     "failure-capable scalar operation does not have exactly "
+                     "one invoke edge",
+                     instructionBlocks.at(instructionId), instructionId);
+    }
   }
   if (std::any_of(fullExpressionMarkers.begin(), fullExpressionMarkers.end(),
                   [](std::size_t count) { return count != 1; })) {
@@ -3541,7 +3772,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         if (drop.kind != MirInstructionKind::Drop ||
             drop.lifecycle.size() != 1 ||
             drop.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
-            drop.lifecycle.front().source != boundary.obligations[dropIndex]) {
+            drop.lifecycle.front().source != boundary.obligations[dropIndex] ||
+            drop.lifecycle.front().failureCleanup !=
+                (boundary.kind == MirCleanupBoundaryKind::Failure)) {
           return failure(body, owner,
                          "cleanup sequence is not the exact contiguous "
                          "reverse construction order",
@@ -3851,7 +4084,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         for (const MirInstruction &instruction : candidateBlock.instructions) {
           for (const MirLifecycleEvent &event : instruction.lifecycle) {
             const MirDropObligation *obligation =
-                event.kind == MirLifecycleEventKind::Drop
+                event.kind == MirLifecycleEventKind::Drop &&
+                        !event.failureCleanup
                     ? body.findDropObligation(event.source)
                     : nullptr;
             if (obligation != nullptr &&

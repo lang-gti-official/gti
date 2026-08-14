@@ -467,6 +467,126 @@ private:
     }
   }
 
+  void
+  appendFailureCleanupBoundary(std::vector<MirDropObligationId> obligations) {
+    if (obligations.empty()) {
+      return;
+    }
+    const std::size_t id = output.cleanupBoundaries.size() + 1;
+    output.cleanupBoundaries.push_back({.id = id,
+                                        .kind = MirCleanupBoundaryKind::Failure,
+                                        .obligations = std::move(obligations)});
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Lifecycle, .cleanupBoundaryEnd = id});
+  }
+
+  void emitFailureTemporaryCleanup(
+      const std::vector<TemporaryDrop> &activeTemporaries) {
+    std::vector<MirDropObligationId> cleanup;
+    cleanup.reserve(activeTemporaries.size());
+    for (auto candidate = activeTemporaries.rbegin();
+         candidate != activeTemporaries.rend(); ++candidate) {
+      const MirDropObligation *obligation =
+          output.findDropObligation(candidate->obligation);
+      const MirPlace *place =
+          obligation == nullptr ? nullptr : output.findPlace(obligation->place);
+      if (obligation == nullptr || place == nullptr) {
+        valid = false;
+        continue;
+      }
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Drop,
+           .destination = obligation->place,
+           .info = ExpressionInfo{.type = obligation->dropType.type,
+                                  .category = ValueCategory::Place,
+                                  .access = AccessMode::Mutable,
+                                  .traits = place->traits},
+           .lifecycle = {{.kind = MirLifecycleEventKind::Drop,
+                          .source = candidate->obligation,
+                          .conditional = candidate->conditional,
+                          .failureCleanup = true}}});
+      cleanup.push_back(candidate->obligation);
+    }
+    appendFailureCleanupBoundary(std::move(cleanup));
+  }
+
+  void emitFailureScopeCleanup(const Scope &scope) {
+    for (auto loan = scope.loans.rbegin(); loan != scope.loans.rend(); ++loan) {
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
+    }
+    std::vector<MirDropObligationId> cleanup;
+    cleanup.reserve(scope.drops.size());
+    for (auto drop = scope.drops.rbegin(); drop != scope.drops.rend(); ++drop) {
+      const MirPlace *place = output.findPlace(*drop);
+      const MirDropObligationId obligation =
+          place != nullptr && place->root == MirPlaceRootKind::Binding
+              ? dropObligationForBinding(place->binding)
+              : 0;
+      if (place == nullptr || obligation == 0) {
+        valid = false;
+        continue;
+      }
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Drop,
+           .destination = *drop,
+           .info = ExpressionInfo{.type = place->type,
+                                  .category = ValueCategory::Place,
+                                  .access = place->access,
+                                  .traits = place->traits},
+           .lifecycle = {{.kind = MirLifecycleEventKind::Drop,
+                          .source = obligation,
+                          .failureCleanup = true}}});
+      cleanup.push_back(obligation);
+    }
+    appendFailureCleanupBoundary(std::move(cleanup));
+  }
+
+  void appendFailureControlFlow(MirInstructionId producerInstruction) {
+    const MirBlockId producerBlock = current;
+    const MirBlock *producer = currentBlock();
+    if (producer == nullptr || producer->instructions.empty() ||
+        producer->instructions.back().id != producerInstruction) {
+      valid = false;
+      return;
+    }
+
+    const MirBlockId normalBlock = appendBlock();
+    const MirBlockId failureBlock = appendBlock();
+    const MirFailureRecordId failureRecord = output.failureRecords.size() + 1;
+    output.failureRecords.push_back({.id = failureRecord,
+                                     .producerBlock = producerBlock,
+                                     .producerInstruction = producerInstruction,
+                                     .parameterBlock = failureBlock});
+    output.blocks[failureBlock - 1].failureParameter = failureRecord;
+    current = producerBlock;
+    terminate({.kind = MirTerminatorKind::Invoke,
+               .invokeInstruction = producerInstruction,
+               .failureRecord = failureRecord,
+               .target = normalBlock,
+               .elseTarget = failureBlock});
+
+    current = failureBlock;
+    emitFailureTemporaryCleanup(temporaryDrops);
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+      emitFailureScopeCleanup(*scope);
+    }
+    terminate({.kind = MirTerminatorKind::PropagateFailure,
+               .failureRecord = failureRecord});
+    current = normalBlock;
+  }
+
+  [[nodiscard]] bool isFullExpressionRoot(HirValueId value) const {
+    return value != 0 &&
+           std::any_of(source.fullExpressions.begin(),
+                       source.fullExpressions.end(),
+                       [&](const HirFullExpression &expression) {
+                         return std::find(expression.roots.begin(),
+                                          expression.roots.end(),
+                                          value) != expression.roots.end();
+                       });
+  }
+
   MirInstructionId appendInstruction(MirInstruction instruction) {
     MirBlock *block = currentBlock();
     if (block == nullptr || terminated()) {
@@ -531,6 +651,12 @@ private:
       }
     }
     block->instructions.push_back(std::move(instruction));
+    if (supportsMirFailureControlFlow(output.kind) &&
+        requiresMirFailureControlFlow(
+            block->instructions.back(),
+            isFullExpressionRoot(block->instructions.back().hirValue))) {
+      appendFailureControlFlow(id);
+    }
     return id;
   }
 

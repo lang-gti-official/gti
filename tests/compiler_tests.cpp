@@ -1137,7 +1137,7 @@ int main() {
          "class values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v16\n") &&
+  expect(dump.starts_with("mir-body-v17\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos,
          "MIR v15 should serialize the exact class-value parameter modes");
@@ -1623,7 +1623,6 @@ int main() { return lifetime(true) - 13; }
   const lang::HirFunctionInstance *hirLifetime = hirFunction("lifetime");
   const lang::HirFunctionInstance *hirConsume = hirFunction("consume");
   const lang::HirFunctionInstance *hirMake = hirFunction("make_token");
-  const lang::HirFunctionInstance *hirObserve = hirFunction("observe");
   const lang::MirFunctionInstance *mirLifetime =
       hirLifetime == nullptr
           ? nullptr
@@ -1835,13 +1834,7 @@ int main() { return lifetime(true) - 13; }
   bool directConditionalResultSlot = false;
   if (mirLifetime != nullptr) {
     for (const lang::MirBlock &block : mirLifetime->body.blocks) {
-      bool calledObserve = false;
       for (const lang::MirInstruction &instruction : block.instructions) {
-        if (instruction.kind == lang::MirInstructionKind::Call &&
-            hirObserve != nullptr &&
-            instruction.functionTarget == hirObserve->id) {
-          calledObserve = true;
-        }
         if (instruction.destination && instruction.result &&
             (instruction.kind == lang::MirInstructionKind::Compute ||
              instruction.kind == lang::MirInstructionKind::Move ||
@@ -1868,12 +1861,12 @@ int main() { return lifetime(true) - 13; }
                    }));
         }
         for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
-          if (calledObserve &&
-              event.kind == lang::MirLifecycleEventKind::Drop &&
-              event.conditional) {
+          if (event.kind == lang::MirLifecycleEventKind::Drop &&
+              event.conditional && !event.failureCleanup) {
             const lang::MirDropObligation *obligation =
                 mirLifetime->body.findDropObligation(event.source);
             if (obligation != nullptr && token != nullptr &&
+                obligation->fullExpression != 0 &&
                 obligation->dropType.classInstance == token->id) {
               ++fullExpressionConditionalDrops;
             }
@@ -2198,7 +2191,11 @@ int main() { return lifetime(true) - 13; }
     for (lang::MirBlock &block : wrongLexicalDropOrderConsume->body.blocks) {
       for (std::size_t marker = 2; marker < block.instructions.size();
            ++marker) {
-        if (block.instructions[marker].cleanupBoundaryEnd == 0 ||
+        const std::size_t boundaryId =
+            block.instructions[marker].cleanupBoundaryEnd;
+        if (boundaryId == 0 ||
+            wrongLexicalDropOrderConsume->body.cleanupBoundaries[boundaryId - 1]
+                    .kind != lang::MirCleanupBoundaryKind::Normal ||
             block.instructions[marker - 1].kind !=
                 lang::MirInstructionKind::Drop ||
             block.instructions[marker - 2].kind !=
@@ -4904,7 +4901,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v16\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v17\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -6903,7 +6900,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v16 ") &&
+  expect(mirDump.starts_with("mir-v17 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -7719,6 +7716,9 @@ int main() {
                      });
     if (loan != branchLocalMirFunction->body.loans.end()) {
       for (const lang::MirBlock &block : branchLocalMirFunction->body.blocks) {
+        if (block.failureParameter != 0) {
+          continue;
+        }
         for (const lang::MirInstruction &instruction : block.instructions) {
           if (instruction.kind != lang::MirInstructionKind::EndBorrow ||
               instruction.loan != loan->id) {
@@ -22510,7 +22510,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v16 ") &&
+             mirDump.starts_with("mir-v17 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

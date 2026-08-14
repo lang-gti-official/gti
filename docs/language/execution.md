@@ -906,9 +906,13 @@ snapshot-local source anchors. The pre-optimization metadata builder now
 constructs the canonical logical source table, one-based artifact-local sites,
 descriptor serialization, and SHA-256 identity; MIR retains exact detector
 site mappings plus distinct direct, virtual, constructor, and callable
-propagation channels. The implementation does not yet carry fixed runtime
-records, explicit normal/failure CFG edges, cleanup unwinding, containment, or
-backend execution of that identity.
+propagation channels. MIR now gives eligible full-expression-root scalar
+operations in function and lambda bodies explicit normal/failure successors,
+one fixed-record parameter, reverse-construction failure cleanup, and an exact
+record-preserving propagation endpoint. This is a verified IR slice only.
+Nested expression and staged owning-argument failures, nontrivial or borrowed
+results, constructors and partial initialization, double failure, hosted
+containment, runtime records, and backend execution remain open.
 The frontend rejects recursively cleanup-owning namespace globals and static
 fields, but the C++ backend may execute cleanup-free GTI static initialization
 before its native `main`.
@@ -932,8 +936,8 @@ order, but these executable-authority gaps remain:
   construction or a defined failure;
 - one source-graph-derived program-initialization plan inside the hosted
   boundary;
-- complete executable representation of the failure cleanup required by
-  Section 4.10; and
+- complete executable representation of Section 4.10 beyond the bounded
+  full-expression-root scalar MIR cleanup family; and
 - cleanup interaction with any future manual object-lifetime operations.
 
 The first four are release blockers for backend-independent 1.0 execution.

@@ -4,8 +4,11 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <iostream>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -74,6 +77,46 @@ lang::MirInstruction *firstFailureInstruction(lang::MirProgram &program) {
     }
   }
   return nullptr;
+}
+
+std::optional<lang::HirFunctionInstanceId>
+functionInstance(const lang::FrontendResult &frontend, std::string_view name) {
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source != nullptr && function.source->name().lexeme == name) {
+      return function.id;
+    }
+  }
+  return std::nullopt;
+}
+
+lang::MirBody *functionBody(lang::MirProgram &program,
+                            lang::HirFunctionInstanceId id) {
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      program.functionInstances());
+  const auto found =
+      std::find_if(functions.begin(), functions.end(),
+                   [&](const lang::MirFunctionInstance &function) {
+                     return function.id == id;
+                   });
+  return found == functions.end() ? nullptr : &found->body;
+}
+
+const lang::MirBody *functionBody(const lang::FrontendResult &frontend,
+                                  std::string_view name) {
+  const std::optional<lang::HirFunctionInstanceId> id =
+      functionInstance(frontend, name);
+  const lang::MirFunctionInstance *function =
+      id ? frontend.mir.findFunctionInstance(*id) : nullptr;
+  return function == nullptr ? nullptr : &function->body;
+}
+
+bool hasVerificationError(const lang::MirVerificationResult &result,
+                          std::string_view message) {
+  return std::any_of(result.errors.begin(), result.errors.end(),
+                     [&](const lang::MirVerificationError &error) {
+                       return error.message.find(message) != std::string::npos;
+                     });
 }
 
 void testCanonicalMetadataAndMirSites() {
@@ -168,7 +211,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v16 ") &&
+      snapshot.starts_with("mir-v17 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -180,6 +223,197 @@ int main() {
   expect(validSnapshot,
          "MIR snapshots should expose deterministic artifact sites without "
          "absolute paths");
+}
+
+void testInvokeEdgesAndFailureCleanup() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("/tmp/gti-failure-control/main.gti", R"(
+class Token {
+public:
+  int value;
+  Token(int input) : value(input) {}
+  ~Token() {}
+};
+
+int leaf(mut int value) {
+  Token outer = Token(1);
+  {
+    Token inner = Token(2);
+    return value + 1;
+  }
+}
+
+int caller(mut int value) {
+  Token local = Token(3);
+  return leaf(value);
+}
+
+int consume(Token token, int value) { return value; }
+
+int deferred_nested_argument(mut int value) {
+  return consume(Token(4), value + 1);
+}
+
+int main() { return caller(1); }
+)");
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "the failure cleanup fixture should reach verified MIR");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+
+  const lang::MirBody *leaf = functionBody(frontend, "leaf");
+  const lang::MirBody *caller = functionBody(frontend, "caller");
+  const auto inspect = [](const lang::MirBody *body,
+                          std::size_t expectedFailureDrops,
+                          lang::FailurePropagationKind propagation) {
+    if (body == nullptr || body->failureRecords.size() != 1) {
+      return false;
+    }
+    const lang::MirFailureRecord &record = body->failureRecords.front();
+    const lang::MirBlock *producer = body->findBlock(record.producerBlock);
+    const lang::MirBlock *cleanup = body->findBlock(record.parameterBlock);
+    if (producer == nullptr || cleanup == nullptr ||
+        producer->terminator.kind != lang::MirTerminatorKind::Invoke ||
+        producer->terminator.failureRecord != record.id ||
+        cleanup->failureParameter != record.id ||
+        cleanup->terminator.kind != lang::MirTerminatorKind::PropagateFailure ||
+        cleanup->terminator.failureRecord != record.id ||
+        producer->instructions.empty() ||
+        producer->instructions.back().id != record.producerInstruction ||
+        producer->instructions.back().definedFailure.propagation !=
+            propagation) {
+      return false;
+    }
+    std::vector<std::size_t> constructionOrder;
+    for (const lang::MirInstruction &instruction : cleanup->instructions) {
+      if (instruction.kind != lang::MirInstructionKind::Drop) {
+        continue;
+      }
+      if (instruction.lifecycle.size() != 1 ||
+          !instruction.lifecycle.front().failureCleanup) {
+        return false;
+      }
+      const lang::MirDropObligation *obligation =
+          body->findDropObligation(instruction.lifecycle.front().source);
+      if (obligation == nullptr) {
+        return false;
+      }
+      constructionOrder.push_back(obligation->constructionOrder);
+    }
+    return constructionOrder.size() == expectedFailureDrops &&
+           std::is_sorted(constructionOrder.begin(), constructionOrder.end(),
+                          std::greater<>());
+  };
+  expect(inspect(leaf, 2, lang::FailurePropagationKind::None),
+         "a local scalar failure should receive an exact record and clean "
+         "nested locals in reverse construction order");
+  expect(inspect(caller, 1, lang::FailurePropagationKind::DirectCall),
+         "a propagating scalar call should preserve its record while cleaning "
+         "the caller's local state");
+
+  const lang::MirBody *deferred =
+      functionBody(frontend, "deferred_nested_argument");
+  std::size_t deferredLocalOrigins = 0;
+  bool deferredInvokePropagates = false;
+  if (deferred != nullptr) {
+    for (const lang::MirBlock &block : deferred->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        deferredLocalOrigins +=
+            !instruction.definedFailure.localOrigins.empty();
+      }
+    }
+    if (deferred->failureRecords.size() == 1) {
+      const lang::MirFailureRecord &record = deferred->failureRecords.front();
+      const lang::MirBlock *producer =
+          deferred->findBlock(record.producerBlock);
+      const lang::MirInstruction *invocation =
+          producer == nullptr || producer->instructions.empty()
+              ? nullptr
+              : &producer->instructions.back();
+      deferredInvokePropagates =
+          invocation != nullptr && invocation->definedFailure.propagation ==
+                                       lang::FailurePropagationKind::DirectCall;
+    }
+  }
+  expect(deferred != nullptr && deferredLocalOrigins != 0 &&
+             deferredInvokePropagates,
+         "nested argument detectors should remain identity-only until owned "
+         "parameter staging is represented, while the root call propagates");
+
+  const std::string snapshot = lang::MirPrinter().print(frontend.mir);
+  expect(snapshot.find("failure-records 1") != std::string::npos &&
+             snapshot.find("failure-parameter=fail1") != std::string::npos &&
+             snapshot.find("failure-cleanup=1") != std::string::npos,
+         "MIR snapshots should expose fixed records and failure cleanup");
+
+  const std::optional<lang::HirFunctionInstanceId> leafId =
+      functionInstance(frontend, "leaf");
+  if (!leafId) {
+    expect(false, "the failure cleanup fixture should retain leaf identity");
+    return;
+  }
+
+  lang::MirProgram missingInvoke = frontend.mir;
+  lang::MirBody *missingInvokeLeaf = functionBody(missingInvoke, *leafId);
+  if (missingInvokeLeaf != nullptr &&
+      !missingInvokeLeaf->failureRecords.empty()) {
+    const lang::MirFailureRecord &record =
+        missingInvokeLeaf->failureRecords.front();
+    lang::MirBlock &producer =
+        missingInvokeLeaf->blocks[record.producerBlock - 1];
+    producer.terminator = {.kind = lang::MirTerminatorKind::Goto,
+                           .target = producer.terminator.target};
+    lang::rebuildMirReachability(*missingInvokeLeaf);
+    (void)lang::rebuildMirValueUses(*missingInvokeLeaf);
+  }
+  const lang::MirVerificationResult missingInvokeResult =
+      lang::verifyMirProgram(missingInvoke);
+  expect(!missingInvokeResult.valid() &&
+             hasVerificationError(missingInvokeResult, "one invoke"),
+         "MIR verification should reject a removed failure invoke");
+
+  lang::MirProgram rewrittenRecord = frontend.mir;
+  lang::MirBody *rewrittenRecordLeaf = functionBody(rewrittenRecord, *leafId);
+  if (rewrittenRecordLeaf != nullptr &&
+      !rewrittenRecordLeaf->failureRecords.empty()) {
+    const lang::MirFailureRecord &record =
+        rewrittenRecordLeaf->failureRecords.front();
+    rewrittenRecordLeaf->blocks[record.parameterBlock - 1]
+        .terminator.failureRecord = 0;
+  }
+  const lang::MirVerificationResult rewrittenRecordResult =
+      lang::verifyMirProgram(rewrittenRecord);
+  expect(!rewrittenRecordResult.valid() &&
+             hasVerificationError(rewrittenRecordResult,
+                                  "preserve its exact fixed record"),
+         "MIR verification should reject a rewritten propagated record");
+
+  lang::MirProgram reorderedCleanup = frontend.mir;
+  lang::MirBody *reorderedCleanupLeaf = functionBody(reorderedCleanup, *leafId);
+  if (reorderedCleanupLeaf != nullptr &&
+      !reorderedCleanupLeaf->failureRecords.empty()) {
+    const lang::MirFailureRecord &record =
+        reorderedCleanupLeaf->failureRecords.front();
+    std::vector<lang::MirInstruction> &instructions =
+        reorderedCleanupLeaf->blocks[record.parameterBlock - 1].instructions;
+    std::vector<std::size_t> drops;
+    for (std::size_t index = 0; index < instructions.size(); ++index) {
+      if (instructions[index].kind == lang::MirInstructionKind::Drop) {
+        drops.push_back(index);
+      }
+    }
+    if (drops.size() >= 2) {
+      std::swap(instructions[drops[0]], instructions[drops[1]]);
+    }
+    (void)lang::rebuildMirValueUses(*reorderedCleanupLeaf);
+  }
+  const lang::MirVerificationResult reorderedCleanupResult =
+      lang::verifyMirProgram(reorderedCleanup);
+  expect(!reorderedCleanupResult.valid() &&
+             hasVerificationError(reorderedCleanupResult, "cleanup sequence"),
+         "MIR verification should reject reordered failure cleanup");
 }
 
 void testEmptyDescriptorContract() {
@@ -300,6 +534,7 @@ void testMetadataAndSiteVerifierMutations() {
 
 int main() {
   testCanonicalMetadataAndMirSites();
+  testInvokeEdgesAndFailureCleanup();
   testEmptyDescriptorContract();
   testExternalSourceRouteIdentity();
   testMetadataAndSiteVerifierMutations();

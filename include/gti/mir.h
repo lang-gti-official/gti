@@ -21,6 +21,7 @@ using MirInstructionId = std::size_t;
 using MirValueId = std::size_t;
 using MirTemporaryId = std::size_t;
 using MirDropObligationId = std::size_t;
+using MirFailureRecordId = std::size_t;
 
 struct MirFullExpression {
   HirFullExpressionId id = 0;
@@ -30,8 +31,15 @@ struct MirFullExpression {
   std::vector<HirValueId> roots;
 };
 
+enum class MirCleanupBoundaryKind {
+  Normal,
+  Failure,
+  Count,
+};
+
 struct MirCleanupBoundary {
   std::size_t id = 0;
+  MirCleanupBoundaryKind kind = MirCleanupBoundaryKind::Normal;
   std::vector<MirDropObligationId> obligations;
 };
 
@@ -171,6 +179,7 @@ struct MirLifecycleEvent {
   MirDropObligationId source = 0;
   MirDropObligationId target = 0;
   bool conditional = false;
+  bool failureCleanup = false;
 };
 
 enum class MirInstructionKind {
@@ -306,7 +315,9 @@ enum class MirTerminatorKind {
   Goto,
   Branch,
   Switch,
+  Invoke,
   Return,
+  PropagateFailure,
   Unreachable,
   Exit,
 };
@@ -322,6 +333,8 @@ struct MirTerminator {
   HirStatementId hirStatement = 0;
   std::optional<MirOperand> value;
   std::optional<MirLoanId> returnLoan;
+  MirInstructionId invokeInstruction = 0;
+  MirFailureRecordId failureRecord = 0;
   MirBlockId target = 0;
   MirBlockId elseTarget = 0;
   std::vector<MirSwitchTarget> switchTargets;
@@ -329,9 +342,17 @@ struct MirTerminator {
 
 struct MirBlock {
   MirBlockId id = 0;
+  MirFailureRecordId failureParameter = 0;
   std::vector<MirInstruction> instructions;
   MirTerminator terminator;
   bool reachable = false;
+};
+
+struct MirFailureRecord {
+  MirFailureRecordId id = 0;
+  MirBlockId producerBlock = 0;
+  MirInstructionId producerInstruction = 0;
+  MirBlockId parameterBlock = 0;
 };
 
 struct MirValue {
@@ -370,6 +391,7 @@ struct MirBody {
   std::vector<MirFullExpression> fullExpressions;
   std::vector<MirCleanupBoundary> cleanupBoundaries;
   std::vector<MirDropObligation> dropObligations;
+  std::vector<MirFailureRecord> failureRecords;
   std::vector<MirValue> values;
   std::vector<std::vector<MirValueUse>> valueUses;
 
@@ -389,6 +411,12 @@ struct MirBody {
   findDropObligation(MirDropObligationId id) const {
     return id == 0 || id > dropObligations.size() ? nullptr
                                                   : &dropObligations[id - 1];
+  }
+
+  [[nodiscard]] const MirFailureRecord *
+  findFailureRecord(MirFailureRecordId id) const {
+    return id == 0 || id > failureRecords.size() ? nullptr
+                                                 : &failureRecords[id - 1];
   }
 
   [[nodiscard]] const MirValue *findValue(MirValueId id) const {
@@ -416,6 +444,10 @@ struct MirVerificationResult {
 
 void rebuildMirReachability(MirBody &body);
 [[nodiscard]] bool rebuildMirValueUses(MirBody &body);
+[[nodiscard]] bool supportsMirFailureControlFlow(MirBodyKind kind);
+[[nodiscard]] bool
+requiresMirFailureControlFlow(const MirInstruction &instruction,
+                              bool fullExpressionRoot);
 [[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
                                                   std::size_t owner = 0);
 

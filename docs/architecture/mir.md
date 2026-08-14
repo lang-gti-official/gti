@@ -1,8 +1,8 @@
 # MIR
 
 Status: Implemented structural CFG, ownership/effect, synchronization,
-normal-exit lifecycle, and defined-failure identity foundation; not yet the
-sole backend input.
+normal-exit lifecycle, and bounded defined-failure control-flow foundation;
+not yet the sole backend input.
 
 MIR lowers each concrete HIR body into body-local control flow, values, places,
 resolved calls, ownership operations, and cleanup. It is the intended
@@ -21,8 +21,11 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v16`/`mir-body-v16`.
-Version 16 adds the immutable failure artifact descriptor and exact one-based
+The deterministic serialization is currently `mir-v17`/`mir-body-v17`.
+Version 17 adds bounded `Invoke`/`PropagateFailure` control flow, body-local
+fixed failure-record parameters, and deterministic failure cleanup for
+eligible full-expression-root scalar operations in function and lambda bodies.
+Version 16 added the immutable failure artifact descriptor and exact one-based
 detector-site mappings. Version 15 added exact local defined-failure origin
 sets, snapshot-local source anchors, and call-like propagation channels. It
 also extended the ordered-input
@@ -90,6 +93,18 @@ A `MirBody` owns:
   channels and never copy a callee's possible category set. The verifier
   rejects invalid vocabulary, anchors, duplicates, instruction placement, or
   propagation that disagrees with the exact target and dispatch;
+- one bounded failure-control-flow family for a failure-capable scalar
+  `Compute`, `Load`, or `Call` that is itself a selected full-expression root,
+  has no destination, loan, ownership event, lifecycle event, reference
+  result, or active-drop result, and occurs in a function or lambda body. The
+  operation is the final instruction in an `Invoke` block. Its normal
+  successor has no failure state; its dedicated failure successor receives one
+  body-local `MirFailureRecord` parameter, ends active loans, destroys active
+  full-expression temporaries and lexical owners in reverse construction
+  order, and terminates with `PropagateFailure` carrying the same record ID.
+  The record points back to the exact detector/propagating instruction, so a
+  local origin retains its artifact site and a call propagation edge cannot
+  re-site the callee record;
 - exact backend-independent synchronization records on resolved calls. The
   verifier accepts thread spawn/join and mutex lock/unlock without an atomic
   order; requires a legal operation-specific order for atomic load, store, and
@@ -412,22 +427,23 @@ anchors, their verified artifact-local site IDs, the immutable artifact
 descriptor, and direct/virtual/constructor/callable propagation identity. Any
 such operation projects conservatively to `mayTrap`, making it
 non-speculatable, non-removable, and non-reorderable, but the structured
-identity remains the authority. MIR does not yet carry fixed failure records,
-failure successors, cleanup unwinding, caller-control-flow propagation, or
-containment edges required by
+identity remains the authority. Eligible full-expression-root scalar
+operations in function and lambda bodies additionally carry verified fixed
+record, normal/failure successor, LIFO cleanup, and propagation edges. Nested
+detectors, assignment destinations, owning or borrowed results, constructors,
+field/module initialization, destructors and double failure, partial
+construction, caller-to-callee record ABI, and containment remain outside that
+bounded family and are still required by
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure).
 
-After the completed M-LIFE-01 temporary and active-drop facts and after
-M-EXEC-01 decomposes the relevant calls, construction, and checked expressions,
-the next M-FAIL-01 slice must add one `Invoke`-style terminator with normal and
-failure successors. An origin form carries the exact local outcome set plus an
-artifact-local `FailureSiteId`; a call/constructor/virtual form carries only a
-`mayPropagateFailure` channel and preserves a callee record byte-for-byte. The
-normal successor receives an optional typed result block parameter and the
-failure successor receives a fixed failure-record block parameter. This extends
-the current instruction-only `MirValue` definition rule; a checked operation
-cannot branch from the middle of a basic block or smuggle its result through an
-unverified native exception.
+The bounded `Invoke` family deliberately requires a trivial scalar result, so
+the existing instruction-defined value is usable only from the normal
+successor and the verifier rejects any use in the dedicated failure block. The
+next M-EXEC-01/M-FAIL-01 slice must represent staged parameter ownership and
+edge-specific result initialization before extending `Invoke` to nested
+arguments, owning/borrowed results, constructors, or assignments. That later
+family can introduce normal result block parameters without changing the
+fixed-record failure parameter or record-preservation rule.
 
 Cleanup blocks forward the same record through supported initialized and
 partially initialized shapes to the hosted-program boundary. A second origin

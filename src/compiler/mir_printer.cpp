@@ -117,7 +117,7 @@ failurePropagationName(FailurePropagationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v16 valid=" << program.valid() << '\n';
+    output << "mir-v17 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -369,7 +369,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v16\n";
+    output << "mir-body-v17\n";
     body(value, 0);
     return output.str();
   }
@@ -621,7 +621,8 @@ private:
   void lifecycleEvent(const MirLifecycleEvent &value) {
     output << "lifecycle(kind=" << number(value.kind) << ";source=drop"
            << value.source << ";target=drop" << value.target
-           << ";conditional=" << value.conditional << ')';
+           << ";conditional=" << value.conditional
+           << ";failure-cleanup=" << value.failureCleanup << ')';
   }
 
   void dropObligation(const MirDropObligation &value) {
@@ -874,8 +875,9 @@ private:
     }
     output << " return-loan=";
     optional(value.returnLoan);
-    output << " target=bb" << value.target << " else=bb" << value.elseTarget
-           << " switches=[";
+    output << " invoke=i" << value.invokeInstruction << " failure=fail"
+           << value.failureRecord << " target=bb" << value.target << " else=bb"
+           << value.elseTarget << " switches=[";
     for (std::size_t index = 0; index < value.switchTargets.size(); ++index) {
       separator(index);
       const MirSwitchTarget &target = value.switchTargets[index];
@@ -891,7 +893,8 @@ private:
   }
 
   void block(const MirBlock &value) {
-    output << "  bb" << value.id << " reachable=" << value.reachable << '\n';
+    output << "  bb" << value.id << " reachable=" << value.reachable
+           << " failure-parameter=fail" << value.failureParameter << '\n';
     for (const MirInstruction &item : value.instructions) {
       instruction(item);
     }
@@ -926,13 +929,20 @@ private:
     }
     output << " cleanup-boundaries " << value.cleanupBoundaries.size() << '\n';
     for (const MirCleanupBoundary &item : value.cleanupBoundaries) {
-      output << "  cleanup-boundary" << item.id << " obligations=[";
+      output << "  cleanup-boundary" << item.id << " kind=" << number(item.kind)
+             << " obligations=[";
       list(item.obligations);
       output << "]\n";
     }
     output << " drops " << value.dropObligations.size() << '\n';
     for (const MirDropObligation &item : value.dropObligations) {
       dropObligation(item);
+    }
+    output << " failure-records " << value.failureRecords.size() << '\n';
+    for (const MirFailureRecord &item : value.failureRecords) {
+      output << "  fail" << item.id << " producer=bb" << item.producerBlock
+             << ":i" << item.producerInstruction << " parameter=bb"
+             << item.parameterBlock << '\n';
     }
     output << " values " << value.values.size() << '\n';
     for (const MirValue &item : value.values) {
