@@ -16,8 +16,9 @@ SourceLoader -> per-unit Lexer/Parser -> Program
              -> gti_driver/native compiler
 ```
 
-`Frontend::analyze` in `include/gti/frontend.h` owns the ordering through MIR.
-Both the CLI and LSP enter through that API. `FrontendResult` owns the AST,
+`Frontend::analyze` is declared in `include/gti/frontend.h` and implemented in
+`src/compiler/frontend.cpp`; it owns the ordering through MIR. Both the CLI and
+LSP enter through that API. `FrontendResult` owns the AST,
 semantic model, HIR, MIR, source graph, source manager, diagnostics, and phase
 validity together, which keeps AST-address semantic side tables alive.
 
@@ -70,16 +71,26 @@ must store durable summaries rather than pointers into a discarded snapshot.
 
 ## Source Map
 
-- `include/gti/frontend.h`: phase orchestration and owned result.
+- `include/gti/frontend.h`, `src/compiler/frontend.cpp`: phase orchestration
+  contract and compiled implementation.
 - `include/gti/{token,lexer,parser,ast}.h`,
-  `src/compiler/{lexer,parser}.cpp`: frontend syntax layers.
+  `src/compiler/{token,lexer,parser,ast_printer}.cpp`: frontend syntax records,
+  keyword storage, scanning/parsing, and AST presentation.
+- `include/gti/{diagnostic,source_graph,source_loader}.h`,
+  `src/compiler/{diagnostic,source_graph,source_loader}.cpp`: source snapshots,
+  include graphs, and diagnostic/source-location support.
 - `include/gti/semantic_analyzer.h`,
-  `src/compiler/semantic_analyzer.cpp`: semantic model contract and compiled
-  analysis.
-- `include/gti/{hir,mir}.h`, `src/compiler/{hir_lowering,mir_lowering,mir}.cpp`:
-  public IR records plus compiled HIR/MIR lowering and MIR verification.
+  `src/compiler/{semantic_analyzer,semantic_model,semantic_type_printer}.cpp`:
+  semantic records/query contract plus compiled analysis, snapshot operations,
+  place/type policy, and type presentation.
+- `include/gti/{hir,mir}.h`,
+  `src/compiler/{hir_model,hir_lowering,mir_lowering,mir}.cpp`: public IR records
+  plus compiled query operations, HIR/MIR lowering, and MIR verification.
 - `include/gti/optimizer.h`, `src/compiler/optimizer.cpp`: current optimizer
   entry points.
+- `include/gti/{constant_evaluator,formatter,language_queries}.h`,
+  `src/compiler/{constant_evaluator,formatter,language_queries}.cpp`: shared
+  constant evaluation and editor-facing formatting/query implementations.
 - `include/gti/{backend,cpp_backend,cpp_emitter}.h`,
   `src/compiler/{cpp_backend,cpp_emitter}.cpp`: backend contracts and compiled
   C++ representation.

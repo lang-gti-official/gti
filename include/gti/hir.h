@@ -6,10 +6,8 @@
 #include "gti/semantic_analyzer.h"
 #include "gti/target.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -255,27 +253,11 @@ struct HirBody {
   std::vector<HirStatement> statements;
   std::vector<HirStatementId> roots;
 
-  [[nodiscard]] const HirValue *findValue(HirValueId id) const {
-    const auto found =
-        std::find_if(values.begin(), values.end(),
-                     [id](const HirValue &value) { return value.id == id; });
-    return found == values.end() ? nullptr : &*found;
-  }
+  [[nodiscard]] const HirValue *findValue(HirValueId id) const;
 
-  [[nodiscard]] const HirStatement *findStatement(HirStatementId id) const {
-    const auto found = std::find_if(
-        statements.begin(), statements.end(),
-        [id](const HirStatement &statement) { return statement.id == id; });
-    return found == statements.end() ? nullptr : &*found;
-  }
+  [[nodiscard]] const HirStatement *findStatement(HirStatementId id) const;
 
-  [[nodiscard]] const HirLoan *findLoan(SemanticLoanId id) const {
-    const auto found =
-        std::find_if(loans.begin(), loans.end(), [id](const HirLoan &loan) {
-          return loan.semanticLoan == id;
-        });
-    return found == loans.end() ? nullptr : &*found;
-  }
+  [[nodiscard]] const HirLoan *findLoan(SemanticLoanId id) const;
 
   [[nodiscard]] const HirDropObligation *
   findDropObligation(HirDropObligationId id) const {
@@ -493,47 +475,9 @@ public:
 
   [[nodiscard]] const HirBody &module() const { return moduleBody; }
 
-  [[nodiscard]] std::size_t valueCount() const {
-    std::size_t count = moduleBody.values.size();
-    for (const HirClassInstance &classInstance : classes) {
-      count += classInstance.fieldInitializers.values.size();
-      count += classInstance.staticFieldInitializers.values.size();
-    }
-    for (const HirFunctionInstance &function : functions) {
-      count += function.body.values.size();
-    }
-    for (const HirConstructorInstance &constructor : constructors) {
-      count += constructor.body.values.size();
-    }
-    for (const HirDestructorInstance &destructor : destructors) {
-      count += destructor.body.values.size();
-    }
-    for (const HirLambda &lambda : lambdas) {
-      count += lambda.body.values.size();
-    }
-    return count;
-  }
+  [[nodiscard]] std::size_t valueCount() const;
 
-  [[nodiscard]] std::size_t statementCount() const {
-    std::size_t count = moduleBody.statements.size();
-    for (const HirClassInstance &classInstance : classes) {
-      count += classInstance.fieldInitializers.statements.size();
-      count += classInstance.staticFieldInitializers.statements.size();
-    }
-    for (const HirFunctionInstance &function : functions) {
-      count += function.body.statements.size();
-    }
-    for (const HirConstructorInstance &constructor : constructors) {
-      count += constructor.body.statements.size();
-    }
-    for (const HirDestructorInstance &destructor : destructors) {
-      count += destructor.body.statements.size();
-    }
-    for (const HirLambda &lambda : lambdas) {
-      count += lambda.body.statements.size();
-    }
-    return count;
-  }
+  [[nodiscard]] std::size_t statementCount() const;
 
   [[nodiscard]] const HirFunctionInstance *
   findFunctionInstance(HirFunctionInstanceId id) const {
@@ -556,11 +500,7 @@ public:
   }
 
   [[nodiscard]] const std::vector<HirValueId> &
-  valueIdsForSource(const Expr &source) const {
-    static const std::vector<HirValueId> empty;
-    const auto found = sourceValueIds.find(&source);
-    return found == sourceValueIds.end() ? empty : found->second;
-  }
+  valueIdsForSource(const Expr &source) const;
 
 private:
   friend class HirLowerer;

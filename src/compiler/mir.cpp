@@ -12,6 +12,41 @@
 #include <utility>
 
 namespace lang {
+
+const std::vector<MirValueUse> &MirBody::usesOf(MirValueId id) const {
+  static const std::vector<MirValueUse> empty;
+  return id == 0 || id > valueUses.size() ? empty : valueUses[id - 1];
+}
+
+std::size_t MirBody::instructionCount() const {
+  std::size_t result = 0;
+  for (const MirBlock &block : blocks) {
+    result += block.instructions.size();
+  }
+  return result;
+}
+
+std::size_t MirProgram::blockCount() const {
+  std::size_t result = moduleBody.blocks.size();
+  for (const MirClassInstance &instance : classes) {
+    result += instance.fieldInitializers.blocks.size();
+    result += instance.staticFieldInitializers.blocks.size();
+  }
+  for (const MirFunctionInstance &instance : functions) {
+    result += instance.body.blocks.size();
+  }
+  for (const MirConstructorInstance &instance : constructors) {
+    result += instance.body.blocks.size();
+  }
+  for (const MirDestructorInstance &instance : destructors) {
+    result += instance.body.blocks.size();
+  }
+  for (const MirLambdaInstance &instance : lambdas) {
+    result += instance.body.blocks.size();
+  }
+  return result;
+}
+
 namespace {
 
 [[nodiscard]] MirVerificationResult

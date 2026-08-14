@@ -86,8 +86,9 @@ The current formatter has three deliberately separate responsibilities:
 
 1. `format_config` discovers and validates configuration without knowing about
    LSP or JSON-RPC;
-2. `Formatter` scans GTI lexemes, identifies the small amount of structural
-   context needed by implemented options, and produces idempotent text; and
+2. `Formatter` is declared in `include/gti/formatter.h`; its scanner and
+   structural formatting policy compile once in `src/compiler/formatter.cpp`
+   and produce idempotent text; and
 3. the LSP translates editor options, loads project configuration, reports
    configuration issues, and returns one whole-document edit.
 

@@ -3,6 +3,8 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/native_header.h"
+#include "gti/source_loader.h"
+#include "gti/support.h"
 
 #include <exception>
 #include <string>

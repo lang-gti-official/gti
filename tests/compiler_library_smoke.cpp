@@ -1,3 +1,5 @@
+#include "gti/ast_printer.h"
+#include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/effects.h"
@@ -8,6 +10,9 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <type_traits>
+
+static_assert(std::is_base_of_v<lang::ExprVisitor, lang::AstPrinter>);
 
 int main() {
   lang::installCrashHandlers("gti_compiler_library_smoke");
@@ -88,6 +93,15 @@ int main() {
       !matchesNative(lang::TargetScalarKind::Pointer, sizeof(void *),
                      alignof(void *))) {
     return 5;
+  }
+
+  lang::LiteralExpr literal(lang::Literal{std::uint64_t{1}});
+  lang::SemanticModel semantics;
+  const lang::SemanticOccurrence occurrence{.name = "value"};
+  if (lang::AstPrinter().print(literal) != "1" ||
+      lang::SignaturePrinter(semantics).binding(occurrence) !=
+          "unknown value") {
+    return 6;
   }
 
   return 0;

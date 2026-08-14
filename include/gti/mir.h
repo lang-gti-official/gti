@@ -2,7 +2,6 @@
 
 #include "gti/hir.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -391,18 +390,9 @@ struct MirBody {
     return id == 0 || id > values.size() ? nullptr : &values[id - 1];
   }
 
-  [[nodiscard]] const std::vector<MirValueUse> &usesOf(MirValueId id) const {
-    static const std::vector<MirValueUse> empty;
-    return id == 0 || id > valueUses.size() ? empty : valueUses[id - 1];
-  }
+  [[nodiscard]] const std::vector<MirValueUse> &usesOf(MirValueId id) const;
 
-  [[nodiscard]] std::size_t instructionCount() const {
-    std::size_t result = 0;
-    for (const MirBlock &block : blocks) {
-      result += block.instructions.size();
-    }
-    return result;
-  }
+  [[nodiscard]] std::size_t instructionCount() const;
 };
 
 struct MirVerificationError {
@@ -620,26 +610,7 @@ public:
     return id == 0 || id > lambdas.size() ? nullptr : &lambdas[id - 1];
   }
 
-  [[nodiscard]] std::size_t blockCount() const {
-    std::size_t result = moduleBody.blocks.size();
-    for (const MirClassInstance &instance : classes) {
-      result += instance.fieldInitializers.blocks.size();
-      result += instance.staticFieldInitializers.blocks.size();
-    }
-    for (const MirFunctionInstance &instance : functions) {
-      result += instance.body.blocks.size();
-    }
-    for (const MirConstructorInstance &instance : constructors) {
-      result += instance.body.blocks.size();
-    }
-    for (const MirDestructorInstance &instance : destructors) {
-      result += instance.body.blocks.size();
-    }
-    for (const MirLambdaInstance &instance : lambdas) {
-      result += instance.body.blocks.size();
-    }
-    return result;
-  }
+  [[nodiscard]] std::size_t blockCount() const;
 
 private:
   friend class MirLowerer;

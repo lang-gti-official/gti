@@ -29,24 +29,7 @@ public:
                : immediateDominators[block - 1];
   }
 
-  [[nodiscard]] bool dominates(MirBlockId dominator, MirBlockId block) const {
-    if (!isReachable(dominator) || !isReachable(block)) {
-      return false;
-    }
-    if (dominator == block) {
-      return true;
-    }
-
-    MirBlockId current = immediateDominator(block);
-    for (std::size_t depth = 0;
-         current != 0 && depth < immediateDominators.size(); ++depth) {
-      if (current == dominator) {
-        return true;
-      }
-      current = immediateDominator(current);
-    }
-    return false;
-  }
+  [[nodiscard]] bool dominates(MirBlockId dominator, MirBlockId block) const;
 
   friend bool operator==(const MirDominanceInfo &,
                          const MirDominanceInfo &) = default;

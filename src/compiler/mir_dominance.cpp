@@ -174,6 +174,26 @@ struct GraphTraits<const lang::mir_dominance_detail::CfgSnapshot *> {
 } // namespace llvm
 
 namespace lang {
+
+bool MirDominanceInfo::dominates(MirBlockId dominator, MirBlockId block) const {
+  if (!isReachable(dominator) || !isReachable(block)) {
+    return false;
+  }
+  if (dominator == block) {
+    return true;
+  }
+
+  MirBlockId current = immediateDominator(block);
+  for (std::size_t depth = 0;
+       current != 0 && depth < immediateDominators.size(); ++depth) {
+    if (current == dominator) {
+      return true;
+    }
+    current = immediateDominator(current);
+  }
+  return false;
+}
+
 namespace {
 
 using CfgNode = mir_dominance_detail::CfgNode;

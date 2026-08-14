@@ -180,11 +180,19 @@ endif()
 
 add_library(
   "gti_compiler" STATIC
+  "src/compiler/ast_printer.cpp"
   "src/compiler/binary_float.cpp"
   "src/compiler/checked_integer.cpp"
+  "src/compiler/constant_evaluator.cpp"
+  "src/compiler/diagnostic.cpp"
+  "src/compiler/executable_path.cpp"
   "src/compiler/format_config.cpp"
+  "src/compiler/formatter.cpp"
+  "src/compiler/frontend.cpp"
   "src/compiler/hir.cpp"
+  "src/compiler/hir_model.cpp"
   "src/compiler/hir_lowering.cpp"
+  "src/compiler/language_queries.cpp"
   "src/compiler/lexer.cpp"
   "src/compiler/mir.cpp"
   "src/compiler/mir_dominance.cpp"
@@ -196,9 +204,14 @@ add_library(
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
   "src/compiler/semantic_analyzer.cpp"
+  "src/compiler/semantic_model.cpp"
+  "src/compiler/semantic_type_printer.cpp"
+  "src/compiler/source_graph.cpp"
   "src/compiler/source_loader.cpp"
+  "src/compiler/standard_library.cpp"
   "src/compiler/support.cpp"
   "src/compiler/target.cpp"
+  "src/compiler/token.cpp"
 )
 target_include_directories("gti_compiler" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(

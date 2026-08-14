@@ -138,17 +138,7 @@ struct TargetInfo {
   TargetDataLayout dataLayout;
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
 
-  [[nodiscard]] std::string_view value(TargetProperty property) const {
-    switch (property) {
-    case TargetProperty::Os:
-      return os;
-    case TargetProperty::Vendor:
-      return vendor;
-    case TargetProperty::Arch:
-      return arch;
-    }
-    return {};
-  }
+  [[nodiscard]] std::string_view value(TargetProperty property) const;
 
   [[nodiscard]] bool supported() const;
 

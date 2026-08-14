@@ -9,7 +9,9 @@ syntax-preserving `Program`, then hands that owned tree to semantic analysis.
 
 `SourceLoader` is declared in `include/gti/source_loader.h`; its canonical path,
 filesystem, include-resolution, cycle, provenance, and source-manager algorithms
-are compiled into `gti_compiler` from `src/compiler/source_loader.cpp`. It
+are compiled into `gti_compiler` from `src/compiler/source_loader.cpp`.
+`SourceGraph` traversal/mutation and `SourceManager` location work compile in
+`src/compiler/source_graph.cpp` and `src/compiler/diagnostic.cpp`. The loader
 canonicalizes source identity, lexes each unit, resolves `#include` directives,
 and builds `SourceGraph`.
 Quoted paths are relative GTI files; `<std/name>` resolves only beneath the
@@ -22,8 +24,9 @@ does not discover manifests or synthesize package roots. Includes are
 load-once dependency edges, not textual substitution. The implicit prelude is
 an edge to every ordinary unit.
 
-Ordinary `Frontend::analyze()` performs this load itself. The compiled driver
-also exposes `loadCompilationInputs` for project-cache orchestration. It still
+Ordinary `Frontend::analyze()` in `src/compiler/frontend.cpp` performs this load
+itself. The compiled driver also exposes `loadCompilationInputs` for
+project-cache orchestration. It still
 uses `SourceLoader`, retains the resulting `SourceGraph`, `SourceManager`, and
 source diagnostics as one snapshot, and either hashes that snapshot for a
 verified cache hit or moves it into `Frontend::analyzeLoaded` on a miss. The
@@ -45,9 +48,11 @@ that future plan.
 
 ## Lexer
 
-Token identity and source spelling live in `include/gti/token.h`. `Lexer`
-declarations live in `include/gti/lexer.h`; scanning implementation is compiled
-in `src/compiler/lexer.cpp`. Tokens retain source identity, one-based line, and
+Token identity, source spelling, and small `constexpr` classifications live in
+`include/gti/token.h`; the keyword table is defined once in
+`src/compiler/token.cpp`. `Lexer` declarations live in `include/gti/lexer.h`;
+scanning implementation is compiled in `src/compiler/lexer.cpp`. Tokens retain
+source identity, one-based line, and
 UTF-8 byte offset. Fixed-width integer aliases normalize to shared token kinds,
 and reserved `__gti_` identifiers are rejected here. Every C++20/C++23 core
 keyword that has no GTI meaning is classified as `CPP_RESERVED`; `delete` has

@@ -97,6 +97,18 @@ std::string_view targetScalarKindName(TargetScalarKind kind) {
   return {};
 }
 
+std::string_view TargetInfo::value(TargetProperty property) const {
+  switch (property) {
+  case TargetProperty::Os:
+    return os;
+  case TargetProperty::Vendor:
+    return vendor;
+  case TargetProperty::Arch:
+    return arch;
+  }
+  return {};
+}
+
 bool TargetInfo::supported() const {
   const bool supportedOs = os == "macos" || os == "linux" || os == "windows";
   const bool supportedVendor =

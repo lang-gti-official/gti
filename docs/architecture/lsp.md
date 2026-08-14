@@ -20,8 +20,9 @@ HIR/MIR, source graph, source text, and diagnostics together. The LSP retains a
 `shared_ptr<const FrontendResult>` in each `AnalysisSnapshot`. This keeps AST
 pointers and snapshot-scoped symbol IDs valid while a request reads them.
 
-`LanguageQueries` in `include/gti/language_queries.h` owns reusable hover,
-completion, and definition logic. Semantic tokens use compiler symbol and
+`LanguageQueries` is declared in `include/gti/language_queries.h`; reusable
+hover, completion, definition, and signature rendering compile in
+`src/compiler/language_queries.cpp`. Semantic tokens use compiler symbol and
 occurrence facts for identifiers and lexical facts for keywords, literals,
 operators, and comments. The protocol layer must not repeat name lookup,
 overload selection, type rendering, or declaration parsing.

@@ -11,7 +11,10 @@ lookup or type inference.
 `SemanticModel`, and the narrow `SemanticVisitor` analysis/query facade.
 Declaration registration, lookup, overload selection, flow/lifecycle analysis,
 generic reanalysis, and AST visitor algorithms compile once in
-`src/compiler/semantic_analyzer.cpp`. Consumers cannot depend on mutable
+`src/compiler/semantic_analyzer.cpp`. Snapshot/database operations and shared
+place, trait, extent, and intrinsic classifications compile in
+`src/compiler/semantic_model.cpp`; canonical type rendering compiles in
+`src/compiler/semantic_type_printer.cpp`. Consumers cannot depend on mutable
 analysis state or visitor internals.
 
 ## Analysis Order

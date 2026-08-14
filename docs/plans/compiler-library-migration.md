@@ -49,8 +49,10 @@ support in `src/compiler/support.cpp`. Phase 4 is complete: concrete instance
 de-duplication is compiled in `src/compiler/hir.cpp`, HIR lowering lives in
 `src/compiler/hir_lowering.cpp`, and MIR body/CFG lowering lives in
 `src/compiler/mir_lowering.cpp`. Optimization and C++ emission algorithms are
-also compiled; only intentionally small value operations and separate tooling
-surfaces remain header-defined.
+also compiled. Frontend orchestration, semantic snapshot queries, constant
+evaluation, formatting, and language-query algorithms compile as well. Headers
+retain records, templates, short `constexpr` operations, trivial accessors, and
+abstract contracts rather than traversal or policy implementations.
 
 ## Decision Summary
 
@@ -286,13 +288,21 @@ minutes 26 seconds. The release workflow now uses an exact-input compiler cache
 and four-way CTest scheduling. Warm-cache improvement must be read from later
 workflow evidence; it is not treated as completion of phase 3.
 
-After phase 3, the public semantic header is 3,479 lines and an
-implementation-only edit compiles `semantic_analyzer.cpp` once, then relinks
-consumers. On the same local arm64 development machine used for migration that
-path took 5.89 seconds wall, with no CLI, LSP, driver, or test source
-recompilation. These numbers are directional rather than a cross-machine
+After the initial phase 3 extraction, the public semantic header was 3,479
+lines. An implementation-only edit compiled `semantic_analyzer.cpp` once, then
+relinked consumers. On the same local arm64 development machine used for
+migration that path took 5.89 seconds wall, with no CLI, LSP, driver, or test
+source recompilation. These numbers are directional rather than a cross-machine
 comparison with issue #50; clean Release workflow measurements remain the
 release evidence.
+
+The completion pass moved `SemanticDatabase`, `SemanticModel`, place/trait and
+array-extent policy, and semantic type presentation into compiled sources. The
+header is now 1,856 lines of records, storage, declarations, and small value
+operations. Touching `semantic_model.cpp` rebuilt one compiler object and
+relinked consumers in 2.89 seconds without recompiling CLI, LSP, driver, or test
+sources. Formatter-only changes likewise rebuild one object; the recorded local
+path took 1.15 seconds before relinking.
 
 ## Phased Implementation
 
@@ -482,6 +492,29 @@ presents those results. The driver now also resolves canonical workspaces and
 source-only path dependency graphs. `gti_compiler` consumes only the resulting
 immutable `PackageSourceRoot` values for include loading; TOML, workspace
 selection, acquisition, cache, and artifact policy remain outside it.
+
+### Completion pass: shared compiler and tooling algorithms
+
+Status: implemented
+
+The final cross-cutting pass compiled the remaining substantial non-template
+algorithms without changing their public contracts:
+
+- frontend orchestration, source-graph operations, source locations,
+  executable/resource discovery, and the token keyword table;
+- semantic database/model operations, place and trait policy, array-extent
+  evaluation, semantic/signature printing, and shared constant evaluation;
+- HIR/MIR aggregate queries and dominance traversal;
+- AST printing, formatting, and hover/completion/definition queries.
+
+`AstPrinter` remains an `ExprVisitor`, and `SignaturePrinter` retains its public
+methods and value layout; their implementations are simply out of line. The
+installed compiler smoke compiles and executes those contracts against
+`GTI::compiler`. Headers intentionally continue to define AST/HIR/MIR records,
+templates, `constexpr` tables and mappings, and trivial ownership/accessor
+operations. Moving those would either remove compile-time API behavior or turn
+plain data models into opaque allocation boundaries, neither of which is a
+migration goal.
 
 ## Testing And Verification
 
