@@ -4,7 +4,7 @@
 > boundaries are documented in
 > [`docs/architecture/overview.md`](../architecture/overview.md).
 
-Status: accepted; phases 1, 2, 3, and 7 implemented, and phases 4 and 5
+Status: accepted; phases 1, 2, 3, 4, and 7 implemented, and phase 5
 partially implemented
 
 Prompt-sized migration ordering is maintained in
@@ -46,11 +46,12 @@ arithmetic is compiled in `src/compiler/checked_integer.cpp` using the sole
 `llvm::APInt` implementation selected under ADR 006; its former portable
 implementation is non-built reference material under `archive/compiler/`.
 Target-triple parsing lives in `src/compiler/target.cpp`, and tool-process
-support in
-`src/compiler/support.cpp`. Phase 4 has an opening slice: concrete instance
-de-duplication is compiled in `src/compiler/hir.cpp` behind
-`include/gti/hir_instance_index.h`. The remaining HIR/MIR lowering,
-pass management, analyses, and most compiler algorithms remain header-defined.
+support in `src/compiler/support.cpp`. Phase 4 is complete: concrete instance
+de-duplication is compiled in `src/compiler/hir.cpp`, HIR lowering lives in
+`src/compiler/hir_lowering.cpp`, and MIR body/CFG lowering lives in
+`src/compiler/mir_lowering.cpp`. Pass management, remaining optimization
+editors and analyses, backend emission, and several tooling algorithms remain
+header-defined.
 
 ## Decision Summary
 
@@ -387,8 +388,7 @@ Acceptance criteria:
 
 ### Phase 4: compile HIR and MIR lowering
 
-Status: in progress; MIR integrity and printing are compiled, lowering remains
-header-defined
+Status: implemented
 
 - Keep IR value types, IDs, validation results, and read-only consumer APIs in
   headers.
@@ -397,6 +397,13 @@ header-defined
   compiled sources.
 - Preserve ID scope, source provenance, dispatch identity, move/loan/drop
   effects, and constructor ordering.
+
+`HirLowerer` now exposes a request-owned facade over its compiled instance
+worklist and expression lowering. Stateless `MirLowerer` exposes an out-of-line
+lowering API while its body builder remains private to the implementation.
+Touching `mir_lowering.cpp` on the migration machine rebuilt one compiler
+object and relinked consumers in 2.97 seconds without recompiling consumer
+sources.
 
 Acceptance criteria:
 
