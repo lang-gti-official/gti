@@ -10168,6 +10168,215 @@ int main() {
               std::string::npos,
       "nominal unique owners should remain move-only and physically movable");
 
+  const lang::FrontendResult nullState =
+      lang::Frontend().analyze("unique-owner-null-state.gti", R"(
+struct Widget {
+public:
+  Widget() {}
+};
+
+class Nullable {
+  mut bool empty = false;
+
+public:
+  Nullable(nullptr_t value) : empty(true) {}
+  void operator=(nullptr_t value) mut { this.empty = true; }
+  bool is_empty() { return this.empty; }
+};
+
+void consume(std::unique_ptr<Widget> value) {}
+
+int main() {
+  mut Nullable nullable = nullptr;
+  nullable = nullptr;
+  if (!nullable.is_empty()) { return 1; }
+
+  mut std::unique_ptr<Widget> owner = nullptr;
+  owner.reset();
+  owner = nullptr;
+  owner = std::make_unique<Widget>();
+  owner = nullptr;
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!nullState.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : nullState.diagnostics) {
+      std::cerr << "Unexpected unique-owner null-state diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(nullState.canGenerateCode() &&
+             lang::verifyMirProgram(nullState.mir).valid(),
+         "empty unique-owner construction, repeated reset, nullptr "
+         "assignment, and later replacement should validate through MIR");
+
+  const lang::FunctionDecl *nullMain =
+      findTopLevelFunction(nullState.program, "main");
+  const lang::VariableDecl *emptyOwner = nullptr;
+  const lang::Assign *nullAssignment = nullptr;
+  if (nullMain != nullptr) {
+    for (const lang::StmtPtr &statement : nullMain->body()->statements()) {
+      if (const auto *variable =
+              dynamic_cast<const lang::VariableDecl *>(statement.get());
+          variable != nullptr && variable->name().lexeme == "owner") {
+        emptyOwner = variable;
+      }
+      const auto *expression =
+          dynamic_cast<const lang::ExpressionStmt *>(statement.get());
+      const auto *assignment = expression == nullptr
+                                   ? nullptr
+                                   : dynamic_cast<const lang::Assign *>(
+                                         expression->expression().get());
+      if (assignment != nullptr && assignment->name().lexeme == "owner" &&
+          dynamic_cast<const lang::LiteralExpr *>(assignment->value().get()) !=
+              nullptr) {
+        nullAssignment = assignment;
+      }
+    }
+  }
+  const lang::ResolvedConstructionInfo *emptyConstruction =
+      emptyOwner == nullptr || !emptyOwner->initializer()
+          ? nullptr
+          : nullState.semantics.findConstruction(*emptyOwner->initializer());
+  const lang::ResolvedOperatorInfo *assignmentResolution =
+      nullAssignment == nullptr
+          ? nullptr
+          : nullState.semantics.findOperator(*nullAssignment);
+  expect(emptyConstruction != nullptr &&
+             emptyConstruction->parameterTypes ==
+                 std::vector<lang::SemanticType>{lang::SemanticType::NullPtr} &&
+             assignmentResolution != nullptr &&
+             assignmentResolution->kind ==
+                 lang::OverloadedOperator::Assignment &&
+             assignmentResolution->parameterTypes ==
+                 std::vector<lang::SemanticType>{lang::SemanticType::NullPtr},
+         "nullptr initialization and assignment should retain their exact "
+         "source-defined constructor and operator identities");
+
+  bool foundNullConstruction = false;
+  bool foundAssignmentCall = false;
+  for (const lang::HirFunctionInstance &function :
+       nullState.hir.functionInstances()) {
+    if (function.source == nullptr ||
+        function.source->name().lexeme != "main") {
+      continue;
+    }
+    for (const lang::HirValue &value : function.body.values) {
+      foundNullConstruction =
+          foundNullConstruction ||
+          (value.kind == lang::HirValueKind::DirectInitializer &&
+           value.constructorTarget.has_value() && value.operands.size() == 1 &&
+           value.parameterTypes ==
+               std::vector<lang::SemanticType>{lang::SemanticType::NullPtr});
+      if (value.kind != lang::HirValueKind::Call || !value.functionTarget) {
+        continue;
+      }
+      const lang::HirFunctionInstance *target =
+          nullState.hir.findFunctionInstance(*value.functionTarget);
+      foundAssignmentCall = foundAssignmentCall ||
+                            (target != nullptr && target->source != nullptr &&
+                             target->source->operatorName() &&
+                             target->source->operatorName()->kind ==
+                                 lang::OverloadedOperator::Assignment);
+    }
+  }
+  bool foundMirAssignmentCall = false;
+  for (const lang::MirFunctionInstance &function :
+       nullState.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const lang::MirFunctionInstance *target =
+            instruction.functionTarget ? nullState.mir.findFunctionInstance(
+                                             *instruction.functionTarget)
+                                       : nullptr;
+        foundMirAssignmentCall =
+            foundMirAssignmentCall ||
+            (instruction.kind == lang::MirInstructionKind::Call &&
+             target != nullptr &&
+             target->overloadedOperator ==
+                 lang::OverloadedOperator::Assignment);
+      }
+    }
+  }
+  expect(foundNullConstruction && foundAssignmentCall && foundMirAssignmentCall,
+         "typed HIR and MIR should retain null construction and exact "
+         "assignment calls instead of treating nullptr as a class value");
+
+  const lang::OptimizationResult nullOptimizations =
+      lang::OptimizationPipeline().run(nullState.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact nullArtifact =
+      lang::CppBackend().generate({.program = nullState.program,
+                                   .semantics = nullState.semantics,
+                                   .hir = nullState.hir,
+                                   .mir = nullState.mir,
+                                   .optimizations = nullOptimizations});
+  expect(nullArtifact.contents.find("unique_ptr(const std::nullptr_t empty)") !=
+                 std::string::npos &&
+             nullArtifact.contents.find(
+                 "void unique_ptr<T>::operator=(const std::nullptr_t empty)") !=
+                 std::string::npos &&
+             nullArtifact.contents.find("(owner).operator=(nullptr)") !=
+                 std::string::npos,
+         "the C++ backend should emit source-defined null construction and "
+         "assignment without a public-type special case");
+
+  const lang::FrontendResult rejectedNullArgument =
+      lang::Frontend().analyze("unique-owner-null-argument.gti", R"(
+struct Widget {};
+void consume(std::unique_ptr<Widget> value) {}
+int main() {
+  consume(nullptr);
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!rejectedNullArgument.canGenerateCode() &&
+             countDiagnosticCode(rejectedNullArgument.diagnostics,
+                                 "GTI-S2003") == 1 &&
+             hasDiagnostic(rejectedNullArgument.diagnostics,
+                           "has type 'nullptr_t' but the parameter requires "
+                           "'std::unique_ptr<Widget>'"),
+         "target-typed nullptr construction must not become an implicit "
+         "class conversion for ordinary call arguments");
+
+  const lang::FrontendResult rejectedPointerNullConstructor =
+      lang::Frontend().analyze("pointer-null-constructor.gti", R"(
+class PointerOnly {
+public:
+  PointerOnly(int* value) {}
+};
+int main() {
+  PointerOnly value = nullptr;
+  return 0;
+}
+)");
+  expect(!rejectedPointerNullConstructor.canGenerateCode() &&
+             countDiagnosticCode(rejectedPointerNullConstructor.diagnostics,
+                                 "GTI-S2012") == 1,
+         "target-typed nullptr construction should require an exact "
+         "nullptr_t constructor rather than a raw-pointer overload");
+
+  const lang::FrontendResult rejectedPointerNullAssignment =
+      lang::Frontend().analyze("pointer-null-assignment.gti", R"(
+class PointerOnly {
+public:
+  PointerOnly() {}
+  void operator=(int* value) mut {}
+};
+int main() {
+  mut PointerOnly value = PointerOnly();
+  value = nullptr;
+  return 0;
+}
+)");
+  expect(!rejectedPointerNullAssignment.canGenerateCode() &&
+             countDiagnosticCode(rejectedPointerNullAssignment.diagnostics,
+                                 "GTI-S2003") == 1,
+         "nullptr assignment should require an exact nullptr_t operator "
+         "rather than a raw-pointer overload");
+
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-unique-ownership.gti", R"(
 struct Widget {
@@ -10315,10 +10524,14 @@ int main() {
 
   const std::string formatted = lang::Formatter().format(
       "std::unique_ptr<Widget> make(){return std::make_unique<Widget>();}"
-      "int read(mut std::unique_ptr<Widget> value){return value->read();}");
+      "int read(mut std::unique_ptr<Widget> value){return value->read();}"
+      "class Nullable{public:void operator=(nullptr_t empty)mut{}};");
   expect(formatted.find("value->read()") != std::string::npos &&
+             formatted.find("void operator=(nullptr_t empty) mut {") !=
+                 std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
-         "unique-owner spelling should format idempotently");
+         "unique-owner and exact assignment spelling should format "
+         "idempotently");
 }
 
 void testTypedHirGenericInstances() {

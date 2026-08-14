@@ -156,8 +156,18 @@ class unique_ptr<T> {
   mut gti_internal::unique_owner<T> owner = nullptr;
 
 public:
+  unique_ptr(nullptr_t empty) : owner(nullptr) {}
+
   unique_ptr(gti_internal::unique_owner<T> value)
       : owner(std::move(value)) {}
+
+  void reset() mut {
+    this.owner = nullptr;
+  }
+
+  void operator=(nullptr_t empty) mut {
+    this.reset();
+  }
 
   T& operator*() {
     return gti_internal::unique_owner_borrow(this.owner);

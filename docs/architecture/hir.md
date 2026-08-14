@@ -117,6 +117,13 @@ not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
+A class binding initialized from an exact `nullptr_t` constructor remains one
+ordinary construction in HIR. The source literal owns the constructed value;
+lowering adds one source-less `nullptr_t` operand so MIR retains the selected
+constructor's real argument type. A selected member `operator=` is represented
+as an ordinary call with an explicit named-place receiver and exact right-hand
+argument. Neither form is inferred from a public standard-library type name.
+
 The bounded M-EXEC-01 invocation slices give an eligible ordinary call or
 ordinary constructor a `HirCallPlan`. Eligibility is deliberately narrow: the
 target is concrete and non-intrinsic; source argument cardinality exactly

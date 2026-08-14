@@ -126,6 +126,14 @@ conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list and do not define implicit
 conversions.
 
+One bounded target-typed rule applies to an explicitly declared class or
+struct binding: when its initializer is exactly `nullptr`, the destination may
+select one accessible constructor whose sole parameter is exactly
+`nullptr_t`. The same conversion is not considered for function arguments,
+constructor arguments, or returns. Assignment does not use this construction
+rule; a class assignment from `nullptr` requires an exact member
+`operator=(nullptr_t)`.
+
 Value-assignment contexts, including initialization, assignment, and return,
 accept an integer literal when its mathematical value fits the destination.
 A non-literal integer may widen within the same signedness, and an unsigned
@@ -396,6 +404,9 @@ pattern/exhaustiveness failures.
 The overloadable operator set and arity rules are defined by the incorporated
 grammar. Operators are member-only and are selected through ordinary exact
 semantic resolution. The backend does not perform GTI operator lookup.
+`operator=` takes one exact argument and requires a mutable receiver. A
+same-type assignment with no exact user operator continues to use the class's
+generated copy or move assignment policy.
 
 Contextual `operator bool` participates only in the contexts enumerated by the
 language contract. Logical `and`/`or` and `&&`/`||` are equivalent spellings

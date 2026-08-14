@@ -1508,6 +1508,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitAssignExpr(const Assign &expr) override {
+    if (const ResolvedOperatorInfo *resolved = semantics.findOperator(expr);
+        resolved != nullptr &&
+        resolved->kind == OverloadedOperator::Assignment &&
+        resolved->declaration != nullptr) {
+      output << '(';
+      emitResolvedName(expr, expr.path());
+      output << ")." << emittedFunctionName(*resolved->declaration) << '(';
+      emitExpression(expr.value());
+      output << ')';
+      return;
+    }
     if (hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic)) {
       emitNativeAssignmentExpression(
           expr.oper(), [&] { emitResolvedName(expr, expr.path()); },
@@ -1967,6 +1978,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   void visitLiteralExpr(const LiteralExpr &expr) override {
     const Literal &literal = expr.value();
     if (std::holds_alternative<std::nullptr_t>(literal)) {
+      if (const ResolvedConstructionInfo *construction =
+              semantics.findConstruction(expr);
+          construction != nullptr &&
+          construction->constructedType.kind == SemanticType::Class) {
+        emitSemanticType(construction->constructedType);
+        output << "(nullptr)";
+        return;
+      }
       output << "nullptr";
     } else if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
       const SemanticType *type = semantics.findType(expr);
@@ -4223,6 +4242,7 @@ private:
       case OverloadedOperator::LessEqual:
       case OverloadedOperator::Greater:
       case OverloadedOperator::GreaterEqual:
+      case OverloadedOperator::Assignment:
         return std::string(
             operatorSourceSpelling(function.operatorName()->kind));
       case OverloadedOperator::Dereference:

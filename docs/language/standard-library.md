@@ -46,7 +46,7 @@ public surface includes:
 | `std::ptrdiff_t` | Transparent alias of `int64_t` |
 | `std::string_view` | Counted read-only view over static literal storage |
 | `std::print` and `std::println` | Portable output operations over string views |
-| `std::unique_ptr<T>` | Nominal move-only unique owner |
+| `std::unique_ptr<T>` | Nominal move-only unique owner with explicit null construction, reset, and null assignment |
 | `std::make_unique<T>` | Ordinary generic unique-owner factory |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |

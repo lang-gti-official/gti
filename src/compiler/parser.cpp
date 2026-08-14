@@ -642,6 +642,9 @@ private:
     if (match({TokenKind::PLUS_PLUS})) {
       return {OverloadedOperator::PreIncrement, std::move(keyword), previous()};
     }
+    if (match({TokenKind::EQUAL})) {
+      return {OverloadedOperator::Assignment, std::move(keyword), previous()};
+    }
     if (match({TokenKind::EQUAL_EQUAL})) {
       return {OverloadedOperator::Equal, std::move(keyword), previous()};
     }
@@ -674,9 +677,9 @@ private:
     }
     throw error(peek(),
                 "Supported overloads are operator*, operator->, prefix "
-                "operator++, operator[], operator(), operator==, operator!=, "
-                "operator<, operator<=, operator>, operator>=, and operator "
-                "bool.");
+                "operator++, operator=, operator[], operator(), operator==, "
+                "operator!=, operator<, operator<=, operator>, operator>=, "
+                "and operator bool.");
   }
 
   static Token syntheticOperatorName(const OperatorName &operatorName) {

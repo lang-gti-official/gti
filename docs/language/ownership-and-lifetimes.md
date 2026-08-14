@@ -665,13 +665,25 @@ Owning pointers may be empty, including after movement. Boolean and `nullptr`
 comparisons inspect that state. Dereference and member access on an empty owner
 produce a defined GTI runtime failure rather than undefined behavior.
 
-Empty construction is explicit, consistent with all GTI class construction:
+An owner may be initialized directly from the exact `nullptr_t` literal and
+may be reset or assigned `nullptr` later:
 
 ```gti
-std::unique_ptr<Entity> entity = std::unique_ptr<Entity>();
+mut std::unique_ptr<Entity> entity = nullptr;
+entity.reset();
+entity = nullptr;
 ```
 
-GTI does not implicitly convert `nullptr` into a class value.
+Initialization selects the source-defined
+`std::unique_ptr<T>(nullptr_t)` constructor. Assignment selects the
+source-defined exact `operator=(nullptr_t)` overload. `reset()` and null
+assignment destroy a present pointee exactly once and leave the owner empty;
+repeating either operation on an empty owner is valid. The owner remains
+move-only and its ordinary scope cleanup remains deterministic.
+
+This is not a general implicit class conversion. In particular, an ordinary
+call such as `consume(nullptr)` does not construct a `unique_ptr` argument;
+call arguments still require an exact parameter type.
 
 The default `make_unique` operation is infallible at the type level: allocation
 exhaustion raises `GTI-R0011` with detail `unique_owner`. Future

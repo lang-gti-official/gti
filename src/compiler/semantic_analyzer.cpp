@@ -2292,7 +2292,7 @@ public:
         ++suppressLoanPlaceAccessDepth;
       }
       initializerType =
-          analyzeInitializer(stmt.initializer(), expectedInitializer);
+          analyzeInitializer(stmt.initializer(), expectedInitializer, true);
       if (establishesLoan) {
         --suppressLoanPlaceAccessDepth;
       }
@@ -2501,9 +2501,31 @@ public:
       reportUnavailablePlace(expr.name(), *state, &targetPlace);
       targetStateValid = false;
     }
-    const SemanticType valueType =
-        simpleAssignment ? analyzeInitializer(expr.value(), targetType)
-                         : analyze(expr.value());
+    SemanticType valueType;
+    if (simpleAssignment && targetType.kind == SemanticType::Class) {
+      valueType = analyze(expr.value());
+      if (hasExactOperatorCandidate(OverloadedOperator::Assignment, targetType,
+                                    valueType)) {
+        ExprPtr receiver;
+        if (expr.path().segments.size() == 1) {
+          receiver = std::make_unique<Variable>(expr.name());
+        } else {
+          receiver =
+              std::make_unique<QualifiedName>(NamePath(expr.path().segments));
+        }
+        const std::optional<FunctionCandidate> selected = resolveOperator(
+            expr, OverloadedOperator::Assignment, receiver, targetType,
+            expr.oper(), std::span<const SemanticType>(&valueType, 1),
+            std::span<const ExprPtr>(&expr.value(), 1));
+        currentType = selected ? callExpressionType(selected->returnType)
+                               : SemanticType::Unknown;
+        return;
+      }
+    } else {
+      valueType = simpleAssignment
+                      ? analyzeInitializer(expr.value(), targetType)
+                      : analyze(expr.value());
+    }
     const auto *moveCall = dynamic_cast<const Call *>(expr.value().get());
     const Variable *movedSource =
         moveCall != nullptr &&
@@ -14172,6 +14194,30 @@ private:
     return selected;
   }
 
+  [[nodiscard]] bool
+  hasExactOperatorCandidate(OverloadedOperator kind,
+                            const SemanticType &receiverType,
+                            const SemanticType &argumentType) const {
+    const ClassInfo *owner = classInfo(receiverType);
+    if (owner == nullptr) {
+      return false;
+    }
+    const auto found =
+        owner->members.find(std::string(operatorFunctionName(kind)));
+    if (found == owner->members.end() ||
+        found->second.symbol.type != SemanticType::Function) {
+      return false;
+    }
+    const Symbol overloadSet =
+        substituteSymbol(found->second.symbol, receiverType);
+    return std::any_of(
+        overloadSet.overloads.begin(), overloadSet.overloads.end(),
+        [&](const FunctionCandidate &candidate) {
+          return candidate.parameterTypes.size() == 1 &&
+                 candidate.parameterTypes.front() == argumentType;
+        });
+  }
+
   [[nodiscard]] std::optional<FunctionCandidate> resolveOperator(
       const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
       const SemanticType &receiverType, const Token &token,
@@ -15118,7 +15164,8 @@ private:
       const Expr &construction, ClassId classId,
       const std::vector<SemanticType> &typeArguments,
       const std::vector<CompileTimeValue> &valueArguments,
-      std::vector<AnalyzedCallArgument> arguments, const Token &paren) {
+      std::vector<AnalyzedCallArgument> arguments, const Token &paren,
+      bool requireExactNullParameter = false) {
     if (classId == 0 || classId > classes.size()) {
       currentType = SemanticType::Unknown;
       return;
@@ -15205,7 +15252,10 @@ private:
         parameterTypes.emplace_back(parameterType);
         const AnalyzedCallArgument &argument = arguments[index];
         const bool matches =
-            argument.forwardedPackElement
+            requireExactNullParameter
+                ? parameterType == SemanticType::NullPtr &&
+                      argument.type == SemanticType::NullPtr
+            : argument.forwardedPackElement
                 ? forwardedPackArgumentMatches(parameterType, argument.type)
                 : argument.expression != nullptr &&
                       contextualCallArgumentPotentiallyMatches(
@@ -17719,6 +17769,7 @@ private:
         name.kind == OverloadedOperator::GreaterEqual;
     std::optional<std::size_t> expectedArity = 0;
     switch (name.kind) {
+    case OverloadedOperator::Assignment:
     case OverloadedOperator::Subscript:
     case OverloadedOperator::Equal:
     case OverloadedOperator::NotEqual:
@@ -17784,6 +17835,10 @@ private:
     if (name.kind == OverloadedOperator::PreIncrement &&
         function.receiverMutability() != ReceiverMutability::Mutable) {
       fail("Prefix operator++ must use a mutable receiver.");
+    }
+    if (name.kind == OverloadedOperator::Assignment &&
+        function.receiverMutability() != ReceiverMutability::Mutable) {
+      fail("operator= must use a mutable receiver.");
     }
     if ((comparisonOperator ||
          name.kind == OverloadedOperator::ContextualBool) &&
@@ -22819,11 +22874,23 @@ private:
   }
 
   SemanticType analyzeInitializer(const ExprPtr &expr,
-                                  const SemanticType &expectedType) {
+                                  const SemanticType &expectedType,
+                                  bool allowExactNullConstruction = false) {
     const std::optional<SemanticType> enclosingType = contextualInitializerType;
     contextualInitializerType = expectedType;
-    const SemanticType result =
-        analyzeExpectedCallableResult(expr, expectedType);
+    SemanticType result = analyzeExpectedCallableResult(expr, expectedType);
+    if (allowExactNullConstruction && expr &&
+        expectedType.kind == SemanticType::Class &&
+        result == SemanticType::NullPtr) {
+      std::vector<AnalyzedCallArgument> arguments = {
+          {.type = result, .expression = &expr}};
+      analyzeConstructorCallArguments(
+          *expr, expectedType.classId, expectedType.arguments,
+          expectedType.valueArguments, std::move(arguments),
+          expressionToken(expr), true);
+      result = currentType;
+      semanticModel.record(*expr, expressionInfo(result));
+    }
     contextualInitializerType = enclosingType;
     return result;
   }
@@ -24866,6 +24933,16 @@ private:
     if (const auto *variable =
             dynamic_cast<const Variable *>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
+      if (symbol == nullptr) {
+        return true;
+      }
+      return symbol->assignable &&
+             (symbol->ownerClass == 0 || symbol->staticMember ||
+              receiverAllowsMutation(currentReceiverMutability));
+    }
+    if (const auto *qualified =
+            dynamic_cast<const QualifiedName *>(expression.get())) {
+      const Symbol *symbol = resolveQualified(qualified->name());
       if (symbol == nullptr) {
         return true;
       }

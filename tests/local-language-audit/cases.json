@@ -27,6 +27,15 @@
       "stderr": ""
     },
     {
+      "id": "unique-owner-null-state",
+      "kind": "execution",
+      "source": "execution/unique-owner-null-state.gti",
+      "exit_code": 0,
+      "stdout": "drop\ndrop\ndone\n",
+      "stderr": "",
+      "emit_contains": ["operator=(nullptr)", "owner = nullptr"]
+    },
+    {
       "id": "compound-assignment-output",
       "kind": "execution",
       "source": "execution/compound-assignments.gti",

@@ -1,0 +1,24 @@
+class Tracked {
+public:
+  Tracked() {}
+
+  ~Tracked() {
+    std::println("drop");
+  }
+};
+
+int main() {
+  mut std::unique_ptr<Tracked> owner = nullptr;
+  owner.reset();
+
+  owner = std::make_unique<Tracked>();
+  owner.reset();
+  owner.reset();
+
+  owner = std::make_unique<Tracked>();
+  owner = nullptr;
+  owner.reset();
+
+  std::println("done");
+  return 0;
+}

@@ -146,6 +146,7 @@ public:
   int operator()(int value) { return value; }
   int operator()() && { return this.value; }
   Handle& operator->() { return this; }
+  void operator=(nullptr_t other) mut { this.value = 0; }
   bool operator==(nullptr_t other) { return false; }
   bool operator!=(nullptr_t other) { return true; }
   operator bool() { return true; }
@@ -257,6 +258,23 @@ public:
             (initializer_expression
               (primary_expression
                 (this_expression))))))
+      (operator_declaration
+        (type)
+        (parameter_clause
+          (parameter
+            (type)
+            (identifier)))
+        (block
+          (expression_statement
+            (assignment_expression
+              (member_expression
+                (primary_expression
+                  (this_expression))
+                (identifier))
+              (initializer_expression
+                (primary_expression
+                  (literal
+                    (integer_literal))))))))
       (operator_declaration
         (type
           (primitive_type))

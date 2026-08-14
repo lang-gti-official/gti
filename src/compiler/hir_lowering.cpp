@@ -1789,8 +1789,40 @@ private:
     };
 
     if (const auto *assign = dynamic_cast<const Assign *>(raw)) {
-      kind = HirValueKind::Assignment;
-      operation = assign->oper().kind;
+      const ResolvedOperatorInfo *resolved = model.findOperator(*assign);
+      if (resolved != nullptr &&
+          resolved->kind == OverloadedOperator::Assignment) {
+        kind = HirValueKind::Call;
+        const SymbolId symbol = model.findResolvedSymbol(*assign);
+        const SymbolRecord *record = model.database().findSymbol(symbol);
+        HirValue target;
+        target.id = nextValueId++;
+        target.kind = assign->path().segments.size() == 1
+                          ? HirValueKind::Variable
+                          : HirValueKind::QualifiedName;
+        target.symbol = symbol;
+        target.info = record == nullptr
+                          ? ExpressionInfo{.type = resolved->dispatchOwner,
+                                           .category = ValueCategory::Place,
+                                           .access = AccessMode::Mutable,
+                                           .traits = semanticTraits(
+                                               resolved->dispatchOwner)}
+                          : ExpressionInfo{.type = record->type,
+                                           .category = ValueCategory::Place,
+                                           .access = record->mutableBinding
+                                                         ? AccessMode::Mutable
+                                                         : AccessMode::ReadOnly,
+                                           .traits = record->traits};
+        if (const PlaceKey *place = model.findPlace(*assign)) {
+          target.place = qualifyPlace(*place, body.placeDomain);
+        }
+        receiver = target.id;
+        operands.push_back(target.id);
+        body.values.push_back(std::move(target));
+      } else {
+        kind = HirValueKind::Assignment;
+        operation = assign->oper().kind;
+      }
       lowerOperand(assign->value());
     } else if (const auto *initializer =
                    dynamic_cast<const ArrayInitializer *>(raw)) {
@@ -1895,8 +1927,29 @@ private:
       }
     } else if (const auto *literalExpression =
                    dynamic_cast<const LiteralExpr *>(raw)) {
-      kind = HirValueKind::Literal;
-      literal = literalExpression->value();
+      const ResolvedConstructionInfo *construction =
+          model.findConstruction(*literalExpression);
+      if (construction != nullptr &&
+          construction->constructedType.kind == SemanticType::Class &&
+          construction->parameterTypes.size() == 1 &&
+          construction->parameterTypes.front() == SemanticType::NullPtr &&
+          std::holds_alternative<std::nullptr_t>(literalExpression->value())) {
+        HirValue argument;
+        argument.id = nextValueId++;
+        argument.kind = HirValueKind::Literal;
+        argument.info =
+            ExpressionInfo{.type = SemanticType::NullPtr,
+                           .category = ValueCategory::Value,
+                           .access = AccessMode::ReadOnly,
+                           .traits = semanticTraits(SemanticType::NullPtr)};
+        argument.literal = literalExpression->value();
+        operands.push_back(argument.id);
+        body.values.push_back(std::move(argument));
+        kind = HirValueKind::DirectInitializer;
+      } else {
+        kind = HirValueKind::Literal;
+        literal = literalExpression->value();
+      }
     } else if (const auto *logical = dynamic_cast<const Logical *>(raw)) {
       kind = HirValueKind::Logical;
       operation = logical->oper().kind;
@@ -2088,7 +2141,8 @@ private:
       value.borrowOrigin = resolved->borrowOrigin;
       value.borrowArgument = resolved->borrowArgument;
       value.borrowAccess = resolved->borrowAccess;
-      if (resolved->kind == OverloadedOperator::Call &&
+      if ((resolved->kind == OverloadedOperator::Call ||
+           resolved->kind == OverloadedOperator::Assignment) &&
           !value.operands.empty()) {
         value.receiver = value.operands.front();
       }
@@ -2119,6 +2173,14 @@ private:
           if (receiverType.kind != SemanticType::Class ||
               receiverType.classId != target->ownerClass) {
             receiverType = model.typeOf(*unary->right());
+          }
+        } else if (dynamic_cast<const Assign *>(raw) != nullptr) {
+          if (receiverType.kind != SemanticType::Class ||
+              receiverType.classId != target->ownerClass) {
+            const SymbolRecord *receiverSymbol =
+                model.database().findSymbol(value.symbol);
+            receiverType = receiverSymbol == nullptr ? SemanticType::Unknown
+                                                     : receiverSymbol->type;
           }
         }
         const std::vector<SemanticType> ownerArguments =

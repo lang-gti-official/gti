@@ -335,7 +335,7 @@ call-receiver-qualifier
                        = "mut" | "&&" ;
 
 non-call-overloadable-operator
-                       = "*" | "->" | "++" | "[" "]"
+                       = "*" | "->" | "++" | "=" | "[" "]"
                        | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 
 function-declaration   = [ "static" ] [ "constexpr" ] [ "mut" ] type IDENTIFIER
@@ -439,10 +439,11 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
 
 (* Operator overloads are class or struct members and cannot have method type
    parameters or runtime bindings. `operator*` and `operator->` take no
-   parameters and return checked references. `operator[]` and the comparison
-   operators `==`, `!=`, `<`, `<=`, `>`, and `>=` take one exact-match
-   parameter. Prefix `operator++` takes no parameters, returns void, and
-   requires a mutable receiver; postfix overloading is not provided.
+   parameters and return checked references. `operator=`, `operator[]`, and
+   the comparison operators `==`, `!=`, `<`, `<=`, `>`, and `>=` take one
+   exact-match parameter. `operator=` requires a mutable receiver. Prefix
+   `operator++` takes no parameters, returns void, and requires a mutable
+   receiver; postfix overloading is not provided.
    `operator()` takes any number of exact-match parameters and may return any
    otherwise-valid function return type. In addition to the
    ordinary read-only and trailing-`mut` forms, it may use trailing `&&` to
@@ -1069,9 +1070,11 @@ pack-expansion         = IDENTIFIER "..." ;
    owner is empty. The wrapper can be a local, function value, field,
    fixed-array element, non-escaping local reference, fixed generic type
    argument, or a once-forwarded variadic pack element. Unique-owner globals
-   remain unavailable. Empty owners use
-   explicit `std::unique_ptr<T>()` construction; `nullptr` remains available
-   for comparison. *)
+   remain unavailable. An exact `nullptr_t` constructor permits target-typed
+   `std::unique_ptr<T> owner = nullptr` initialization, while exact
+   `operator=(nullptr_t)` and `reset()` empty an existing mutable owner. These
+   rules do not add an implicit class conversion to call,
+   constructor-argument, or return-value overload resolution. *)
 
 (* `std::move(value)` is a compiler-defined explicit move operation for a named
    movable local value, by-value parameter, writable named field path rooted in

@@ -100,6 +100,7 @@ enum class OverloadedOperator {
   Dereference,
   Arrow,
   PreIncrement,
+  Assignment,
   Subscript,
   Call,
   Equal,
@@ -126,6 +127,8 @@ operatorFunctionName(OverloadedOperator kind) {
     return "__gti_operator_arrow";
   case OverloadedOperator::PreIncrement:
     return "__gti_operator_pre_increment";
+  case OverloadedOperator::Assignment:
+    return "__gti_operator_assignment";
   case OverloadedOperator::Subscript:
     return "__gti_operator_subscript";
   case OverloadedOperator::Call:
@@ -157,6 +160,8 @@ operatorSourceSpelling(OverloadedOperator kind) {
     return "operator->";
   case OverloadedOperator::PreIncrement:
     return "operator++";
+  case OverloadedOperator::Assignment:
+    return "operator=";
   case OverloadedOperator::Subscript:
     return "operator[]";
   case OverloadedOperator::Call:
