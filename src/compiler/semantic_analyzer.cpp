@@ -1,5 +1,7 @@
 #include "gti/semantic_analyzer.h"
 
+#include <cassert>
+
 namespace lang {
 
 class SemanticVisitor::Impl final : public ExprVisitor, public StmtVisitor {
@@ -22706,6 +22708,458 @@ private:
     return expressionInfo(std::move(type));
   }
 
+  [[nodiscard]] static FailurePropagationKind
+  failurePropagation(CallDispatch dispatch) {
+    return dispatch == CallDispatch::Virtual
+               ? FailurePropagationKind::VirtualCall
+               : FailurePropagationKind::DirectCall;
+  }
+
+  static void addFailureOutcome(DefinedFailureOperation &operation,
+                                DefinedFailureCode code,
+                                DefinedFailureDetail detail) {
+    assert(!operation.localOrigins.empty());
+    std::vector<DefinedFailureOutcome> &outcomes =
+        operation.localOrigins.back().outcomes;
+    const DefinedFailureOutcome outcome{.code = code, .detail = detail};
+    if (std::find(outcomes.begin(), outcomes.end(), outcome) ==
+        outcomes.end()) {
+      outcomes.push_back(outcome);
+    }
+  }
+
+  [[nodiscard]] static std::optional<DefinedFailureDetail>
+  arithmeticFailureDetail(TokenKind operation) {
+    switch (operation) {
+    case TokenKind::PLUS:
+    case TokenKind::PLUS_EQUAL:
+    case TokenKind::PLUS_PLUS:
+      return DefinedFailureDetail::Addition;
+    case TokenKind::MINUS:
+    case TokenKind::MINUS_EQUAL:
+    case TokenKind::MINUS_MINUS:
+      return DefinedFailureDetail::Subtraction;
+    case TokenKind::STAR:
+    case TokenKind::STAR_EQUAL:
+      return DefinedFailureDetail::Multiplication;
+    case TokenKind::SLASH:
+    case TokenKind::SLASH_EQUAL:
+      return DefinedFailureDetail::Division;
+    default:
+      return std::nullopt;
+    }
+  }
+
+  void addIntegerOperationFailures(
+      DefinedFailureOperation &operation, TokenKind token,
+      const SemanticType &resultType,
+      const SemanticType &countType = SemanticType::Unknown) const {
+    if (const std::optional<DefinedFailureDetail> detail =
+            arithmeticFailureDetail(token)) {
+      if (token == TokenKind::SLASH || token == TokenKind::SLASH_EQUAL) {
+        addFailureOutcome(operation, DefinedFailureCode::DivisionByZero,
+                          DefinedFailureDetail::IntegerDivision);
+        const std::optional<CheckedIntegerDomain> resultDomain =
+            constantIntegerDomain(resultType);
+        if (resultDomain && !resultDomain->signedValue) {
+          return;
+        }
+      }
+      addFailureOutcome(operation, DefinedFailureCode::IntegerOverflow,
+                        *detail);
+      return;
+    }
+    if (token == TokenKind::PERCENT || token == TokenKind::PERCENT_EQUAL) {
+      addFailureOutcome(operation, DefinedFailureCode::ModuloByZero,
+                        DefinedFailureDetail::IntegerModulo);
+      return;
+    }
+    if (token == TokenKind::SHIFT_LEFT ||
+        token == TokenKind::SHIFT_LEFT_EQUAL ||
+        token == TokenKind::SHIFT_RIGHT ||
+        token == TokenKind::SHIFT_RIGHT_EQUAL) {
+      const DefinedFailureDetail detail =
+          token == TokenKind::SHIFT_LEFT || token == TokenKind::SHIFT_LEFT_EQUAL
+              ? DefinedFailureDetail::LeftShift
+              : DefinedFailureDetail::RightShift;
+      const std::optional<CheckedIntegerDomain> countDomain =
+          constantIntegerDomain(countType);
+      if (!countDomain || countDomain->signedValue) {
+        addFailureOutcome(operation, DefinedFailureCode::NegativeShiftCount,
+                          detail);
+      }
+      addFailureOutcome(operation, DefinedFailureCode::ShiftCountOutOfRange,
+                        detail);
+    }
+  }
+
+  [[nodiscard]] static bool
+  numericConversionMayFail(const SemanticType &source,
+                           const SemanticType &target) {
+    const std::optional<CheckedIntegerDomain> sourceInteger =
+        constantIntegerDomain(source);
+    const std::optional<CheckedIntegerDomain> targetInteger =
+        constantIntegerDomain(target);
+    const std::optional<BinaryFloatFormat> sourceFloat =
+        semanticFloatFormat(source);
+    const std::optional<BinaryFloatFormat> targetFloat =
+        semanticFloatFormat(target);
+    if (sourceInteger && targetInteger) {
+      if (sourceInteger->signedValue == targetInteger->signedValue) {
+        return sourceInteger->width > targetInteger->width;
+      }
+      if (!sourceInteger->signedValue && targetInteger->signedValue) {
+        return sourceInteger->width >= targetInteger->width;
+      }
+      return true;
+    }
+    if (sourceFloat && targetInteger) {
+      return true;
+    }
+    if (sourceInteger && targetFloat) {
+      return false;
+    }
+    if (sourceFloat && targetFloat) {
+      return *sourceFloat == BinaryFloatFormat::Binary64 &&
+             *targetFloat == BinaryFloatFormat::Binary32;
+    }
+    return false;
+  }
+
+  [[nodiscard]] static SemanticType
+  compoundIntermediateType(TokenKind operation, const SemanticType &target,
+                           const SemanticType &right,
+                           const Expr *leftExpression,
+                           const Expr *rightExpression) {
+    if (operation == TokenKind::SHIFT_LEFT_EQUAL ||
+        operation == TokenKind::SHIFT_RIGHT_EQUAL) {
+      return promotedInteger(target);
+    }
+    return numericResult(target, right, leftExpression, rightExpression);
+  }
+
+  void addCompoundConversionFailure(DefinedFailureOperation &operation,
+                                    TokenKind token, const SemanticType &target,
+                                    const SemanticType &right,
+                                    const Expr *leftExpression,
+                                    const Expr *rightExpression) const {
+    const SemanticType intermediate = compoundIntermediateType(
+        token, target, right, leftExpression, rightExpression);
+    if (intermediate != SemanticType::Unknown &&
+        numericConversionMayFail(intermediate, target)) {
+      addFailureOutcome(operation,
+                        DefinedFailureCode::NumericConversionOutOfRange,
+                        DefinedFailureDetail::NumericCast);
+    }
+  }
+
+  [[nodiscard]] DefinedFailureDetail uniqueOwnerAccessDetail() const {
+    if (currentFunctionDeclaration != nullptr &&
+        currentFunctionDeclaration->operatorName() &&
+        currentFunctionDeclaration->operatorName()->kind ==
+            OverloadedOperator::Arrow) {
+      return DefinedFailureDetail::MemberAccess;
+    }
+    return DefinedFailureDetail::Dereference;
+  }
+
+  [[nodiscard]] DefinedFailureOperation
+  classifyDefinedFailure(const Expr &expr, const ExpressionInfo &info) const {
+    DefinedFailureOperation operation;
+    const auto *callExpression = dynamic_cast<const Call *>(&expr);
+    const ResolvedCallInfo *callResolution =
+        callExpression == nullptr ? nullptr
+                                  : semanticModel.findCall(*callExpression);
+    const auto anchor = [&](const Token &token) {
+      const SourceSpan span = tokenSpan(token);
+      operation.localOrigins.push_back(
+          DefinedFailureOrigin{.sourceUnit = sourceUnitFor(token),
+                               .start = span.start,
+                               .end = span.end,
+                               .line = span.line});
+    };
+
+    if (const ResolvedOperatorInfo *resolved =
+            semanticModel.findOperator(expr)) {
+      const bool assignmentExpression =
+          dynamic_cast<const Assign *>(&expr) != nullptr ||
+          dynamic_cast<const Set *>(&expr) != nullptr ||
+          dynamic_cast<const IndexSet *>(&expr) != nullptr ||
+          dynamic_cast<const DereferenceSet *>(&expr) != nullptr;
+      const bool loweredAssignmentCall =
+          dynamic_cast<const Assign *>(&expr) != nullptr &&
+          resolved->kind == OverloadedOperator::Assignment;
+      if (resolved->function != 0 &&
+          (!assignmentExpression || loweredAssignmentCall)) {
+        operation.propagation = failurePropagation(resolved->dispatch);
+      }
+      return operation;
+    }
+
+    if (const ResolvedConstructionInfo *construction =
+            semanticModel.findConstruction(expr);
+        construction != nullptr &&
+        construction->kind == ConstructorKind::Ordinary &&
+        construction->constructedType.kind == SemanticType::Class &&
+        construction->constructor != 0 &&
+        (callResolution == nullptr ||
+         callResolution->intrinsic == IntrinsicKind::None)) {
+      operation.propagation = FailurePropagationKind::Constructor;
+      return operation;
+    }
+
+    if (const auto *call = dynamic_cast<const Call *>(&expr)) {
+      if (const auto *member =
+              dynamic_cast<const Get *>(call->callee().get())) {
+        const SemanticType objectType = semanticModel.typeOf(*member->object());
+        if (objectType.kind == SemanticType::Expected &&
+            call->arguments().empty()) {
+          if (member->name().lexeme == "value") {
+            anchor(member->name());
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidExpectedAccess,
+                              DefinedFailureDetail::ValueOnError);
+            return operation;
+          }
+          if (member->name().lexeme == "error") {
+            anchor(member->name());
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidExpectedAccess,
+                              DefinedFailureDetail::ErrorOnValue);
+            return operation;
+          }
+        }
+      }
+
+      if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call)) {
+        const IntrinsicKind intrinsic = resolved->intrinsic;
+        if (intrinsic != IntrinsicKind::None) {
+          const Token token = callableToken(call->callee());
+          switch (intrinsic) {
+          case IntrinsicKind::NumericTypeParameterConversion:
+          case IntrinsicKind::NumericAliasConversion:
+            if (!call->arguments().empty() &&
+                numericConversionMayFail(
+                    semanticModel.typeOf(*call->arguments().front()),
+                    info.type)) {
+              anchor(token);
+              addFailureOutcome(operation,
+                                DefinedFailureCode::NumericConversionOutOfRange,
+                                DefinedFailureDetail::NumericCast);
+            }
+            break;
+          case IntrinsicKind::AllocateUniqueOwner:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
+                              DefinedFailureDetail::UniqueOwner);
+            break;
+          case IntrinsicKind::UniqueOwnerBorrow:
+          case IntrinsicKind::UniqueOwnerBorrowMut:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::EmptyOwnerAccess,
+                              uniqueOwnerAccessDetail());
+            break;
+          case IntrinsicKind::AllocateStorage:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
+                              DefinedFailureDetail::PrivateStorage);
+            break;
+          case IntrinsicKind::StorageConstruct:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
+                              DefinedFailureDetail::PrivateStorage);
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidStorageState,
+                              DefinedFailureDetail::DuplicateConstruction);
+            addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
+                              DefinedFailureDetail::ElementConstruction);
+            break;
+          case IntrinsicKind::StorageRead:
+          case IntrinsicKind::StorageReadMut:
+          case IntrinsicKind::StorageDestroy:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
+                              DefinedFailureDetail::PrivateStorage);
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidStorageState,
+                              DefinedFailureDetail::UninitializedAccess);
+            break;
+          case IntrinsicKind::StorageRelocate:
+            anchor(token);
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidStorageState,
+                              DefinedFailureDetail::RelocationCapacity);
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidStorageState,
+                              DefinedFailureDetail::InvalidRelocationSource);
+            addFailureOutcome(
+                operation, DefinedFailureCode::InvalidStorageState,
+                DefinedFailureDetail::OccupiedRelocationDestination);
+            break;
+          case IntrinsicKind::DefaultTypeParameterConstruction:
+          case IntrinsicKind::Move:
+          case IntrinsicKind::UniqueOwnerIsNull:
+          case IntrinsicKind::IntegerWrappingAdd:
+          case IntrinsicKind::IntegerWrappingSubtract:
+          case IntrinsicKind::IntegerWrappingMultiply:
+          case IntrinsicKind::IntegerSaturatingAdd:
+          case IntrinsicKind::IntegerSaturatingSubtract:
+          case IntrinsicKind::IntegerSaturatingMultiply:
+          case IntrinsicKind::IntegerCheckedAdd:
+          case IntrinsicKind::IntegerCheckedSubtract:
+          case IntrinsicKind::IntegerCheckedMultiply:
+          case IntrinsicKind::None:
+          case IntrinsicKind::Count:
+            break;
+          }
+          return operation;
+        }
+        const FunctionInfo *target =
+            semanticModel.findFunction(resolved->function);
+        if (target != nullptr && target->linkage == LanguageLinkage::Gti) {
+          operation.propagation = failurePropagation(resolved->dispatch);
+        }
+        return operation;
+      }
+      if (semanticModel.findLambdaCall(*call) != nullptr ||
+          semanticModel.findDeferredCallableCall(*call) != nullptr) {
+        operation.propagation = FailurePropagationKind::Callable;
+        return operation;
+      }
+    }
+
+    if (const auto *conversion = dynamic_cast<const Conversion *>(&expr)) {
+      if (numericConversionMayFail(semanticModel.typeOf(*conversion->value()),
+                                   info.type)) {
+        anchor(conversion->targetType().name.first());
+        addFailureOutcome(operation,
+                          DefinedFailureCode::NumericConversionOutOfRange,
+                          DefinedFailureDetail::NumericCast);
+      }
+      return operation;
+    }
+
+    const auto addIndexFailure = [&](const ExprPtr &object,
+                                     const Token &bracket) {
+      const SemanticType objectType = semanticModel.typeOf(*object);
+      if (objectType.kind == SemanticType::Array) {
+        anchor(bracket);
+        addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
+                          DefinedFailureDetail::FixedArray);
+      } else if (objectType.kind == SemanticType::StringView) {
+        anchor(bracket);
+        addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
+                          DefinedFailureDetail::StringView);
+      }
+    };
+    if (const auto *index = dynamic_cast<const Index *>(&expr)) {
+      addIndexFailure(index->object(), index->bracket());
+      return operation;
+    }
+
+    if (const auto *binary = dynamic_cast<const Binary *>(&expr)) {
+      if (isIntegral(info.type)) {
+        anchor(binary->oper());
+        addIntegerOperationFailures(operation, binary->oper().kind, info.type,
+                                    semanticModel.typeOf(*binary->right()));
+      }
+    } else if (const auto *unary = dynamic_cast<const Unary *>(&expr)) {
+      if (isIntegral(info.type)) {
+        anchor(unary->oper());
+        if (unary->oper().kind == TokenKind::MINUS) {
+          addFailureOutcome(operation, DefinedFailureCode::IntegerOverflow,
+                            DefinedFailureDetail::Negation);
+        } else {
+          const SemanticType operandType =
+              semanticModel.typeOf(*unary->right());
+          addIntegerOperationFailures(operation, unary->oper().kind,
+                                      promotedInteger(operandType));
+          if ((unary->oper().kind == TokenKind::PLUS_PLUS ||
+               unary->oper().kind == TokenKind::MINUS_MINUS) &&
+              numericConversionMayFail(promotedInteger(info.type), info.type)) {
+            addFailureOutcome(operation,
+                              DefinedFailureCode::NumericConversionOutOfRange,
+                              DefinedFailureDetail::NumericCast);
+          }
+        }
+      }
+    } else if (const auto *postfix = dynamic_cast<const Postfix *>(&expr)) {
+      if (isIntegral(info.type)) {
+        anchor(postfix->oper());
+        const SemanticType operandType =
+            semanticModel.typeOf(*postfix->expression());
+        addIntegerOperationFailures(operation, postfix->oper().kind,
+                                    promotedInteger(operandType));
+        if (numericConversionMayFail(promotedInteger(info.type), info.type)) {
+          addFailureOutcome(operation,
+                            DefinedFailureCode::NumericConversionOutOfRange,
+                            DefinedFailureDetail::NumericCast);
+        }
+      }
+    } else if (const auto *assign = dynamic_cast<const Assign *>(&expr)) {
+      if (assign->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
+        anchor(assign->oper());
+        const SemanticType right = semanticModel.typeOf(*assign->value());
+        const SemanticType intermediate =
+            compoundIntermediateType(assign->oper().kind, info.type, right,
+                                     nullptr, assign->value().get());
+        addIntegerOperationFailures(operation, assign->oper().kind,
+                                    intermediate, right);
+        addCompoundConversionFailure(operation, assign->oper().kind, info.type,
+                                     right, nullptr, assign->value().get());
+      }
+    } else if (const auto *set = dynamic_cast<const Set *>(&expr)) {
+      if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
+        anchor(set->oper());
+        const SemanticType right = semanticModel.typeOf(*set->value());
+        const SemanticType intermediate = compoundIntermediateType(
+            set->oper().kind, info.type, right, nullptr, set->value().get());
+        addIntegerOperationFailures(operation, set->oper().kind, intermediate,
+                                    right);
+        addCompoundConversionFailure(operation, set->oper().kind, info.type,
+                                     right, nullptr, set->value().get());
+      }
+    } else if (const auto *set = dynamic_cast<const IndexSet *>(&expr)) {
+      addIndexFailure(set->object(), set->bracket());
+      if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
+        anchor(set->oper());
+        const SemanticType right = semanticModel.typeOf(*set->value());
+        const SemanticType intermediate = compoundIntermediateType(
+            set->oper().kind, info.type, right, nullptr, set->value().get());
+        addIntegerOperationFailures(operation, set->oper().kind, intermediate,
+                                    right);
+        addCompoundConversionFailure(operation, set->oper().kind, info.type,
+                                     right, nullptr, set->value().get());
+      }
+    } else if (const auto *set = dynamic_cast<const DereferenceSet *>(&expr)) {
+      if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
+        anchor(set->oper());
+        const SemanticType right = semanticModel.typeOf(*set->value());
+        const SemanticType intermediate = compoundIntermediateType(
+            set->oper().kind, info.type, right, nullptr, set->value().get());
+        addIntegerOperationFailures(operation, set->oper().kind, intermediate,
+                                    right);
+        addCompoundConversionFailure(operation, set->oper().kind, info.type,
+                                     right, nullptr, set->value().get());
+      }
+    }
+
+    std::erase_if(operation.localOrigins,
+                  [](const DefinedFailureOrigin &origin) {
+                    return origin.outcomes.empty();
+                  });
+    for (DefinedFailureOrigin &origin : operation.localOrigins) {
+      std::sort(origin.outcomes.begin(), origin.outcomes.end(),
+                [](DefinedFailureOutcome left, DefinedFailureOutcome right) {
+                  if (left.code != right.code) {
+                    return left.code < right.code;
+                  }
+                  return left.detail < right.detail;
+                });
+    }
+    return operation;
+  }
+
   SemanticType analyze(const Expr &expr) {
     return analyze(expr, OccurrenceRole::Reference | OccurrenceRole::Read);
   }
@@ -22715,6 +23169,8 @@ private:
     SemanticType result = currentType;
     ExpressionInfo info = classifyExpression(expr, result);
     semanticModel.record(expr, info);
+    semanticModel.recordDefinedFailure(expr,
+                                       classifyDefinedFailure(expr, info));
     if (const SemanticPlace place = semanticPlace(&expr);
         place.root != nullptr) {
       semanticModel.recordPlace(expr, placeKey(place));
@@ -22889,7 +23345,10 @@ private:
           expectedType.valueArguments, std::move(arguments),
           expressionToken(expr), true);
       result = currentType;
-      semanticModel.record(*expr, expressionInfo(result));
+      const ExpressionInfo info = expressionInfo(result);
+      semanticModel.record(*expr, info);
+      semanticModel.recordDefinedFailure(*expr,
+                                         classifyDefinedFailure(*expr, info));
     }
     contextualInitializerType = enclosingType;
     return result;

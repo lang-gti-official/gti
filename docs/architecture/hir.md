@@ -1,7 +1,7 @@
 # Typed HIR
 
-Status: Implemented concrete-instance, typed-value, and normal-exit lifecycle
-foundation.
+Status: Implemented concrete-instance, typed-value, normal-exit lifecycle, and
+defined-failure identity foundation.
 
 HIR is GTI's backend-independent graph of concrete program instances and
 executable typed values. It sits after semantic analysis and before body-local
@@ -124,15 +124,23 @@ constructor's real argument type. A selected member `operator=` is represented
 as an ordinary call with an explicit named-place receiver and exact right-hand
 argument. Neither form is inferred from a public standard-library type name.
 
-The bounded M-EXEC-01 invocation slices give an eligible ordinary call or
-ordinary constructor a `HirCallPlan`. Eligibility is deliberately narrow: the
+The bounded M-EXEC-01 invocation slices give an eligible ordinary call,
+resolved class `operator()` call, or ordinary constructor a `HirCallPlan`.
+Eligibility is deliberately narrow: the
 target is concrete and non-intrinsic; source argument cardinality exactly
 matches the selected parameters; no pack expansion is present; and every
 parameter is either a supported scalar/reference form or an exact class value
-without borrowed state. Ordinary function calls exclude operators, lambdas,
-deferred callables, and construction. Ordinary constructors require an exact
-constructor target and at least one parameter; generated/default zero-argument
-construction and copy/move special construction remain unscheduled. The plan
+without borrowed state. The ordinary function family excludes operators other
+than `operator()`, lambdas, unresolved deferred callables, and construction. A
+concretely selected `operator()` uses the same exact target even when its
+generic source call still has a deferred-callable base record. Its receiver is
+a read or mutable borrow for a place, a value for a reusable value receiver, or
+a `MoveValue` for an explicitly moved receiver or exact trailing-`&&` target.
+This preserves a once-callable requirement even when exact overload selection
+legitimately falls back to a read or mutable target. Ordinary constructors
+require an exact constructor target and at least one parameter;
+generated/default zero-argument construction and copy/move special construction
+remain unscheduled. The plan
 names a function receiver, when present, once and records each argument in
 source order with its exact concrete parameter type. Constructors have no
 receiver. An input role is value, class-copy value, class-move value, read
@@ -142,9 +150,10 @@ remains source provenance and compatibility-backend input; MIR consumes the
 plan as schedule authority for these slices.
 
 This is not yet a complete executable schedule. Borrowed-state class values,
-packs, overloaded/callable calls, operators, special/default construction,
-conditionals, target-place formation, result destinations, and module/static
-initializer bodies remain outside the bounded plan.
+packs, unresolved callable calls, operators other than `operator()`,
+special/default construction, conditionals, target-place formation, result
+destinations, and module/static initializer bodies remain outside the bounded
+plan.
 
 M-LIFE-01 maps each AST full-expression root selected by `SemanticModel` to a
 snapshot-local `HirFullExpressionId`; HIR does not infer endpoints from
@@ -231,15 +240,25 @@ propagate an already formed record; it does not acquire a transitive category
 set or replace the origin site. Conservative propagation can later be refined
 by the one function-effect authority without changing this distinction.
 
-After HIR, a backend-independent failure-metadata builder consumes those local
-origins together with `SourceGraph`, `SourceManager`, the direct/project logical
-root, and the canonical pre-optimization site-table rules. It assigns
+`SemanticModel` now records a `DefinedFailureOperation` for each classified
+source expression. HIR copies that operation without reclassifying it. One
+operation may carry several `DefinedFailureOrigin` records because one lowered
+expression can contain distinct detector sites, such as bounds and arithmetic
+checks in an indexed compound assignment. Each origin owns a sorted unique
+outcome set and a snapshot-local `SourceUnitId` plus line/offset anchor. Direct,
+virtual, constructor, callable, and future task-join propagation remain a
+separate enum with no transitive category set.
+
+After HIR, a backend-independent failure-metadata builder must consume those
+local origins together with `SourceGraph`, `SourceManager`, the direct/project
+logical root, and the canonical pre-optimization site-table rules. It assigns
 artifact-local `FailureSiteId` values, maps detector HIR values to them, and
 constructs the immutable artifact descriptor. MIR and every backend consume
 that compiler-owned metadata; HIR/MIR never calculate the final artifact digest
-or retain absolute paths. This pipeline does not exist yet. Current HIR retains
-enough AST provenance for the transitional backend but owns neither the general
-failure vocabulary nor the metadata product.
+or retain absolute paths. This builder does not exist yet. Current HIR owns the
+compiler vocabulary and snapshot-local origin/propagation identity, but not
+artifact site IDs, immutable descriptors, failure records, cleanup edges, or
+the metadata product consumed by a production backend.
 
 ## Boundary
 

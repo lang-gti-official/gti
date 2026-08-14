@@ -265,6 +265,15 @@ SemanticModel::unsafeOperation(const Expr &expression) const {
                          : base->unsafeOperation(expression);
 }
 
+[[nodiscard]] const DefinedFailureOperation *
+SemanticModel::findDefinedFailure(const Expr &expression) const {
+  const auto found = definedFailures.find(&expression);
+  if (found != definedFailures.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findDefinedFailure(expression);
+}
+
 [[nodiscard]] const PlaceKey *
 SemanticModel::findPlace(const Expr &expression) const {
   const auto found = places.find(&expression);
@@ -853,6 +862,7 @@ void SemanticModel::clear() {
   fullExpressionOrder.clear();
   constants.clear();
   unsafeOperations.clear();
+  definedFailures.clear();
   places.clear();
   ownershipEvents.clear();
   ownershipEventOrder.clear();
@@ -982,6 +992,15 @@ void SemanticModel::recordLoanEndpoint(SemanticLoanId id,
 
 void SemanticModel::record(const Expr &expression, ExpressionInfo info) {
   expressions.insert_or_assign(&expression, std::move(info));
+}
+
+void SemanticModel::recordDefinedFailure(const Expr &expression,
+                                         DefinedFailureOperation operation) {
+  if (operation.empty()) {
+    definedFailures.erase(&expression);
+    return;
+  }
+  definedFailures.insert_or_assign(&expression, std::move(operation));
 }
 
 bool SemanticModel::appendFullExpression(

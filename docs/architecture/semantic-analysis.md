@@ -74,6 +74,9 @@ compiler IDs. Important facts include:
 - exact selected calls, operators, conversions, constructors, contextual
   integer operands, intrinsic identity, dispatch mode, borrow origin, and any
   exact global/static borrow place;
+- exact local defined-failure origins and call-like propagation channels,
+  keyed by source expression and anchored by snapshot-local source-unit
+  identity plus line/offsets;
 - AST-selected full-expression roots for statements and constructor
   initializers;
 - class bases, override roots, abstract/polymorphic state, and destruction;
@@ -485,11 +488,23 @@ call preserves the original record byte-for-byte and does not acquire or select
 the callee's possible origin categories. Neither later phase nor the backend
 may infer a category from operator spelling or a native helper.
 
-This general record is not implemented yet. Existing checked-integer and
-constant-evaluation enums preserve part of the vocabulary, while indexing,
-owners, expected observers, storage, allocation, and host operations use
-separate semantic/intrinsic facts that M-FAIL-01 must normalize without moving
-source validity out of semantics.
+The first semantic identity slice is implemented in `gti/failure.h` and
+`SemanticModel::findDefinedFailure`. It gives checked integer arithmetic,
+numeric conversion, fixed-array and string-view indexing, unique-owner access,
+expected observers, private storage operations, allocation, ordinary GTI
+calls, concrete construction, resolved operators, and confined callables one
+compiler-owned vocabulary. An expression may retain more than one distinct
+origin; outcomes within each origin are sorted and deduplicated. Propagation is
+recorded independently for direct, virtual, constructor, and callable edges,
+without copying a callee category set or changing the origin anchor. Exact
+`nullptr_t` contextual construction is reclassified after constructor
+selection so the late contextual step cannot lose its constructor channel.
+
+This is not yet the executable general record. Hosted-startup and remaining
+trusted host origins, artifact-local site interning, function-effect
+refinement, failure successors, cleanup unwinding, containment, and runtime
+records remain M-FAIL-01 work. Existing transitional backend helpers are not
+evidence that those pieces exist.
 
 The selected owned-argument program-entry record must also state that its
 compiler-generated hosted-startup operation has exactly three local origins:

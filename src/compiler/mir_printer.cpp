@@ -93,10 +93,31 @@ callInputKindName(HirCallInputKind kind) {
   return "invalid";
 }
 
+[[nodiscard]] constexpr std::string_view
+failurePropagationName(FailurePropagationKind kind) {
+  switch (kind) {
+  case FailurePropagationKind::None:
+    return "none";
+  case FailurePropagationKind::DirectCall:
+    return "direct-call";
+  case FailurePropagationKind::VirtualCall:
+    return "virtual-call";
+  case FailurePropagationKind::Constructor:
+    return "constructor";
+  case FailurePropagationKind::Callable:
+    return "callable";
+  case FailurePropagationKind::TaskJoin:
+    return "task-join";
+  case FailurePropagationKind::Count:
+    return "invalid";
+  }
+  return "invalid";
+}
+
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v14 valid=" << program.valid() << '\n';
+    output << "mir-v15 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -328,7 +349,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v14\n";
+    output << "mir-body-v15\n";
     body(value, 0);
     return output.str();
   }
@@ -741,6 +762,28 @@ private:
     } else {
       output << '-';
     }
+    output << " failure-origins=[";
+    for (std::size_t originIndex = 0;
+         originIndex < value.definedFailure.localOrigins.size();
+         ++originIndex) {
+      separator(originIndex);
+      const DefinedFailureOrigin &origin =
+          value.definedFailure.localOrigins[originIndex];
+      output << "unit" << origin.sourceUnit << ':' << origin.line << '@'
+             << origin.start << ".." << origin.end << '{';
+      for (std::size_t outcomeIndex = 0; outcomeIndex < origin.outcomes.size();
+           ++outcomeIndex) {
+        separator(outcomeIndex);
+        const DefinedFailureOutcome outcome = origin.outcomes[outcomeIndex];
+        output << static_cast<std::uint16_t>(outcome.code) << ':'
+               << definedFailureCodeName(outcome.code) << ':'
+               << definedFailureDetailName(outcome.detail);
+      }
+      output << '}';
+    }
+    output << ']';
+    output << " failure-propagation="
+           << failurePropagationName(value.definedFailure.propagation);
     output << " dispatch=" << number(value.dispatch) << " dispatch-owner=";
     type(value.dispatchOwner);
     output << " function=";

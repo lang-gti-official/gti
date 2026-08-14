@@ -1281,6 +1281,7 @@ private:
                                         .place = sourcePlace,
                                         .type = value->info.type}},
                           .intrinsic = value->intrinsic,
+                          .definedFailure = localDefinedFailure(source),
                           .info = value->info};
       (void)initializeValueLifecycle(move, *value);
       (void)appendInstruction(std::move(move));
@@ -1306,6 +1307,7 @@ private:
                                .operands = {{.kind = MirOperandKind::Copy,
                                              .place = place,
                                              .type = value->info.type}},
+                               .definedFailure = localDefinedFailure(value),
                                .info = value->info});
       emittedValues.insert(id);
       endConsumedCallResultLoans(value->operands, *value);
@@ -1899,6 +1901,15 @@ private:
     return id;
   }
 
+  [[nodiscard]] static DefinedFailureOperation
+  localDefinedFailure(const HirValue *value) {
+    DefinedFailureOperation operation;
+    if (value != nullptr) {
+      operation.localOrigins = value->definedFailure.localOrigins;
+    }
+    return operation;
+  }
+
   [[nodiscard]] MirOperand
   prepareCallInput(HirValueId callSite, HirValueId sourceValue,
                    const SemanticType &type, HirCallInputKind inputKind,
@@ -1908,8 +1919,8 @@ private:
                         .category = ValueCategory::Value,
                         .access = AccessMode::ReadOnly,
                         .traits = semanticTraits(type)};
-    if (const HirValue *sourceValueInfo = findValue(sourceValue);
-        sourceValueInfo != nullptr && sourceValueInfo->info.type == type) {
+    const HirValue *sourceValueInfo = findValue(sourceValue);
+    if (sourceValueInfo != nullptr && sourceValueInfo->info.type == type) {
       info.traits = sourceValueInfo->info.traits;
     }
     const MirValueId result = appendValue(sourceValue, info);
@@ -1922,6 +1933,14 @@ private:
                          .result = result,
                          .operands = {std::move(operand)},
                          .info = info};
+    const bool materializesCheckedPlace =
+        inputKind == HirCallInputKind::CopyValue ||
+        ((inputKind == HirCallInputKind::ReadBorrow ||
+          inputKind == HirCallInputKind::MutableBorrow) &&
+         input.operands.front().kind != MirOperandKind::Loan);
+    if (materializesCheckedPlace) {
+      input.definedFailure = localDefinedFailure(sourceValueInfo);
+    }
     if (inputKind == HirCallInputKind::MoveValue) {
       transferTemporaryOut(input, sourceValue);
     }
@@ -1936,6 +1955,7 @@ private:
                         .result = resultFor(value),
                         .intrinsic = value.intrinsic,
                         .synchronization = value.synchronization,
+                        .definedFailure = value.definedFailure,
                         .dispatch = value.dispatch,
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
@@ -2102,6 +2122,7 @@ private:
                              .hirValue = value.id,
                              .callSite = value.callPlan ? value.id : 0,
                              .result = resultFor(value),
+                             .definedFailure = value.definedFailure,
                              .constructorTarget = value.constructorTarget,
                              .constructorKind = value.constructorKind,
                              .info = value.info};
@@ -2204,10 +2225,15 @@ private:
                                .info = info});
     } else if (value->contextualBoolTarget) {
       const AccessMode access = receiverAccess(*value->contextualBoolTarget);
+      const FailurePropagationKind propagation =
+          value->dispatch == CallDispatch::Virtual
+              ? FailurePropagationKind::VirtualCall
+              : FailurePropagationKind::DirectCall;
       (void)appendInstruction({.kind = MirInstructionKind::Call,
                                .hirValue = id,
                                .result = result,
                                .receiver = receiverOperand(id, access),
+                               .definedFailure = {.propagation = propagation},
                                .dispatch = value->dispatch,
                                .dispatchOwner = value->dispatchOwner,
                                .functionTarget = value->contextualBoolTarget,
@@ -2640,6 +2666,7 @@ private:
                              .result = resultFor(value),
                              .destination = destination,
                              .operation = operation,
+                             .definedFailure = value.definedFailure,
                              .info = value.info});
     emittedValues.insert(value.id);
   }
@@ -2697,6 +2724,7 @@ private:
           .operands = std::move(operands),
           .operation = value->operation ? assignmentOperation(*value->operation)
                                         : MirOperation::None,
+          .definedFailure = value->definedFailure,
           .info = value->info};
       if (temporaryIsActive(sourceObligation)) {
         const MirPlace *destinationPlace = output.findPlace(destination);
@@ -2762,6 +2790,7 @@ private:
                                .enumVariant = value->enumVariant,
                                .payloadIndex = value->payloadIndex,
                                .intrinsic = value->intrinsic,
+                               .definedFailure = value->definedFailure,
                                .lambdaTarget = value->lambdaTarget,
                                .info = value->info};
     if (instruction.operation == MirOperation::Closure &&
@@ -2958,6 +2987,7 @@ private:
                                .hirValue = valueId,
                                .operands = {sourceOperand},
                                .loan = loan,
+                               .definedFailure = localDefinedFailure(value),
                                .info = value->info});
       if (!scopes.empty()) {
         scopes.back().loans.push_back(loan);
@@ -2989,6 +3019,7 @@ private:
                        .place = sourcePlace,
                        .type = value->info.type}},
          .loan = loan,
+         .definedFailure = localDefinedFailure(value),
          .info = value->info});
     if (!scopes.empty()) {
       scopes.back().loans.push_back(loan);
@@ -3013,6 +3044,7 @@ private:
                                      ? SemanticType::Unknown
                                      : findValue(valueId)->info.type}},
            .loan = stored,
+           .definedFailure = localDefinedFailure(findValue(valueId)),
            .info = findValue(valueId) == nullptr ? ExpressionInfo{}
                                                  : findValue(valueId)->info});
       output.loans[stored - 1].escapes = true;

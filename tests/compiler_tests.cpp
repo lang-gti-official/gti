@@ -1137,10 +1137,10 @@ int main() {
          "class values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v14\n") &&
+  expect(dump.starts_with("mir-body-v15\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos,
-         "MIR v14 should serialize the exact class-value parameter modes");
+         "MIR v15 should serialize the exact class-value parameter modes");
 }
 
 void testOrderedOrdinaryConstructorInputs() {
@@ -4904,7 +4904,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v14\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v15\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -6903,7 +6903,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v14 ") &&
+  expect(mirDump.starts_with("mir-v15 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -16262,6 +16262,10 @@ int main() {
   bool selectedRead = false;
   bool selectedMutable = false;
   bool mirOnceReceiverMoved = false;
+  bool hirOnceReceiverScheduled = false;
+  bool mirOnceReceiverScheduled = false;
+  bool hirMovedFallbackScheduled = false;
+  bool mirMovedFallbackScheduled = false;
   for (const lang::HirFunctionInstance &instance :
        frontend.hir.functionInstances()) {
     if (instance.source == nullptr ||
@@ -16279,6 +16283,22 @@ int main() {
     selectedMutable =
         selectedMutable || signature.selectedCapability ==
                                lang::CallableInvocationCapability::Mutable;
+    for (const lang::HirValue &value : instance.body.values) {
+      hirOnceReceiverScheduled =
+          hirOnceReceiverScheduled ||
+          (value.functionTarget &&
+           value.callableInvocation ==
+               lang::CallableInvocationCapability::Once &&
+           value.callPlan && value.callPlan->receiver &&
+           value.callPlan->receiver->kind == lang::HirCallInputKind::MoveValue);
+      hirMovedFallbackScheduled =
+          hirMovedFallbackScheduled ||
+          (value.functionTarget &&
+           value.callableInvocation ==
+               lang::CallableInvocationCapability::Mutable &&
+           value.callPlan && value.callPlan->receiver &&
+           value.callPlan->receiver->kind == lang::HirCallInputKind::MoveValue);
+    }
     const lang::MirFunctionInstance *mir =
         frontend.mir.findFunctionInstance(instance.id);
     if (mir == nullptr) {
@@ -16309,6 +16329,28 @@ int main() {
             return found == definitionBlock->instructions.end() ? nullptr
                                                                 : &*found;
           }();
+          if (definition != nullptr &&
+              definition->kind == lang::MirInstructionKind::CallInput &&
+              definition->operands.size() == 1 &&
+              definition->operands.front().kind ==
+                  lang::MirOperandKind::Value) {
+            const lang::MirValue *preparedSource =
+                mir->body.findValue(definition->operands.front().value);
+            const lang::MirBlock *sourceBlock =
+                preparedSource == nullptr
+                    ? nullptr
+                    : mir->body.findBlock(preparedSource->definitionBlock);
+            if (sourceBlock != nullptr) {
+              const auto found = std::find_if(
+                  sourceBlock->instructions.begin(),
+                  sourceBlock->instructions.end(),
+                  [&](const lang::MirInstruction &candidate) {
+                    return candidate.id == preparedSource->definition;
+                  });
+              definition =
+                  found == sourceBlock->instructions.end() ? nullptr : &*found;
+            }
+          }
           mirOnceReceiverMoved =
               mirOnceReceiverMoved ||
               (definition != nullptr &&
@@ -16316,13 +16358,56 @@ int main() {
                definition->ownership &&
                definition->ownership->kind == lang::OwnershipEventKind::Move);
         }
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget && instruction.callableInvocation &&
+            instruction.receiver &&
+            instruction.receiver->kind == lang::MirOperandKind::Value) {
+          const lang::MirValue *receiver =
+              mir->body.findValue(instruction.receiver->value);
+          const lang::MirBlock *definitionBlock =
+              receiver == nullptr
+                  ? nullptr
+                  : mir->body.findBlock(receiver->definitionBlock);
+          const lang::MirInstruction *definition = nullptr;
+          if (definitionBlock != nullptr) {
+            const auto found =
+                std::find_if(definitionBlock->instructions.begin(),
+                             definitionBlock->instructions.end(),
+                             [&](const lang::MirInstruction &candidate) {
+                               return candidate.id == receiver->definition;
+                             });
+            definition = found == definitionBlock->instructions.end() ? nullptr
+                                                                      : &*found;
+          }
+          mirOnceReceiverScheduled =
+              mirOnceReceiverScheduled ||
+              (instruction.callableInvocation ==
+                   lang::CallableInvocationCapability::Once &&
+               definition != nullptr &&
+               definition->kind == lang::MirInstructionKind::CallInput &&
+               definition->callInputRole == lang::MirCallInputRole::Receiver &&
+               definition->callInputKind == lang::HirCallInputKind::MoveValue);
+          mirMovedFallbackScheduled =
+              mirMovedFallbackScheduled ||
+              (instruction.callableInvocation ==
+                   lang::CallableInvocationCapability::Mutable &&
+               definition != nullptr &&
+               definition->kind == lang::MirInstructionKind::CallInput &&
+               definition->callInputRole == lang::MirCallInputRole::Receiver &&
+               definition->callInputKind == lang::HirCallInputKind::MoveValue);
+        }
       }
     }
   }
   expect(selectedOnce && selectedRead && selectedMutable &&
-             mirOnceReceiverMoved,
+             mirOnceReceiverMoved && hirOnceReceiverScheduled &&
+             mirOnceReceiverScheduled && hirMovedFallbackScheduled &&
+             mirMovedFallbackScheduled &&
+             lang::verifyMirProgram(frontend.mir).valid(),
          "concrete HIR/MIR should retain once requirements, compatible "
-         "selected capabilities, and the proving ownership move");
+         "selected capabilities, the proving ownership move, and ordered "
+         "move checkpoints for consuming and explicitly moved fallback "
+         "receivers");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -22425,7 +22510,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v14 ") &&
+             mirDump.starts_with("mir-v15 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

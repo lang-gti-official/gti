@@ -167,6 +167,7 @@ struct HirValue {
   std::optional<ConstantValue> constant;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   SynchronizationOperation synchronization;
+  DefinedFailureOperation definedFailure;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;

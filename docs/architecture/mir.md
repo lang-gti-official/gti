@@ -1,7 +1,8 @@
 # MIR
 
-Status: Implemented structural CFG, ownership/effect, synchronization, and
-normal-exit lifecycle foundation; not yet the sole backend input.
+Status: Implemented structural CFG, ownership/effect, synchronization,
+normal-exit lifecycle, and defined-failure identity foundation; not yet the
+sole backend input.
 
 MIR lowers each concrete HIR body into body-local control flow, values, places,
 resolved calls, ownership operations, and cleanup. It is the intended
@@ -20,9 +21,14 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v14`/`mir-body-v14`.
-Version 14 adds exact synchronization operation identity and atomic order
-metadata to call instructions. It retains version 13's exact ordered-input
+The deterministic serialization is currently `mir-v15`/`mir-body-v15`.
+Version 15 adds exact local defined-failure origin sets, snapshot-local source
+anchors, and call-like propagation channels. It also extends the ordered-input
+schedule to a concretely resolved class `operator()` receiver, using a
+`MoveValue` checkpoint for an explicitly moved receiver or exact
+trailing-`&&` target. Version 14 added
+exact synchronization operation identity and atomic order metadata to call
+instructions. It retained version 13's exact ordered-input
 schedule for concrete ordinary constructor invocations with supported
 arguments. A scheduled constructor has
 one exact constructor target, no receiver, source-ordered argument checkpoints,
@@ -73,6 +79,13 @@ A `MirBody` owns:
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
+- exact defined-failure identity on checked instructions. Each local detector
+  origin retains a sorted unique outcome set and a snapshot-local
+  `SourceUnitId` plus line/offset anchor. Direct, virtual, constructor,
+  callable, and future task-join propagation are separate channels and never
+  copy a callee's possible category set. The verifier rejects invalid
+  vocabulary, anchors, duplicates, instruction placement, or propagation that
+  disagrees with the exact target and dispatch;
 - exact backend-independent synchronization records on resolved calls. The
   verifier accepts thread spawn/join and mutex lock/unlock without an atomic
   order; requires a legal operation-specific order for atomic load, store, and
@@ -352,11 +365,16 @@ operation.
 
 It also does not yet completely implement
 [Execution Section 4.2](../language/execution.md#42-evaluation-order). For the
-bounded ordinary-invocation slices, the verifier requires a function receiver
-when applicable, argument inputs in exact source/parameter order, and the final
-`Call` or `Construct` to form a strict dominance/order chain. A scheduled
-constructor must have no receiver and must retain its exact ordinary
-constructor target. Verification rejects a direct unprepared operand, wrong
+bounded ordinary-invocation and concrete `operator()` slices, the verifier
+requires a function receiver when applicable, argument inputs in exact
+source/parameter order, and the final `Call` or `Construct` to form a strict
+dominance/order chain. A read or mutable callable receiver uses its exact
+borrow capability; an explicitly moved receiver or exact once-callable target
+requires a `MoveValue` receiver checkpoint and ownership transfer. This
+preserves an enclosing once-callable contract when exact selection falls back
+to a read or mutable call operator. A scheduled constructor must have
+no receiver and must retain its exact ordinary constructor target.
+Verification rejects a direct unprepared operand, wrong
 call-site, duplicate or abandoned checkpoint, swapped argument index,
 type/role drift, and invocation before setup. Class-copy inputs additionally
 require the exact copyable, non-borrowed source place. Class-move inputs require
@@ -368,10 +386,10 @@ Other calls and expression families still rely on recursive lowering order,
 which is not a verified materialization schedule and does not control
 production emission. Borrowed-state class parameter construction,
 generated/default and copy/move special construction, target-place formation,
-result storage, operators, packs, callable/overloaded calls, conditional
-families, and failure rollback are incomplete. Module initializers and each
-class's static-field initializer body remain separate rather than one
-source-graph-derived hosted sequence.
+result storage, operators other than concrete `operator()`, packs, unresolved
+callables, conditional families, and failure rollback are incomplete. Module
+initializers and each class's static-field initializer body remain separate
+rather than one source-graph-derived hosted sequence.
 
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations for the current
@@ -385,18 +403,19 @@ edge, and a boundary with a live untransferred obligation. A structural edit
 that changes those regions invalidates and rebuilds their schedule and cleanup
 facts.
 
-MIR also does not yet carry the failure records, possible-outcome sets,
-failure successors, caller propagation, or containment edges required by
-[Execution §4.10](../language/execution.md#410-defined-runtime-failure). The existing
-`mayTrap` effect is conservative scheduling information; it cannot distinguish
-a defined checked failure from unsafe/native behavior and does not identify a
-category or source site. Retaining an HIR value ID is useful provenance but is
-not sufficient authority for a MIR-only backend.
+MIR now carries exact local possible-outcome sets, snapshot-local origin
+anchors, and direct/virtual/constructor/callable propagation identity required
+by the first M-FAIL-01 slice. Any such operation projects conservatively to
+`mayTrap`, making it non-speculatable, non-removable, and non-reorderable, but
+the structured identity remains the authority. MIR does not yet carry
+artifact-local site IDs, fixed failure records, failure successors, cleanup
+unwinding, caller-control-flow propagation, or containment edges required by
+[Execution §4.10](../language/execution.md#410-defined-runtime-failure).
 
 After the completed M-LIFE-01 temporary and active-drop facts and after
 M-EXEC-01 decomposes the relevant calls, construction, and checked expressions,
-M-FAIL-01 must add one `Invoke`-style terminator with normal and failure
-successors. An origin form carries the exact local outcome set plus an
+The next M-FAIL-01 slice must add one `Invoke`-style terminator with normal and
+failure successors. An origin form carries the exact local outcome set plus an
 artifact-local `FailureSiteId`; a call/constructor/virtual form carries only a
 `mayPropagateFailure` channel and preserves a callee record byte-for-byte. The
 normal successor receives an optional typed result block parameter and the

@@ -282,6 +282,7 @@ struct MirInstruction {
   std::optional<std::size_t> payloadIndex;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   SynchronizationOperation synchronization;
+  DefinedFailureOperation definedFailure;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;

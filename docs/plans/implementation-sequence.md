@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.133.0
+Checkpoint: 0.135.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,11 +134,11 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.133.0 |
+| Foundation | Evidence at 0.135.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
-| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v14 retains ordered scalar/reference and eligible class-value inputs for ordinary calls and concrete ordinary constructors, exact global/static borrow-origin places, and exact synchronization operation/order records. |
+| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v15 retains ordered scalar/reference and eligible class-value inputs for ordinary calls, concrete ordinary constructors, and concretely resolved class `operator()` calls, including consuming-receiver moves; exact global/static borrow-origin places; synchronization operation/order records; and exact defined-failure origin and propagation identity. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
@@ -154,13 +154,15 @@ start a later phase:
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move environments plus exact generic return and one-field owner transport implement its current bounded lifecycle. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
-| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. |
+| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. The first M-FAIL-01 slice gives semantics, HIR, and MIR one exact outcome vocabulary, multi-origin snapshot-local source anchors, distinct propagation channels, verifier rules, and conservative optimizer barriers. |
 
 MIR is not yet the sole executable authority. It owns the supported
-failure-free temporary/drop slice and bounded ordinary call/constructor input
-schedules, but not complete ordered parameter/result materialization,
-partial-constructor rollback, object layout, ABI, or every checked-failure edge,
-and the C++ backend still emits bodies from checked AST/HIR facts.
+failure-free temporary/drop slice, bounded ordinary call/constructor/concrete
+call-operator input schedules, and defined-failure identity, but not complete
+ordered parameter/result materialization, artifact failure sites, explicit
+failure/cleanup edges, partial-constructor rollback, object layout, ABI, or
+runtime containment. The C++ backend still emits bodies from checked AST/HIR
+facts.
 
 ## Dependency Map
 
@@ -595,9 +597,9 @@ analysis, HIR, MIR, and the backend.
 
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
-- **State/role:** blocked; `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` are done.
-  Remaining prerequisites are the ordinary-call, construction,
-  checked-expression, and program/module initialization slices of
+- **State/role:** active; `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` are done.
+  The semantic/HIR/MIR identity slice is implemented. Remaining work depends
+  on the checked-expression and program/module initialization slices of
   `M-EXEC-01`; systems-readiness implementation.
 - **Scope:** Represent exact local categories/details and canonical frontend
   source anchors in HIR, then assign deterministic artifact-local site IDs for
@@ -619,6 +621,17 @@ analysis, HIR, MIR, and the backend.
   HIR/MIR operation with the fixed negative-count, checked-count-conversion,
   and owned-argument-allocation origins plus the source `main` anchor, rather
   than leaving those checks implicit in backend code.
+- **Landed bounded slice:** `DefinedFailureOperation` records exact local
+  outcome sets at snapshot-local source-unit/line/offset origins and records
+  direct, virtual, constructor, and callable propagation separately. Semantics
+  classifies the current arithmetic, conversion, bounds, owner, expected,
+  storage, allocation, call, construction, and resolved-operator families; HIR
+  and MIR retain the identity without absolute paths. MIR verification rejects
+  forged vocabulary, origins, duplicates, placement, target, or propagation,
+  and optimizer effects preserve every such operation as an observable trap.
+  Artifact site IDs, hosted/generated origins, explicit failure successors,
+  cleanup unwinding, fixed records, containment, reporting, and executable
+  backend use remain open.
   This row does not claim that the compatibility emitter executes those edges.
 - **Exit gate:** every current failure family has exact semantic/HIR
   local-origin and source-anchor snapshots plus MIR outcome/site snapshots;
@@ -633,11 +646,11 @@ analysis, HIR, MIR, and the backend.
 ### M-EXEC-01: Ordered Expression And Call Lowering
 
 - **State/role:** in progress; `M-LIFE-01` and `D-EXEC-01` are done. Concrete
-  non-intrinsic ordinary calls and concrete ordinary constructors with
-  scalar/reference parameters and eligible non-borrowed class-value parameters
-  now retain exact HIR input roles and verified MIR
-  receiver/argument/invocation order; the remaining families are
-  systems-readiness implementation.
+  non-intrinsic ordinary calls, concrete ordinary constructors, and concretely
+  resolved class `operator()` calls with scalar/reference parameters and
+  eligible non-borrowed class-value parameters now retain exact HIR input roles
+  and verified MIR receiver/argument/invocation order; the remaining families
+  are systems-readiness implementation.
 - **Scope:** Decompose one complete expression family into ordered MIR values
   and temporaries, including receivers, arguments, transient loans, and cleanup.
   Extend one family per prompt: ordinary calls, construction/parameter setup,
@@ -650,8 +663,12 @@ analysis, HIR, MIR, and the backend.
 - **Landed bounded slices:** Eligible ordinary calls retain one HIR receiver
   and source-ordered arguments; eligible ordinary constructors retain no
   receiver, one exact constructor target, and at least one source-ordered
-  argument. Both use exact selected parameter types and
-  value/class-copy/class-move/read-borrow/mutable-borrow roles. MIR emits
+  argument. A concretely selected class `operator()` retains an exact read or
+  mutable receiver borrow, reusable value receiver, or consuming `MoveValue`
+  receiver for an explicit move or trailing-`&&` target, including once-callable
+  fallback to an exact read/mutable overload. These use exact selected
+  parameter types and value/class-copy/class-move/read-borrow/mutable-borrow
+  roles. MIR emits
   one-use `CallInput` checkpoints and verifies call-site, role, index, type,
   dominance, and strict receiver-when-applicable, arguments, then `Call` or
   `Construct` order. A class copy consumes the exact copyable place; a class
@@ -660,9 +677,9 @@ analysis, HIR, MIR, and the backend.
   duplicate/abandoned and bypassed inputs, type drift, reordering, forged
   receiver/copy/move modes, missing or misplaced transfer, and erased target
   identity. Generated/default zero-argument and copy/move special construction,
-  borrowed-state class values, packs, overloaded/callable calls, failure
-  rollback, backend emission, and semantic borrow relaxation remain out of
-  these slices.
+  borrowed-state class values, packs, unresolved callables, operators other
+  than concrete `operator()`, failure rollback, backend emission, and semantic
+  borrow relaxation remain out of these slices.
 - **Non-goals:** broad AST emitter rewrite, production body emission, or an
   IIFE workaround. M-BACK owns production C++ consumption of this schedule.
 - **Exit gate:** deterministic HIR/MIR snapshots and verifier mutations prove

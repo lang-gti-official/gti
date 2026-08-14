@@ -1761,6 +1761,39 @@ private:
     return result;
   }
 
+  [[nodiscard]] std::optional<HirCallReceiver>
+  orderedReceiver(HirValueId receiver, ReceiverMutability mutability,
+                  bool preserveExplicitMove, const HirBody &body) const {
+    const HirValue *input = body.findValue(receiver);
+    if (input == nullptr) {
+      return std::nullopt;
+    }
+
+    HirCallInputKind kind = HirCallInputKind::Value;
+    const bool consumesReceiver =
+        mutability == ReceiverMutability::Consuming ||
+        (preserveExplicitMove && input->kind == HirValueKind::Move);
+    if (consumesReceiver) {
+      if (input->info.type.kind != SemanticType::Class ||
+          input->info.category != ValueCategory::Value ||
+          !input->info.traits.movable ||
+          input->info.traits.containsBorrowedState) {
+        return std::nullopt;
+      }
+      kind = HirCallInputKind::MoveValue;
+    } else if (input->info.category == ValueCategory::Place) {
+      kind = mutability == ReceiverMutability::Mutable
+                 ? HirCallInputKind::MutableBorrow
+                 : HirCallInputKind::ReadBorrow;
+    }
+
+    return HirCallReceiver{
+        .value = receiver,
+        .kind = kind,
+        .type = input->info.type,
+    };
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const ExprPtr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
@@ -2022,6 +2055,10 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
+    if (const DefinedFailureOperation *failure =
+            model.findDefinedFailure(*raw)) {
+      value.definedFailure = *failure;
+    }
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);
@@ -2225,9 +2262,12 @@ private:
     if (const auto *call = dynamic_cast<const Call *>(raw);
         call != nullptr && kind == HirValueKind::Call &&
         value.intrinsic == IntrinsicKind::None && !value.constructorTarget &&
-        value.functionTarget && model.findOperator(*call) == nullptr &&
+        value.functionTarget &&
+        (model.findOperator(*call) == nullptr ||
+         model.findOperator(*call)->kind == OverloadedOperator::Call) &&
         model.findLambdaCall(*call) == nullptr &&
-        model.findDeferredCallableCall(*call) == nullptr &&
+        (model.findDeferredCallableCall(*call) == nullptr ||
+         model.findOperator(*call) != nullptr) &&
         value.parameterTypes.size() == call->arguments().size()) {
       const std::size_t argumentCount = call->arguments().size();
       const bool exactOperands = argumentCount <= value.operands.size();
@@ -2242,15 +2282,22 @@ private:
               ? orderedArguments(arguments, value.parameterTypes, body)
               : std::nullopt;
       const ResolvedCallInfo *resolved = model.findCall(*call);
+      const ResolvedOperatorInfo *resolvedOperator = model.findOperator(*call);
       const FunctionInfo *resolvedTarget =
           resolved == nullptr || resolved->function == 0
               ? nullptr
               : baseModel->findFunction(resolved->function);
       std::optional<HirValueId> callReceiver;
+      ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
       bool supportedReceiver = true;
-      if (resolved != nullptr && resolved->declaration != nullptr &&
-          resolvedTarget != nullptr && resolvedTarget->ownerClass != 0 &&
-          !resolved->declaration->isStatic()) {
+      if (resolvedOperator != nullptr) {
+        callReceiver = value.receiver;
+        receiverMutability = resolvedOperator->receiverMutability;
+        supportedReceiver = callReceiver.has_value() &&
+                            body.findValue(*callReceiver) != nullptr;
+      } else if (resolved != nullptr && resolved->declaration != nullptr &&
+                 resolvedTarget != nullptr && resolvedTarget->ownerClass != 0 &&
+                 !resolved->declaration->isStatic()) {
         const HirValue *callee = value.operands.empty()
                                      ? nullptr
                                      : body.findValue(value.operands.front());
@@ -2264,26 +2311,21 @@ private:
         }
         supportedReceiver = supportedReceiver && callReceiver.has_value() &&
                             body.findValue(*callReceiver) != nullptr;
+        receiverMutability = resolved->declaration->receiverMutability();
       }
       if (plannedArguments && supportedReceiver) {
         HirCallPlan plan;
         if (callReceiver) {
-          const HirValue &input = *body.findValue(*callReceiver);
-          const bool mutableReceiver =
-              resolved != nullptr && resolved->declaration != nullptr &&
-              receiverAllowsMutation(
-                  resolved->declaration->receiverMutability());
-          plan.receiver = {
-              .value = *callReceiver,
-              .kind = input.info.category == ValueCategory::Place
-                          ? (mutableReceiver ? HirCallInputKind::MutableBorrow
-                                             : HirCallInputKind::ReadBorrow)
-                          : HirCallInputKind::Value,
-              .type = input.info.type,
-          };
+          plan.receiver = orderedReceiver(*callReceiver, receiverMutability,
+                                          resolvedOperator != nullptr, body);
+          if (!plan.receiver) {
+            supportedReceiver = false;
+          }
         }
-        plan.arguments = *plannedArguments;
-        value.callPlan = std::move(plan);
+        if (supportedReceiver) {
+          plan.arguments = *plannedArguments;
+          value.callPlan = std::move(plan);
+        }
       }
     }
     if (model.findConstruction(*raw) != nullptr && value.constructorTarget &&

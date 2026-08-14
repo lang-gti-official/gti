@@ -510,6 +510,9 @@ MirEffectTraits effects(const MirInstruction &instruction) {
       instruction.unsafeOperation == UnsafeOperationKind::AddressOf) {
     result.targetDependent = true;
   }
+  if (!instruction.definedFailure.empty()) {
+    result.mayTrap = true;
+  }
   const bool observable =
       result.writesPlace || result.readsUnknownMemory ||
       result.writesUnknownMemory || result.allocates || result.invokesRuntime ||

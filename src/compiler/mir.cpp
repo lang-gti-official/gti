@@ -2186,6 +2186,92 @@ validSynchronizationOperation(const SynchronizationOperation &operation) {
   return false;
 }
 
+[[nodiscard]] bool
+validDefinedFailureOperation(const DefinedFailureOperation &operation) {
+  if (operation.propagation >= FailurePropagationKind::Count) {
+    return false;
+  }
+  for (std::size_t originIndex = 0; originIndex < operation.localOrigins.size();
+       ++originIndex) {
+    const DefinedFailureOrigin &origin = operation.localOrigins[originIndex];
+    if (origin.outcomes.empty() || origin.sourceUnit == 0 ||
+        origin.end <= origin.start || origin.line < 1) {
+      return false;
+    }
+    for (std::size_t previousIndex = 0; previousIndex < originIndex;
+         ++previousIndex) {
+      const DefinedFailureOrigin &previous =
+          operation.localOrigins[previousIndex];
+      if (previous.sourceUnit == origin.sourceUnit &&
+          previous.start == origin.start && previous.end == origin.end &&
+          previous.line == origin.line &&
+          previous.outcomes == origin.outcomes) {
+        return false;
+      }
+    }
+    for (std::size_t index = 0; index < origin.outcomes.size(); ++index) {
+      const DefinedFailureOutcome outcome = origin.outcomes[index];
+      if (!validDefinedFailureOutcome(outcome)) {
+        return false;
+      }
+      if (index != 0) {
+        const DefinedFailureOutcome previous = origin.outcomes[index - 1];
+        if (previous.code > outcome.code ||
+            (previous.code == outcome.code &&
+             previous.detail >= outcome.detail)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool
+validFailureInstructionShape(const MirInstruction &instruction) {
+  if (!validDefinedFailureOperation(instruction.definedFailure)) {
+    return false;
+  }
+  if (!instruction.definedFailure.localOrigins.empty() &&
+      instruction.kind != MirInstructionKind::Compute &&
+      instruction.kind != MirInstructionKind::Load &&
+      instruction.kind != MirInstructionKind::Assign &&
+      instruction.kind != MirInstructionKind::Modify &&
+      instruction.kind != MirInstructionKind::Move &&
+      instruction.kind != MirInstructionKind::Borrow &&
+      instruction.kind != MirInstructionKind::CallInput &&
+      instruction.kind != MirInstructionKind::Call &&
+      instruction.kind != MirInstructionKind::Construct) {
+    return false;
+  }
+  switch (instruction.definedFailure.propagation) {
+  case FailurePropagationKind::None:
+    return true;
+  case FailurePropagationKind::DirectCall:
+    return instruction.kind == MirInstructionKind::Call &&
+           instruction.dispatch == CallDispatch::Static &&
+           instruction.functionTarget.has_value();
+  case FailurePropagationKind::VirtualCall:
+    return instruction.kind == MirInstructionKind::Call &&
+           instruction.dispatch == CallDispatch::Virtual &&
+           instruction.functionTarget.has_value();
+  case FailurePropagationKind::Constructor:
+    return instruction.kind == MirInstructionKind::Construct &&
+           instruction.constructorTarget.has_value();
+  case FailurePropagationKind::Callable:
+    return instruction.kind == MirInstructionKind::Call &&
+           (instruction.lambdaTarget.has_value() ||
+            instruction.callableInvocation.has_value());
+  case FailurePropagationKind::TaskJoin:
+    return instruction.kind == MirInstructionKind::Call &&
+           instruction.synchronization.kind ==
+               SynchronizationOperationKind::ThreadJoin;
+  case FailurePropagationKind::Count:
+    return false;
+  }
+  return false;
+}
+
 } // namespace
 
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
@@ -2677,8 +2763,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                               instruction.callInputKind) ||
           (*instruction.callInputRole == MirCallInputRole::Receiver &&
            (instruction.callInputIndex != 0 ||
-            instruction.callInputKind == HirCallInputKind::CopyValue ||
-            instruction.callInputKind == HirCallInputKind::MoveValue))) {
+            instruction.callInputKind == HirCallInputKind::CopyValue))) {
         return false;
       }
       const MirOperand &operand = instruction.operands.front();
@@ -3110,6 +3195,28 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     for (std::size_t instructionIndex = 0;
          instructionIndex < block.instructions.size(); ++instructionIndex) {
       const MirInstruction &instruction = block.instructions[instructionIndex];
+      if (!validFailureInstructionShape(instruction)) {
+        const DefinedFailureOrigin *firstOrigin =
+            instruction.definedFailure.localOrigins.empty()
+                ? nullptr
+                : &instruction.definedFailure.localOrigins.front();
+        return failure(
+            body, owner,
+            "defined-failure metadata does not match instruction kind " +
+                std::to_string(static_cast<unsigned>(instruction.kind)) +
+                " and propagation " +
+                std::to_string(static_cast<unsigned>(
+                    instruction.definedFailure.propagation)) +
+                "; local origins=" +
+                std::to_string(instruction.definedFailure.localOrigins.size()) +
+                (firstOrigin == nullptr
+                     ? std::string{}
+                     : ", first anchor unit=" +
+                           std::to_string(firstOrigin->sourceUnit) +
+                           " outcomes=" +
+                           std::to_string(firstOrigin->outcomes.size())),
+            block.id, instruction.id);
+      }
       if (instruction.id == 0 ||
           !instructionIds.insert(instruction.id).second ||
           instruction.intrinsic == IntrinsicKind::Count ||
@@ -3635,6 +3742,33 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                ? nullptr
                : definition->second;
   };
+  const auto exactReceiverInputKind = [&](const MirInstruction &invocation,
+                                          const MirInstruction &receiver) {
+    if (!invocation.callableInvocation) {
+      return receiver.callInputKind == HirCallInputKind::Value ||
+             receiver.callInputKind == HirCallInputKind::ReadBorrow ||
+             receiver.callInputKind == HirCallInputKind::MutableBorrow;
+    }
+    const bool exactMovedReceiver =
+        receiver.callInputKind == HirCallInputKind::MoveValue &&
+        invocation.receiver &&
+        consumedCallableReceiver(body, *invocation.receiver,
+                                 MirValueUseKind::InstructionReceiver,
+                                 invocation.id);
+    switch (*invocation.callableInvocation) {
+    case CallableInvocationCapability::Read:
+      return receiver.callInputKind == HirCallInputKind::Value ||
+             receiver.callInputKind == HirCallInputKind::ReadBorrow ||
+             exactMovedReceiver;
+    case CallableInvocationCapability::Mutable:
+      return receiver.callInputKind == HirCallInputKind::Value ||
+             receiver.callInputKind == HirCallInputKind::MutableBorrow ||
+             exactMovedReceiver;
+    case CallableInvocationCapability::Once:
+      return exactMovedReceiver;
+    }
+    return false;
+  };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &invocation : block.instructions) {
       if ((invocation.kind != MirInstructionKind::Call &&
@@ -3647,6 +3781,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         const MirInstruction *receiver = callInputFor(*invocation.receiver);
         if (receiver == nullptr || receiver->callSite != invocation.callSite ||
             *receiver->callInputRole != MirCallInputRole::Receiver ||
+            !exactReceiverInputKind(invocation, *receiver) ||
             receiver->info.type != invocation.receiver->type) {
           return failure(body, owner,
                          "ordered call receiver is not prepared by its exact "
@@ -4803,18 +4938,30 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       const bool preparedOwnershipTransfer =
           (instruction.kind == MirInstructionKind::Call ||
            instruction.kind == MirInstructionKind::Construct) &&
-          std::any_of(
-              instruction.operands.begin(), instruction.operands.end(),
-              [&](const MirOperand &operand) {
-                const MirInstruction *prepared =
-                    operand.kind == MirOperandKind::Value
-                        ? definitionFor(body, operand.value)
-                        : nullptr;
-                return prepared != nullptr &&
-                       prepared->kind == MirInstructionKind::CallInput &&
-                       prepared->callInputKind == HirCallInputKind::MoveValue &&
-                       transfersOut(*prepared);
-              });
+          ((instruction.receiver &&
+            [&] {
+              const MirInstruction *prepared =
+                  instruction.receiver->kind == MirOperandKind::Value
+                      ? definitionFor(body, instruction.receiver->value)
+                      : nullptr;
+              return prepared != nullptr &&
+                     prepared->kind == MirInstructionKind::CallInput &&
+                     prepared->callInputKind == HirCallInputKind::MoveValue &&
+                     transfersOut(*prepared);
+            }()) ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       [&](const MirOperand &operand) {
+                         const MirInstruction *prepared =
+                             operand.kind == MirOperandKind::Value
+                                 ? definitionFor(body, operand.value)
+                                 : nullptr;
+                         return prepared != nullptr &&
+                                prepared->kind ==
+                                    MirInstructionKind::CallInput &&
+                                prepared->callInputKind ==
+                                    HirCallInputKind::MoveValue &&
+                                transfersOut(*prepared);
+                       }));
       const bool transfersOwnership =
           transfersOut(instruction) || preparedOwnershipTransfer;
       if (instruction.kind == MirInstructionKind::Call && transfersOwnership &&
@@ -4858,6 +5005,19 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          "signature",
                          block.id, instruction.id);
         }
+        const FailurePropagationKind expectedPropagation =
+            target->linkage == LanguageLinkage::C ||
+                    instruction.intrinsic != IntrinsicKind::None
+                ? FailurePropagationKind::None
+            : instruction.dispatch == CallDispatch::Virtual
+                ? FailurePropagationKind::VirtualCall
+                : FailurePropagationKind::DirectCall;
+        if (instruction.definedFailure.propagation != expectedPropagation) {
+          return failure(body, owner,
+                         "call failure propagation does not match its exact "
+                         "target and dispatch",
+                         block.id, instruction.id);
+        }
       }
       const MirConstructorInstance *constructorTarget = nullptr;
       if (instruction.constructorTarget) {
@@ -4886,6 +5046,14 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          "target signature",
                          block.id, instruction.id);
         }
+        if (instruction.kind == MirInstructionKind::Construct &&
+            instruction.definedFailure.propagation !=
+                FailurePropagationKind::Constructor) {
+          return failure(body, owner,
+                         "construction failure propagation does not match "
+                         "its exact constructor target",
+                         block.id, instruction.id);
+        }
       }
       if (instruction.lambdaTarget && !instruction.functionTarget) {
         const MirLambdaInstance *lambda =
@@ -4898,6 +5066,24 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          "target signature",
                          block.id, instruction.id);
         }
+        if (instruction.definedFailure.propagation !=
+            FailurePropagationKind::Callable) {
+          return failure(body, owner,
+                         "lambda-call failure propagation does not preserve "
+                         "the callable channel",
+                         block.id, instruction.id);
+        }
+      }
+      if (instruction.kind == MirInstructionKind::Call &&
+          !instruction.functionTarget && !instruction.lambdaTarget &&
+          instruction.intrinsic == IntrinsicKind::None &&
+          instruction.callableInvocation &&
+          instruction.definedFailure.propagation !=
+              FailurePropagationKind::Callable) {
+        return failure(body, owner,
+                       "deferred callable invocation is missing its failure "
+                       "propagation channel",
+                       block.id, instruction.id);
       }
 
       if (instruction.borrowOrigin == BorrowOriginKind::None) {

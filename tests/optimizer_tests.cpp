@@ -1437,7 +1437,7 @@ int main() {
     missingTargetCall->functionTarget.reset();
   }
   expect(missingTargetCall != nullptr &&
-             hasMessage(missingTarget, "invalid shape or reference"),
+             hasMessage(missingTarget, "defined-failure metadata"),
          "the verifier should reject an ordered ordinary call that loses its "
          "exact function target");
 
@@ -2494,6 +2494,306 @@ void testMirEffectClassification() {
              !atomicStore.reorderable,
          "a release atomic store should remain a non-reorderable write "
          "barrier");
+}
+
+void testDefinedFailureIdentityAndPropagation() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "defined-failure-metadata.gti", R"(
+class Box {
+public:
+  Box(int value) {}
+  int operator()() { return 1; }
+};
+
+interface Reader {
+  int read();
+};
+
+class ReaderBox : public Reader {
+public:
+  int read() override { return 2; }
+};
+
+int relay(int value) { return value; }
+int read_value(Reader& reader) { return reader.read(); }
+
+int main() {
+  mut int value = 8;
+  int sum = value + 1;
+  int quotient = value / 2;
+  int remainder = value % 3;
+  int shifted = value << 1;
+  int8_t narrowed = int8_t(value);
+  mut int values[2] = {1, 2};
+  int indexed = values[1];
+  values[1] += value;
+  mut uint32_t unsigned_value = uint32_t(8);
+  uint32_t unsigned_quotient = unsigned_value / uint32_t(2);
+  uint32_t unsigned_shifted = unsigned_value << uint32_t(1);
+  expected<int, int> result = 1;
+  int unwrapped = result.value();
+  Box box = Box(value);
+  int invoked = box();
+  ReaderBox reader = ReaderBox();
+  Reader& reader_view = reader;
+  int virtual_value = read_value(reader_view);
+  auto callable = [](int input) -> int { return input; };
+  int callable_value = callable(3);
+  return relay(sum + quotient + remainder + shifted + int(narrowed) +
+               indexed + unwrapped + invoked + int(unsigned_quotient) +
+               int(unsigned_shifted) + virtual_value + callable_value);
+}
+)",
+      {std::filesystem::path(__FILE__).parent_path().parent_path() /
+       "stdlib/prelude.gti"});
+  const lang::HirFunctionInstance *hirMain = findHirFunction(frontend, "main");
+  const lang::MirFunctionInstance *mirMain =
+      hirMain == nullptr ? nullptr
+                         : frontend.mir.findFunctionInstance(hirMain->id);
+  expect(frontend.canGenerateCode() && hirMain != nullptr &&
+             mirMain != nullptr && lang::verifyMirProgram(frontend.mir).valid(),
+         "defined failures should reach validated HIR and MIR");
+  if (!frontend.canGenerateCode() || hirMain == nullptr || mirMain == nullptr) {
+    return;
+  }
+
+  const auto hasOutcome = [](const lang::DefinedFailureOperation &operation,
+                             lang::DefinedFailureCode code,
+                             lang::DefinedFailureDetail detail) {
+    return std::any_of(
+        operation.localOrigins.begin(), operation.localOrigins.end(),
+        [&](const lang::DefinedFailureOrigin &origin) {
+          return std::find(origin.outcomes.begin(), origin.outcomes.end(),
+                           lang::DefinedFailureOutcome{.code = code,
+                                                       .detail = detail}) !=
+                 origin.outcomes.end();
+        });
+  };
+  const auto hirHasOutcome = [&](lang::DefinedFailureCode code,
+                                 lang::DefinedFailureDetail detail) {
+    return std::any_of(hirMain->body.values.begin(), hirMain->body.values.end(),
+                       [&](const lang::HirValue &value) {
+                         return hasOutcome(value.definedFailure, code, detail);
+                       });
+  };
+  bool sawMultipleLocalOrigins = false;
+  bool unsignedDivisionIsExact = false;
+  bool unsignedShiftIsExact = false;
+  for (const lang::HirValue &value : hirMain->body.values) {
+    sawMultipleLocalOrigins =
+        sawMultipleLocalOrigins || value.definedFailure.localOrigins.size() > 1;
+    if (!value.operation) {
+      continue;
+    }
+    if (*value.operation == lang::TokenKind::SLASH &&
+        value.info.type == lang::SemanticType::UInt32) {
+      unsignedDivisionIsExact =
+          hasOutcome(value.definedFailure,
+                     lang::DefinedFailureCode::DivisionByZero,
+                     lang::DefinedFailureDetail::IntegerDivision) &&
+          !hasOutcome(value.definedFailure,
+                      lang::DefinedFailureCode::IntegerOverflow,
+                      lang::DefinedFailureDetail::Division);
+    }
+    if (*value.operation == lang::TokenKind::SHIFT_LEFT &&
+        value.info.type == lang::SemanticType::UInt32) {
+      unsignedShiftIsExact =
+          hasOutcome(value.definedFailure,
+                     lang::DefinedFailureCode::ShiftCountOutOfRange,
+                     lang::DefinedFailureDetail::LeftShift) &&
+          !hasOutcome(value.definedFailure,
+                      lang::DefinedFailureCode::NegativeShiftCount,
+                      lang::DefinedFailureDetail::LeftShift);
+    }
+  }
+  expect(
+      hirHasOutcome(lang::DefinedFailureCode::IntegerOverflow,
+                    lang::DefinedFailureDetail::Addition) &&
+          hirHasOutcome(lang::DefinedFailureCode::DivisionByZero,
+                        lang::DefinedFailureDetail::IntegerDivision) &&
+          hirHasOutcome(lang::DefinedFailureCode::ModuloByZero,
+                        lang::DefinedFailureDetail::IntegerModulo) &&
+          hirHasOutcome(lang::DefinedFailureCode::NegativeShiftCount,
+                        lang::DefinedFailureDetail::LeftShift) &&
+          hirHasOutcome(lang::DefinedFailureCode::ShiftCountOutOfRange,
+                        lang::DefinedFailureDetail::LeftShift) &&
+          hirHasOutcome(lang::DefinedFailureCode::NumericConversionOutOfRange,
+                        lang::DefinedFailureDetail::NumericCast) &&
+          hirHasOutcome(lang::DefinedFailureCode::IndexOutOfBounds,
+                        lang::DefinedFailureDetail::FixedArray) &&
+          hirHasOutcome(lang::DefinedFailureCode::InvalidExpectedAccess,
+                        lang::DefinedFailureDetail::ValueOnError) &&
+          sawMultipleLocalOrigins && unsignedDivisionIsExact &&
+          unsignedShiftIsExact,
+      "HIR should preserve the exact compiler-owned failure vocabulary");
+
+  bool sawIndexedLoad = false;
+  bool sawConstructorPropagation = false;
+  std::size_t directPropagations = 0;
+  std::size_t localOriginCount = 0;
+  bool allAnchorsExact = true;
+  bool allFailureEffectsTrap = true;
+  for (const lang::MirBlock &block : mirMain->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      for (const lang::DefinedFailureOrigin &origin :
+           instruction.definedFailure.localOrigins) {
+        ++localOriginCount;
+        allAnchorsExact = allAnchorsExact && origin.sourceUnit != 0 &&
+                          origin.end > origin.start && origin.line > 0 &&
+                          !origin.outcomes.empty();
+      }
+      if (!instruction.definedFailure.empty()) {
+        const lang::MirEffectTraits effect = lang::effects(instruction);
+        allFailureEffectsTrap =
+            allFailureEffectsTrap && effect.mayTrap && !effect.speculatable &&
+            !effect.removableWhenUnused && !effect.reorderable;
+      }
+      sawIndexedLoad = sawIndexedLoad ||
+                       (instruction.kind == lang::MirInstructionKind::Load &&
+                        hasOutcome(instruction.definedFailure,
+                                   lang::DefinedFailureCode::IndexOutOfBounds,
+                                   lang::DefinedFailureDetail::FixedArray));
+      sawConstructorPropagation = sawConstructorPropagation ||
+                                  instruction.definedFailure.propagation ==
+                                      lang::FailurePropagationKind::Constructor;
+      directPropagations += instruction.definedFailure.propagation ==
+                                    lang::FailurePropagationKind::DirectCall
+                                ? 1
+                                : 0;
+    }
+  }
+  expect(localOriginCount >= 8 && allAnchorsExact && sawIndexedLoad &&
+             sawConstructorPropagation && directPropagations >= 2 &&
+             allFailureEffectsTrap,
+         "MIR should retain exact local origins, constructor/call propagation, "
+         "and optimizer barriers");
+
+  bool sawVirtualPropagation = false;
+  bool sawCallablePropagation = false;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        sawVirtualPropagation = sawVirtualPropagation ||
+                                instruction.definedFailure.propagation ==
+                                    lang::FailurePropagationKind::VirtualCall;
+        sawCallablePropagation = sawCallablePropagation ||
+                                 instruction.definedFailure.propagation ==
+                                     lang::FailurePropagationKind::Callable;
+      }
+    }
+  }
+  expect(sawVirtualPropagation && sawCallablePropagation,
+         "MIR should distinguish virtual and callable failure propagation");
+
+  const std::string dump = lang::MirPrinter().print(mirMain->body);
+  expect(dump.starts_with("mir-body-v15\n") &&
+             dump.find("integer_overflow:addition") != std::string::npos &&
+             dump.find("index_out_of_bounds:fixed_array") !=
+                 std::string::npos &&
+             dump.find("failure-propagation=direct-call") != std::string::npos,
+         "MIR v15 should serialize exact failure identities deterministically");
+
+  const auto firstOriginInstruction = [](lang::MirBody &body) {
+    for (lang::MirBlock &block : body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return !instruction.definedFailure.localOrigins.empty();
+          });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+
+  lang::MirBody invalidPair = mirMain->body;
+  lang::MirInstruction *invalidPairInstruction =
+      firstOriginInstruction(invalidPair);
+  if (invalidPairInstruction != nullptr) {
+    invalidPairInstruction->definedFailure.localOrigins.front()
+        .outcomes.front() = {.code = lang::DefinedFailureCode::IntegerOverflow,
+                             .detail = lang::DefinedFailureDetail::StdoutWrite};
+  }
+  expect(invalidPairInstruction != nullptr &&
+             !lang::verifyMirBody(invalidPair).valid(),
+         "the MIR verifier should reject an invalid failure code/detail pair");
+
+  lang::MirBody duplicateOutcome = mirMain->body;
+  lang::MirInstruction *duplicateInstruction =
+      firstOriginInstruction(duplicateOutcome);
+  if (duplicateInstruction != nullptr) {
+    std::vector<lang::DefinedFailureOutcome> &outcomes =
+        duplicateInstruction->definedFailure.localOrigins.front().outcomes;
+    outcomes.push_back(outcomes.front());
+  }
+  expect(duplicateInstruction != nullptr &&
+             !lang::verifyMirBody(duplicateOutcome).valid(),
+         "the MIR verifier should reject duplicate failure outcomes");
+
+  lang::MirBody duplicateOrigin = mirMain->body;
+  lang::MirInstruction *duplicateOriginInstruction =
+      firstOriginInstruction(duplicateOrigin);
+  if (duplicateOriginInstruction != nullptr) {
+    std::vector<lang::DefinedFailureOrigin> &origins =
+        duplicateOriginInstruction->definedFailure.localOrigins;
+    origins.push_back(origins.front());
+  }
+  expect(duplicateOriginInstruction != nullptr &&
+             !lang::verifyMirBody(duplicateOrigin).valid(),
+         "the MIR verifier should reject duplicate failure origins");
+
+  lang::MirBody emptyOriginSpan = mirMain->body;
+  lang::MirInstruction *emptySpanInstruction =
+      firstOriginInstruction(emptyOriginSpan);
+  if (emptySpanInstruction != nullptr) {
+    lang::DefinedFailureOrigin &origin =
+        emptySpanInstruction->definedFailure.localOrigins.front();
+    origin.end = origin.start;
+  }
+  expect(emptySpanInstruction != nullptr &&
+             !lang::verifyMirBody(emptyOriginSpan).valid(),
+         "the MIR verifier should reject an empty failure source span");
+
+  lang::MirProgram missingPropagation = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      missingPropagation.functionInstances());
+  lang::MirFunctionInstance *mutableMain =
+      hirMain->id == 0 || hirMain->id > functions.size()
+          ? nullptr
+          : &functions[hirMain->id - 1];
+  lang::MirInstruction *propagatingCall = nullptr;
+  if (mutableMain != nullptr) {
+    for (lang::MirBlock &block : mutableMain->body.blocks) {
+      const auto found =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [](const lang::MirInstruction &instruction) {
+                         return instruction.definedFailure.propagation ==
+                                lang::FailurePropagationKind::DirectCall;
+                       });
+      if (found != block.instructions.end()) {
+        propagatingCall = &*found;
+        break;
+      }
+    }
+  }
+  if (propagatingCall != nullptr) {
+    propagatingCall->definedFailure.propagation =
+        lang::FailurePropagationKind::None;
+  }
+  const lang::MirVerificationResult missingPropagationResult =
+      lang::verifyMirProgram(missingPropagation);
+  expect(propagatingCall != nullptr && !missingPropagationResult.valid() &&
+             std::any_of(missingPropagationResult.errors.begin(),
+                         missingPropagationResult.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find(
+                                      "call failure propagation") !=
+                                  std::string::npos;
+                         }),
+         "program verification should reject a call that drops its exact "
+         "failure propagation channel");
 }
 
 void testSynchronizationMirContract() {
@@ -4294,10 +4594,10 @@ int main() {
           lang::CallableInvocationCapability::Read;
     }
     expect(forgedInvocation != nullptr &&
-               lang::verifyMirBody(forgedRun->body).valid() &&
+               !lang::verifyMirBody(forgedRun->body).valid() &&
                !lang::verifyMirProgram(forgedSelectedCapability).valid(),
-           "program verification must bind a call site's selected capability "
-           "to the concrete mutable operator() target");
+           "MIR verification must bind a call site's selected capability to "
+           "its ordered receiver and concrete mutable operator() target");
 
     lang::MirProgram missingOperatorIdentity = stateful.mir;
     lang::MirFunctionInstance *identityRun =
@@ -4566,6 +4866,67 @@ int main() {
              lang::verifyMirProgram(linearOnce.mir).valid(),
          "a once-callable receiver should have one linear use of its exact "
          "ownership move");
+
+  const auto onceReceiverInput = [](lang::MirBody &body) {
+    for (lang::MirBlock &block : body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            instruction.callableInvocation !=
+                lang::CallableInvocationCapability::Once ||
+            !instruction.receiver ||
+            instruction.receiver->kind != lang::MirOperandKind::Value) {
+          continue;
+        }
+        const lang::MirValue *receiver =
+            body.findValue(instruction.receiver->value);
+        if (receiver == nullptr) {
+          continue;
+        }
+        lang::MirBlock *definitionBlock = nullptr;
+        for (lang::MirBlock &candidate : body.blocks) {
+          if (candidate.id == receiver->definitionBlock) {
+            definitionBlock = &candidate;
+            break;
+          }
+        }
+        if (definitionBlock == nullptr) {
+          continue;
+        }
+        const auto found =
+            std::find_if(definitionBlock->instructions.begin(),
+                         definitionBlock->instructions.end(),
+                         [&](const lang::MirInstruction &candidate) {
+                           return candidate.id == receiver->definition;
+                         });
+        if (found != definitionBlock->instructions.end() &&
+            found->kind == lang::MirInstructionKind::CallInput &&
+            found->callInputRole == lang::MirCallInputRole::Receiver) {
+          return &*found;
+        }
+      }
+    }
+    return static_cast<lang::MirInstruction *>(nullptr);
+  };
+
+  lang::MirBody orderedOnce =
+      mirLinearInvoke == nullptr ? lang::MirBody{} : mirLinearInvoke->body;
+  lang::MirInstruction *orderedOnceInput = onceReceiverInput(orderedOnce);
+  expect(orderedOnceInput != nullptr &&
+             orderedOnceInput->callInputKind ==
+                 lang::HirCallInputKind::MoveValue &&
+             lang::verifyMirBody(orderedOnce).valid(),
+         "a concrete consuming operator should use an ordered move-value "
+         "receiver checkpoint");
+
+  lang::MirBody forgedOnce = orderedOnce;
+  lang::MirInstruction *forgedOnceInput = onceReceiverInput(forgedOnce);
+  if (forgedOnceInput != nullptr) {
+    forgedOnceInput->callInputKind = lang::HirCallInputKind::Value;
+    forgedOnceInput->lifecycle.clear();
+  }
+  expect(forgedOnceInput != nullptr && !lang::verifyMirBody(forgedOnce).valid(),
+         "the MIR verifier should reject a consuming operator receiver "
+         "relabeled as a non-consuming value");
 
   lang::MirProgram duplicatedOnceInvocation = linearOnce.mir;
   lang::MirFunctionInstance *duplicatedLinearInvoke =
@@ -4902,6 +5263,7 @@ int main() {
   testMirLiteralIdentityFoldAndEditor();
   testMirDominanceAndValueAvailability();
   testMirEffectClassification();
+  testDefinedFailureIdentityAndPropagation();
   testSynchronizationMirContract();
   testExclusiveReborrowMirFlow();
   testTransientBorrowNormalization();

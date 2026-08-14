@@ -4,6 +4,7 @@
 #include "gti/checked_integer.h"
 #include "gti/constant_evaluator.h"
 #include "gti/diagnostic.h"
+#include "gti/failure.h"
 #include "gti/generic_constraint.h"
 #include "gti/source_graph.h"
 
@@ -1366,6 +1367,9 @@ public:
   [[nodiscard]] UnsafeOperationKind
   unsafeOperation(const Expr &expression) const;
 
+  [[nodiscard]] const DefinedFailureOperation *
+  findDefinedFailure(const Expr &expression) const;
+
   [[nodiscard]] const PlaceKey *findPlace(const Expr &expression) const;
 
   [[nodiscard]] const OwnershipEvent *
@@ -1594,6 +1598,9 @@ private:
   void recordUnsafeOperation(const Expr &expression,
                              UnsafeOperationKind operation);
 
+  void recordDefinedFailure(const Expr &expression,
+                            DefinedFailureOperation operation);
+
   void recordPlace(const Expr &expression, PlaceKey place);
 
   void recordOwnershipEvent(const Expr &expression, OwnershipEvent event);
@@ -1734,6 +1741,7 @@ private:
   std::vector<SemanticFullExpression> fullExpressionOrder;
   std::unordered_map<const Expr *, ConstantValue> constants;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
+  std::unordered_map<const Expr *, DefinedFailureOperation> definedFailures;
   std::unordered_map<const Expr *, PlaceKey> places;
   std::unordered_map<const Expr *, OwnershipEvent> ownershipEvents;
   std::unordered_map<SymbolId, LambdaCaptureMode> lambdaCaptureModes;

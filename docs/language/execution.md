@@ -901,7 +901,11 @@ for this normative contract.
 **Implementation gap:** the transitional C++ emitter still uses duplicated
 message-plus-`abort()` helpers, performs no failure cleanup, exposes a
 signal-derived status, and lets native expected observers escape this
-contract. HIR/MIR also lack explicit failure records and propagation edges.
+contract. Semantics, HIR, and MIR now carry the stable local failure
+vocabulary, snapshot-local source anchors, and distinct direct, virtual,
+constructor, and callable propagation channels. They do not yet carry
+artifact-local site IDs, fixed runtime records, explicit normal/failure CFG
+edges, cleanup unwinding, containment, or backend execution of that identity.
 The frontend rejects recursively cleanup-owning namespace globals and static
 fields, but the C++ backend may execute cleanup-free GTI static initialization
 before its native `main`.
