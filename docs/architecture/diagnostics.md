@@ -108,6 +108,10 @@ diagnostics or letting a backend message choose either identity.
   backend's failure detail when a standard exception provides one, and suggests
   reporting a reduced compiler bug. A non-standard exception receives the same
   stable code without inventing a native exception description.
+- Reserve `GTI-B0002` for internal post-HIR failure-metadata construction or
+  verification failure. Anchor it at byte zero of the selected entry unit,
+  include the first failed invariant, and do not attach a source fix-it: valid
+  GTI source cannot repair inconsistent compiler-owned metadata.
 
 `GTI-S2046` owns the confined-callable boundary. It points at the callable
 use, forwarding argument, or enclosing return type that lacks a proven exact

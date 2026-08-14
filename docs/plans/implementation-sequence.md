@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.135.0
+Checkpoint: 0.136.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,11 +134,11 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.135.0 |
+| Foundation | Evidence at 0.136.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
-| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v15 retains ordered scalar/reference and eligible class-value inputs for ordinary calls, concrete ordinary constructors, and concretely resolved class `operator()` calls, including consuming-receiver moves; exact global/static borrow-origin places; synchronization operation/order records; and exact defined-failure origin and propagation identity. |
+| MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability; MIR v16 retains v15's ordered scalar/reference and eligible class-value inputs for ordinary calls, concrete ordinary constructors, and concretely resolved class `operator()` calls, including consuming-receiver moves; exact global/static borrow-origin places; synchronization operation/order records; and exact defined-failure origin, propagation, artifact descriptor, and detector-site identity. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
@@ -154,15 +154,14 @@ start a later phase:
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks; local copy/move environments plus exact generic return and one-field owner transport implement its current bounded lifecycle. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
-| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. The first M-FAIL-01 slice gives semantics, HIR, and MIR one exact outcome vocabulary, multi-origin snapshot-local source anchors, distinct propagation channels, verifier rules, and conservative optimizer barriers. |
+| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. The first two M-FAIL-01 slices give semantics, HIR, and MIR one exact outcome vocabulary, multi-origin snapshot-local source anchors, distinct propagation channels, conservative optimizer barriers, deterministic artifact descriptors, and exact local detector-site IDs. |
 
 MIR is not yet the sole executable authority. It owns the supported
 failure-free temporary/drop slice, bounded ordinary call/constructor/concrete
 call-operator input schedules, and defined-failure identity, but not complete
-ordered parameter/result materialization, artifact failure sites, explicit
-failure/cleanup edges, partial-constructor rollback, object layout, ABI, or
-runtime containment. The C++ backend still emits bodies from checked AST/HIR
-facts.
+ordered parameter/result materialization, explicit failure/cleanup edges,
+partial-constructor rollback, object layout, ABI, or runtime containment. The
+C++ backend still emits bodies from checked AST/HIR facts.
 
 ## Dependency Map
 
@@ -598,9 +597,9 @@ analysis, HIR, MIR, and the backend.
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
 - **State/role:** active; `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` are done.
-  The semantic/HIR/MIR identity slice is implemented. Remaining work depends
-  on the checked-expression and program/module initialization slices of
-  `M-EXEC-01`; systems-readiness implementation.
+  The semantic/HIR identity and artifact metadata/site slices are implemented.
+  Remaining work depends on the checked-expression and program/module
+  initialization slices of `M-EXEC-01`; systems-readiness implementation.
 - **Scope:** Represent exact local categories/details and canonical frontend
   source anchors in HIR, then assign deterministic artifact-local site IDs for
   MIR through the failure-metadata builder. Represent call-like propagation
@@ -629,9 +628,13 @@ analysis, HIR, MIR, and the backend.
   and MIR retain the identity without absolute paths. MIR verification rejects
   forged vocabulary, origins, duplicates, placement, target, or propagation,
   and optimizer effects preserve every such operation as an observable trap.
-  Artifact site IDs, hosted/generated origins, explicit failure successors,
-  cleanup unwinding, fixed records, containment, reporting, and executable
-  backend use remain open.
+  The post-HIR metadata builder now derives logical names, deterministic
+  external-unit route identities, definition-site coalescing, one-based
+  `FailureSiteId` assignments, canonical descriptor bytes, and the SHA-256
+  artifact identity before optimization. MIR retains and verifies exact local
+  detector sites while propagation remains un-sited. Hosted/generated origins,
+  explicit failure successors, cleanup unwinding, fixed records, containment,
+  reporting, and executable backend use remain open.
   This row does not claim that the compatibility emitter executes those edges.
 - **Exit gate:** every current failure family has exact semantic/HIR
   local-origin and source-anchor snapshots plus MIR outcome/site snapshots;

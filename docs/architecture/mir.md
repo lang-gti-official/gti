@@ -21,9 +21,11 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v15`/`mir-body-v15`.
-Version 15 adds exact local defined-failure origin sets, snapshot-local source
-anchors, and call-like propagation channels. It also extends the ordered-input
+The deterministic serialization is currently `mir-v16`/`mir-body-v16`.
+Version 16 adds the immutable failure artifact descriptor and exact one-based
+detector-site mappings. Version 15 added exact local defined-failure origin
+sets, snapshot-local source anchors, and call-like propagation channels. It
+also extended the ordered-input
 schedule to a concretely resolved class `operator()` receiver, using a
 `MoveValue` checkpoint for an explicitly moved receiver or exact
 trailing-`&&` target. Version 14 added
@@ -81,11 +83,13 @@ A `MirBody` owns:
   intrinsic identity, C linkage, and external symbols;
 - exact defined-failure identity on checked instructions. Each local detector
   origin retains a sorted unique outcome set and a snapshot-local
-  `SourceUnitId` plus line/offset anchor. Direct, virtual, constructor,
-  callable, and future task-join propagation are separate channels and never
-  copy a callee's possible category set. The verifier rejects invalid
-  vocabulary, anchors, duplicates, instruction placement, or propagation that
-  disagrees with the exact target and dispatch;
+  `SourceUnitId` plus line/offset anchor and has one parallel artifact-local
+  `FailureSiteId`. `MirProgram` owns the immutable canonical descriptor, source
+  mapping, origin assignments, and SHA-256 artifact identity. Direct, virtual,
+  constructor, callable, and future task-join propagation are separate
+  channels and never copy a callee's possible category set. The verifier
+  rejects invalid vocabulary, anchors, duplicates, instruction placement, or
+  propagation that disagrees with the exact target and dispatch;
 - exact backend-independent synchronization records on resolved calls. The
   verifier accepts thread spawn/join and mutex lock/unlock without an atomic
   order; requires a legal operation-specific order for atomic load, store, and
@@ -404,17 +408,18 @@ that changes those regions invalidates and rebuilds their schedule and cleanup
 facts.
 
 MIR now carries exact local possible-outcome sets, snapshot-local origin
-anchors, and direct/virtual/constructor/callable propagation identity required
-by the first M-FAIL-01 slice. Any such operation projects conservatively to
-`mayTrap`, making it non-speculatable, non-removable, and non-reorderable, but
-the structured identity remains the authority. MIR does not yet carry
-artifact-local site IDs, fixed failure records, failure successors, cleanup
-unwinding, caller-control-flow propagation, or containment edges required by
+anchors, their verified artifact-local site IDs, the immutable artifact
+descriptor, and direct/virtual/constructor/callable propagation identity. Any
+such operation projects conservatively to `mayTrap`, making it
+non-speculatable, non-removable, and non-reorderable, but the structured
+identity remains the authority. MIR does not yet carry fixed failure records,
+failure successors, cleanup unwinding, caller-control-flow propagation, or
+containment edges required by
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure).
 
 After the completed M-LIFE-01 temporary and active-drop facts and after
 M-EXEC-01 decomposes the relevant calls, construction, and checked expressions,
-The next M-FAIL-01 slice must add one `Invoke`-style terminator with normal and
+the next M-FAIL-01 slice must add one `Invoke`-style terminator with normal and
 failure successors. An origin form carries the exact local outcome set plus an
 artifact-local `FailureSiteId`; a call/constructor/virtual form carries only a
 `mayPropagateFailure` channel and preserves a callee record byte-for-byte. The

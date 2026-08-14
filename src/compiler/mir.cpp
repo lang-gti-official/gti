@@ -2232,6 +2232,13 @@ validFailureInstructionShape(const MirInstruction &instruction) {
   if (!validDefinedFailureOperation(instruction.definedFailure)) {
     return false;
   }
+  if (instruction.localFailureSites.size() !=
+          instruction.definedFailure.localOrigins.size() ||
+      std::any_of(instruction.localFailureSites.begin(),
+                  instruction.localFailureSites.end(),
+                  [](FailureSiteId site) { return site == 0; })) {
+    return false;
+  }
   if (!instruction.definedFailure.localOrigins.empty() &&
       instruction.kind != MirInstructionKind::Compute &&
       instruction.kind != MirInstructionKind::Load &&
@@ -5513,9 +5520,37 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     result.errors.push_back({.bodyKind = MirBodyKind::Module,
                              .message = "MIR program is marked invalid"});
   }
+  const FailureMetadataVerificationResult failureMetadata =
+      verifyFailureMetadata(program.failureMetadata());
+  for (const std::string &error : failureMetadata.errors) {
+    result.errors.push_back({.bodyKind = MirBodyKind::Module,
+                             .message = "invalid failure metadata: " + error});
+  }
 
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
     append(result, verifyMirBody(body, owner));
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        for (std::size_t originIndex = 0;
+             originIndex < instruction.definedFailure.localOrigins.size();
+             ++originIndex) {
+          const std::optional<FailureSiteId> expected =
+              program.failureMetadata().siteFor(
+                  instruction.definedFailure.localOrigins[originIndex]);
+          if (!expected ||
+              originIndex >= instruction.localFailureSites.size() ||
+              instruction.localFailureSites[originIndex] != *expected) {
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .block = block.id,
+                 .instruction = instruction.id,
+                 .message = "defined-failure origin does not retain its exact "
+                            "artifact-local site"});
+          }
+        }
+      }
+    }
     if (program.executionProfile() != ExecutionProfile::SingleThreaded) {
       return;
     }

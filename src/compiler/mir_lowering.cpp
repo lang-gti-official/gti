@@ -4,12 +4,13 @@ namespace lang {
 
 class MirBodyLowerer {
 public:
-  MirBodyLowerer(const HirProgram &program, const HirBody &source,
+  MirBodyLowerer(const HirProgram &program,
+                 const FailureMetadata &failureMetadata, const HirBody &source,
                  MirBodyKind kind, SemanticType returnType,
                  bool implicitZeroReturn = false,
                  const HirFunctionInstance *function = nullptr,
                  const HirLambda *lambda = nullptr)
-      : program(program), source(source),
+      : program(program), failureMetadata(failureMetadata), source(source),
         implicitZeroReturn(implicitZeroReturn), function(function) {
     output.kind = kind;
     output.placeDomain = source.placeDomain;
@@ -480,6 +481,18 @@ private:
           instruction.ownership = source->ownership;
         }
       }
+    }
+    instruction.localFailureSites.clear();
+    instruction.localFailureSites.reserve(
+        instruction.definedFailure.localOrigins.size());
+    for (const DefinedFailureOrigin &origin :
+         instruction.definedFailure.localOrigins) {
+      const std::optional<FailureSiteId> site = failureMetadata.siteFor(origin);
+      if (!site) {
+        valid = false;
+        continue;
+      }
+      instruction.localFailureSites.push_back(*site);
     }
     const auto rawPlace = [&](MirPlaceId id) {
       const MirPlace *place = output.findPlace(id);
@@ -4071,6 +4084,7 @@ private:
   }
 
   const HirProgram &program;
+  const FailureMetadata &failureMetadata;
   const HirBody &source;
   bool implicitZeroReturn = false;
   const HirFunctionInstance *function = nullptr;
@@ -4103,17 +4117,20 @@ private:
   std::vector<ContinueContext> continueContexts;
 };
 
-MirLoweringResult MirLowerer::lower(const HirProgram &source) const {
+MirLoweringResult
+MirLowerer::lower(const HirProgram &source,
+                  const FailureMetadata &failureMetadata) const {
   MirLoweringResult result;
   if (!source.valid()) {
     result.program.valid_ = false;
     return result;
   }
 
-  bool valid = true;
+  bool valid = verifyFailureMetadata(failureMetadata).valid();
   result.program.executionProfile_ = source.executionProfile();
+  result.program.failureMetadata_ = failureMetadata;
   result.program.moduleBody =
-      lowerBody(source, source.module(), MirBodyKind::Module,
+      lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
                 SemanticType::Void, {}, valid);
 
   result.program.classes.reserve(source.classInstances().size());
@@ -4151,11 +4168,11 @@ MirLoweringResult MirLowerer::lower(const HirProgram &source) const {
            .dropKind = field.info.traits.drop,
            .requiresActiveCleanup = field.requiresActiveCleanup});
     }
-    lowered.fieldInitializers = lowerBody(source, instance.fieldInitializers,
-                                          MirBodyKind::FieldInitializers,
-                                          SemanticType::Void, {}, valid);
+    lowered.fieldInitializers = lowerBody(
+        source, failureMetadata, instance.fieldInitializers,
+        MirBodyKind::FieldInitializers, SemanticType::Void, {}, valid);
     lowered.staticFieldInitializers = lowerBody(
-        source, instance.staticFieldInitializers,
+        source, failureMetadata, instance.staticFieldInitializers,
         MirBodyKind::StaticFieldInitializers, SemanticType::Void, {}, valid);
     for (auto field = instance.fields.rbegin(); field != instance.fields.rend();
          ++field) {
@@ -4229,9 +4246,9 @@ MirLoweringResult MirLowerer::lower(const HirProgram &source) const {
          .overrideMethod = instance.overrideMethod,
          .virtualRoots = instance.virtualRoots,
          .callableParameters = std::move(callableParameters),
-         .body = lowerBody(source, instance.body, MirBodyKind::Function,
-                           instance.returnType, {}, valid, implicitZeroReturn,
-                           nullptr, &instance)});
+         .body = lowerBody(source, failureMetadata, instance.body,
+                           MirBodyKind::Function, instance.returnType, {},
+                           valid, implicitZeroReturn, nullptr, &instance)});
   }
 
   result.program.constructors.reserve(source.constructorInstances().size());
@@ -4260,9 +4277,10 @@ MirLoweringResult MirLowerer::lower(const HirProgram &source) const {
          .borrowParameter = instance.borrowParameter,
          .borrowAccess = instance.borrowAccess,
          .initializers = std::move(initializers),
-         .body = lowerBody(source, instance.body, MirBodyKind::Constructor,
-                           SemanticType::Void, instance.initializerValues,
-                           valid, false, &instance.initializers)});
+         .body = lowerBody(source, failureMetadata, instance.body,
+                           MirBodyKind::Constructor, SemanticType::Void,
+                           instance.initializerValues, valid, false,
+                           &instance.initializers)});
   }
 
   result.program.destructors.reserve(source.destructorInstances().size());
@@ -4270,8 +4288,9 @@ MirLoweringResult MirLowerer::lower(const HirProgram &source) const {
     result.program.destructors.push_back(
         {.id = instance.id,
          .owner = instance.owner,
-         .body = lowerBody(source, instance.body, MirBodyKind::Destructor,
-                           SemanticType::Void, {}, valid)});
+         .body = lowerBody(source, failureMetadata, instance.body,
+                           MirBodyKind::Destructor, SemanticType::Void, {},
+                           valid)});
   }
 
   result.program.lambdas.reserve(source.lambdaInstances().size());
@@ -4296,9 +4315,9 @@ MirLoweringResult MirLowerer::lower(const HirProgram &source) const {
               ? instance.captureRequiresActiveCleanup[capture]
               : false);
     }
-    lowered.body = lowerBody(source, instance.body, MirBodyKind::Lambda,
-                             instance.returnType, {}, valid, false, nullptr,
-                             nullptr, &instance);
+    lowered.body = lowerBody(source, failureMetadata, instance.body,
+                             MirBodyKind::Lambda, instance.returnType, {},
+                             valid, false, nullptr, nullptr, &instance);
     result.program.lambdas.push_back(std::move(lowered));
   }
   result.program.valid_ = valid;
@@ -4306,13 +4325,15 @@ MirLoweringResult MirLowerer::lower(const HirProgram &source) const {
 }
 
 MirBody MirLowerer::lowerBody(
-    const HirProgram &program, const HirBody &body, MirBodyKind kind,
-    SemanticType returnType, const std::vector<HirValueId> &prologueValues,
-    bool &valid, bool implicitZeroReturn,
+    const HirProgram &program, const FailureMetadata &failureMetadata,
+    const HirBody &body, MirBodyKind kind, SemanticType returnType,
+    const std::vector<HirValueId> &prologueValues, bool &valid,
+    bool implicitZeroReturn,
     const std::vector<HirConstructorInitializer> *initializers,
     const HirFunctionInstance *function, const HirLambda *lambda) {
-  MirBodyLowerer lowerer(program, body, kind, std::move(returnType),
-                         implicitZeroReturn, function, lambda);
+  MirBodyLowerer lowerer(program, failureMetadata, body, kind,
+                         std::move(returnType), implicitZeroReturn, function,
+                         lambda);
   MirBody result = lowerer.lower(prologueValues, initializers);
   valid = valid && lowerer.isValid();
   return result;

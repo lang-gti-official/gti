@@ -293,6 +293,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   std::vector<Token> output;
   int braceDepth = 0;
   int conditionalDepth = 0;
+  std::size_t includeOccurrence = 0;
   Token outerConditional;
   for (std::size_t index = 0; index < fileTokens.size(); ++index) {
     Token &token = fileTokens[index];
@@ -336,6 +337,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     }
 
     if (token.kind == TokenKind::HASH_INCLUDE) {
+      const std::size_t occurrence = includeOccurrence++;
       const ResolvedInclude include =
           resolveInclude(fileTokens, index, path, braceDepth, conditionalDepth);
       index = include.directiveEnd;
@@ -343,7 +345,9 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
         graph.addDependency({.source = unitId,
                              .target = include.dependency,
                              .kind = include.kind,
-                             .directive = tokenSpan(token)});
+                             .directive = tokenSpan(token),
+                             .includeSpelling = include.includeSpelling,
+                             .includeOccurrence = occurrence});
       }
       continue;
     }
@@ -408,7 +412,17 @@ SourceLoader::resolveInclude(std::vector<Token> &tokens, std::size_t index,
   }
 
   if (hasStandardPath) {
-    return resolveAngleInclude(tokens, index, includeToken, includingFile);
+    ResolvedInclude result =
+        resolveAngleInclude(tokens, index, includeToken, includingFile);
+    if (result.dependency != 0) {
+      for (std::size_t spellingIndex = index + 1;
+           spellingIndex <= result.directiveEnd &&
+           tokens[spellingIndex].kind != TokenKind::SEMICOLON;
+           ++spellingIndex) {
+        result.includeSpelling += tokens[spellingIndex].lexeme;
+      }
+    }
+    return result;
   }
 
   const Token &pathToken = tokens[index + 1];
@@ -460,7 +474,8 @@ SourceLoader::resolveInclude(std::vector<Token> &tokens, std::size_t index,
           .dependency =
               loadFile(resolved, false, false, &includeToken, trustedImport,
                        trustedImport ? SourceUnitRole::StandardLibrary
-                                     : SourceUnitRole::Application)};
+                                     : SourceUnitRole::Application),
+          .includeSpelling = pathToken.lexeme};
 }
 
 SourceLoader::ResolvedInclude

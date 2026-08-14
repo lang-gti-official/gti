@@ -23,6 +23,11 @@ source. A quoted include cannot cross an owning package boundary. Direct mode
 does not discover manifests or synthesize package roots. Includes are
 load-once dependency edges, not textual substitution. The implicit prelude is
 an edge to every ordinary unit.
+Successful source-written include edges also retain the exact path spelling and
+that directive's zero-based lexical occurrence. Those facts are not another
+resolution mechanism: the failure-metadata builder uses them only to derive a
+deterministic, host-path-free identity for a source outside the artifact's
+logical root.
 
 Ordinary `Frontend::analyze()` in `src/compiler/frontend.cpp` performs this load
 itself. The compiled driver also exposes `loadCompilationInputs` for

@@ -901,11 +901,14 @@ for this normative contract.
 **Implementation gap:** the transitional C++ emitter still uses duplicated
 message-plus-`abort()` helpers, performs no failure cleanup, exposes a
 signal-derived status, and lets native expected observers escape this
-contract. Semantics, HIR, and MIR now carry the stable local failure
-vocabulary, snapshot-local source anchors, and distinct direct, virtual,
-constructor, and callable propagation channels. They do not yet carry
-artifact-local site IDs, fixed runtime records, explicit normal/failure CFG
-edges, cleanup unwinding, containment, or backend execution of that identity.
+contract. Semantics and HIR carry the stable local failure vocabulary and
+snapshot-local source anchors. The pre-optimization metadata builder now
+constructs the canonical logical source table, one-based artifact-local sites,
+descriptor serialization, and SHA-256 identity; MIR retains exact detector
+site mappings plus distinct direct, virtual, constructor, and callable
+propagation channels. The implementation does not yet carry fixed runtime
+records, explicit normal/failure CFG edges, cleanup unwinding, containment, or
+backend execution of that identity.
 The frontend rejects recursively cleanup-owning namespace globals and static
 fields, but the C++ backend may execute cleanup-free GTI static initialization
 before its native `main`.

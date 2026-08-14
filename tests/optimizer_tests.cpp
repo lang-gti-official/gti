@@ -2687,7 +2687,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v15\n") &&
+  expect(dump.starts_with("mir-body-v16\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -2842,7 +2842,8 @@ int main() {
     }
   }
 
-  const lang::MirLoweringResult lowered = lang::MirLowerer().lower(stagedHir);
+  const lang::MirLoweringResult lowered =
+      lang::MirLowerer().lower(stagedHir, concurrent.failureMetadata);
   const lang::MirFunctionInstance *loweredMain =
       hirMain == hirFunctions.end()
           ? nullptr

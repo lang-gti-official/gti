@@ -249,16 +249,20 @@ outcome set and a snapshot-local `SourceUnitId` plus line/offset anchor. Direct,
 virtual, constructor, callable, and future task-join propagation remain a
 separate enum with no transitive category set.
 
-After HIR, a backend-independent failure-metadata builder must consume those
-local origins together with `SourceGraph`, `SourceManager`, the direct/project
-logical root, and the canonical pre-optimization site-table rules. It assigns
-artifact-local `FailureSiteId` values, maps detector HIR values to them, and
-constructs the immutable artifact descriptor. MIR and every backend consume
-that compiler-owned metadata; HIR/MIR never calculate the final artifact digest
-or retain absolute paths. This builder does not exist yet. Current HIR owns the
-compiler vocabulary and snapshot-local origin/propagation identity, but not
-artifact site IDs, immutable descriptors, failure records, cleanup edges, or
-the metadata product consumed by a production backend.
+After HIR, the backend-independent failure-metadata builder consumes those
+local origins together with `SourceGraph`, `SourceManager`, and the
+direct/project logical root. It applies the canonical pre-optimization rules:
+definition anchors coalesce across concrete generic instances, outcome pairs
+are unioned and sorted, logical names never contain incidental absolute paths,
+and external names use exact source bytes plus the shortest lexicographically
+least include route. It then assigns one-based `FailureSiteId` values and
+computes the SHA-256 identity over the immutable descriptor serialization.
+
+`FrontendResult::failureMetadata` owns that product. MIR copies it and maps
+every local detector origin to its exact site; propagating calls remain
+un-sited. HIR still owns only compiler vocabulary and snapshot-local
+origin/propagation identity. It does not acquire artifact IDs, failure records,
+cleanup edges, or backend representation policy.
 
 ## Boundary
 

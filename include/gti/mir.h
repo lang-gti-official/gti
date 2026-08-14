@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/failure_metadata.h"
 #include "gti/hir.h"
 
 #include <cstddef>
@@ -283,6 +284,7 @@ struct MirInstruction {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
+  std::vector<FailureSiteId> localFailureSites;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
@@ -566,6 +568,10 @@ public:
   }
   [[nodiscard]] const MirBody &module() const { return moduleBody; }
 
+  [[nodiscard]] const FailureMetadata &failureMetadata() const {
+    return failureMetadata_;
+  }
+
   [[nodiscard]] const std::vector<MirClassInstance> &classInstances() const {
     return classes;
   }
@@ -622,6 +628,7 @@ private:
 
   bool valid_ = true;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
+  FailureMetadata failureMetadata_;
   MirBody moduleBody;
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
@@ -640,13 +647,15 @@ struct MirLoweringResult {
 
 class MirLowerer {
 public:
-  [[nodiscard]] MirLoweringResult lower(const HirProgram &source) const;
+  [[nodiscard]] MirLoweringResult
+  lower(const HirProgram &source, const FailureMetadata &failureMetadata) const;
 
 private:
   [[nodiscard]] static MirBody lowerBody(
-      const HirProgram &program, const HirBody &body, MirBodyKind kind,
-      SemanticType returnType, const std::vector<HirValueId> &prologueValues,
-      bool &valid, bool implicitZeroReturn = false,
+      const HirProgram &program, const FailureMetadata &failureMetadata,
+      const HirBody &body, MirBodyKind kind, SemanticType returnType,
+      const std::vector<HirValueId> &prologueValues, bool &valid,
+      bool implicitZeroReturn = false,
       const std::vector<HirConstructorInitializer> *initializers = nullptr,
       const HirFunctionInstance *function = nullptr,
       const HirLambda *lambda = nullptr);

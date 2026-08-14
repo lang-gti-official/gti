@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/diagnostic.h"
+#include "gti/failure_metadata.h"
 #include "gti/hir.h"
 #include "gti/mir.h"
 #include "gti/parser.h"
@@ -35,6 +36,7 @@ struct FrontendResult {
   Program program;
   SemanticModel semantics;
   HirProgram hir;
+  FailureMetadata failureMetadata;
   MirProgram mir;
   SourceGraph sourceGraph;
   SourceManager sources;
@@ -43,10 +45,12 @@ struct FrontendResult {
   bool syntaxValid = false;
   bool semanticValid = false;
   bool hirValid = false;
+  bool failureMetadataValid = false;
   bool mirValid = false;
 
   [[nodiscard]] bool canGenerateCode() const {
-    return sourceValid && syntaxValid && semanticValid && hirValid && mirValid;
+    return sourceValid && syntaxValid && semanticValid && hirValid &&
+           failureMetadataValid && mirValid;
   }
 };
 

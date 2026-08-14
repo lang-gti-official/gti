@@ -48,6 +48,7 @@ private:
     std::size_t directiveEnd = 0;
     SourceUnitId dependency = 0;
     SourceDependencyKind kind = SourceDependencyKind::Include;
+    std::string includeSpelling;
   };
 
   static std::filesystem::path canonicalPath(const std::filesystem::path &path);

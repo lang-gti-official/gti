@@ -186,6 +186,7 @@ add_library(
   "src/compiler/constant_evaluator.cpp"
   "src/compiler/diagnostic.cpp"
   "src/compiler/executable_path.cpp"
+  "src/compiler/failure_metadata.cpp"
   "src/compiler/format_config.cpp"
   "src/compiler/formatter.cpp"
   "src/compiler/frontend.cpp"
@@ -459,6 +460,11 @@ if(BUILD_TESTING)
   add_executable("gti_optimizer_tests" "tests/optimizer_tests.cpp")
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
+
+  add_executable("gti_failure_metadata_tests"
+                 "tests/failure_metadata_tests.cpp")
+  target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
+  add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests)
 
   add_executable("gti_raw_pointer_tests" "tests/raw_pointer_tests.cpp")
   target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_cpp_backend)

@@ -104,8 +104,9 @@ layout into an ABI.
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure) assigns
 checked-failure meaning to compiler-owned facts and leaves the runtime a narrow
 environment role. Semantics/HIR select local origins and propagation, the
-failure-metadata builder assigns artifact-local sites, and MIR will own
-propagation and cleanup. A generated boundary/runtime pair may serialize,
+failure-metadata builder assigns artifact-local sites, MIR retains their exact
+detector mappings, and later MIR slices own propagation and cleanup control
+flow. A generated boundary/runtime pair may serialize,
 observe, return, or terminate with the completed record, but it may not infer a
 category, choose caller cleanup, or use a generated/native source location.
 

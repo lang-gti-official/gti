@@ -37,6 +37,8 @@ struct SourceDependency {
   SourceUnitId target = 0;
   SourceDependencyKind kind = SourceDependencyKind::Include;
   std::optional<SourceSpan> directive;
+  std::string includeSpelling;
+  std::size_t includeOccurrence = 0;
 };
 
 struct SourceUnit {

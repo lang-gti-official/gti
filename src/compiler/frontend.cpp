@@ -137,8 +137,32 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     return result;
   }
 
+  FailureMetadataBuildResult failureMetadata = [&] {
+    const PhaseTimeScope timeScope("gti-failure-metadata");
+    return FailureMetadataBuilder().build(result.sourceGraph, result.sources,
+                                          result.hir, entryPath);
+  }();
+  result.failureMetadataValid = failureMetadata.valid();
+  result.failureMetadata = std::move(failureMetadata.metadata);
+  if (!result.failureMetadataValid) {
+    const SourceUnit *entry =
+        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+    std::string message =
+        "Internal compiler error: failed to construct failure metadata.";
+    if (!failureMetadata.errors.empty()) {
+      message += " " + failureMetadata.errors.front() + ".";
+    }
+    result.diagnostics.push_back(makeDiagnostic(
+        "GTI-B0002", DiagnosticPhase::Backend,
+        SourceSpan{entry == nullptr ? entryPath.string() : entry->path.string(),
+                   0, 0, 1},
+        std::move(message)));
+    return result;
+  }
+
   const PhaseTimeScope mirTimeScope("gti-mir-lowering");
-  MirLoweringResult mir = MirLowerer().lower(result.hir);
+  MirLoweringResult mir =
+      MirLowerer().lower(result.hir, result.failureMetadata);
   result.mirValid = mir.valid();
   result.mir = std::move(mir.program);
   if (!result.mirValid) {

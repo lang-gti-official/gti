@@ -7,12 +7,12 @@ Status: Current transitional C++ backend.
 optimized MIR, HIR compatibility replacements, and selected target.
 `BackendArtifact` is source or object content plus its extension.
 
-M-FAIL-01 must extend this handoff with compiler-owned `FailureMetadata`: the
-immutable descriptor, artifact identity, and detector-to-`FailureSiteId`
-mapping built before MIR optimization. Building it requires `SourceGraph`,
-`SourceManager`, and the driver-provided direct/project logical root; a backend
-must not reconstruct those inputs from absolute token paths. This metadata
-product is not present in `BackendInput` today.
+M-FAIL-01 now supplies compiler-owned `FailureMetadata` through
+`BackendInput::mir`: the immutable descriptor, artifact identity, and
+detector-to-`FailureSiteId` mapping are built before MIR optimization. Building
+it consumes `SourceGraph`, `SourceManager`, and source-loader logical-root
+provenance; a backend must not reconstruct those inputs from absolute token
+paths. The transitional C++ backend does not execute the metadata yet.
 
 ## C++ Backend
 

@@ -117,7 +117,27 @@ failurePropagationName(FailurePropagationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v15 valid=" << program.valid() << '\n';
+    output << "mir-v16 valid=" << program.valid() << '\n';
+    output << "failure-metadata artifact="
+           << program.failureMetadata().artifactIdentity().hex()
+           << " descriptor-bytes="
+           << program.failureMetadata().descriptorBytes().size()
+           << " sites=" << program.failureMetadata().sites().size() << '\n';
+    for (const FailureSiteDescriptor &site :
+         program.failureMetadata().sites()) {
+      output << "failure-site @" << site.id
+             << " source=" << site.logicalSource.size() << ':'
+             << site.logicalSource << " line=" << site.line
+             << " span=" << site.start << ".." << site.end << " outcomes=[";
+      for (std::size_t index = 0; index < site.outcomes.size(); ++index) {
+        separator(index);
+        const DefinedFailureOutcome outcome = site.outcomes[index];
+        output << static_cast<std::uint16_t>(outcome.code) << ':'
+               << definedFailureCodeName(outcome.code) << ':'
+               << definedFailureDetailName(outcome.detail);
+      }
+      output << "]\n";
+    }
     output << "module\n";
     body(program.module(), 0);
 
@@ -349,7 +369,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v15\n";
+    output << "mir-body-v16\n";
     body(value, 0);
     return output.str();
   }
@@ -781,6 +801,9 @@ private:
       }
       output << '}';
     }
+    output << ']';
+    output << " failure-sites=[";
+    list(value.localFailureSites);
     output << ']';
     output << " failure-propagation="
            << failurePropagationName(value.definedFailure.propagation);
