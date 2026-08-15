@@ -523,13 +523,65 @@ int main() {
              std::string_view::npos,
          "a second eligible member of the same class should emit from "
          "verified MIR");
-  expect(memberDefinition(artifact.contents, "reads_this").find(marker) ==
+  expect(memberDefinition(artifact.contents, "reads_this").find(marker) !=
              std::string_view::npos,
-         "a member that reads through `this` lies outside the family and "
-         "must stay wholly on compatibility emission");
-  expect(count(artifact.contents, marker) == 2,
-         "exactly the two eligible member bodies should carry the family "
+         "a read-only member reading one scalar field through `this` should "
+         "emit from verified MIR");
+  expect(memberDefinition(artifact.contents, "reads_this")
+                 .find("(*this).stored") != std::string_view::npos,
+         "the emitted field place should bind by reference to the live "
+         "member spelling");
+  expect(count(artifact.contents, marker) == 3,
+         "exactly the three eligible member bodies should carry the family "
          "marker");
+}
+
+// A member access whose object is a local binding rather than `this` reads
+// through a Binding-rooted projected place, which the family does not admit;
+// the graceful HIR gate must keep the body compatible rather than fail
+// closed.
+void testForeignObjectFieldReadStaysCompatibility() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-scalar-cfg-foreign-field.gti", R"(
+class Holder {
+public:
+  int stored;
+  Holder(int input) : stored(input) {}
+};
+
+class Reader {
+public:
+  Reader() {}
+  int read_other(Holder holder) { return holder.stored; }
+};
+
+int main() {
+  Holder holder = Holder(4);
+  Reader reader = Reader();
+  return reader.read_other(holder) - 4;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the foreign-field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
+         "the foreign-field fixture should retain valid MIR");
+  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
+    return;
+  }
+  const lang::BackendArtifact artifact =
+      emit(frontend, optimized.mir, compatibility);
+  expect(memberDefinition(artifact.contents, "read_other").find(marker) ==
+             std::string_view::npos,
+         "a field read on a non-receiver object lies outside the family and "
+         "must stay wholly on compatibility emission");
 }
 
 void testGenericOwnerMemberStaysCompatibility() {
@@ -1133,6 +1185,7 @@ int main(int argc, char **argv) {
   testSelectedFamily(std::filesystem::path(argv[1]));
   testUninitializedDeclarationStaysCompatibility();
   testConcreteMemberSelection();
+  testForeignObjectFieldReadStaysCompatibility();
   testGenericOwnerMemberStaysCompatibility();
   testIncoherentSwitchRejected(std::filesystem::path(argv[1]));
   testProvenanceAndSnapshotCoherence(std::filesystem::path(argv[1]));

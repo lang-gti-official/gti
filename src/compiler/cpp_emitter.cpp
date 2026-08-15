@@ -5328,6 +5328,24 @@ private:
   [[nodiscard]] static bool
   isMirScalarCfgPlace(const MirPlace &place,
                       const MirFunctionInstance &function) {
+    if (place.root == MirPlaceRootKind::This) {
+      // A read-only member body may read one scalar field through `this`.
+      // The bare receiver place is only the projection carrier; it holds the
+      // class type and is never referenced by an operand or destination.
+      if (!function.owner || place.binding != 0 || place.symbol != 0 ||
+          place.capture != 0 || place.temporary != 0 || place.value != 0 ||
+          place.loan != 0 || place.initiallyAvailable) {
+        return false;
+      }
+      if (place.projections.empty()) {
+        return place.type.kind == SemanticType::Class;
+      }
+      return place.projections.size() == 1 &&
+             place.projections.front().kind == MirProjectionKind::Field &&
+             place.projections.front().field != 0 &&
+             isMirScalarCfgType(place.type) &&
+             isMirScalarCfgTraits(place.traits, place.type);
+    }
     if (!place.projections.empty() || !isMirScalarCfgType(place.type) ||
         !isMirScalarCfgTraits(place.traits, place.type)) {
       return false;
@@ -5426,7 +5444,8 @@ private:
     }
     return std::any_of(body.places.begin(), body.places.end(),
                        [&](const MirPlace &place) {
-                         return place.root == MirPlaceRootKind::Binding &&
+                         return (place.root == MirPlaceRootKind::Binding ||
+                                 place.root == MirPlaceRootKind::This) &&
                                 place.key && event->place == *place.key;
                        });
   }
@@ -5761,6 +5780,14 @@ private:
              left.sourceValue == right.sourceValue)) {
           return false;
         }
+        // Each receiver use materializes its own This-rooted place, so two
+        // bare carriers or two reads of one field are canonical; only one
+        // source value mapped to two places is not, mirroring temporaries.
+        if (left.root == MirPlaceRootKind::This &&
+            right.root == MirPlaceRootKind::This &&
+            left.sourceValue == right.sourceValue) {
+          return false;
+        }
       }
     }
     return true;
@@ -5915,6 +5942,19 @@ private:
               }
               const HirValue *source =
                   hirFunction.body.findValue(place.sourceValue);
+              if (place.root == MirPlaceRootKind::This) {
+                if (source == nullptr || source->info.type != place.type) {
+                  return false;
+                }
+                if (place.projections.empty()) {
+                  return source->kind == HirValueKind::This;
+                }
+                return source->kind == HirValueKind::MemberAccess &&
+                       place.projections.size() == 1 &&
+                       place.projections.front().field == source->symbol &&
+                       sameMirScalarLeafTraits(source->info.traits,
+                                               place.traits);
+              }
               return place.root == MirPlaceRootKind::Temporary &&
                      source != nullptr && source->info.type == place.type &&
                      sameMirScalarLeafTraits(source->info.traits, place.traits);
@@ -5972,8 +6012,16 @@ private:
 
   [[nodiscard]] static bool isHirScalarCfgValue(const HirValue &value,
                                                 const HirBody &body) {
-    if (!isMirScalarCfgType(value.info.type) ||
-        !isMirScalarCfgTraits(value.info.traits, value.info.type) ||
+    // The receiver is a class-typed place carrier: it never produces a scalar
+    // value itself and is admitted only so a member-access read can project
+    // one scalar field from it. Every neutral safety check below still
+    // applies to it.
+    const bool receiverCarrier = value.kind == HirValueKind::This &&
+                                 value.info.type.kind == SemanticType::Class &&
+                                 value.info.category == ValueCategory::Place;
+    if ((!receiverCarrier &&
+         (!isMirScalarCfgType(value.info.type) ||
+          !isMirScalarCfgTraits(value.info.traits, value.info.type))) ||
         value.unsafeOperation != UnsafeOperationKind::None ||
         !value.parameterTypes.empty() ||
         value.intrinsic != IntrinsicKind::None ||
@@ -6008,6 +6056,18 @@ private:
                          [&](const HirBinding &binding) {
                            return binding.info.symbol == value.symbol;
                          });
+    case HirValueKind::This:
+      return receiverCarrier && !value.operation && value.operands.empty() &&
+             !value.literal && value.symbol == 0;
+    case HirValueKind::MemberAccess: {
+      if (value.operands.size() != 1 || value.literal || value.symbol == 0 ||
+          value.info.category != ValueCategory::Place ||
+          value.info.access != AccessMode::ReadOnly) {
+        return false;
+      }
+      const HirValue *object = body.findValue(value.operands.front());
+      return object != nullptr && object->kind == HirValueKind::This;
+    }
     case HirValueKind::Grouping:
       return !value.operation && value.operands.size() == 1 && !value.literal;
     case HirValueKind::Unary:
@@ -12952,6 +13012,24 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     output << "// GTI verified-MIR body: scalar-cfg-v1 function-instance "
            << function.id << "\n";
     for (const MirPlace &place : function.body.places) {
+      if (place.root == MirPlaceRootKind::This) {
+        // The bare receiver place is only the projection carrier and is never
+        // referenced. A field place binds by reference so every load reads
+        // the live member; receivers here are read-only, so no write occurs.
+        if (place.projections.empty()) {
+          continue;
+        }
+        const SymbolRecord *field =
+            semantics.database().findSymbol(place.projections.front().field);
+        if (field == nullptr || field->name.empty()) {
+          throw std::logic_error(
+              "verified scalar-CFG MIR lost an exact field symbol");
+        }
+        writeIndent();
+        output << "const auto &__gti_mir_p_" << place.id << " = (*this)."
+               << field->name << ";\n";
+        continue;
+      }
       writeIndent();
       emitSemanticType(place.type);
       output << " __gti_mir_p_" << place.id;

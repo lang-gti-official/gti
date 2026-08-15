@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.151.0
+Checkpoint version: 0.152.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -125,6 +125,29 @@ structurally incoherent, that no invalid-shape issue is raised, and that
 readiness does not regress below a floor. The first of those matters most: a
 change that breaks compilation silently improves every other figure, which
 masked two unsound attempts earlier in this campaign.
+
+The 0.152.0 checkpoint adds This-rooted scalar field reads to
+`scalar-cfg-v1` and produces the first material production emission. A
+read-only member of a concrete class may now read scalar fields through
+`this`: the HIR gate admits the receiver as a class-typed carrier and
+`this.field` member reads whose object is exactly the receiver, the shape
+gate admits This-rooted places (the bare carrier plus single-`Field` scalar
+projections, each receiver use materializing its own place keyed by source
+value), boundary read events may name admitted This keys (reinitialize events
+remain binding-only, so no write channel opens), coherence maps each This
+place back to its exact `This` or member-access source value, and emission
+binds each field place by reference to the live member spelling while
+skipping the carrier. Reads of another object's fields, projection chains,
+writes, and mutable receivers all stay compatible, with the foreign-object
+read covered as an explicit near miss.
+
+Measured effect across the 57-example corpus: production emission rises from
+1 to 32 verified-MIR bodies across 20 files, and the differential oracle now
+compares 17 sources with behavioral agreement on every one and zero
+disagreements. One family defect was found and fixed during the change: the
+first canonical-place rule for This roots flagged two bare carriers as
+duplicates, which broke a two-field member in the compiler suite; carriers
+are per-use places keyed by source value, mirroring temporaries.
 
 The 0.151.0 checkpoint clears the per-declaration member boundary in
 `scalar-cfg-v1`. The selector now resolves a member per MIR instance: an

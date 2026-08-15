@@ -156,9 +156,14 @@ generic emitter replaces that single whole-program route.
   backedges. It excludes calls, checked-failure arithmetic, references,
   pointers, loans, drops, cleanup, construction, and failure edges. A member
   is resolved per instance rather than per declaration: zero instances, a
-  generic owner, several instantiations, a mutable receiver, or any use of
-  `this` in the body keep the member wholly on compatibility emission, and
-  emitted member definitions use the ordinary deferred qualified form.
+  generic owner, several instantiations, or a mutable receiver keep the
+  member wholly on compatibility emission, and emitted member definitions use
+  the ordinary deferred qualified form. A read-only member may additionally
+  read scalar fields through `this`: the bare receiver is a class-typed
+  projection carrier that is never referenced, each single-`Field` projected
+  place binds by reference to the live member spelling, and reads of another
+  object's fields, projection chains, and every write remain outside the
+  family.
 - `scalar-direct-call-v1` adds exact ordered scalar `CallInput`/`Call` stages
   to the scalar-CFG substrate. Every reachable node must be an eligible
   source-defined free function in one closed acyclic static-call graph, every
