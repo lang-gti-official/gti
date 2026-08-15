@@ -6,8 +6,10 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -958,6 +960,115 @@ int32_t checked_increment(int32_t value) {
       "owning failure-cleanup body");
 }
 
+// Sweeps the shipped example corpus through the generic body-emission gate.
+//
+// This exists because the readiness figure is otherwise measured only by
+// ad-hoc tooling, and a change that breaks compilation silently "improves" it:
+// a rejected source contributes no bodies at all. Asserting that every example
+// still reaches MIR keeps that failure mode visible, and asserting that no
+// frontend-produced body is Incoherent keeps the gate honest about the
+// difference between "needs more MIR authority" and "this MIR is wrong".
+void testExampleCorpusEmissionReadiness() {
+  const std::filesystem::path repository =
+      std::filesystem::path(__FILE__).parent_path().parent_path();
+  const std::filesystem::path examples = repository / "examples";
+  std::vector<std::filesystem::path> sources;
+  if (std::filesystem::is_directory(examples)) {
+    for (const std::filesystem::directory_entry &entry :
+         std::filesystem::directory_iterator(examples)) {
+      if (entry.is_regular_file() && entry.path().extension() == ".gti") {
+        sources.push_back(entry.path());
+      }
+    }
+  }
+  std::sort(sources.begin(), sources.end());
+  expect(!sources.empty(), "the example corpus should be discoverable");
+
+  std::size_t rejected = 0;
+  std::size_t bodies = 0;
+  std::size_t ready = 0;
+  std::size_t incoherent = 0;
+  std::size_t invalidIssues = 0;
+  for (const std::filesystem::path &source : sources) {
+    std::ifstream input(source);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::filesystem::path standardLibrary = repository / "stdlib";
+    const lang::FrontendResult frontend = lang::Frontend().analyze(
+        source.filename().string(), buffer.str(),
+        {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+    if (!frontend.canGenerateCode()) {
+      ++rejected;
+      std::cerr << "corpus source no longer reaches MIR: "
+                << source.filename().string() << '\n';
+      for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+        std::cerr << "  " << diagnostic.code << ": " << diagnostic.message
+                  << '\n';
+      }
+      continue;
+    }
+    const lang::CppMirBodyEmissionMap map(completeRows(frontend.mir));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    for (const lang::MirBodyAddress address :
+         lang::enumerateMirBodyAddresses(frontend.mir)) {
+      const lang::CppMirBodyEmissionAnalysis analysis =
+          emitter.analyze(address);
+      ++bodies;
+      if (analysis.ready()) {
+        ++ready;
+      }
+      if (analysis.readiness == lang::CppMirBodyEmissionReadiness::Incoherent) {
+        ++incoherent;
+        std::cerr << "incoherent body in " << source.filename().string()
+                  << " kind=" << static_cast<int>(address.kind)
+                  << " owner=" << address.owner << ": "
+                  << (analysis.issues.empty() ? std::string("<no issue>")
+                                              : analysis.issues.front().detail)
+                  << '\n';
+      }
+      for (const lang::CppMirBodyEmissionIssue &issue : analysis.issues) {
+        switch (issue.kind) {
+        case lang::CppMirBodyEmissionIssueKind::InvalidMirProgram:
+        case lang::CppMirBodyEmissionIssueKind::InvalidBodyAddress:
+        case lang::CppMirBodyEmissionIssueKind::InvalidRepresentationEnum:
+        case lang::CppMirBodyEmissionIssueKind::InvalidRepresentationRow:
+        case lang::CppMirBodyEmissionIssueKind::InvalidBodyKind:
+        case lang::CppMirBodyEmissionIssueKind::InvalidInstructionKind:
+        case lang::CppMirBodyEmissionIssueKind::InvalidOperation:
+        case lang::CppMirBodyEmissionIssueKind::InvalidOperandKind:
+        case lang::CppMirBodyEmissionIssueKind::InvalidPlaceRootKind:
+        case lang::CppMirBodyEmissionIssueKind::InvalidProjectionKind:
+        case lang::CppMirBodyEmissionIssueKind::InvalidTerminatorKind:
+          ++invalidIssues;
+          std::cerr << "invalid-shape issue in " << source.filename().string()
+                    << ": " << issue.detail << '\n';
+          break;
+        default:
+          break;
+        }
+      }
+    }
+  }
+
+  std::cout << "example-corpus emission readiness: sources=" << sources.size()
+            << " rejected=" << rejected << " bodies=" << bodies
+            << " ready=" << ready << " incoherent=" << incoherent << '\n';
+
+  expect(rejected == 0,
+         "every shipped example should still reach verified MIR; a rejected "
+         "source silently inflates every readiness figure");
+  expect(incoherent == 0,
+         "no frontend-produced body should be structurally incoherent to the "
+         "generic emission gate");
+  expect(invalidIssues == 0,
+         "frontend-produced MIR should raise no invalid-shape emission issue");
+  // A floor rather than an exact count: the gate protects against regression
+  // without forcing an update on every representation improvement.
+  expect(ready >= 1900,
+         "generic emission readiness across the example corpus should not "
+         "regress below its recorded floor");
+}
+
 } // namespace
 
 int main() {
@@ -969,6 +1080,7 @@ int main() {
   testConcreteGenericFieldOwner();
   testAmbiguousStaticStorageFailsClosed();
   testOwningCheckedBodyNeedsWholeCleanupProof();
+  testExampleCorpusEmissionReadiness();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

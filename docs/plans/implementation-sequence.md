@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.149.0
+Checkpoint: 0.150.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -983,6 +983,43 @@ analysis, HIR, MIR, and the backend.
   The program-initialization slice executes GTI module/static initializers
   inside the hosted adapter after containment is active, rather than through
   native C++ pre-`main` initialization.
+- **Measured cutover position (0.150.0).** Production emits exactly one body
+  from verified MIR across the 57-example corpus, a single `scalar-cfg-v1`.
+  The six completed families each select correctly on their dedicated fixtures
+  (3-25 bodies) but effectively never match shipped code, because each carries
+  a whole-program selection contract rather than a per-body one.
+  `CppMirBodyEmitter` reports 1953 of 2429 corpus bodies emitter-ready, but it
+  is a fail-closed analysis gate with no text-emission step and no production
+  caller, so that figure is a precondition, not emission. The
+  `mir_emission_readiness` assertions inside `cpp_mir_body_emitter` now track
+  it, including that every example still reaches MIR, since a rejected source
+  silently inflates every readiness figure. That gate catches a
+  compilation-breaking regression, which is the mode that masked two unsound
+  attempts in this campaign, but it does not by itself establish semantic
+  correctness: relaxing the loan exclusion in
+  `requiresMirFailureControlFlow` alone raises readiness to 2006 with zero
+  rejections and zero incoherent bodies, while leaving the enclosing scope to
+  end a loan the failed operation never produced. Readiness movement is
+  therefore necessary evidence for a cutover step, never sufficient.
+- **Relaxing family selectors is exhausted.** Measured over the corpus, no
+  source function becomes `scalar-cfg-v1`-eligible by relaxing the member,
+  `constexpr`, operator, or linkage gates: every source function is already
+  excluded by a non-scalar signature (532) or by a body outside the scalar-CFG
+  instruction set (899). The bottleneck is emission capability, not selection
+  breadth.
+- **Emitter capability ranked by bodies unlocked.** Of the 899 bodies outside
+  the scalar-CFG set: `Lifecycle` 899, `Call` 647, `CallInput` 420,
+  failure edges and checked operations 354, drops 47, `Construct` 26, loans and
+  borrows 16. `Lifecycle` is required by every one of them and is already
+  classified `RepresentedByMir`, so the first emission increment should cover
+  `Lifecycle` plus the existing scalar-CFG set, then `Call`/`CallInput`.
+- **Remaining wiring pieces.** (1) A representation-row builder: nothing in
+  production constructs `CppMirBodyEmissionMapRows`, and the planner snapshot
+  carries coherence seals rather than C++ spellings, so the builder must reuse
+  the emitter's naming authority. (2) The text-emission step the body-emitter
+  header reserves. (3) Integration in `CppBackend` with differential
+  comparison against the compatibility emitter over the corpus, which is the
+  strongest available correctness oracle for the cutover.
 - **Exit gate:** all reachable GTI bodies have one executable authority; every
   current checked family preserves exact record, prior effects, and cleanup at
   O0/O1/O3 and C++20/C++23; native expected/assert/abort paths and duplicated

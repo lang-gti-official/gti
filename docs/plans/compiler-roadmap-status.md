@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.149.0
+Checkpoint version: 0.150.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -111,6 +111,32 @@ initializer, operation, place, CFG, return, call-input, reverse-edge, transfer,
 and drop drift. Its runtime gate proves cleanup order without double cleanup at
 O0/O1/O3 under C++20/C++23. Checked lifecycle, comma, loops, switches, class
 results, and other unsupported connected shapes remain wholly compatible.
+
+The 0.150.0 checkpoint measures the true cutover position and makes it a
+tracked gate. Production emits exactly one body from verified MIR across the
+57-example corpus. The six completed families select correctly on their own
+fixtures but effectively never match shipped code, because each carries a
+whole-program selection contract. `CppMirBodyEmitter`'s 1953-of-2429
+emitter-ready figure is a precondition rather than emission: the class is a
+fail-closed analysis gate with no text-emission step and no production caller.
+The `cpp_mir_body_emitter` suite now sweeps the example corpus and asserts that
+every example still reaches verified MIR, that no frontend-produced body is
+structurally incoherent, that no invalid-shape issue is raised, and that
+readiness does not regress below a floor. The first of those matters most: a
+change that breaks compilation silently improves every other figure, which
+masked two unsound attempts earlier in this campaign.
+
+Selector relaxation is exhausted as a strategy. Measured over the corpus, no
+source function becomes `scalar-cfg-v1`-eligible by relaxing the member,
+`constexpr`, operator, or linkage gates; every one is already excluded by a
+non-scalar signature (532) or a body outside the scalar-CFG instruction set
+(899). Of those 899, `Lifecycle` is required by all 899, `Call` by 647,
+`CallInput` by 420, failure edges by 354, drops by 47, `Construct` by 26, and
+loans by 16. `Lifecycle` is already `RepresentedByMir`, so the first emission
+increment is `Lifecycle` plus the scalar-CFG set, then `Call`/`CallInput`. The
+remaining wiring is a representation-row builder reusing the emitter's naming
+authority, the reserved text-emission step, and `CppBackend` integration with
+differential comparison against the compatibility emitter.
 
 The 0.149.0 checkpoint admits trivial-commit assignments and establishes that
 the remaining cutover debt is representation work rather than eligibility
