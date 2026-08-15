@@ -89,7 +89,7 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v27`/`mir-body-v27`.
+The deterministic serialization is currently `mir-v28`/`mir-body-v28`.
 Version 20 introduced function-definition provenance and the first MIR-owned
 defined-failure effect summary. Each concrete function records
 `DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a
@@ -124,7 +124,11 @@ failure-edge contract as an ordinary call: a failure-capable construction
 carries its own `Invoke`/record/cleanup edge, and a full-expression-root
 construction with a cleanup-owning result initializes that result only on the
 success edge, so failure cleanup can never drop an object whose construction
-did not complete. The defined-failure bit
+did not complete. Version 28 stops treating an ownership event as a blanket
+disqualification: a state-preserving read (`Read`, available to available, on
+a reachable edge) leaves nothing for a failure edge to unwind and no longer
+blocks routing, while any event that moves or reinitializes ownership still
+does. The defined-failure bit
 deliberately covers only GTI
 defined failure; it is not a summary of allocation, arbitrary user code,
 synchronization, or the other future O-MIR-02 effect dimensions.
@@ -699,7 +703,13 @@ owning result still initializes through its re-homed temporary and stays
 unrouted until the remaining owning-result materialization lands),
 constructors, field/module initialization stages, failure-capable destructors
 and double failure, and partial construction remain outside that general
-bounded verifier family. The narrower production
+bounded verifier family. Constructor and initializer bodies are excluded by
+construction, not by omission: a constructor transfers each completed
+subobject into `this`, which removes it from the body's temporary and scope
+cleanup sets, so a failure edge placed there today would propagate through an
+empty cleanup block and leak every subobject already built. Partial-
+construction rollback is therefore a prerequisite for those bodies rather than
+an independent later refinement. The narrower production
 `scalar-failure-callgraph-v1` component now validates its complete
 caller-to-callee record route and hosted containment as an additional atomic
 selection contract. Broader forms are still required by

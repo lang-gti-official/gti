@@ -2667,6 +2667,12 @@ validFailureInstructionShape(const MirInstruction &instruction) {
 } // namespace
 
 bool supportsMirFailureControlFlow(MirBodyKind kind) {
+  // Constructor and initializer bodies are deliberately excluded. A
+  // constructor transfers each completed subobject into `this`, which removes
+  // it from the body's temporary and scope cleanup sets, so a failure edge
+  // placed here would propagate through an empty cleanup block and leak every
+  // subobject already constructed. Admitting these bodies requires the
+  // partial-construction rollback representation first.
   return kind == MirBodyKind::Module || kind == MirBodyKind::Function ||
          kind == MirBodyKind::Destructor || kind == MirBodyKind::Lambda ||
          kind == MirBodyKind::HostedStartup;
@@ -2692,8 +2698,18 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   // instruction, so the position parameter no longer restricts eligibility;
   // it remains the verifier's identity for the staged-owner cleanup contract.
   (void)position;
+  // A state-preserving read leaves nothing for a failure edge to unwind, so it
+  // does not disqualify an otherwise eligible operation. Any event that moves,
+  // reinitializes, or otherwise transitions ownership still does, because the
+  // failure edge would have to restore the prior state.
+  const bool statePreservingOwnership =
+      !instruction.ownership ||
+      (instruction.ownership->kind == OwnershipEventKind::Read &&
+       instruction.ownership->before == OwnershipStateSet::Available &&
+       instruction.ownership->after == OwnershipStateSet::Available &&
+       instruction.ownership->reachable);
   if (instruction.definedFailure.empty() || instruction.destination ||
-      instruction.loan || instruction.ownership ||
+      instruction.loan || !statePreservingOwnership ||
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
   }

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.147.0
+Checkpoint version: 0.148.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -111,6 +111,30 @@ initializer, operation, place, CFG, return, call-input, reverse-edge, transfer,
 and drop drift. Its runtime gate proves cleanup order without double cleanup at
 O0/O1/O3 under C++20/C++23. Checked lifecycle, comma, loops, switches, class
 results, and other unsupported connected shapes remain wholly compatible.
+
+The 0.148.0 checkpoint admits state-preserving reads to the routed family and
+records a measured prerequisite for the constructor slice. MIR v28 stops
+treating any ownership event as a blanket disqualification: a `Read` that
+leaves an available place available on a reachable edge has nothing for a
+failure edge to unwind, matching the benign-event rule the defined-failure
+effect derivation already applies. All 34 such operations in the example
+corpus are exactly that shape; routing them removes 34
+`MissingCheckedFailureControlFlow` occurrences and moves two more bodies to
+emitter-ready (1951 to 1953) with no debt displaced elsewhere.
+
+Enabling constructor and field-initializer bodies was attempted and reverted
+on evidence. The flip passes MIR verification and removes 91 occurrences, but
+the resulting MIR is unsound: a constructor `TransferOut`s each completed
+subobject into `this`, which removes it from the body's temporary and scope
+cleanup sets, so a later checked failure propagates through an empty cleanup
+block and leaks it. This was confirmed in the two-initializer `std::string`
+constructor of example 20, where obligation 1 is initialized on an earlier
+success edge, transferred out by the field-initializer `CallBody`, and then
+absent from the failure block of a later checked call. Verification does not
+catch it because constructor rollback verification is itself the missing
+authority. Partial-construction rollback is therefore a hard prerequisite,
+not a parallel refinement, and `supportsMirFailureControlFlow` now records
+that reason at the exclusion.
 
 The 0.147.0 checkpoint extends ordered failure edges to construction. MIR v27
 routes a failure-capable `Construct` exactly like an ordinary call, and a
