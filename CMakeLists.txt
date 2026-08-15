@@ -472,6 +472,11 @@ if(BUILD_TESTING)
   add_test(NAME cpp_backend_library_boundary
            COMMAND gti_cpp_backend_library_smoke)
 
+  add_executable("gti_mir_differential_helper"
+                 "tests/mir_differential_helper.cpp")
+  target_link_libraries("gti_mir_differential_helper"
+                        PRIVATE gti_cpp_backend gti_compiler)
+
   add_executable("gti_driver_library_smoke" "tests/driver_library_smoke.cpp")
   target_link_libraries("gti_driver_library_smoke" PRIVATE gti_driver)
   add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
@@ -694,6 +699,18 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/sum_types_runtime_test.py"
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/56-sum-types.gti"
+    )
+    file(GLOB GTI_DIFFERENTIAL_SOURCES
+         "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.gti")
+    add_test(
+      NAME mir_differential_oracle
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_differential_test.py"
+              "$<TARGET_FILE:gti_mir_differential_helper>"
+              "${CMAKE_CXX_COMPILER}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
+              "$<TARGET_FILE:gti_runtime>"
+              ${GTI_DIFFERENTIAL_SOURCES}
     )
     add_test(
       NAME mir_backend_first_family_runtime

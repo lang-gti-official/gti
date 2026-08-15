@@ -39,6 +39,7 @@ assertions.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
+| `mir_differential_oracle` | observable-behavior agreement between the MIR-preferring `CppBackend` path and the no-MIR public direct-emitter path over the example corpus, reporting per-source agreement, disagreement, and not-comparable sources |
 | `cpp_mir_body_emitter` | generic MIR body-emission gate classification, and a sweep of the shipped example corpus asserting that every example still reaches verified MIR, that no frontend-produced body is structurally incoherent, that no invalid-shape emission issue is raised, and that emitter readiness does not regress below its floor |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
@@ -398,6 +399,66 @@ Neither exclusive reborrows nor the additional `main` signature adds a token,
 grammar production, or formatting rule. The LSP receives their semantic
 diagnostics through the shared frontend and should not implement separate
 ownership or entry-signature inference.
+
+## MIR Emission Differential Oracle
+
+`mir_differential_oracle` compiles each corpus source down both C++
+representation paths and compares observable program behavior. Both paths are
+existing public APIs, so the oracle adds no production surface: the
+MIR-preferring path is `CppBackend::generate`, and the compatibility path is
+the `CppEmitter` constructor that takes no `MirProgram`, which
+[`implementation-sequence.md`](../plans/implementation-sequence.md) retains as
+the explicit public direct-emitter API until the final cutover. With no MIR
+every family selector deselects, so that path emits the whole program from
+AST/semantics/HIR.
+
+Placing the control at the backend follows the authority table in
+[`overview.md`](overview.md): the Backend owns representation and artifact
+generation, so choosing between two backend representations of the same
+verified IR is a backend-layer decision. A driver or CLI switch would put a
+representation policy in a layer whose entry forbids it and would create the
+durable fallback surface that the migration rules prohibit; a build variant
+could not be exercised by a normal test run.
+
+Generated C++ text is explicitly not a contract, so text is never compared for
+pass or fail. Comparison is on exit status, stdout, and stderr of the two built
+programs, following the deterministic-record principle of the `GTI-BENCH-1`
+protocol in [`benchmarks/README.md`](../../benchmarks/README.md). Both variants
+are compiled with the driver's own native flags so neither gains a toolchain
+advantage.
+
+### Demonstrated coverage
+
+The oracle detects a fault in the emission of a body that the MIR path actually
+emits, when that fault changes observable behavior. This was verified by
+swapping the scalar-CFG branch targets in `cpp_emitter.cpp`, which the oracle
+reported as a disagreement of exit status 4 against 0.
+
+### Demonstrated blind spots
+
+The oracle is not a general correctness gate. Its reach is bounded by how many
+bodies the MIR path emits, which is currently one across the whole corpus.
+Verified blind spots:
+
+- **MIR faults that do not reach emission.** Relaxing the loan exclusion in
+  `requiresMirFailureControlFlow` raises emitter readiness from 1953 to 2006
+  and leaves the enclosing scope to end a loan the failed operation never
+  produced, yet the oracle stays green: the change alters MIR routing without
+  changing which bodies are emitted from MIR.
+- **Emission code paths no emitted body exercises.** Changing the scalar-CFG
+  spelling of `Equal` to `!=` was not detected, because the single emitted body
+  performs no equality comparison.
+- **Faults with no observable effect**, including cleanup that is missing or
+  duplicated without changing exit status or output, and any difference
+  confined to memory the program never reports.
+- **Sources neither path can compare**, reported as not-comparable rather than
+  as agreement. Fifty-six of fifty-seven corpus sources are currently in this
+  class because they contain no MIR-emitted body.
+
+The oracle therefore reports what it compared rather than a pass rate, and
+fails when it would otherwise compare nothing. Readiness figures from
+`cpp_mir_body_emitter` measure MIR preconditions and must not be reported as
+oracle coverage.
 
 ## Optional Local Language Audit
 
