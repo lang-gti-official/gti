@@ -1628,7 +1628,42 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
          constructor.initializers) {
       builder.addType(initializer.targetType);
     }
+    // A constructor's emitted name is its owner type's spelling; a
+    // destructor's appends the source class name. Declarations stay rowless.
+    if (constructor.definitionKind == MirDefinitionKind::Source) {
+      if (const MirClassInstance *owner =
+              mir.findClassInstance(constructor.owner)) {
+        builder.rows.bodies.push_back(
+            {.address = {.kind = MirBodyKind::Constructor,
+                         .owner = constructor.id},
+             .spelling =
+                 cppSemanticTypeSpelling(semantics, standard, owner->type)});
+      }
+    }
   }
+  for (const MirDestructorInstance &destructor : mir.destructorInstances()) {
+    if (destructor.definitionKind != MirDefinitionKind::Source) {
+      continue;
+    }
+    const MirClassInstance *owner = mir.findClassInstance(destructor.owner);
+    const ClassTypeInfo *info =
+        owner == nullptr ? nullptr
+                         : semantics.findClassType(owner->declaration);
+    if (owner == nullptr || info == nullptr || info->declaration == nullptr) {
+      continue;
+    }
+    builder.rows.bodies.push_back(
+        {.address = {.kind = MirBodyKind::Destructor, .owner = destructor.id},
+         .spelling = cppSemanticTypeSpelling(semantics, standard, owner->type) +
+                     "::~" + info->declaration->name().lexeme});
+  }
+
+  // The one sealed lifetime helper the runtime ships today. Naming it here
+  // is what lets Construct/Drop-bearing bodies become analysis-Ready; the
+  // text step's vocabulary still decides what actually emits.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::LifetimeStorage,
+       .spelling = "::gti_internal::backend::mir_lifetime_slot"});
   for (const MirLambdaInstance &lambda : mir.lambdaInstances()) {
     builder.addType(lambda.type);
     builder.addType(lambda.returnType);
@@ -1637,6 +1672,50 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
     }
     for (const SemanticType &type : lambda.captureTypes) {
       builder.addType(type);
+    }
+  }
+
+  // Namespace-global storage rows for every Symbol-rooted place MIR reads:
+  // the exact "::__gti_program::<name>" spelling the transitional emitter
+  // writes for a plain global. Class-owned and namespaced storage stays
+  // rowless until a text step can spell it, so those reads fail closed.
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
+    const MirBody *body = findMirBody(mir, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const MirPlace &place : body->places) {
+      if (place.root != MirPlaceRootKind::Symbol || place.capture != 0 ||
+          place.symbol == 0 || !place.projections.empty()) {
+        continue;
+      }
+      const MirProgramInitializationStep *step =
+          mir.programInitializationPlan().findStepForSymbol(place.symbol);
+      if (step != nullptr && step->ownerClass != 0) {
+        continue;
+      }
+      if (std::any_of(builder.rows.symbols.begin(), builder.rows.symbols.end(),
+                      [&](const CppMirSymbolRepresentation &row) {
+                        return row.kind ==
+                                   CppMirSymbolRepresentationKind::Storage &&
+                               row.owner == 0 && row.symbol == place.symbol;
+                      })) {
+        continue;
+      }
+      const SymbolRecord *record =
+          semantics.database().findSymbol(place.symbol);
+      if (record == nullptr || record->kind != SymbolKind::GlobalVariable ||
+          record->qualifiedName != record->name || record->name.empty()) {
+        continue;
+      }
+      builder.rows.symbols.push_back(
+          {.kind = CppMirSymbolRepresentationKind::Storage,
+           .owner = 0,
+           .symbol = place.symbol,
+           .ordinal = 0,
+           .type = place.type,
+           .spelling = "::__gti_program::" + record->name});
+      builder.addType(place.type);
     }
   }
 

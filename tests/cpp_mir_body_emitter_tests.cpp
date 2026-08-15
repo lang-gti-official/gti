@@ -1187,6 +1187,55 @@ void testGeneralTextStepMatchesProductionEmission() {
          "general text step's emission");
 }
 
+// The production rows now carry namespace-global storage names,
+// constructor/destructor body names, and the sealed lifetime-slot helper,
+// so every non-entry scalar function body of the class-default-cleanup
+// fixture is analysis-Ready; its constructor and destructor bodies stay
+// gated by the structural rollback/double-failure proofs, and the text
+// vocabulary still declines Construct/Drop, so production emission of the
+// family is unchanged until those land.
+void testCleanupFixtureFunctionBodiesAreReady() {
+  const std::filesystem::path fixture =
+      std::filesystem::path(__FILE__).parent_path() / "fixtures" /
+      "mir_backend_class_default_cleanup.gti";
+  std::ifstream input(fixture);
+  std::stringstream buffer;
+  buffer << input.rdbuf();
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze(fixture.string(), buffer.str());
+  expect(frontend.canGenerateCode(),
+         "the class-default-cleanup fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  bool functionBodiesReady = true;
+  std::size_t scalarFunctionBodies = 0;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (function.entryKind != lang::ProgramEntryKind::None ||
+        function.mayRaiseDefinedFailure) {
+      continue;
+    }
+    ++scalarFunctionBodies;
+    const lang::CppMirBodyEmissionAnalysis analysis = emitter.analyze(
+        {.kind = lang::MirBodyKind::Function, .owner = function.id});
+    if (!analysis.ready()) {
+      functionBodiesReady = false;
+      std::cerr << "cleanup function-instance " << function.id
+                << " is not ready: "
+                << (analysis.issues.empty() ? std::string("<no issue>")
+                                            : analysis.issues.front().detail)
+                << '\n';
+    }
+  }
+  expect(scalarFunctionBodies >= 3 && functionBodiesReady,
+         "every non-entry failure-free cleanup-fixture function body should "
+         "be analysis-Ready under production rows");
+}
+
 } // namespace
 
 int main() {
@@ -1200,6 +1249,7 @@ int main() {
   testOwningCheckedBodyNeedsWholeCleanupProof();
   testExampleCorpusEmissionReadiness();
   testGeneralTextStepMatchesProductionEmission();
+  testCleanupFixtureFunctionBodiesAreReady();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

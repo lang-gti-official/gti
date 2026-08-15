@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.160.0
+Checkpoint: 0.161.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,16 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Rows for the next dissolution measured and landed (0.161.0).** The
+  production rows now carry namespace-global storage spellings,
+  constructor/destructor body names, and the sealed lifetime-slot helper,
+  which makes every non-entry scalar function body of the
+  class-default-cleanup fixture analysis-Ready (pinned by the body-emitter
+  suite). Dissolving the three remaining families is blocked on MIR
+  authority, not representation: their constructor and destructor bodies
+  still carry the partial-construction-rollback and double-failure
+  structural gaps the atomic contracts currently license, so those
+  families keep their selectors until that authority lands.
 - **Admission widened per body (0.158.0-0.159.0).** The scalar-cfg gate no longer
   excludes compiler-private declarations, so standard-library scalar bodies
   select per body through the same fail-closed walk (corpus production
