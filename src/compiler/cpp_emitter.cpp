@@ -42,6 +42,7 @@ public:
     output.str("");
     output.clear();
     indentation = 0;
+    generalCfgAdmitted.reset();
     forwardedAliases.clear();
     forwardedTypeAliases.clear();
     forwardedExternC.clear();
@@ -5750,63 +5751,6 @@ private:
   }
 
   [[nodiscard]] static bool
-  isMirScalarCfgBodyShape(const MirFunctionInstance &function,
-                          const MirProgram *program) {
-    const MirBody &body = function.body;
-    if (body.kind != MirBodyKind::Function || body.entry == 0 ||
-        body.blocks.empty() || body.entry > body.blocks.size() ||
-        body.returnType != function.returnType || !body.loans.empty() ||
-        !body.dropObligations.empty() || !body.cleanupBoundaries.empty() ||
-        !body.failureRecords.empty() ||
-        function.parameterTypes.size() != function.parameterBindings.size() ||
-        !std::all_of(function.parameterTypes.begin(),
-                     function.parameterTypes.end(), isMirScalarCfgType) ||
-        !(function.returnType == SemanticType::Void ||
-          isMirScalarCfgType(function.returnType)) ||
-        !hasCanonicalMirScalarCfgPlaces(body) ||
-        !std::all_of(body.places.begin(), body.places.end(),
-                     [&](const MirPlace &place) {
-                       return isMirScalarCfgPlace(place, function);
-                     }) ||
-        !std::all_of(
-            body.values.begin(), body.values.end(), [](const MirValue &value) {
-              return isMirScalarCfgType(value.info.type) &&
-                     isMirScalarCfgTraits(value.info.traits, value.info.type);
-            })) {
-      return false;
-    }
-    for (std::size_t index = 0; index < function.parameterBindings.size();
-         ++index) {
-      if (std::none_of(body.places.begin(), body.places.end(),
-                       [&](const MirPlace &place) {
-                         return place.root == MirPlaceRootKind::Binding &&
-                                place.binding ==
-                                    function.parameterBindings[index] &&
-                                place.type == function.parameterTypes[index] &&
-                                place.initiallyAvailable;
-                       })) {
-        return false;
-      }
-    }
-    return std::all_of(
-        body.blocks.begin(), body.blocks.end(), [&](const MirBlock &block) {
-          return block.failureParameter == 0 &&
-                 std::all_of(
-                     block.instructions.begin(), block.instructions.end(),
-                     [&](const MirInstruction &instruction) {
-                       return isMirScalarCfgInstruction(instruction, function,
-                                                        block.id) ||
-                              isMirScalarDirectCallInput(instruction, function,
-                                                         block.id) ||
-                              (program != nullptr &&
-                               isMirScalarDirectCall(instruction, function,
-                                                     *program, block.id));
-                     }) &&
-                 isMirScalarCfgTerminatorShape(block.terminator, function);
-        });
-  }
-
-  [[nodiscard]] static bool
   isCoherentMirScalarCfgTerminator(const MirTerminator &terminator) {
     if (terminator.kind != MirTerminatorKind::Switch) {
       return true;
@@ -5873,180 +5817,6 @@ private:
             *source->operation == TokenKind::OR) &&
            source->info.type == SemanticType::Bool && literal != nullptr &&
            *literal == (*source->operation == TokenKind::OR);
-  }
-
-  [[nodiscard]] bool isMirScalarCfgBody(const MirFunctionInstance &function,
-                                        const HirFunctionInstance &hirFunction,
-                                        const MirProgram *program) const {
-    const MirBody &body = function.body;
-    if (!isMirScalarCfgBodyShape(function, program) ||
-        body.placeDomain != hirFunction.body.placeDomain ||
-        body.fullExpressions.size() !=
-            hirFunction.body.fullExpressions.size() ||
-        !std::all_of(
-            body.places.begin(), body.places.end(),
-            [&](const MirPlace &place) {
-              if (place.root == MirPlaceRootKind::Binding) {
-                const auto binding =
-                    std::find_if(hirFunction.body.bindings.begin(),
-                                 hirFunction.body.bindings.end(),
-                                 [&](const HirBinding &candidate) {
-                                   return candidate.id == place.binding;
-                                 });
-                return binding != hirFunction.body.bindings.end() &&
-                       binding->info.symbol == place.symbol &&
-                       binding->info.type == place.type &&
-                       binding->info.access == place.access &&
-                       place.key == PlaceKey{.domain = body.placeDomain,
-                                             .root = binding->info.symbol} &&
-                       sameMirScalarLeafTraits(binding->info.traits,
-                                               place.traits);
-              }
-              const HirValue *source =
-                  hirFunction.body.findValue(place.sourceValue);
-              if (place.root == MirPlaceRootKind::This) {
-                if (source == nullptr || source->info.type != place.type) {
-                  return false;
-                }
-                if (place.projections.empty()) {
-                  return source->kind == HirValueKind::This;
-                }
-                return source->kind == HirValueKind::MemberAccess &&
-                       place.projections.size() == 1 &&
-                       place.projections.front().field == source->symbol &&
-                       sameMirScalarLeafTraits(source->info.traits,
-                                               place.traits);
-              }
-              return place.root == MirPlaceRootKind::Temporary &&
-                     source != nullptr && source->info.type == place.type &&
-                     sameMirScalarLeafTraits(source->info.traits, place.traits);
-            }) ||
-        !std::all_of(body.values.begin(), body.values.end(),
-                     [&](const MirValue &value) {
-                       const HirValue *source =
-                           hirFunction.body.findValue(value.sourceValue);
-                       if (source == nullptr) {
-                         return false;
-                       }
-                       const MirInstruction *definition =
-                           body.findBlock(value.definitionBlock) == nullptr
-                               ? nullptr
-                               : mirScalarDefinitionFor(body, value);
-                       if (definition != nullptr &&
-                           definition->kind == MirInstructionKind::CallInput) {
-                         return source->info.type == value.info.type &&
-                                sameMirScalarLeafTraits(source->info.traits,
-                                                        value.info.traits) &&
-                                value.info.category == ValueCategory::Value &&
-                                value.info.access == AccessMode::ReadOnly;
-                       }
-                       return sameMirScalarLeafInfo(source->info, value.info);
-                     })) {
-      return false;
-    }
-    for (std::size_t index = 0; index < body.fullExpressions.size(); ++index) {
-      const MirFullExpression &lowered = body.fullExpressions[index];
-      const HirFullExpression &source = hirFunction.body.fullExpressions[index];
-      if (lowered.id != index + 1 || lowered.hirExpression != source.id ||
-          lowered.statement != source.statement ||
-          lowered.constructorInitializer != source.constructorInitializer ||
-          lowered.roots != source.roots) {
-        return false;
-      }
-    }
-    struct ExpectedCallInput {
-      HirValueId call = 0;
-      std::size_t index = 0;
-      HirValueId source = 0;
-      std::size_t count = 0;
-    };
-    std::unordered_map<HirValueId, std::size_t> exactCallCounts;
-    std::vector<ExpectedCallInput> exactCallInputs;
-    for (const HirValue &value : hirFunction.body.values) {
-      if (value.kind != HirValueKind::Call) {
-        continue;
-      }
-      if (!value.callPlan || exactCallCounts.contains(value.id)) {
-        return false;
-      }
-      exactCallCounts.emplace(value.id, 0);
-      for (const HirCallArgument &argument : value.callPlan->arguments) {
-        exactCallInputs.push_back({.call = value.id,
-                                   .index = argument.parameterIndex,
-                                   .source = argument.value});
-      }
-    }
-    for (const MirBlock &block : body.blocks) {
-      if (!isCoherentMirScalarCfgTerminator(block.terminator)) {
-        return false;
-      }
-      for (const MirInstruction &instruction : block.instructions) {
-        if (instruction.operation == MirOperation::Literal &&
-            !isCoherentMirScalarCfgLiteral(instruction, function,
-                                           hirFunction)) {
-          return false;
-        }
-        if (!std::all_of(
-                instruction.operands.begin(), instruction.operands.end(),
-                [&](const MirOperand &operand) {
-                  return operand.kind != MirOperandKind::Constant ||
-                         isCoherentMirScalarCfgSyntheticLogicalConstant(
-                             instruction, function, hirFunction);
-                })) {
-          return false;
-        }
-        if (instruction.kind == MirInstructionKind::CallInput) {
-          const HirValue *argument =
-              hirFunction.body.findValue(instruction.hirValue);
-          const auto expected = std::find_if(
-              exactCallInputs.begin(), exactCallInputs.end(),
-              [&](const ExpectedCallInput &candidate) {
-                return candidate.call == instruction.callSite &&
-                       candidate.index == instruction.callInputIndex;
-              });
-          if (argument == nullptr || expected == exactCallInputs.end() ||
-              expected->source != instruction.hirValue ||
-              ++expected->count != 1 ||
-              argument->info.type != instruction.info.type ||
-              !sameMirScalarLeafTraits(argument->info.traits,
-                                       instruction.info.traits)) {
-            return false;
-          }
-        }
-        if (instruction.kind != MirInstructionKind::Call) {
-          continue;
-        }
-        const auto exactCall = exactCallCounts.find(instruction.hirValue);
-        const HirValue *source =
-            hirFunction.body.findValue(instruction.hirValue);
-        if (exactCall == exactCallCounts.end() || ++exactCall->second != 1 ||
-            source == nullptr ||
-            !isHirScalarDirectCall(*source, hirFunction.body) ||
-            source->id != instruction.callSite ||
-            source->functionTarget != instruction.functionTarget ||
-            source->parameterTypes != instruction.parameterTypes ||
-            source->info.type != instruction.info.type ||
-            source->callPlan->arguments.size() != instruction.operands.size()) {
-          return false;
-        }
-        for (std::size_t index = 0; index < instruction.operands.size();
-             ++index) {
-          const MirValue *operand =
-              body.findValue(instruction.operands[index].value);
-          const MirInstruction *input =
-              operand == nullptr ? nullptr
-                                 : mirScalarDefinitionFor(body, *operand);
-          if (input == nullptr ||
-              input->hirValue != source->callPlan->arguments[index].value ||
-              input->callInputIndex !=
-                  source->callPlan->arguments[index].parameterIndex) {
-            return false;
-          }
-        }
-      }
-    }
-    return std::all_of(exactCallCounts.begin(), exactCallCounts.end(),
-                       [](const auto &entry) { return entry.second == 1; });
   }
 
   [[nodiscard]] static bool
@@ -6195,59 +5965,6 @@ private:
     }
   }
 
-  // Calls are admitted per body rather than through the closed-graph
-  // scalar-direct-call selection: an eligible call names a static
-  // proved-failure-free source free function, so no failure channel can
-  // cross into or out of a differently-emitted neighbor, and the callee's
-  // own body authority is decided independently.
-  [[nodiscard]] bool
-  isHirScalarCfgBody(const HirFunctionInstance &function) const {
-    const HirBody &body = function.body;
-    std::unordered_set<HirValueId> callees;
-    for (const HirValue &value : body.values) {
-      if (value.kind != HirValueKind::Call) {
-        continue;
-      }
-      if (!isHirScalarDirectCall(value, body)) {
-        return false;
-      }
-      // The failure-free proof is MIR-level, so the HIR gate must consult it
-      // here: a call to a target that may raise (or whose summary is only
-      // conservatively true) declines gracefully instead of reaching the
-      // fail-closed shape gate.
-      const MirFunctionInstance *target =
-          mir == nullptr || !value.functionTarget
-              ? nullptr
-              : mir->findFunctionInstance(*value.functionTarget);
-      if (target == nullptr || target->mayRaiseDefinedFailure ||
-          target->definitionKind !=
-              MirFunctionInstance::DefinitionKind::Source) {
-        return false;
-      }
-      callees.insert(value.operands.front());
-    }
-    return body.loans.empty() && body.dropObligations.empty() &&
-           std::all_of(body.bindings.begin(), body.bindings.end(),
-                       [](const HirBinding &binding) {
-                         return isMirScalarCfgType(binding.info.type) &&
-                                isMirScalarCfgTraits(binding.info.traits,
-                                                     binding.info.type) &&
-                                binding.info.retainedLoan == 0 &&
-                                !binding.info.staticStorage &&
-                                !binding.dropObligation;
-                       }) &&
-           std::all_of(body.values.begin(), body.values.end(),
-                       [&](const HirValue &value) {
-                         return value.kind == HirValueKind::Call
-                                    ? isHirScalarDirectCall(value, body)
-                                : callees.contains(value.id)
-                                    ? isHirScalarDirectCallee(value)
-                                    : isHirScalarCfgValue(value, body);
-                       }) &&
-           std::all_of(body.statements.begin(), body.statements.end(),
-                       isHirScalarCfgStatement);
-  }
-
   [[nodiscard]] const MirFunctionInstance *
   selectedMirScalarCfg(const FunctionDecl &function) const {
     if (mir == nullptr || !function.body()) {
@@ -6376,20 +6093,36 @@ private:
           "eligible MIR scalar-CFG metadata does not match its HIR and "
           "semantic declaration");
     }
-    if (!isHirScalarCfgBody(*hirInstance)) {
+    // Admission is analysis-driven: the general emitter's own fail-closed
+    // readiness plus its vocabulary probe decide, so selection never
+    // re-models emission through a HIR body shape. A declined body stays on
+    // the compatibility path instead of becoming a near-miss internal error.
+    if (!generalBodyAdmitted(selected->id)) {
       return nullptr;
     }
-    if (!isMirScalarCfgBodyShape(*selected, mir)) {
-      throw std::logic_error(
-          "eligible scalar-CFG source body is not represented by the closed "
-          "verified MIR family");
-    }
-    if (!isMirScalarCfgBody(*selected, *hirInstance, mir)) {
-      throw std::logic_error(
-          "verified MIR scalar-CFG body does not match its HIR source or "
-          "verified MIR rewrite proof");
-    }
     return selected;
+  }
+
+  [[nodiscard]] bool generalBodyAdmitted(HirFunctionInstanceId instance) const {
+    if (mir == nullptr || !generalEmissionMap) {
+      return false;
+    }
+    if (!generalCfgAdmitted) {
+      generalCfgAdmitted.emplace();
+      const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
+      const CppMirProgramEmissionAnalysis analysis = emitter.analyzeProgram();
+      // Program- or row-level validation issues admit nothing; per-body
+      // readiness and the text vocabulary admit each body individually.
+      if (analysis.issues.empty()) {
+        for (const CppMirBodyEmissionAnalysis &body : analysis.bodies) {
+          if (body.body.kind == MirBodyKind::Function && body.ready() &&
+              emitter.supportsBodyText(body.body)) {
+            generalCfgAdmitted->insert(body.body.owner);
+          }
+        }
+      }
+    }
+    return generalCfgAdmitted->contains(instance);
   }
 
   [[nodiscard]] bool
@@ -15243,9 +14976,14 @@ namespace gti_internal::backend {
   const FunctionDecl *ownedArgumentsEntry = nullptr;
   std::size_t indentation = 0;
   std::size_t classDepth = 0;
-  // Copied representation rows for the generic MIR body emitter, built once
-  // per emission from the extracted spelling authorities (ADR 016 phase 4).
+  // Copied representation rows for the generic MIR body emitter, built and
+  // owned at the backend boundary (ADR 016 phase 4).
   std::optional<CppMirBodyEmissionMap> generalEmissionMap;
+  // Function instances the general emitter admits: Ready under its
+  // fail-closed analysis and inside its text vocabulary. Computed once per
+  // emission from the emitter's own authorities.
+  mutable std::optional<std::unordered_set<HirFunctionInstanceId>>
+      generalCfgAdmitted;
   std::size_t payloadSwitchCounter = 0;
   bool emittingField = false;
   bool emittingScheduledType = false;

@@ -2236,6 +2236,221 @@ cppMirExpectedTypeRepresentation(const SemanticType &type) {
   return expectedTypeRepresentation(type);
 }
 
+bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
+  if (address.kind != MirBodyKind::Function) {
+    return false;
+  }
+  const MirFunctionInstance *function =
+      program_.findFunctionInstance(address.owner);
+  if (function == nullptr) {
+    return false;
+  }
+  const MirBody &body = function->body;
+  if (body.blocks.empty() || body.entry == 0 ||
+      body.entry > body.blocks.size()) {
+    return false;
+  }
+
+  const auto typeRow = [&](const SemanticType &type) {
+    const auto found = std::find_if(
+        representations_.types().begin(), representations_.types().end(),
+        [&](const CppMirTypeRepresentation &row) { return row.type == type; });
+    return found != representations_.types().end() && !found->spelling.empty();
+  };
+  const auto fieldRow = [&](SymbolId field) {
+    if (!function->owner) {
+      return false;
+    }
+    const auto found = std::find_if(
+        representations_.symbols().begin(), representations_.symbols().end(),
+        [&](const CppMirSymbolRepresentation &row) {
+          return row.kind == CppMirSymbolRepresentationKind::Field &&
+                 row.owner == *function->owner && row.symbol == field &&
+                 row.ordinal == 0;
+        });
+    return found != representations_.symbols().end() &&
+           !found->spelling.empty();
+  };
+  const auto bodyRow = [&](HirFunctionInstanceId target) {
+    const MirBodyAddress callee{.kind = MirBodyKind::Function, .owner = target};
+    const auto found = std::find_if(
+        representations_.bodies().begin(), representations_.bodies().end(),
+        [&](const CppMirBodyNameRepresentation &row) {
+          return row.address == callee;
+        });
+    return found != representations_.bodies().end() && !found->spelling.empty();
+  };
+  const auto valueOperand = [](const MirOperand &operand) {
+    return operand.kind == MirOperandKind::Value;
+  };
+  const auto syntheticBool = [](const MirOperand &operand) {
+    return operand.kind == MirOperandKind::Constant && operand.value == 0 &&
+           operand.place == 0 && operand.loan == 0 && operand.literal &&
+           operand.type == SemanticType::Bool &&
+           std::holds_alternative<bool>(*operand.literal);
+  };
+  const auto literalSupported = [&](const std::optional<Literal> &literal,
+                                    const SemanticType &type) {
+    if (!literal) {
+      return false;
+    }
+    if (std::holds_alternative<std::uint64_t>(*literal)) {
+      return typeRow(type);
+    }
+    return std::holds_alternative<CharacterLiteral>(*literal) ||
+           std::holds_alternative<bool>(*literal);
+  };
+
+  for (const MirPlace &place : body.places) {
+    if (place.root == MirPlaceRootKind::This) {
+      if (place.projections.empty()) {
+        continue;
+      }
+      if (place.projections.size() != 1 ||
+          place.projections.front().kind != MirProjectionKind::Field ||
+          !fieldRow(place.projections.front().field)) {
+        return false;
+      }
+      continue;
+    }
+    if (!place.projections.empty() || !typeRow(place.type)) {
+      return false;
+    }
+  }
+  for (const MirValue &value : body.values) {
+    if (!typeRow(value.info.type)) {
+      return false;
+    }
+  }
+
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      switch (instruction.kind) {
+      case MirInstructionKind::Lifecycle:
+        continue;
+      case MirInstructionKind::Compute: {
+        if (!instruction.result) {
+          return false;
+        }
+        switch (instruction.operation) {
+        case MirOperation::Literal:
+          if (!literalSupported(instruction.literal, instruction.info.type)) {
+            return false;
+          }
+          continue;
+        case MirOperation::Identity:
+        case MirOperation::LogicalNot:
+          if (instruction.operands.size() != 1 ||
+              !valueOperand(instruction.operands.front())) {
+            return false;
+          }
+          continue;
+        case MirOperation::Positive:
+        case MirOperation::BitwiseNot:
+          if (instruction.operands.size() != 1 ||
+              !valueOperand(instruction.operands.front()) ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        case MirOperation::BitwiseAnd:
+        case MirOperation::BitwiseOr:
+        case MirOperation::BitwiseXor:
+          if (instruction.operands.size() != 2 ||
+              !valueOperand(instruction.operands[0]) ||
+              !valueOperand(instruction.operands[1]) ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        case MirOperation::Equal:
+        case MirOperation::NotEqual:
+        case MirOperation::Less:
+        case MirOperation::LessEqual:
+        case MirOperation::Greater:
+        case MirOperation::GreaterEqual:
+          if (instruction.operands.size() != 2 ||
+              !valueOperand(instruction.operands[0]) ||
+              !valueOperand(instruction.operands[1])) {
+            return false;
+          }
+          continue;
+        default:
+          return false;
+        }
+      }
+      case MirInstructionKind::Load:
+        if (!instruction.result || instruction.operands.size() != 1 ||
+            instruction.operands.front().place == 0) {
+          return false;
+        }
+        continue;
+      case MirInstructionKind::Initialize:
+        if (!instruction.destination || instruction.operands.size() != 1 ||
+            (!valueOperand(instruction.operands.front()) &&
+             !syntheticBool(instruction.operands.front()))) {
+          return false;
+        }
+        continue;
+      case MirInstructionKind::Assign:
+        if (!instruction.destination || !instruction.result ||
+            instruction.operands.size() != 1 ||
+            !valueOperand(instruction.operands.front())) {
+          return false;
+        }
+        continue;
+      case MirInstructionKind::CallInput:
+        if (!instruction.result || instruction.operands.size() != 1 ||
+            !valueOperand(instruction.operands.front())) {
+          return false;
+        }
+        continue;
+      case MirInstructionKind::Call:
+        if (!instruction.functionTarget ||
+            !bodyRow(*instruction.functionTarget) ||
+            !std::all_of(instruction.operands.begin(),
+                         instruction.operands.end(), valueOperand)) {
+          return false;
+        }
+        continue;
+      default:
+        return false;
+      }
+    }
+    switch (block.terminator.kind) {
+    case MirTerminatorKind::Goto:
+    case MirTerminatorKind::Unreachable:
+      continue;
+    case MirTerminatorKind::Branch:
+      if (!block.terminator.value || !valueOperand(*block.terminator.value)) {
+        return false;
+      }
+      continue;
+    case MirTerminatorKind::Switch: {
+      if (!block.terminator.value || !valueOperand(*block.terminator.value)) {
+        return false;
+      }
+      bool targets = true;
+      for (const MirSwitchTarget &target : block.terminator.switchTargets) {
+        targets = targets && target.value && typeRow(target.value->type);
+      }
+      if (!targets) {
+        return false;
+      }
+      continue;
+    }
+    case MirTerminatorKind::Return:
+      if (block.terminator.value && !valueOperand(*block.terminator.value)) {
+        return false;
+      }
+      continue;
+    default:
+      return false;
+    }
+  }
+  return true;
+}
+
 CppMirBodyEmissionText CppMirBodyEmitter::emitBodyText(
     MirBodyAddress address, std::string_view familyLabel,
     CppMirBodyTextForm form, std::size_t indentation) const {

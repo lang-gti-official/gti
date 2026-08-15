@@ -320,6 +320,14 @@ public:
   emitBodyText(MirBodyAddress address, std::string_view familyLabel,
                CppMirBodyTextForm form, std::size_t indentation) const;
 
+  // Non-throwing vocabulary probe for the general bb-loop text form: true
+  // exactly when every place, value, instruction, and terminator of the
+  // addressed function body is inside the text step's ported vocabulary and
+  // every consulted representation row is present. Admission combines this
+  // with a Ready analysis; the pair is the single authority on what the
+  // general emitter can publish, so selection never re-models emission.
+  [[nodiscard]] bool supportsBodyText(MirBodyAddress address) const;
+
 private:
   const MirProgram &program_;
   const CppMirBodyEmissionMap &representations_;

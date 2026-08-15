@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.158.0
+Checkpoint: 0.159.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1072,9 +1072,15 @@ analysis, HIR, MIR, and the backend.
   receiver-place handling derived from MIR rather than family flags.
   (3) `CppBackend::generate` builds and owns the rows beside the program
   plan and passes them into the emitter, which no longer derives a spelling
-  authority of its own; remaining wiring is retiring the HIR-shaped
-  admission selectors in favor of analysis-driven per-body admission.
-- **Admission widened per body (0.158.0).** The scalar-cfg gate no longer
+  authority of its own. (4) Scalar-cfg admission is analysis-driven
+  (0.159.0): the general emitter's fail-closed readiness plus its
+  `supportsBodyText` vocabulary probe decide per body, the HIR body-shape
+  walk and its two MIR shape/coherence re-proofs are deleted, and a
+  declined body stays on the compatibility path instead of becoming a
+  near-miss internal error. Declaration-identity facts, concrete-instance
+  resolution, and the HIR/MIR metadata seal remain on the selection path;
+  the remaining HIR-shaped admission lives in the five atomic families.
+- **Admission widened per body (0.158.0-0.159.0).** The scalar-cfg gate no longer
   excludes compiler-private declarations, so standard-library scalar bodies
   select per body through the same fail-closed walk (corpus production
   emission 35 -> 150 bodies). A constexpr relaxation was measured to yield
