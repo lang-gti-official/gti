@@ -290,7 +290,7 @@ straight-line acyclic scalar/static-call chains can be marked
 conservatively true; and generic MIR verification rejects a forged false claim.
 It also checks that proved-failure-free static calls carry `None`, while
 conservative or failure-capable static targets retain `DirectCall`, and that
-the deterministic `mir-v28`/`mir-body-v28` dump records definition kind and
+the deterministic `mir-v29`/`mir-body-v29` dump records definition kind and
 summary. Version 22 additionally serializes the exact merged
 program-initialization unit/step plan and every per-block step tag; verification
 and source/optimized coherence freeze their presence, empty unit rows, order,

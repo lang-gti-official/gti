@@ -2708,10 +2708,25 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
        instruction.ownership->before == OwnershipStateSet::Available &&
        instruction.ownership->after == OwnershipStateSet::Available &&
        instruction.ownership->reachable);
-  if (instruction.definedFailure.empty() || instruction.destination ||
+  // A checked assignment to a trivially destroyed place writes nothing when it
+  // fails and runs no lifecycle event, so its failure edge needs only the
+  // ordinary temporary and scope cleanup. This covers the narrowing compound
+  // forms that keep a closed instruction because semantics folds their
+  // arithmetic and conversion into one origin. An assignment that replaces an
+  // owning value still needs the destination's own unwinding rule.
+  const bool trivialCommitDestination =
+      instruction.kind == MirInstructionKind::Assign &&
+      instruction.lifecycle.empty() &&
+      instruction.info.traits.drop == DropKind::Trivial &&
+      !instruction.info.traits.containsBorrowedState;
+  if (instruction.definedFailure.empty() ||
+      (instruction.destination && !trivialCommitDestination) ||
       instruction.loan || !statePreservingOwnership ||
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
+  }
+  if (trivialCommitDestination) {
+    return true;
   }
   if (instruction.kind == MirInstructionKind::Compute ||
       instruction.kind == MirInstructionKind::Load) {

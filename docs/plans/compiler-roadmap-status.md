@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.148.0
+Checkpoint version: 0.149.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -111,6 +111,33 @@ initializer, operation, place, CFG, return, call-input, reverse-edge, transfer,
 and drop drift. Its runtime gate proves cleanup order without double cleanup at
 O0/O1/O3 under C++20/C++23. Checked lifecycle, comma, loops, switches, class
 results, and other unsupported connected shapes remain wholly compatible.
+
+The 0.149.0 checkpoint admits trivial-commit assignments and establishes that
+the remaining cutover debt is representation work rather than eligibility
+widening. MIR v29 routes a checked assignment whose destination is trivially
+destroyed and which runs no lifecycle event, covering the narrowing compound
+forms that keep a closed instruction; a failure writes nothing there, so the
+edge needs only ordinary cleanup. This removes 22
+`MissingCheckedFailureControlFlow` occurrences with no debt displaced.
+
+Two further eligibility widenings were attempted and reverted on evidence,
+and both are now proved to need new representation rather than a predicate
+change:
+
+- Operations that produce a loan (132 occurrences, the largest remaining
+  exclusion inside supported bodies). Registering the loan into the enclosing
+  scope only after the instruction is not sufficient, because the loan record
+  and its reborrow parent link already exist; the loan-flow verifier then
+  rejects the failure edge for ending a parent before its child, which broke
+  16 examples. This needs a success-edge loan on the invoke terminator plus
+  loan-flow liveness starting at the normal successor.
+- Constructor and field-initializer bodies, reverted in 0.148.0 for the
+  partial-construction leak recorded below.
+
+The remaining `MissingPackExpansionMir` debt is likewise upstream: a call whose
+argument is a `PackExpansion` returns no HIR call plan, so it also accounts for
+part of `MissingCallInputScheduleMir`. Expanding a pack into concrete ordered
+elements is semantic work, matching the treatment `PackFold` already receives.
 
 The 0.148.0 checkpoint admits state-preserving reads to the routed family and
 records a measured prerequisite for the constructor slice. MIR v28 stops

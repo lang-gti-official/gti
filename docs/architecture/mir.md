@@ -89,7 +89,7 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v28`/`mir-body-v28`.
+The deterministic serialization is currently `mir-v29`/`mir-body-v29`.
 Version 20 introduced function-definition provenance and the first MIR-owned
 defined-failure effect summary. Each concrete function records
 `DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a
@@ -128,7 +128,12 @@ did not complete. Version 28 stops treating an ownership event as a blanket
 disqualification: a state-preserving read (`Read`, available to available, on
 a reachable edge) leaves nothing for a failure edge to unwind and no longer
 blocks routing, while any event that moves or reinitializes ownership still
-does. The defined-failure bit
+does. Version 29 admits a checked assignment whose destination is trivially
+destroyed and which runs no lifecycle event: a failure writes nothing and
+leaves no state to unwind, so its edge needs only the ordinary temporary and
+scope cleanup. This covers the narrowing compound forms that keep a closed
+instruction. An assignment that replaces an owning value still requires the
+destination's own unwinding rule. The defined-failure bit
 deliberately covers only GTI
 defined failure; it is not a summary of allocation, arbitrary user code,
 synchronization, or the other future O-MIR-02 effect dimensions.
@@ -709,7 +714,14 @@ subobject into `this`, which removes it from the body's temporary and scope
 cleanup sets, so a failure edge placed there today would propagate through an
 empty cleanup block and leak every subobject already built. Partial-
 construction rollback is therefore a prerequisite for those bodies rather than
-an independent later refinement. The narrower production
+an independent later refinement. An operation that itself produces a loan is
+excluded for the same class of reason: the loan record and its reborrow parent
+link are created before the instruction, so a failure edge would end a loan
+the operation never produced, and the loan-flow verifier rejects that as
+ending a parent before its child. Admitting those operations requires a
+success-edge loan on the invoke terminator, analogous to the cleanup-owning
+result obligation, plus loan-flow liveness that starts at the normal
+successor. The narrower production
 `scalar-failure-callgraph-v1` component now validates its complete
 caller-to-callee record route and hosted containment as an additional atomic
 selection contract. Broader forms are still required by

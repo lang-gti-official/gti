@@ -287,7 +287,7 @@ void testFamily(const std::filesystem::path &fixture) {
          "proved constructors should use exact targets without failure edges");
 
   const std::string dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v28 ") &&
+  expect(dump.starts_with("mir-v29 ") &&
              dump.find("constructor-initializer=1") != std::string::npos,
          "MIR v24 should print the new initializer-stage authority");
 
