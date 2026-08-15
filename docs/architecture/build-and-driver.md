@@ -224,6 +224,18 @@ include paths is a later build-system convenience; current projects may check
 in or explicitly regenerate the header and list its directory under the
 existing native include settings.
 
+Direct mode also exposes `--emit-mir`. It runs the same complete frontend,
+optimization compatibility check, and MIR verification, then selects
+`MirBackend`, which serializes the verified optimized MIR snapshot that
+executable backends consume in the deterministic versioned `mir-v*` text
+format owned by `MirPrinter`. The mode writes one `.mir` artifact, defaults to
+`<entry>.mir`, applies the loaded source overwrite guard, and performs no
+native compilation or linking. It is mutually exclusive with `--emit-cpp`,
+`--emit-native-header`, `--keep-cpp`, and trailing compiler arguments. The
+artifact is an inspection surface for the backend-authority migration; the
+serialization contract remains
+[`docs/architecture/mir.md`](mir.md).
+
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,

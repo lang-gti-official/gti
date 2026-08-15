@@ -199,6 +199,7 @@ add_library(
   "src/compiler/mir_dominance.cpp"
   "src/compiler/mir_lowering.cpp"
   "src/compiler/mir_printer.cpp"
+  "src/compiler/mir_backend.cpp"
   "src/compiler/native_header.cpp"
   "src/compiler/optimization/effects.cpp"
   "src/compiler/optimization/rewrite.cpp"

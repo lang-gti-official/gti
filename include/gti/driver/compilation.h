@@ -105,4 +105,8 @@ compileWithBackend(const CompilationRequest &request, Backend &backend);
 [[nodiscard]] CompilationResult
 compileToNativeHeader(const CompilationRequest &request);
 
+// Serializes the verified optimized MIR snapshot that executable backends
+// consume, in the deterministic versioned text format owned by `MirPrinter`.
+[[nodiscard]] CompilationResult compileToMir(const CompilationRequest &request);
+
 } // namespace lang::driver

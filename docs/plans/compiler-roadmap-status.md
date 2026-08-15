@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.152.0
+Checkpoint version: 0.153.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -125,6 +125,17 @@ structurally incoherent, that no invalid-shape issue is raised, and that
 readiness does not regress below a floor. The first of those matters most: a
 change that breaks compilation silently improves every other figure, which
 masked two unsound attempts earlier in this campaign.
+
+The 0.153.0 checkpoint adds the `--emit-mir` inspection surface. Direct mode
+gains a `MirBackend` selected exactly like the C++ and native-header backends:
+the same complete frontend, optimization compatibility check, and MIR
+verification run first, then the backend serializes the verified optimized
+snapshot in the deterministic versioned `mir-v*` format owned by `MirPrinter`.
+The artifact defaults to `<entry>.mir`, honors the loaded-source overwrite
+guard, is byte-deterministic across runs, and is mutually exclusive with the
+other emission modes. This gives the backend-authority migration a first-class
+way to inspect exactly what executable backends consume without reaching for
+test probes.
 
 The 0.152.0 checkpoint adds This-rooted scalar field reads to
 `scalar-cfg-v1` and produces the first material production emission. A

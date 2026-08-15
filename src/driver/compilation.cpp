@@ -2,6 +2,7 @@
 
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/mir_backend.h"
 #include "gti/native_header.h"
 #include "gti/source_loader.h"
 #include "gti/support.h"
@@ -182,6 +183,11 @@ CompilationResult compileToCpp(const CompilationRequest &request,
 
 CompilationResult compileToNativeHeader(const CompilationRequest &request) {
   NativeHeaderBackend backend;
+  return compileWithBackend(request, backend);
+}
+
+CompilationResult compileToMir(const CompilationRequest &request) {
+  MirBackend backend;
   return compileWithBackend(request, backend);
 }
 

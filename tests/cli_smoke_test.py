@@ -1632,6 +1632,34 @@ def main():
             encoding="utf-8"
         )
 
+        # --emit-mir writes the deterministic verified-MIR serialization for
+        # the same program, refuses to combine with other emission modes, and
+        # derives its default output path from the input stem.
+        mir_dump = root / "optimization.mir"
+        run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-mir",
+                "-o",
+                str(mir_dump),
+            ]
+        )
+        mir_text = mir_dump.read_text(encoding="utf-8")
+        assert mir_text.startswith("mir-v")
+        assert " valid=1" in mir_text.splitlines()[0]
+        assert "failure-metadata artifact=" in mir_text
+        combined = run(
+            [gti, str(optimization_source), "--emit-mir", "--emit-cpp"],
+            expected=64,
+        )
+        assert "cannot be used together" in combined.stderr
+        kept = run(
+            [gti, str(optimization_source), "--emit-mir", "--keep-cpp"],
+            expected=64,
+        )
+        assert "cannot be used together" in kept.stderr
+
         optimization_executable = root / "optimization"
         optimized_build = run(
             [
