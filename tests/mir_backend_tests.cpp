@@ -386,6 +386,12 @@ int main() { return stable() - 7; }
   lang::MirBody &staleModule =
       const_cast<lang::MirBody &>(staleWithMatchingModule.module());
   staleModule.placeDomain = expected.hir.module().placeDomain;
+  // The generated hosted-startup body pins its place domain to the module
+  // snapshot, so a structurally coherent forgery has to move both.
+  if (const lang::MirBody *hosted = staleWithMatchingModule.hostedStartup()) {
+    const_cast<lang::MirBody *>(hosted)->placeDomain.snapshot =
+        staleModule.placeDomain.snapshot;
+  }
   expect(lang::verifyMirProgram(staleWithMatchingModule).valid(),
          "the defense-in-depth fixture should remain valid after only its "
          "empty module domain is forged");
@@ -680,6 +686,21 @@ int32_t dormant(int32_t value) { return value; }
     return;
   }
   missingFunctions.pop_back();
+  // That body counted toward the generated hosted-startup place domain, which
+  // is pinned one past the maximum remaining body domain.
+  if (const lang::MirBody *hosted = missing.hostedStartup()) {
+    std::size_t maximumBodyDomain = 0;
+    for (const lang::MirBodyAddress address :
+         lang::enumerateMirBodyAddresses(missing)) {
+      const lang::MirBody *candidate = lang::findMirBody(missing, address);
+      if (candidate != nullptr && candidate != hosted) {
+        maximumBodyDomain =
+            std::max(maximumBodyDomain, candidate->placeDomain.body);
+      }
+    }
+    const_cast<lang::MirBody *>(hosted)->placeDomain.body =
+        maximumBodyDomain + 1;
+  }
   expect(lang::verifyMirProgram(missing).valid(),
          "removing an unreferenced final instance should remain structurally "
          "valid so backend snapshot coherence owns the rejection");

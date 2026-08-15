@@ -2684,31 +2684,18 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.lifecycle.front().target == 0) {
     return true;
   }
-  if (position == MirFailureControlFlowPosition::None ||
-      instruction.definedFailure.empty() || instruction.destination ||
+  // The eligible instruction shapes are position-independent: a checked
+  // scalar computation, load, or eligible ordinary call carries the same
+  // Invoke/record/cleanup contract whether it is a full-expression root, a
+  // nested call argument after prepared owners, or any other nested value
+  // position. Failure routing reads the live temporary/scope state at the
+  // instruction, so the position parameter no longer restricts eligibility;
+  // it remains the verifier's identity for the staged-owner cleanup contract.
+  (void)position;
+  if (instruction.definedFailure.empty() || instruction.destination ||
       instruction.loan || instruction.ownership ||
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
-  }
-  if (position == MirFailureControlFlowPosition::PreparedCallArgumentRoot) {
-    const bool localScalarDetector =
-        instruction.definedFailure.propagation ==
-            FailurePropagationKind::None &&
-        !instruction.definedFailure.localOrigins.empty() &&
-        (instruction.kind == MirInstructionKind::Compute ||
-         instruction.kind == MirInstructionKind::Load);
-    const bool directScalarCall =
-        instruction.kind == MirInstructionKind::Call &&
-        instruction.callSite != 0 &&
-        instruction.dispatch == CallDispatch::Static &&
-        instruction.functionTarget.has_value() &&
-        instruction.definedFailure.propagation ==
-            FailurePropagationKind::DirectCall &&
-        instruction.definedFailure.localOrigins.empty() &&
-        instruction.lifecycle.empty() && !instruction.successResultDrop;
-    if (!localScalarDetector && !directScalarCall) {
-      return false;
-    }
   }
   if (instruction.kind == MirInstructionKind::Compute ||
       instruction.kind == MirInstructionKind::Load) {
@@ -2847,8 +2834,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
 
   for (std::size_t index = 0; index < body.cleanupBoundaries.size(); ++index) {
     const MirCleanupBoundary &boundary = body.cleanupBoundaries[index];
-    if (boundary.id != index + 1 ||
-        boundary.hostedStartupOperation == 0 ||
+    if (boundary.id != index + 1 || boundary.hostedStartupOperation == 0 ||
         boundary.kind != MirCleanupBoundaryKind::Failure ||
         boundary.obligations.empty() ||
         std::any_of(boundary.obligations.begin(), boundary.obligations.end(),
@@ -2876,8 +2862,8 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
 
   std::unordered_set<MirInstructionId> instructionIds;
   std::vector<std::size_t> definitions(body.values.size(), 0);
-  std::vector<std::size_t> cleanupBoundaryMarkers(
-      body.cleanupBoundaries.size(), 0);
+  std::vector<std::size_t> cleanupBoundaryMarkers(body.cleanupBoundaries.size(),
+                                                  0);
   std::vector<std::size_t> failureParameters(body.failureRecords.size(), 0);
   std::vector<std::size_t> failureInvokes(body.failureRecords.size(), 0);
   std::vector<std::size_t> failureEndpoints(body.failureRecords.size(), 0);
@@ -2979,8 +2965,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
         const bool failureDrop =
             instruction.kind == MirInstructionKind::Drop &&
             instruction.lifecycle.size() == 1 &&
-            instruction.lifecycle.front().kind ==
-                MirLifecycleEventKind::Drop &&
+            instruction.lifecycle.front().kind == MirLifecycleEventKind::Drop &&
             instruction.lifecycle.front().failureCleanup;
         const bool failureBoundary =
             instruction.kind == MirInstructionKind::Lifecycle &&
@@ -3011,8 +2996,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
           valid = valid && source && !target &&
                   event.failureCleanup == (block.activeFailure != 0) &&
                   instruction.kind == MirInstructionKind::Drop &&
-                  instruction.destination &&
-                  validDrop(event.source) &&
+                  instruction.destination && validDrop(event.source) &&
                   body.dropObligations[event.source - 1].place ==
                       *instruction.destination;
           break;
@@ -3056,8 +3040,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
          validOperand(*terminator.value) &&
          terminator.value->type == SemanticType::Int32) ||
         (terminator.kind == MirTerminatorKind::Invoke &&
-         validTarget(terminator.target) &&
-         validTarget(terminator.elseTarget) &&
+         validTarget(terminator.target) && validTarget(terminator.elseTarget) &&
          terminator.target != terminator.elseTarget &&
          terminator.invokeInstruction != 0 &&
          validFailureRecord(terminator.failureRecord)) ||
@@ -3123,20 +3106,19 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
                     !terminator.successLifecycle.front().conditional &&
                     !terminator.successLifecycle.front().failureCleanup
               : terminator.successLifecycle.empty();
-      if (producer == nullptr || instructionBlocks[terminator.invokeInstruction] !=
-                                     block.id ||
+      if (producer == nullptr ||
+          instructionBlocks[terminator.invokeInstruction] != block.id ||
           block.instructions.empty() ||
           block.instructions.back().id != terminator.invokeInstruction ||
-          !exactHostedFailureProducer ||
-          record.producerBlock != block.id ||
+          !exactHostedFailureProducer || record.producerBlock != block.id ||
           record.producerInstruction != terminator.invokeInstruction ||
           record.parameterBlock != terminator.elseTarget ||
           normal.failureParameter != 0 ||
           normal.activeFailure != block.activeFailure ||
           failed.failureParameter != terminator.failureRecord ||
           failed.activeFailure != expectedFailureActive ||
-          terminator.failureRecord == block.activeFailure ||
-          terminator.value || !exactSuccessLifecycle) {
+          terminator.failureRecord == block.activeFailure || terminator.value ||
+          !exactSuccessLifecycle) {
         return failure(body, owner,
                        "hosted-startup invoke does not match its exact "
                        "generated record or successors",
@@ -3147,8 +3129,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
     const bool emptyFailureEndpoint =
         terminator.invokeInstruction == 0 && !terminator.value &&
         terminator.target == 0 && terminator.elseTarget == 0 &&
-        terminator.switchTargets.empty() &&
-        terminator.successLifecycle.empty();
+        terminator.switchTargets.empty() && terminator.successLifecycle.empty();
     if (terminator.kind == MirTerminatorKind::ContainFailure) {
       if (block.activeFailure == 0 ||
           block.activeFailure != terminator.failureRecord ||
@@ -3191,8 +3172,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
         block.terminator.kind != MirTerminatorKind::Goto &&
         block.terminator.kind != MirTerminatorKind::Invoke &&
         block.terminator.kind != MirTerminatorKind::ContainFailure &&
-        block.terminator.kind !=
-            MirTerminatorKind::TerminateCleanupFailure) {
+        block.terminator.kind != MirTerminatorKind::TerminateCleanupFailure) {
       return failure(body, owner,
                      "hosted-startup active-failure path bypasses its exact "
                      "terminal endpoint",
@@ -3205,9 +3185,8 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
           block.terminator.elseTarget == successor;
       const MirFailureRecordId expectedActive =
           invokeFailure
-              ? (block.activeFailure == 0
-                     ? block.terminator.failureRecord
-                     : block.activeFailure)
+              ? (block.activeFailure == 0 ? block.terminator.failureRecord
+                                          : block.activeFailure)
               : block.activeFailure;
       if (target.activeFailure != expectedActive ||
           (!invokeFailure && target.failureParameter != 0)) {
@@ -3217,8 +3196,8 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
                        successor);
       }
       if (target.failureParameter != 0) {
-        if (!invokeFailure || block.terminator.failureRecord !=
-                                  target.failureParameter) {
+        if (!invokeFailure ||
+            block.terminator.failureRecord != target.failureParameter) {
           return failure(body, owner,
                          "hosted-startup failure parameter has a non-failure "
                          "predecessor",
@@ -3299,8 +3278,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
         const MirBlock *secondary =
             body.findBlock(cursor->terminator.elseTarget);
         if (secondary == nullptr || secondary->activeFailure != record.id ||
-            secondary->failureParameter !=
-                cursor->terminator.failureRecord ||
+            secondary->failureParameter != cursor->terminator.failureRecord ||
             secondary->failureParameter == record.id ||
             !secondary->instructions.empty() ||
             secondary->terminator.kind !=
@@ -3320,10 +3298,9 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
                      cursor->id);
     }
     for (const MirBlock &candidate : body.blocks) {
-      const bool primaryState =
-          candidate.activeFailure == record.id &&
-          (candidate.failureParameter == 0 ||
-           candidate.failureParameter == record.id);
+      const bool primaryState = candidate.activeFailure == record.id &&
+                                (candidate.failureParameter == 0 ||
+                                 candidate.failureParameter == record.id);
       if (primaryState && !chain.contains(candidate.id)) {
         return failure(body, owner,
                        "hosted-startup primary cleanup block is disconnected",
@@ -3419,8 +3396,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
       }
     }
   }
-  if (std::any_of(cleanupBoundaryMarkers.begin(),
-                  cleanupBoundaryMarkers.end(),
+  if (std::any_of(cleanupBoundaryMarkers.begin(), cleanupBoundaryMarkers.end(),
                   [](std::size_t count) { return count != 1; })) {
     return failure(body, owner,
                    "hosted-startup cleanup boundary lacks one exact marker");
@@ -3465,11 +3441,11 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
 }
 
 [[nodiscard]] bool bodyHasHostedStartupProvenance(const MirBody &body) {
-  return std::any_of(
-             body.cleanupBoundaries.begin(), body.cleanupBoundaries.end(),
-             [](const MirCleanupBoundary &boundary) {
-               return boundary.hostedStartupOperation != 0;
-             }) ||
+  return std::any_of(body.cleanupBoundaries.begin(),
+                     body.cleanupBoundaries.end(),
+                     [](const MirCleanupBoundary &boundary) {
+                       return boundary.hostedStartupOperation != 0;
+                     }) ||
          std::any_of(body.failureRecords.begin(), body.failureRecords.end(),
                      [](const MirFailureRecord &record) {
                        return record.hostedStartupOperation != 0;
@@ -4706,10 +4682,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         const bool primary = block.failureParameter == block.activeFailure &&
                              producer != nullptr &&
                              producer->activeFailure == 0;
-        const bool secondary =
-            block.failureParameter != block.activeFailure &&
-            producer != nullptr &&
-            producer->activeFailure == block.activeFailure;
+        const bool secondary = block.failureParameter != block.activeFailure &&
+                               producer != nullptr &&
+                               producer->activeFailure == block.activeFailure;
         if (!primary && !secondary) {
           return failure(body, owner,
                          "failure parameter does not bind a primary or the "
@@ -5235,13 +5210,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       ++failureEndpointCounts[block.terminator.failureRecord - 1];
     }
-    if (block.terminator.kind ==
-        MirTerminatorKind::TerminateCleanupFailure) {
+    if (block.terminator.kind == MirTerminatorKind::TerminateCleanupFailure) {
       const MirFailureRecord *secondary =
           body.findFailureRecord(block.terminator.failureRecord);
-      const MirBlock *producer =
-          secondary == nullptr ? nullptr
-                               : body.findBlock(secondary->producerBlock);
+      const MirBlock *producer = secondary == nullptr
+                                     ? nullptr
+                                     : body.findBlock(secondary->producerBlock);
       if (secondary == nullptr || block.activeFailure == 0 ||
           block.failureParameter == 0 ||
           block.failureParameter != block.terminator.failureRecord ||
@@ -5305,8 +5279,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         continue;
       }
       const bool exactFailureEdge =
-          invokeFailure &&
-          block.terminator.failureRecord == parameter;
+          invokeFailure && block.terminator.failureRecord == parameter;
       if (!exactFailureEdge) {
         return failure(body, owner,
                        "failure-record parameter has a non-failure "
@@ -5387,10 +5360,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         const MirBlock *normal = body.findBlock(cursor->terminator.target);
         const MirBlock *secondary =
             body.findBlock(cursor->terminator.elseTarget);
-        if (secondary == nullptr ||
-            secondary->activeFailure != record.id ||
-            secondary->failureParameter !=
-                cursor->terminator.failureRecord ||
+        if (secondary == nullptr || secondary->activeFailure != record.id ||
+            secondary->failureParameter != cursor->terminator.failureRecord ||
             secondary->failureParameter == record.id ||
             !secondary->instructions.empty() ||
             secondary->terminator.kind !=
@@ -5412,10 +5383,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
 
     for (const MirBlock &candidate : body.blocks) {
-      const bool primaryState =
-          candidate.activeFailure == record.id &&
-          (candidate.failureParameter == 0 ||
-           candidate.failureParameter == record.id);
+      const bool primaryState = candidate.activeFailure == record.id &&
+                                (candidate.failureParameter == 0 ||
+                                 candidate.failureParameter == record.id);
       if (primaryState && !primaryChain.contains(candidate.id)) {
         return failure(body, owner,
                        "active primary failure block is disconnected from "
@@ -5444,9 +5414,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                    "cleanup sequence must have exactly one boundary marker");
   }
   std::unordered_map<MirInstructionId, std::size_t> bindingDropCoverage;
-  const auto precedingDropSequence =
-      [&](const MirBlock &markerBlock, std::size_t markerIndex,
-          std::size_t dropCount)
+  const auto precedingDropSequence = [&](const MirBlock &markerBlock,
+                                         std::size_t markerIndex,
+                                         std::size_t dropCount)
       -> std::optional<std::vector<const MirInstruction *>> {
     std::vector<const MirInstruction *> reversed;
     reversed.reserve(dropCount);
@@ -5458,8 +5428,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return std::nullopt;
       }
       while (cursorIndex != 0 && reversed.size() < dropCount) {
-        const MirInstruction &candidate =
-            cursor->instructions[cursorIndex - 1];
+        const MirInstruction &candidate = cursor->instructions[cursorIndex - 1];
         if (candidate.kind != MirInstructionKind::Drop) {
           break;
         }
@@ -5506,8 +5475,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       const MirCleanupBoundary &boundary =
           body.cleanupBoundaries[marker.cleanupBoundaryEnd - 1];
-      const auto drops = precedingDropSequence(
-          block, markerIndex, boundary.obligations.size());
+      const auto drops = precedingDropSequence(block, markerIndex,
+                                               boundary.obligations.size());
       if (!drops || drops->size() != boundary.obligations.size()) {
         return failure(body, owner,
                        "cleanup sequence is not connected to its exact "
@@ -5539,8 +5508,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       const MirDropObligation *obligation =
           body.findDropObligation(instruction.lifecycle.front().source);
-      const bool failureCleanup =
-          instruction.lifecycle.front().failureCleanup;
+      const bool failureCleanup = instruction.lifecycle.front().failureCleanup;
       const bool requiresBoundary =
           failureCleanup ||
           (obligation != nullptr &&
@@ -5821,6 +5789,35 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                        "program-constant substitution retains an extra "
                        "unmarked compute",
                        block.id, instruction.id);
+      }
+    }
+  }
+  // An ordered call stages its inputs, so a substituted constant used as a
+  // receiver or argument keeps its exact HIR identity on the staged value as
+  // well as on its one materialization. Admit only a stage that forwards an
+  // already scheduled value of the same constant.
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::CallInput ||
+            instruction.programConstantSubstitution || !instruction.result ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Value) {
+          continue;
+        }
+        const auto schedule =
+            programConstantScheduleValues.find(instruction.hirValue);
+        if (schedule == programConstantScheduleValues.end() ||
+            !schedule->second.contains(instruction.operands.front().value)) {
+          continue;
+        }
+        const MirValue *staged = body.findValue(*instruction.result);
+        if (staged == nullptr || staged->sourceValue != instruction.hirValue) {
+          continue;
+        }
+        changed =
+            schedule->second.insert(*instruction.result).second || changed;
       }
     }
   }
@@ -6131,20 +6128,39 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     const MirBlock &producer =
         body.blocks[instructionBlocks.at(instructionId) - 1];
-    const MirBlock &failureBlock =
-        body.blocks[producer.terminator.elseTarget - 1];
+    // A failure-capable destructor routes its own secondary failure, so one
+    // reverse cleanup edge can span a chain of blocks instead of ending in the
+    // immediate failure successor. Follow the normal continuation of each
+    // cleanup invoke so every staged owner is counted exactly once across the
+    // whole chain.
+    std::vector<const MirBlock *> cleanupChain;
+    std::unordered_set<MirBlockId> visitedCleanupBlocks;
+    for (MirBlockId next = producer.terminator.elseTarget;
+         next != 0 && next <= body.blocks.size() &&
+         visitedCleanupBlocks.insert(next).second;) {
+      const MirBlock &cleanupBlock = body.blocks[next - 1];
+      cleanupChain.push_back(&cleanupBlock);
+      if (cleanupBlock.terminator.kind != MirTerminatorKind::Invoke) {
+        break;
+      }
+      next = cleanupBlock.terminator.target;
+    }
     for (const MirDropObligationId prepared :
          argumentContext->priorPreparedDrops) {
-      const std::size_t cleanupCount = static_cast<std::size_t>(std::count_if(
-          failureBlock.instructions.begin(), failureBlock.instructions.end(),
-          [&](const MirInstruction &cleanup) {
-            return cleanup.kind == MirInstructionKind::Drop &&
-                   cleanup.lifecycle.size() == 1 &&
-                   cleanup.lifecycle.front().kind ==
-                       MirLifecycleEventKind::Drop &&
-                   cleanup.lifecycle.front().source == prepared &&
-                   cleanup.lifecycle.front().failureCleanup;
-          }));
+      std::size_t cleanupCount = 0;
+      for (const MirBlock *failureBlock : cleanupChain) {
+        cleanupCount += static_cast<std::size_t>(std::count_if(
+            failureBlock->instructions.begin(),
+            failureBlock->instructions.end(),
+            [&](const MirInstruction &cleanup) {
+              return cleanup.kind == MirInstructionKind::Drop &&
+                     cleanup.lifecycle.size() == 1 &&
+                     cleanup.lifecycle.front().kind ==
+                         MirLifecycleEventKind::Drop &&
+                     cleanup.lifecycle.front().source == prepared &&
+                     cleanup.lifecycle.front().failureCleanup;
+            }));
+      }
       if (cleanupCount != 1) {
         return failure(
             body, owner,
@@ -6179,8 +6195,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           }
         }
       }
-      const auto drops = precedingDropSequence(block, markerIndex,
-                                               expressionDropIds.size());
+      const auto drops =
+          precedingDropSequence(block, markerIndex, expressionDropIds.size());
       if (!drops || drops->size() != expressionDropIds.size()) {
         return failure(body, owner,
                        "full-expression cleanup is not connected to its "
@@ -7849,16 +7865,14 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.kind != MirInstructionKind::Drop ||
           instruction.lifecycle.size() != 1 ||
-          instruction.lifecycle.front().kind !=
-              MirLifecycleEventKind::Drop) {
+          instruction.lifecycle.front().kind != MirLifecycleEventKind::Drop) {
         continue;
       }
       const MirDropObligation *obligation =
           body.findDropObligation(instruction.lifecycle.front().source);
       const MirDestructorInstance *destructor =
           obligation != nullptr && obligation->dropType.destructor
-              ? program.findDestructorInstance(
-                    *obligation->dropType.destructor)
+              ? program.findDestructorInstance(*obligation->dropType.destructor)
               : nullptr;
       const FailurePropagationKind expected =
           destructor != nullptr && destructor->mayRaiseDefinedFailure
@@ -10798,24 +10812,25 @@ verifyMirHostedStartup(const MirProgram &program) {
           operation.expected.block, operation.expected.instruction);
     }
   };
-  const auto exactCleanupBoundary = [&](const TakenOperation &operation,
-                                        std::vector<MirDropObligationId>
-                                            obligations) {
-    if (operation.expected.cleanupBoundary == 0 ||
-        operation.expected.cleanupBoundary > body->cleanupBoundaries.size()) {
-      return;
-    }
-    const MirCleanupBoundary expected{
-        .id = operation.expected.cleanupBoundary,
-        .hostedStartupOperation = operation.expected.id,
-        .kind = MirCleanupBoundaryKind::Failure,
-        .obligations = std::move(obligations)};
-    if (body->cleanupBoundaries[operation.expected.cleanupBoundary - 1] !=
-        expected) {
-      add("hosted-startup generated cleanup boundary is not exact",
-          operation.expected.block, operation.expected.instruction);
-    }
-  };
+  const auto exactCleanupBoundary =
+      [&](const TakenOperation &operation,
+          std::vector<MirDropObligationId> obligations) {
+        if (operation.expected.cleanupBoundary == 0 ||
+            operation.expected.cleanupBoundary >
+                body->cleanupBoundaries.size()) {
+          return;
+        }
+        const MirCleanupBoundary expected{
+            .id = operation.expected.cleanupBoundary,
+            .hostedStartupOperation = operation.expected.id,
+            .kind = MirCleanupBoundaryKind::Failure,
+            .obligations = std::move(obligations)};
+        if (body->cleanupBoundaries[operation.expected.cleanupBoundary - 1] !=
+            expected) {
+          add("hosted-startup generated cleanup boundary is not exact",
+              operation.expected.block, operation.expected.instruction);
+        }
+      };
   MirBlockId nextGeneratedBlock = 2;
   const auto destructorMayRaise = [&](MirDropObligationId obligation) {
     const MirDropObligation *drop = body->findDropObligation(obligation);
@@ -10825,112 +10840,103 @@ verifyMirHostedStartup(const MirProgram &program) {
             : nullptr;
     return destructor != nullptr && destructor->mayRaiseDefinedFailure;
   };
-  const auto takeFailureRoute =
-      [&](MirBlockId producerBlock, MirInstructionId producerInstruction,
-          const std::vector<MirDropObligationId> &activeDrops,
-          MirDropObligationId successDrop = 0) {
-        const MirBlockId normalBlock = nextGeneratedBlock++;
-        const MirBlockId failureBlock = nextGeneratedBlock++;
-        const TakenOperation route = take(
-            MirHostedStartupOperationKind::RouteOperationFailure,
-            MirHostedStartupFailureBehavior::None, producerBlock, false,
-            false, false, false, true);
-        exactFailureRecord(route,
-                           {.producerBlock = producerBlock,
-                            .producerInstruction = producerInstruction,
-                            .parameterBlock = failureBlock});
-        MirTerminator invoke{.kind = MirTerminatorKind::Invoke,
-                             .invokeInstruction = producerInstruction,
-                             .failureRecord = route.expected.failureRecord,
-                             .target = normalBlock,
-                             .elseTarget = failureBlock};
-        if (successDrop != 0) {
-          invoke.successLifecycle = {
-              {.kind = MirLifecycleEventKind::Initialize,
-               .target = successDrop}};
-        }
-        exactTerminator(route, std::move(invoke));
+  const auto takeFailureRoute = [&](MirBlockId producerBlock,
+                                    MirInstructionId producerInstruction,
+                                    const std::vector<MirDropObligationId>
+                                        &activeDrops,
+                                    MirDropObligationId successDrop = 0) {
+    const MirBlockId normalBlock = nextGeneratedBlock++;
+    const MirBlockId failureBlock = nextGeneratedBlock++;
+    const TakenOperation route =
+        take(MirHostedStartupOperationKind::RouteOperationFailure,
+             MirHostedStartupFailureBehavior::None, producerBlock, false, false,
+             false, false, true);
+    exactFailureRecord(route, {.producerBlock = producerBlock,
+                               .producerInstruction = producerInstruction,
+                               .parameterBlock = failureBlock});
+    MirTerminator invoke{.kind = MirTerminatorKind::Invoke,
+                         .invokeInstruction = producerInstruction,
+                         .failureRecord = route.expected.failureRecord,
+                         .target = normalBlock,
+                         .elseTarget = failureBlock};
+    if (successDrop != 0) {
+      invoke.successLifecycle = {
+          {.kind = MirLifecycleEventKind::Initialize, .target = successDrop}};
+    }
+    exactTerminator(route, std::move(invoke));
 
-        MirBlockId cleanupBlock = failureBlock;
-        std::vector<MirDropObligationId> boundaryDrops;
-        boundaryDrops.reserve(activeDrops.size());
-        for (auto candidate = activeDrops.rbegin();
-             candidate != activeDrops.rend(); ++candidate) {
-          const MirDropObligation *drop =
-              body->findDropObligation(*candidate);
-          const MirPlace *place =
-              drop == nullptr ? nullptr : body->findPlace(drop->place);
-          const bool mayRaise = destructorMayRaise(*candidate);
-          const TakenOperation cleanupDrop = take(
-              MirHostedStartupOperationKind::DropFailureCleanup,
-              failureBehavior(mayRaise), cleanupBlock, true, false, false,
-              false);
-          if (drop != nullptr && place != nullptr) {
-            exactInstruction(
-                cleanupDrop,
-                {.kind = MirInstructionKind::Drop,
-                 .destination = drop->place,
-                 .definedFailure = propagation(
-                     FailurePropagationKind::Destructor, mayRaise),
-                 .info = generatedInfo(drop->dropType.type,
-                                       ValueCategory::Place,
-                                       AccessMode::Mutable),
-                 .lifecycle = {{.kind = MirLifecycleEventKind::Drop,
-                                .source = *candidate,
-                                .failureCleanup = true}}});
-          }
-          boundaryDrops.push_back(*candidate);
-          if (!mayRaise) {
-            continue;
-          }
-          const MirBlockId cleanupNormal = nextGeneratedBlock++;
-          const MirBlockId secondaryBlock = nextGeneratedBlock++;
-          const TakenOperation cleanupRoute = take(
-              MirHostedStartupOperationKind::RouteCleanupFailure,
-              MirHostedStartupFailureBehavior::None, cleanupBlock, false,
-              false, false, false, true);
-          exactFailureRecord(
-              cleanupRoute,
-              {.producerBlock = cleanupBlock,
-               .producerInstruction = cleanupDrop.expected.instruction,
-               .parameterBlock = secondaryBlock});
-          exactTerminator(
-              cleanupRoute,
-              {.kind = MirTerminatorKind::Invoke,
-               .invokeInstruction = cleanupDrop.expected.instruction,
-               .failureRecord = cleanupRoute.expected.failureRecord,
-               .target = cleanupNormal,
-               .elseTarget = secondaryBlock});
-          const TakenOperation terminate = take(
-              MirHostedStartupOperationKind::TerminateCleanupFailure,
-              MirHostedStartupFailureBehavior::None, secondaryBlock, false,
-              false, false, false);
-          exactTerminator(
-              terminate,
-              {.kind = MirTerminatorKind::TerminateCleanupFailure,
-               .failureRecord = cleanupRoute.expected.failureRecord});
-          cleanupBlock = cleanupNormal;
-        }
-        if (!boundaryDrops.empty()) {
-          const TakenOperation end = take(
-              MirHostedStartupOperationKind::EndFailureCleanup,
-              MirHostedStartupFailureBehavior::None, cleanupBlock, true,
-              false, false, false, false, true);
-          exactCleanupBoundary(end, boundaryDrops);
-          exactInstruction(
-              end, {.kind = MirInstructionKind::Lifecycle,
-                    .cleanupBoundaryEnd = end.expected.cleanupBoundary});
-        }
-        const TakenOperation contain = take(
-            MirHostedStartupOperationKind::ContainFailure,
-            MirHostedStartupFailureBehavior::None, cleanupBlock, false,
-            false, false, false);
-        exactTerminator(
-            contain,
-            {.kind = MirTerminatorKind::ContainFailure,
-             .failureRecord = route.expected.failureRecord});
-        return normalBlock;
-      };
+    MirBlockId cleanupBlock = failureBlock;
+    std::vector<MirDropObligationId> boundaryDrops;
+    boundaryDrops.reserve(activeDrops.size());
+    for (auto candidate = activeDrops.rbegin(); candidate != activeDrops.rend();
+         ++candidate) {
+      const MirDropObligation *drop = body->findDropObligation(*candidate);
+      const MirPlace *place =
+          drop == nullptr ? nullptr : body->findPlace(drop->place);
+      const bool mayRaise = destructorMayRaise(*candidate);
+      const TakenOperation cleanupDrop = take(
+          MirHostedStartupOperationKind::DropFailureCleanup,
+          failureBehavior(mayRaise), cleanupBlock, true, false, false, false);
+      if (drop != nullptr && place != nullptr) {
+        exactInstruction(
+            cleanupDrop,
+            {.kind = MirInstructionKind::Drop,
+             .destination = drop->place,
+             .definedFailure =
+                 propagation(FailurePropagationKind::Destructor, mayRaise),
+             .info = generatedInfo(drop->dropType.type, ValueCategory::Place,
+                                   AccessMode::Mutable),
+             .lifecycle = {{.kind = MirLifecycleEventKind::Drop,
+                            .source = *candidate,
+                            .failureCleanup = true}}});
+      }
+      boundaryDrops.push_back(*candidate);
+      if (!mayRaise) {
+        continue;
+      }
+      const MirBlockId cleanupNormal = nextGeneratedBlock++;
+      const MirBlockId secondaryBlock = nextGeneratedBlock++;
+      const TakenOperation cleanupRoute =
+          take(MirHostedStartupOperationKind::RouteCleanupFailure,
+               MirHostedStartupFailureBehavior::None, cleanupBlock, false,
+               false, false, false, true);
+      exactFailureRecord(cleanupRoute, {.producerBlock = cleanupBlock,
+                                        .producerInstruction =
+                                            cleanupDrop.expected.instruction,
+                                        .parameterBlock = secondaryBlock});
+      exactTerminator(cleanupRoute,
+                      {.kind = MirTerminatorKind::Invoke,
+                       .invokeInstruction = cleanupDrop.expected.instruction,
+                       .failureRecord = cleanupRoute.expected.failureRecord,
+                       .target = cleanupNormal,
+                       .elseTarget = secondaryBlock});
+      const TakenOperation terminate =
+          take(MirHostedStartupOperationKind::TerminateCleanupFailure,
+               MirHostedStartupFailureBehavior::None, secondaryBlock, false,
+               false, false, false);
+      exactTerminator(terminate,
+                      {.kind = MirTerminatorKind::TerminateCleanupFailure,
+                       .failureRecord = cleanupRoute.expected.failureRecord});
+      cleanupBlock = cleanupNormal;
+    }
+    if (!boundaryDrops.empty()) {
+      const TakenOperation end =
+          take(MirHostedStartupOperationKind::EndFailureCleanup,
+               MirHostedStartupFailureBehavior::None, cleanupBlock, true, false,
+               false, false, false, true);
+      exactCleanupBoundary(end, boundaryDrops);
+      exactInstruction(end,
+                       {.kind = MirInstructionKind::Lifecycle,
+                        .cleanupBoundaryEnd = end.expected.cleanupBoundary});
+    }
+    const TakenOperation contain =
+        take(MirHostedStartupOperationKind::ContainFailure,
+             MirHostedStartupFailureBehavior::None, cleanupBlock, false, false,
+             false, false);
+    exactTerminator(contain, {.kind = MirTerminatorKind::ContainFailure,
+                              .failureRecord = route.expected.failureRecord});
+    return normalBlock;
+  };
 
   if (plan.kind == ProgramEntryKind::NoArguments) {
     MirBlockId currentBlock = 1;
@@ -10953,14 +10959,14 @@ verifyMirHostedStartup(const MirProgram &program) {
                         .bodyTarget = plan.programInitializationTarget,
                         .info = generatedInfo(SemanticType::Void)});
       if (moduleMayRaise) {
-        currentBlock = takeFailureRoute(
-            currentBlock, callBody.expected.instruction, {});
+        currentBlock =
+            takeFailureRoute(currentBlock, callBody.expected.instruction, {});
       }
     }
     const TakenOperation callEntry =
         take(MirHostedStartupOperationKind::CallEntry,
-             failureBehavior(entry.mayRaiseDefinedFailure), currentBlock,
-             true, false, true, false);
+             failureBehavior(entry.mayRaiseDefinedFailure), currentBlock, true,
+             false, true, false);
     exactValue(callEntry, generatedInfo(SemanticType::Int32));
     exactInstruction(callEntry, {.kind = MirInstructionKind::Call,
                                  .result = callEntry.expected.value,
@@ -10970,13 +10976,13 @@ verifyMirHostedStartup(const MirProgram &program) {
                                  .functionTarget = entry.id,
                                  .info = generatedInfo(SemanticType::Int32)});
     if (entry.mayRaiseDefinedFailure) {
-      currentBlock = takeFailureRoute(
-          currentBlock, callEntry.expected.instruction, {});
+      currentBlock =
+          takeFailureRoute(currentBlock, callEntry.expected.instruction, {});
     }
-    const TakenOperation returnEntry = take(
-        MirHostedStartupOperationKind::ReturnEntry,
-        MirHostedStartupFailureBehavior::None, currentBlock, false, false,
-        false, false);
+    const TakenOperation returnEntry =
+        take(MirHostedStartupOperationKind::ReturnEntry,
+             MirHostedStartupFailureBehavior::None, currentBlock, false, false,
+             false, false);
     exactTerminator(returnEntry,
                     {.kind = MirTerminatorKind::Return,
                      .value = MirOperand{.kind = MirOperandKind::Value,
@@ -11111,10 +11117,10 @@ verifyMirHostedStartup(const MirProgram &program) {
       add("owned-argument hosted failure site is not the exact two-outcome "
           "shared anchor");
     }
-    const TakenOperation validate = take(
-        MirHostedStartupOperationKind::ValidateArgumentCount,
-        MirHostedStartupFailureBehavior::Detect, currentBlock, true, false,
-        true, false);
+    const TakenOperation validate =
+        take(MirHostedStartupOperationKind::ValidateArgumentCount,
+             MirHostedStartupFailureBehavior::Detect, currentBlock, true, false,
+             true, false);
     exactValue(validate, generatedInfo(SemanticType::Int64));
     exactInstruction(validate,
                      {.kind = MirInstructionKind::Load,
@@ -11122,13 +11128,13 @@ verifyMirHostedStartup(const MirProgram &program) {
                       .definedFailure = {.localOrigins = {validateOrigin}},
                       .localFailureSites = {hostedSite},
                       .info = generatedInfo(SemanticType::Int64)});
-    currentBlock = takeFailureRoute(currentBlock,
-                                    validate.expected.instruction, {});
+    currentBlock =
+        takeFailureRoute(currentBlock, validate.expected.instruction, {});
 
-    const TakenOperation convert = take(
-        MirHostedStartupOperationKind::ConvertArgumentCount,
-        MirHostedStartupFailureBehavior::Detect, currentBlock, true, false,
-        true, false);
+    const TakenOperation convert =
+        take(MirHostedStartupOperationKind::ConvertArgumentCount,
+             MirHostedStartupFailureBehavior::Detect, currentBlock, true, false,
+             true, false);
     exactValue(convert, generatedInfo(SemanticType::Int32));
     exactInstruction(convert,
                      {.kind = MirInstructionKind::Compute,
@@ -11140,8 +11146,8 @@ verifyMirHostedStartup(const MirProgram &program) {
                       .definedFailure = {.localOrigins = {convertOrigin}},
                       .localFailureSites = {hostedSite},
                       .info = generatedInfo(SemanticType::Int32)});
-    currentBlock = takeFailureRoute(currentBlock,
-                                    convert.expected.instruction, {});
+    currentBlock =
+        takeFailureRoute(currentBlock, convert.expected.instruction, {});
     if (callsProgramInitialization) {
       const TakenOperation callBody =
           take(MirHostedStartupOperationKind::CallProgramInitialization,
@@ -11154,8 +11160,8 @@ verifyMirHostedStartup(const MirProgram &program) {
                         .bodyTarget = plan.programInitializationTarget,
                         .info = generatedInfo(SemanticType::Void)});
       if (moduleMayRaise) {
-        currentBlock = takeFailureRoute(
-            currentBlock, callBody.expected.instruction, {});
+        currentBlock =
+            takeFailureRoute(currentBlock, callBody.expected.instruction, {});
       }
     }
 
@@ -11174,34 +11180,31 @@ verifyMirHostedStartup(const MirProgram &program) {
                        .place = vector.expected.place,
                        .generatedValue = vector.expected.value,
                        .dropType = vectorDropType});
-    const bool vectorMayRaise =
-        vectorConstructor != nullptr &&
-        vectorConstructor->mayRaiseDefinedFailure;
+    const bool vectorMayRaise = vectorConstructor != nullptr &&
+                                vectorConstructor->mayRaiseDefinedFailure;
     MirInstruction expectedVector{
         .kind = MirInstructionKind::Construct,
         .result = vector.expected.value,
-        .definedFailure = propagation(FailurePropagationKind::Constructor,
-                                      vectorMayRaise),
+        .definedFailure =
+            propagation(FailurePropagationKind::Constructor, vectorMayRaise),
         .constructorTarget = plan.vectorConstructor,
         .info = generatedInfo(vectorType)};
     if (vectorMayRaise) {
       expectedVector.successResultDrop = vector.expected.dropObligation;
     } else {
-      expectedVector.lifecycle = {
-          {.kind = MirLifecycleEventKind::Initialize,
-           .target = vector.expected.dropObligation}};
+      expectedVector.lifecycle = {{.kind = MirLifecycleEventKind::Initialize,
+                                   .target = vector.expected.dropObligation}};
     }
     exactInstruction(vector, std::move(expectedVector));
     if (vectorMayRaise) {
-      currentBlock = takeFailureRoute(currentBlock,
-                                      vector.expected.instruction, {},
-                                      vector.expected.dropObligation);
+      currentBlock = takeFailureRoute(currentBlock, vector.expected.instruction,
+                                      {}, vector.expected.dropObligation);
     }
 
-    const TakenOperation initializeIndex = take(
-        MirHostedStartupOperationKind::InitializeArgumentIndex,
-        MirHostedStartupFailureBehavior::None, currentBlock, true, true,
-        false, false);
+    const TakenOperation initializeIndex =
+        take(MirHostedStartupOperationKind::InitializeArgumentIndex,
+             MirHostedStartupFailureBehavior::None, currentBlock, true, true,
+             false, false);
     exactPlace(initializeIndex,
                {.root = MirPlaceRootKind::Temporary,
                 .temporary = 1,
@@ -11218,18 +11221,17 @@ verifyMirHostedStartup(const MirProgram &program) {
          .info = generatedInfo(SemanticType::Int32, ValueCategory::Place,
                                AccessMode::Mutable)});
     const MirBlockId loopHeaderBlock = nextGeneratedBlock++;
-    const TakenOperation enterLoop = take(
-        MirHostedStartupOperationKind::EnterArgumentLoop,
-        MirHostedStartupFailureBehavior::None, currentBlock, false, false,
-        false, false);
-    exactTerminator(enterLoop,
-                    {.kind = MirTerminatorKind::Goto,
-                     .target = loopHeaderBlock});
+    const TakenOperation enterLoop =
+        take(MirHostedStartupOperationKind::EnterArgumentLoop,
+             MirHostedStartupFailureBehavior::None, currentBlock, false, false,
+             false, false);
+    exactTerminator(enterLoop, {.kind = MirTerminatorKind::Goto,
+                                .target = loopHeaderBlock});
 
-    const TakenOperation loadIndex = take(
-        MirHostedStartupOperationKind::LoadArgumentIndex,
-        MirHostedStartupFailureBehavior::None, loopHeaderBlock, true, false,
-        true, false);
+    const TakenOperation loadIndex =
+        take(MirHostedStartupOperationKind::LoadArgumentIndex,
+             MirHostedStartupFailureBehavior::None, loopHeaderBlock, true,
+             false, true, false);
     exactValue(loadIndex, generatedInfo(SemanticType::Int32));
     exactInstruction(loadIndex,
                      {.kind = MirInstructionKind::Load,
@@ -11238,10 +11240,10 @@ verifyMirHostedStartup(const MirProgram &program) {
                                     .place = initializeIndex.expected.place,
                                     .type = SemanticType::Int32}},
                       .info = generatedInfo(SemanticType::Int32)});
-    const TakenOperation testIndex = take(
-        MirHostedStartupOperationKind::TestArgumentIndex,
-        MirHostedStartupFailureBehavior::None, loopHeaderBlock, true, false,
-        true, false);
+    const TakenOperation testIndex =
+        take(MirHostedStartupOperationKind::TestArgumentIndex,
+             MirHostedStartupFailureBehavior::None, loopHeaderBlock, true,
+             false, true, false);
     exactValue(testIndex, generatedInfo(SemanticType::Bool));
     exactInstruction(testIndex,
                      {.kind = MirInstructionKind::Compute,
@@ -11256,10 +11258,10 @@ verifyMirHostedStartup(const MirProgram &program) {
                       .info = generatedInfo(SemanticType::Bool)});
     const MirBlockId loopBodyBlock = nextGeneratedBlock++;
     const MirBlockId entryCallBlock = nextGeneratedBlock++;
-    const TakenOperation branchLoop = take(
-        MirHostedStartupOperationKind::BranchArgumentLoop,
-        MirHostedStartupFailureBehavior::None, loopHeaderBlock, false, false,
-        false, false);
+    const TakenOperation branchLoop =
+        take(MirHostedStartupOperationKind::BranchArgumentLoop,
+             MirHostedStartupFailureBehavior::None, loopHeaderBlock, false,
+             false, false, false);
     exactTerminator(branchLoop,
                     {.kind = MirTerminatorKind::Branch,
                      .value = MirOperand{.kind = MirOperandKind::Value,
@@ -11270,10 +11272,10 @@ verifyMirHostedStartup(const MirProgram &program) {
 
     MirBlockId iterationBlock = loopBodyBlock;
 
-    const TakenOperation readView = take(
-        MirHostedStartupOperationKind::ReadArgumentView,
-        MirHostedStartupFailureBehavior::None, iterationBlock, true, false,
-        true, false);
+    const TakenOperation readView =
+        take(MirHostedStartupOperationKind::ReadArgumentView,
+             MirHostedStartupFailureBehavior::None, iterationBlock, true, false,
+             true, false);
     exactValue(readView, generatedInfo(SemanticType::StringView));
     exactInstruction(readView,
                      {.kind = MirInstructionKind::Compute,
@@ -11283,9 +11285,10 @@ verifyMirHostedStartup(const MirProgram &program) {
                                     .type = SemanticType::Int32}},
                       .operation = MirOperation::None,
                       .info = generatedInfo(SemanticType::StringView)});
-    const TakenOperation stringInput = take(
-        MirHostedStartupOperationKind::PrepareStringConstructorArgument,
-        MirHostedStartupFailureBehavior::None, 3, true, false, true, false);
+    const TakenOperation stringInput =
+        take(MirHostedStartupOperationKind::PrepareStringConstructorArgument,
+             MirHostedStartupFailureBehavior::None, iterationBlock, true, false,
+             true, false);
     exactValue(stringInput, generatedInfo(SemanticType::StringView));
     exactInstruction(stringInput,
                      {.kind = MirInstructionKind::CallInput,
@@ -11296,11 +11299,12 @@ verifyMirHostedStartup(const MirProgram &program) {
                                     .value = readView.expected.value,
                                     .type = SemanticType::StringView}},
                       .info = generatedInfo(SemanticType::StringView)});
+    const bool stringMayRaise = stringConstructor != nullptr &&
+                                stringConstructor->mayRaiseDefinedFailure;
     const TakenOperation string =
         take(MirHostedStartupOperationKind::ConstructArgumentString,
-             failureBehavior(stringConstructor != nullptr &&
-                             stringConstructor->mayRaiseDefinedFailure),
-             3, true, true, true, true);
+             failureBehavior(stringMayRaise), iterationBlock, true, true, true,
+             true);
     exactValue(string, generatedInfo(stringType));
     exactPlace(string, {.root = MirPlaceRootKind::Value,
                         .value = string.expected.value,
@@ -11311,25 +11315,34 @@ verifyMirHostedStartup(const MirProgram &program) {
                        .place = string.expected.place,
                        .generatedValue = string.expected.value,
                        .dropType = stringDropType});
-    exactInstruction(
-        string, {.kind = MirInstructionKind::Construct,
-                 .result = string.expected.value,
-                 .operands = {{.kind = MirOperandKind::Value,
-                               .value = stringInput.expected.value,
-                               .type = SemanticType::StringView}},
-                 .parameterTypes = {SemanticType::StringView},
-                 .definedFailure =
-                     propagation(FailurePropagationKind::Constructor,
-                                 stringConstructor != nullptr &&
-                                     stringConstructor->mayRaiseDefinedFailure),
-                 .constructorTarget = plan.stringConstructor,
-                 .info = generatedInfo(stringType),
-                 .lifecycle = {{.kind = MirLifecycleEventKind::Initialize,
-                                .target = string.expected.dropObligation}}});
+    MirInstruction expectedString{
+        .kind = MirInstructionKind::Construct,
+        .result = string.expected.value,
+        .operands = {{.kind = MirOperandKind::Value,
+                      .value = stringInput.expected.value,
+                      .type = SemanticType::StringView}},
+        .parameterTypes = {SemanticType::StringView},
+        .definedFailure =
+            propagation(FailurePropagationKind::Constructor, stringMayRaise),
+        .constructorTarget = plan.stringConstructor,
+        .info = generatedInfo(stringType)};
+    if (stringMayRaise) {
+      expectedString.successResultDrop = string.expected.dropObligation;
+    } else {
+      expectedString.lifecycle = {{.kind = MirLifecycleEventKind::Initialize,
+                                   .target = string.expected.dropObligation}};
+    }
+    exactInstruction(string, std::move(expectedString));
+    if (stringMayRaise) {
+      iterationBlock = takeFailureRoute(
+          iterationBlock, string.expected.instruction,
+          {vector.expected.dropObligation}, string.expected.dropObligation);
+    }
 
-    const TakenOperation appendReceiver = take(
-        MirHostedStartupOperationKind::PrepareAppendReceiver,
-        MirHostedStartupFailureBehavior::None, 3, true, false, true, false);
+    const TakenOperation appendReceiver =
+        take(MirHostedStartupOperationKind::PrepareAppendReceiver,
+             MirHostedStartupFailureBehavior::None, iterationBlock, true, false,
+             true, false);
     exactValue(appendReceiver, generatedInfo(vectorType));
     exactInstruction(appendReceiver,
                      {.kind = MirInstructionKind::CallInput,
@@ -11342,7 +11355,8 @@ verifyMirHostedStartup(const MirProgram &program) {
                       .info = generatedInfo(vectorType)});
     const TakenOperation appendArgument =
         take(MirHostedStartupOperationKind::PrepareAppendArgumentMove,
-             MirHostedStartupFailureBehavior::None, 3, true, true, true, true);
+             MirHostedStartupFailureBehavior::None, iterationBlock, true, true,
+             true, true);
     exactValue(appendArgument, generatedInfo(stringType));
     exactPlace(appendArgument, {.root = MirPlaceRootKind::Temporary,
                                 .temporary = 2,
@@ -11368,10 +11382,12 @@ verifyMirHostedStartup(const MirProgram &program) {
          .lifecycle = {{.kind = MirLifecycleEventKind::Reparent,
                         .source = string.expected.dropObligation,
                         .target = appendArgument.expected.dropObligation}}});
-    const TakenOperation appendCall = take(
-        MirHostedStartupOperationKind::CallAppend,
-        failureBehavior(append != nullptr && append->mayRaiseDefinedFailure), 3,
-        true, false, false, false);
+    const bool appendMayRaise =
+        append != nullptr && append->mayRaiseDefinedFailure;
+    const TakenOperation appendCall =
+        take(MirHostedStartupOperationKind::CallAppend,
+             failureBehavior(appendMayRaise), iterationBlock, true, false,
+             false, false);
     exactInstruction(
         appendCall,
         {.kind = MirInstructionKind::Call,
@@ -11383,15 +11399,20 @@ verifyMirHostedStartup(const MirProgram &program) {
                        .type = stringType}},
          .parameterTypes = {stringType},
          .definedFailure =
-             propagation(FailurePropagationKind::DirectCall,
-                         append != nullptr && append->mayRaiseDefinedFailure),
+             propagation(FailurePropagationKind::DirectCall, appendMayRaise),
          .functionTarget = plan.appendFunction,
          .info = generatedInfo(SemanticType::Void),
          .lifecycle = {{.kind = MirLifecycleEventKind::TransferOut,
                         .source = appendArgument.expected.dropObligation}}});
-    const TakenOperation advance = take(
-        MirHostedStartupOperationKind::AdvanceArgumentIndex,
-        MirHostedStartupFailureBehavior::None, 3, true, false, true, false);
+    if (appendMayRaise) {
+      iterationBlock =
+          takeFailureRoute(iterationBlock, appendCall.expected.instruction,
+                           {vector.expected.dropObligation});
+    }
+    const TakenOperation advance =
+        take(MirHostedStartupOperationKind::AdvanceArgumentIndex,
+             MirHostedStartupFailureBehavior::None, iterationBlock, true, false,
+             true, false);
     exactValue(advance, generatedInfo(SemanticType::Int32, ValueCategory::Place,
                                       AccessMode::Mutable));
     exactInstruction(advance, {.kind = MirInstructionKind::Modify,
@@ -11401,15 +11422,19 @@ verifyMirHostedStartup(const MirProgram &program) {
                                .info = generatedInfo(SemanticType::Int32,
                                                      ValueCategory::Place,
                                                      AccessMode::Mutable)});
-    const TakenOperation continueLoop = take(
-        MirHostedStartupOperationKind::ContinueArgumentLoop,
-        MirHostedStartupFailureBehavior::None, 3, false, false, false, false);
-    exactTerminator(continueLoop,
-                    {.kind = MirTerminatorKind::Goto, .target = 2});
+    const TakenOperation continueLoop =
+        take(MirHostedStartupOperationKind::ContinueArgumentLoop,
+             MirHostedStartupFailureBehavior::None, iterationBlock, false,
+             false, false, false);
+    exactTerminator(continueLoop, {.kind = MirTerminatorKind::Goto,
+                                   .target = loopHeaderBlock});
 
-    const TakenOperation entryCount = take(
-        MirHostedStartupOperationKind::PrepareEntryCount,
-        MirHostedStartupFailureBehavior::None, 4, true, false, true, false);
+    MirBlockId finalBlock = entryCallBlock;
+
+    const TakenOperation entryCount =
+        take(MirHostedStartupOperationKind::PrepareEntryCount,
+             MirHostedStartupFailureBehavior::None, finalBlock, true, false,
+             true, false);
     exactValue(entryCount, generatedInfo(SemanticType::Int32));
     exactInstruction(entryCount, {.kind = MirInstructionKind::CallInput,
                                   .callInputRole = MirCallInputRole::Argument,
@@ -11421,7 +11446,8 @@ verifyMirHostedStartup(const MirProgram &program) {
                                   .info = generatedInfo(SemanticType::Int32)});
     const TakenOperation entryArguments =
         take(MirHostedStartupOperationKind::PrepareEntryArgumentsMove,
-             MirHostedStartupFailureBehavior::None, 4, true, true, true, true);
+             MirHostedStartupFailureBehavior::None, finalBlock, true, true,
+             true, true);
     exactValue(entryArguments, generatedInfo(vectorType));
     exactPlace(entryArguments, {.root = MirPlaceRootKind::Temporary,
                                 .temporary = 3,
@@ -11450,8 +11476,8 @@ verifyMirHostedStartup(const MirProgram &program) {
                         .target = entryArguments.expected.dropObligation}}});
     const TakenOperation callEntry =
         take(MirHostedStartupOperationKind::CallEntry,
-             failureBehavior(entry.mayRaiseDefinedFailure), 4, true, false,
-             true, false);
+             failureBehavior(entry.mayRaiseDefinedFailure), finalBlock, true,
+             false, true, false);
     exactValue(callEntry, generatedInfo(SemanticType::Int32));
     exactInstruction(
         callEntry,
@@ -11470,9 +11496,14 @@ verifyMirHostedStartup(const MirProgram &program) {
          .info = generatedInfo(SemanticType::Int32),
          .lifecycle = {{.kind = MirLifecycleEventKind::TransferOut,
                         .source = entryArguments.expected.dropObligation}}});
-    const TakenOperation returnEntry = take(
-        MirHostedStartupOperationKind::ReturnEntry,
-        MirHostedStartupFailureBehavior::None, 4, false, false, false, false);
+    if (entry.mayRaiseDefinedFailure) {
+      finalBlock =
+          takeFailureRoute(finalBlock, callEntry.expected.instruction, {});
+    }
+    const TakenOperation returnEntry =
+        take(MirHostedStartupOperationKind::ReturnEntry,
+             MirHostedStartupFailureBehavior::None, finalBlock, false, false,
+             false, false);
     exactTerminator(returnEntry,
                     {.kind = MirTerminatorKind::Return,
                      .value = MirOperand{.kind = MirOperandKind::Value,

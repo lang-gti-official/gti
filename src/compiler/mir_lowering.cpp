@@ -327,8 +327,7 @@ private:
         *drop->dropType.destructor == 0) {
       return FailurePropagationKind::None;
     }
-    if (*drop->dropType.destructor >
-        definedFailureEffects.destructors.size()) {
+    if (*drop->dropType.destructor > definedFailureEffects.destructors.size()) {
       return FailurePropagationKind::Destructor;
     }
     return definedFailureEffects.destructors[*drop->dropType.destructor - 1]
@@ -657,13 +656,12 @@ private:
                                   .target = target});
   }
 
-  [[nodiscard]] MirBlockId
-  appendBlock(MirFailureRecordId activeFailure = 0) {
+  [[nodiscard]] MirBlockId appendBlock(MirFailureRecordId activeFailure = 0) {
     const MirBlockId id = output.blocks.size() + 1;
-    output.blocks.push_back({.id = id,
-                             .programInitializationStep =
-                                 currentProgramInitializationStep,
-                             .activeFailure = activeFailure});
+    output.blocks.push_back(
+        {.id = id,
+         .programInitializationStep = currentProgramInitializationStep,
+         .activeFailure = activeFailure});
     return id;
   }
 
@@ -699,9 +697,8 @@ private:
         {.kind = MirInstructionKind::Lifecycle, .cleanupBoundaryEnd = id});
   }
 
-  void appendCleanupFailureControlFlow(
-      MirInstructionId producerInstruction,
-      MirFailureRecordId activeFailure) {
+  void appendCleanupFailureControlFlow(MirInstructionId producerInstruction,
+                                       MirFailureRecordId activeFailure) {
     const MirBlockId producerBlock = current;
     const MirBlock *producer = currentBlock();
     if (activeFailure == 0 || producer == nullptr ||
@@ -717,8 +714,7 @@ private:
     const MirFailureRecordId secondary = output.failureRecords.size() + 1;
     output.failureRecords.push_back({.id = secondary,
                                      .producerBlock = producerBlock,
-                                     .producerInstruction =
-                                         producerInstruction,
+                                     .producerInstruction = producerInstruction,
                                      .parameterBlock = failureBlock});
     output.blocks[failureBlock - 1].failureParameter = secondary;
     current = producerBlock;
@@ -734,17 +730,17 @@ private:
     current = normalBlock;
   }
 
-  MirInstructionId appendFailureCleanupDrop(
-      MirDropObligationId obligation, MirPlaceId destination,
-      ExpressionInfo info, bool conditional = false) {
-    MirInstruction drop{
-        .kind = MirInstructionKind::Drop,
-        .destination = destination,
-        .info = std::move(info),
-        .lifecycle = {{.kind = MirLifecycleEventKind::Drop,
-                       .source = obligation,
-                       .conditional = conditional,
-                       .failureCleanup = true}}};
+  MirInstructionId appendFailureCleanupDrop(MirDropObligationId obligation,
+                                            MirPlaceId destination,
+                                            ExpressionInfo info,
+                                            bool conditional = false) {
+    MirInstruction drop{.kind = MirInstructionKind::Drop,
+                        .destination = destination,
+                        .info = std::move(info),
+                        .lifecycle = {{.kind = MirLifecycleEventKind::Drop,
+                                       .source = obligation,
+                                       .conditional = conditional,
+                                       .failureCleanup = true}}};
     drop.definedFailure.propagation =
         normalizedDestructorPropagation(obligation);
     const MirInstructionId instruction =
@@ -800,10 +796,10 @@ private:
     appendFailureCleanupBoundary(std::move(cleanup));
   }
 
-  void emitFailureScopeCleanup(
-      const Scope &scope,
-      const std::vector<MirDropObligationId> &consumedDrops,
-      const std::vector<MirLoanId> &endedLoans) {
+  void
+  emitFailureScopeCleanup(const Scope &scope,
+                          const std::vector<MirDropObligationId> &consumedDrops,
+                          const std::vector<MirLoanId> &endedLoans) {
     for (auto loan = scope.loans.rbegin(); loan != scope.loans.rend(); ++loan) {
       if (containsLoan(endedLoans, *loan)) {
         continue;
@@ -887,8 +883,7 @@ private:
       ExpressionInfo info, std::vector<MirLifecycleEvent> lifecycle,
       const std::vector<MirDropObligationId> &consumedDrops,
       const std::vector<MirLoanId> &endedLoans, HirValueId hirValue = 0,
-      HirStatementId hirStatement = 0,
-      std::size_t constructorInitializer = 0) {
+      HirStatementId hirStatement = 0, std::size_t constructorInitializer = 0) {
     MirInstruction drop{.kind = MirInstructionKind::Drop,
                         .hirValue = hirValue,
                         .hirStatement = hirStatement,
@@ -1123,16 +1118,16 @@ private:
         continue;
       }
       consumedDrops.push_back(candidate->obligation);
-      (void)appendNormalDrop(
-          candidate->obligation, obligation->place,
-          ExpressionInfo{.type = obligation->dropType.type,
-                         .category = ValueCategory::Place,
-                         .access = AccessMode::Mutable,
-                         .traits = place->traits},
-          {{.kind = MirLifecycleEventKind::Drop,
-            .source = candidate->obligation,
-            .conditional = candidate->conditional}},
-          consumedDrops, {}, hirValue, hirStatement, constructorInitializer);
+      (void)appendNormalDrop(candidate->obligation, obligation->place,
+                             ExpressionInfo{.type = obligation->dropType.type,
+                                            .category = ValueCategory::Place,
+                                            .access = AccessMode::Mutable,
+                                            .traits = place->traits},
+                             {{.kind = MirLifecycleEventKind::Drop,
+                               .source = candidate->obligation,
+                               .conditional = candidate->conditional}},
+                             consumedDrops, {}, hirValue, hirStatement,
+                             constructorInitializer);
     }
     temporaryDrops = baseline;
     const auto boundary = std::find_if(
@@ -2749,6 +2744,12 @@ private:
                              .source = parameterDrop});
     }
     const MirDropObligationId resultDrop = dropObligationForValue(value.id);
+    // The success-edge result form stays bounded to full-expression roots: a
+    // nested owning result must be re-homed by initializeValueLifecycle into
+    // a temporary place so a conditional join can drop it without using an
+    // arm-local value, and that re-homed Initialize lifecycle then keeps the
+    // nested call outside the routed family until the remaining owning-result
+    // materialization work lands.
     const bool successEdgeResult =
         resultDrop != 0 && supportsMirFailureControlFlow(output.kind) &&
         isFullExpressionRoot(value.id) && !call.definedFailure.empty() &&
@@ -3869,10 +3870,10 @@ private:
     scopes.front().loans.push_back(loan);
   }
 
-  void emitScope(
-      const Scope &scope,
-      std::vector<MirDropObligationId> *sharedConsumedDrops = nullptr,
-      std::vector<MirLoanId> *sharedEndedLoans = nullptr) {
+  void
+  emitScope(const Scope &scope,
+            std::vector<MirDropObligationId> *sharedConsumedDrops = nullptr,
+            std::vector<MirLoanId> *sharedEndedLoans = nullptr) {
     std::vector<MirDropObligationId> localConsumedDrops;
     std::vector<MirLoanId> localEndedLoans;
     std::vector<MirDropObligationId> &consumedDrops =
@@ -3903,17 +3904,16 @@ private:
       }
       (void)appendNormalDrop(
           obligation, *drop,
-          place == nullptr
-              ? ExpressionInfo{}
-              : ExpressionInfo{.type = place->type,
-                               .category = ValueCategory::Place,
-                               .access = place->access,
-                               .traits = place->traits},
+          place == nullptr ? ExpressionInfo{}
+                           : ExpressionInfo{.type = place->type,
+                                            .category = ValueCategory::Place,
+                                            .access = place->access,
+                                            .traits = place->traits},
           obligation == 0
               ? std::vector<MirLifecycleEvent>{}
-              : std::vector<MirLifecycleEvent>{
-                    {.kind = MirLifecycleEventKind::Drop,
-                     .source = obligation}},
+              : std::vector<MirLifecycleEvent>{{.kind =
+                                                    MirLifecycleEventKind::Drop,
+                                                .source = obligation}},
           consumedDrops, endedLoans);
     }
     if (!cleanup.empty()) {
@@ -5010,12 +5010,24 @@ MirLowerer::lower(const HirProgram &source,
     provisional.program.valid_ = false;
     return provisional;
   }
-  const MirDefinedFailureEffects effects =
+  // A function-level proof reads the lowered shape, and lowering with a
+  // proved-false callee or destructor removes the failure edges that hid the
+  // next proof. Re-lower until the derived result is its own fixed point.
+  // Effects only ever move from conservative true toward proved false, so this
+  // terminates; the bound keeps a non-converging program fail-closed below.
+  constexpr int maximumEffectRounds = 8;
+  MirDefinedFailureEffects effects =
       deriveMirDefinedFailureEffects(provisional.program);
   MirLoweringResult result =
       lowerProgram(source, failureMetadata, effects, true);
-  const MirDefinedFailureEffects finalEffects =
+  MirDefinedFailureEffects finalEffects =
       deriveMirDefinedFailureEffects(result.program);
+  for (int round = 0; round < maximumEffectRounds && effects != finalEffects;
+       ++round) {
+    effects = finalEffects;
+    result = lowerProgram(source, failureMetadata, effects, true);
+    finalEffects = deriveMirDefinedFailureEffects(result.program);
+  }
   const bool exactSummaries =
       effects == finalEffects &&
       effects.functions.size() == result.program.functionInstances().size() &&
@@ -5362,8 +5374,8 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
   // The hosted schedule is a closed, bounded graph. Reserve for every normal,
   // primary-cleanup, and first-secondary block before retaining references.
   body.blocks.reserve(64);
-  const auto appendBlock = [&](MirFailureRecordId activeFailure = 0)
-      -> MirBlock & {
+  const auto appendBlock = [&](MirFailureRecordId activeFailure =
+                                   0) -> MirBlock & {
     MirBlock block;
     block.id = body.blocks.size() + 1;
     block.activeFailure = activeFailure;
@@ -5500,19 +5512,19 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
         .requiresActiveCleanup =
             instance != nullptr && instance->requiresActiveCleanup};
   };
-  const auto appendFailureRecord =
-      [&](MirHostedStartupOperationId operation, MirFailureRecord record) {
-        const MirFailureRecordId id = body.failureRecords.size() + 1;
-        record.id = id;
-        record.hostedStartupOperation = operation;
-        body.failureRecords.push_back(std::move(record));
-        MirHostedStartupOperation &row = plan.operations[operation - 1];
-        if (row.failureRecord != 0) {
-          valid = false;
-        }
-        row.failureRecord = id;
-        return id;
-      };
+  const auto appendFailureRecord = [&](MirHostedStartupOperationId operation,
+                                       MirFailureRecord record) {
+    const MirFailureRecordId id = body.failureRecords.size() + 1;
+    record.id = id;
+    record.hostedStartupOperation = operation;
+    body.failureRecords.push_back(std::move(record));
+    MirHostedStartupOperation &row = plan.operations[operation - 1];
+    if (row.failureRecord != 0) {
+      valid = false;
+    }
+    row.failureRecord = id;
+    return id;
+  };
   const auto appendCleanupBoundary =
       [&](MirHostedStartupOperationId operation,
           std::vector<MirDropObligationId> obligations) {
@@ -5553,20 +5565,19 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
             continue;
           }
           const bool mayRaise = destructorMayRaise(*candidate);
-          const MirHostedStartupOperationId dropOperation = beginOperation(
-              MirHostedStartupOperationKind::DropFailureCleanup,
-              failureBehavior(mayRaise), cleanup->id);
+          const MirHostedStartupOperationId dropOperation =
+              beginOperation(MirHostedStartupOperationKind::DropFailureCleanup,
+                             failureBehavior(mayRaise), cleanup->id);
           MirInstruction cleanupDrop;
           cleanupDrop.kind = MirInstructionKind::Drop;
           cleanupDrop.destination = drop->place;
-          cleanupDrop.definedFailure = propagation(
-              FailurePropagationKind::Destructor, mayRaise);
+          cleanupDrop.definedFailure =
+              propagation(FailurePropagationKind::Destructor, mayRaise);
           cleanupDrop.info = generatedInfo(
               drop->dropType.type, ValueCategory::Place, AccessMode::Mutable);
-          cleanupDrop.lifecycle = {
-              {.kind = MirLifecycleEventKind::Drop,
-               .source = *candidate,
-               .failureCleanup = true}};
+          cleanupDrop.lifecycle = {{.kind = MirLifecycleEventKind::Drop,
+                                    .source = *candidate,
+                                    .failureCleanup = true}};
           const MirInstructionId dropInstruction = appendInstruction(
               dropOperation, *cleanup, std::move(cleanupDrop));
           boundaryDrops.push_back(*candidate);
@@ -5581,10 +5592,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
               MirHostedStartupOperationKind::RouteCleanupFailure,
               MirHostedStartupFailureBehavior::None, producerBlock);
           const MirFailureRecordId secondary = appendFailureRecord(
-              routeOperation,
-              {.producerBlock = producerBlock,
-               .producerInstruction = dropInstruction,
-               .parameterBlock = secondaryBlock.id});
+              routeOperation, {.producerBlock = producerBlock,
+                               .producerInstruction = dropInstruction,
+                               .parameterBlock = secondaryBlock.id});
           secondaryBlock.failureParameter = secondary;
           terminate(routeOperation, *cleanup,
                     {.kind = MirTerminatorKind::Invoke,
@@ -5593,11 +5603,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                      .target = normal.id,
                      .elseTarget = secondaryBlock.id});
 
-          const MirHostedStartupOperationId terminateOperation =
-              beginOperation(
-                  MirHostedStartupOperationKind::TerminateCleanupFailure,
-                  MirHostedStartupFailureBehavior::None,
-                  secondaryBlock.id);
+          const MirHostedStartupOperationId terminateOperation = beginOperation(
+              MirHostedStartupOperationKind::TerminateCleanupFailure,
+              MirHostedStartupFailureBehavior::None, secondaryBlock.id);
           terminate(terminateOperation, secondaryBlock,
                     {.kind = MirTerminatorKind::TerminateCleanupFailure,
                      .failureRecord = secondary});
@@ -5614,9 +5622,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                             {.kind = MirInstructionKind::Lifecycle,
                              .cleanupBoundaryEnd = boundary});
         }
-        const MirHostedStartupOperationId containOperation = beginOperation(
-            MirHostedStartupOperationKind::ContainFailure,
-            MirHostedStartupFailureBehavior::None, cleanup->id);
+        const MirHostedStartupOperationId containOperation =
+            beginOperation(MirHostedStartupOperationKind::ContainFailure,
+                           MirHostedStartupFailureBehavior::None, cleanup->id);
         terminate(containOperation, *cleanup,
                   {.kind = MirTerminatorKind::ContainFailure,
                    .failureRecord = primary});
@@ -5637,10 +5645,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
             MirHostedStartupOperationKind::RouteOperationFailure,
             MirHostedStartupFailureBehavior::None, producerBlock);
         const MirFailureRecordId primary = appendFailureRecord(
-            routeOperation,
-            {.producerBlock = producerBlock,
-             .producerInstruction = instruction,
-             .parameterBlock = failureBlock.id});
+            routeOperation, {.producerBlock = producerBlock,
+                             .producerInstruction = instruction,
+                             .parameterBlock = failureBlock.id});
         failureBlock.failureParameter = primary;
         failureBlock.activeFailure = primary;
         MirTerminator invoke{.kind = MirTerminatorKind::Invoke,
@@ -5649,9 +5656,8 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                              .target = normal.id,
                              .elseTarget = failureBlock.id};
         if (successDrop != 0) {
-          invoke.successLifecycle = {
-              {.kind = MirLifecycleEventKind::Initialize,
-               .target = successDrop}};
+          invoke.successLifecycle = {{.kind = MirLifecycleEventKind::Initialize,
+                                      .target = successDrop}};
         }
         terminate(routeOperation, *producer, std::move(invoke));
         emitFailureCleanup(failureBlock, primary, activeDrops);
@@ -5687,9 +5693,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
     const bool entryMayRaise =
         entry != nullptr && entry->mayRaiseDefinedFailure;
-    const MirHostedStartupOperationId entryCallOperation = beginOperation(
-        MirHostedStartupOperationKind::CallEntry,
-        failureBehavior(entryMayRaise), startupBlock->id);
+    const MirHostedStartupOperationId entryCallOperation =
+        beginOperation(MirHostedStartupOperationKind::CallEntry,
+                       failureBehavior(entryMayRaise), startupBlock->id);
     const MirInstructionId entryCallInstruction = nextInstruction;
     const MirValueId entryResult =
         appendValue(entryCallOperation, startupBlock->id, entryCallInstruction,
@@ -5709,8 +5715,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
     const MirHostedStartupOperationId returnOperation =
         beginOperation(MirHostedStartupOperationKind::ReturnEntry,
-                       MirHostedStartupFailureBehavior::None,
-                       startupBlock->id);
+                       MirHostedStartupFailureBehavior::None, startupBlock->id);
     MirTerminator returnEntry;
     returnEntry.kind = MirTerminatorKind::Return;
     returnEntry.value = MirOperand{.kind = MirOperandKind::Value,
@@ -5739,8 +5744,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
         exactLocalFailure(hirPlan->validateCount);
     const MirHostedStartupOperationId validateOperation =
         beginOperation(MirHostedStartupOperationKind::ValidateArgumentCount,
-                       MirHostedStartupFailureBehavior::Detect,
-                       setupBlock->id);
+                       MirHostedStartupFailureBehavior::Detect, setupBlock->id);
     const MirInstructionId validateInstruction = nextInstruction;
     const MirValueId validatedCount =
         appendValue(validateOperation, setupBlock->id, validateInstruction,
@@ -5758,8 +5762,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
         exactLocalFailure(hirPlan->convertCount);
     const MirHostedStartupOperationId convertOperation =
         beginOperation(MirHostedStartupOperationKind::ConvertArgumentCount,
-                       MirHostedStartupFailureBehavior::Detect,
-                       setupBlock->id);
+                       MirHostedStartupFailureBehavior::Detect, setupBlock->id);
     const MirInstructionId convertInstruction = nextInstruction;
     const MirValueId stabilizedCount =
         appendValue(convertOperation, setupBlock->id, convertInstruction,
@@ -5797,12 +5800,11 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       }
     }
 
-    const bool vectorMayRaise =
-        vectorConstructor != nullptr &&
-        vectorConstructor->mayRaiseDefinedFailure;
-    const MirHostedStartupOperationId vectorOperation = beginOperation(
-        MirHostedStartupOperationKind::ConstructArgumentVector,
-        failureBehavior(vectorMayRaise), setupBlock->id);
+    const bool vectorMayRaise = vectorConstructor != nullptr &&
+                                vectorConstructor->mayRaiseDefinedFailure;
+    const MirHostedStartupOperationId vectorOperation =
+        beginOperation(MirHostedStartupOperationKind::ConstructArgumentVector,
+                       failureBehavior(vectorMayRaise), setupBlock->id);
     const MirInstructionId vectorInstruction = nextInstruction;
     const MirValueId vectorValue =
         appendValue(vectorOperation, setupBlock->id, vectorInstruction,
@@ -5834,8 +5836,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       constructVector.lifecycle = {
           {.kind = MirLifecycleEventKind::Initialize, .target = vectorDrop}};
     }
-    appendInstruction(vectorOperation, *setupBlock,
-                      std::move(constructVector));
+    appendInstruction(vectorOperation, *setupBlock, std::move(constructVector));
     if (vectorMayRaise) {
       routeOperationFailure(setupBlock, vectorInstruction, {}, vectorDrop);
     }
@@ -5844,8 +5845,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
     const MirHostedStartupOperationId initializeIndexOperation =
         beginOperation(MirHostedStartupOperationKind::InitializeArgumentIndex,
-                       MirHostedStartupFailureBehavior::None,
-                       setupBlock->id);
+                       MirHostedStartupFailureBehavior::None, setupBlock->id);
     const MirPlaceId indexPlace =
         appendPlace(initializeIndexOperation,
                     {.root = MirPlaceRootKind::Temporary,
@@ -5868,8 +5868,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     MirBlock &loopHeader = appendBlock();
     const MirHostedStartupOperationId enterLoopOperation =
         beginOperation(MirHostedStartupOperationKind::EnterArgumentLoop,
-                       MirHostedStartupFailureBehavior::None,
-                       setupBlock->id);
+                       MirHostedStartupFailureBehavior::None, setupBlock->id);
     MirTerminator enterLoop;
     enterLoop.kind = MirTerminatorKind::Goto;
     enterLoop.target = loopHeader.id;
@@ -5926,10 +5925,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     branchLoop.elseTarget = entryCallBlock.id;
     terminate(branchLoopOperation, loopHeader, std::move(branchLoop));
 
-    const MirHostedStartupOperationId viewOperation =
-        beginOperation(MirHostedStartupOperationKind::ReadArgumentView,
-                       MirHostedStartupFailureBehavior::None,
-                       iterationBlock->id);
+    const MirHostedStartupOperationId viewOperation = beginOperation(
+        MirHostedStartupOperationKind::ReadArgumentView,
+        MirHostedStartupFailureBehavior::None, iterationBlock->id);
     const MirInstructionId viewInstruction = nextInstruction;
     const MirValueId argumentView =
         appendValue(viewOperation, iterationBlock->id, viewInstruction,
@@ -5948,10 +5946,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
         MirHostedStartupOperationKind::PrepareStringConstructorArgument,
         MirHostedStartupFailureBehavior::None, iterationBlock->id);
     const MirInstructionId stringInputInstruction = nextInstruction;
-    const MirValueId preparedView =
-        appendValue(stringInputOperation, iterationBlock->id,
-                    stringInputInstruction,
-                    generatedInfo(SemanticType::StringView));
+    const MirValueId preparedView = appendValue(
+        stringInputOperation, iterationBlock->id, stringInputInstruction,
+        generatedInfo(SemanticType::StringView));
     MirInstruction prepareView;
     prepareView.kind = MirInstructionKind::CallInput;
     prepareView.callInputRole = MirCallInputRole::Argument;
@@ -5964,12 +5961,11 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     appendInstruction(stringInputOperation, *iterationBlock,
                       std::move(prepareView));
 
-    const bool stringMayRaise =
-        stringConstructor != nullptr &&
-        stringConstructor->mayRaiseDefinedFailure;
-    const MirHostedStartupOperationId stringOperation = beginOperation(
-        MirHostedStartupOperationKind::ConstructArgumentString,
-        failureBehavior(stringMayRaise), iterationBlock->id);
+    const bool stringMayRaise = stringConstructor != nullptr &&
+                                stringConstructor->mayRaiseDefinedFailure;
+    const MirHostedStartupOperationId stringOperation =
+        beginOperation(MirHostedStartupOperationKind::ConstructArgumentString,
+                       failureBehavior(stringMayRaise), iterationBlock->id);
     const MirInstructionId stringInstruction = nextInstruction;
     const MirValueId stringValue =
         appendValue(stringOperation, iterationBlock->id, stringInstruction,
@@ -6012,10 +6008,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                             stringDrop);
     }
 
-    const MirHostedStartupOperationId appendReceiverOperation =
-        beginOperation(MirHostedStartupOperationKind::PrepareAppendReceiver,
-                       MirHostedStartupFailureBehavior::None,
-                       iterationBlock->id);
+    const MirHostedStartupOperationId appendReceiverOperation = beginOperation(
+        MirHostedStartupOperationKind::PrepareAppendReceiver,
+        MirHostedStartupFailureBehavior::None, iterationBlock->id);
     const MirInstructionId appendReceiverInstruction = nextInstruction;
     const MirValueId preparedReceiver =
         appendValue(appendReceiverOperation, iterationBlock->id,
@@ -6032,10 +6027,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     appendInstruction(appendReceiverOperation, *iterationBlock,
                       std::move(prepareReceiver));
 
-    const MirHostedStartupOperationId appendArgumentOperation =
-        beginOperation(MirHostedStartupOperationKind::PrepareAppendArgumentMove,
-                       MirHostedStartupFailureBehavior::None,
-                       iterationBlock->id);
+    const MirHostedStartupOperationId appendArgumentOperation = beginOperation(
+        MirHostedStartupOperationKind::PrepareAppendArgumentMove,
+        MirHostedStartupFailureBehavior::None, iterationBlock->id);
     const MirInstructionId appendArgumentInstruction = nextInstruction;
     const MirValueId preparedString =
         appendValue(appendArgumentOperation, iterationBlock->id,
@@ -6073,9 +6067,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
     const bool appendMayRaise =
         append != nullptr && append->mayRaiseDefinedFailure;
-    const MirHostedStartupOperationId appendCallOperation = beginOperation(
-        MirHostedStartupOperationKind::CallAppend,
-        failureBehavior(appendMayRaise), iterationBlock->id);
+    const MirHostedStartupOperationId appendCallOperation =
+        beginOperation(MirHostedStartupOperationKind::CallAppend,
+                       failureBehavior(appendMayRaise), iterationBlock->id);
     MirInstruction appendCall;
     appendCall.kind = MirInstructionKind::Call;
     appendCall.receiver = MirOperand{.kind = MirOperandKind::Value,
@@ -6098,10 +6092,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                             {vectorDrop});
     }
 
-    const MirHostedStartupOperationId advanceOperation =
-        beginOperation(MirHostedStartupOperationKind::AdvanceArgumentIndex,
-                       MirHostedStartupFailureBehavior::None,
-                       iterationBlock->id);
+    const MirHostedStartupOperationId advanceOperation = beginOperation(
+        MirHostedStartupOperationKind::AdvanceArgumentIndex,
+        MirHostedStartupFailureBehavior::None, iterationBlock->id);
     const MirInstructionId advanceInstruction = nextInstruction;
     const MirValueId advancedIndex =
         appendValue(advanceOperation, iterationBlock->id, advanceInstruction,
@@ -6116,23 +6109,22 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                                  AccessMode::Mutable);
     appendInstruction(advanceOperation, *iterationBlock, std::move(advance));
 
-    const MirHostedStartupOperationId continueOperation =
-        beginOperation(MirHostedStartupOperationKind::ContinueArgumentLoop,
-                       MirHostedStartupFailureBehavior::None,
-                       iterationBlock->id);
+    const MirHostedStartupOperationId continueOperation = beginOperation(
+        MirHostedStartupOperationKind::ContinueArgumentLoop,
+        MirHostedStartupFailureBehavior::None, iterationBlock->id);
     MirTerminator continueLoop;
     continueLoop.kind = MirTerminatorKind::Goto;
     continueLoop.target = loopHeader.id;
     terminate(continueOperation, *iterationBlock, std::move(continueLoop));
 
     MirBlock *finalBlock = &entryCallBlock;
-    const MirHostedStartupOperationId entryCountOperation = beginOperation(
-        MirHostedStartupOperationKind::PrepareEntryCount,
-        MirHostedStartupFailureBehavior::None, finalBlock->id);
+    const MirHostedStartupOperationId entryCountOperation =
+        beginOperation(MirHostedStartupOperationKind::PrepareEntryCount,
+                       MirHostedStartupFailureBehavior::None, finalBlock->id);
     const MirInstructionId entryCountInstruction = nextInstruction;
     const MirValueId preparedCount =
-        appendValue(entryCountOperation, finalBlock->id,
-                    entryCountInstruction, generatedInfo(SemanticType::Int32));
+        appendValue(entryCountOperation, finalBlock->id, entryCountInstruction,
+                    generatedInfo(SemanticType::Int32));
     MirInstruction prepareCount;
     prepareCount.kind = MirInstructionKind::CallInput;
     prepareCount.callInputRole = MirCallInputRole::Argument;
@@ -6145,9 +6137,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     appendInstruction(entryCountOperation, *finalBlock,
                       std::move(prepareCount));
 
-    const MirHostedStartupOperationId entryArgumentsOperation = beginOperation(
-        MirHostedStartupOperationKind::PrepareEntryArgumentsMove,
-        MirHostedStartupFailureBehavior::None, finalBlock->id);
+    const MirHostedStartupOperationId entryArgumentsOperation =
+        beginOperation(MirHostedStartupOperationKind::PrepareEntryArgumentsMove,
+                       MirHostedStartupFailureBehavior::None, finalBlock->id);
     const MirInstructionId entryArgumentsInstruction = nextInstruction;
     const MirValueId preparedArguments =
         appendValue(entryArgumentsOperation, finalBlock->id,
@@ -6186,9 +6178,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
     const bool entryMayRaise =
         entry != nullptr && entry->mayRaiseDefinedFailure;
-    const MirHostedStartupOperationId entryCallOperation = beginOperation(
-        MirHostedStartupOperationKind::CallEntry,
-        failureBehavior(entryMayRaise), finalBlock->id);
+    const MirHostedStartupOperationId entryCallOperation =
+        beginOperation(MirHostedStartupOperationKind::CallEntry,
+                       failureBehavior(entryMayRaise), finalBlock->id);
     const MirInstructionId entryCallInstruction = nextInstruction;
     const MirValueId entryResult =
         appendValue(entryCallOperation, finalBlock->id, entryCallInstruction,
@@ -6215,9 +6207,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     }
     plan.entryResult = entryResult;
 
-    const MirHostedStartupOperationId returnOperation = beginOperation(
-        MirHostedStartupOperationKind::ReturnEntry,
-        MirHostedStartupFailureBehavior::None, finalBlock->id);
+    const MirHostedStartupOperationId returnOperation =
+        beginOperation(MirHostedStartupOperationKind::ReturnEntry,
+                       MirHostedStartupFailureBehavior::None, finalBlock->id);
     MirTerminator returnEntry;
     returnEntry.kind = MirTerminatorKind::Return;
     returnEntry.value = MirOperand{.kind = MirOperandKind::Value,

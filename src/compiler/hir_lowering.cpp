@@ -1769,7 +1769,10 @@ private:
       SemanticType receiver = model.typeOf(*member->object());
       if (receiver.kind == SemanticType::RawPointer &&
           receiver.arguments.size() == 1) {
-        receiver = receiver.arguments.front();
+        // Copy before assignment: the pointee lives inside the vector the
+        // assignment replaces, so a direct self-assign reads freed storage.
+        SemanticType pointee = receiver.arguments.front();
+        receiver = std::move(pointee);
       }
       if (receiver.kind == SemanticType::Class &&
           receiver.classId == target.ownerClass) {
@@ -1804,7 +1807,8 @@ private:
       SemanticType receiver = model.typeOf(*member->object());
       if (receiver.kind == SemanticType::RawPointer &&
           receiver.arguments.size() == 1) {
-        receiver = receiver.arguments.front();
+        SemanticType pointee = receiver.arguments.front();
+        receiver = std::move(pointee);
       }
       if (receiver.kind == SemanticType::Class &&
           receiver.classId == target.ownerClass) {

@@ -333,7 +333,7 @@ def main():
             line.startswith("+ ") for line in uncached_build.stderr.splitlines()
         )
 
-        cache_executables = list((project / "build/gti/cache/v1").glob(
+        cache_executables = list((project / "build/gti/cache/v2").glob(
             "*/executable"
         ))
         assert len(cache_executables) == 1

@@ -473,16 +473,16 @@ void testMutations(const std::filesystem::path &fixture) {
   if (conservativeEarly != nullptr) {
     conservativeEarly->mayRaiseDefinedFailure = true;
   }
+  // A drop keeps `None` propagation only for a proved failure-free
+  // destructor, so raising the summary alone leaves the drop sites claiming a
+  // failure-free cleanup the summary no longer proves.
   expect(conservativeEarly != nullptr &&
-             lang::verifyMirProgram(conservativeDestructor).valid(),
-         "generic MIR should permit a conservative destructor failure "
-         "summary");
-  if (conservativeEarly != nullptr &&
-      lang::verifyMirProgram(conservativeDestructor).valid()) {
-    expect(emissionRejected(frontend, conservativeDestructor, compatibility),
-           "selected cleanup must require the MIR-proved failure-free "
-           "destructor summary");
-  }
+             !lang::verifyMirProgram(conservativeDestructor).valid(),
+         "generic MIR verification should reject a raised destructor summary "
+         "that its drop propagation no longer matches");
+  expect(emissionRejected(frontend, conservativeDestructor, compatibility),
+         "selected cleanup must require the MIR-proved failure-free "
+         "destructor summary");
 
   lang::MirProgram forgedFailureFreeDestructor = frontend.mir;
   lang::MirDestructorInstance *checkedCleanup = findMirDestructor(

@@ -329,10 +329,11 @@ int main() {
       if (lang::integerArithmeticIntrinsic(value.intrinsic)) {
         hirIntrinsics.insert(value.intrinsic);
         expect(value.kind == lang::HirValueKind::Call &&
-                   value.operands.size() == 3 && !value.dropObligation,
-               "HIR should preserve each private arithmetic call and its "
-               "callee plus two operands without manufacturing cleanup for "
-               "a cleanup-free checked result");
+                   value.operands.size() == 2 && !value.dropObligation,
+               "HIR should preserve each private arithmetic call as its two "
+               "typed operands, naming the callee by intrinsic kind rather "
+               "than an unrecorded callee operand, without manufacturing "
+               "cleanup for a cleanup-free checked result");
       }
     }
   }

@@ -247,7 +247,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v24 valid=" << program.valid() << '\n';
+    output << "mir-v25 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -545,7 +545,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v24\n";
+    output << "mir-body-v25\n";
     body(value, 0);
     return output.str();
   }
@@ -1266,9 +1266,9 @@ private:
     }
     output << " cleanup-boundaries " << value.cleanupBoundaries.size() << '\n';
     for (const MirCleanupBoundary &item : value.cleanupBoundaries) {
-      output << "  cleanup-boundary" << item.id << " hosted-operation="
-             << item.hostedStartupOperation << " kind=" << number(item.kind)
-             << " obligations=[";
+      output << "  cleanup-boundary" << item.id
+             << " hosted-operation=" << item.hostedStartupOperation
+             << " kind=" << number(item.kind) << " obligations=[";
       list(item.obligations);
       output << "]\n";
     }

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.144.0
+Checkpoint version: 0.145.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -111,6 +111,27 @@ initializer, operation, place, CFG, return, call-input, reverse-edge, transfer,
 and drop drift. Its runtime gate proves cleanup order without double cleanup at
 O0/O1/O3 under C++20/C++23. Checked lifecycle, comma, loops, switches, class
 results, and other unsupported connected shapes remain wholly compatible.
+
+The 0.145.0 checkpoint restabilizes the tree after the 0.144.0 landing and
+extends M-FAIL-01's representation: the hosted owned-arguments golden verifier
+now mirrors the generated Stage-E schedule, defined-failure effect derivation
+iterates to its fixed point, internal MIR failures report every distinct
+verifier error, and five self-aliasing `SemanticType` assignments in the C++
+body-emitter scan and HIR receiver peeling were corrected (the emitter bug
+mislabeled six coherent example bodies incoherent under ASan-visible
+undefined behavior). MIR v25 then makes checked failure-edge eligibility
+position-independent: every eligible checked scalar computation, load, and
+ordinary call in any nested value position of a failure-control-flow body
+carries the verified Invoke/record/reverse-cleanup/propagation contract, with
+prepared owner stages dropped exactly once across failure-capable cleanup
+chains. Nested cleanup-owning results deliberately keep their re-homed
+initialize lifecycle and stay compatible until the remaining owning-result
+materialization lands. Across the 57-example corpus this moves 87 additional
+bodies to emitter-ready and removes the largest single
+`MissingCheckedFailureControlFlow` share (855 to 533 occurrences); ordered
+compound schedules, generated construction schedules, call-input staging for
+remaining call forms, and partial-construction rollback remain the next
+inventory debts.
 
 The current 0.144.0 backend phase completes `scalar-failure-callgraph-v1`, the sixth
 bounded production MIR family and the first hosted failure-capable component.

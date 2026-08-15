@@ -171,16 +171,29 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     const MirVerificationResult verification = verifyMirProgram(result.mir);
     std::string message =
         "Internal compiler error: failed to construct valid MIR.";
-    const auto detail =
-        std::find_if(verification.errors.begin(), verification.errors.end(),
-                     [](const MirVerificationError &error) {
-                       return error.message != "MIR program is marked invalid";
-                     });
-    if (detail != verification.errors.end()) {
-      message += " " + detail->message + " (body owner " +
-                 std::to_string(detail->owner) + ", block " +
-                 std::to_string(detail->block) + ", instruction " +
-                 std::to_string(detail->instruction) + ").";
+    // One internal failure often reports several verifier errors, and the
+    // first is not always the owning cause. Report every distinct error so an
+    // internal failure names its real origin instead of a later symptom.
+    constexpr std::size_t maximumReportedDetails = 5;
+    std::vector<std::string> details;
+    for (const MirVerificationError &error : verification.errors) {
+      if (error.message == "MIR program is marked invalid") {
+        continue;
+      }
+      std::string detail = error.message + " (body owner " +
+                           std::to_string(error.owner) + ", block " +
+                           std::to_string(error.block) + ", instruction " +
+                           std::to_string(error.instruction) + ")";
+      if (std::find(details.begin(), details.end(), detail) != details.end()) {
+        continue;
+      }
+      details.push_back(std::move(detail));
+      if (details.size() == maximumReportedDetails) {
+        break;
+      }
+    }
+    for (const std::string &detail : details) {
+      message += " " + detail + ".";
     }
     result.diagnostics.push_back(makeDiagnostic(
         "GTI-B0001", DiagnosticPhase::Backend,

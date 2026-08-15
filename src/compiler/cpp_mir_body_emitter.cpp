@@ -1092,7 +1092,10 @@ private:
         }
         if (currentType && currentType->kind == SemanticType::Array &&
             currentType->arguments.size() == 1) {
-          currentType = currentType->arguments.front();
+          // Copy before assignment: the element lives inside the vector the
+          // assignment replaces, so a direct self-assign reads freed storage.
+          SemanticType element = currentType->arguments.front();
+          currentType = std::move(element);
         } else {
           currentType.reset();
         }
@@ -1103,7 +1106,8 @@ private:
             (currentType->kind == SemanticType::Reference ||
              currentType->kind == SemanticType::UniqueOwner ||
              currentType->kind == SemanticType::SharedPointer)) {
-          currentType = currentType->arguments.front();
+          SemanticType pointee = currentType->arguments.front();
+          currentType = std::move(pointee);
         } else {
           currentType.reset();
         }
@@ -1113,7 +1117,8 @@ private:
         requireCapability(CppMirEmissionCapabilityKind::RawMemory);
         if (currentType && currentType->kind == SemanticType::RawPointer &&
             currentType->arguments.size() == 1) {
-          currentType = currentType->arguments.front();
+          SemanticType pointee = currentType->arguments.front();
+          currentType = std::move(pointee);
         } else {
           currentType.reset();
         }
@@ -1522,7 +1527,9 @@ private:
       }
     }
     if (terminator.kind == MirTerminatorKind::Invoke ||
-        terminator.kind == MirTerminatorKind::PropagateFailure) {
+        terminator.kind == MirTerminatorKind::PropagateFailure ||
+        terminator.kind == MirTerminatorKind::ContainFailure ||
+        terminator.kind == MirTerminatorKind::TerminateCleanupFailure) {
       requireCapability(CppMirEmissionCapabilityKind::DefinedFailure, block.id,
                         0);
     }
@@ -1688,6 +1695,8 @@ CppMirEmissionEncoding classifyCppMirTerminatorKind(MirTerminatorKind kind) {
     return CppMirEmissionEncoding::RepresentedByMir;
   case MirTerminatorKind::Invoke:
   case MirTerminatorKind::PropagateFailure:
+  case MirTerminatorKind::ContainFailure:
+  case MirTerminatorKind::TerminateCleanupFailure:
     return CppMirEmissionEncoding::NeedsCopiedRepresentation;
   case MirTerminatorKind::None:
     return CppMirEmissionEncoding::Invalid;

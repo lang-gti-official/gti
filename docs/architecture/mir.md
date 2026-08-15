@@ -89,7 +89,7 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v23`/`mir-body-v23`.
+The deterministic serialization is currently `mir-v25`/`mir-body-v25`.
 Version 20 introduced function-definition provenance and the first MIR-owned
 defined-failure effect summary. Each concrete function records
 `DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a
@@ -104,7 +104,18 @@ program-initialization unit/step plan and serializes each block's exact
 its dense operation inventory, and exact generated-entity provenance tags on
 places, values, drops, instructions, and terminators. It also serializes the
 source `main` anchor and the exact target and program-initialization calls used
-by that hosted boundary. The defined-failure bit deliberately covers only GTI
+by that hosted boundary. Version 24 adds that boundary's Stage-E containment
+operations -- `RouteOperationFailure`, `DropFailureCleanup`,
+`RouteCleanupFailure`, `EndFailureCleanup`, `ContainFailure`, and
+`TerminateCleanupFailure` -- together with the generated failure-record and
+cleanup-boundary provenance tags each one owns. Version 25 makes checked
+failure-edge eligibility position-independent: the same verified
+Invoke/record/cleanup contract that covered full-expression roots and
+prepared-call-argument detectors now covers every eligible checked scalar
+computation, load, and ordinary call in any nested value position of a
+failure-control-flow body, and the verifier requires exactly one edge wherever
+the shape is eligible. The defined-failure bit
+deliberately covers only GTI
 defined failure; it is not a summary of allocation, arbitrary user code,
 synchronization, or the other future O-MIR-02 effect dimensions.
 
@@ -325,9 +336,15 @@ A `MirBody` owns:
   source-entry parameter transfer, and the exact vector/string constructor and
   append calls while preserving those callees' allocation records; no local
   `allocation_failure/hosted_arguments` origin is produced. MIR now owns this
-  hosted schedule and provenance. Stage-E terminal containment, cleanup-failure
-  handling, partial-construction rollback, and generic backend emission remain
-  open;
+  hosted schedule and provenance, including the Stage-E terminal containment
+  and cleanup-failure control flow: every failure-capable startup stage routes
+  one contained failure record through `RouteOperationFailure`, reverse
+  `DropFailureCleanup`, `EndFailureCleanup`, and `ContainFailure`, and a
+  failure-capable destructor adds `RouteCleanupFailure` plus
+  `TerminateCleanupFailure`. Partial-construction rollback and generic backend
+  emission of that cleanup remain open; `CppMirBodyEmitter` still reports the
+  hosted schedule as `MissingFailureCleanupMir` and
+  `MissingPartialConstructionRollbackMir` debts;
 - lexical scopes, cleanup edges, loans, carrier bindings, and source/HIR
   provenance.
 
@@ -660,15 +677,19 @@ anchors, their verified artifact-local site IDs, the immutable artifact
 descriptor, and direct/virtual/constructor/callable propagation identity. Any
 such operation projects conservatively to `mayTrap`, making it
 non-speculatable, non-removable, and non-reorderable, but the structured
-identity remains the authority. Eligible full-expression-root scalar operations,
-exact local scalar detectors or static direct-call propagations used as ordinary
-call arguments after a prepared owner, and ordinary calls with one
-cleanup-owning class result in function and lambda bodies additionally carry
+identity remains the authority. Eligible checked scalar computations, loads, and ordinary calls now carry
 verified fixed record, normal/failure successor, LIFO cleanup, and propagation
-edges. Other nested operations, assignment destinations, borrowed and remaining
-owning results, constructors, field/module initialization, failure-capable
-destructors and double failure, and partial construction remain outside that
-general bounded verifier family. The narrower production
+edges in every value position of a function, lambda, module, destructor, or
+hosted-startup body: eligibility is position-independent, a nested detector's
+failure edge drops the live temporaries and prepared owner stages recorded at
+that point, and a full-expression-root ordinary call may still initialize one
+cleanup-owning result on its success edge. Assignment destinations and
+compound place schedules, nested cleanup-owning and borrowed results (a nested
+owning result still initializes through its re-homed temporary and stays
+unrouted until the remaining owning-result materialization lands),
+constructors, field/module initialization stages, failure-capable destructors
+and double failure, and partial construction remain outside that general
+bounded verifier family. The narrower production
 `scalar-failure-callgraph-v1` component now validates its complete
 caller-to-callee record route and hosted containment as an additional atomic
 selection contract. Broader forms are still required by

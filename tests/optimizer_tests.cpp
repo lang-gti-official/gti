@@ -2095,8 +2095,11 @@ int main() {
   auto &forgedHostedPlan =
       const_cast<std::optional<lang::MirHostedStartupPlan> &>(
           forgedHostedAddress.hostedStartupPlan());
+  // The hosted schedule now pins the entry's failure shape, so a retarget is
+  // only structurally valid when the replacement shares it. This isolates the
+  // frozen body address from an incidental schedule change.
   const lang::HirFunctionInstance *replacementEntry =
-      findHirFunction(frontend, "grouped_integer");
+      findHirFunction(frontend, "grouped_expression");
   auto &hostedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
       forgedHostedAddress.functionInstances());
   const bool canRetargetHostedAddress =
@@ -3399,12 +3402,12 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v23\n") &&
+  expect(dump.starts_with("mir-body-v25\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
              dump.find("failure-propagation=direct-call") != std::string::npos,
-         "MIR v23 should serialize exact failure identities deterministically");
+         "MIR v24 should serialize exact failure identities deterministically");
 
   const auto firstOriginInstruction = [](lang::MirBody &body) {
     for (lang::MirBlock &block : body.blocks) {

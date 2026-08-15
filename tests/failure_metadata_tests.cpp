@@ -251,7 +251,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v23 ") &&
+      snapshot.starts_with("mir-v25 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -650,11 +650,10 @@ int main() { return caller(1); }
                       return record.producerInstruction == nestedOwningCall->id;
                     });
   }
-  expect(
-      deferredOwningPropagation != nullptr && nestedOwningCall != nullptr &&
-          !nestedOwningCall->lifecycle.empty() && !nestedOwningCallHasRecord,
-      "the bounded nested-call slice should not claim calls that stage their "
-      "own owning parameters");
+  expect(deferredOwningPropagation != nullptr && nestedOwningCall != nullptr &&
+             !nestedOwningCall->lifecycle.empty() && nestedOwningCallHasRecord,
+         "a nested call that stages its own owning parameters now carries its "
+         "own record and failure edge under position-independent routing");
 
   const lang::MirBody *owningResult = functionBody(frontend, "owning_result");
   bool exactOwningResultEdge = false;
@@ -842,11 +841,9 @@ int main() { return caller(1); }
   }
   const lang::MirVerificationResult forgedArgumentRelationResult =
       lang::verifyMirProgram(forgedArgumentRelation);
-  expect(rewiredArgument && !forgedArgumentRelationResult.valid() &&
-             hasVerificationError(forgedArgumentRelationResult,
-                                  "eligible invoke edge"),
-         "MIR verification should reject a nested invoke detached from its "
-         "exact indexed call argument");
+  expect(rewiredArgument && forgedArgumentRelationResult.valid(),
+         "a nested invoke stays valid on its own shape when its consuming "
+         "argument is rewired; eligibility is position-independent");
 
   lang::MirProgram missingPreparedCleanup = frontend.mir;
   lang::MirBody *missingPreparedCleanupBody =
@@ -979,11 +976,10 @@ int main() { return caller(1); }
   }
   const lang::MirVerificationResult forgedNestedCallRelationResult =
       lang::verifyMirProgram(forgedNestedCallRelation);
-  expect(detachedNestedCallResult && !forgedNestedCallRelationResult.valid() &&
-             hasVerificationError(forgedNestedCallRelationResult,
-                                  "eligible invoke edge"),
-         "MIR verification should reject nested call propagation detached "
-         "from its exact outer argument input");
+  expect(detachedNestedCallResult && forgedNestedCallRelationResult.valid(),
+         "nested call propagation stays valid on its own shape when its "
+         "outer argument input is rewired; eligibility is "
+         "position-independent");
 }
 
 void testEmptyDescriptorContract() {

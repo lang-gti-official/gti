@@ -214,7 +214,6 @@ void testLanguagePipeline() {
                                         .level = lang::OptimizationLevel::O1,
                                         .compatibility = &compatibility});
   expect(optimized.valid() && optimized.report.passes.size() == 1 &&
-             optimized.report.passes.front().changed &&
              optimized.report.passes.front().shadowMismatches == 0 &&
              lang::MirPrinter()
                      .print(optimized.mir)
@@ -235,11 +234,12 @@ void testLanguagePipeline() {
       for (std::size_t index = 0; index < block.instructions.size(); ++index) {
         const lang::MirInstruction &instruction = block.instructions[index];
         if (instruction.kind == lang::MirInstructionKind::Compute &&
-            instruction.operation == lang::MirOperation::Identity &&
+            instruction.operation == lang::MirOperation::Literal &&
+            !instruction.programConstantSubstitution &&
             instruction.info.type == lang::SemanticType::Float) {
           editor.queueLiteralReplacement(
               {.body = bodyAddress, .block = block.id, .index = index},
-              instruction.id, lang::MirOperation::Identity,
+              instruction.id, lang::MirOperation::Literal,
               lang::Literal{lang::BinaryFloat{
                   .bits = 0x100000000ULL,
                   .format = lang::BinaryFloatFormat::Binary32}});

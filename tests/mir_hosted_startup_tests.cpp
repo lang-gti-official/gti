@@ -231,27 +231,42 @@ void testOwnedScheduleAndPrinter() {
   if (!plan || body == nullptr) {
     return;
   }
-  expect(body->blocks.size() == 4 && body->entry == 1 &&
+  expect(!body->blocks.empty() && body->entry == 1 &&
              std::all_of(body->blocks.begin(), body->blocks.end(),
                          [&](const lang::MirBlock &block) {
                            return block.id >= 1 &&
                                   block.id <= body->blocks.size() &&
                                   block.reachable;
                          }),
-         "owned startup should retain four stable blocks without dangling "
+         "owned startup should retain dense reachable blocks without dangling "
          "block-reference corruption");
-  const lang::MirHostedStartupOperation *validate = plan->findOperation(1);
-  const lang::MirHostedStartupOperation *convert = plan->findOperation(2);
-  expect(validate != nullptr && convert != nullptr &&
-             validate->kind ==
-                 lang::MirHostedStartupOperationKind::ValidateArgumentCount &&
-             convert->kind ==
-                 lang::MirHostedStartupOperationKind::ConvertArgumentCount &&
+  const auto findStage = [&](lang::MirHostedStartupOperationKind kind)
+      -> const lang::MirHostedStartupOperation * {
+    for (const lang::MirHostedStartupOperation &row : plan->operations) {
+      if (row.kind == kind) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  const lang::MirHostedStartupOperation *validate =
+      findStage(lang::MirHostedStartupOperationKind::ValidateArgumentCount);
+  const lang::MirHostedStartupOperation *convert =
+      findStage(lang::MirHostedStartupOperationKind::ConvertArgumentCount);
+  const std::size_t detectStages = static_cast<std::size_t>(
+      std::count_if(plan->operations.begin(), plan->operations.end(),
+                    [](const lang::MirHostedStartupOperation &row) {
+                      return row.failureBehavior ==
+                             lang::MirHostedStartupFailureBehavior::Detect;
+                    }));
+  expect(validate != nullptr && convert != nullptr && detectStages == 2 &&
+             validate->id < convert->id &&
              validate->failureBehavior ==
                  lang::MirHostedStartupFailureBehavior::Detect &&
              convert->failureBehavior ==
                  lang::MirHostedStartupFailureBehavior::Detect,
-         "the two hosted-local detectors should be the first dense stages");
+         "the two hosted-local detectors should be the only ordered Detect "
+         "stages");
   const lang::MirInstruction *validateInstruction =
       validate == nullptr ? nullptr : [&]() -> const lang::MirInstruction * {
     const lang::MirBlock *block = body->findBlock(validate->block);
@@ -326,21 +341,22 @@ void testOwnedScheduleAndPrinter() {
          "generated vector/string construction and move stages should close "
          "over their exact drop obligations");
 
+  const auto countTerminators = [&](lang::MirTerminatorKind kind) {
+    return static_cast<std::size_t>(
+        std::count_if(body->blocks.begin(), body->blocks.end(),
+                      [&](const lang::MirBlock &block) {
+                        return block.terminator.kind == kind;
+                      }));
+  };
   expect(
-      body->failureRecords.empty() &&
-          lang::supportsMirFailureControlFlow(
-              lang::MirBodyKind::HostedStartup) &&
-          std::none_of(body->blocks.begin(), body->blocks.end(),
-                       [](const lang::MirBlock &block) {
-                         return block.terminator.kind ==
-                                    lang::MirTerminatorKind::Invoke ||
-                                block.terminator.kind ==
-                                    lang::MirTerminatorKind::ContainFailure ||
-                                block.terminator.kind ==
-                                    lang::MirTerminatorKind::TerminateCleanupFailure;
-                       }),
-      "Stage-E control-flow kinds should be admitted while the frozen "
-      "Stage-D startup schedule remains containment-free");
+      lang::supportsMirFailureControlFlow(lang::MirBodyKind::HostedStartup) &&
+          !body->failureRecords.empty() &&
+          countTerminators(lang::MirTerminatorKind::Invoke) ==
+              body->failureRecords.size() &&
+          countTerminators(lang::MirTerminatorKind::ContainFailure) ==
+              body->failureRecords.size(),
+      "every failure-capable startup stage should route one contained "
+      "Stage-E failure record");
 
   const auto readView = std::find_if(
       plan->operations.begin(), plan->operations.end(),
@@ -375,7 +391,7 @@ void testOwnedScheduleAndPrinter() {
          "effects");
 
   const std::string dump = lang::MirPrinter().print(owned.mir);
-  expect(dump.starts_with("mir-v24 valid=") &&
+  expect(dump.starts_with("mir-v25 valid=") &&
              dump.find("hosted-startup kind=") != std::string::npos &&
              dump.find("hosted-operation @") != std::string::npos &&
              dump.find("hosted-startup-body") != std::string::npos &&
@@ -599,8 +615,12 @@ void testFailureTargetAndOwnershipMutations() {
   if (entryCall != nullptr) {
     entryCall->lifecycle.clear();
   }
-  expectHostedBodyValid(missingTransfer,
-                        "missing transfer should remain body-valid");
+  // The staged vector is a caller-owned prepared parameter, so normal-exit
+  // lifecycle verification now rejects the missing transfer as a live
+  // obligation before the hosted stage check reports the same drift.
+  expectRejected(missingTransfer, "active drop obligation",
+                 "a missing entry transfer should leave a live obligation at "
+                 "body exit");
   expectRejected(missingTransfer, "canonical stage",
                  "entry should transfer the generated vector exactly once");
 

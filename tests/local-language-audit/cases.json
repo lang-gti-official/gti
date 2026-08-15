@@ -132,8 +132,8 @@
       "id": "checked-addition-overflow",
       "kind": "runtime_failure",
       "source": "runtime/checked-addition-overflow.gti",
-      "contains": ["integer addition overflow"],
-      "emit_contains": ["gti_internal::backend::add"]
+      "contains": ["GTI-R0001", "integer_overflow", "addition"],
+      "emit_contains": ["// GTI verified-MIR body: scalar-failure-callgraph-v1"]
     },
     {
       "id": "checked-negation-overflow",
