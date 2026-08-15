@@ -89,7 +89,7 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v26`/`mir-body-v26`.
+The deterministic serialization is currently `mir-v27`/`mir-body-v27`.
 Version 20 introduced function-definition provenance and the first MIR-owned
 defined-failure effect summary. Each concrete function records
 `DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a
@@ -119,7 +119,12 @@ assignment or increment/decrement to its ordered read/operate/commit schedule
 -- `Load` of the place, the exact checked arithmetic `Compute`, then an
 ordinary `Assign` commit -- instead of one closed compound instruction, so the
 update uses only MIR's primitive vocabulary and its check routes through the
-ordinary failure edge. The defined-failure bit
+ordinary failure edge. Version 27 gives an ordered `Construct` the same
+failure-edge contract as an ordinary call: a failure-capable construction
+carries its own `Invoke`/record/cleanup edge, and a full-expression-root
+construction with a cleanup-owning result initializes that result only on the
+success edge, so failure cleanup can never drop an object whose construction
+did not complete. The defined-failure bit
 deliberately covers only GTI
 defined failure; it is not a summary of allocation, arbitrary user code,
 synchronization, or the other future O-MIR-02 effect dimensions.

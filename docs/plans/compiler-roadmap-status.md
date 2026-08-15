@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.146.0
+Checkpoint version: 0.147.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -111,6 +111,28 @@ initializer, operation, place, CFG, return, call-input, reverse-edge, transfer,
 and drop drift. Its runtime gate proves cleanup order without double cleanup at
 O0/O1/O3 under C++20/C++23. Checked lifecycle, comma, loops, switches, class
 results, and other unsupported connected shapes remain wholly compatible.
+
+The 0.147.0 checkpoint extends ordered failure edges to construction. MIR v27
+routes a failure-capable `Construct` exactly like an ordinary call, and a
+full-expression-root construction with a cleanup-owning result now initializes
+that result only on its success edge. This removes 28 unrouted checked
+constructions from the example corpus. It does not move a body across the
+readiness line, because every affected body carries other debts, and it does
+not complete constructor-side work: a nested construction, a construction that
+produces a loan, and constructor and field-initializer bodies themselves all
+remain compatible.
+
+Constructor-side evidence for the next slice is now exact. All 14 checked
+constructor bodies in the corpus own cleanup-bearing fields, so
+partial-construction rollback is genuinely required rather than vacuous; no
+constructor instruction currently carries a `constructorInitializer` stage tag
+outside the bounded explicit-scalar-field path, so the stages a rollback would
+unwind are not yet represented; and the 58 field-initializer bodies each carry
+one checked operation with zero drop obligations, so their own rollback is a
+no-op but their failure channel would cross the unconverted constructor
+`CallBody` boundary. Representing initializer stages, tracking their
+subobject obligations, and closing constructor plus field-initializer channels
+together is therefore one coherent slice, not three independent ones.
 
 The 0.146.0 checkpoint lands the ordered compound-update family. MIR v26
 lowers a same-domain scalar compound assignment or increment/decrement to an

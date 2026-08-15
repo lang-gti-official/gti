@@ -2871,7 +2871,22 @@ private:
         }
       }
     }
-    (void)initializeValueLifecycle(construct, value);
+    // Mirror the ordinary-call result contract: a full-expression-root
+    // construction that may raise initializes its cleanup-owning result only
+    // on the success edge, so failure cleanup can never drop an object whose
+    // construction did not complete. A nested construction keeps the direct
+    // initialize lifecycle, because its result would otherwise be an
+    // arm-local value at a conditional join.
+    const MirDropObligationId resultDrop = dropObligationForValue(value.id);
+    const bool successEdgeResult =
+        resultDrop != 0 && supportsMirFailureControlFlow(output.kind) &&
+        isFullExpressionRoot(value.id) && !construct.definedFailure.empty() &&
+        !construct.destination && !construct.loan && !value.ownership;
+    if (successEdgeResult) {
+      construct.successResultDrop = resultDrop;
+    } else {
+      (void)initializeValueLifecycle(construct, value);
+    }
     (void)appendInstruction(std::move(construct));
   }
 

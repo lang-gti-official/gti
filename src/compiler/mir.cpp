@@ -2702,7 +2702,11 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
     return instruction.info.traits.drop == DropKind::Trivial &&
            instruction.lifecycle.empty() && !instruction.successResultDrop;
   }
-  if (instruction.kind != MirInstructionKind::Call ||
+  // A construction is an ordered invocation with the same failure shape as an
+  // ordinary call: it may raise before producing anything, and its
+  // cleanup-owning result must be initialized only on the success edge.
+  if ((instruction.kind != MirInstructionKind::Call &&
+       instruction.kind != MirInstructionKind::Construct) ||
       std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
                   [](const MirLifecycleEvent &event) {
                     return event.kind != MirLifecycleEventKind::TransferOut;
@@ -3918,6 +3922,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (callInput && instruction.callSite == 0) ||
         (!callInput && instruction.preparedParameterDrop) ||
         (instruction.kind != MirInstructionKind::Call &&
+         instruction.kind != MirInstructionKind::Construct &&
          instruction.successResultDrop) ||
         (!callInput && instruction.callInputIndex != 0) ||
         (!callInput && instruction.callInputRole) ||
