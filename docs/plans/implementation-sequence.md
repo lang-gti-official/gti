@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.150.0
+Checkpoint: 0.151.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -178,11 +178,14 @@ shadow infrastructure:
    gate covers O0/O1/O3 and C++20/C++23; broader signatures, lifecycle failure,
    initialization, double failure, embedding, and callbacks remain separate
    work rather than implied completion of M-FAIL-01.
-7. **Final authority cutover — active (`M-BACK-02`).** Migrate remaining constructors,
-   destructors, lambdas, program/module initialization, and any remaining body
-   families; remove AST/HIR body emission, native failure helpers, and the HIR
+7. **Final authority cutover — active (`M-BACK-02`).** Build general MIR
+   emission for the remaining constructor, destructor, lambda, and
+   program/module initialization work rather than proving another narrow
+   family; remove AST/HIR body emission, native failure helpers, and the HIR
    replacement bridge. AST, semantics, and HIR remain available only for
    declarations, concrete identities, layout, ABI, and representation facts.
+   The evidence standard is recorded under "Cutover Evidence After The
+   Differential Oracle" below.
 
 Backward compatibility with accidental compatibility-emitter behavior or with
 the textual form of generated C++ is not a migration requirement. GTI has no
@@ -194,6 +197,39 @@ may still serve unmigrated families and the explicit public direct-emitter API;
 its presence does not authorize fallback for a selected family. This does not
 permit breaking an explicitly accepted language semantic, runtime ABI, or
 native-interoperability contract.
+
+### Cutover Evidence After The Differential Oracle
+
+Phases 1-6 proved one narrow family at a time because no independent oracle
+existed: a whole-program selection contract was the only available way to
+establish that a migrated body was correct. That constraint no longer holds.
+The MIR/compatibility differential oracle compares observable behavior of
+both emission paths, so agreement is now direct evidence for an individual
+body rather than an inference from its family's contract.
+
+The measured cost of the old standard is on record: six families passed their
+exit gates while production emitted one body, because each family's
+whole-program contract almost never matched shipped code. Family breadth
+tracked contract satisfaction, not emission.
+
+The remaining cutover therefore builds general MIR emission and validates it
+differentially instead of admitting further narrow families:
+
+- Admit bodies **per body**, not per whole-program family contract. A
+  whole-program condition may still gate a body when that body depends on it,
+  but not because every other body in the program must also qualify.
+- Treat **differential agreement with the compatibility emitter** as the
+  primary correctness evidence for a migrated body. Report bodies emitted,
+  bodies agreeing, and bodies not comparable.
+- Keep selection **fail-closed**. A shape MIR cannot represent, or that
+  emission does not handle, stays wholly on the compatibility path. Broad
+  emission never authorizes guessing at an unsupported shape.
+- Keep the standing invariants: no body mixes the two authorities, the
+  textual form of generated C++ is not a contract, and no migrated route is
+  retained behind a fallback flag once the compatibility bridge is removed.
+
+Emitter-readiness counts measure MIR preconditions, not emission, and are not
+cutover progress. Report emission as bodies emitted and agreeing.
 
 Split a phase only when a missing language decision or verifier invariant makes
 the larger set unsound. Implementation convenience, prompt size, or the
@@ -335,7 +371,7 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `M-BACK-02` final cutover | **active** | failure-capable `scalar-failure-callgraph-v1` complete | Migrate every remaining body and initialization family and remove the compatibility execution bridge. | No reachable GTI body or optimization decision executes from AST/HIR; all legacy body and failure helpers are gone. |
+| 1 | `M-BACK-02` final cutover | **active** | failure-capable `scalar-failure-callgraph-v1` complete | Build general MIR emission for every remaining body and initialization family, validated by the differential oracle, and remove the compatibility execution bridge. | No reachable GTI body or optimization decision executes from AST/HIR; all legacy body and failure helpers are gone; migrated bodies agree with the compatibility emitter or are recorded as not comparable. |
 | 2 | `P-MEASURE-01` | **in progress** (parallel only) | none | Complete benchmark breadth without delaying or editing backend-authority surfaces. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
 | 3 | `A-CACHE-01` | **ready** (parallel only) | `C-MIG-02` done | Define snapshot-safe parsed-unit cache ownership without delaying or editing backend-authority surfaces. | Cache identity and invalidation are explicit, with no AST pointer crossing incompatible snapshots. |
 

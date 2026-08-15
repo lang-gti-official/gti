@@ -144,7 +144,9 @@ generic emitter replaces that single whole-program route.
   only fixed-width-integer parameters/results, parameter loads,
   literal/identity values, trivial full-expression boundaries, and one return.
   `void` is admitted only as a result for a no-op leaf.
-- `scalar-cfg-v1` admits non-entry, non-generic free functions over
+- `scalar-cfg-v1` admits non-entry, non-generic free functions, and ordinary
+  non-static, non-virtual, non-operator read-only members of one concrete
+  non-generic class instantiation, over
   fixed-width integers, `bool`, and `char`, with `void` also permitted as a
   result; unprojected scalar binding and temporary places; the verified
   literal, identity, logical-not, bitwise,
@@ -152,7 +154,11 @@ generic emitter replaces that single whole-program route.
   plain assignment, and trivial full-expression boundaries; and
   `Goto`/`Branch`/`Switch`/`Return`/`Unreachable` control flow, including loop
   backedges. It excludes calls, checked-failure arithmetic, references,
-  pointers, loans, drops, cleanup, construction, and failure edges.
+  pointers, loans, drops, cleanup, construction, and failure edges. A member
+  is resolved per instance rather than per declaration: zero instances, a
+  generic owner, several instantiations, a mutable receiver, or any use of
+  `this` in the body keep the member wholly on compatibility emission, and
+  emitted member definitions use the ordinary deferred qualified form.
 - `scalar-direct-call-v1` adds exact ordered scalar `CallInput`/`Call` stages
   to the scalar-CFG substrate. Every reachable node must be an eligible
   source-defined free function in one closed acyclic static-call graph, every

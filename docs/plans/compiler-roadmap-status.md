@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.150.0
+Checkpoint version: 0.151.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -125,6 +125,23 @@ structurally incoherent, that no invalid-shape issue is raised, and that
 readiness does not regress below a floor. The first of those matters most: a
 change that breaks compilation silently improves every other figure, which
 masked two unsound attempts earlier in this campaign.
+
+The 0.151.0 checkpoint clears the per-declaration member boundary in
+`scalar-cfg-v1`. The selector now resolves a member per MIR instance: an
+ordinary non-static, non-virtual, non-operator read-only member of one
+concrete non-generic class instantiation is emitted from verified MIR through
+the ordinary deferred qualified definition, while zero instances, a generic
+owner (including a single generic instantiation, whose substituted HIR body no
+longer matches the source declaration shape), several instantiations, a
+mutable receiver, or any use of `this` decline gracefully to compatibility.
+Free functions keep the exact-one-instance fail-closed contract, and owner
+drift is still rejected in both directions. The focused gate covers positive
+member selection, the `this`-reading near miss, and the single-generic-owner
+near miss. Corpus emission is unchanged at one body, because every eligible
+concrete-class member in the examples reads fields through `this`; the next
+yield boundary is This-rooted scalar field reads, which requires coordinated
+HIR-gate, shape-gate, coherence, and emission extensions plus a reference
+binding for field places.
 
 Selector relaxation is not the next increment, for a structural reason rather
 than the one recorded earlier. Instrumenting the real `selectedMirScalarCfg`

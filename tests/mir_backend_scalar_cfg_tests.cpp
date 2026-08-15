@@ -225,6 +225,35 @@ void expectSelectedDefinitions(std::string_view generated) {
   }
 }
 
+// Finds one deferred member definition. The emitted name carries a mangling
+// prefix and a call site can share a line with an opening brace, so the match
+// requires the qualified `Owner::` spelling on the definition line itself.
+std::string_view memberDefinition(std::string_view generated,
+                                  std::string_view sourceName) {
+  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
+  for (std::size_t name = generated.find(needle);
+       name != std::string_view::npos;
+       name = generated.find(needle, name + needle.size())) {
+    const std::size_t lineStart = generated.rfind('\n', name);
+    const std::size_t lineEnd = generated.find('\n', name);
+    const std::size_t brace = generated.find(" {\n", name);
+    const std::string_view line = generated.substr(
+        lineStart == std::string_view::npos ? 0 : lineStart + 1,
+        lineEnd - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
+    if (line.find("::") == std::string_view::npos) {
+      continue;
+    }
+    if (brace != std::string_view::npos &&
+        (lineEnd == std::string_view::npos || brace < lineEnd)) {
+      const std::size_t end = generated.find("\n  }", brace);
+      return end == std::string_view::npos
+                 ? std::string_view{}
+                 : generated.substr(brace, end - brace + 4);
+    }
+  }
+  return {};
+}
+
 void testSelectedFamily(const std::filesystem::path &fixture) {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze(fixture.string(), readFile(fixture));
@@ -432,6 +461,116 @@ int main() { return compatibility_uninitialized(); }
                  .find(marker) == std::string_view::npos,
          "an operand-free scalar declaration lies outside scalar-cfg-v1 and "
          "must stay wholly on compatibility emission");
+}
+
+// The scalar-cfg family now admits an ordinary non-static, non-virtual,
+// non-operator, read-only member of one concrete non-generic class. Emission
+// stays keyed per source declaration, so the concrete-owner requirement and
+// every graceful decline below are part of the family contract.
+void testConcreteMemberSelection() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-scalar-cfg-member.gti", R"(
+class Chooser {
+  int stored;
+
+public:
+  Chooser(int input) : stored(input) {}
+  int mask(bool pick, int left, int right) {
+    mut int result = 0;
+    if (pick) {
+      result = left & right;
+    } else {
+      result = left | right;
+    }
+    return result;
+  }
+  bool same(int left, int right) { return left == right; }
+  int reads_this() { return this.stored; }
+  void bumps(mut int, int) mut {}
+};
+
+int main() {
+  Chooser chooser = Chooser(3);
+  if (chooser.mask(true, 6, 3) == 2 and chooser.same(4, 4) and
+      chooser.reads_this() == 3) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the concrete-member fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
+         "the concrete-member fixture should retain valid MIR");
+  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
+    return;
+  }
+  const lang::BackendArtifact artifact =
+      emit(frontend, optimized.mir, compatibility);
+  expect(memberDefinition(artifact.contents, "mask").find(marker) !=
+             std::string_view::npos,
+         "a this-free read-only member of a concrete class should emit from "
+         "verified MIR");
+  expect(memberDefinition(artifact.contents, "same").find(marker) !=
+             std::string_view::npos,
+         "a second eligible member of the same class should emit from "
+         "verified MIR");
+  expect(memberDefinition(artifact.contents, "reads_this").find(marker) ==
+             std::string_view::npos,
+         "a member that reads through `this` lies outside the family and "
+         "must stay wholly on compatibility emission");
+  expect(count(artifact.contents, marker) == 2,
+         "exactly the two eligible member bodies should carry the family "
+         "marker");
+}
+
+void testGenericOwnerMemberStaysCompatibility() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-scalar-cfg-generic-owner.gti", R"(
+class Wrap<T> {
+  T stored;
+
+public:
+  Wrap(T input) : stored(input) {}
+  bool matches(int left, int right) { return left == right; }
+};
+
+int main() {
+  Wrap<int> wrap = Wrap<int>(1);
+  return wrap.matches(2, 2) ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the generic-owner fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
+         "the generic-owner fixture should retain valid MIR");
+  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
+    return;
+  }
+  // A single generic instantiation resolves to one instance, but its HIR body
+  // is substituted and no longer matches the source declaration shape, so the
+  // member must decline gracefully rather than fail closed.
+  const lang::BackendArtifact artifact =
+      emit(frontend, optimized.mir, compatibility);
+  expect(count(artifact.contents, marker) == 0,
+         "a member of a generic owner must stay wholly on compatibility "
+         "emission even with exactly one instantiation");
 }
 
 void testIncoherentSwitchRejected(const std::filesystem::path &fixture) {
@@ -993,6 +1132,8 @@ int main(int argc, char **argv) {
   }
   testSelectedFamily(std::filesystem::path(argv[1]));
   testUninitializedDeclarationStaysCompatibility();
+  testConcreteMemberSelection();
+  testGenericOwnerMemberStaysCompatibility();
   testIncoherentSwitchRejected(std::filesystem::path(argv[1]));
   testProvenanceAndSnapshotCoherence(std::filesystem::path(argv[1]));
   return failures == 0 ? 0 : 1;

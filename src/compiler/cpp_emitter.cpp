@@ -6123,10 +6123,9 @@ private:
         function.requiresClause() || !function.genericParameters().empty() ||
         info->id == 0 || !info->genericParameters.empty() ||
         !info->requirements.empty() || info->parameterPack ||
-        info->ownerClass != 0 || info->entryPoint ||
-        info->entryKind != ProgramEntryKind::None || info->staticMember ||
-        info->internalLinkage || info->constexprFunction ||
-        info->linkage != LanguageLinkage::Gti ||
+        info->entryPoint || info->entryKind != ProgramEntryKind::None ||
+        info->staticMember || info->internalLinkage ||
+        info->constexprFunction || info->linkage != LanguageLinkage::Gti ||
         !info->externalSymbol.empty() || info->virtualMethod ||
         info->pureVirtual || info->overrideMethod ||
         info->intrinsic != IntrinsicKind::None ||
@@ -6138,23 +6137,51 @@ private:
           isMirScalarCfgType(info->returnType))) {
       return nullptr;
     }
+    if (info->ownerClass != 0 &&
+        function.receiverMutability() != ReceiverMutability::ReadOnly) {
+      return nullptr;
+    }
 
     const MirFunctionInstance *selected = nullptr;
+    bool ambiguousInstances = false;
     for (const MirFunctionInstance &candidate : mir->functionInstances()) {
       if (candidate.declaration != info->id) {
         continue;
       }
       if (selected != nullptr) {
+        ambiguousInstances = true;
+        break;
+      }
+      selected = &candidate;
+    }
+    if (info->ownerClass != 0) {
+      // Emission is keyed per source declaration, so a member is admitted
+      // only when its owner is one concrete non-generic instantiation. Zero
+      // instances (an unused owner), several (a generic owner), and a
+      // single generic instantiation (whose HIR body is substituted and no
+      // longer matches the source declaration shape) all keep the body on
+      // the compatibility path; forged whole-program drift is owned by the
+      // backend snapshot gate rather than this selector.
+      if (selected == nullptr || ambiguousInstances || !selected->owner) {
+        return nullptr;
+      }
+      const MirClassInstance *ownerInstance =
+          mir->findClassInstance(*selected->owner);
+      if (ownerInstance == nullptr || !ownerInstance->type.arguments.empty() ||
+          !ownerInstance->type.valueArguments.empty()) {
+        return nullptr;
+      }
+    } else {
+      if (ambiguousInstances) {
         throw std::logic_error(
             "C++ backend found duplicate MIR instances for an eligible "
             "source function");
       }
-      selected = &candidate;
-    }
-    if (selected == nullptr) {
-      throw std::logic_error(
-          "C++ backend is missing the MIR instance for an eligible source "
-          "function");
+      if (selected == nullptr) {
+        throw std::logic_error(
+            "C++ backend is missing the MIR instance for an eligible source "
+            "function");
+      }
     }
     const HirFunctionInstance *hirInstance =
         hir.findFunctionInstance(selected->id);
@@ -6187,7 +6214,8 @@ private:
         selected->definitionKind !=
             MirFunctionInstance::DefinitionKind::Source ||
         hirInstance->body.placeDomain != selected->body.placeDomain ||
-        selected->owner || selected->staticMember ||
+        selected->owner.has_value() != (info->ownerClass != 0) ||
+        selected->staticMember ||
         selected->receiverMutability != ReceiverMutability::ReadOnly ||
         selected->overloadedOperator || selected->constexprFunction ||
         selected->entryKind != ProgramEntryKind::None ||
