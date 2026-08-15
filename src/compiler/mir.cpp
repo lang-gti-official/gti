@@ -2678,6 +2678,39 @@ bool supportsMirFailureControlFlow(MirBodyKind kind) {
          kind == MirBodyKind::Lambda || kind == MirBodyKind::HostedStartup;
 }
 
+bool mirBodyRoutesFailureEdges(const MirBody &body) {
+  if (!supportsMirFailureControlFlow(body.kind)) {
+    return false;
+  }
+  if (body.kind != MirBodyKind::Constructor) {
+    return true;
+  }
+  // A constructor that silently transfers any subobject into `this` without
+  // arming rollback routes no defined-failure edges at all: an edge anywhere
+  // in the body could not drain that subobject, so the whole body stays on
+  // the compatibility failure authority instead of leaking through verified
+  // MIR. Rollback retirement transfers are exempt; they end obligations the
+  // failure edges already drained or the caller now owns.
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Lifecycle) {
+        continue;
+      }
+      for (const MirLifecycleEvent &event : instruction.lifecycle) {
+        if (event.kind != MirLifecycleEventKind::TransferOut) {
+          continue;
+        }
+        const MirDropObligation *source = body.findDropObligation(event.source);
+        if (source != nullptr &&
+            source->kind != MirDropObligationKind::ConstructionRollback) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 bool requiresMirFailureControlFlow(const MirInstruction &instruction,
                                    MirFailureControlFlowPosition position) {
   if (instruction.kind == MirInstructionKind::Drop &&
@@ -3599,6 +3632,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return failure(body, owner,
                      "failure-record table has an invalid identity or edge");
     }
+  }
+  if (body.kind == MirBodyKind::Constructor &&
+      !mirBodyRoutesFailureEdges(body) && !body.failureRecords.empty()) {
+    return failure(body, owner,
+                   "constructor with an unarmed subobject transfer must not "
+                   "carry defined-failure edges");
   }
   const auto validOperand = [&](const MirOperand &operand) {
     switch (operand.kind) {
@@ -6167,7 +6206,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             ? MirFailureControlFlowPosition::PreparedCallArgumentRoot
             : MirFailureControlFlowPosition::None;
     const bool requiresEdge =
-        supportsMirFailureControlFlow(body.kind) &&
+        mirBodyRoutesFailureEdges(body) &&
         requiresMirFailureControlFlow(*instruction, position);
     if ((requiresEdge && invokeCount != 1) ||
         (!requiresEdge && invokeCount != 0)) {
@@ -8234,7 +8273,7 @@ checkedIntegerFailureContract(const MirBody &body,
                        block.id, instruction.id);
       }
 
-      if ((supportsMirFailureControlFlow(body.kind) &&
+      if ((mirBodyRoutesFailureEdges(body) &&
            fullExpressionRoot(instruction)) ||
           !records.empty()) {
         if (records.size() != 1) {

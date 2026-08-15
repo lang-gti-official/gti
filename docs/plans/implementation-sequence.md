@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.162.0
+Checkpoint: 0.163.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,14 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Unarmed constructor transfers fail closed (0.163.0).** A constructor
+  with any silent subobject transfer into `this` (owned-parameter and other
+  unstaged forms) routes no defined-failure edges: lowering prescans the
+  initializer list before placing any edge, `mirBodyRoutesFailureEdges`
+  holds the body-wide verifier rule, and the emission analysis retires its
+  categorical rollback issue exactly when a constructor's verified MIR
+  carries complete rollback coverage (no state-bearing bases, no unarmed
+  transfers, every non-trivially-droppable field armed).
 - **Partial-construction rollback represented (0.162.0, schema v30).**
   Ordinary constructors stage each class field completed from one owning
   temporary as an Initialize that reparents into a ConstructionRollback

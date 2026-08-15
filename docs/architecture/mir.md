@@ -533,8 +533,14 @@ class field completed from one owning constructed temporary is an explicit
 `ConstructionRollback` obligation on the exact This-rooted field place; every
 defined-failure edge of the constructor body drains the armed set in reverse
 stage order behind one failure cleanup boundary, and normal completion
-retires it by transfer to the caller. Base subobjects, owned-parameter
-stages, and field/static initializer bodies remain M-FAIL-01 work.
+retires it by transfer to the caller. A constructor that
+silently transfers any subobject into `this` without arming rollback (the
+owned-parameter and other unstaged initializer forms) routes no
+defined-failure edges at all — the lowering decides body-wide before any
+edge is placed and the verifier holds the matching body-wide rule — so its
+checked operations stay on the compatibility failure authority instead of
+leaking through verified MIR. Base subobjects, owned-parameter stages, and
+field/static initializer bodies remain M-FAIL-01 work.
 
 M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
 available/moved/uninitialized fixed point over lifecycle events. Parameters

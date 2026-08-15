@@ -580,6 +580,10 @@ struct MirVerificationResult {
 void rebuildMirReachability(MirBody &body);
 [[nodiscard]] bool rebuildMirValueUses(MirBody &body);
 [[nodiscard]] bool supportsMirFailureControlFlow(MirBodyKind kind);
+// Body-level refinement: a constructor whose lowering silently transferred a
+// subobject into `this` without arming rollback routes no defined-failure
+// edges at all.
+[[nodiscard]] bool mirBodyRoutesFailureEdges(const MirBody &body);
 enum class MirFailureControlFlowPosition {
   None,
   FullExpressionRoot,

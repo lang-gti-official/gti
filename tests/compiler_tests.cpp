@@ -25998,6 +25998,60 @@ void testSupportFacilities() {
          "LLVM-backed facilities should agree on availability");
 }
 
+void testUnarmedConstructorTransferSuppressesFailureEdges() {
+  const std::string source = R"(
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t seed) : value(seed) {}
+  ~Resource() {}
+};
+
+class Holder {
+  Resource moved;
+  int32_t checked;
+
+public:
+  Holder(Resource moved, int32_t bump)
+      : moved(std::move(moved)), checked(bump + bump) {}
+  int32_t total() { return this.moved.value + this.checked; }
+};
+
+int main() {
+  Holder holder = Holder(Resource(3), 4);
+  return holder.total() - 11;
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrustedPreludeFixture("unarmed-constructor.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the owned-parameter constructor fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirConstructorInstance *holderConstructor = nullptr;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    if (constructor.initializers.size() == 2) {
+      holderConstructor = &constructor;
+    }
+  }
+  expect(holderConstructor != nullptr,
+         "the fixture should lower the owned-parameter constructor");
+  if (holderConstructor == nullptr) {
+    return;
+  }
+  expect(!lang::mirBodyRoutesFailureEdges(holderConstructor->body),
+         "an unarmed owned-parameter transfer must suppress failure-edge "
+         "routing for the whole constructor body");
+  expect(holderConstructor->body.failureRecords.empty(),
+         "the checked operation after the unarmed transfer must not receive "
+         "a defined-failure edge");
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "the suppressed constructor should remain verified MIR");
+}
+
 void testConstructorPartialRollbackRepresentation() {
   const std::string source = R"(
 class Resource {
@@ -26154,6 +26208,7 @@ int main() {
 int main() {
   lang::installCrashHandlers("gti_tests");
   testConstructorPartialRollbackRepresentation();
+  testUnarmedConstructorTransferSuppressesFailureEdges();
   testFrontendStopPhase();
   testToolingOccurrenceOptOut();
   testTargetTripleParsing();

@@ -106,6 +106,39 @@ public:
       }
 
       (void)prologueValues;
+      if (output.kind == MirBodyKind::Constructor && initializers != nullptr) {
+        // Decide body-wide, before any edge is routed, whether some
+        // initializer will silently transfer a subobject into `this`
+        // without arming rollback; the verifier holds the matching
+        // body-wide rule. Stage-eligible single owning arguments either arm
+        // rollback or stay inactive, so they never transfer unarmed.
+        for (const HirConstructorInitializer &initializer : *initializers) {
+          const HirConstructorInstance *target =
+              initializer.constructorTarget
+                  ? program.findConstructorInstance(
+                        *initializer.constructorTarget)
+                  : nullptr;
+          const bool stageEligible =
+              initializer.kind == ConstructorInitializerTargetKind::Field &&
+              !initializer.storesReference && !initializer.generatedDefault &&
+              !initializer.ownedParameter &&
+              initializer.arguments.size() == 1 &&
+              initializer.targetType.kind == SemanticType::Class;
+          for (std::size_t index = 0; index < initializer.arguments.size();
+               ++index) {
+            if (initializer.storesReference || (stageEligible && index == 0) ||
+                (target != nullptr && index < target->parameterTypes.size() &&
+                 target->parameterTypes[index].kind ==
+                     SemanticType::Reference)) {
+              continue;
+            }
+            const HirValue *argument = findValue(initializer.arguments[index]);
+            if (argument != nullptr && argument->dropObligation) {
+              constructorUnarmedTransfer = true;
+            }
+          }
+        }
+      }
       if (initializers != nullptr) {
         for (std::size_t initializerIndex = 0;
              initializerIndex < initializers->size(); ++initializerIndex) {
@@ -304,6 +337,13 @@ private:
   // Armed ConstructionRollback obligations in stage order; failure edges
   // drain them in reverse and normal completion retires them.
   std::vector<MirDropObligationId> constructorRollback;
+  // Set when a constructor body silently transfers a temporary into `this`
+  // without arming rollback (owned-parameter and other unstaged initializer
+  // forms). From that point on no defined-failure edge may be routed in this
+  // body: such an edge could not drain the transferred subobject, so the
+  // checked operations after it stay on the compatibility authority instead
+  // of leaking through verified MIR.
+  bool constructorUnarmedTransfer = false;
 
   struct PreparedCallInput {
     MirOperand operand;
@@ -813,7 +853,7 @@ private:
         normalizedDestructorPropagation(obligation);
     const MirInstructionId instruction =
         appendInstruction(std::move(drop), true, false);
-    if (instruction != 0 && supportsMirFailureControlFlow(output.kind) &&
+    if (instruction != 0 && routeFailureEdgesHere() &&
         normalizedDestructorPropagation(obligation) ==
             FailurePropagationKind::Destructor) {
       const MirBlock *block = currentBlock();
@@ -1014,7 +1054,7 @@ private:
         normalizedDestructorPropagation(obligation);
     const MirInstructionId instruction =
         appendInstruction(std::move(drop), true, false);
-    if (instruction != 0 && supportsMirFailureControlFlow(output.kind) &&
+    if (instruction != 0 && routeFailureEdgesHere() &&
         normalizedDestructorPropagation(obligation) ==
             FailurePropagationKind::Destructor) {
       appendFailureControlFlow(instruction, 0, consumedDrops, endedLoans);
@@ -1109,7 +1149,7 @@ private:
         : preparedCallArgumentRoot
             ? MirFailureControlFlowPosition::PreparedCallArgumentRoot
             : MirFailureControlFlowPosition::None;
-    if (routeFailureControlFlow && supportsMirFailureControlFlow(output.kind) &&
+    if (routeFailureControlFlow && routeFailureEdgesHere() &&
         requiresMirFailureControlFlow(appended, failurePosition)) {
       const MirDropObligationId successResultDrop =
           appended.successResultDrop.value_or(0);
@@ -1135,6 +1175,16 @@ private:
     appendLifecycle(instruction, {.kind = MirLifecycleEventKind::TransferOut,
                                   .source = sourceObligation});
     (void)removeTemporary(sourceObligation);
+    if (output.kind == MirBodyKind::Constructor &&
+        instruction.kind == MirInstructionKind::Lifecycle) {
+      constructorUnarmedTransfer = true;
+    }
+  }
+
+  [[nodiscard]] bool routeFailureEdgesHere() const {
+    return supportsMirFailureControlFlow(output.kind) &&
+           (output.kind != MirBodyKind::Constructor ||
+            !constructorUnarmedTransfer);
   }
 
   [[nodiscard]] MirDropObligationId
@@ -2898,7 +2948,7 @@ private:
     // nested call outside the routed family until the remaining owning-result
     // materialization work lands.
     const bool successEdgeResult =
-        resultDrop != 0 && supportsMirFailureControlFlow(output.kind) &&
+        resultDrop != 0 && routeFailureEdgesHere() &&
         isFullExpressionRoot(value.id) && !call.definedFailure.empty() &&
         !call.destination && !call.loan && !value.ownership;
     if (successEdgeResult) {
@@ -2998,7 +3048,7 @@ private:
     // arm-local value at a conditional join.
     const MirDropObligationId resultDrop = dropObligationForValue(value.id);
     const bool successEdgeResult =
-        resultDrop != 0 && supportsMirFailureControlFlow(output.kind) &&
+        resultDrop != 0 && routeFailureEdgesHere() &&
         isFullExpressionRoot(value.id) && !construct.definedFailure.empty() &&
         !construct.destination && !construct.loan && !value.ownership;
     if (successEdgeResult) {
