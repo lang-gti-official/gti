@@ -163,7 +163,13 @@ generic emitter replaces that single whole-program route.
   projection carrier that is never referenced, each single-`Field` projected
   place binds by reference to the live member spelling, and reads of another
   object's fields, projection chains, and every write remain outside the
-  family.
+  family. The family also admits calls per body: an eligible call names a
+  static proved-failure-free source free function through the exact ordered
+  `CallInput`/`Call` stages, the HIR gate consults the MIR failure summary so
+  a may-raise or conservatively-true target declines gracefully, and the
+  callee's own body authority is decided independently. The closed-graph
+  `scalar-direct-call-v1` selector keeps priority over this per-body
+  capability for the whole components it owns.
 - `scalar-direct-call-v1` adds exact ordered scalar `CallInput`/`Call` stages
   to the scalar-CFG substrate. Every reachable node must be an eligible
   source-defined free function in one closed acyclic static-call graph, every

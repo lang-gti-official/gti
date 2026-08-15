@@ -2089,7 +2089,16 @@ private:
         if (model.findExpression(*call->callee()) != nullptr) {
           lowerOperand(call->callee());
         }
-        if (resolved != nullptr && resolved->declaration != nullptr &&
+        // An implicit receiver exists only for an unqualified call that
+        // resolves to a non-static member of the enclosing class. A free
+        // function is not static, so testing staticness alone attached a
+        // spurious receiver to every unqualified free-function call made
+        // inside a member body.
+        const FunctionInfo *resolvedInfo =
+            resolved != nullptr && resolved->declaration != nullptr
+                ? model.findFunction(*resolved->declaration)
+                : nullptr;
+        if (resolvedInfo != nullptr && resolvedInfo->ownerClass != 0 &&
             !resolved->declaration->isStatic() &&
             dynamic_cast<const Variable *>(call->callee().get()) != nullptr &&
             currentReceiverType.kind == SemanticType::Class) {

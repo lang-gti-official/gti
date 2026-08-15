@@ -1501,19 +1501,24 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         selectedMirScalarFailureFunction(stmt);
     const MirFunctionInstance *mirLeaf =
         mirFailure == nullptr ? selectedMirScalarLeaf(stmt) : nullptr;
-    const MirFunctionInstance *mirCfg =
-        mirLeaf == nullptr ? selectedMirScalarCfg(stmt) : nullptr;
+    // Every atomic whole-component family selects before the general
+    // per-body scalar-cfg capability, so their closed contracts and runtime
+    // gates stay authoritative for the components they own; per-body
+    // selection is the fallback for everything outside those components.
     const MirFunctionInstance *mirDirect =
-        mirLeaf == nullptr && mirCfg == nullptr ? selectedMirScalarDirect(stmt)
-                                                : nullptr;
+        mirLeaf == nullptr ? selectedMirScalarDirect(stmt) : nullptr;
     const MirFunctionInstance *mirCleanup =
-        mirLeaf == nullptr && mirCfg == nullptr && mirDirect == nullptr
+        mirLeaf == nullptr && mirDirect == nullptr
             ? selectedMirClassDefaultCleanup(stmt)
             : nullptr;
     const MirFunctionInstance *mirOwned =
-        mirLeaf == nullptr && mirCfg == nullptr && mirDirect == nullptr &&
-                mirCleanup == nullptr
+        mirLeaf == nullptr && mirDirect == nullptr && mirCleanup == nullptr
             ? selectedMirOwnedLifecycleFunction(stmt)
+            : nullptr;
+    const MirFunctionInstance *mirCfg =
+        mirLeaf == nullptr && mirDirect == nullptr && mirCleanup == nullptr &&
+                mirOwned == nullptr
+            ? selectedMirScalarCfg(stmt)
             : nullptr;
     const MirFunctionInstance *mirBody =
         mirLeaf != nullptr
@@ -4000,20 +4005,20 @@ private:
             selectedMirScalarFailureFunction(*function);
         const MirFunctionInstance *mirLeaf =
             mirFailure == nullptr ? selectedMirScalarLeaf(*function) : nullptr;
-        const MirFunctionInstance *mirCfg =
-            mirLeaf != nullptr ? nullptr : selectedMirScalarCfg(*function);
         const MirFunctionInstance *mirDirect =
-            mirLeaf == nullptr && mirCfg == nullptr
-                ? selectedMirScalarDirect(*function)
-                : nullptr;
+            mirLeaf != nullptr ? nullptr : selectedMirScalarDirect(*function);
         const MirFunctionInstance *mirCleanup =
-            mirLeaf == nullptr && mirCfg == nullptr && mirDirect == nullptr
+            mirLeaf == nullptr && mirDirect == nullptr
                 ? selectedMirClassDefaultCleanup(*function)
                 : nullptr;
         const MirFunctionInstance *mirOwned =
-            mirLeaf == nullptr && mirCfg == nullptr && mirDirect == nullptr &&
-                    mirCleanup == nullptr
+            mirLeaf == nullptr && mirDirect == nullptr && mirCleanup == nullptr
                 ? selectedMirOwnedLifecycleFunction(*function)
+                : nullptr;
+        const MirFunctionInstance *mirCfg =
+            mirLeaf == nullptr && mirDirect == nullptr &&
+                    mirCleanup == nullptr && mirOwned == nullptr
+                ? selectedMirScalarCfg(*function)
                 : nullptr;
         const MirFunctionInstance *mirBody =
             mirLeaf != nullptr
@@ -5794,7 +5799,8 @@ private:
   }
 
   [[nodiscard]] static bool
-  isMirScalarCfgBodyShape(const MirFunctionInstance &function) {
+  isMirScalarCfgBodyShape(const MirFunctionInstance &function,
+                          const MirProgram *program) {
     const MirBody &body = function.body;
     if (body.kind != MirBodyKind::Function || body.entry == 0 ||
         body.blocks.empty() || body.entry > body.blocks.size() ||
@@ -5834,12 +5840,17 @@ private:
     return std::all_of(
         body.blocks.begin(), body.blocks.end(), [&](const MirBlock &block) {
           return block.failureParameter == 0 &&
-                 std::all_of(block.instructions.begin(),
-                             block.instructions.end(),
-                             [&](const MirInstruction &instruction) {
-                               return isMirScalarCfgInstruction(
-                                   instruction, function, block.id);
-                             }) &&
+                 std::all_of(
+                     block.instructions.begin(), block.instructions.end(),
+                     [&](const MirInstruction &instruction) {
+                       return isMirScalarCfgInstruction(instruction, function,
+                                                        block.id) ||
+                              isMirScalarDirectCallInput(instruction, function,
+                                                         block.id) ||
+                              (program != nullptr &&
+                               isMirScalarDirectCall(instruction, function,
+                                                     *program, block.id));
+                     }) &&
                  isMirScalarCfgTerminatorShape(block.terminator, function);
         });
   }
@@ -5913,11 +5924,11 @@ private:
            *literal == (*source->operation == TokenKind::OR);
   }
 
-  [[nodiscard]] static bool
-  isMirScalarCfgBody(const MirFunctionInstance &function,
-                     const HirFunctionInstance &hirFunction) {
+  [[nodiscard]] bool isMirScalarCfgBody(const MirFunctionInstance &function,
+                                        const HirFunctionInstance &hirFunction,
+                                        const MirProgram *program) const {
     const MirBody &body = function.body;
-    if (!isMirScalarCfgBodyShape(function) ||
+    if (!isMirScalarCfgBodyShape(function, program) ||
         body.placeDomain != hirFunction.body.placeDomain ||
         body.fullExpressions.size() !=
             hirFunction.body.fullExpressions.size() ||
@@ -5963,8 +5974,22 @@ private:
                      [&](const MirValue &value) {
                        const HirValue *source =
                            hirFunction.body.findValue(value.sourceValue);
-                       return source != nullptr &&
-                              sameMirScalarLeafInfo(source->info, value.info);
+                       if (source == nullptr) {
+                         return false;
+                       }
+                       const MirInstruction *definition =
+                           body.findBlock(value.definitionBlock) == nullptr
+                               ? nullptr
+                               : mirScalarDefinitionFor(body, value);
+                       if (definition != nullptr &&
+                           definition->kind == MirInstructionKind::CallInput) {
+                         return source->info.type == value.info.type &&
+                                sameMirScalarLeafTraits(source->info.traits,
+                                                        value.info.traits) &&
+                                value.info.category == ValueCategory::Value &&
+                                value.info.access == AccessMode::ReadOnly;
+                       }
+                       return sameMirScalarLeafInfo(source->info, value.info);
                      })) {
       return false;
     }
@@ -5978,27 +6003,99 @@ private:
         return false;
       }
     }
-    return std::all_of(
-        body.blocks.begin(), body.blocks.end(), [&](const MirBlock &block) {
-          return isCoherentMirScalarCfgTerminator(block.terminator) &&
-                 std::all_of(
-                     block.instructions.begin(), block.instructions.end(),
-                     [&](const MirInstruction &instruction) {
-                       const bool coherentLiteral =
-                           instruction.operation != MirOperation::Literal ||
-                           isCoherentMirScalarCfgLiteral(instruction, function,
-                                                         hirFunction);
-                       const bool coherentConstants = std::all_of(
-                           instruction.operands.begin(),
-                           instruction.operands.end(),
-                           [&](const MirOperand &operand) {
-                             return operand.kind != MirOperandKind::Constant ||
-                                    isCoherentMirScalarCfgSyntheticLogicalConstant(
-                                        instruction, function, hirFunction);
-                           });
-                       return coherentLiteral && coherentConstants;
-                     });
-        });
+    struct ExpectedCallInput {
+      HirValueId call = 0;
+      std::size_t index = 0;
+      HirValueId source = 0;
+      std::size_t count = 0;
+    };
+    std::unordered_map<HirValueId, std::size_t> exactCallCounts;
+    std::vector<ExpectedCallInput> exactCallInputs;
+    for (const HirValue &value : hirFunction.body.values) {
+      if (value.kind != HirValueKind::Call) {
+        continue;
+      }
+      if (!value.callPlan || exactCallCounts.contains(value.id)) {
+        return false;
+      }
+      exactCallCounts.emplace(value.id, 0);
+      for (const HirCallArgument &argument : value.callPlan->arguments) {
+        exactCallInputs.push_back({.call = value.id,
+                                   .index = argument.parameterIndex,
+                                   .source = argument.value});
+      }
+    }
+    for (const MirBlock &block : body.blocks) {
+      if (!isCoherentMirScalarCfgTerminator(block.terminator)) {
+        return false;
+      }
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.operation == MirOperation::Literal &&
+            !isCoherentMirScalarCfgLiteral(instruction, function,
+                                           hirFunction)) {
+          return false;
+        }
+        if (!std::all_of(
+                instruction.operands.begin(), instruction.operands.end(),
+                [&](const MirOperand &operand) {
+                  return operand.kind != MirOperandKind::Constant ||
+                         isCoherentMirScalarCfgSyntheticLogicalConstant(
+                             instruction, function, hirFunction);
+                })) {
+          return false;
+        }
+        if (instruction.kind == MirInstructionKind::CallInput) {
+          const HirValue *argument =
+              hirFunction.body.findValue(instruction.hirValue);
+          const auto expected = std::find_if(
+              exactCallInputs.begin(), exactCallInputs.end(),
+              [&](const ExpectedCallInput &candidate) {
+                return candidate.call == instruction.callSite &&
+                       candidate.index == instruction.callInputIndex;
+              });
+          if (argument == nullptr || expected == exactCallInputs.end() ||
+              expected->source != instruction.hirValue ||
+              ++expected->count != 1 ||
+              argument->info.type != instruction.info.type ||
+              !sameMirScalarLeafTraits(argument->info.traits,
+                                       instruction.info.traits)) {
+            return false;
+          }
+        }
+        if (instruction.kind != MirInstructionKind::Call) {
+          continue;
+        }
+        const auto exactCall = exactCallCounts.find(instruction.hirValue);
+        const HirValue *source =
+            hirFunction.body.findValue(instruction.hirValue);
+        if (exactCall == exactCallCounts.end() || ++exactCall->second != 1 ||
+            source == nullptr ||
+            !isHirScalarDirectCall(*source, hirFunction.body) ||
+            source->id != instruction.callSite ||
+            source->functionTarget != instruction.functionTarget ||
+            source->parameterTypes != instruction.parameterTypes ||
+            source->info.type != instruction.info.type ||
+            source->callPlan->arguments.size() != instruction.operands.size()) {
+          return false;
+        }
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          const MirValue *operand =
+              body.findValue(instruction.operands[index].value);
+          const MirInstruction *input =
+              operand == nullptr ? nullptr
+                                 : mirScalarDefinitionFor(body, *operand);
+          if (input == nullptr ||
+              input->hirValue != source->callPlan->arguments[index].value ||
+              input->callInputIndex !=
+                  source->callPlan->arguments[index].parameterIndex) {
+            return false;
+          }
+        }
+      }
+    }
+    return std::all_of(exactCallCounts.begin(), exactCallCounts.end(),
+                       [](const auto &entry) { return entry.second == 1; });
   }
 
   [[nodiscard]] static bool
@@ -6147,9 +6244,37 @@ private:
     }
   }
 
-  [[nodiscard]] static bool
-  isHirScalarCfgBody(const HirFunctionInstance &function) {
+  // Calls are admitted per body rather than through the closed-graph
+  // scalar-direct-call selection: an eligible call names a static
+  // proved-failure-free source free function, so no failure channel can
+  // cross into or out of a differently-emitted neighbor, and the callee's
+  // own body authority is decided independently.
+  [[nodiscard]] bool
+  isHirScalarCfgBody(const HirFunctionInstance &function) const {
     const HirBody &body = function.body;
+    std::unordered_set<HirValueId> callees;
+    for (const HirValue &value : body.values) {
+      if (value.kind != HirValueKind::Call) {
+        continue;
+      }
+      if (!isHirScalarDirectCall(value, body)) {
+        return false;
+      }
+      // The failure-free proof is MIR-level, so the HIR gate must consult it
+      // here: a call to a target that may raise (or whose summary is only
+      // conservatively true) declines gracefully instead of reaching the
+      // fail-closed shape gate.
+      const MirFunctionInstance *target =
+          mir == nullptr || !value.functionTarget
+              ? nullptr
+              : mir->findFunctionInstance(*value.functionTarget);
+      if (target == nullptr || target->mayRaiseDefinedFailure ||
+          target->definitionKind !=
+              MirFunctionInstance::DefinitionKind::Source) {
+        return false;
+      }
+      callees.insert(value.operands.front());
+    }
     return body.loans.empty() && body.dropObligations.empty() &&
            std::all_of(body.bindings.begin(), body.bindings.end(),
                        [](const HirBinding &binding) {
@@ -6162,7 +6287,11 @@ private:
                        }) &&
            std::all_of(body.values.begin(), body.values.end(),
                        [&](const HirValue &value) {
-                         return isHirScalarCfgValue(value, body);
+                         return value.kind == HirValueKind::Call
+                                    ? isHirScalarDirectCall(value, body)
+                                : callees.contains(value.id)
+                                    ? isHirScalarDirectCallee(value)
+                                    : isHirScalarCfgValue(value, body);
                        }) &&
            std::all_of(body.statements.begin(), body.statements.end(),
                        isHirScalarCfgStatement);
@@ -6295,12 +6424,12 @@ private:
     if (!isHirScalarCfgBody(*hirInstance)) {
       return nullptr;
     }
-    if (!isMirScalarCfgBodyShape(*selected)) {
+    if (!isMirScalarCfgBodyShape(*selected, mir)) {
       throw std::logic_error(
           "eligible scalar-CFG source body is not represented by the closed "
           "verified MIR family");
     }
-    if (!isMirScalarCfgBody(*selected, *hirInstance)) {
+    if (!isMirScalarCfgBody(*selected, *hirInstance, mir)) {
       throw std::logic_error(
           "verified MIR scalar-CFG body does not match its HIR source or "
           "verified MIR rewrite proof");
@@ -13059,7 +13188,7 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
       output << "case " << block.id << ": {\n";
       ++indentation;
       for (const MirInstruction &instruction : block.instructions) {
-        emitMirScalarCfgInstruction(instruction);
+        emitMirScalarDirectInstruction(instruction);
       }
       emitMirScalarCfgTerminator(block.terminator);
       --indentation;

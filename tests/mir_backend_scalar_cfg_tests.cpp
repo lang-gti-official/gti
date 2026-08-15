@@ -584,6 +584,64 @@ int main() {
          "must stay wholly on compatibility emission");
 }
 
+// Calls are admitted per body: an eligible call names a static
+// proved-failure-free source free function, and the callee's own authority is
+// decided independently, so no closed-graph selection is required and no
+// failure channel can cross into a differently-emitted neighbor.
+void testPerBodyCallSelection() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-scalar-cfg-per-body-call.gti", R"(
+int mask_bits(int left, int right) { return left & right; }
+
+int checked_add(int left, int right) { return left + right; }
+
+class Widget {
+  int stored;
+
+public:
+  Widget(int input) : stored(input) {}
+  int combined(int other) { return mask_bits(this.stored, other); }
+  int risky(int other) { return checked_add(this.stored, other); }
+};
+
+int main() {
+  Widget widget = Widget(6);
+  if (widget.combined(3) == 2 and widget.risky(1) == 7) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the per-body call fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
+         "the per-body call fixture should retain valid MIR");
+  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
+    return;
+  }
+  const lang::BackendArtifact artifact =
+      emit(frontend, optimized.mir, compatibility);
+  expect(memberDefinition(artifact.contents, "combined").find(marker) !=
+             std::string_view::npos,
+         "a member calling a proved-failure-free free function should emit "
+         "from verified MIR without closed-graph selection");
+  expect(functionDefinition(artifact.contents, "mask_bits").find(marker) !=
+             std::string_view::npos,
+         "the called free function keeps its own independent body authority");
+  expect(memberDefinition(artifact.contents, "risky").find(marker) ==
+             std::string_view::npos,
+         "a call to a may-raise target must decline gracefully to "
+         "compatibility rather than fail closed");
+}
+
 void testGenericOwnerMemberStaysCompatibility() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("mir-scalar-cfg-generic-owner.gti", R"(
@@ -1186,6 +1244,7 @@ int main(int argc, char **argv) {
   testUninitializedDeclarationStaysCompatibility();
   testConcreteMemberSelection();
   testForeignObjectFieldReadStaysCompatibility();
+  testPerBodyCallSelection();
   testGenericOwnerMemberStaysCompatibility();
   testIncoherentSwitchRejected(std::filesystem::path(argv[1]));
   testProvenanceAndSnapshotCoherence(std::filesystem::path(argv[1]));

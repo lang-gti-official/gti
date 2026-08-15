@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.153.0
+Checkpoint version: 0.154.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -125,6 +125,30 @@ structurally incoherent, that no invalid-shape issue is raised, and that
 readiness does not regress below a floor. The first of those matters most: a
 change that breaks compilation silently improves every other figure, which
 masked two unsound attempts earlier in this campaign.
+
+The 0.154.0 checkpoint adds per-body static calls to `scalar-cfg-v1` and
+fixes an HIR receiver-fidelity defect the work exposed. Calls no longer
+require the closed-graph scalar-direct-call selection: an eligible call names
+a static proved-failure-free source free function through the exact ordered
+`CallInput`/`Call` stages already verified by that family, the HIR gate now
+consults the MIR failure summary so a may-raise or conservatively-true target
+declines gracefully instead of reaching the fail-closed shape gate, and the
+coherence layer carries the exact call-input correspondence walk. The
+closed-graph family keeps selector priority for the whole components it owns.
+Composition now works end to end: a concrete-class member reading its own
+field and calling a free helper emits wholly from verified MIR.
+
+The HIR fix: lowering attached an implicit receiver to every unqualified call
+made inside a member body whose target was merely non-static, which described
+free-function calls as receiver-bearing. The guard now also requires the
+resolved target to be a member (`ownerClass != 0`), so a free-function call
+inside a member carries no receiver at any layer.
+
+Corpus emission is unchanged at 32 bodies: the examples' free-function calls
+target checked-arithmetic functions whose summaries are not provably
+failure-free, so no additional example body qualifies yet. The capability is
+proven by the focused gates instead, and its yield grows as the failure-free
+closure widens.
 
 The 0.153.0 checkpoint adds the `--emit-mir` inspection surface. Direct mode
 gains a `MirBackend` selected exactly like the C++ and native-header backends:
