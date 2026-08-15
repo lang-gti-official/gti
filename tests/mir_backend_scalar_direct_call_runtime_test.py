@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 
-MARKER = "// GTI verified-MIR body: scalar-direct-call-v1"
+MARKER = "// GTI verified-MIR body: scalar-cfg-v1"
 SELECTED = (
     "direct_identity",
     "selected_forward",
@@ -24,20 +24,34 @@ SELECTED = (
     "direct_heterogeneous",
     "direct_loop",
     "direct_cross_namespace",
+    "direct_identity_leaf",
+    "direct_alternate_leaf",
+    "direct_heterogeneous_leaf",
+    "direct_first",
+    "direct_pair",
+    "direct_ping",
+    "direct_sink",
+    "direct_zero",
+    "scoped_leaf",
+    "is_valid",
+    "get",
+    # Callers the old whole-graph contract had to reject even though their
+    # own bodies are ordinary: their ineligible callees stay on the
+    # compatibility path while the calls emit from verified MIR.
+    "compatibility_static_member",
+    "compatibility_internal_call",
+    "compatibility_constexpr_target",
+    "compatibility_constexpr_call",
+    "compatibility_for_target",
+    "compatibility_for_call",
 )
 COMPATIBILITY = (
     "checked_target",
     "compatibility_checked_target",
     "compatibility_checked_call",
     "constexpr_target",
-    "compatibility_constexpr_target",
-    "compatibility_constexpr_call",
-    "compatibility_static_member",
     "compatibility_internal_target",
-    "compatibility_internal_call",
     "compatibility_recursive",
-    "compatibility_for_target",
-    "compatibility_for_call",
 )
 
 
@@ -67,8 +81,8 @@ def function_definition(generated: str, source_name: str) -> str:
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
     if generated.count(MARKER) != len(SELECTED):
         sys.stderr.write(
-            f"{optimization}/{standard} did not select exactly the sixteen "
-            "verified scalar direct-call MIR bodies\n"
+            f"{optimization}/{standard} did not select exactly the verified "
+            "scalar MIR bodies\n"
         )
         return False
     for name in SELECTED:

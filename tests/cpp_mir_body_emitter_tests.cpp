@@ -1142,8 +1142,7 @@ void testGeneralTextStepMatchesProductionEmission() {
       }
       const std::string label =
           generated.substr(labelStart, labelEnd - labelStart);
-      if (label != "scalar-cfg-v1" && label != "scalar-direct-call-v1" &&
-          label != "scalar-leaf-v1") {
+      if (label != "scalar-cfg-v1") {
         continue;
       }
       const std::string_view instanceMarker = "function-instance ";
@@ -1165,9 +1164,6 @@ void testGeneralTextStepMatchesProductionEmission() {
       }
       const lang::CppMirBodyEmissionText emission = emitter.emitBodyText(
           {.kind = lang::MirBodyKind::Function, .owner = instance}, label,
-          label == "scalar-leaf-v1"
-              ? lang::CppMirBodyTextForm::ScalarStraightLine
-              : lang::CppMirBodyTextForm::ScalarCfg,
           markerIndent / 2 - 1);
       if (emission.emitted() &&
           generated.find(emission.text) != std::string::npos) {

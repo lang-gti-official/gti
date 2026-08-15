@@ -209,7 +209,7 @@ int main() { return selected() - 41; }
   if (result.artifact) {
     expect(
         result.artifact->contents.find(
-            "// GTI verified-MIR body: scalar-leaf-v1") != std::string::npos &&
+            "// GTI verified-MIR body: scalar-cfg-v1") != std::string::npos &&
             result.artifact->contents.find("static_cast<std::int32_t>(41)") !=
                 std::string::npos &&
             result.artifact->contents.find("static_cast<std::int32_t>(82)") ==

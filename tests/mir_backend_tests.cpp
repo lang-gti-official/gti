@@ -184,14 +184,10 @@ void testSelectedFamilyAndCompatibilityFallback() {
 
   const lang::BackendArtifact o0Artifact =
       emit(frontend, o0.mir, o0Compatibility);
-  constexpr std::string_view marker =
-      "// GTI verified-MIR body: scalar-leaf-v1";
-  if (count(o0Artifact.contents, marker) != 7) {
-    std::cerr << lang::MirPrinter().print(o0.mir) << '\n';
-  }
-  expect(count(o0Artifact.contents, marker) == 7,
-         "only the seven bounded fixed-integer/void leaves should use MIR "
-         "body emission");
+  constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1";
+  expect(count(o0Artifact.contents, marker) == 10,
+         "exactly the ten scalar bodies of this fixture should use general "
+         "MIR body emission");
   expect(o0Artifact.contents.find("__gti_mir_arg_0") != std::string::npos &&
              o0Artifact.contents.find("__gti_mir_v_") != std::string::npos,
          "the selected definitions should name MIR parameters and SSA values");
@@ -207,7 +203,7 @@ void testSelectedFamilyAndCompatibilityFallback() {
          "local-storage family");
   expect(
       functionDefinition(o0Artifact.contents, "mir_i8_identity")
-                  .find("const std::int8_t") != std::string_view::npos &&
+                  .find("std::int8_t") != std::string_view::npos &&
           functionDefinition(o0Artifact.contents, "mir_i64_max")
                   .find("static_cast<std::int64_t>(9223372036854775807)") !=
               std::string_view::npos &&
@@ -228,11 +224,11 @@ void testSelectedFamilyAndCompatibilityFallback() {
          "selected second parameter");
   expect(
       functionDefinition(o0Artifact.contents, "compatibility_bool_identity")
-                  .find(marker) == std::string_view::npos &&
+                  .find(marker) != std::string_view::npos &&
           functionDefinition(o0Artifact.contents, "compatibility_char_identity")
-                  .find(marker) == std::string_view::npos,
-      "bool and character leaves should remain deliberate compatibility "
-      "near-misses for the first MIR family");
+                  .find(marker) != std::string_view::npos,
+      "bool and character identity bodies are admitted per body by the "
+      "general emitter");
 
   const std::string direct =
       lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
@@ -252,9 +248,8 @@ void testSelectedFamilyAndCompatibilityFallback() {
         emit(frontend, o1.mir, o1Compatibility);
     const lang::BackendArtifact o1WithO0Compatibility =
         emit(frontend, o1.mir, o0Compatibility);
-    expect(count(o1Artifact.contents, marker) == 7,
-           "the same closed family should remain selected after MIR "
-           "optimization");
+    expect(count(o1Artifact.contents, marker) == 10,
+           "the same bodies should remain selected after MIR optimization");
     const std::string_view o0Constant =
         functionDefinition(o0Artifact.contents, "mir_constant");
     const std::string_view o1Constant =
@@ -268,7 +263,7 @@ void testSelectedFamilyAndCompatibilityFallback() {
                 std::string_view::npos,
         "the marked constant body should execute the verified O1 "
         "Identity-to-Literal MIR rewrite");
-    expect(count(o1WithO0Compatibility.contents, marker) == 7 &&
+    expect(count(o1WithO0Compatibility.contents, marker) == 10 &&
                functionDefinition(o1WithO0Compatibility.contents,
                                   "mir_constant") == o1Constant,
            "verified optimized MIR should control the selected body even "
@@ -749,7 +744,7 @@ int main() { return huge() == int64_t(9223372036854775807) ? 0 : 1; }
   const lang::BackendArtifact baseline =
       emit(frontend, frontend.mir, compatibility);
   expect(functionDefinition(baseline.contents, "huge")
-                 .find("// GTI verified-MIR body: scalar-leaf-v1") !=
+                 .find("// GTI verified-MIR body: scalar-cfg-v1") !=
              std::string_view::npos,
          "the signed literal boundary fixture must enter the selected MIR "
          "family before mutation");

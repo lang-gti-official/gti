@@ -15,8 +15,7 @@
 
 namespace {
 
-constexpr std::string_view marker =
-    "// GTI verified-MIR body: scalar-direct-call-v1";
+constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1";
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -164,12 +163,31 @@ bool emissionRejected(const lang::FrontendResult &frontend,
 
 void expectSelectedDefinitions(std::string_view generated) {
   constexpr std::string_view selected[] = {
-      "direct_identity",        "selected_forward",     "selected_order",
-      "selected_void",          "direct_chain_middle",  "selected_chain",
-      "direct_chain",           "direct_unused",        "direct_choose",
-      "direct_nested",          "direct_call_zero",     "direct_literal",
-      "direct_call_void",       "direct_heterogeneous", "direct_loop",
+      "direct_identity",
+      "selected_forward",
+      "selected_order",
+      "selected_void",
+      "direct_chain_middle",
+      "selected_chain",
+      "direct_chain",
+      "direct_unused",
+      "direct_choose",
+      "direct_nested",
+      "direct_call_zero",
+      "direct_literal",
+      "direct_call_void",
+      "direct_heterogeneous",
+      "direct_loop",
       "direct_cross_namespace",
+      // Callers the old whole-graph contract had to reject even though
+      // their own bodies are ordinary: their ineligible callees stay on the
+      // compatibility path while the calls emit from verified MIR.
+      "compatibility_constexpr_target",
+      "compatibility_constexpr_call",
+      "compatibility_static_member",
+      "compatibility_internal_call",
+      "compatibility_for_target",
+      "compatibility_for_call",
   };
   expect(std::count(generated.begin(), generated.end(), '\n') != 0,
          "generated C++ should be non-empty");
@@ -184,14 +202,8 @@ void expectSelectedDefinitions(std::string_view generated) {
       "compatibility_checked_target",
       "compatibility_checked_call",
       "constexpr_target",
-      "compatibility_constexpr_target",
-      "compatibility_constexpr_call",
-      "compatibility_static_member",
       "compatibility_internal_target",
-      "compatibility_internal_call",
       "compatibility_recursive",
-      "compatibility_for_target",
-      "compatibility_for_call",
   };
   for (const std::string_view name : compatibility) {
     expect(functionDefinition(generated, name).find(marker) ==
@@ -456,7 +468,7 @@ void testMutations(const std::filesystem::path &fixture) {
   if (changedOperation &&
       lang::verifyMirProgram(substitutedOperation).valid()) {
     expect(emissionRejected(frontend, substitutedOperation, compatibility),
-           "scalar-direct-call-v1 must reject an operation substitution that "
+           "scalar-cfg-v1 must reject an operation substitution that "
            "has no optimizer rewrite provenance");
   }
 
@@ -478,7 +490,7 @@ void testMutations(const std::filesystem::path &fixture) {
          "generic MIR");
   if (changedBranch && lang::verifyMirProgram(swappedBranch).valid()) {
     expect(emissionRejected(frontend, swappedBranch, compatibility),
-           "scalar-direct-call-v1 must reject a branch-successor swap that has "
+           "scalar-cfg-v1 must reject a branch-successor swap that has "
            "no optimizer rewrite provenance");
   }
 
@@ -573,7 +585,7 @@ void testMutations(const std::filesystem::path &fixture) {
              "should remain generic valid MIR");
       if (lang::verifyMirProgram(launderedFold).valid()) {
         expect(emissionRejected(frontend, launderedFold, o1Compatibility),
-               "scalar-direct-call-v1 must reject a grouped argument whose "
+               "scalar-cfg-v1 must reject a grouped argument whose "
                "identity-fold provenance was laundered");
       }
     }

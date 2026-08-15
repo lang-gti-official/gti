@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.159.0
+Checkpoint: 0.160.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1078,8 +1078,19 @@ analysis, HIR, MIR, and the backend.
   walk and its two MIR shape/coherence re-proofs are deleted, and a
   declined body stays on the compatibility path instead of becoming a
   near-miss internal error. Declaration-identity facts, concrete-instance
-  resolution, and the HIR/MIR metadata seal remain on the selection path;
-  the remaining HIR-shaped admission lives in the five atomic families.
+  resolution, and the HIR/MIR metadata seal remain on the selection path.
+- **Scalar-leaf and scalar-direct-call families dissolved (0.160.0).**
+  Analysis-driven per-body admission covers every body the two families
+  selected, so their selectors, whole-graph verification walkers, and text
+  routes are deleted and their bodies publish under the general scalar-cfg
+  label. Per-body admission also emits the ordinary callers those
+  whole-graph contracts had to reject: constexpr, static-member, and
+  internal-linkage callees stay on the compatibility path while calls to
+  them emit from verified MIR. The text step asserts literal-value
+  fidelity, so a forged out-of-range literal remains an internal error
+  rather than implementation-defined C++. The remaining HIR-shaped
+  admission lives in the three atomic families (scalar-failure-callgraph,
+  class-default-cleanup, owned-lifecycle).
 - **Admission widened per body (0.158.0-0.159.0).** The scalar-cfg gate no longer
   excludes compiler-private declarations, so standard-library scalar bodies
   select per body through the same fail-closed walk (corpus production

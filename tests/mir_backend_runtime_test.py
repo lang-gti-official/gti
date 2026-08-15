@@ -37,7 +37,7 @@ def main() -> int:
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(sys.argv[2]).resolve()
-    marker = "// GTI verified-MIR body: scalar-leaf-v1"
+    marker = "// GTI verified-MIR body: scalar-cfg-v1"
     with tempfile.TemporaryDirectory(prefix="gti-mir-backend-") as temporary:
         root = pathlib.Path(temporary)
         emitted_by_mode: dict[tuple[str, str], str] = {}
@@ -77,10 +77,10 @@ def main() -> int:
                 if emission.returncode != 0:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
-                if generated.count(marker) != 7:
+                if generated.count(marker) != 12:
                     sys.stderr.write(
-                        "generated C++ did not select exactly the seven "
-                        "verified scalar-leaf MIR bodies\n"
+                        "generated C++ did not select exactly the twelve "
+                        "verified scalar MIR bodies\n"
                     )
                     return 1
                 if "return ::gti_internal::backend::add(value, 1);" not in generated:
@@ -89,7 +89,7 @@ def main() -> int:
                     )
                     return 1
                 if (
-                    "const std::int8_t"
+                    "std::int8_t"
                     not in function_definition(generated, "mir_i8_identity")
                     or "mir_second(std::int8_t __gti_mir_arg_0, std::int32_t "
                     "__gti_mir_arg_1, std::uint64_t __gti_mir_arg_2)"
@@ -109,16 +109,17 @@ def main() -> int:
                     return 1
                 if (
                     marker
-                    in function_definition(
+                    not in function_definition(
                         generated, "compatibility_bool_identity"
                     )
                     or marker
-                    in function_definition(
+                    not in function_definition(
                         generated, "compatibility_char_identity"
                     )
                 ):
                     sys.stderr.write(
-                        "bool or character near-miss escaped compatibility\n"
+                        "bool or character identity bodies should now be "
+                        "admitted per body by the general emitter\n"
                     )
                     return 1
 
