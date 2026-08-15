@@ -270,6 +270,15 @@ struct CppMirProgramEmissionAnalysis {
   }
 };
 
+// The concrete text form one migrated family publishes today: the general
+// bb-loop form shared by the scalar-cfg and scalar-direct-call families, or
+// the scalar-leaf single-block SSA form. Receiver-place handling is derived
+// from MIR and rows, never selected by the caller.
+enum class CppMirBodyTextForm {
+  ScalarCfg,
+  ScalarStraightLine,
+};
+
 // One general text emission attempt. `text` is complete exactly when the
 // fail-closed analysis is Ready and every construct in the body is inside the
 // text step's ported vocabulary; there is never partial text.
@@ -300,17 +309,16 @@ public:
   [[nodiscard]] CppMirProgramEmissionAnalysis analyzeProgram() const;
 
   // General per-instance body text for the scalar vocabulary the migrated
-  // per-body families cover today. `familyLabel` is the production
-  // verified-MIR marker label, `fieldBoundThisPlaces` selects the scalar-cfg
-  // receiver-field binding for This-rooted places (the direct family declares
-  // such places as ordinary locals), and `indentation` is the caller's
-  // two-space indentation depth at the body's opening brace. Analysis runs
-  // first; a non-Ready body returns its issues and no text. A Ready body
-  // whose construct falls outside the ported vocabulary is emission drift and
-  // throws, matching the transitional emitter's fail-closed behavior.
+  // families cover today. `familyLabel` is the production verified-MIR
+  // marker label, `form` selects the family's historical text form, and
+  // `indentation` is the caller's two-space indentation depth at the body's
+  // opening brace. Analysis runs first; a non-Ready body returns its issues
+  // and no text. A Ready body whose construct falls outside the ported
+  // vocabulary is emission drift and throws, matching the transitional
+  // emitter's fail-closed behavior.
   [[nodiscard]] CppMirBodyEmissionText
   emitBodyText(MirBodyAddress address, std::string_view familyLabel,
-               bool fieldBoundThisPlaces, std::size_t indentation) const;
+               CppMirBodyTextForm form, std::size_t indentation) const;
 
 private:
   const MirProgram &program_;

@@ -1741,15 +1741,26 @@ public:
 
   [[nodiscard]] std::string emit(const MirFunctionInstance &function,
                                  std::string_view familyLabel,
-                                 bool fieldBoundThisPlaces) {
+                                 CppMirBodyTextForm form) {
     output.str("");
     output << "{\n";
     ++indentation;
     writeIndent();
     output << "// GTI verified-MIR body: " << familyLabel
            << " function-instance " << function.id << "\n";
+    if (form == CppMirBodyTextForm::ScalarStraightLine) {
+      emitStraightLine(function);
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      return output.str();
+    }
     for (const MirPlace &place : function.body.places) {
-      if (fieldBoundThisPlaces && place.root == MirPlaceRootKind::This) {
+      // Receiver-place handling is derived from MIR, not selected by the
+      // caller: a This-rooted place is the projection carrier (skipped) or
+      // one projected read-only field (bound by reference to the live
+      // member). No admitted body declares a receiver as an ordinary local.
+      if (place.root == MirPlaceRootKind::This) {
         // The bare receiver place is only the projection carrier and is never
         // referenced. A field place binds by reference so every load reads
         // the live member; receivers here are read-only, so no write occurs.
@@ -1816,6 +1827,60 @@ public:
   }
 
 private:
+  // Ported verbatim from the transitional emitter's scalar-leaf body
+  // emission: single-block SSA text with const values, direct parameter
+  // reads, and one trailing return.
+  void emitStraightLine(const MirFunctionInstance &function) {
+    for (const MirInstruction &instruction :
+         function.body.blocks.front().instructions) {
+      writeIndent();
+      if (instruction.kind == MirInstructionKind::Lifecycle) {
+        output << "// GTI MIR full-expression boundary "
+               << instruction.fullExpressionEnd << "\n";
+        continue;
+      }
+      output << "const " << typeSpelling(instruction.info.type)
+             << " __gti_mir_v_" << *instruction.result << " = ";
+      if (instruction.kind == MirInstructionKind::Load) {
+        const MirPlace *place =
+            function.body.findPlace(instruction.operands.front().place);
+        if (place == nullptr) {
+          throw std::logic_error(
+              "verified MIR scalar-leaf load lost its parameter place");
+        }
+        const auto parameter =
+            std::find(function.parameterBindings.begin(),
+                      function.parameterBindings.end(), place->binding);
+        output << "__gti_mir_arg_"
+               << std::distance(function.parameterBindings.begin(), parameter);
+      } else if (instruction.operation == MirOperation::Literal) {
+        emitStraightLineLiteral(*instruction.literal, instruction.info.type);
+      } else {
+        output << "__gti_mir_v_" << instruction.operands.front().value;
+      }
+      output << ";\n";
+    }
+    writeIndent();
+    output << "return";
+    if (function.body.blocks.front().terminator.value) {
+      output << " __gti_mir_v_"
+             << function.body.blocks.front().terminator.value->value;
+    }
+    output << ";\n";
+  }
+
+  void emitStraightLineLiteral(const Literal &literal,
+                               const SemanticType &type) {
+    if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
+      output << "static_cast<" << typeSpelling(type) << ">(";
+      emitIntegerLiteral(*integer);
+      output << ')';
+      return;
+    }
+    throw std::logic_error(
+        "verified MIR scalar-leaf literal has an unsupported representation");
+  }
+
   void writeIndent() {
     for (std::size_t index = 0; index < indentation; ++index) {
       output << "  ";
@@ -2173,7 +2238,7 @@ cppMirExpectedTypeRepresentation(const SemanticType &type) {
 
 CppMirBodyEmissionText CppMirBodyEmitter::emitBodyText(
     MirBodyAddress address, std::string_view familyLabel,
-    bool fieldBoundThisPlaces, std::size_t indentation) const {
+    CppMirBodyTextForm form, std::size_t indentation) const {
   CppMirBodyEmissionText result;
   result.analysis = analyze(address);
   if (!result.analysis.ready()) {
@@ -2190,7 +2255,7 @@ CppMirBodyEmissionText CppMirBodyEmitter::emitBodyText(
         "general MIR body text emission lost its exact function instance");
   }
   result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
-                    .emit(*function, familyLabel, fieldBoundThisPlaces);
+                    .emit(*function, familyLabel, form);
   return result;
 }
 

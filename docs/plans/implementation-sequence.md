@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.154.0
+Checkpoint: 0.157.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -183,9 +183,10 @@ shadow infrastructure:
    program/module initialization work rather than proving another narrow
    family; remove AST/HIR body emission, native failure helpers, and the HIR
    replacement bridge. The general per-instance text step and the production
-   representation-row builder are in place: scalar-cfg and scalar-direct-call
-   body text is produced by `CppMirBodyEmitter::emitBodyText` from MIR plus
-   copied rows, byte-identical to the family emission it replaced. AST, semantics, and HIR remain available only for
+   representation-row builder are in place: scalar-leaf, scalar-cfg, and
+   scalar-direct-call body text is produced by `CppMirBodyEmitter::emitBodyText`
+   from MIR plus copied rows, byte-identical to the family emission it
+   replaced, and read-only scalar operator members are admitted per body. AST, semantics, and HIR remain available only for
    declarations, concrete identities, layout, ABI, and representation facts.
    The evidence standard is recorded under "Cutover Evidence After The
    Differential Oracle" below.
@@ -1063,13 +1064,16 @@ analysis, HIR, MIR, and the backend.
   borrows 16. `Lifecycle` is required by every one of them and is already
   classified `RepresentedByMir`, so the first emission increment should cover
   `Lifecycle` plus the existing scalar-CFG set, then `Call`/`CallInput`.
-- **Remaining wiring pieces.** (1) A representation-row builder: nothing in
-  production constructs `CppMirBodyEmissionMapRows`, and the planner snapshot
-  carries coherence seals rather than C++ spellings, so the builder must reuse
-  the emitter's naming authority. (2) The text-emission step the body-emitter
-  header reserves. (3) Integration in `CppBackend` with differential
-  comparison against the compatibility emitter over the corpus, which is the
-  strongest available correctness oracle for the cutover.
+- **Wiring landed (0.156.0-0.157.0).** (1) `buildCppMirBodyEmissionMapRows`
+  is the production representation-row builder, reusing the extracted
+  `cpp_representation` naming authorities. (2) `CppMirBodyEmitter::emitBodyText`
+  is the text-emission step; the scalar-leaf, scalar-cfg, and
+  scalar-direct-call families delegate their production body text to it, with
+  receiver-place handling derived from MIR rather than family flags.
+  (3) Rows are built once at the emitter's MIR boundary; remaining wiring is
+  moving construction fully to the backend/lowered-program boundary and
+  retiring the HIR-shaped admission selectors in favor of analysis-driven
+  per-body admission.
 - **Exit gate:** all reachable GTI bodies have one executable authority; every
   current checked family preserves exact record, prior effects, and cleanup at
   O0/O1/O3 and C++20/C++23; native expected/assert/abort paths and duplicated

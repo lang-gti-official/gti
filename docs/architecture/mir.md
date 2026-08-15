@@ -48,11 +48,12 @@ representation rows — type, field-symbol, body-name/call-target, and
 non-payload enum spellings drawn only from the extracted
 `cpp_representation` authorities — and `CppMirBodyEmitter::emitBodyText`
 emits one Ready function body from MIR and those rows alone, with no
-Program, semantic, or HIR input. The transitional emitter's scalar-cfg and
-scalar-direct-call families delegate their body text to this step: admission
-stays in the family gates, one general text authority produces the bytes,
-and a selected body the general step cannot emit is an internal error rather
-than a silent fallback. The body-emitter suite pins byte agreement between
+Program, semantic, or HIR input. The transitional emitter's scalar-leaf, scalar-cfg,
+and scalar-direct-call families delegate their body text to this step:
+admission stays in the family gates, one general text authority produces the
+bytes, receiver-place handling is derived from MIR rather than selected by a
+family flag, and a selected body the general step cannot emit is an internal
+error rather than a silent fallback. The body-emitter suite pins byte agreement between
 this step and every production-published scalar body across the example
 corpus.
 

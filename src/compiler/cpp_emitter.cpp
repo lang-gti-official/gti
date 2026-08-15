@@ -33,6 +33,14 @@ public:
       : standard(standard), target(std::move(target)),
         optimizations(optimizations), semantics(semantics), hir(hir) {
     mir = verifiedMir;
+    // Copied representation rows are built once at construction, at the
+    // emitter's MIR boundary, so body emission never derives a spelling
+    // lazily mid-run (ADR 016). The no-MIR public direct API has no rows and
+    // never selects a verified-MIR body.
+    if (mir != nullptr) {
+      generalEmissionMap.emplace(
+          buildCppMirBodyEmissionMapRows(semantics, *mir, standard));
+    }
     indexUnsafeOperations();
   }
 
@@ -1583,8 +1591,10 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         } else {
           emitMirClassDefaultCleanupBody(*mirCleanup);
         }
-        emitStructuralOperatorAdapter(stmt);
-        emitCallableAdapter(stmt);
+        if (!emittingDeferredMember) {
+          emitStructuralOperatorAdapter(stmt);
+          emitCallableAdapter(stmt);
+        }
         return;
       }
       const TypeRef *enclosingReturnType = currentReturnType;
@@ -5209,66 +5219,9 @@ private:
     }
   }
 
-  void emitMirScalarLeafLiteral(const Literal &literal,
-                                const SemanticType &type) {
-    if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
-      output << "static_cast<";
-      emitSemanticType(type);
-      output << ">(";
-      emitIntegerLiteral(*integer);
-      output << ')';
-      return;
-    }
-    throw std::logic_error(
-        "verified MIR scalar-leaf literal has an unsupported representation");
-  }
-
-  void emitMirScalarLeafOperand(const MirOperand &operand) {
-    output << "__gti_mir_v_" << operand.value;
-  }
-
   void emitMirScalarLeafBody(const MirFunctionInstance &function) {
-    output << "{\n";
-    ++indentation;
-    writeIndent();
-    output << "// GTI verified-MIR body: scalar-leaf-v1 function-instance "
-           << function.id << "\n";
-    for (const MirInstruction &instruction :
-         function.body.blocks.front().instructions) {
-      writeIndent();
-      if (instruction.kind == MirInstructionKind::Lifecycle) {
-        output << "// GTI MIR full-expression boundary "
-               << instruction.fullExpressionEnd << "\n";
-        continue;
-      }
-      output << "const ";
-      emitSemanticType(instruction.info.type);
-      output << " __gti_mir_v_" << *instruction.result << " = ";
-      if (instruction.kind == MirInstructionKind::Load) {
-        const MirPlace *place =
-            function.body.findPlace(instruction.operands.front().place);
-        const auto parameter =
-            std::find(function.parameterBindings.begin(),
-                      function.parameterBindings.end(), place->binding);
-        output << "__gti_mir_arg_"
-               << std::distance(function.parameterBindings.begin(), parameter);
-      } else if (instruction.operation == MirOperation::Literal) {
-        emitMirScalarLeafLiteral(*instruction.literal, instruction.info.type);
-      } else {
-        emitMirScalarLeafOperand(instruction.operands.front());
-      }
-      output << ";\n";
-    }
-    writeIndent();
-    output << "return";
-    if (function.body.blocks.front().terminator.value) {
-      output << ' ';
-      emitMirScalarLeafOperand(*function.body.blocks.front().terminator.value);
-    }
-    output << ";\n";
-    --indentation;
-    writeIndent();
-    output << "}\n";
+    emitGeneralMirBodyText(function, "scalar-leaf-v1",
+                           CppMirBodyTextForm::ScalarStraightLine);
   }
 
   [[nodiscard]] static bool isMirScalarCfgType(const SemanticType &type) {
@@ -6312,13 +6265,13 @@ private:
           "C++ backend source function does not belong to its semantic "
           "snapshot");
     }
-    if (function.hasCLinkage() || function.operatorName() ||
-        function.requiresClause() || !function.genericParameters().empty() ||
-        info->id == 0 || !info->genericParameters.empty() ||
-        !info->requirements.empty() || info->parameterPack ||
-        info->entryPoint || info->entryKind != ProgramEntryKind::None ||
-        info->staticMember || info->internalLinkage ||
-        info->constexprFunction || info->linkage != LanguageLinkage::Gti ||
+    if (function.hasCLinkage() || function.requiresClause() ||
+        !function.genericParameters().empty() || info->id == 0 ||
+        !info->genericParameters.empty() || !info->requirements.empty() ||
+        info->parameterPack || info->entryPoint ||
+        info->entryKind != ProgramEntryKind::None || info->staticMember ||
+        info->internalLinkage || info->constexprFunction ||
+        info->linkage != LanguageLinkage::Gti ||
         !info->externalSymbol.empty() || info->virtualMethod ||
         info->pureVirtual || info->overrideMethod ||
         info->intrinsic != IntrinsicKind::None ||
@@ -6410,7 +6363,11 @@ private:
         selected->owner.has_value() != (info->ownerClass != 0) ||
         selected->staticMember ||
         selected->receiverMutability != ReceiverMutability::ReadOnly ||
-        selected->overloadedOperator || selected->constexprFunction ||
+        selected->overloadedOperator !=
+            (function.operatorName()
+                 ? std::optional(function.operatorName()->kind)
+                 : std::nullopt) ||
+        selected->constexprFunction ||
         selected->entryKind != ProgramEntryKind::None ||
         selected->entryArgumentAppendTarget ||
         selected->returnType != info->returnType ||
@@ -13144,18 +13101,14 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   // selected body the general emitter cannot produce is emission drift.
   void emitGeneralMirBodyText(const MirFunctionInstance &function,
                               std::string_view familyLabel,
-                              bool fieldBoundThisPlaces) {
-    if (mir == nullptr) {
+                              CppMirBodyTextForm form) {
+    if (mir == nullptr || !generalEmissionMap) {
       throw std::logic_error("general MIR body emission requires verified MIR");
-    }
-    if (!generalEmissionMap) {
-      generalEmissionMap.emplace(
-          buildCppMirBodyEmissionMapRows(semantics, *mir, standard));
     }
     const CppMirBodyEmissionText emission =
         CppMirBodyEmitter(*mir, *generalEmissionMap)
             .emitBodyText({.kind = MirBodyKind::Function, .owner = function.id},
-                          familyLabel, fieldBoundThisPlaces, indentation);
+                          familyLabel, form, indentation);
     if (!emission.emitted()) {
       std::string message =
           "selected verified-MIR body is not ready for general emission";
@@ -13172,7 +13125,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitMirScalarCfgBody(const MirFunctionInstance &function) {
-    emitGeneralMirBodyText(function, "scalar-cfg-v1", true);
+    emitGeneralMirBodyText(function, "scalar-cfg-v1",
+                           CppMirBodyTextForm::ScalarCfg);
   }
 
   void emitMirScalarDirectTarget(const MirInstruction &instruction) {
@@ -13235,7 +13189,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitMirScalarDirectBody(const MirFunctionInstance &function) {
-    emitGeneralMirBodyText(function, "scalar-direct-call-v1", false);
+    emitGeneralMirBodyText(function, "scalar-direct-call-v1",
+                           CppMirBodyTextForm::ScalarCfg);
   }
 
   void emitMirClassDefaultCleanupGlobal(SymbolId symbol) {
