@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.145.0
+Checkpoint version: 0.146.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -111,6 +111,30 @@ initializer, operation, place, CFG, return, call-input, reverse-edge, transfer,
 and drop drift. Its runtime gate proves cleanup order without double cleanup at
 O0/O1/O3 under C++20/C++23. Checked lifecycle, comma, loops, switches, class
 results, and other unsupported connected shapes remain wholly compatible.
+
+The 0.146.0 checkpoint lands the ordered compound-update family. MIR v26
+lowers a same-domain scalar compound assignment or increment/decrement to an
+explicit `Load` read, the exact checked arithmetic `Compute`, and an ordinary
+`Assign` commit, replacing the closed `Modify`/compound-`Assign` instruction.
+The bounded family requires the read, the operation, and the commit to share
+one fixed-width integer domain and requires the decomposed arithmetic to
+inherit exactly the origin its checked contract names, so an unchecked
+operator-indexed update and a narrowing form that folds a conversion into the
+same origin both stay compatible. Across the 57-example corpus this moves 37
+more bodies to emitter-ready (1914 to 1951), reduces the ordered-compound debt
+from 231 to 26 occurrences, and removes a further 103
+`MissingCheckedFailureControlFlow` occurrences because the decomposed
+arithmetic routes through the ordinary failure edge.
+
+Two remaining debts are now known to be blocked upstream rather than by MIR
+scheduling. `MissingCallInputScheduleMir` (162) covers calls whose HIR value
+carries no `callPlan`; the parameter types and input kinds are overload-
+resolution facts, so staging them is semantic work, not MIR work. The
+remaining `MissingCheckedFailureControlFlow` (430: 333 function, 58 field-
+initializer, 39 constructor) is dominated by failure-capable `Construct` and
+by initializer and constructor bodies, which need partial-construction
+rollback before they can carry a failure edge; that is the next coherent
+slice.
 
 The 0.145.0 checkpoint restabilizes the tree after the 0.144.0 landing and
 extends M-FAIL-01's representation: the hosted owned-arguments golden verifier

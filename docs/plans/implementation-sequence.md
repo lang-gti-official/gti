@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.145.0
+Checkpoint: 0.146.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.

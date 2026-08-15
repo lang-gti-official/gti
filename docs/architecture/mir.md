@@ -89,7 +89,7 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v25`/`mir-body-v25`.
+The deterministic serialization is currently `mir-v26`/`mir-body-v26`.
 Version 20 introduced function-definition provenance and the first MIR-owned
 defined-failure effect summary. Each concrete function records
 `DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a
@@ -114,7 +114,12 @@ Invoke/record/cleanup contract that covered full-expression roots and
 prepared-call-argument detectors now covers every eligible checked scalar
 computation, load, and ordinary call in any nested value position of a
 failure-control-flow body, and the verifier requires exactly one edge wherever
-the shape is eligible. The defined-failure bit
+the shape is eligible. Version 26 lowers a same-domain scalar compound
+assignment or increment/decrement to its ordered read/operate/commit schedule
+-- `Load` of the place, the exact checked arithmetic `Compute`, then an
+ordinary `Assign` commit -- instead of one closed compound instruction, so the
+update uses only MIR's primitive vocabulary and its check routes through the
+ordinary failure edge. The defined-failure bit
 deliberately covers only GTI
 defined failure; it is not a summary of allocation, arbitrary user code,
 synchronization, or the other future O-MIR-02 effect dimensions.
@@ -706,9 +711,15 @@ the count domain is signed. Negation requires a signed result domain and names
 `integer_overflow:negation`. An integer conversion names
 `numeric_conversion_out_of_range:numeric_cast` exactly when the complete
 source domain is not contained in the destination; a widening/safe-domain
-conversion must carry no stale origin, site, or record. Float conversions,
-compound assignment, increment/decrement, and their checked place schedule are
-deliberately outside this bounded verifier family. The production
+conversion must carry no stale origin, site, or record. Float conversions and the
+narrowing compound place schedule are deliberately outside this bounded
+verifier family. A same-domain compound assignment or increment/decrement is
+no longer a closed operation: it lowers to an ordered `Load`/`Compute`/`Assign`
+schedule whose arithmetic satisfies this contract directly. A narrowing form
+keeps its closed `Assign`/`Modify` instruction because semantics folds the
+arithmetic and the checked conversion into one HIR-authored origin, and MIR may
+not split that origin across stages; per-stage origins are the prerequisite for
+completing the convert stage. The production
 `scalar-failure-callgraph-v1` selector consumes every operation in this
 fixed-integer allowlist; compatibility bodies do not gain that authority merely
 because their MIR detector metadata verifies.

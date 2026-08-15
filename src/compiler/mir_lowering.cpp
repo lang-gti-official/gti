@@ -2241,6 +2241,34 @@ private:
     }
   }
 
+  [[nodiscard]] static MirOperation
+  orderedCompoundArithmetic(MirOperation assignment) {
+    switch (assignment) {
+    case MirOperation::AddAssign:
+      return MirOperation::Add;
+    case MirOperation::SubtractAssign:
+      return MirOperation::Subtract;
+    case MirOperation::MultiplyAssign:
+      return MirOperation::Multiply;
+    case MirOperation::DivideAssign:
+      return MirOperation::Divide;
+    case MirOperation::RemainderAssign:
+      return MirOperation::Remainder;
+    case MirOperation::BitwiseAndAssign:
+      return MirOperation::BitwiseAnd;
+    case MirOperation::BitwiseOrAssign:
+      return MirOperation::BitwiseOr;
+    case MirOperation::BitwiseXorAssign:
+      return MirOperation::BitwiseXor;
+    case MirOperation::ShiftLeftAssign:
+      return MirOperation::ShiftLeft;
+    case MirOperation::ShiftRightAssign:
+      return MirOperation::ShiftRight;
+    default:
+      return MirOperation::None;
+    }
+  }
+
   [[nodiscard]] static MirOperation modifierOperation(const HirValue &value) {
     if (!value.operation) {
       return MirOperation::None;
@@ -3302,6 +3330,136 @@ private:
     emittedValues.insert(value.id);
   }
 
+  // An ordered compound update reads its place once, checks the arithmetic,
+  // and commits the result. Representing those stages explicitly keeps the
+  // schedule inside MIR's primitive vocabulary instead of one opaque
+  // compound instruction a backend would have to re-derive.
+  //
+  // The bounded family requires the read, the operation, and the commit to
+  // share one fixed-width integer domain. A narrowing form folds a checked
+  // conversion into the same HIR-authored failure origin, and MIR may not
+  // split that origin across stages, so it stays on the compound instruction
+  // until semantics gives each stage its own origin.
+  [[nodiscard]] static bool fixedWidthIntegerType(const SemanticType &type) {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  // A fixed-width integer result makes the arithmetic operations below carry
+  // a mandatory checked-outcome contract, so the decomposed operation must
+  // inherit exactly one source origin. Bitwise updates carry no contract and
+  // may be unchecked.
+  [[nodiscard]] static bool
+  orderedCompoundContractBearing(MirOperation operation) {
+    switch (operation) {
+    case MirOperation::Add:
+    case MirOperation::Subtract:
+    case MirOperation::Multiply:
+    case MirOperation::Divide:
+    case MirOperation::Remainder:
+    case MirOperation::ShiftLeft:
+    case MirOperation::ShiftRight:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  [[nodiscard]] static bool
+  orderedCompoundOutcomes(const DefinedFailureOperation &failure,
+                          MirOperation operation) {
+    if (failure.propagation != FailurePropagationKind::None ||
+        failure.localOrigins.size() > 1) {
+      return false;
+    }
+    if (orderedCompoundContractBearing(operation) !=
+        (failure.localOrigins.size() == 1)) {
+      return false;
+    }
+    for (const DefinedFailureOrigin &origin : failure.localOrigins) {
+      for (const DefinedFailureOutcome &outcome : origin.outcomes) {
+        if (outcome.code == DefinedFailureCode::NumericConversionOutOfRange) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] bool orderedCompoundEligible(const HirValue &value,
+                                             MirPlaceId destination,
+                                             const SemanticType &operandType,
+                                             MirOperation operation) {
+    const MirPlace *place = output.findPlace(destination);
+    return place != nullptr && place->projections.size() <= 1 &&
+           fixedWidthIntegerType(value.info.type) &&
+           place->type == value.info.type && operandType == value.info.type &&
+           value.info.category == ValueCategory::Value &&
+           value.info.traits.drop == DropKind::Trivial &&
+           !value.info.traits.containsBorrowedState && !value.ownership &&
+           value.unsafeOperation == UnsafeOperationKind::None &&
+           orderedCompoundOutcomes(value.definedFailure, operation);
+  }
+
+  // Emits read -> checked operation -> commit for one eligible place update.
+  // `result` names the MIR value the HIR value denotes: the pre-update read
+  // for a postfix form, the committed operand otherwise.
+  void emitOrderedCompoundSchedule(const HirValue &value,
+                                   MirPlaceId destination,
+                                   MirOperation operation,
+                                   MirOperand sourceOperand, bool postfix,
+                                   bool commitResult) {
+    const MirValueId canonical = mirValueFor(value);
+    const MirValueId readValue =
+        postfix ? canonical : appendValue(value.id, value.info);
+    (void)appendInstruction({.kind = MirInstructionKind::Load,
+                             .hirValue = value.id,
+                             .result = readValue,
+                             .operands = {{.kind = MirOperandKind::Copy,
+                                           .place = destination,
+                                           .type = value.info.type}},
+                             .info = value.info},
+                            false);
+    const MirValueId computedValue =
+        postfix || commitResult ? appendValue(value.id, value.info) : canonical;
+    (void)appendInstruction({.kind = MirInstructionKind::Compute,
+                             .hirValue = value.id,
+                             .result = computedValue,
+                             .operands = {{.kind = MirOperandKind::Value,
+                                           .value = readValue,
+                                           .type = value.info.type},
+                                          std::move(sourceOperand)},
+                             .operation = operation,
+                             .definedFailure = value.definedFailure,
+                             .info = value.info},
+                            false);
+    // The commit keeps assignment's ordinary result contract; a prefix or
+    // compound form denotes it, and a postfix form discards it in favor of
+    // the pre-update read.
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Assign,
+         .hirValue = value.id,
+         .result = commitResult ? canonical : appendValue(value.id, value.info),
+         .destination = destination,
+         .operands = {{.kind = MirOperandKind::Value,
+                       .value = computedValue,
+                       .type = value.info.type}},
+         .operation = MirOperation::Assign,
+         .info = value.info});
+    emittedValues.insert(value.id);
+  }
+
   void emitModify(const HirValue &value) {
     if (value.operands.size() != 1) {
       valid = false;
@@ -3312,6 +3470,21 @@ private:
     const MirPlaceId destination = placeForValue(value.operands.front());
     if (operation == MirOperation::None || destination == 0) {
       valid = false;
+      return;
+    }
+    const bool increment = operation == MirOperation::PreIncrement ||
+                           operation == MirOperation::PostIncrement;
+    const bool postfix = operation == MirOperation::PostIncrement ||
+                         operation == MirOperation::PostDecrement;
+    const MirOperation arithmetic =
+        increment ? MirOperation::Add : MirOperation::Subtract;
+    if (orderedCompoundEligible(value, destination, value.info.type,
+                                arithmetic)) {
+      emitOrderedCompoundSchedule(value, destination, arithmetic,
+                                  {.kind = MirOperandKind::Constant,
+                                   .literal = Literal{std::uint64_t{1}},
+                                   .type = value.info.type},
+                                  postfix, false);
       return;
     }
     (void)appendInstruction({.kind = MirInstructionKind::Modify,
@@ -3374,16 +3547,27 @@ private:
         operands.push_back(valueOperand(sourceValue));
         sourceObligation = dropObligationForValue(sourceValue);
       }
-      MirInstruction assign{
-          .kind = MirInstructionKind::Assign,
-          .hirValue = value->id,
-          .result = resultFor(*value),
-          .destination = destination,
-          .operands = std::move(operands),
-          .operation = value->operation ? assignmentOperation(*value->operation)
-                                        : MirOperation::None,
-          .definedFailure = value->definedFailure,
-          .info = value->info};
+      const MirOperation assignOperation =
+          value->operation ? assignmentOperation(*value->operation)
+                           : MirOperation::None;
+      const MirOperation compoundOperation =
+          orderedCompoundArithmetic(assignOperation);
+      if (compoundOperation != MirOperation::None && operands.size() == 1 &&
+          sourceObligation == 0 &&
+          orderedCompoundEligible(*value, destination, operands.front().type,
+                                  compoundOperation)) {
+        emitOrderedCompoundSchedule(*value, destination, compoundOperation,
+                                    std::move(operands.front()), false, true);
+        return;
+      }
+      MirInstruction assign{.kind = MirInstructionKind::Assign,
+                            .hirValue = value->id,
+                            .result = resultFor(*value),
+                            .destination = destination,
+                            .operands = std::move(operands),
+                            .operation = assignOperation,
+                            .definedFailure = value->definedFailure,
+                            .info = value->info};
       if (temporaryIsActive(sourceObligation)) {
         const MirPlace *destinationPlace = output.findPlace(destination);
         const MirDropObligationId target =

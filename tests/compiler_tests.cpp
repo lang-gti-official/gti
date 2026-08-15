@@ -573,6 +573,9 @@ int main() { [[discard]] flow(true); }
     }
     return count;
   };
+  // A compound update is an ordered read/operate/commit schedule rather than
+  // one closed mutation operation, so its arithmetic appears as an ordinary
+  // Compute and its commit as an ordinary Assign.
   expect(operationCount(lang::MirInstructionKind::Compute,
                         lang::MirOperation::Add) >= 1 &&
              operationCount(lang::MirInstructionKind::Compute,
@@ -580,9 +583,8 @@ int main() { [[discard]] flow(true); }
              operationCount(lang::MirInstructionKind::Compute,
                             lang::MirOperation::ExpectedHasValue) >= 1 &&
              operationCount(lang::MirInstructionKind::Assign,
-                            lang::MirOperation::AddAssign) >= 1 &&
-             operationCount(lang::MirInstructionKind::Modify,
-                            lang::MirOperation::PostIncrement) >= 1,
+                            lang::MirOperation::Assign) >= 1 &&
+             instructionCount(*flow, lang::MirInstructionKind::Load) >= 1,
          "MIR should use backend-neutral scalar and mutation operations");
 
   const bool hasLogicalTemporary =
@@ -1150,7 +1152,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v25\n") &&
+  expect(dump.starts_with("mir-body-v26\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5849,7 +5851,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v25\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v26\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7863,7 +7865,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v25 ") &&
+  expect(mirDump.starts_with("mir-v26 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -14519,15 +14521,19 @@ int main() {
                              });
                        });
   };
-  expect(hasOperation(lang::MirOperation::MultiplyAssign) &&
-             hasOperation(lang::MirOperation::DivideAssign) &&
-             hasOperation(lang::MirOperation::RemainderAssign) &&
-             hasOperation(lang::MirOperation::BitwiseAndAssign) &&
-             hasOperation(lang::MirOperation::BitwiseOrAssign) &&
-             hasOperation(lang::MirOperation::BitwiseXorAssign) &&
-             hasOperation(lang::MirOperation::ShiftLeftAssign) &&
-             hasOperation(lang::MirOperation::ShiftRightAssign),
-         "MIR should preserve each compound mutation as a closed operation");
+  // Each same-domain compound mutation lowers to its ordered schedule, so the
+  // body retains the exact arithmetic operation plus an assignment commit.
+  expect(hasOperation(lang::MirOperation::Multiply) &&
+             hasOperation(lang::MirOperation::Divide) &&
+             hasOperation(lang::MirOperation::Remainder) &&
+             hasOperation(lang::MirOperation::BitwiseAnd) &&
+             hasOperation(lang::MirOperation::BitwiseOr) &&
+             hasOperation(lang::MirOperation::BitwiseXor) &&
+             hasOperation(lang::MirOperation::ShiftLeft) &&
+             hasOperation(lang::MirOperation::ShiftRight) &&
+             hasOperation(lang::MirOperation::Assign),
+         "MIR should lower each compound mutation to its ordered "
+         "read/operate/commit schedule");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-checked-arithmetic.gti", R"(
@@ -23976,7 +23982,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v25 ") &&
+             mirDump.starts_with("mir-v26 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
