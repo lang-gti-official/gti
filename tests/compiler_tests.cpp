@@ -3586,7 +3586,8 @@ int main() { return Globals::first + Globals::later + Globals::self; }
              directDiagnostic->phase == lang::DiagnosticPhase::Semantics &&
              directDiagnostic->severity == lang::DiagnosticSeverity::Error &&
              directDiagnostic->primary.source ==
-                 std::filesystem::weakly_canonical("later-program-storage.gti")
+                 std::filesystem::weakly_canonical(
+                     std::filesystem::absolute("later-program-storage.gti"))
                      .string() &&
              directDiagnostic->primary.start == directAccess &&
              directDiagnostic->primary.end == directAccess + 5 &&

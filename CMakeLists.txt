@@ -848,6 +848,11 @@ if(BUILD_TESTING)
         output_determinism defined_integer_runtime binary64_runtime sum_types_runtime
         native_record_c_oracle native_header_c_cpp_oracle
         cli_workflow project_cli_workflow
+        mir_backend_first_family_runtime failure_descriptor_backend_compile
+        mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
+        mir_backend_class_default_cleanup_runtime
+        mir_backend_owned_lifecycle_runtime
+        mir_backend_scalar_failure_callgraph_runtime
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )
