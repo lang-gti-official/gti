@@ -917,10 +917,12 @@ component reuses its exact class facts inside a separately closed entry graph.
 Generic
 verification permits conservative true summaries but rejects unproved false
 claims and propagation drift.
-The immediate critical path is the final backend-authority cutover. It
-inventories and migrates the remaining body and program-initialization
-families, then removes compatibility body emission, HIR replacement execution,
-and legacy native-failure helpers once their last users are gone. Broader
+The immediate critical path is the final backend-authority cutover. It builds
+general MIR emission for the remaining body and program-initialization work,
+validated against the compatibility emitter by the differential oracle rather
+than by further narrow family contracts, then removes compatibility body
+emission, HIR replacement execution, and legacy native-failure helpers once
+their last users are gone. Broader
 M-FAIL lifecycle, double-failure, embedding, task, and callback containment
 remain explicit feature work rather than retroactive claims of the bounded
 hosted component. The whole `M-EXEC-01` row is not a barrier to each family
