@@ -173,6 +173,13 @@ enum class MirDropObligationKind {
   Binding,
   Value,
   PreparedParameter,
+  // A completed constructor subobject transferred into `this`. Armed by the
+  // stage-completing Initialize, drained in reverse stage order on every
+  // defined-failure edge of the constructor body, and retired by transfer
+  // to the caller on normal completion. Compiler-generated: it has no HIR
+  // obligation or full-expression identity, and its place is the exact
+  // This-rooted field place of its stage.
+  ConstructionRollback,
 };
 
 struct MirDropType {

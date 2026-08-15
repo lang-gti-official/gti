@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.161.0
+Checkpoint: 0.162.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,16 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Partial-construction rollback represented (0.162.0, schema v30).**
+  Ordinary constructors stage each class field completed from one owning
+  temporary as an Initialize that reparents into a ConstructionRollback
+  obligation on the This-rooted field place; constructor bodies are admitted
+  to MIR failure control flow, failure edges drain the armed set in reverse
+  stage order, normal completion retires it, and the verifier rejects a
+  forged leaking edge (pinned with a mutation test). Remaining before the
+  atomic families can dissolve: base subobjects, owned-parameter stage
+  unification, initializer-body schedules, and the destructor double-failure
+  envelope.
 - **Rows for the next dissolution measured and landed (0.161.0).** The
   production rows now carry namespace-global storage spellings,
   constructor/destructor body names, and the sealed lifetime-slot helper,

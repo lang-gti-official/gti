@@ -527,7 +527,14 @@ data remain exact.
 checked-dereference verifier paths. Its index comparison now retains constant
 and dynamic-selection metadata, but replacing that normalization with a
 single key-producing loan transform is outside the bounded fixed-array slice.
-Partial-construction rollback on a defined failure edge remains M-FAIL-01 work.
+Partial-construction rollback is represented for ordinary constructors: a
+class field completed from one owning constructed temporary is an explicit
+`Initialize` stage that reparents the temporary's obligation into a
+`ConstructionRollback` obligation on the exact This-rooted field place; every
+defined-failure edge of the constructor body drains the armed set in reverse
+stage order behind one failure cleanup boundary, and normal completion
+retires it by transfer to the caller. Base subobjects, owned-parameter
+stages, and field/static initializer bodies remain M-FAIL-01 work.
 
 M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
 available/moved/uninitialized fixed point over lifecycle events. Parameters
@@ -726,13 +733,12 @@ owning result still initializes through its re-homed temporary and stays
 unrouted until the remaining owning-result materialization lands),
 constructors, field/module initialization stages, failure-capable destructors
 and double failure, and partial construction remain outside that general
-bounded verifier family. Constructor and initializer bodies are excluded by
-construction, not by omission: a constructor transfers each completed
-subobject into `this`, which removes it from the body's temporary and scope
-cleanup sets, so a failure edge placed there today would propagate through an
-empty cleanup block and leak every subobject already built. Partial-
-construction rollback is therefore a prerequisite for those bodies rather than
-an independent later refinement. An operation that itself produces a loan is
+bounded verifier family. Constructor bodies now participate: each
+completed subobject transferred into `this` arms a `ConstructionRollback`
+obligation, so a defined-failure edge drains exactly the subobjects already
+built instead of propagating through an empty cleanup block. Field and
+static initializer bodies remain excluded until their construction schedules
+are staged the same way. An operation that itself produces a loan is
 excluded for the same class of reason: the loan record and its reborrow parent
 link are created before the instruction, so a failure edge would end a loan
 the operation never produced, and the loan-flow verifier rejects that as

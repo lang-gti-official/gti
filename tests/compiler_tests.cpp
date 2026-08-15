@@ -1152,7 +1152,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v29\n") &&
+  expect(dump.starts_with("mir-body-v30\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5852,7 +5852,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v29\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v30\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7866,7 +7866,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v29 ") &&
+  expect(mirDump.starts_with("mir-v30 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -23983,7 +23983,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v29 ") &&
+             mirDump.starts_with("mir-v30 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -25998,10 +25998,162 @@ void testSupportFacilities() {
          "LLVM-backed facilities should agree on availability");
 }
 
+void testConstructorPartialRollbackRepresentation() {
+  const std::string source = R"(
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t seed) : value(seed) {}
+  ~Resource() {}
+};
+
+class Pair {
+public:
+  Resource first;
+  Resource second;
+  Pair(int32_t a, int32_t b) : first(Resource(a)), second(Resource(a + b)) {}
+};
+
+int main() {
+  Pair pair = Pair(1, 2);
+  return pair.first.value + pair.second.value - 4;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("constructor-rollback.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the constructor-rollback fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirConstructorInstance *pairConstructor = nullptr;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    if (constructor.initializers.size() == 2) {
+      pairConstructor = &constructor;
+    }
+  }
+  expect(pairConstructor != nullptr,
+         "the fixture should lower the two-field constructor");
+  if (pairConstructor == nullptr) {
+    return;
+  }
+  const lang::MirBody &body = pairConstructor->body;
+
+  std::vector<const lang::MirDropObligation *> rollback;
+  for (const lang::MirDropObligation &obligation : body.dropObligations) {
+    if (obligation.kind != lang::MirDropObligationKind::ConstructionRollback) {
+      continue;
+    }
+    const lang::MirPlace *place = body.findPlace(obligation.place);
+    expect(place != nullptr && place->root == lang::MirPlaceRootKind::This &&
+               place->projections.size() == 1 &&
+               place->projections.front().kind ==
+                   lang::MirProjectionKind::Field,
+           "every rollback obligation should own one exact This-rooted field "
+           "place");
+    rollback.push_back(&obligation);
+  }
+  expect(rollback.size() == 2,
+         "each completed class-field stage should arm one rollback "
+         "obligation");
+  if (rollback.size() != 2) {
+    return;
+  }
+
+  std::size_t armingStages = 0;
+  bool retired = false;
+  const lang::MirBlock *failureBlock = nullptr;
+  for (const lang::MirBlock &block : body.blocks) {
+    if (block.failureParameter != 0) {
+      failureBlock = &block;
+    }
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Initialize &&
+          instruction.constructorInitializer != 0) {
+        for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          if (event.kind == lang::MirLifecycleEventKind::Reparent &&
+              (event.target == rollback[0]->id ||
+               event.target == rollback[1]->id)) {
+            ++armingStages;
+          }
+        }
+      }
+      if (instruction.kind == lang::MirInstructionKind::Lifecycle &&
+          instruction.lifecycle.size() == 2 &&
+          std::all_of(
+              instruction.lifecycle.begin(), instruction.lifecycle.end(),
+              [&](const lang::MirLifecycleEvent &event) {
+                return event.kind == lang::MirLifecycleEventKind::TransferOut &&
+                       (event.source == rollback[0]->id ||
+                        event.source == rollback[1]->id);
+              })) {
+        retired = true;
+      }
+    }
+  }
+  expect(armingStages == 2,
+         "each stage-completing Initialize should reparent its temporary "
+         "into the armed rollback obligation");
+  expect(retired, "normal completion should retire both rollback obligations "
+                  "by transfer to the caller");
+  expect(failureBlock != nullptr,
+         "the checked second-stage initializer should produce a failure "
+         "edge inside the constructor body");
+  if (failureBlock == nullptr) {
+    return;
+  }
+
+  bool droppedFirst = false;
+  bool droppedSecond = false;
+  for (const lang::MirInstruction &instruction : failureBlock->instructions) {
+    if (instruction.kind != lang::MirInstructionKind::Drop ||
+        instruction.lifecycle.size() != 1 ||
+        !instruction.lifecycle.front().failureCleanup) {
+      continue;
+    }
+    droppedFirst =
+        droppedFirst || instruction.lifecycle.front().source == rollback[0]->id;
+    droppedSecond = droppedSecond ||
+                    instruction.lifecycle.front().source == rollback[1]->id;
+  }
+  expect(droppedFirst && !droppedSecond,
+         "the failure edge must drop exactly the completed first subobject "
+         "and never the unfinished second");
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "the rollback-bearing program should verify");
+
+  lang::MirProgram leaking = frontend.mir;
+  auto &leakingConstructors =
+      const_cast<std::vector<lang::MirConstructorInstance> &>(
+          leaking.constructorInstances());
+  for (lang::MirConstructorInstance &constructor : leakingConstructors) {
+    if (constructor.initializers.size() != 2) {
+      continue;
+    }
+    for (lang::MirBlock &block :
+         const_cast<std::vector<lang::MirBlock> &>(constructor.body.blocks)) {
+      if (block.failureParameter == 0) {
+        continue;
+      }
+      auto &instructions =
+          const_cast<std::vector<lang::MirInstruction> &>(block.instructions);
+      std::erase_if(instructions, [&](const lang::MirInstruction &candidate) {
+        return candidate.kind == lang::MirInstructionKind::Drop;
+      });
+    }
+  }
+  expect(!lang::verifyMirProgram(leaking).valid(),
+         "a forged failure edge that leaks the completed subobject must be "
+         "rejected");
+}
+
 } // namespace
 
 int main() {
   lang::installCrashHandlers("gti_tests");
+  testConstructorPartialRollbackRepresentation();
   testFrontendStopPhase();
   testToolingOccurrenceOptOut();
   testTargetTripleParsing();

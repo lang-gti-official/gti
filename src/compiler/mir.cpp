@@ -2667,15 +2667,15 @@ validFailureInstructionShape(const MirInstruction &instruction) {
 } // namespace
 
 bool supportsMirFailureControlFlow(MirBodyKind kind) {
-  // Constructor and initializer bodies are deliberately excluded. A
-  // constructor transfers each completed subobject into `this`, which removes
-  // it from the body's temporary and scope cleanup sets, so a failure edge
-  // placed here would propagate through an empty cleanup block and leak every
-  // subobject already constructed. Admitting these bodies requires the
-  // partial-construction rollback representation first.
+  // Constructor bodies are admitted now that partial-construction rollback
+  // is represented: each completed subobject transferred into `this` arms a
+  // ConstructionRollback obligation, every defined-failure edge drains the
+  // armed set in reverse stage order, and normal completion retires it by
+  // transfer to the caller. Field/static initializer bodies remain excluded
+  // until their construction schedules are staged the same way.
   return kind == MirBodyKind::Module || kind == MirBodyKind::Function ||
-         kind == MirBodyKind::Destructor || kind == MirBodyKind::Lambda ||
-         kind == MirBodyKind::HostedStartup;
+         kind == MirBodyKind::Constructor || kind == MirBodyKind::Destructor ||
+         kind == MirBodyKind::Lambda || kind == MirBodyKind::HostedStartup;
 }
 
 bool requiresMirFailureControlFlow(const MirInstruction &instruction,
@@ -4465,13 +4465,18 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     const bool valueKind = obligation.kind == MirDropObligationKind::Value;
     const bool preparedKind =
         obligation.kind == MirDropObligationKind::PreparedParameter;
+    // Compiler-generated for one completed constructor subobject: no HIR
+    // obligation or full-expression identity, and the place is the exact
+    // This-rooted field place of its stage.
+    const bool rollbackKind =
+        obligation.kind == MirDropObligationKind::ConstructionRollback;
     const bool validHirIdentity =
-        preparedKind
+        preparedKind || rollbackKind
             ? obligation.hirObligation == 0
             : obligation.hirObligation != 0 &&
                   hirDropObligations.insert(obligation.hirObligation).second;
     const bool exactFullExpression =
-        bindingKind
+        bindingKind || rollbackKind
             ? obligation.fullExpression == 0 &&
                   obligation.hirFullExpression == 0
             : obligation.fullExpression != 0 &&
@@ -4484,8 +4489,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         obligation.dropType.type == SemanticType::Unknown ||
         obligation.dropType.type.kind == SemanticType::Reference ||
         (bindingKind != (obligation.binding != 0)) ||
-        (valueKind != (obligation.value != 0)) || !exactFullExpression ||
-        (obligation.initiallyActive && !bindingKind) ||
+        ((valueKind != (obligation.value != 0)) && !rollbackKind) ||
+        (rollbackKind && (obligation.value != 0 || obligation.binding != 0)) ||
+        !exactFullExpression || (obligation.initiallyActive && !bindingKind) ||
+        (rollbackKind &&
+         (body.kind != MirBodyKind::Constructor ||
+          place->root != MirPlaceRootKind::This ||
+          place->projections.size() != 1 ||
+          place->projections.front().kind != MirProjectionKind::Field)) ||
         (preparedKind && (place->root != MirPlaceRootKind::Temporary ||
                           place->temporary == 0 || place->sourceValue == 0)) ||
         (obligation.dropType.type.kind == SemanticType::Class &&
@@ -4945,6 +4956,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               ((instruction.kind == MirInstructionKind::Lifecycle &&
                 source->kind == MirDropObligationKind::Value &&
                 instruction.hirValue == source->value) ||
+               // Normal constructor completion retires each armed rollback
+               // subobject by transferring it to the caller through one
+               // standalone retirement instruction.
+               (instruction.kind == MirInstructionKind::Lifecycle &&
+                source->kind == MirDropObligationKind::ConstructionRollback &&
+                body.kind == MirBodyKind::Constructor) ||
                ((instruction.kind == MirInstructionKind::Compute ||
                  instruction.kind == MirInstructionKind::Initialize ||
                  instruction.kind == MirInstructionKind::CallInput ||
@@ -12508,6 +12525,18 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           field->type == initializer.targetType &&
           scalarInitializerType(initializer.targetType) &&
           field->dropKind == DropKind::Trivial && !field->requiresActiveCleanup;
+      // A class field completed from one owning argument may publish an
+      // explicit rollback-armed stage; whether it does depends on the
+      // argument's lowering-time ownership, so its stage count is at most
+      // one rather than exactly one.
+      const bool explicitClassField =
+          constructorOwner != nullptr &&
+          field != constructorOwner->declaredFields.end() &&
+          initializer.kind == ConstructorInitializerTargetKind::Field &&
+          !initializer.storesReference && !initializer.generatedDefault &&
+          !initializer.ownedParameter && initializer.arguments.size() == 1 &&
+          field->type == initializer.targetType &&
+          initializer.targetType.kind == SemanticType::Class;
       // Constructor full-expression boundaries are shared lifecycle facts,
       // not scalar-stage markers: reference, nested-construction, and
       // generated-default initializers can legitimately publish one. Only the
@@ -12515,7 +12544,10 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
       if ((explicitScalarField &&
            (initializerStageCounts[initializerIndex] != 1 ||
             initializerBoundaryCounts[initializerIndex] != 1)) ||
-          (!explicitScalarField &&
+          (!explicitScalarField && explicitClassField &&
+           (initializerStageCounts[initializerIndex] > 1 ||
+            initializerBoundaryCounts[initializerIndex] > 1)) ||
+          (!explicitScalarField && !explicitClassField &&
            (initializerStageCounts[initializerIndex] != 0 ||
             initializerBoundaryCounts[initializerIndex] > 1))) {
         exactInitializerStages = false;

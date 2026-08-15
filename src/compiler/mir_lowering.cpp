@@ -171,6 +171,66 @@ public:
                           .access = AccessMode::Mutable,
                           .traits = field->info.traits}});
           }
+          // A class field completed from one owning constructed temporary
+          // becomes an explicit stage: the Initialize reparents the
+          // temporary's obligation into a ConstructionRollback obligation on
+          // the exact This-rooted field place. Failure edges after this
+          // stage drain armed rollback obligations in reverse order and
+          // normal completion transfers them to the caller, so a
+          // mid-construction defined failure can no longer leak a completed
+          // subobject.
+          const MirDropObligationId classStageSource =
+              constructorOwner != nullptr &&
+                      field != constructorOwner->fields.end() &&
+                      initializer.kind ==
+                          ConstructorInitializerTargetKind::Field &&
+                      !initializer.storesReference &&
+                      !initializer.generatedDefault &&
+                      !initializer.ownedParameter &&
+                      initializer.arguments.size() == 1 &&
+                      field->info.type == initializer.targetType &&
+                      initializer.targetType.kind == SemanticType::Class &&
+                      !field->info.traits.containsBorrowedState
+                  ? dropObligationForValue(initializer.arguments.front())
+                  : 0;
+          const bool explicitClassFieldStage =
+              classStageSource != 0 && temporaryIsActive(classStageSource);
+          if (explicitClassFieldStage) {
+            const MirPlaceId destination =
+                appendPlace({.root = MirPlaceRootKind::This,
+                             .projections = {{.kind = MirProjectionKind::Field,
+                                              .field = initializer.field}},
+                             .type = initializer.targetType,
+                             .access = AccessMode::Mutable,
+                             .traits = field->info.traits,
+                             .sourceValue = initializer.arguments.front()});
+            const MirDropObligation *sourceDrop =
+                output.findDropObligation(classStageSource);
+            const MirDropObligationId rollback =
+                output.dropObligations.size() + 1;
+            output.dropObligations.push_back(
+                {.id = rollback,
+                 .constructionOrder = rollback,
+                 .kind = MirDropObligationKind::ConstructionRollback,
+                 .place = destination,
+                 .dropType = sourceDrop == nullptr ? MirDropType{}
+                                                   : sourceDrop->dropType});
+            MirInstruction initialize{
+                .kind = MirInstructionKind::Initialize,
+                .hirValue = initializer.arguments.front(),
+                .constructorInitializer = initializerIndex + 1,
+                .destination = destination,
+                .operands = {valueOperand(initializer.arguments.front())},
+                .info = {.type = initializer.targetType,
+                         .category = ValueCategory::Place,
+                         .access = AccessMode::Mutable,
+                         .traits = field->info.traits}};
+            appendReparentOrTypedTransfer(initialize, classStageSource,
+                                          rollback);
+            (void)removeTemporary(classStageSource);
+            (void)appendInstruction(std::move(initialize));
+            constructorRollback.push_back(rollback);
+          }
           if (initializer.storesReference &&
               initializer.arguments.size() == 1) {
             markStoredBorrow(initializer.arguments.front(), initializer.field,
@@ -186,6 +246,9 @@ public:
             const bool referenceParameter =
                 target != nullptr && index < target->parameterTypes.size() &&
                 target->parameterTypes[index].kind == SemanticType::Reference;
+            if (explicitClassFieldStage && index == 0) {
+              continue;
+            }
             if (!initializer.storesReference && !referenceParameter) {
               emitTemporaryTransfer(initializer.arguments[index]);
             }
@@ -198,6 +261,7 @@ public:
       lowerStatements(source.roots);
     }
     if (!terminated()) {
+      retireConstructorRollback();
       emitScopeExit(0);
       if (output.kind == MirBodyKind::Module ||
           output.kind == MirBodyKind::FieldInitializers ||
@@ -236,6 +300,10 @@ private:
     friend bool operator==(const TemporaryDrop &,
                            const TemporaryDrop &) = default;
   };
+
+  // Armed ConstructionRollback obligations in stage order; failure edges
+  // drain them in reverse and normal completion retires them.
+  std::vector<MirDropObligationId> constructorRollback;
 
   struct PreparedCallInput {
     MirOperand operand;
@@ -873,9 +941,60 @@ private:
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       emitFailureScopeCleanup(*scope, consumedDrops, endedLoans);
     }
+    emitFailureConstructorRollback();
     terminate({.kind = MirTerminatorKind::PropagateFailure,
                .failureRecord = failureRecord});
     current = normalBlock;
+  }
+
+  // Completed constructor subobjects live in `this`, outside every temporary
+  // and scope cleanup set, so a defined-failure edge drains the armed
+  // rollback obligations here in reverse stage order before propagating.
+  void emitFailureConstructorRollback() {
+    if (output.kind != MirBodyKind::Constructor ||
+        constructorRollback.empty()) {
+      return;
+    }
+    std::vector<MirDropObligationId> cleanup;
+    cleanup.reserve(constructorRollback.size());
+    for (auto armed = constructorRollback.rbegin();
+         armed != constructorRollback.rend(); ++armed) {
+      const MirDropObligation *obligation = output.findDropObligation(*armed);
+      if (obligation == nullptr) {
+        valid = false;
+        continue;
+      }
+      const MirPlace *place = output.findPlace(obligation->place);
+      if (place == nullptr) {
+        valid = false;
+        continue;
+      }
+      (void)appendFailureCleanupDrop(
+          *armed, obligation->place,
+          ExpressionInfo{.type = place->type,
+                         .category = ValueCategory::Place,
+                         .access = place->access,
+                         .traits = place->traits});
+      cleanup.push_back(*armed);
+    }
+    appendFailureCleanupBoundary(std::move(cleanup));
+  }
+
+  // Normal constructor completion transfers every armed subobject to the
+  // caller: the constructed object owns them from here, so no rollback
+  // obligation stays active across a normal exit edge.
+  void retireConstructorRollback() {
+    if (output.kind != MirBodyKind::Constructor ||
+        constructorRollback.empty()) {
+      return;
+    }
+    MirInstruction release{.kind = MirInstructionKind::Lifecycle};
+    for (const MirDropObligationId armed : constructorRollback) {
+      release.lifecycle.push_back(
+          {.kind = MirLifecycleEventKind::TransferOut, .source = armed});
+    }
+    (void)appendInstruction(std::move(release));
+    constructorRollback.clear();
   }
 
   MirInstructionId appendNormalDrop(
