@@ -1001,12 +1001,23 @@ analysis, HIR, MIR, and the backend.
   rejections and zero incoherent bodies, while leaving the enclosing scope to
   end a loan the failed operation never produced. Readiness movement is
   therefore necessary evidence for a cutover step, never sufficient.
-- **Relaxing family selectors is exhausted.** Measured over the corpus, no
-  source function becomes `scalar-cfg-v1`-eligible by relaxing the member,
-  `constexpr`, operator, or linkage gates: every source function is already
-  excluded by a non-scalar signature (532) or by a body outside the scalar-CFG
-  instruction set (899). The bottleneck is emission capability, not selection
-  breadth.
+- **The declaration gate is the binding constraint, and it is structural.**
+  Instrumenting the real `selectedMirScalarCfg` over the corpus shows the
+  first-match rejection reasons are operator 1124, member 944, generic 892,
+  compiler-private 798, `constexpr` 432, non-scalar parameter type 268, entry
+  114, with no function reaching the body-shape gate at all. A previous
+  checkpoint recorded the opposite conclusion from an approximate model of that
+  gate; the approximation wrongly excluded `Lifecycle`, which the real gate
+  already admits as a pure full-expression marker. Treat the instrumented
+  numbers above as authoritative.
+- **Member and generic admission is not a gate relaxation.** After the
+  declaration gate, the selector requires exactly one MIR function instance per
+  source declaration with empty type and value arguments, and throws otherwise.
+  A member of a generic class has one instance per instantiation, so admitting
+  members makes the backend fail with "missing the MIR instance for an eligible
+  source function". Emission is currently keyed per source declaration; the
+  next increment therefore requires per-instance body emission rather than a
+  wider selector.
 - **Emitter capability ranked by bodies unlocked.** Of the 899 bodies outside
   the scalar-CFG set: `Lifecycle` 899, `Call` 647, `CallInput` 420,
   failure edges and checked operations 354, drops 47, `Construct` 26, loans and

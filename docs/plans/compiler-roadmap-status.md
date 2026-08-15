@@ -126,11 +126,18 @@ readiness does not regress below a floor. The first of those matters most: a
 change that breaks compilation silently improves every other figure, which
 masked two unsound attempts earlier in this campaign.
 
-Selector relaxation is exhausted as a strategy. Measured over the corpus, no
-source function becomes `scalar-cfg-v1`-eligible by relaxing the member,
-`constexpr`, operator, or linkage gates; every one is already excluded by a
-non-scalar signature (532) or a body outside the scalar-CFG instruction set
-(899). Of those 899, `Lifecycle` is required by all 899, `Call` by 647,
+Selector relaxation is not the next increment, for a structural reason rather
+than the one recorded earlier. Instrumenting the real `selectedMirScalarCfg`
+shows first-match declaration rejections of operator 1124, member 944, generic
+892, compiler-private 798, `constexpr` 432, non-scalar parameter type 268, and
+entry 114, with no function reaching the body-shape gate. The earlier claim
+that relaxing those gates yields nothing came from an approximate model that
+wrongly excluded `Lifecycle`; the real gate already admits it as a pure
+full-expression marker. Admitting members was then attempted and reverted: the
+selector requires exactly one MIR instance per source declaration with empty
+type arguments, so a member of a generic class makes the backend fail with
+"missing the MIR instance for an eligible source function". Emission is keyed
+per source declaration, so the next increment needs per-instance body emission. Of those 899, `Lifecycle` is required by all 899, `Call` by 647,
 `CallInput` by 420, failure edges by 354, drops by 47, `Construct` by 26, and
 loans by 16. `Lifecycle` is already `RepresentedByMir`, so the first emission
 increment is `Lifecycle` plus the scalar-CFG set, then `Call`/`CallInput`. The
