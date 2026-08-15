@@ -232,10 +232,46 @@ isHostedStartupArgumentIndexAdvance(const MirBody &body,
          block.terminator.invokeInstruction == instruction.id;
 }
 
+// True when the constructor's verified MIR carries the complete rollback
+// authority for its owner: no state-bearing bases, no unarmed subobject
+// transfer (the body still routes failure edges), and every declared field
+// with a non-trivial drop armed exactly one ConstructionRollback obligation.
+[[nodiscard]] bool
+constructorRollbackCovered(const MirConstructorInstance &constructor,
+                           const MirClassInstance *owner);
+
 [[nodiscard]] bool classHasStateBearingBase(const MirClassInstance &instance) {
   return std::any_of(
       instance.bases.begin(), instance.bases.end(),
       [](const HirBaseInstance &base) { return !base.interface; });
+}
+
+bool constructorRollbackCovered(const MirConstructorInstance &constructor,
+                                const MirClassInstance *owner) {
+  if (owner == nullptr || classHasStateBearingBase(*owner) ||
+      !mirBodyRoutesFailureEdges(constructor.body)) {
+    return false;
+  }
+  for (const MirClassFieldInfo &field : owner->declaredFields) {
+    if (field.dropKind == DropKind::Trivial) {
+      continue;
+    }
+    const bool armed = std::any_of(
+        constructor.body.dropObligations.begin(),
+        constructor.body.dropObligations.end(),
+        [&](const MirDropObligation &obligation) {
+          if (obligation.kind != MirDropObligationKind::ConstructionRollback) {
+            return false;
+          }
+          const MirPlace *place = constructor.body.findPlace(obligation.place);
+          return place != nullptr && place->projections.size() == 1 &&
+                 place->projections.front().field == field.symbol;
+        });
+    if (!armed) {
+      return false;
+    }
+  }
+  return true;
 }
 
 class BodyAnalysisBuilder {
@@ -886,7 +922,10 @@ private:
                        .owner = *initializer.constructorTarget});
         }
       }
+      constructorRollbackAuthority =
+          constructorRollbackCovered(*constructor, owner);
       if (constructor->definitionKind == MirDefinitionKind::Source &&
+          !constructorRollbackAuthority &&
           (constructor->mayRaiseDefinedFailure ||
            (owner != nullptr && (owner->requiresActiveCleanup ||
                                  classHasStateBearingBase(*owner))))) {
@@ -1469,7 +1508,8 @@ private:
             block.id, instruction.id,
             "checked operation has no exact Invoke/record/cleanup successor");
       }
-      if (result.body.kind == MirBodyKind::Constructor) {
+      if (result.body.kind == MirBodyKind::Constructor &&
+          !constructorRollbackAuthority) {
         add(CppMirBodyEmissionIssueKind::MissingPartialConstructionRollbackMir,
             block.id, instruction.id,
             "failure-capable construction has no general subobject rollback");
@@ -1547,6 +1587,10 @@ private:
   const MirProgram &program;
   const CppMirBodyEmissionMap &representations;
   CppMirBodyEmissionAnalysis result;
+  // Set by the Constructor owner-metadata scan: the body's verified MIR
+  // carries complete rollback authority, so the categorical rollback issues
+  // do not apply.
+  bool constructorRollbackAuthority = false;
 };
 
 } // namespace
