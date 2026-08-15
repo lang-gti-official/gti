@@ -1,5 +1,6 @@
 #include "gti/cpp_backend.h"
 
+#include "cpp_mir_body_emitter.h"
 #include "cpp_mir_program_plan.h"
 #include "cpp_mir_representation_snapshot.h"
 
@@ -83,11 +84,18 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
                            "representation route");
   }
 
+  // Copied representation rows for the generic body emitter are built and
+  // owned at this boundary, beside the program plan, from the same verified
+  // inputs (ADR 016). The emitter receives them; it does not derive them.
+  CppMirBodyEmissionMap generalRows(
+      buildCppMirBodyEmissionMapRows(input.semantics, input.mir, standard));
+
   // The plan above is complete before this one whole-program emitter is
   // constructed. UnsupportedSurface never triggers per-body dispatch here.
   return {.kind = BackendArtifactKind::Source,
           .contents = CppEmitter(input.semantics, input.hir, input.mir,
-                                 standard, input.target, &input.optimizations)
+                                 std::move(generalRows), standard, input.target,
+                                 &input.optimizations)
                           .emit(input.program),
           .extension = ".cpp"};
 }

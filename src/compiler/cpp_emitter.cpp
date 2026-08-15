@@ -29,18 +29,12 @@ public:
   explicit Impl(const SemanticModel &semantics, const HirProgram &hir,
                 CppStandard standard, TargetInfo target,
                 const OptimizationResult *optimizations,
-                const MirProgram *verifiedMir = nullptr)
+                const MirProgram *verifiedMir = nullptr,
+                std::optional<CppMirBodyEmissionMap> generalRows = std::nullopt)
       : standard(standard), target(std::move(target)),
-        optimizations(optimizations), semantics(semantics), hir(hir) {
+        optimizations(optimizations), semantics(semantics), hir(hir),
+        generalEmissionMap(std::move(generalRows)) {
     mir = verifiedMir;
-    // Copied representation rows are built once at construction, at the
-    // emitter's MIR boundary, so body emission never derives a spelling
-    // lazily mid-run (ADR 016). The no-MIR public direct API has no rows and
-    // never selects a verified-MIR body.
-    if (mir != nullptr) {
-      generalEmissionMap.emplace(
-          buildCppMirBodyEmissionMapRows(semantics, *mir, standard));
-    }
     indexUnsafeOperations();
   }
 
@@ -6276,7 +6270,7 @@ private:
         info->pureVirtual || info->overrideMethod ||
         info->intrinsic != IntrinsicKind::None ||
         info->returnBorrowOrigin != BorrowOriginKind::None ||
-        !info->callableParameters.empty() || info->compilerPrivate ||
+        !info->callableParameters.empty() ||
         !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
                      isMirScalarCfgType) ||
         !(info->returnType == SemanticType::Void ||
@@ -15265,11 +15259,13 @@ CppEmitter::CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
                                   optimizations)) {}
 
 CppEmitter::CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
-                       const MirProgram &verifiedMir, CppStandard standard,
+                       const MirProgram &verifiedMir,
+                       CppMirBodyEmissionMap generalRows, CppStandard standard,
                        TargetInfo target,
                        const OptimizationResult *optimizations)
     : impl(std::make_unique<Impl>(semantics, hir, standard, std::move(target),
-                                  optimizations, &verifiedMir)) {}
+                                  optimizations, &verifiedMir,
+                                  std::move(generalRows))) {}
 
 CppEmitter::~CppEmitter() = default;
 CppEmitter::CppEmitter(CppEmitter &&) noexcept = default;

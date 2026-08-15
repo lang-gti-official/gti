@@ -19,6 +19,12 @@ SELECTED = (
     "cfg_loop",
     "cfg_fold",
 )
+# Standard-library scalar bodies selected per body once compiler-private
+# declarations were admitted; the fixture links them through the prelude.
+STDLIB_SELECTED = (
+    "is_valid",
+    "get",
+)
 COMPATIBILITY = (
     "compatibility_checked",
     "compatibility_call_target",
@@ -51,13 +57,13 @@ def function_definition(generated: str, source_name: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    if generated.count(MARKER) != len(SELECTED):
+    if generated.count(MARKER) != len(SELECTED) + len(STDLIB_SELECTED):
         sys.stderr.write(
-            f"{optimization}/{standard} did not select exactly the ten "
-            "verified scalar CFG MIR bodies\n"
+            f"{optimization}/{standard} did not select exactly the verified "
+            "scalar CFG MIR bodies\n"
         )
         return False
-    for name in SELECTED:
+    for name in SELECTED + STDLIB_SELECTED:
         if MARKER not in function_definition(generated, name):
             sys.stderr.write(
                 f"{optimization}/{standard} did not select {name} from MIR\n"

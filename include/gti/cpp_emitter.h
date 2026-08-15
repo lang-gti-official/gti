@@ -8,6 +8,7 @@
 
 namespace lang {
 
+class CppMirBodyEmissionMap;
 class HirProgram;
 class MirProgram;
 class OptimizationResult;
@@ -43,9 +44,14 @@ public:
 private:
   friend class CppBackend;
 
+  // The copied representation rows are built at the backend boundary
+  // (ADR 016): CppBackend constructs and validates them beside the program
+  // plan and passes ownership in, so the emitter never derives a spelling
+  // authority of its own.
   CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
-             const MirProgram &verifiedMir, CppStandard standard,
-             TargetInfo target, const OptimizationResult *optimizations);
+             const MirProgram &verifiedMir, CppMirBodyEmissionMap generalRows,
+             CppStandard standard, TargetInfo target,
+             const OptimizationResult *optimizations);
 
   class Impl;
   std::unique_ptr<Impl> impl;

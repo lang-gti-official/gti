@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.157.0
+Checkpoint: 0.158.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1070,10 +1070,16 @@ analysis, HIR, MIR, and the backend.
   is the text-emission step; the scalar-leaf, scalar-cfg, and
   scalar-direct-call families delegate their production body text to it, with
   receiver-place handling derived from MIR rather than family flags.
-  (3) Rows are built once at the emitter's MIR boundary; remaining wiring is
-  moving construction fully to the backend/lowered-program boundary and
-  retiring the HIR-shaped admission selectors in favor of analysis-driven
-  per-body admission.
+  (3) `CppBackend::generate` builds and owns the rows beside the program
+  plan and passes them into the emitter, which no longer derives a spelling
+  authority of its own; remaining wiring is retiring the HIR-shaped
+  admission selectors in favor of analysis-driven per-body admission.
+- **Admission widened per body (0.158.0).** The scalar-cfg gate no longer
+  excludes compiler-private declarations, so standard-library scalar bodies
+  select per body through the same fail-closed walk (corpus production
+  emission 35 -> 150 bodies). A constexpr relaxation was measured to yield
+  zero selected bodies and was reverted rather than kept as unexercised
+  risk.
 - **Exit gate:** all reachable GTI bodies have one executable authority; every
   current checked family preserves exact record, prior effects, and cleanup at
   O0/O1/O3 and C++20/C++23; native expected/assert/abort paths and duplicated
