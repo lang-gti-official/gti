@@ -3,6 +3,7 @@
 #include "gti/failure_metadata.h"
 #include "gti/hir.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -22,6 +23,7 @@ using MirValueId = std::size_t;
 using MirTemporaryId = std::size_t;
 using MirDropObligationId = std::size_t;
 using MirFailureRecordId = std::size_t;
+using MirHostedStartupOperationId = std::size_t;
 
 struct MirFullExpression {
   HirFullExpressionId id = 0;
@@ -29,6 +31,9 @@ struct MirFullExpression {
   HirStatementId statement = 0;
   std::size_t constructorInitializer = 0;
   std::vector<HirValueId> roots;
+
+  friend bool operator==(const MirFullExpression &,
+                         const MirFullExpression &) = default;
 };
 
 enum class MirCleanupBoundaryKind {
@@ -39,8 +44,12 @@ enum class MirCleanupBoundaryKind {
 
 struct MirCleanupBoundary {
   std::size_t id = 0;
+  MirHostedStartupOperationId hostedStartupOperation = 0;
   MirCleanupBoundaryKind kind = MirCleanupBoundaryKind::Normal;
   std::vector<MirDropObligationId> obligations;
+
+  friend bool operator==(const MirCleanupBoundary &,
+                         const MirCleanupBoundary &) = default;
 };
 
 enum class MirBodyKind {
@@ -51,6 +60,18 @@ enum class MirBodyKind {
   Constructor,
   Destructor,
   Lambda,
+  HostedStartup,
+};
+
+// Stable program-local address of one MIR body. `owner` is zero only for the
+// module body. HostedStartup uses the exact nonzero entry function instance;
+// every other kind uses its corresponding concrete instance ID.
+struct MirBodyAddress {
+  MirBodyKind kind = MirBodyKind::Module;
+  std::size_t owner = 0;
+
+  friend bool operator==(const MirBodyAddress &,
+                         const MirBodyAddress &) = default;
 };
 
 enum class MirPlaceRootKind {
@@ -76,10 +97,14 @@ struct MirPlaceProjection {
   MirValueId index = 0;
   std::optional<std::uint64_t> constantIndex;
   std::size_t selection = 0;
+
+  friend bool operator==(const MirPlaceProjection &,
+                         const MirPlaceProjection &) = default;
 };
 
 struct MirPlace {
   MirPlaceId id = 0;
+  MirHostedStartupOperationId hostedStartupOperation = 0;
   MirPlaceRootKind root = MirPlaceRootKind::Value;
   HirBindingId binding = 0;
   SymbolId symbol = 0;
@@ -94,6 +119,8 @@ struct MirPlace {
   HirValueId sourceValue = 0;
   std::optional<PlaceKey> key;
   bool initiallyAvailable = false;
+
+  friend bool operator==(const MirPlace &, const MirPlace &) = default;
 };
 
 enum class MirOperandKind {
@@ -114,6 +141,8 @@ struct MirOperand {
   MirLoanId loan = 0;
   std::optional<Literal> literal;
   SemanticType type = SemanticType::Unknown;
+
+  friend bool operator==(const MirOperand &, const MirOperand &) = default;
 };
 
 enum class MirLoanKind {
@@ -136,6 +165,8 @@ struct MirLoan {
   SymbolId storedField = 0;
   bool entry = false;
   bool escapes = false;
+
+  friend bool operator==(const MirLoan &, const MirLoan &) = default;
 };
 
 enum class MirDropObligationKind {
@@ -150,20 +181,27 @@ struct MirDropType {
   std::optional<HirLambdaId> lambdaInstance;
   std::optional<HirDestructorInstanceId> destructor;
   bool requiresActiveCleanup = false;
+
+  friend bool operator==(const MirDropType &, const MirDropType &) = default;
 };
 
 struct MirDropObligation {
   MirDropObligationId id = 0;
+  MirHostedStartupOperationId hostedStartupOperation = 0;
   HirDropObligationId hirObligation = 0;
   std::size_t constructionOrder = 0;
   MirDropObligationKind kind = MirDropObligationKind::Value;
   MirPlaceId place = 0;
   HirBindingId binding = 0;
   HirValueId value = 0;
+  MirValueId generatedValue = 0;
   HirFullExpressionId hirFullExpression = 0;
   HirFullExpressionId fullExpression = 0;
   MirDropType dropType;
   bool initiallyActive = false;
+
+  friend bool operator==(const MirDropObligation &,
+                         const MirDropObligation &) = default;
 };
 
 enum class MirLifecycleEventKind {
@@ -181,6 +219,9 @@ struct MirLifecycleEvent {
   MirDropObligationId target = 0;
   bool conditional = false;
   bool failureCleanup = false;
+
+  friend bool operator==(const MirLifecycleEvent &,
+                         const MirLifecycleEvent &) = default;
 };
 
 enum class MirInstructionKind {
@@ -197,6 +238,7 @@ enum class MirInstructionKind {
   Drop,
   EndBorrow,
   Lifecycle,
+  CallBody,
   Count,
 };
 
@@ -267,14 +309,44 @@ struct MirPackFoldElement {
   SemanticType elementType = SemanticType::Unknown;
   HirFunctionInstanceId functionTarget = 0;
   std::vector<SemanticType> parameterTypes;
+
+  friend bool operator==(const MirPackFoldElement &,
+                         const MirPackFoldElement &) = default;
+};
+
+enum class MirLiteralProvenanceKind {
+  None,
+  Source,
+  IdentityFold,
+  Count,
+};
+
+// Every MIR Compute/Literal instruction says whether it came directly from
+// lowering or from a verified optimizer rewrite. A rewrite retains its
+// original MIR input rather than asking a backend to recover transformation
+// authority from HIR. The source value is proof-only metadata: it must
+// dominate the rewritten instruction and trace through same-typed identities
+// to the exact literal.
+struct MirLiteralProvenance {
+  MirLiteralProvenanceKind kind = MirLiteralProvenanceKind::None;
+  MirValueId sourceValue = 0;
+
+  friend bool operator==(const MirLiteralProvenance &,
+                         const MirLiteralProvenance &) = default;
 };
 
 struct MirInstruction {
   MirInstructionId id = 0;
   MirInstructionKind kind = MirInstructionKind::Compute;
+  MirHostedStartupOperationId hostedStartupOperation = 0;
   HirValueId hirValue = 0;
   HirStatementId hirStatement = 0;
   HirValueId callSite = 0;
+  // One-based source constructor-initializer stage. This is zero for every
+  // instruction outside a constructor prologue and lets verification and a
+  // backend bind a field initialization to its exact MIR schedule without
+  // reopening AST expressions.
+  std::size_t constructorInitializer = 0;
   std::optional<MirCallInputRole> callInputRole;
   std::size_t callInputIndex = 0;
   HirCallInputKind callInputKind = HirCallInputKind::Value;
@@ -302,6 +374,8 @@ struct MirInstruction {
   std::optional<BorrowOriginPlace> borrowPlace;
   MirOperation operation = MirOperation::None;
   std::optional<Literal> literal;
+  MirLiteralProvenance literalProvenance;
+  bool programConstantSubstitution = false;
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
   std::optional<std::size_t> enumVariant;
@@ -314,6 +388,7 @@ struct MirInstruction {
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
+  std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
   std::vector<CallableArgumentBoundary> callableArguments;
@@ -324,6 +399,17 @@ struct MirInstruction {
   std::vector<MirLifecycleEvent> lifecycle;
   HirFullExpressionId fullExpressionEnd = 0;
   std::size_t cleanupBoundaryEnd = 0;
+
+  friend bool operator==(const MirInstruction &,
+                         const MirInstruction &) = default;
+};
+
+struct MirProgramConstantSubstitution {
+  HirValueId hirValue = 0;
+  ConstantValue constant;
+
+  friend bool operator==(const MirProgramConstantSubstitution &,
+                         const MirProgramConstantSubstitution &) = default;
 };
 
 enum class MirTerminatorKind {
@@ -336,15 +422,21 @@ enum class MirTerminatorKind {
   PropagateFailure,
   Unreachable,
   Exit,
+  ContainFailure,
+  TerminateCleanupFailure,
 };
 
 struct MirSwitchTarget {
   std::optional<SwitchCaseValue> value;
   MirBlockId target = 0;
+
+  friend bool operator==(const MirSwitchTarget &,
+                         const MirSwitchTarget &) = default;
 };
 
 struct MirTerminator {
   MirTerminatorKind kind = MirTerminatorKind::None;
+  MirHostedStartupOperationId hostedStartupOperation = 0;
   HirValueId hirValue = 0;
   HirStatementId hirStatement = 0;
   std::optional<MirOperand> value;
@@ -355,29 +447,43 @@ struct MirTerminator {
   MirBlockId elseTarget = 0;
   std::vector<MirSwitchTarget> switchTargets;
   std::vector<MirLifecycleEvent> successLifecycle;
+
+  friend bool operator==(const MirTerminator &,
+                         const MirTerminator &) = default;
 };
 
 struct MirBlock {
   MirBlockId id = 0;
+  ProgramInitializationStepId programInitializationStep = 0;
   MirFailureRecordId failureParameter = 0;
+  MirFailureRecordId activeFailure = 0;
   std::vector<MirInstruction> instructions;
   MirTerminator terminator;
   bool reachable = false;
+
+  friend bool operator==(const MirBlock &, const MirBlock &) = default;
 };
 
 struct MirFailureRecord {
   MirFailureRecordId id = 0;
+  MirHostedStartupOperationId hostedStartupOperation = 0;
   MirBlockId producerBlock = 0;
   MirInstructionId producerInstruction = 0;
   MirBlockId parameterBlock = 0;
+
+  friend bool operator==(const MirFailureRecord &,
+                         const MirFailureRecord &) = default;
 };
 
 struct MirValue {
   MirValueId id = 0;
+  MirHostedStartupOperationId hostedStartupOperation = 0;
   HirValueId sourceValue = 0;
   ExpressionInfo info;
   MirBlockId definitionBlock = 0;
   MirInstructionId definition = 0;
+
+  friend bool operator==(const MirValue &, const MirValue &) = default;
 };
 
 enum class MirValueUseKind {
@@ -395,6 +501,8 @@ struct MirValueUse {
   MirInstructionId instruction = 0;
   MirPlaceId place = 0;
   std::size_t operandIndex = 0;
+
+  friend bool operator==(const MirValueUse &, const MirValueUse &) = default;
 };
 
 struct MirBody {
@@ -409,6 +517,7 @@ struct MirBody {
   std::vector<MirCleanupBoundary> cleanupBoundaries;
   std::vector<MirDropObligation> dropObligations;
   std::vector<MirFailureRecord> failureRecords;
+  std::vector<MirProgramConstantSubstitution> programConstantSubstitutions;
   std::vector<MirValue> values;
   std::vector<std::vector<MirValueUse>> valueUses;
 
@@ -443,6 +552,8 @@ struct MirBody {
   [[nodiscard]] const std::vector<MirValueUse> &usesOf(MirValueId id) const;
 
   [[nodiscard]] std::size_t instructionCount() const;
+
+  friend bool operator==(const MirBody &, const MirBody &) = default;
 };
 
 struct MirVerificationError {
@@ -478,6 +589,8 @@ struct MirFieldDrop {
   SymbolId symbol = 0;
   SemanticType type = SemanticType::Unknown;
   bool requiresActiveCleanup = false;
+
+  friend bool operator==(const MirFieldDrop &, const MirFieldDrop &) = default;
 };
 
 struct MirClassFieldLifecycle {
@@ -486,6 +599,9 @@ struct MirClassFieldLifecycle {
   SemanticType type = SemanticType::Unknown;
   DropKind dropKind = DropKind::Trivial;
   bool requiresActiveCleanup = false;
+
+  friend bool operator==(const MirClassFieldLifecycle &,
+                         const MirClassFieldLifecycle &) = default;
 };
 
 struct MirClassFieldInfo {
@@ -494,6 +610,9 @@ struct MirClassFieldInfo {
   SemanticType type = SemanticType::Unknown;
   DropKind dropKind = DropKind::Trivial;
   bool requiresActiveCleanup = false;
+
+  friend bool operator==(const MirClassFieldInfo &,
+                         const MirClassFieldInfo &) = default;
 };
 
 struct MirClassInstance {
@@ -516,6 +635,9 @@ struct MirClassInstance {
   MirBody fieldInitializers;
   MirBody staticFieldInitializers;
   std::vector<MirFieldDrop> fieldDropOrder;
+
+  friend bool operator==(const MirClassInstance &,
+                         const MirClassInstance &) = default;
 };
 
 struct MirCallableSignature {
@@ -526,11 +648,17 @@ struct MirCallableSignature {
   std::optional<CallableInvocationCapability> selectedCapability;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirLambdaId> lambdaTarget;
+
+  friend bool operator==(const MirCallableSignature &,
+                         const MirCallableSignature &) = default;
 };
 
 struct MirCallableForwarding {
   std::size_t parameterIndex = 0;
   std::optional<HirFunctionInstanceId> functionTarget;
+
+  friend bool operator==(const MirCallableForwarding &,
+                         const MirCallableForwarding &) = default;
 };
 
 struct MirCallableParameter {
@@ -541,6 +669,15 @@ struct MirCallableParameter {
   std::optional<CallableOwnedTransport> ownedTransport;
   std::vector<MirCallableSignature> signatures;
   std::vector<MirCallableForwarding> forwardings;
+
+  friend bool operator==(const MirCallableParameter &,
+                         const MirCallableParameter &) = default;
+};
+
+enum class MirDefinitionKind {
+  Source,
+  RuntimeBinding,
+  Declaration,
 };
 
 struct MirFunctionInstance {
@@ -567,7 +704,17 @@ struct MirFunctionInstance {
   bool overrideMethod = false;
   std::vector<FunctionId> virtualRoots;
   std::vector<MirCallableParameter> callableParameters;
+  using DefinitionKind = MirDefinitionKind;
+  DefinitionKind definitionKind = DefinitionKind::Declaration;
+  // MIR-owned defined-failure propagation dimension. Verification proves
+  // every false value from the complete acyclic scalar/static-call graph.
+  // This does not summarize allocation, user-code, synchronization, or other
+  // O-MIR-02 effect dimensions.
+  bool mayRaiseDefinedFailure = true;
   MirBody body;
+
+  friend bool operator==(const MirFunctionInstance &,
+                         const MirFunctionInstance &) = default;
 };
 
 struct MirConstructorInitializer {
@@ -582,6 +729,9 @@ struct MirConstructorInitializer {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
   std::optional<std::size_t> ownedParameter;
+
+  friend bool operator==(const MirConstructorInitializer &,
+                         const MirConstructorInitializer &) = default;
 };
 
 struct MirConstructorInstance {
@@ -592,14 +742,24 @@ struct MirConstructorInstance {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
+  bool mayRaiseDefinedFailure = true;
   std::vector<MirConstructorInitializer> initializers;
   MirBody body;
+
+  friend bool operator==(const MirConstructorInstance &,
+                         const MirConstructorInstance &) = default;
 };
 
 struct MirDestructorInstance {
   HirDestructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
+  MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
+  bool mayRaiseDefinedFailure = true;
   MirBody body;
+
+  friend bool operator==(const MirDestructorInstance &,
+                         const MirDestructorInstance &) = default;
 };
 
 struct MirLambdaInstance {
@@ -613,6 +773,179 @@ struct MirLambdaInstance {
   std::vector<SymbolId> captureSymbols;
   std::vector<bool> captureRequiresActiveCleanup;
   MirBody body;
+
+  friend bool operator==(const MirLambdaInstance &,
+                         const MirLambdaInstance &) = default;
+};
+
+struct MirProgramInitializationUnit {
+  SourceUnitId sourceUnit = 0;
+  std::vector<ProgramInitializationStepId> steps;
+
+  friend bool operator==(const MirProgramInitializationUnit &,
+                         const MirProgramInitializationUnit &) = default;
+};
+
+enum class MirProgramDataInitializationKind {
+  None,
+  ImplicitZero,
+  Constant,
+  Count,
+};
+
+// Pointer-free identity for one program-wide storage step in the merged
+// Module/0 body. Data-only steps retain an explicit implicit-zero/constant
+// provenance discriminator and the exact constant payload when applicable.
+// Executable steps instead retain the exact HIR statement/root and published
+// MIR full-expression identities.
+struct MirProgramInitializationStep {
+  ProgramInitializationStepId id = 0;
+  SourceUnitId sourceUnit = 0;
+  ProgramStorageKind storageKind = ProgramStorageKind::NamespaceGlobal;
+  ProgramInitializationStepRole role =
+      ProgramInitializationStepRole::Initializer;
+  SymbolId symbol = 0;
+  HirClassInstanceId ownerClass = 0;
+  bool requiresActiveCleanup = false;
+  HirBindingId binding = 0;
+  MirPlaceId storagePlace = 0;
+  MirBlockId entryBlock = 0;
+  MirInstructionId storageInitialization = 0;
+  MirProgramDataInitializationKind dataInitialization =
+      MirProgramDataInitializationKind::None;
+  std::optional<ConstantValue> dataConstant;
+  HirStatementId statement = 0;
+  HirValueId initializer = 0;
+  HirFullExpressionId fullExpression = 0;
+
+  friend bool operator==(const MirProgramInitializationStep &,
+                         const MirProgramInitializationStep &) = default;
+};
+
+struct MirProgramInitializationPlan {
+  std::vector<MirProgramInitializationUnit> units;
+  std::vector<MirProgramInitializationStep> steps;
+
+  [[nodiscard]] const MirProgramInitializationStep *
+  findStep(ProgramInitializationStepId id) const {
+    return id == 0 || id > steps.size() ? nullptr : &steps[id - 1];
+  }
+
+  [[nodiscard]] const MirProgramInitializationStep *
+  findStepForSymbol(SymbolId symbol) const {
+    const auto found =
+        std::find_if(steps.begin(), steps.end(), [symbol](const auto &step) {
+          return step.symbol == symbol;
+        });
+    return found == steps.end() ? nullptr : &*found;
+  }
+
+  friend bool operator==(const MirProgramInitializationPlan &,
+                         const MirProgramInitializationPlan &) = default;
+};
+
+enum class MirHostedStartupExitPolicy {
+  ImmediateExit70,
+  Count,
+};
+
+enum class MirHostedStartupFailureBehavior {
+  None,
+  Detect,
+  Propagate,
+  Count,
+};
+
+enum class MirHostedStartupOperationKind {
+  ValidateArgumentCount,
+  ConvertArgumentCount,
+  CallProgramInitialization,
+  ConstructArgumentVector,
+  InitializeArgumentIndex,
+  EnterArgumentLoop,
+  LoadArgumentIndex,
+  TestArgumentIndex,
+  BranchArgumentLoop,
+  ReadArgumentView,
+  PrepareStringConstructorArgument,
+  ConstructArgumentString,
+  PrepareAppendReceiver,
+  PrepareAppendArgumentMove,
+  CallAppend,
+  AdvanceArgumentIndex,
+  ContinueArgumentLoop,
+  PrepareEntryCount,
+  PrepareEntryArgumentsMove,
+  CallEntry,
+  ReturnEntry,
+  RouteOperationFailure,
+  DropFailureCleanup,
+  RouteCleanupFailure,
+  EndFailureCleanup,
+  ContainFailure,
+  TerminateCleanupFailure,
+  Count,
+};
+
+struct MirHostedStartupSourceAnchor {
+  SourceUnitId sourceUnit = 0;
+  std::size_t start = 0;
+  std::size_t end = 0;
+  int line = 1;
+
+  friend bool operator==(const MirHostedStartupSourceAnchor &,
+                         const MirHostedStartupSourceAnchor &) = default;
+};
+
+struct MirHostedStartupOperation {
+  MirHostedStartupOperationId id = 0;
+  MirHostedStartupOperationKind kind =
+      MirHostedStartupOperationKind::ValidateArgumentCount;
+  MirHostedStartupFailureBehavior failureBehavior =
+      MirHostedStartupFailureBehavior::None;
+  MirBlockId block = 0;
+  MirInstructionId instruction = 0;
+  MirPlaceId place = 0;
+  MirValueId value = 0;
+  MirDropObligationId dropObligation = 0;
+  MirFailureRecordId failureRecord = 0;
+  std::size_t cleanupBoundary = 0;
+  bool terminator = false;
+
+  friend bool operator==(const MirHostedStartupOperation &,
+                         const MirHostedStartupOperation &) = default;
+};
+
+// Pointer-free authority for the compiler-generated hosted boundary. The
+// operation rows are dense and close over every generated place, value, drop,
+// instruction, and terminator in `HostedStartup/<entry>`; source HIR
+// identities never appear in that body. Failure cleanup and terminal
+// containment remain a later MIR capability even though
+// detection/propagation intent is retained here.
+struct MirHostedStartupPlan {
+  ProgramEntryKind kind = ProgramEntryKind::None;
+  HirFunctionInstanceId entry = 0;
+  HirFunctionInstanceId appendFunction = 0;
+  HirConstructorInstanceId vectorConstructor = 0;
+  HirConstructorInstanceId stringConstructor = 0;
+  MirHostedStartupSourceAnchor sourceAnchor;
+  MirBodyAddress programInitializationTarget;
+  MirHostedStartupExitPolicy exitPolicy =
+      MirHostedStartupExitPolicy::ImmediateExit70;
+  MirPlaceId argumentIndexPlace = 0;
+  MirPlaceId argumentVectorPlace = 0;
+  MirValueId stabilizedCount = 0;
+  MirValueId argumentVector = 0;
+  MirValueId entryResult = 0;
+  std::vector<MirHostedStartupOperation> operations;
+
+  [[nodiscard]] const MirHostedStartupOperation *
+  findOperation(MirHostedStartupOperationId id) const {
+    return id == 0 || id > operations.size() ? nullptr : &operations[id - 1];
+  }
+
+  friend bool operator==(const MirHostedStartupPlan &,
+                         const MirHostedStartupPlan &) = default;
 };
 
 class MirProgram {
@@ -622,6 +955,20 @@ public:
     return executionProfile_;
   }
   [[nodiscard]] const MirBody &module() const { return moduleBody; }
+
+  [[nodiscard]] const MirProgramInitializationPlan &
+  programInitializationPlan() const {
+    return programInitialization;
+  }
+
+  [[nodiscard]] const std::optional<MirHostedStartupPlan> &
+  hostedStartupPlan() const {
+    return hostedStartupPlan_;
+  }
+
+  [[nodiscard]] const MirBody *hostedStartup() const {
+    return hostedStartupBody ? &*hostedStartupBody : nullptr;
+  }
 
   [[nodiscard]] const FailureMetadata &failureMetadata() const {
     return failureMetadata_;
@@ -677,13 +1024,20 @@ public:
 
   [[nodiscard]] std::size_t blockCount() const;
 
+  friend bool operator==(const MirProgram &, const MirProgram &) = default;
+
 private:
   friend class MirLowerer;
-  friend class MirProgramEditor;
+  friend MirVerificationResult
+  verifyMirOptimizationCoherence(const MirProgram &source,
+                                 const MirProgram &optimized);
 
   bool valid_ = true;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   FailureMetadata failureMetadata_;
+  MirProgramInitializationPlan programInitialization;
+  std::optional<MirHostedStartupPlan> hostedStartupPlan_;
+  std::optional<MirBody> hostedStartupBody;
   MirBody moduleBody;
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
@@ -692,7 +1046,46 @@ private:
   std::vector<MirLambdaInstance> lambdas;
 };
 
+// Returns every body exactly once in deterministic program order: module,
+// each class's field/static initializers, functions, constructors,
+// destructors, lambdas, then the optional hosted-startup body. An address not
+// owned by the program resolves to nullptr; only Module uses owner zero and
+// HostedStartup uses the exact nonzero entry function instance.
+[[nodiscard]] std::vector<MirBodyAddress>
+enumerateMirBodyAddresses(const MirProgram &program);
+[[nodiscard]] const MirBody *findMirBody(const MirProgram &program,
+                                         MirBodyAddress address);
+[[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);
+
 [[nodiscard]] MirVerificationResult verifyMirProgram(const MirProgram &program);
+
+// Verifies that `optimized` is exactly `source` plus rewrites admitted by the
+// controlled MIR editor. The current rewrite vocabulary contains only the
+// verifier-proven Compute/Identity -> Compute/Literal identity fold; no CFG,
+// operand, call, lifecycle, or metadata rewrite is authorized.
+[[nodiscard]] MirVerificationResult
+verifyMirOptimizationCoherence(const MirProgram &source,
+                               const MirProgram &optimized);
+
+struct MirDefinedFailureEffects {
+  std::vector<bool> functions;
+  std::vector<bool> constructors;
+  std::vector<bool> destructors;
+
+  friend bool operator==(const MirDefinedFailureEffects &,
+                         const MirDefinedFailureEffects &) = default;
+};
+
+// Failure-dimension slice of O-MIR-02. Each result is indexed by its concrete
+// instance ID and remains conservative (`true`) unless an acyclic, closed,
+// bounded scalar/static-call/construction/normal-cleanup graph is proved from
+// MIR alone.
+[[nodiscard]] MirDefinedFailureEffects
+deriveMirDefinedFailureEffects(const MirProgram &program);
+
+// Compatibility accessor for clients of MIR v20's function-only slice.
+[[nodiscard]] std::vector<bool>
+deriveMirScalarDefinedFailureEffects(const MirProgram &program);
 
 struct MirLoweringResult {
   MirProgram program;
@@ -706,14 +1099,28 @@ public:
   lower(const HirProgram &source, const FailureMetadata &failureMetadata) const;
 
 private:
+  [[nodiscard]] static MirLoweringResult
+  lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
+               const MirDefinedFailureEffects &definedFailureEffects,
+               bool includeProgramInitialization);
+
   [[nodiscard]] static MirBody lowerBody(
       const HirProgram &program, const FailureMetadata &failureMetadata,
       const HirBody &body, MirBodyKind kind, SemanticType returnType,
-      const std::vector<HirValueId> &prologueValues, bool &valid,
+      const std::vector<HirValueId> &prologueValues,
+      const MirDefinedFailureEffects &definedFailureEffects, bool &valid,
       bool implicitZeroReturn = false,
       const std::vector<HirConstructorInitializer> *initializers = nullptr,
       const HirFunctionInstance *function = nullptr,
-      const HirLambda *lambda = nullptr);
+      const HirConstructorInstance *constructor = nullptr,
+      const HirLambda *lambda = nullptr,
+      const HirProgramInitializationPlan *programInitialization = nullptr,
+      MirProgramInitializationPlan *loweredProgramInitialization = nullptr);
+
+  [[nodiscard]] static bool
+  lowerHostedStartup(const HirProgram &source,
+                     const FailureMetadata &failureMetadata,
+                     MirProgram &program);
 };
 
 } // namespace lang

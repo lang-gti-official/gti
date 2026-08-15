@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.142.0
+Checkpoint version: 0.144.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -40,11 +40,132 @@ container, and the minimal public concurrency profile into systems-readiness
 work. Advanced forms remain gated, and the existing ownership, failure,
 evaluation, IR, and backend requirements still apply.
 
-The review found no new competing semantic authority or dependency-order
-drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
-structural MIR lowering remain one directional. The C++ backend consumes
-frontend facts instead of deciding overloads, ownership, dispatch, or language
-validity.
+Source loading, parsing, semantic selection, concrete HIR discovery, and
+structural MIR lowering remain directional, and the C++ backend does not decide
+overloads, ownership, dispatch, or language validity. Production execution is
+nevertheless still split. `CppBackend` now executes the exact
+`scalar-leaf-v1`, `scalar-cfg-v1`, `scalar-direct-call-v1`,
+`class-default-cleanup-v1`, `owned-lifecycle-call-v1`, and hosted
+`scalar-failure-callgraph-v1` families from verified optimized MIR, while
+bodies outside those families remain on the AST/semantic/HIR compatibility
+emitter.
+That remaining
+compatibility bridge is immediate fix-now architectural debt.
+
+The backend-authority recovery campaign is active. `M-BACK-01` completed the
+first production seam with the deliberately failure-free MIR-emitted
+`scalar-leaf-v1` family; the whole `M-EXEC-01` row was not a prerequisite.
+`M-BACK-02` has now also completed `scalar-cfg-v1`, which expands the seam
+across one coherent call-free, failure-free, cleanup-free scalar CFG family
+rather than serializing each instruction or source construct, and
+`scalar-direct-call-v1`, the first closed acyclic failure-free static-call
+graph, and `class-default-cleanup-v1`, the first bounded construction and
+normal-cleanup family. `owned-lifecycle-call-v1` now completes the broader
+failure-free construction/normal-cleanup phase with one exact passive-scalar
+owner and atomic acyclic free-function graph.
+`scalar-failure-callgraph-v1` completes the bounded hosted failure-capable
+phase with exact records, cleanup, reporting, and status 70. The
+final-authority phase is now active.
+New executable language features remain paused unless they are required by the
+active migration family.
+
+MIR v20 supplied the first function-level failure-effect foundation needed by
+that closure. MIR v21 retains that vector and makes
+`MirDefinedFailureEffects` cover functions, constructors, and destructors.
+Functions, constructors, and destructors carry the bounded
+`mayRaiseDefinedFailure` dimension plus applicable definition provenance. The
+function component retains the acyclic closed scalar/static-call proof and adds
+the exact class-default-cleanup shape. A separate closed proof covers exact
+passive-scalar-class constructor initializer stages, their source destructors,
+and free-function graphs consumed atomically by the production
+`owned-lifecycle-call-v1` family. The lowerer
+verifies a provisional all-conservative program, derives the three-kind result,
+then lowers and verifies the exact final facts. Generic verification permits
+conservative `true` but rejects any `false` that it cannot independently prove.
+A static GTI call records `None` exactly when its target is proved false and
+`DirectCall` otherwise.
+
+The 0.144.0 backend campaign first completes `class-default-cleanup-v1`, the fourth bounded
+production MIR family and the first with construction and normal cleanup. It
+admits exact generated-default construction of empty concrete class locals in
+one root scope, loads the scalar return value before cleanup, and executes
+reverse lexical `Drop` instructions through one normal cleanup boundary. The
+matching public source destructors are independently emitted from verified MIR
+and limited to exact scalar-literal assignments to mutable top-level globals.
+The C++ representation uses strict raw-storage lifetime slots with explicit
+construction and destruction, so native RAII cannot hide a missing MIR drop.
+`mir_backend_class_default_cleanup` and its runtime companion prove exact
+selection, fail-closed HIR/MIR and summary mutations, and O0/O1/O3 execution at
+C++20/C++23. Declared constructors, fields or bases, nested scopes, branches,
+calls, loans, and failure-capable cleanup remain compatible.
+
+The next 0.144.0 backend phase completes `owned-lifecycle-call-v1`, the fifth bounded
+production MIR family and the broader failure-free construction/normal-cleanup
+phase. One atomic acyclic free-function graph may construct, move, pass,
+transfer, and drop exact passive-scalar-field owners whose source constructor
+and destructor schedules are proved by MIR v21. Production uses explicit
+lifetime slots and disengages every verified drop before native destruction;
+source/MIR schedule coherence and reverse HIR caller closure keep the whole
+component either selected or compatible. Dedicated structural mutations reject
+initializer, operation, place, CFG, return, call-input, reverse-edge, transfer,
+and drop drift. Its runtime gate proves cleanup order without double cleanup at
+O0/O1/O3 under C++20/C++23. Checked lifecycle, comma, loops, switches, class
+results, and other unsupported connected shapes remain wholly compatible.
+
+The current 0.144.0 backend phase completes `scalar-failure-callgraph-v1`, the sixth
+bounded production MIR family and the first hosted failure-capable component.
+One no-argument `int32_t` entry and its exact acyclic `int32_t` free-function
+graph use a private bool/out-result/record ABI. Checked signed and unsigned
+integer operations create exact source records, direct calls preserve the
+record, and verified failure drops run before propagation without publishing a
+result. Atomic selection rejects every external HIR-body incoming edge or
+selected-class representation user, dynamic initialization, native/virtual/
+normal-ABI edges, cycles, checked lifecycle bodies, and source/MIR drift. The
+single hosted boundary reports once and exits 70; its native-exception
+firewall exits 70 without manufacturing a GTI record. Structural and runtime
+gates cover every admitted operation and failure outcome at O0/O1/O3 under
+C++20/C++23. This does not complete broader M-FAIL integration, callbacks,
+embedding, double failure, general initialization, or final backend authority.
+
+The 0.143.0 checkpoint completes `M-BACK-01`/`scalar-leaf-v1`. Production
+`CppBackend` independently verifies the exact optimized MIR snapshot and emits
+eligible non-entry, non-generic fixed-width-integer leaf functions wholly from
+MIR, including source literals and optimizer-created identity-fold literals;
+a no-op `void` result is also admitted. MIR v20 retains and verifies version
+19's exact source or identity-fold provenance used by this path. Unsupported or
+incoherent bodies remain wholly compatible, while invalid, stale, or forged
+MIR is rejected instead of reinterpreted. The two first-family gates prove
+optimized-instruction control and execute selected plus near-miss bodies at
+O0/O1/O3 under C++20/C++23.
+
+The same checkpoint completes `M-BACK-02`/`scalar-cfg-v1`. Its whole-body
+selector adds fixed-width-integer, `bool`, and `char` scalar computations,
+unprojected binding/temporary places, initialization and assignment, branch,
+switch, short-circuit, and loop CFG while excluding calls, checked failure,
+references, loans, drops, cleanup, and construction.
+`mir_backend_scalar_cfg` proves exact selection, compatibility near misses,
+optimized-literal control, and source-coherent emitted-CFG control.
+`mir_backend_scalar_cfg_runtime` executes the family at O0/O1/O3 under
+C++20/C++23. These remain bounded production authority seams, not general MIR
+body authority; the later owned-lifecycle phase completed the broader
+failure-free closure, while failure-capable and final-authority body families
+remain.
+
+The next completed M-BACK-02 phase is `scalar-direct-call-v1`, the third
+bounded production MIR family. It extends the scalar-CFG substrate with exact
+ordered scalar call-input checkpoints and static calls inside a closed acyclic
+graph of source-defined free functions. MIR v20 proves every selected node
+`mayRaiseDefinedFailure=false`, and the final calls carry `None` with no stale
+failure record or `Invoke` edge. If an independently eligible HIR graph carries
+a conservative true summary, production emission rejects the noncanonical
+drift rather than silently falling back; header-, body-, dispatch-, and
+cycle-ineligible graphs remain compatible. Once the family is selected,
+target, input, provenance, graph, or instruction drift likewise fails closed.
+Checked/unsupported targets, recursion, members, internal linkage,
+`constexpr`, HIR-`for` target graphs, virtual/callable dispatch, ownership,
+cleanup, and construction remain outside that family. The dedicated structural
+and runtime gates cover fail-closed mutations, IdentityFold evidence, and
+O0/O1/O3 at C++20/C++23.
 
 The 0.142.0 checkpoint extends the prepared-argument M-FAIL-01 edge from local
 detectors to one ownership-free static direct call with a trivial result. The
@@ -305,7 +426,8 @@ opaque native argument vectors, native link operands, and unresolved
 library/framework inputs, plus dependency-injecting environment search paths,
 until their transitive dependencies can be modeled.
 Verified generated C++ and executable payloads
-live under `build/gti/cache/v1`; hits skip parsing through native linking,
+live under `build/gti/cache/v2`; the v2 identity includes ordered configured
+prelude-root provenance before canonicalized source/dependency facts. Hits skip parsing through native linking,
 corruption is diagnosed and rebuilt before replacement, and `--no-cache`
 provides a clean verification path. Pure-GTI checkout moves retain content
 identity while native/external path-semantic inputs remain explicit. Direct
@@ -585,11 +707,16 @@ record. The landed M-FAIL-01 slices now assign exact semantic/HIR/MIR
 local-origin and propagation identity, deterministic artifact sites, and
 bounded full-expression-root and exact local-detector or ownership-free static
 direct-call prepared-argument `Invoke`/cleanup/propagation edges. They do
-not yet change current execution: the emitter still aborts without
-cleanup/location/category preservation and wrong-state expected access still
-inherits native behavior until ordered nested parameter/result state, the
-remaining M-FAIL-01 runtime and containment work, co-delivered Q-FAIL-01, and
-complete M-BACK-02 body migration land; M-LIFE-01 is complete.
+not yet change current execution. The Q-FAIL runtime substrate now supplies a
+fixed version-one C record/artifact/site ABI with per-site outcome validation,
+the descriptor-free runtime sentinel, allocation-free Unicode-15.1 ordinary
+and emergency reports, observer re-entry/exception/mutation protection,
+partial/`EINTR`-safe I/O, one terminal winner, and status 70. C/C++ layout,
+Unicode-boundary, and subprocess tests own those facts. The emitter still
+aborts without cleanup/location/category preservation and wrong-state expected
+access still inherits native behavior until ordered nested parameter/result
+state, generated hosted containment, descriptor emission, and complete
+failure-capable M-BACK-02 body migration land; M-LIFE-01 is complete.
 
 D-LANG-01 is now complete in the maintained
 [language restriction ledger](language-alignment.md). It classifies every
@@ -681,25 +808,24 @@ parser and position-sensitive editor-query gates. Larger MIR dataflow and
 verification work remains explicitly staged rather than being folded into
 these corrections.
 
-The compiler is nevertheless transitional rather than backend-independent:
+The compiler is transitional rather than backend-independent:
 
-- semantic analysis and typed HIR are the strongest authorities today;
-- MIR is validated and contains CFG, value, place, call, move, loan, drop, and
-  normal-exit lifecycle structure, but it does not yet own ordered
-  receiver/argument/result materialization or failure rollback;
+- semantics owns language validity, HIR owns concrete instances, and MIR owns
+  its implemented body-local CFG, value, place, call, move, loan, drop,
+  lifecycle, ordered-input, and bounded failure-edge families;
+- MIR still lacks complete receiver/argument/result materialization,
+  partial-constructor rollback, containment, and program initialization;
 - constant folding still controls C++ emission through the compatibility HIR
   replacement table;
 - the C++ emitter still walks checked AST and HIR side data rather than
   emitting complete bodies from optimized MIR.
 
-The standard-library critical path is therefore still **Milestone 1:
-lifetimes, places, and ownership flow**. The first source-defined vector now
-validates movable dynamic storage and exact in-place construction, but complete
-iterator invalidation and mutable traversal still depend on that milestone.
-The bounded raw-pointer/unsafe slice enables audited native wrappers but does
-not create owner dependencies or safe container traversal, so it does not
-remove that remaining blocker. Teaching the compiler public library type names
-would not remove it either.
+The immediate compiler critical path is therefore **backend-authority
+recovery**, not additional shadow MIR breadth. M-LIFE-01's normal-exit
+temporary/drop substrate and several ordered/failure families are already
+verified; the next credibility result is to execute the largest sound body set
+from those facts. Remaining lifetime, ordering, rollback, and containment work
+is co-delivered by the production migration phase that consumes it.
 
 Compiler operations that ordinary GTI cannot yet express now enter semantics
 through trusted bodyless declarations in the implicit prelude. Calls bind the
@@ -717,9 +843,9 @@ semantic publication prevent application access to the surrounding namespace.
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, explicit application/prelude/physical-standard-library roles, target directives, reserved type-only layout-query operators, and the bounded comma-pack-fold expression are shared by CLI and LSP. Override-only paths do not acquire compiler trust. Dependency-first `compilationOrder()` remains parse/assembly order, not the accepted runtime initialization plan. The external Tree-sitter grammar has a CI gate that parses every shipped standard-library and example source in addition to focused corpus fixtures. |
 | Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, bounded constexpr values/functions/branches, target-owned layout-query constants, AST full-expression roots, and current borrow restrictions are authoritative. It now also owns passive-union validity/layout and unsafe access, plus payload-enum case identity, exact construction, immutable copied bindings, and switch exhaustiveness. Constexpr evaluation is compiler-owned, checked, step/depth bounded, and recorded independently of C++ emission. Layout queries resolve aliases and recursively derive supported positive-array facts without consulting native C++; `GTI-S2063` rejects unsupported or non-concrete operands before lowering. One-level raw-pointer operations and pointer-bearing C calls are classified against lexical unsafe context before lowering; raw pointers create no semantic loans. Trusted intrinsics and compiler-private types bind by declaration identity; `GTI-S2058` rejects application access to root `gti_internal`, and source publication prevents aliases or exposed signature types from leaking its symbols. Variadic storage construction selects exact element constructors, bounded C linkage retains exact external symbols, and the owned hosted-entry signature records its canonical argument types plus resolved startup append callable. The bounded comma-pack fold selects one symbolic free-function target and records each exact read-only element specialization without per-element overload resolution. Named-field move state is path-sensitive and checked on reachable loop backedges. Borrowed-return summaries select one read-only receiver or parameter origin and concrete generic carrier instances preserve it through calls, moves, returns, and drops. Retained local loans have owner/carrier provenance and frontend-selected straight-line, nested conditional, loop-exit, switch-exit, and proven break-path endings. Every carrier of a shared read-only loan contributes to that same path-aware plan. Bounded exclusive reborrows create distinct mutable or read-only child loans over stable root/field/checked-dereference places, suspend the mutable parent, validate prefix-overlap conflicts, permit known-disjoint sibling children and projected access, and fully reactivate the parent only after its final active child endpoint. General indexed, raw, opaque, stored, or escaping exclusive-loan graphs remain deferred. |
 | Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values including frontend-computed constants, layout-query provenance and values, structured and payload-case construction, payload extraction/pattern facts, exhaustive switches, passive-union layout facts, source provenance, selected C linkage/external symbols, unsafe block markers, classified unsafe expressions, semantic-root-mapped full-expression identities, and typed lexical/value drop obligations with exact concrete cleanup descriptors. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. Program-entry instances retain the semantic entry kind and exact startup append callable. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. Bounded `PackFold` values retain fixed operands and ordered exact concrete element-call identities, including an explicit empty sequence. Exclusive reborrows retain child/parent identity, stable source place, access, and the semantic endpoint plan selected for reactivation. Eligible ordinary calls, concrete ordinary constructors, and concrete class `operator()` calls retain exact ordered input roles. Values retain exact defined-failure local origins and propagation identity; HIR remains immutable. The post-HIR metadata builder assigns artifact-local sites without mutating HIR. Ordered roles for the remaining expression families, destination materialization, one merged program-init plan, and failure edges are not implemented. |
-| MIR | Structural, normal-exit lifecycle, and bounded failure-control-flow foundation | Owns body CFG, values, places, calls, moves, loans, typed drop obligations, lifecycle events, normal cleanup, raw-memory operations, payload operations, native-linkage facts, synchronization facts, deterministic failure metadata, and program-entry metadata. MIR v18 retains verified `Invoke`/`PropagateFailure` edges, fixed-record parameters, active-loan ending, and reverse-construction failure cleanup while adding caller-owned class-value parameter stages for ordinary calls, success-edge-only initialization for one cleanup-owning call-result shape, and exact local-detector or ownership-free static direct-call argument edges after earlier prepared stages. It retains the ordered call/constructor/call-operator input families, exclusive reborrows, payload and passive-union facts, and conservative `PackFold` operation. Nested calls with owning parameter/result state and other compound detector edges, broader result/target materialization, constructors and partial rollback, double failure, merged program initialization, containment, backend execution, and a general ABI model remain missing. |
-| Optimizer | Stage A complete; Stage B started | Backend-neutral checked-integer and exact binary32/binary64 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. One atomic controlled editor client folds primitive grouping identities in verified shadow MIR and reports HIR agreement plus repair/invalidation. General pass management, cached analyses, broader folds, and MIR-controlled emission remain outstanding. |
-| C++ backend | Transitional with documented evaluation/failure gaps | Consumes semantic and HIR decisions, including compiler-capability and opaque native-handle type identity, emits exact binary32/binary64 and layout-query constants, native passive unions with frontend-layout assertions, and payload enums as replaceable `std::variant` wrappers with one-evaluation switches. It lowers the bounded pack fold as one ordered native comma fold naming the single frontend-selected generic target, without native overload selection. It preserves opaque types as declarations only, never delegates a GTI layout query or sum-type validity decision to native C++, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. Inline native argument/helper lists, temporary behavior, and static initialization do not implement Execution Section 4.2; emitter-local abort helpers and native expected observers do not implement Section 4.10's category/site, cleanup, embedding, or status contract. It is not evidence that MIR is ready for LLVM. |
+| MIR | Structural, normal-exit lifecycle, bounded failure-control-flow, and three-kind failure-effect foundation | Owns body CFG, values, places, calls, moves, loans, typed drop obligations, lifecycle events, normal cleanup, raw-memory operations, payload operations, native-linkage facts, synchronization facts, deterministic failure metadata, program-entry metadata, instance definition provenance, and bounded defined-failure summaries. MIR v18 retains verified `Invoke`/`PropagateFailure` edges, fixed-record parameters, active-loan ending, and reverse-construction failure cleanup while adding caller-owned class-value parameter stages for ordinary calls, success-edge-only initialization for one cleanup-owning call-result shape, and exact local-detector or ownership-free static direct-call argument edges after earlier prepared stages. MIR v19 added mandatory source/identity-fold provenance to `Compute/Literal` instructions and verifies each rewrite against its dominating MIR input chain. MIR v20 introduced the exact acyclic closed scalar/static-call function vector. MIR v21 makes the canonical result cover functions, constructors, and destructors; adds the bounded class-default-cleanup proof plus an exact passive-scalar-class constructor/destructor/function closure; and independently rejects unproved false claims. The `owned-lifecycle-call-v1` backend family consumes that closure only after exact source/MIR graph and lifecycle-schedule verification. `scalar-failure-callgraph-v1` additionally selects one exact hosted no-argument entry graph and validates its complete fixed-record route, failure cleanup, and containment atomically. MIR retains exact `None`/`DirectCall` propagation, the ordered call/constructor/call-operator input families, exclusive reborrows, payload and passive-union facts, and conservative `PackFold` operation. Nested owning calls outside that bounded family and other compound detector edges, broader result/target materialization, partial rollback, double failure, merged program initialization, a complete effect model, and a general ABI model remain missing. |
+| Optimizer | Bounded editor/transform foundation with production clients | Backend-neutral checked-integer and exact binary32/binary64 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. One atomic controlled editor client folds primitive grouping identities in verified MIR, reports HIR agreement plus repair/invalidation, and now controls emitted values for `scalar-leaf-v1`, `scalar-cfg-v1`, and `scalar-direct-call-v1`. General pass management, cached analyses, and broader folds remain client-gated rather than prerequisites for backend migration. |
+| C++ backend | Transitional; six bounded MIR families, other families compatible | `CppBackend` re-verifies its exact optimized MIR snapshot and emits complete eligible `scalar-leaf-v1`, `scalar-cfg-v1`, `scalar-direct-call-v1`, `class-default-cleanup-v1`, `owned-lifecycle-call-v1`, and hosted `scalar-failure-callgraph-v1` bodies from MIR with no per-expression fallback. It rejects invalid, stale, forged, or incoherent snapshots; unsupported bodies remain wholly on the AST/semantic/HIR compatibility path. The first three families remain cleanup-free. `class-default-cleanup-v1` adds exact generated-default empty-class construction and reverse lexical cleanup; `owned-lifecycle-call-v1` adds exact scalar-field constructors/destructors plus constructed, moved, prepared, transferred, and dropped class values over one atomic acyclic free-function graph. The hosted failure family adds checked fixed-integer execution, exact record forwarding, verified failure drops, Return-only result publication, one runtime terminal call, and an immediate status-70 native-exception firewall. The lifecycle-using families use strict raw-storage lifetime slots. Generic, based, polymorphic, checked-lifecycle, borrowed/raw/callable-state, broader hosted signatures/initialization, and other unsupported shapes remain compatible. The compatibility emitter still provides all other existing representation. Its remaining inline native argument/helper lists, temporary behavior, static initialization, abort helpers, and native expected observers do not yet implement Execution Sections 4.2 and 4.10; those families require matching closed M-BACK migrations, not new compatibility cases. |
 | Compiler library boundary | Migration complete | Frontend, semantic model/analysis, HIR/MIR lowering and queries, optimization, formatting/language queries, and support algorithms compile in `gti_compiler`; C++ emission compiles in `gti_cpp_backend`, and native/project orchestration compiles in `gti_driver`. Public headers retain records, templates, `constexpr` values, trivial accessors, and exact-version facades. |
 | Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `test`, `clean`, and schema-7 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Test targets build and execute independently in deterministic order. Project build/run/test requests use a verified content-addressed whole-program cache. Canonical workspaces and source-only path dependencies now provide deterministic package selection, direct package aliases, graph diagnostics, shared outputs, and cache provenance without network access. Git/registry dependencies, lockfiles, native dependency composition, and LSP project-fact consumption remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
 
@@ -774,7 +900,8 @@ Still required:
 - the readiness-selected source-text work; all selected add/subtract/multiply
   integer modes and binary64 are implemented;
 
-### Milestone 1: lifetimes, places, and ownership flow - active
+### Milestone 1: lifetimes, places, and ownership flow - foundation complete;
+remaining families co-deliver with backend recovery
 
 Implemented foundation:
 
@@ -935,10 +1062,10 @@ lifetime work are incomplete.
 ## Parallel Tracks
 
 - **Optimizer/backend:** the bounded Stage A editor client and first Stage B
-  shadow fold are complete. The next optimizer work may expand existing safe
-  folds one proof family at a time or implement `O-MIR-02` conservative
-  per-function effects. General pass management must still follow a concrete
-  client, and no new optimization should extend the HIR replacement bridge.
+  shadow proof are sufficient. The immediate work is the active production MIR
+  body emitter and cutover; broader shadow folds, per-function effects, and
+  general pass management wait unless the selected migration family directly
+  requires them. No new optimization may extend the HIR replacement bridge.
 - **Build system:** immutable compiler/driver requests, executable/test
   manifest targets, and `build`, `check`, `run`, `test`, `clean`, and
   `metadata` are complete. Structured package/profile/target native inputs and
@@ -956,16 +1083,18 @@ lifetime work are incomplete.
 ## Operational Queue
 
 The sole maintained work queue is
-[`implementation-sequence.md`](implementation-sequence.md). Its current first
-unowned task is the operator and one-time assignment-place `M-EXEC-01` family;
-the scalar/reference and eligible non-borrowed class-value ordinary-call and
-ordinary-constructor schedules have landed, while M-OWN-01/M-OWN-02/M-LIFE-01,
-I-CAP-01, C-TYPE-01/C-GLOBAL-01/C-MIR-01, and the
-evaluation, memory-model, callable, failure, and compatibility decisions are
-complete. The executable compiler critical path
-now continues ordered MIR expression lowering, then the co-delivered
-failure/runtime substrate, the first MIR-emitted
-body family, and complete M-BACK-02 body-family migration.
+[`implementation-sequence.md`](implementation-sequence.md).
+`M-BACK-01`/`scalar-leaf-v1`, `M-BACK-02`/`scalar-cfg-v1`, and
+`M-BACK-02`/`scalar-direct-call-v1` plus
+`M-BACK-02`/`class-default-cleanup-v1` and
+`M-BACK-02`/`owned-lifecycle-call-v1` plus hosted
+`M-BACK-02`/`scalar-failure-callgraph-v1` are complete. The active task is the
+final authority cutover: inventory and migrate every remaining executable body
+and initialization family, then remove compatibility-emitter body execution,
+the HIR replacement bridge, and legacy native-failure helpers when their last
+users are gone. Completion of all remaining `M-EXEC-01` work is not a global
+prerequisite. Unrelated
+executable language and optimizer breadth do not pre-empt that campaign.
 
 This checkpoint records evidence rather than duplicating that queue. Every
 future pass should update its row in the implementation sequence, this file's

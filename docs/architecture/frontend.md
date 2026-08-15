@@ -45,11 +45,19 @@ includes, and the prelude, not arbitrary declarations in the combined AST.
 
 `SourceGraph::compilationOrder()` supplies the current dependency-first parsing
 and combined-AST assembly order. It is not runtime program-initialization
-authority. The accepted D-EXEC-01 contract requires semantics to build a
-separate immutable initialization plan from prelude order, lexical include
-directive spans, active declarations, and source positions. Source-unit IDs,
-loader worklist order, and the combined declaration vector cannot stand in for
-that future plan.
+authority. `SourceGraph` separately retains configured prelude roots in their
+exact input order; `clear()`, copying a loaded snapshot, and
+`Frontend::analyzeLoaded` preserve or reset that vector together with the
+entry, units, and dependency edges. Invalid or stale root identities fail
+closed rather than silently changing order.
+
+Semantics consumes those facts to build the separate immutable
+`ProgramInitializationPlan`: ordered prelude roots precede the entry walk,
+explicit include edges are followed in lexical dependency-first order with
+first-visit deduplication, and only declarations in active target branches are
+admitted in source order. Source-unit IDs, loader worklist order,
+`compilationOrder()`, and the combined declaration vector are therefore not
+execution authority.
 
 ## Lexer
 

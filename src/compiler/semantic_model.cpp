@@ -7,6 +7,145 @@
 
 namespace lang {
 
+namespace {
+
+void collectActiveProgramStatement(const Stmt *statement,
+                                   const TargetInfo &target,
+                                   std::vector<const Stmt *> &result);
+
+void collectActiveProgramStatements(const StmtList &statements,
+                                    const TargetInfo &target,
+                                    std::vector<const Stmt *> &result) {
+  for (const StmtPtr &statement : statements) {
+    collectActiveProgramStatement(statement.get(), target, result);
+  }
+}
+
+void collectActiveProgramStatement(const Stmt *statement,
+                                   const TargetInfo &target,
+                                   std::vector<const Stmt *> &result) {
+  if (statement == nullptr) {
+    return;
+  }
+  result.push_back(statement);
+  if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+    collectActiveProgramStatements(block->statements(), target, result);
+  } else if (const auto *owner = dynamic_cast<const ClassDecl *>(statement)) {
+    collectActiveProgramStatements(owner->members(), target, result);
+  } else if (const auto *conditional =
+                 dynamic_cast<const ConditionalStmt *>(statement)) {
+    if (const StmtList *branch = conditional->activeBranch(target)) {
+      collectActiveProgramStatements(*branch, target, result);
+    }
+  } else if (const auto *constructor =
+                 dynamic_cast<const ConstructorDecl *>(statement)) {
+    collectActiveProgramStatement(constructor->body().get(), target, result);
+  } else if (const auto *destructor =
+                 dynamic_cast<const DestructorDecl *>(statement)) {
+    collectActiveProgramStatement(destructor->body().get(), target, result);
+  } else if (const auto *loop = dynamic_cast<const DoWhileStmt *>(statement)) {
+    collectActiveProgramStatement(loop->body().get(), target, result);
+  } else if (const auto *external =
+                 dynamic_cast<const ExternCDecl *>(statement)) {
+    collectActiveProgramStatements(external->declarations(), target, result);
+  } else if (const auto *loop = dynamic_cast<const ForStmt *>(statement)) {
+    collectActiveProgramStatement(loop->initializer().get(), target, result);
+    collectActiveProgramStatement(loop->body().get(), target, result);
+  } else if (const auto *function =
+                 dynamic_cast<const FunctionDecl *>(statement)) {
+    collectActiveProgramStatement(function->body().get(), target, result);
+  } else if (const auto *branch = dynamic_cast<const IfStmt *>(statement)) {
+    collectActiveProgramStatement(branch->thenBranch().get(), target, result);
+    collectActiveProgramStatement(branch->elseBranch().get(), target, result);
+  } else if (const auto *space =
+                 dynamic_cast<const NamespaceDecl *>(statement)) {
+    collectActiveProgramStatements(space->declarations(), target, result);
+  } else if (const auto *loop = dynamic_cast<const RangeForStmt *>(statement)) {
+    collectActiveProgramStatement(loop->lowered().get(), target, result);
+  } else if (const auto *selection =
+                 dynamic_cast<const SwitchStmt *>(statement)) {
+    for (const SwitchArm &arm : selection->arms()) {
+      collectActiveProgramStatements(arm.statements, target, result);
+    }
+  } else if (const auto *binding =
+                 dynamic_cast<const StructuredBindingDecl *>(statement)) {
+    for (const VariableDecl &element : binding->bindings()) {
+      collectActiveProgramStatement(&element, target, result);
+    }
+  } else if (const auto *loop = dynamic_cast<const WhileStmt *>(statement)) {
+    collectActiveProgramStatement(loop->body().get(), target, result);
+  }
+}
+
+} // namespace
+
+SemanticAnalysisSeal makeSemanticAnalysisSeal(const Program &program,
+                                              const TargetInfo &target,
+                                              const SourceGraph *sourceGraph) {
+  SemanticAnalysisSeal result{.target = target};
+  result.programSnapshot = program.snapshotId();
+  collectActiveProgramStatements(program.declarations(), target,
+                                 result.activeStatements);
+  if (sourceGraph == nullptr) {
+    return result;
+  }
+  result.sourceGraph.entry = sourceGraph->entryUnit();
+  result.sourceGraph.preludeRoots = sourceGraph->preludeRoots();
+  result.sourceGraph.units.reserve(sourceGraph->sourceUnits().size());
+  for (const SourceUnit &unit : sourceGraph->sourceUnits()) {
+    result.sourceGraph.units.push_back(
+        {.id = unit.id,
+         .path = unit.path.generic_string(),
+         .declarationStart = unit.declarationStart,
+         .declarationCount = unit.declarationCount,
+         .standardLibraryName = unit.standardLibraryName,
+         .packageIdentity = unit.packageIdentity,
+         .packageRelativePath = unit.packageRelativePath,
+         .role = unit.role,
+         .entry = unit.entry,
+         .prelude = unit.prelude});
+  }
+  result.sourceGraph.dependencies.reserve(
+      sourceGraph->dependencyEdges().size());
+  for (const SourceDependency &dependency : sourceGraph->dependencyEdges()) {
+    result.sourceGraph.dependencies.push_back(
+        {.source = dependency.source,
+         .target = dependency.target,
+         .kind = dependency.kind,
+         .directiveSource = dependency.directive ? dependency.directive->source
+                                                 : std::string{},
+         .directiveStart =
+             dependency.directive ? dependency.directive->start : 0,
+         .directiveEnd = dependency.directive ? dependency.directive->end : 0,
+         .directiveLine = dependency.directive ? dependency.directive->line : 0,
+         .includeSpelling = dependency.includeSpelling,
+         .includeOccurrence = dependency.includeOccurrence});
+  }
+  return result;
+}
+
+bool SemanticAnalysisSeal::matchesProgram(const Program &program,
+                                          const TargetInfo &candidate) const {
+  if (!matchesTarget(candidate)) {
+    return false;
+  }
+  if (programSnapshot == 0 || programSnapshot != program.snapshotId()) {
+    return false;
+  }
+  const SemanticAnalysisSeal candidateSeal =
+      makeSemanticAnalysisSeal(program, candidate);
+  return activeStatements == candidateSeal.activeStatements;
+}
+
+const ProgramInitializationStep *
+ProgramInitializationPlan::findStepForSymbol(SymbolId symbol) const {
+  const auto found =
+      std::find_if(steps.begin(), steps.end(), [symbol](const auto &step) {
+        return step.symbol == symbol;
+      });
+  return found == steps.end() ? nullptr : &*found;
+}
+
 [[nodiscard]] const std::vector<SymbolRecord> &
 SemanticDatabase::symbols() const {
   return symbolRecords;
@@ -272,6 +411,30 @@ SemanticModel::findDefinedFailure(const Expr &expression) const {
     return &found->second;
   }
   return base == nullptr ? nullptr : base->findDefinedFailure(expression);
+}
+
+const SemanticAnalysisSeal &SemanticModel::analysisSeal() const {
+  return base == nullptr ? semanticAnalysisSeal : base->analysisSeal();
+}
+
+const ProgramInitializationPlan &
+SemanticModel::programInitializationPlan() const {
+  return base != nullptr && programInitialization.steps.empty() &&
+                 programInitialization.unitOrder.empty()
+             ? base->programInitializationPlan()
+             : programInitialization;
+}
+
+const std::optional<HostedProgramEntryPlan> &
+SemanticModel::hostedProgramEntryPlan() const {
+  return base != nullptr && !hostedProgramEntry ? base->hostedProgramEntryPlan()
+                                                : hostedProgramEntry;
+}
+
+bool SemanticModel::isProgramConstantSubstitution(
+    const Expr &expression) const {
+  return programConstantSubstitutions.contains(&expression) ||
+         (base != nullptr && base->isProgramConstantSubstitution(expression));
 }
 
 [[nodiscard]] const PlaceKey *
@@ -869,9 +1032,13 @@ void SemanticModel::clear() {
   statementFullExpressions.clear();
   constructorFullExpressions.clear();
   fullExpressionOrder.clear();
+  semanticAnalysisSeal = {};
   constants.clear();
   unsafeOperations.clear();
   definedFailures.clear();
+  programInitialization = {};
+  hostedProgramEntry.reset();
+  programConstantSubstitutions.clear();
   places.clear();
   ownershipEvents.clear();
   ownershipEventOrder.clear();
@@ -926,6 +1093,28 @@ void SemanticModel::setExecutionProfile(ExecutionProfile profile) {
 
 void SemanticModel::setPlaceSnapshot(std::size_t snapshot) {
   placeSnapshot_ = snapshot;
+}
+
+void SemanticModel::setAnalysisSeal(SemanticAnalysisSeal seal) {
+  semanticAnalysisSeal = std::move(seal);
+}
+
+void SemanticModel::setProgramInitializationPlan(
+    ProgramInitializationPlan plan) {
+  programInitialization = std::move(plan);
+}
+
+void SemanticModel::setHostedProgramEntryPlan(
+    std::optional<HostedProgramEntryPlan> plan) {
+  hostedProgramEntry = std::move(plan);
+}
+
+void SemanticModel::recordProgramConstantSubstitution(const Expr &expression) {
+  programConstantSubstitutions.insert(&expression);
+}
+
+void SemanticModel::clearProgramConstantSubstitution(const Expr &expression) {
+  programConstantSubstitutions.erase(&expression);
 }
 
 // Turns this model into an instance-analysis delta over baseModel: reads

@@ -30,6 +30,25 @@ void printDiagnostics(const lang::FrontendResult &frontend) {
   }
 }
 
+std::filesystem::path standardLibraryPrelude() {
+  return std::filesystem::path(__FILE__).parent_path().parent_path() /
+         "stdlib/prelude.gti";
+}
+
+std::filesystem::path standardLibraryRoot() {
+  return standardLibraryPrelude().parent_path();
+}
+
+lang::FailureMetadataBuildResult
+rebuildFailureMetadata(const lang::FrontendResult &frontend,
+                       const lang::HirProgram &hir) {
+  const lang::SourceUnit *entry =
+      frontend.sourceGraph.findUnit(frontend.sourceGraph.entryUnit());
+  return lang::FailureMetadataBuilder().build(
+      frontend.sourceGraph, frontend.sources, hir,
+      entry == nullptr ? std::filesystem::path{} : entry->path);
+}
+
 template <typename Callback>
 void forEachInstruction(const lang::MirProgram &program, Callback callback) {
   const auto body = [&](const lang::MirBody &value) {
@@ -117,6 +136,27 @@ bool hasVerificationError(const lang::MirVerificationResult &result,
                      [&](const lang::MirVerificationError &error) {
                        return error.message.find(message) != std::string::npos;
                      });
+}
+
+lang::MirInstruction *functionInstruction(lang::MirProgram &program,
+                                          lang::HirFunctionInstanceId function,
+                                          lang::MirOperation operation) {
+  lang::MirBody *body = functionBody(program, function);
+  if (body == nullptr) {
+    return nullptr;
+  }
+  for (lang::MirBlock &block : body->blocks) {
+    const auto found = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [&](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::Compute &&
+                 instruction.operation == operation;
+        });
+    if (found != block.instructions.end()) {
+      return &*found;
+    }
+  }
+  return nullptr;
 }
 
 void testCanonicalMetadataAndMirSites() {
@@ -211,7 +251,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v18 ") &&
+      snapshot.starts_with("mir-v23 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -440,15 +480,16 @@ int main() { return caller(1); }
         argumentInput->operands.front().kind == lang::MirOperandKind::Value &&
         argumentInput->operands.front().value == *nestedDetector->result;
   }
-  expect(deferred != nullptr && deferred->failureRecords.size() == 2 &&
+  expect(deferred != nullptr && deferred->failureRecords.size() == 1 &&
              deferredPreparedParameters.size() == 2 &&
              nestedDetector != nullptr && nestedRecord != nullptr &&
-             deferredCall != nullptr && deferredCallRecord != nullptr &&
-             nestedFeedsFinalArgument && reversePreparedCleanup &&
-             allPreparedTransferAtCall,
+             deferredCall != nullptr && deferredCallRecord == nullptr &&
+             deferredCall->definedFailure.empty() && nestedFeedsFinalArgument &&
+             reversePreparedCleanup && allPreparedTransferAtCall,
          "a later scalar argument failure should branch before the callee, "
-         "drop earlier prepared owners in reverse order, and reserve transfer "
-         "for the normal call path");
+         "drop earlier prepared owners in reverse order, reserve transfer for "
+         "the normal call path, and leave no stale record on the proved-"
+         "failure-free outer call");
 
   const lang::MirBody *deferredPropagation =
       functionBody(frontend, "deferred_nested_call");
@@ -465,12 +506,12 @@ int main() { return caller(1); }
           propagationPreparedParameters.push_back(
               *instruction.preparedParameterDrop);
         }
-        if (instruction.kind != lang::MirInstructionKind::Call ||
-            instruction.definedFailure.propagation !=
-                lang::FailurePropagationKind::DirectCall) {
+        if (instruction.kind != lang::MirInstructionKind::Call) {
           continue;
         }
-        if (instruction.operands.size() == 1) {
+        if (instruction.operands.size() == 1 &&
+            instruction.definedFailure.propagation ==
+                lang::FailurePropagationKind::DirectCall) {
           nestedCall = &instruction;
         } else if (instruction.operands.size() == 3) {
           propagationOuterCall = &instruction;
@@ -574,15 +615,17 @@ int main() { return caller(1); }
                        }) == 1;
           });
   expect(deferredPropagation != nullptr &&
-             deferredPropagation->failureRecords.size() == 2 &&
+             deferredPropagation->failureRecords.size() == 1 &&
              propagationPreparedParameters.size() == 2 &&
              nestedCall != nullptr && nestedCallRecord != nullptr &&
              propagationOuterCall != nullptr &&
-             propagationOuterRecord != nullptr && exactPropagatedRecord &&
-             nestedCallFeedsOuterArgument && reversePropagationCleanup &&
-             propagationTransfersOnlyAtOuterCall,
+             propagationOuterRecord == nullptr &&
+             propagationOuterCall->definedFailure.empty() &&
+             exactPropagatedRecord && nestedCallFeedsOuterArgument &&
+             reversePropagationCleanup && propagationTransfersOnlyAtOuterCall,
          "a nested direct scalar call should propagate its exact record, "
-         "clean earlier prepared owners, and feed one normal outer argument");
+         "clean earlier prepared owners, feed one normal outer argument, and "
+         "leave no stale record on the proved-failure-free outer call");
 
   const lang::MirBody *deferredOwningPropagation =
       functionBody(frontend, "deferred_nested_owning_call");
@@ -953,6 +996,220 @@ void testEmptyDescriptorContract() {
          "the empty descriptor must retain the normative prefix digest");
 }
 
+void testHostedProgramEntryMetadata() {
+  const lang::FrontendResult noEntry = lang::Frontend().analyze(
+      "/tmp/gti-hosted-metadata/no-entry.gti", "int helper() { return 0; }\n");
+  const lang::FrontendResult noArguments =
+      lang::Frontend().analyze("/tmp/gti-hosted-metadata/no-arguments.gti",
+                               "int main() { return 0; }\n");
+  expect(noEntry.canGenerateCode() && !noEntry.hir.hostedProgramEntryPlan() &&
+             noEntry.failureMetadata.sites().empty() &&
+             noEntry.failureMetadata.assignments().empty(),
+         "a program without an entry point should add no hosted failure "
+         "metadata");
+  expect(noArguments.canGenerateCode() &&
+             noArguments.hir.hostedProgramEntryPlan() &&
+             noArguments.hir.hostedProgramEntryPlan()->kind ==
+                 lang::ProgramEntryKind::NoArguments &&
+             noArguments.failureMetadata.sites().empty() &&
+             noArguments.failureMetadata.assignments().empty(),
+         "a no-argument entry point should add no hosted failure metadata");
+
+  const std::string source = R"(
+#include <std/string>
+#include <std/vector>
+using arguments = std::vector<std::string>;
+int main(mut int count, mut arguments values) { return count; }
+)";
+  const auto analyzeAt = [&](const std::filesystem::path &entry) {
+    return lang::Frontend().analyze(entry, source, {standardLibraryPrelude()},
+                                    {}, {standardLibraryRoot()});
+  };
+  const lang::FrontendResult owned =
+      analyzeAt("/tmp/gti-hosted-metadata-a/owned-main.gti");
+  const lang::FrontendResult relocated =
+      analyzeAt("/tmp/gti-hosted-metadata-b/owned-main.gti");
+  expect(owned.canGenerateCode() && owned.diagnostics.empty(),
+         "the owned hosted-metadata fixture should reach verified MIR");
+  expect(relocated.canGenerateCode() && relocated.diagnostics.empty(),
+         "the relocated owned hosted-metadata fixture should compile");
+  if (!owned.canGenerateCode() || !relocated.canGenerateCode()) {
+    printDiagnostics(owned);
+    printDiagnostics(relocated);
+    return;
+  }
+
+  const std::optional<lang::HirHostedProgramEntryPlan> &hosted =
+      owned.hir.hostedProgramEntryPlan();
+  const std::vector<lang::DefinedFailureOutcome> expectedOutcomes{
+      {.code = lang::DefinedFailureCode::NumericConversionOutOfRange,
+       .detail = lang::DefinedFailureDetail::HostedArgumentCount},
+      {.code = lang::DefinedFailureCode::HostedRuntimeContractFailure,
+       .detail = lang::DefinedFailureDetail::NegativeArgumentCount}};
+  const lang::DefinedFailureOrigin *validate =
+      hosted && hosted->validateCount.localOrigins.size() == 1
+          ? &hosted->validateCount.localOrigins.front()
+          : nullptr;
+  const lang::DefinedFailureOrigin *convert =
+      hosted && hosted->convertCount.localOrigins.size() == 1
+          ? &hosted->convertCount.localOrigins.front()
+          : nullptr;
+  const std::optional<lang::FailureSiteId> validateSite =
+      validate == nullptr ? std::nullopt
+                          : owned.failureMetadata.siteFor(*validate);
+  const std::optional<lang::FailureSiteId> convertSite =
+      convert == nullptr ? std::nullopt
+                         : owned.failureMetadata.siteFor(*convert);
+  const lang::FailureSiteDescriptor *site =
+      validateSite ? owned.failureMetadata.findSite(*validateSite) : nullptr;
+  const auto assignment =
+      !hosted
+          ? owned.failureMetadata.assignments().end()
+          : std::find_if(owned.failureMetadata.assignments().begin(),
+                         owned.failureMetadata.assignments().end(),
+                         [&](const lang::FailureOriginAssignment &candidate) {
+                           return candidate.sourceUnit == hosted->sourceUnit &&
+                                  candidate.start == hosted->mainAnchor.start &&
+                                  candidate.end == hosted->mainAnchor.end;
+                         });
+  const bool noHostedArgumentAllocation = std::none_of(
+      owned.failureMetadata.sites().begin(),
+      owned.failureMetadata.sites().end(),
+      [](const lang::FailureSiteDescriptor &candidate) {
+        return std::any_of(candidate.outcomes.begin(), candidate.outcomes.end(),
+                           [](lang::DefinedFailureOutcome outcome) {
+                             return outcome.detail ==
+                                    lang::DefinedFailureDetail::HostedArguments;
+                           });
+      });
+  expect(hosted && hosted->kind == lang::ProgramEntryKind::OwnedArguments &&
+             validate != nullptr && convert != nullptr && validateSite &&
+             convertSite && *validateSite != 0 &&
+             *validateSite == *convertSite && site != nullptr &&
+             site->line == hosted->mainAnchor.line &&
+             site->start == hosted->mainAnchor.start &&
+             site->end == hosted->mainAnchor.end &&
+             site->outcomes == expectedOutcomes &&
+             assignment != owned.failureMetadata.assignments().end() &&
+             assignment->site == *validateSite &&
+             assignment->outcomes == expectedOutcomes &&
+             noHostedArgumentAllocation,
+         "owned startup should intern its two exact main-anchored detectors "
+         "into one site without manufacturing a hosted-arguments allocation "
+         "origin");
+  expect(owned.failureMetadata.descriptorBytes() ==
+                 relocated.failureMetadata.descriptorBytes() &&
+             owned.failureMetadata.artifactIdentity() ==
+                 relocated.failureMetadata.artifactIdentity() &&
+             owned.failureMetadata.sites() == relocated.failureMetadata.sites(),
+         "owned startup metadata and its digest should be deterministic "
+         "across relocation");
+  expect(static_cast<std::uint16_t>(
+             lang::DefinedFailureDetail::HostedArguments) == 28 &&
+             lang::validDefinedFailureOutcome(
+                 {.code = lang::DefinedFailureCode::AllocationFailure,
+                  .detail = lang::DefinedFailureDetail::HostedArguments}),
+         "hosted_arguments should retain its stable accepted vocabulary "
+         "ordinal while remaining unproduced by current startup");
+
+  const auto expectHostedBuilderRejection =
+      [&](std::string_view label,
+          const std::function<void(lang::HirHostedProgramEntryPlan &)>
+              &mutate) {
+        lang::HirProgram corrupted = owned.hir;
+        auto &plan =
+            const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+                corrupted.hostedProgramEntryPlan());
+        if (plan) {
+          mutate(*plan);
+        }
+        const lang::FailureMetadataBuildResult result =
+            rebuildFailureMetadata(owned, corrupted);
+        expect(plan && !result.valid(),
+               "hosted failure metadata should reject " + std::string(label));
+      };
+  expectHostedBuilderRejection("a missing count-validation detector",
+                               [](auto &plan) { plan.validateCount = {}; });
+  expectHostedBuilderRejection("a missing source unit", [](auto &plan) {
+    plan.sourceUnit = 0;
+    plan.validateCount.localOrigins.front().sourceUnit = 0;
+    plan.convertCount.localOrigins.front().sourceUnit = 0;
+  });
+  expectHostedBuilderRejection("an unknown source unit", [](auto &plan) {
+    constexpr lang::SourceUnitId unknownUnit = 999999;
+    plan.sourceUnit = unknownUnit;
+    plan.validateCount.localOrigins.front().sourceUnit = unknownUnit;
+    plan.convertCount.localOrigins.front().sourceUnit = unknownUnit;
+  });
+  expectHostedBuilderRejection("a drifted source span", [](auto &plan) {
+    ++plan.validateCount.localOrigins.front().start;
+  });
+  expectHostedBuilderRejection("a missing source span", [](auto &plan) {
+    plan.validateCount.localOrigins.front().start = 0;
+    plan.validateCount.localOrigins.front().end = 0;
+  });
+  expectHostedBuilderRejection("a drifted source line", [](auto &plan) {
+    ++plan.validateCount.localOrigins.front().line;
+  });
+  expectHostedBuilderRejection("a missing source line", [](auto &plan) {
+    plan.validateCount.localOrigins.front().line = 0;
+  });
+  expectHostedBuilderRejection("a wrong detector outcome", [](auto &plan) {
+    plan.convertCount.localOrigins.front().outcomes.front().detail =
+        lang::DefinedFailureDetail::NumericCast;
+  });
+  expectHostedBuilderRejection("a missing detector outcome", [](auto &plan) {
+    plan.convertCount.localOrigins.front().outcomes.clear();
+  });
+  expectHostedBuilderRejection("a duplicate detector outcome", [](auto &plan) {
+    auto &outcomes = plan.validateCount.localOrigins.front().outcomes;
+    outcomes.push_back(outcomes.front());
+  });
+  expectHostedBuilderRejection("a duplicate detector origin", [](auto &plan) {
+    plan.validateCount.localOrigins.push_back(
+        plan.validateCount.localOrigins.front());
+  });
+  expectHostedBuilderRejection("a third detector origin", [](auto &plan) {
+    plan.validateCount.localOrigins.push_back(
+        plan.convertCount.localOrigins.front());
+  });
+  expectHostedBuilderRejection(
+      "a manufactured hosted-arguments allocation origin", [](auto &plan) {
+        plan.convertCount.localOrigins.front().outcomes = {
+            {.code = lang::DefinedFailureCode::AllocationFailure,
+             .detail = lang::DefinedFailureDetail::HostedArguments}};
+      });
+  expectHostedBuilderRejection("a propagating hosted detector", [](auto &plan) {
+    plan.validateCount.propagation = lang::FailurePropagationKind::DirectCall;
+  });
+
+  lang::HirProgram forgedNoArguments = noArguments.hir;
+  auto &forgedNoArgumentsPlan =
+      const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+          forgedNoArguments.hostedProgramEntryPlan());
+  if (forgedNoArgumentsPlan && hosted) {
+    forgedNoArgumentsPlan->validateCount = hosted->validateCount;
+  }
+  expect(forgedNoArgumentsPlan &&
+             !rebuildFailureMetadata(noArguments, forgedNoArguments).valid(),
+         "a no-argument hosted entry should reject an injected detector");
+
+  lang::HirProgram coordinatedSpanDrift = owned.hir;
+  auto &coordinatedPlan =
+      const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+          coordinatedSpanDrift.hostedProgramEntryPlan());
+  if (coordinatedPlan) {
+    ++coordinatedPlan->mainAnchor.start;
+    ++coordinatedPlan->validateCount.localOrigins.front().start;
+    ++coordinatedPlan->convertCount.localOrigins.front().start;
+  }
+  expect(coordinatedPlan &&
+             !lang::verifyHirProgramPlans(owned.semantics, coordinatedSpanDrift)
+                  .valid(),
+         "HIR plan verification should reject coordinated main-anchor drift "
+         "that remains internally self-consistent");
+}
+
 void testExternalSourceRouteIdentity() {
   const std::filesystem::path fixtureRoot =
       std::filesystem::weakly_canonical(
@@ -1057,13 +1314,437 @@ void testMetadataAndSiteVerifierMutations() {
          "failure metadata verification should reject a forged assignment");
 }
 
+void testCheckedIntegerOperationVerifierContracts() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("/tmp/gti-checked-integer-contract/main.gti", R"(
+int32_t checked_add(int32_t left, int32_t right) { return left + right; }
+int32_t checked_subtract(int32_t left, int32_t right) {
+  return left - right;
+}
+uint32_t checked_multiply(uint32_t left, uint32_t right) {
+  return left * right;
+}
+int32_t checked_signed_divide(int32_t left, int32_t right) {
+  return left / right;
+}
+uint32_t checked_unsigned_divide(uint32_t left, uint32_t right) {
+  return left / right;
+}
+int32_t checked_remainder(int32_t left, int32_t right) {
+  return left % right;
+}
+int32_t checked_left_shift(int32_t left, int32_t count) {
+  return left << count;
+}
+uint32_t checked_right_shift(uint32_t left, uint32_t count) {
+  return left >> count;
+}
+int32_t checked_negate(int32_t value) { return -value; }
+int8_t contextual_negative_literal() { return -1; }
+int32_t signed_minimum_literal() { return -2147483648; }
+int8_t checked_convert(int32_t value) { return int8_t(value); }
+int32_t safe_convert(int8_t value) { return int32_t(value); }
+int main() { return checked_add(1, 2); }
+)");
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "the checked-integer verifier fixture should reach verified MIR");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+
+  struct ExpectedContract {
+    std::string_view function;
+    lang::MirOperation operation;
+    std::vector<lang::DefinedFailureOutcome> outcomes;
+  };
+  const std::vector<ExpectedContract> contracts = {
+      {"checked_add",
+       lang::MirOperation::Add,
+       {{.code = lang::DefinedFailureCode::IntegerOverflow,
+         .detail = lang::DefinedFailureDetail::Addition}}},
+      {"checked_subtract",
+       lang::MirOperation::Subtract,
+       {{.code = lang::DefinedFailureCode::IntegerOverflow,
+         .detail = lang::DefinedFailureDetail::Subtraction}}},
+      {"checked_multiply",
+       lang::MirOperation::Multiply,
+       {{.code = lang::DefinedFailureCode::IntegerOverflow,
+         .detail = lang::DefinedFailureDetail::Multiplication}}},
+      {"checked_signed_divide",
+       lang::MirOperation::Divide,
+       {{.code = lang::DefinedFailureCode::IntegerOverflow,
+         .detail = lang::DefinedFailureDetail::Division},
+        {.code = lang::DefinedFailureCode::DivisionByZero,
+         .detail = lang::DefinedFailureDetail::IntegerDivision}}},
+      {"checked_unsigned_divide",
+       lang::MirOperation::Divide,
+       {{.code = lang::DefinedFailureCode::DivisionByZero,
+         .detail = lang::DefinedFailureDetail::IntegerDivision}}},
+      {"checked_remainder",
+       lang::MirOperation::Remainder,
+       {{.code = lang::DefinedFailureCode::ModuloByZero,
+         .detail = lang::DefinedFailureDetail::IntegerModulo}}},
+      {"checked_left_shift",
+       lang::MirOperation::ShiftLeft,
+       {{.code = lang::DefinedFailureCode::NegativeShiftCount,
+         .detail = lang::DefinedFailureDetail::LeftShift},
+        {.code = lang::DefinedFailureCode::ShiftCountOutOfRange,
+         .detail = lang::DefinedFailureDetail::LeftShift}}},
+      {"checked_right_shift",
+       lang::MirOperation::ShiftRight,
+       {{.code = lang::DefinedFailureCode::ShiftCountOutOfRange,
+         .detail = lang::DefinedFailureDetail::RightShift}}},
+      {"checked_negate",
+       lang::MirOperation::Negate,
+       {{.code = lang::DefinedFailureCode::IntegerOverflow,
+         .detail = lang::DefinedFailureDetail::Negation}}},
+      {"contextual_negative_literal",
+       lang::MirOperation::Negate,
+       {{.code = lang::DefinedFailureCode::IntegerOverflow,
+         .detail = lang::DefinedFailureDetail::Negation}}},
+      {"signed_minimum_literal",
+       lang::MirOperation::Negate,
+       {{.code = lang::DefinedFailureCode::IntegerOverflow,
+         .detail = lang::DefinedFailureDetail::Negation}}},
+      {"checked_convert",
+       lang::MirOperation::Convert,
+       {{.code = lang::DefinedFailureCode::NumericConversionOutOfRange,
+         .detail = lang::DefinedFailureDetail::NumericCast}}},
+      {"safe_convert", lang::MirOperation::Convert, {}},
+  };
+
+  bool exactBaseline = lang::verifyMirProgram(frontend.mir).valid();
+  for (const ExpectedContract &contract : contracts) {
+    const std::optional<lang::HirFunctionInstanceId> function =
+        functionInstance(frontend, contract.function);
+    lang::MirProgram copy = frontend.mir;
+    const lang::MirInstruction *instruction =
+        function ? functionInstruction(copy, *function, contract.operation)
+                 : nullptr;
+    exactBaseline =
+        exactBaseline && instruction != nullptr &&
+        (contract.outcomes.empty()
+             ? instruction->definedFailure.empty() &&
+                   instruction->localFailureSites.empty()
+             : instruction->definedFailure.propagation ==
+                       lang::FailurePropagationKind::None &&
+                   instruction->definedFailure.localOrigins.size() == 1 &&
+                   instruction->definedFailure.localOrigins.front().outcomes ==
+                       contract.outcomes &&
+                   instruction->localFailureSites.size() == 1 &&
+                   instruction->localFailureSites.front() != 0);
+  }
+  expect(exactBaseline,
+         "checked integer MIR should derive the exact canonical outcome set "
+         "from each operation and signed/count/conversion domain");
+
+  const auto mutateInstruction =
+      [&](lang::MirProgram &program, std::string_view name,
+          lang::MirOperation operation) -> lang::MirInstruction * {
+    const std::optional<lang::HirFunctionInstanceId> function =
+        functionInstance(frontend, name);
+    return function ? functionInstruction(program, *function, operation)
+                    : nullptr;
+  };
+  const auto expectContractRejection = [&](const lang::MirProgram &program,
+                                           std::string_view message) {
+    const lang::MirVerificationResult result = lang::verifyMirProgram(program);
+    const bool rejectedAtContract =
+        !result.valid() && hasVerificationError(result, message);
+    if (!rejectedAtContract) {
+      std::cerr << "Expected checked-operation verifier error containing '"
+                << message << "', got:";
+      for (const lang::MirVerificationError &error : result.errors) {
+        std::cerr << "\n  " << error.message;
+      }
+      std::cerr << '\n';
+    }
+    expect(rejectedAtContract,
+           "checked integer mutation should fail at the exact operation "
+           "contract: " +
+               std::string(message));
+  };
+  const auto relabelValueOperand = [&](lang::MirProgram &program,
+                                       std::string_view name,
+                                       lang::MirOperation operation,
+                                       std::size_t operandIndex,
+                                       const lang::SemanticType &type) {
+    const std::optional<lang::HirFunctionInstanceId> function =
+        functionInstance(frontend, name);
+    lang::MirBody *body = function ? functionBody(program, *function) : nullptr;
+    lang::MirInstruction *instruction =
+        function ? functionInstruction(program, *function, operation) : nullptr;
+    if (body == nullptr || instruction == nullptr ||
+        operandIndex >= instruction->operands.size() ||
+        instruction->operands[operandIndex].kind !=
+            lang::MirOperandKind::Value) {
+      return false;
+    }
+    lang::MirOperand &operand = instruction->operands[operandIndex];
+    lang::MirValue *value =
+        operand.value == 0 || operand.value > body->values.size()
+            ? nullptr
+            : &body->values[operand.value - 1];
+    if (value == nullptr) {
+      return false;
+    }
+    lang::MirBlock *definitionBlock =
+        value->definitionBlock == 0 ||
+                value->definitionBlock > body->blocks.size()
+            ? nullptr
+            : &body->blocks[value->definitionBlock - 1];
+    const auto definition =
+        definitionBlock == nullptr
+            ? std::vector<lang::MirInstruction>::iterator{}
+            : std::find_if(definitionBlock->instructions.begin(),
+                           definitionBlock->instructions.end(),
+                           [&](const lang::MirInstruction &candidate) {
+                             return candidate.id == value->definition;
+                           });
+    if (definitionBlock == nullptr ||
+        definition == definitionBlock->instructions.end()) {
+      return false;
+    }
+    operand.type = type;
+    value->info.type = type;
+    definition->info.type = type;
+    if (definition->operands.size() == 1) {
+      definition->operands.front().type = type;
+    }
+    return true;
+  };
+
+  lang::MirProgram mismatchedArithmeticDomain = frontend.mir;
+  expect(relabelValueOperand(mismatchedArithmeticDomain, "checked_add",
+                             lang::MirOperation::Add, 0,
+                             lang::SemanticType::Int64),
+         "the arithmetic-domain mutation should locate its first operand");
+  expectContractRejection(mismatchedArithmeticDomain,
+                          "fixed-width operand and result domains");
+
+  lang::MirProgram mismatchedShiftValueDomain = frontend.mir;
+  expect(relabelValueOperand(mismatchedShiftValueDomain, "checked_left_shift",
+                             lang::MirOperation::ShiftLeft, 0,
+                             lang::SemanticType::Int64),
+         "the shift-domain mutation should locate its shifted operand");
+  expectContractRejection(mismatchedShiftValueDomain,
+                          "fixed-width operand and result domains");
+
+  lang::MirProgram nonIntegerShiftCount = frontend.mir;
+  expect(relabelValueOperand(nonIntegerShiftCount, "checked_left_shift",
+                             lang::MirOperation::ShiftLeft, 1,
+                             lang::SemanticType::Bool),
+         "the shift-count mutation should locate its count operand");
+  expectContractRejection(nonIntegerShiftCount,
+                          "fixed-width operand and result domains");
+
+  lang::MirProgram mismatchedNegationDomain = frontend.mir;
+  expect(relabelValueOperand(mismatchedNegationDomain, "checked_negate",
+                             lang::MirOperation::Negate, 0,
+                             lang::SemanticType::Int64),
+         "the negation-domain mutation should locate its operand");
+  expectContractRejection(mismatchedNegationDomain,
+                          "fixed-width operand and result domains");
+
+  lang::MirProgram outOfRangeContextualLiteral = frontend.mir;
+  lang::MirInstruction *contextualNegation = mutateInstruction(
+      outOfRangeContextualLiteral, "contextual_negative_literal",
+      lang::MirOperation::Negate);
+  lang::MirBody *contextualBody = nullptr;
+  const std::optional<lang::HirFunctionInstanceId> contextualFunction =
+      functionInstance(frontend, "contextual_negative_literal");
+  if (contextualFunction) {
+    contextualBody =
+        functionBody(outOfRangeContextualLiteral, *contextualFunction);
+  }
+  lang::MirInstruction *contextualLiteral = nullptr;
+  if (contextualBody != nullptr && contextualNegation != nullptr &&
+      contextualNegation->operands.size() == 1 &&
+      contextualNegation->operands.front().kind ==
+          lang::MirOperandKind::Value) {
+    const lang::MirValue *operand =
+        contextualBody->findValue(contextualNegation->operands.front().value);
+    lang::MirBlock *definitionBlock =
+        operand == nullptr || operand->definitionBlock == 0 ||
+                operand->definitionBlock > contextualBody->blocks.size()
+            ? nullptr
+            : &contextualBody->blocks[operand->definitionBlock - 1];
+    if (definitionBlock != nullptr) {
+      const auto definition =
+          std::find_if(definitionBlock->instructions.begin(),
+                       definitionBlock->instructions.end(),
+                       [&](const lang::MirInstruction &candidate) {
+                         return candidate.id == operand->definition;
+                       });
+      if (definition != definitionBlock->instructions.end()) {
+        contextualLiteral = &*definition;
+        contextualLiteral->literal = std::uint64_t{2147483649};
+      }
+    }
+  }
+  expect(contextualLiteral != nullptr,
+         "the contextual literal mutation should locate its exact source "
+         "literal");
+  expectContractRejection(outOfRangeContextualLiteral,
+                          "fixed-width operand and result domains");
+
+  lang::MirProgram driftedConversionSource = frontend.mir;
+  expect(relabelValueOperand(driftedConversionSource, "checked_convert",
+                             lang::MirOperation::Convert, 0,
+                             lang::SemanticType::Int8),
+         "the conversion-domain mutation should locate its source operand");
+  expectContractRejection(driftedConversionSource,
+                          "canonical local failure outcomes");
+
+  lang::MirProgram missingOutcome = frontend.mir;
+  if (lang::MirInstruction *instruction =
+          mutateInstruction(missingOutcome, "checked_signed_divide",
+                            lang::MirOperation::Divide)) {
+    instruction->definedFailure.localOrigins.front().outcomes.pop_back();
+  }
+  expectContractRejection(missingOutcome, "canonical local failure outcomes");
+
+  lang::MirProgram extraOutcome = frontend.mir;
+  if (lang::MirInstruction *instruction =
+          mutateInstruction(extraOutcome, "checked_unsigned_divide",
+                            lang::MirOperation::Divide)) {
+    instruction->definedFailure.localOrigins.front().outcomes.insert(
+        instruction->definedFailure.localOrigins.front().outcomes.begin(),
+        {.code = lang::DefinedFailureCode::IntegerOverflow,
+         .detail = lang::DefinedFailureDetail::Division});
+  }
+  expectContractRejection(extraOutcome, "canonical local failure outcomes");
+
+  lang::MirProgram reorderedOutcomes = frontend.mir;
+  if (lang::MirInstruction *instruction =
+          mutateInstruction(reorderedOutcomes, "checked_signed_divide",
+                            lang::MirOperation::Divide)) {
+    std::reverse(
+        instruction->definedFailure.localOrigins.front().outcomes.begin(),
+        instruction->definedFailure.localOrigins.front().outcomes.end());
+  }
+  expectContractRejection(reorderedOutcomes,
+                          "canonical local failure outcomes");
+
+  lang::MirProgram missingMetadata = frontend.mir;
+  if (lang::MirInstruction *instruction = mutateInstruction(
+          missingMetadata, "checked_subtract", lang::MirOperation::Subtract)) {
+    instruction->definedFailure.localOrigins.clear();
+    instruction->localFailureSites.clear();
+  }
+  expectContractRejection(missingMetadata, "canonical local failure outcomes");
+
+  lang::MirProgram mismatchedOperation = frontend.mir;
+  if (lang::MirInstruction *instruction = mutateInstruction(
+          mismatchedOperation, "checked_add", lang::MirOperation::Add)) {
+    instruction->operation = lang::MirOperation::Multiply;
+  }
+  expectContractRejection(mismatchedOperation,
+                          "canonical local failure outcomes");
+
+  lang::MirProgram duplicateOrigin = frontend.mir;
+  if (lang::MirInstruction *instruction = mutateInstruction(
+          duplicateOrigin, "checked_multiply", lang::MirOperation::Multiply)) {
+    instruction->definedFailure.localOrigins.push_back(
+        instruction->definedFailure.localOrigins.front());
+    instruction->localFailureSites.push_back(
+        instruction->localFailureSites.front());
+  }
+  expectContractRejection(duplicateOrigin, "canonical local failure outcomes");
+
+  lang::MirProgram staleOrigin = frontend.mir;
+  if (lang::MirInstruction *instruction = mutateInstruction(
+          staleOrigin, "checked_remainder", lang::MirOperation::Remainder)) {
+    ++instruction->definedFailure.localOrigins.front().line;
+  }
+  expectContractRejection(staleOrigin, "origin and site identity");
+
+  lang::MirProgram signedShiftMissingOutcome = frontend.mir;
+  if (lang::MirInstruction *instruction =
+          mutateInstruction(signedShiftMissingOutcome, "checked_left_shift",
+                            lang::MirOperation::ShiftLeft)) {
+    instruction->definedFailure.localOrigins.front().outcomes.erase(
+        instruction->definedFailure.localOrigins.front().outcomes.begin());
+  }
+  expectContractRejection(signedShiftMissingOutcome,
+                          "canonical local failure outcomes");
+
+  lang::MirProgram unsignedShiftExtraOutcome = frontend.mir;
+  if (lang::MirInstruction *instruction =
+          mutateInstruction(unsignedShiftExtraOutcome, "checked_right_shift",
+                            lang::MirOperation::ShiftRight)) {
+    instruction->definedFailure.localOrigins.front().outcomes.insert(
+        instruction->definedFailure.localOrigins.front().outcomes.begin(),
+        {.code = lang::DefinedFailureCode::NegativeShiftCount,
+         .detail = lang::DefinedFailureDetail::RightShift});
+  }
+  expectContractRejection(unsignedShiftExtraOutcome,
+                          "canonical local failure outcomes");
+
+  lang::MirProgram mismatchedNegation = frontend.mir;
+  if (lang::MirInstruction *instruction = mutateInstruction(
+          mismatchedNegation, "checked_negate", lang::MirOperation::Negate)) {
+    instruction->definedFailure.localOrigins.front().outcomes.front().detail =
+        lang::DefinedFailureDetail::Subtraction;
+  }
+  expectContractRejection(mismatchedNegation,
+                          "canonical local failure outcomes");
+
+  lang::MirProgram missingConversionOutcome = frontend.mir;
+  if (lang::MirInstruction *instruction =
+          mutateInstruction(missingConversionOutcome, "checked_convert",
+                            lang::MirOperation::Convert)) {
+    instruction->definedFailure.localOrigins.clear();
+    instruction->localFailureSites.clear();
+  }
+  expectContractRejection(missingConversionOutcome,
+                          "canonical local failure outcomes");
+
+  lang::MirProgram forgedWideningFailure = frontend.mir;
+  lang::MirInstruction *checked = mutateInstruction(
+      forgedWideningFailure, "checked_convert", lang::MirOperation::Convert);
+  lang::MirInstruction *widening = mutateInstruction(
+      forgedWideningFailure, "safe_convert", lang::MirOperation::Convert);
+  if (checked != nullptr && widening != nullptr) {
+    widening->definedFailure = checked->definedFailure;
+    widening->localFailureSites = checked->localFailureSites;
+  }
+  expectContractRejection(forgedWideningFailure,
+                          "canonical local failure outcomes");
+
+  lang::MirProgram staleRecord = frontend.mir;
+  const std::optional<lang::HirFunctionInstanceId> addFunction =
+      functionInstance(frontend, "checked_add");
+  lang::MirBody *staleRecordBody =
+      addFunction ? functionBody(staleRecord, *addFunction) : nullptr;
+  if (staleRecordBody != nullptr && !staleRecordBody->failureRecords.empty()) {
+    ++staleRecordBody->failureRecords.front().producerInstruction;
+  }
+  expectContractRejection(staleRecord, "exactly one fixed failure record");
+
+  lang::MirProgram duplicateRecord = frontend.mir;
+  lang::MirBody *duplicateRecordBody =
+      addFunction ? functionBody(duplicateRecord, *addFunction) : nullptr;
+  if (duplicateRecordBody != nullptr &&
+      !duplicateRecordBody->failureRecords.empty()) {
+    lang::MirFailureRecord duplicate =
+        duplicateRecordBody->failureRecords.front();
+    duplicate.id = duplicateRecordBody->failureRecords.size() + 1;
+    duplicateRecordBody->failureRecords.push_back(duplicate);
+  }
+  expectContractRejection(duplicateRecord, "exactly one fixed failure record");
+}
+
 } // namespace
 
 int main() {
   testCanonicalMetadataAndMirSites();
   testInvokeEdgesAndFailureCleanup();
   testEmptyDescriptorContract();
+  testHostedProgramEntryMetadata();
   testExternalSourceRouteIdentity();
   testMetadataAndSiteVerifierMutations();
+  testCheckedIntegerOperationVerifierContracts();
   return passed ? 0 : 1;
 }

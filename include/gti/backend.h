@@ -19,6 +19,10 @@ struct BackendInput {
   const SemanticModel &semantics;
   const HirProgram &hir;
   const MirProgram &mir;
+  // Required by executable-body backends. This is the verified MIR snapshot
+  // before optimization; `mir` may differ only through a MIR-authorized
+  // rewrite accepted by `verifyMirOptimizationCoherence`.
+  const MirProgram *sourceMir = nullptr;
   const OptimizationResult &optimizations;
   TargetInfo target = TargetInfo::host();
 };

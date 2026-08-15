@@ -89,6 +89,9 @@ public:
   [[nodiscard]] std::optional<FailureSiteId>
   siteFor(const DefinedFailureOrigin &origin) const;
 
+  friend bool operator==(const FailureMetadata &,
+                         const FailureMetadata &) = default;
+
 private:
   friend class FailureMetadataBuilder;
 

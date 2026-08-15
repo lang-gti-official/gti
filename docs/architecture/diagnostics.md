@@ -107,6 +107,17 @@ diagnostics or letting a backend message choose either identity.
   field cause when available, suggest local storage or removing the owning
   component, and do not offer a mechanical fix-it. More-specific owner,
   private-storage, and borrowed-state diagnostics take precedence.
+- `GTI-S2068` owns an executable namespace-global or non-generic static-field
+  initializer that may read, write, address, reference, or borrow its own or a
+  later program-storage step, or whose transitive GTI effect closure cannot be
+  proved exact. Point at the direct access or first actionable call/construction
+  edge. Relate the later storage declaration and the rejected initializer; for
+  a transitive access or unknown summary, also relate the exact access or point
+  where the proof becomes incomplete. Suggest moving the dependency earlier in
+  source-unit/declaration order or removing it from the closed GTI call graph.
+  Do not offer a fix-it: reordering declarations or changing effects is not a
+  mechanically safe edit. An explicit frontend-recorded representable constant
+  substitution is a non-use, but `constexpr` storage metadata alone is not.
 - Give a concrete rule and correction; do not expose backend helper names.
 - Add a fix-it only when the edit is mechanically correct for every program
   that produces the diagnostic. Include a concise action message.

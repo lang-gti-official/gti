@@ -14,6 +14,11 @@ public:
     baseModel = &semantics.model();
     output = {};
     output.program.executionProfile_ = target.executionProfile;
+    output.program.semanticAnalysisSeal = baseModel->analysisSeal();
+    if (!baseModel->analysisSeal().matchesProgram(source, target)) {
+      output.program.valid_ = false;
+      return std::move(output);
+    }
     instanceIndex = HirInstanceIndex();
     nextValueId = 1;
     nextBindingId = 1;
@@ -26,16 +31,29 @@ public:
     processedConstructors = 0;
     processedDestructors = 0;
     lambdaTargets.clear();
+    loweredProgramStorage.clear();
 
     seedDeclarations(source.declarations(), std::nullopt);
+    lowerProgramInitializationPlan();
+    lowerHostedProgramEntryPlan();
     finalizeLifetimes(output.program.moduleBody, *baseModel, false);
     lowerLoans(*baseModel, output.program.moduleBody);
     processPendingInstances();
     output.program.valid_ = output.diagnostics.empty() && lifecycleValid;
+    if (output.program.valid_ &&
+        !verifyHirProgramPlans(*baseModel, output.program).valid()) {
+      output.program.valid_ = false;
+    }
     return std::move(output);
   }
 
 private:
+  struct LoweredProgramStorage {
+    HirBindingId binding = 0;
+    std::optional<HirValueId> initializer;
+    HirStatementId statement = 0;
+  };
+
   [[nodiscard]] static SemanticType
   substitute(const SemanticType &type,
              const GenericSubstitution &substitution) {
@@ -382,16 +400,177 @@ private:
                               info->returnType, info->parameterTypes);
         continue;
       }
-      if (const auto *variable =
-              dynamic_cast<const VariableDecl *>(statement.get())) {
-        if (!enclosingClass) {
-          if (const std::optional<HirStatementId> root = lowerStatement(
-                  variable, *baseModel, {}, {}, output.program.moduleBody)) {
-            output.program.moduleBody.roots.push_back(*root);
-          }
-        }
-      }
+      // Program-wide storage is lowered once from the semantic initialization
+      // plan after declaration seeding. Its order is not the combined AST
+      // visitation order, and class statics share the module body with globals.
     }
+  }
+
+  void lowerProgramInitializationPlan() {
+    const ProgramInitializationPlan &semanticPlan =
+        baseModel->programInitializationPlan();
+    output.program.programInitialization.unitOrder = semanticPlan.unitOrder;
+    output.program.programInitialization.steps.reserve(
+        semanticPlan.steps.size());
+    for (const ProgramInitializationStep &step : semanticPlan.steps) {
+      const VariableDecl *declaration = step.declaration;
+      const BindingInfo *info = declaration == nullptr
+                                    ? nullptr
+                                    : baseModel->findBinding(*declaration);
+      HirClassInstanceId ownerClass = 0;
+      if (step.kind == ProgramStorageKind::StaticField) {
+        ownerClass =
+            enqueueClass(SemanticType::classType(step.ownerClass)).value_or(0);
+      }
+      if (step.id == 0 || declaration == nullptr || info == nullptr ||
+          step.symbol == 0 ||
+          (step.kind == ProgramStorageKind::StaticField && ownerClass == 0)) {
+        lifecycleValid = false;
+        continue;
+      }
+      const HirBindingId binding =
+          lowerBinding(*declaration, *info, output.program.moduleBody);
+      std::optional<HirValueId> initializer;
+      HirStatementId statement = 0;
+      if (step.role == ProgramInitializationStepRole::Initializer) {
+        initializer = lowerExpression(declaration->initializer(), *baseModel,
+                                      {}, {}, output.program.moduleBody);
+        statement = appendStatement({.kind = HirStatementKind::Variable,
+                                     .source = declaration,
+                                     .binding = binding,
+                                     .value = initializer},
+                                    output.program.moduleBody);
+        output.program.moduleBody.roots.push_back(statement);
+      }
+      const LoweredProgramStorage lowered{.binding = binding,
+                                          .initializer = initializer,
+                                          .statement = statement};
+      loweredProgramStorage.insert_or_assign(declaration, lowered);
+      output.program.programInitialization.steps.push_back(
+          {.id = step.id,
+           .sourceUnit = step.sourceUnit,
+           .kind = step.kind,
+           .role = step.role,
+           .source = declaration,
+           .symbol = step.symbol,
+           .ownerClass = ownerClass,
+           .requiresActiveCleanup = step.requiresActiveCleanup,
+           .binding = binding,
+           .initializer = initializer,
+           .statement = statement});
+    }
+    if (output.program.programInitialization.steps.size() !=
+        semanticPlan.steps.size()) {
+      lifecycleValid = false;
+    }
+  }
+
+  [[nodiscard]] const ConstructorInfo *
+  findHostedConstructor(const SemanticType &type, ConstructorId id) const {
+    const ClassTypeInfo *classType = baseModel->findClassType(type.classId);
+    const ClassLifecycleInfo *lifecycle =
+        classType == nullptr || classType->declaration == nullptr
+            ? nullptr
+            : baseModel->findClassLifecycle(*classType->declaration);
+    if (lifecycle == nullptr) {
+      return nullptr;
+    }
+    const auto found = std::find_if(
+        lifecycle->constructors.begin(), lifecycle->constructors.end(),
+        [id](const ConstructorInfo &constructor) {
+          return constructor.id == id &&
+                 constructor.kind == ConstructorKind::Ordinary &&
+                 constructor.access == AccessModifier::Public &&
+                 constructor.declaration != nullptr;
+        });
+    return found == lifecycle->constructors.end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] HirConstructorInstanceId
+  enqueueHostedConstructor(const SemanticType &type, ConstructorId id,
+                           const SourceSpan &site) {
+    const ConstructorInfo *constructor = findHostedConstructor(type, id);
+    if (constructor == nullptr) {
+      return 0;
+    }
+    return enqueueConstructor({.constructor = constructor->id,
+                               .declaration = constructor->declaration,
+                               .constructedType = type,
+                               .typeArguments = type.arguments,
+                               .valueArguments = type.valueArguments,
+                               .parameterTypes = constructor->parameterTypes},
+                              site);
+  }
+
+  void lowerHostedProgramEntryPlan() {
+    const std::optional<HostedProgramEntryPlan> &semanticPlan =
+        baseModel->hostedProgramEntryPlan();
+    if (!semanticPlan) {
+      output.program.hostedProgramEntry.reset();
+      return;
+    }
+    const FunctionInfo *entryInfo =
+        baseModel->findFunction(semanticPlan->entry);
+    const std::optional<std::size_t> entryInstance =
+        entryInfo == nullptr
+            ? std::nullopt
+            : instanceIndex.findFunction(entryInfo->id, {}, {}, {}, {});
+    HirHostedProgramEntryPlan lowered{
+        .semanticEntry = semanticPlan->entry,
+        .semanticAppendFunction = semanticPlan->appendFunction,
+        .semanticVectorConstructor = semanticPlan->vectorConstructor,
+        .semanticStringConstructor = semanticPlan->stringConstructor,
+        .entry = entryInstance.value_or(0),
+        .kind = semanticPlan->kind,
+        .sourceUnit = semanticPlan->sourceUnit,
+        .mainAnchor = semanticPlan->mainAnchor,
+        .validateCount = semanticPlan->validateCount,
+        .convertCount = semanticPlan->convertCount};
+    if (semanticPlan->kind == ProgramEntryKind::NoArguments) {
+      if (lowered.entry == 0 || semanticPlan->appendFunction != 0 ||
+          semanticPlan->vectorConstructor != 0 ||
+          semanticPlan->stringConstructor != 0 ||
+          !semanticPlan->validateCount.empty() ||
+          !semanticPlan->convertCount.empty()) {
+        lifecycleValid = false;
+      }
+      output.program.hostedProgramEntry = std::move(lowered);
+      return;
+    }
+    if (semanticPlan->kind != ProgramEntryKind::OwnedArguments ||
+        entryInfo == nullptr || entryInfo->parameterTypes.size() != 2 ||
+        entryInfo->parameterTypes[1].kind != SemanticType::Class ||
+        entryInfo->parameterTypes[1].arguments.size() != 1 ||
+        lowered.entry == 0) {
+      lifecycleValid = false;
+      output.program.hostedProgramEntry = std::move(lowered);
+      return;
+    }
+    const SemanticType &vectorType = entryInfo->parameterTypes[1];
+    const SemanticType &stringType = vectorType.arguments.front();
+    const HirFunctionInstance *entry =
+        output.program.findFunctionInstance(lowered.entry);
+    lowered.appendFunction =
+        entry != nullptr && entry->entryArgumentAppendTarget
+            ? *entry->entryArgumentAppendTarget
+            : 0;
+    lowered.vectorConstructor = enqueueHostedConstructor(
+        vectorType, semanticPlan->vectorConstructor, semanticPlan->mainAnchor);
+    lowered.stringConstructor = enqueueHostedConstructor(
+        stringType, semanticPlan->stringConstructor, semanticPlan->mainAnchor);
+    const HirFunctionInstance *append =
+        output.program.findFunctionInstance(lowered.appendFunction);
+    if (semanticPlan->appendFunction == 0 ||
+        semanticPlan->vectorConstructor == 0 ||
+        semanticPlan->stringConstructor == 0 || lowered.appendFunction == 0 ||
+        lowered.vectorConstructor == 0 || lowered.stringConstructor == 0 ||
+        append == nullptr ||
+        append->declaration != semanticPlan->appendFunction ||
+        semanticPlan->validateCount.empty() ||
+        semanticPlan->convertCount.empty()) {
+      lifecycleValid = false;
+    }
+    output.program.hostedProgramEntry = std::move(lowered);
   }
 
   void processPendingInstances() {
@@ -546,28 +725,36 @@ private:
           info.constant = recorded->constant;
         }
       }
-      const HirBindingId binding =
-          field.declaration == nullptr
-              ? 0
-              : lowerBinding(*field.declaration, info, staticFieldInitializers);
-      const std::optional<HirValueId> initializer =
-          field.declaration == nullptr
-              ? std::nullopt
-              : lowerExpression(field.declaration->initializer(), *model,
-                                snapshot.typeArguments, snapshot.valueArguments,
-                                staticFieldInitializers);
+      LoweredProgramStorage lowered;
       if (field.declaration != nullptr) {
-        HirStatement statement{.kind = HirStatementKind::Variable,
+        const auto found = loweredProgramStorage.find(field.declaration);
+        if (found == loweredProgramStorage.end()) {
+          // Generic class statics are intentionally outside the whole-program
+          // semantic plan until a concrete qualified-static identity exists.
+          // Preserve their previous per-instance body representation.
+          lowered.binding =
+              lowerBinding(*field.declaration, info, staticFieldInitializers);
+          lowered.initializer = lowerExpression(
+              field.declaration->initializer(), *model, snapshot.typeArguments,
+              snapshot.valueArguments, staticFieldInitializers);
+          lowered.statement =
+              appendStatement({.kind = HirStatementKind::Variable,
                                .source = field.declaration,
-                               .binding = binding,
-                               .value = initializer};
-        staticFieldInitializers.roots.push_back(
-            appendStatement(std::move(statement), staticFieldInitializers));
+                               .binding = lowered.binding,
+                               .value = lowered.initializer},
+                              staticFieldInitializers);
+          staticFieldInitializers.roots.push_back(lowered.statement);
+          if (declaration->genericParameters.empty()) {
+            lifecycleValid = false;
+          }
+        } else {
+          lowered = found->second;
+        }
       }
       staticFields.push_back(
           {.declaration = field.declaration,
-           .binding = binding,
-           .initializer = initializer,
+           .binding = lowered.binding,
+           .initializer = lowered.initializer,
            .info = info,
            .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
     }
@@ -1892,7 +2079,12 @@ private:
         enumOwner = payload->owner;
         enumVariant = payload->variantIndex;
       } else if (kind == HirValueKind::Call) {
-        lowerOperand(call->callee());
+        // A resolved type construction has no runtime callee value. Retaining
+        // its type-name expression would create an untyped, semantically
+        // unrecorded HIR operand beside the exact constructor target.
+        if (model.findExpression(*call->callee()) != nullptr) {
+          lowerOperand(call->callee());
+        }
         if (resolved != nullptr && resolved->declaration != nullptr &&
             !resolved->declaration->isStatic() &&
             dynamic_cast<const Variable *>(call->callee().get()) != nullptr &&
@@ -2058,6 +2250,8 @@ private:
                    .operation = operation,
                    .literal = std::move(literal),
                    .constant = model.findConstant(*raw),
+                   .programConstantSubstitution =
+                       model.isProgramConstantSubstitution(*raw),
                    .receiver = receiver,
                    .lambdaTarget = lambdaTarget,
                    .enumOwner = enumOwner,
@@ -2404,6 +2598,8 @@ private:
   SemanticType currentReceiverType = SemanticType::Unknown;
   AccessMode currentReceiverAccess = AccessMode::ReadOnly;
   std::unordered_map<LambdaId, HirLambdaId> lambdaTargets;
+  std::unordered_map<const VariableDecl *, LoweredProgramStorage>
+      loweredProgramStorage;
 };
 
 HirLowerer::HirLowerer(TargetInfo target)

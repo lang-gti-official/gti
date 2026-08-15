@@ -511,6 +511,7 @@ void testHirMirAndBackend() {
                                    .semantics = result.semantics,
                                    .hir = result.hir,
                                    .mir = result.mir,
+                                   .sourceMir = &result.mir,
                                    .optimizations = optimizations});
   const auto emittedInitializer = [&](std::string_view name,
                                       std::uint64_t expected) {

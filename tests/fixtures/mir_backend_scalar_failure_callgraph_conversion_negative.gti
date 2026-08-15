@@ -1,0 +1,5 @@
+int main() {
+  int32_t negative = -1;
+  uint32_t converted = uint32_t(negative);
+  return int32_t(converted);
+}

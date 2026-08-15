@@ -17,7 +17,8 @@ Concrete generic validity is obtained through semantic instance reanalysis.
 `HirProgram` owns:
 
 - the selected execution profile copied from the pre-semantics target facts;
-- module initialization;
+- the semantic analysis seal, exact program-initialization plan, hosted-entry
+  plan, and merged module initialization body;
 - concrete class, function, constructor, destructor, and lambda instances;
 - enums and resolved class/base/lifecycle metadata;
 - executable `HirBody` values, bindings, statements, and root statements;
@@ -31,6 +32,43 @@ IDs are stable only inside one `HirProgram`; zero means no identity.
 The execution profile is immutable program metadata, not a body operation.
 HIR preserves it for later concurrency boundaries but does not repeat the
 global/static validity check owned by semantics or infer runtime capabilities.
+
+## Program Initialization And Hosted Entry
+
+HIR copies the semantic `ProgramInitializationPlan` into one
+`HirProgramInitializationPlan`; it does not reconstruct order from discovered
+instances or module-body iteration. Each namespace global and non-generic
+static field has one exact binding in the merged module body. `DataOnly` steps
+have no module statement, value, or executable initializer root. `Initializer`
+steps have one exact statement/root and must retain the nonzero source-backed
+initializer value plus its source plan identity. Static fields of generic
+classes remain in their concrete class instance bodies and are excluded from
+the program-wide plan.
+
+An exact frontend-computed program constant becomes a
+`programConstantSubstitution` value carrying the same `ConstantValue`,
+`ExpressionInfo`, source expression, and type. This is the downstream proof
+that a later data-only storage declaration need not be loaded early; the flag
+cannot be inferred from the binding's constant metadata. Every other reachable
+module value remains an ordinary storage or executable value.
+
+`HirLowerer` independently recaptures the supplied Program/target identity,
+matches the semantic analysis seal before seeding instances, and runs
+`verifyHirProgramPlans` before exposing a valid result. The verifier exact-
+compares the semantic and HIR seals, initialization and hosted-entry plans,
+module binding/statement/value inventories, full representation-relevant
+binding metadata, initializer provenance, and constant-substitution facts.
+
+For an owned-argument entry, `HirHostedProgramEntryPlan` maps the exact semantic
+entry, append function, vector constructor, and string constructor to concrete
+HIR instance identities. It also copies the `main` anchor and exactly two
+adapter-local failure operations: native negative-count validation and checked
+GTI count conversion. Allocation failure remains owned and sited by the exact
+constructor or append callee; `allocation_failure/hosted_arguments` is reserved
+and currently unproduced. This plan is immutable data only. A later M-FAIL-01 /
+M-EXEC-01 cutover must generate the executable hosted-startup HIR/MIR schedule,
+ordered around program initialization and final parameter transfer, without
+re-siting callee failures.
 
 ## Instance Discovery
 
@@ -92,16 +130,6 @@ edge even though the user `main` body contains no source call to it.
 A concrete `[[c_abi]]` class instance additionally retains its semantic record
 marker and ordered field-layout facts. HIR does not recompute padding, consult
 LLVM, or infer C ABI eligibility from the emitted C++ representation.
-
-M-FAIL-01 must additionally materialize a compiler-generated hosted-startup
-HIR operation/body for that owned-argument entry. It carries the semantic
-entry record's three local origins—negative native count, checked GTI count
-conversion, and owned argument allocation—plus the canonical source `main`
-declaration anchor. The operation has no source `Expr`, but participates in
-failure-metadata interning like every other local detector; it is not implicit
-backend adapter policy. D-EXEC-01 additionally fixes validation and count
-conversion before the ordered program-initialization plan, followed by argument
-construction and final left-to-right parameter transfer.
 
 ## Executable Values
 

@@ -322,6 +322,24 @@ void forEachHirBody(const HirProgram &hir, Callback callback) {
   }
 }
 
+[[nodiscard]] bool exactHostedFailure(const DefinedFailureOperation &operation,
+                                      DefinedFailureCode code,
+                                      DefinedFailureDetail detail,
+                                      const HirHostedProgramEntryPlan &plan) {
+  if (operation.propagation != FailurePropagationKind::None ||
+      operation.localOrigins.size() != 1) {
+    return false;
+  }
+  const DefinedFailureOrigin &origin = operation.localOrigins.front();
+  return origin.outcomes ==
+             std::vector<DefinedFailureOutcome>{
+                 {.code = code, .detail = detail}} &&
+         origin.sourceUnit == plan.sourceUnit &&
+         origin.start == plan.mainAnchor.start &&
+         origin.end == plan.mainAnchor.end &&
+         origin.line == plan.mainAnchor.line;
+}
+
 [[nodiscard]] bool
 outcomesValidAndSorted(const std::vector<DefinedFailureOutcome> &outcomes) {
   if (outcomes.empty()) {
@@ -461,37 +479,68 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
       selectRoutes(sourceGraph);
 
   std::map<OriginKey, PendingOrigin> origins;
+  const auto collectOrigin = [&](const DefinedFailureOrigin &origin) {
+    const SourceUnit *unit = sourceGraph.findUnit(origin.sourceUnit);
+    const std::string *source =
+        unit == nullptr ? nullptr : sources.find(unit->path.string());
+    if (unit == nullptr || source == nullptr || origin.end <= origin.start ||
+        origin.end > source->size() || origin.outcomes.empty()) {
+      result.errors.push_back(
+          "failure origin cannot be resolved to exact source bytes");
+      return;
+    }
+    const std::size_t precedingLines = static_cast<std::size_t>(
+        std::count(source->begin(), source->begin() + origin.start, '\n'));
+    if (precedingLines >=
+        static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+      result.errors.push_back(
+          "failure origin line exceeds the metadata line-number range");
+      return;
+    }
+    const int exactLine = 1 + static_cast<int>(precedingLines);
+    if (origin.line != exactLine) {
+      result.errors.push_back(
+          "failure origin line does not match its exact source bytes");
+      return;
+    }
+    PendingOrigin &pending =
+        origins[{origin.sourceUnit, origin.start, origin.end}];
+    pending.key = {origin.sourceUnit, origin.start, origin.end};
+    pending.line = exactLine;
+    pending.outcomes.insert(pending.outcomes.end(), origin.outcomes.begin(),
+                            origin.outcomes.end());
+  };
   forEachHirBody(hir, [&](const HirBody &body) {
     for (const HirValue &value : body.values) {
       for (const DefinedFailureOrigin &origin :
            value.definedFailure.localOrigins) {
-        const SourceUnit *unit = sourceGraph.findUnit(origin.sourceUnit);
-        const std::string *source =
-            unit == nullptr ? nullptr : sources.find(unit->path.string());
-        if (unit == nullptr || source == nullptr ||
-            origin.end <= origin.start || origin.end > source->size() ||
-            origin.outcomes.empty()) {
-          result.errors.push_back(
-              "failure origin cannot be resolved to exact source bytes");
-          continue;
-        }
-        const std::size_t precedingLines = static_cast<std::size_t>(
-            std::count(source->begin(), source->begin() + origin.start, '\n'));
-        if (precedingLines >=
-            static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-          result.errors.push_back(
-              "failure origin line exceeds the metadata line-number range");
-          continue;
-        }
-        PendingOrigin &pending =
-            origins[{origin.sourceUnit, origin.start, origin.end}];
-        pending.key = {origin.sourceUnit, origin.start, origin.end};
-        pending.line = 1 + static_cast<int>(precedingLines);
-        pending.outcomes.insert(pending.outcomes.end(), origin.outcomes.begin(),
-                                origin.outcomes.end());
+        collectOrigin(origin);
       }
     }
   });
+  if (const std::optional<HirHostedProgramEntryPlan> &hosted =
+          hir.hostedProgramEntryPlan()) {
+    if (hosted->kind == ProgramEntryKind::NoArguments) {
+      if (!hosted->validateCount.empty() || !hosted->convertCount.empty()) {
+        result.errors.push_back(
+            "no-argument hosted entry contains failure origins");
+      }
+    } else if (hosted->kind != ProgramEntryKind::OwnedArguments ||
+               !exactHostedFailure(
+                   hosted->validateCount,
+                   DefinedFailureCode::HostedRuntimeContractFailure,
+                   DefinedFailureDetail::NegativeArgumentCount, *hosted) ||
+               !exactHostedFailure(
+                   hosted->convertCount,
+                   DefinedFailureCode::NumericConversionOutOfRange,
+                   DefinedFailureDetail::HostedArgumentCount, *hosted)) {
+      result.errors.push_back(
+          "owned-argument hosted entry has invalid failure origins");
+    } else {
+      collectOrigin(hosted->validateCount.localOrigins.front());
+      collectOrigin(hosted->convertCount.localOrigins.front());
+    }
+  }
   for (auto &[_, origin] : origins) {
     sortAndUniqueOutcomes(origin.outcomes);
     if (!outcomesValidAndSorted(origin.outcomes)) {

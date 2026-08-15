@@ -30,6 +30,7 @@ using EnumId = std::size_t;
 using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
 using LambdaId = std::size_t;
+using ProgramInitializationStepId = std::size_t;
 using SemanticLoanId = std::size_t;
 using SymbolId = std::size_t;
 using TypeAliasId = std::size_t;
@@ -144,6 +145,9 @@ struct OwnershipEvent {
   OwnershipStateSet before = OwnershipStateSet::Available;
   OwnershipStateSet after = OwnershipStateSet::Available;
   bool reachable = true;
+
+  friend bool operator==(const OwnershipEvent &,
+                         const OwnershipEvent &) = default;
 };
 
 struct GenericParameterInfo {
@@ -469,6 +473,9 @@ struct SemanticTypeTraits {
   bool containsBorrowedState = false;
   bool transferCapable = true;
   bool shareCapable = true;
+
+  friend bool operator==(const SemanticTypeTraits &,
+                         const SemanticTypeTraits &) = default;
 };
 
 // Nominal class traits require collected field metadata. Semantic analysis
@@ -480,6 +487,9 @@ struct ExpressionInfo {
   ValueCategory category = ValueCategory::Value;
   AccessMode access = AccessMode::ReadOnly;
   SemanticTypeTraits traits{};
+
+  friend bool operator==(const ExpressionInfo &,
+                         const ExpressionInfo &) = default;
 };
 
 struct BindingInfo {
@@ -492,6 +502,8 @@ struct BindingInfo {
   bool staticStorage = false;
   bool internalLinkage = false;
   SemanticLoanId retainedLoan = 0;
+
+  friend bool operator==(const BindingInfo &, const BindingInfo &) = default;
 };
 
 enum class SemanticLoanKind {
@@ -711,6 +723,80 @@ enum class ProgramEntryKind {
   OwnedArguments,
 };
 
+enum class ProgramStorageKind {
+  NamespaceGlobal,
+  StaticField,
+};
+
+enum class ProgramInitializationStepRole {
+  DataOnly,
+  Initializer,
+};
+
+struct ProgramInitializationStep {
+  ProgramInitializationStepId id = 0;
+  SourceUnitId sourceUnit = 0;
+  ProgramStorageKind kind = ProgramStorageKind::NamespaceGlobal;
+  ProgramInitializationStepRole role =
+      ProgramInitializationStepRole::Initializer;
+  const VariableDecl *declaration = nullptr;
+  SymbolId symbol = 0;
+  ClassId ownerClass = 0;
+  bool requiresActiveCleanup = false;
+  SourceSpan declarationSpan;
+
+  friend bool operator==(const ProgramInitializationStep &left,
+                         const ProgramInitializationStep &right) {
+    return left.id == right.id && left.sourceUnit == right.sourceUnit &&
+           left.kind == right.kind && left.role == right.role &&
+           left.declaration == right.declaration &&
+           left.symbol == right.symbol && left.ownerClass == right.ownerClass &&
+           left.requiresActiveCleanup == right.requiresActiveCleanup &&
+           left.declarationSpan.source == right.declarationSpan.source &&
+           left.declarationSpan.start == right.declarationSpan.start &&
+           left.declarationSpan.end == right.declarationSpan.end &&
+           left.declarationSpan.line == right.declarationSpan.line;
+  }
+};
+
+struct ProgramInitializationPlan {
+  std::vector<SourceUnitId> unitOrder;
+  std::vector<ProgramInitializationStep> steps;
+
+  [[nodiscard]] const ProgramInitializationStep *
+  findStepForSymbol(SymbolId symbol) const;
+
+  friend bool operator==(const ProgramInitializationPlan &,
+                         const ProgramInitializationPlan &) = default;
+};
+
+struct HostedProgramEntryPlan {
+  FunctionId entry = 0;
+  ProgramEntryKind kind = ProgramEntryKind::None;
+  FunctionId appendFunction = 0;
+  ConstructorId vectorConstructor = 0;
+  ConstructorId stringConstructor = 0;
+  SourceUnitId sourceUnit = 0;
+  SourceSpan mainAnchor;
+  DefinedFailureOperation validateCount;
+  DefinedFailureOperation convertCount;
+
+  friend bool operator==(const HostedProgramEntryPlan &left,
+                         const HostedProgramEntryPlan &right) {
+    return left.entry == right.entry && left.kind == right.kind &&
+           left.appendFunction == right.appendFunction &&
+           left.vectorConstructor == right.vectorConstructor &&
+           left.stringConstructor == right.stringConstructor &&
+           left.sourceUnit == right.sourceUnit &&
+           left.mainAnchor.source == right.mainAnchor.source &&
+           left.mainAnchor.start == right.mainAnchor.start &&
+           left.mainAnchor.end == right.mainAnchor.end &&
+           left.mainAnchor.line == right.mainAnchor.line &&
+           left.validateCount == right.validateCount &&
+           left.convertCount == right.convertCount;
+  }
+};
+
 enum class BorrowOriginKind {
   None,
   Receiver,
@@ -806,12 +892,18 @@ struct CAbiRecordFieldLayout {
   std::uint64_t offsetBytes = 0;
   std::uint64_t sizeBytes = 0;
   std::uint32_t abiAlignmentBytes = 0;
+
+  friend bool operator==(const CAbiRecordFieldLayout &,
+                         const CAbiRecordFieldLayout &) = default;
 };
 
 struct CAbiRecordLayout {
   std::uint64_t sizeBytes = 0;
   std::uint32_t abiAlignmentBytes = 0;
   std::vector<CAbiRecordFieldLayout> fields;
+
+  friend bool operator==(const CAbiRecordLayout &,
+                         const CAbiRecordLayout &) = default;
 };
 
 struct UnionFieldLayout {
@@ -819,12 +911,17 @@ struct UnionFieldLayout {
   SemanticType type = SemanticType::Unknown;
   std::uint64_t sizeBytes = 0;
   std::uint32_t abiAlignmentBytes = 0;
+
+  friend bool operator==(const UnionFieldLayout &,
+                         const UnionFieldLayout &) = default;
 };
 
 struct UnionLayout {
   std::uint64_t sizeBytes = 0;
   std::uint32_t abiAlignmentBytes = 0;
   std::vector<UnionFieldLayout> fields;
+
+  friend bool operator==(const UnionLayout &, const UnionLayout &) = default;
 };
 
 struct ClassTypeInfo {
@@ -1370,6 +1467,76 @@ struct GenericSubstitution {
 
 using SemanticDiagnostic = Diagnostic;
 
+struct SemanticSourceUnitSeal {
+  SourceUnitId id = 0;
+  std::string path;
+  std::size_t declarationStart = 0;
+  std::size_t declarationCount = 0;
+  std::optional<std::string> standardLibraryName;
+  std::optional<std::string> packageIdentity;
+  std::optional<std::string> packageRelativePath;
+  SourceUnitRole role = SourceUnitRole::Application;
+  bool entry = false;
+  bool prelude = false;
+
+  friend bool operator==(const SemanticSourceUnitSeal &,
+                         const SemanticSourceUnitSeal &) = default;
+};
+
+struct SemanticSourceDependencySeal {
+  SourceUnitId source = 0;
+  SourceUnitId target = 0;
+  SourceDependencyKind kind = SourceDependencyKind::Include;
+  std::string directiveSource;
+  std::size_t directiveStart = 0;
+  std::size_t directiveEnd = 0;
+  int directiveLine = 0;
+  std::string includeSpelling;
+  std::size_t includeOccurrence = 0;
+
+  friend bool operator==(const SemanticSourceDependencySeal &,
+                         const SemanticSourceDependencySeal &) = default;
+};
+
+struct SemanticSourceGraphSeal {
+  SourceUnitId entry = 0;
+  std::vector<SourceUnitId> preludeRoots;
+  std::vector<SemanticSourceUnitSeal> units;
+  std::vector<SemanticSourceDependencySeal> dependencies;
+
+  friend bool operator==(const SemanticSourceGraphSeal &,
+                         const SemanticSourceGraphSeal &) = default;
+};
+
+struct SemanticAnalysisSeal {
+  std::uint64_t programSnapshot = 0;
+  TargetInfo target;
+  std::vector<const Stmt *> activeStatements;
+  SemanticSourceGraphSeal sourceGraph;
+
+  [[nodiscard]] bool matchesTarget(const TargetInfo &candidate) const {
+    return target.os == candidate.os && target.vendor == candidate.vendor &&
+           target.arch == candidate.arch &&
+           target.dataLayout == candidate.dataLayout &&
+           target.executionProfile == candidate.executionProfile;
+  }
+
+  [[nodiscard]] bool matchesProgram(const Program &program,
+                                    const TargetInfo &candidate) const;
+
+  friend bool operator==(const SemanticAnalysisSeal &left,
+                         const SemanticAnalysisSeal &right) {
+    return left.matchesTarget(right.target) &&
+           left.programSnapshot == right.programSnapshot &&
+           left.activeStatements == right.activeStatements &&
+           left.sourceGraph == right.sourceGraph;
+  }
+};
+
+[[nodiscard]] SemanticAnalysisSeal
+makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
+                         const SourceGraph *sourceGraph = nullptr);
+
 struct SemanticFullExpression {
   std::size_t order = 0;
   const Stmt *statement = nullptr;
@@ -1379,6 +1546,8 @@ struct SemanticFullExpression {
 
 class SemanticModel {
 public:
+  [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const;
+
   [[nodiscard]] ExecutionProfile executionProfile() const;
 
   [[nodiscard]] std::size_t placeSnapshot() const;
@@ -1392,6 +1561,15 @@ public:
 
   [[nodiscard]] const DefinedFailureOperation *
   findDefinedFailure(const Expr &expression) const;
+
+  [[nodiscard]] const ProgramInitializationPlan &
+  programInitializationPlan() const;
+
+  [[nodiscard]] const std::optional<HostedProgramEntryPlan> &
+  hostedProgramEntryPlan() const;
+
+  [[nodiscard]] bool
+  isProgramConstantSubstitution(const Expr &expression) const;
 
   [[nodiscard]] const PlaceKey *findPlace(const Expr &expression) const;
 
@@ -1583,6 +1761,15 @@ private:
 
   void setPlaceSnapshot(std::size_t snapshot);
 
+  void setAnalysisSeal(SemanticAnalysisSeal seal);
+
+  void setProgramInitializationPlan(ProgramInitializationPlan plan);
+
+  void setHostedProgramEntryPlan(std::optional<HostedProgramEntryPlan> plan);
+
+  void recordProgramConstantSubstitution(const Expr &expression);
+  void clearProgramConstantSubstitution(const Expr &expression);
+
   // Turns this model into an instance-analysis delta over baseModel: reads
   // fall back to the base while writes stay local, so concrete instance
   // reanalysis records only what it produces instead of copying the whole
@@ -1767,9 +1954,13 @@ private:
                      std::vector<SemanticFullExpression>>
       constructorFullExpressions;
   std::vector<SemanticFullExpression> fullExpressionOrder;
+  SemanticAnalysisSeal semanticAnalysisSeal;
   std::unordered_map<const Expr *, ConstantValue> constants;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
   std::unordered_map<const Expr *, DefinedFailureOperation> definedFailures;
+  ProgramInitializationPlan programInitialization;
+  std::optional<HostedProgramEntryPlan> hostedProgramEntry;
+  std::unordered_set<const Expr *> programConstantSubstitutions;
   std::unordered_map<const Expr *, PlaceKey> places;
   std::unordered_map<const Expr *, OwnershipEvent> ownershipEvents;
   std::unordered_map<SymbolId, LambdaCaptureMode> lambdaCaptureModes;

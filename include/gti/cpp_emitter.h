@@ -9,9 +9,11 @@
 namespace lang {
 
 class HirProgram;
+class MirProgram;
 class OptimizationResult;
 class Program;
 class SemanticModel;
+class CppBackend;
 
 class CppEmitter final {
 public:
@@ -39,6 +41,12 @@ public:
   [[nodiscard]] std::string emit(const Program &program);
 
 private:
+  friend class CppBackend;
+
+  CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
+             const MirProgram &verifiedMir, CppStandard standard,
+             TargetInfo target, const OptimizationResult *optimizations);
+
   class Impl;
   std::unique_ptr<Impl> impl;
 };

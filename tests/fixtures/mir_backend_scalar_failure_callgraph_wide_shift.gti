@@ -1,0 +1,7 @@
+int32_t checked_shift(int32_t value, int32_t count) {
+  return value << count;
+}
+
+int main() {
+  return checked_shift(1, 32);
+}

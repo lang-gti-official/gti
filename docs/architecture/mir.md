@@ -1,8 +1,9 @@
 # MIR
 
 Status: Implemented structural CFG, ownership/effect, synchronization,
-normal-exit lifecycle, and bounded defined-failure control-flow foundation;
-not yet the sole backend input.
+normal-exit lifecycle, bounded defined-failure control flow and failure-effect
+foundation, including one hosted failure-capable production component; not yet
+the sole backend input.
 
 MIR lowers each concrete HIR body into body-local control flow, values, places,
 resolved calls, ownership operations, and cleanup. It is the intended
@@ -14,6 +15,73 @@ transformation and future-backend IR.
 verification, and deterministic printing live in `src/compiler/mir.cpp` and
 `src/compiler/mir_printer.cpp`.
 
+Core MIR also owns `MirBodyAddress`, exhaustive deterministic body inventory,
+and const/mutable body lookup. Inventory visits the module first, then each
+class's field and static-field initializer bodies, functions, constructors,
+destructors, and lambdas in concrete-instance order. Owner zero is valid only
+for the module; a zero, out-of-range, or owner absent from the addressed kind
+resolves to no body. Optimizers and coherence checks use this shared navigation
+authority rather than maintaining their own body-family switches.
+
+The private C++ final-cutover planner now consumes that same exhaustive
+inventory. Its representation snapshot owns an exact canonical `MirProgram`
+copy, so planning checks structural equality rather than treating the
+deliberately normalized/partial MIR printer as an identity hash. Each planning
+row copies its address, place domain, definition provenance, and concrete
+declaration/owner identity; no AST or HIR body pointer crosses the boundary.
+The private builder also copies an immutable seal over the exact MIR, body,
+declaration-data, and thunk inventory. Planning checks that seal before sorting
+or moving rows, so coordinated omission or staleness is incoherent even when
+the remaining copied graph is internally consistent.
+This adds a fail-closed pre-emission inventory, not a new MIR body emitter or a
+new semantic authority. `CppBackend` now runs it before constructing the one
+whole-program compatibility emitter. An implicit initializer is data-only only
+for the exact empty one-block `Exit` shape, except `Module/0`: its verified
+implicit-zero/constant storage stages remain `DataOnly`, while any merged
+`Initializer` step makes the Module row executable. Temporary
+production-family labels are inventory only and cannot establish generic-
+emitter coverage.
+
+The sealed private builder derives hosted-entry thunks from the exact MIR entry
+function. It derives one `ProgramInitialization` owner marker exactly when the
+verified merged Module plan contains an `Initializer` step. Exact `Module/0`
+is its sole direct body root and the marker has no dependencies. Field
+initializer bodies are per-construction; a legacy executable generic
+static-field initializer remains independent unsupported inventory and cannot
+infer the merged marker. The planner independently re-derives that complete
+contracted graph: each exact MIR entry body directly roots one hosted-entry
+thunk, and that thunk depends on the marker if and only if executable merged
+program initialization exists. Enum, `constexpr`,
+ABI/opaque/union, and otherwise-unused generic class-template declarations do
+not live in the MIR body inventory, so the builder copies them from exact
+Program/semantic/HIR identity. It also walks every active source declaration
+emitted outside an executable body and records namespace/alias, class,
+callable, storage, access, language-linkage, and empty-declaration rows with a
+stable traversal ordinal and semantic declaration/owner identity where
+available. An otherwise
+unclassified scope-level statement receives a conservative declaration row,
+so new source surface cannot become invisible evidence for `Complete`. This
+keeps unused generic free/member/operator/constructor templates visible even
+when HIR has no concrete instance. Public backend callers cannot supply these
+rows or a trusted support claim. Any incoherence rejects before emission,
+while a coherent unsupported row demotes the complete program to the single
+compatibility route.
+
+Before collecting those rows, the builder requires the semantic and HIR
+analysis seals to agree and exact-compares the seal with the supplied Program
+and full backend `TargetInfo`. The seal records the Program snapshot, active
+statement preorder under target-conditional selection, and exact ordered
+source-unit/dependency/prelude provenance, so a separately parsed passive-only
+Program, a different source graph, and a target selecting a different passive
+branch are rejected even when there is no executable body whose owner would
+otherwise expose the mismatch. The shared HIR-plan verifier additionally
+requires semantic/HIR agreement for program initialization and hosted entry,
+including exact module bindings, values, roots, and program-constant
+substitution provenance. The backend snapshot gate then requires a valid MIR
+program and exact-compares HIR with the merged MIR unit/step order, complete
+storage-place metadata, zero/constant data provenance, dynamic statement/
+initializer/full-expression identities, and substitution inventory.
+
 `MirProgram` copies the selected execution profile from `HirProgram` as
 immutable program metadata. Body lowering and optimization do not rediscover
 it from host/backend flags. The current profile fact constrains frontend
@@ -21,11 +89,87 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v18`/`mir-body-v18`.
-Version 18 adds caller-owned `PreparedParameter` obligations for eligible
+The deterministic serialization is currently `mir-v23`/`mir-body-v23`.
+Version 20 introduced function-definition provenance and the first MIR-owned
+defined-failure effect summary. Each concrete function records
+`DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a
+`mayRaiseDefinedFailure` bit. Version 21 extends definition provenance and that
+bit to concrete constructors and destructors and makes
+`MirDefinedFailureEffects` the canonical three-kind result. Source constructors
+and destructors are distinguished from declarations; a runtime definition kind
+is not valid for either lifecycle body. Version 22 adds the pointer-free merged
+program-initialization unit/step plan and serializes each block's exact
+`ProgramInitializationStepId` tag. Version 23 adds the pointer-free
+`MirHostedStartupPlan`, the compiler-generated `HostedStartup/<entry>` body,
+its dense operation inventory, and exact generated-entity provenance tags on
+places, values, drops, instructions, and terminators. It also serializes the
+source `main` anchor and the exact target and program-initialization calls used
+by that hosted boundary. The defined-failure bit deliberately covers only GTI
+defined failure; it is not a summary of allocation, arbitrary user code,
+synchronization, or the other future O-MIR-02 effect dimensions.
+
+`deriveMirDefinedFailureEffects` starts every function, constructor, and
+destructor conservatively at `true`. Its function component retains version
+20's source-defined, closed, acyclic scalar-CFG/static-call proof and also
+recognizes the exact `class-default-cleanup-v1` construction and normal-cleanup
+schedule. Its destructor component can prove `false` for bounded source bodies
+over the admitted scalar/class operations. A second closed proof admits exact
+source constructors whose base-free passive-scalar class has one verified
+initializer stage per declared field, their matching source destructors, and
+free-function graphs over those scalar/class values. This is only the defined-
+failure dimension by itself. Every function, constructor, or destructor whose
+definition provenance is a declaration (and every runtime-bound function) is
+verified as an exact bodyless skeleton: one empty reachable entry block ending
+in `Return` for `void`, or `Unreachable` for non-`void`, with only its exact
+formal-parameter places admitted. This prevents declaration provenance from
+masking an executable MIR schedule. The production
+`owned-lifecycle-call-v1` selector adds exact source/MIR graph, initializer,
+move, call, transfer, and cleanup coherence before consuming the proved-false
+facts.
+`deriveMirScalarDefinedFailureEffects` is only the compatibility accessor for
+version 20's function vector. Bodyless declarations, runtime bindings,
+recursive cycles, unsupported signatures or operations, and open call targets
+therefore remain `true` in the applicable vector. Program verification
+independently recomputes the proof and rejects an unproved `false` claim while
+permitting a conservative `true` claim. Lowering itself is stricter: it first
+builds and verifies a provisional all-conservative program, derives the
+three-kind summary, lowers a second time with those facts, then requires the
+final re-derived result and stored bits to agree before accepting the program.
+An exact static GTI call to a proved-failure-free target carries
+`FailurePropagationKind::None`; a static GTI call to a target that remains
+failure-capable carries `DirectCall`.
+Verification rejects either direction of propagation drift for the recorded
+target summary. C-linkage and intrinsic calls remain `None`, while virtual
+dispatch retains its distinct `VirtualCall` channel.
+
+This semantic effect proof is intentionally broader than any production C++
+body-family selector. For example, a concrete internal, constrained, or
+`constexpr` source body can validly summarize false while remaining on the
+compatibility backend because its declaration is outside
+`scalar-direct-call-v1`.
+
+Version 19 made `Compute/Literal` origin explicit: directly lowered
+instructions carry `source` provenance, while an optimizer-created literal
+carries an `identity-fold` source value. Verification requires that value to
+strictly dominate the rewrite and trace through same-typed MIR identities to
+the exact literal, so a backend can consume the optimized value without
+consulting the legacy HIR replacement table.
+`verifyMirOptimizationCoherence(source, optimized)` is the structural authority
+gate between that canonical pre-optimization program and production MIR. It
+accepts exact equality plus only an in-place, provenance-bearing identity fold
+at the same body/block/instruction position, with the same IDs, type, and every
+other instruction field. The expected instruction is copied from source and
+patched independently of `MirProgramEditor`; the derived value-use index is
+rebuilt before an exact whole-program comparison. There is no authorized CFG,
+branch-target, call-target, operation, operand, lifecycle, layout, or header
+rewrite today. This comparison is structural rather than based on
+`MirPrinter`, whose deterministic diagnostic format intentionally does not
+encode every snapshot-local identity or declaration field.
+
+Version 18 added caller-owned `PreparedParameter` obligations for eligible
 class-value inputs to ordinary calls. Copy inputs initialize their stage, move
 inputs reparent the exact source obligation when one exists, and the final
-`Call` transfers each stage exactly once when the callee begins. It also adds
+`Call` transfers each stage exactly once when the callee begins. It also added
 normal-success lifecycle events for one bounded cleanup-owning ordinary-call
 result shape, leaving that result uninitialized on the failure edge. The same
 schema now supports an exact local scalar argument detector or un-sited static
@@ -113,7 +257,14 @@ A `MirBody` owns:
   constructor, callable, and future task-join propagation are separate
   channels and never copy a callee's possible category set. The verifier
   rejects invalid vocabulary, anchors, duplicates, instruction placement, or
-  propagation that disagrees with the exact target and dispatch;
+  propagation that disagrees with the exact target and dispatch. For scalar
+  `Compute`, it also independently derives the checked fixed-width-integer
+  contract for `Add`, `Subtract`, `Multiply`, `Divide`, `Remainder`,
+  `ShiftLeft`, `ShiftRight`, `Negate`, and integer-to-integer `Convert` from the
+  operation and operand/result domains. The represented local origin must have
+  exactly that canonical outcome set and one matching artifact assignment/site;
+  an eligible detector must name exactly one producer record and preserve it
+  through its `Invoke`, failure parameter, and `PropagateFailure` endpoint;
 - one bounded failure-control-flow family for a failure-capable scalar
   `Compute`, `Load`, or `Call` that is itself a selected full-expression root,
   plus an exact scalar selected as an indexed ordinary-call argument after at
@@ -167,10 +318,16 @@ A `MirBody` owns:
   authoritative for path cardinality;
 - the program-entry kind and exact concrete startup-append target for the owned
   command-line argument form;
-- after M-FAIL-01, an explicit compiler-generated hosted-startup operation/body
-  whose three local failure origins and `main` anchor lower from HIR rather
-  than being synthesized by a backend, ordered before program initialization
-  and source-entry parameter transfer by D-EXEC-01;
+- the compiler-generated `MirHostedStartupPlan` and `HostedStartup/<entry>`
+  body. Their exact `main` anchor and, for the owned-arguments entry form, two
+  adapter-local origins lower from HIR rather than being synthesized by a
+  backend. The dense operation inventory orders program initialization,
+  source-entry parameter transfer, and the exact vector/string constructor and
+  append calls while preserving those callees' allocation records; no local
+  `allocation_failure/hosted_arguments` origin is produced. MIR now owns this
+  hosted schedule and provenance. Stage-E terminal containment, cleanup-failure
+  handling, partial-construction rollback, and generic backend emission remain
+  open;
 - lexical scopes, cleanup edges, loans, carrier bindings, and source/HIR
   provenance.
 
@@ -187,6 +344,32 @@ A valid HIR layout query lowers to an ordinary unsigned-64
 `MirOperation::Literal` containing the retained frontend value. MIR has no
 target-layout operation and therefore cannot reinterpret `sizeof` or
 `alignof`; the source HIR identity remains available as provenance.
+
+Each HIR program-constant substitution lowers into an exact per-body
+`MirProgramConstantSubstitution` inventory row and a marked constant-producing
+instruction, never a `Load` from not-yet-initialized program storage. Supported
+positive scalar and enum values use exact literal/enum operands. A negative
+integer uses one private magnitude literal consumed exactly once by the marked
+`Negate` result. Verification ties the row, HIR value, constant, instruction,
+type, uses, and source provenance together and rejects any competing unmarked
+compute or storage load carrying that HIR identity. This preserves the semantic
+later-storage proof inside the merged executable program-initialization body;
+the initializer consumes the materialized constant rather than loading
+not-yet-initialized program storage.
+
+`MirProgramInitializationPlan` is the pointer-free authority for the merged
+`Module/0` schedule. Ordered unit rows retain even empty source units. Dense
+step rows copy the exact storage kind, role, symbol, concrete static owner,
+binding, storage place, entry block, storage `Initialize`, and either
+`ImplicitZero`/`Constant` data provenance or the dynamic HIR statement,
+initializer, and MIR full-expression identity. Every Module block is tagged
+with its owning step. Verification requires exact plan/body coverage,
+canonical storage places and publication, step-local CFG, strict program-
+storage access order, substitution materialization, and dense transitions to
+the next step or final `Exit`. Non-generic class static-initializer bodies are
+distinct canonical empty shells after their storage moves into Module. Checked
+dynamic initialization retains ordinary verified failure records and edges;
+production containment and generic body emission remain later backend work.
 
 `MirClassInstance` carries the selected `[[c_abi]]` record size, alignment, and
 ordered field offsets. Program verification checks that this metadata is
@@ -343,10 +526,11 @@ lifecycle-verifier authority.
 ## Controlled Optimization Edits
 
 `optimization/rewrite.h` exposes a deliberately narrow `MirProgramEditor`.
-Bodies are identified by GTI body kind plus owning instance ID; instructions
-are addressed by block ID and zero-based instruction index with an expected
-instruction-ID and operation guard. The editor never exposes mutable program
-vectors or retains instruction pointers across an edit.
+Core MIR identifies bodies by `MirBodyAddress`, a GTI body kind plus owning
+instance ID; editor instructions add a block ID and zero-based instruction
+index with an expected instruction-ID and operation guard. The editor never
+exposes mutable program vectors or retains instruction pointers across an
+edit.
 
 The first supported edit replaces a verified computation with a literal while
 preserving instruction/result IDs, type information, unsafe classification,
@@ -438,8 +622,10 @@ generated/default and copy/move special construction, target-place formation,
 result storage, operators other than concrete `operator()`, whole-pack and
 general pack operations beyond `PackFold`, unresolved callables, conditional
 families, and failure rollback are incomplete. Module
-initializers and each class's static-field initializer body remain separate
-rather than one source-graph-derived hosted sequence.
+now owns one verified source-graph-derived initialization schedule for
+non-generic program storage. Generic static storage, execution of that schedule
+inside the hosted containment boundary, and general body emission remain
+separate work.
 
 `PackFold` has its own bounded verifier contract rather than pretending its
 element calls are ordinary scheduled call syntax. Verification requires the
@@ -459,8 +645,10 @@ failure-free place slice. MIR v18 extends that model with caller-owned ordinary
 call parameter stages and one edge-initialized cleanup-owning call-result shape.
 Later M-EXEC-01 slices must extend the ordered input representation to
 borrowed-state class values, remaining call forms, other result and target
-places, operators, branches, and program initialization, with a
-`ProgramInitializationStepId` where applicable.
+places, operators, and branches. Program initialization already has its
+dedicated plan and per-block `ProgramInitializationStepId`; later work must
+make that verified schedule a production backend input and integrate hosted
+containment/cleanup.
 The verifier must reject use before materialization, duplicate target
 evaluation, invocation before parameter setup, cleanup-state mismatch at an
 edge, and a boundary with a live untransferred obligation. A structural edit
@@ -478,10 +666,31 @@ call arguments after a prepared owner, and ordinary calls with one
 cleanup-owning class result in function and lambda bodies additionally carry
 verified fixed record, normal/failure successor, LIFO cleanup, and propagation
 edges. Other nested operations, assignment destinations, borrowed and remaining
-owning results, constructors, field/module initialization, destructors and
-double failure, partial construction, caller-to-callee record ABI, and
-containment remain outside that bounded family and are still required by
+owning results, constructors, field/module initialization, failure-capable
+destructors and double failure, and partial construction remain outside that
+general bounded verifier family. The narrower production
+`scalar-failure-callgraph-v1` component now validates its complete
+caller-to-callee record route and hosted containment as an additional atomic
+selection contract. Broader forms are still required by
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure).
+
+The checked-scalar verifier no longer accepts an arbitrary valid failure
+code/detail pair on the first integer production family. Signed and unsigned
+addition, subtraction, and multiplication name their exact overflow detail;
+division always names `division_by_zero:integer_division` and adds
+`integer_overflow:division` only for a signed result domain; remainder names
+only `modulo_by_zero:integer_modulo`. Each shift always names its direction's
+`shift_count_out_of_range` outcome and adds `negative_shift_count` only when
+the count domain is signed. Negation requires a signed result domain and names
+`integer_overflow:negation`. An integer conversion names
+`numeric_conversion_out_of_range:numeric_cast` exactly when the complete
+source domain is not contained in the destination; a widening/safe-domain
+conversion must carry no stale origin, site, or record. Float conversions,
+compound assignment, increment/decrement, and their checked place schedule are
+deliberately outside this bounded verifier family. The production
+`scalar-failure-callgraph-v1` selector consumes every operation in this
+fixed-integer allowlist; compatibility bodies do not gain that authority merely
+because their MIR detector metadata verifies.
 
 The bounded `Invoke` family accepts either a trivial scalar result or the exact
 cleanup-owning result obligation of an eligible ordinary call. Scalar values
@@ -502,8 +711,10 @@ their own owning parameter or result state, borrowed results, constructors,
 assignments, and general normal-result block parameters remain separate work.
 
 Cleanup blocks forward the same record through supported initialized and
-partially initialized shapes to the hosted-program boundary. A second origin
-while the primary record is in cleanup constructs the fixed emergency envelope.
+partially initialized shapes to the hosted-program boundary. The future
+double-failure extension must construct the fixed emergency envelope when a
+second origin occurs during primary-record cleanup; current MIR does not yet
+represent that path.
 The same representation supplies reusable boundary primitives that later task
 and callback rows plus E-EMBED-01 can integrate without changing the failure
 effect. The verifier must reject missing/forged sites, origin-incompatible
@@ -512,10 +723,67 @@ result used on the failure edge, and cleanup/control-flow joins with mismatched
 record state. Optimizers preserve the first observable origin, site, cleanup,
 and prior effects.
 
-One primitive scalar literal-identity family can now be transformed in
-verified shadow MIR at `-O1` and above. It still does not control emitted code.
+The `scalar-leaf-v1` fixed-width-integer body family, the call-free
+`scalar-cfg-v1` family, the static-call `scalar-direct-call-v1` family, and the
+bounded `class-default-cleanup-v1`, `owned-lifecycle-call-v1`, and hosted
+`scalar-failure-callgraph-v1` families now execute from verified MIR. The first
+three remain failure-free and cleanup-free.
+`scalar-cfg-v1` adds fixed-width-integer, `bool`, and `char` scalar places and
+computations plus load, initialization, assignment, branch, switch, loop, and
+return CFG shapes while excluding calls, loans, drops, cleanup, construction,
+and failure edges. `scalar-direct-call-v1` adds exact ordered scalar
+`CallInput`/`Call` pairs only when the complete reachable static-call graph is
+acyclic, source-defined, supported by that scalar-CFG substrate, and proved
+`mayRaiseDefinedFailure=false`; each such call has `None` propagation and no
+stale failure CFG. If an otherwise eligible direct graph carries a conservative
+true summary, production emission rejects the noncanonical drift rather than
+silently falling back. At `-O1` and above, the
+primitive literal-identity rewrite controls emitted values for any selected
+scalar family. `class-default-cleanup-v1` instead admits exact generated-default
+construction of empty concrete class locals and their source-defined,
+MIR-proved-failure-free destructors in one root scope. Each local has a
+`Construct` plus `Initialize`/`Reparent` schedule, the scalar return value is
+loaded before cleanup, and reverse lexical `Drop` instructions end at one
+normal cleanup boundary before `Return`. Declared constructors, fields, bases,
+nested scopes, branches, calls, loans, and failure edges remain outside that
+family. `owned-lifecycle-call-v1` extends the failure-free boundary to one
+atomic acyclic graph of eligible source free functions and exact concrete
+passive-scalar-field classes. Constructor bodies retain one ordered
+`Load`/`Initialize`/boundary stage per field and its exact formal binding;
+function bodies retain construction, movement, prepared-call transfer, and
+normal-exit lexical cleanup; destructor bodies retain exact scalar operations,
+places, literals, globals, field projections, and CFG. The backend emits every
+selected stage from verified MIR through explicit lifetime slots and fails
+closed if the selected graph or any reverse failure-free caller drifts.
+`scalar-failure-callgraph-v1` adds one exact no-argument `int32_t` entry and
+its acyclic `int32_t` free-function graph. Each admitted checked integer
+instruction has one exact local site and `Invoke`; each admitted call has an
+un-sited `DirectCall` propagation and forwards the existing record. Failure
+blocks consume their MIR-marked reverse drop obligations before
+`PropagateFailure`, and a result is available only from a `Return` terminator.
+Selection reuses the exact failure-free constructor/destructor proof for any
+class owner but recomputes the function graph atomically. It rejects incoming
+edges and selected-class representation users from every HIR body kind,
+including class values nested in value-owning arrays/wrappers, while leaving
+raw-pointer/reference-only mentions nonowning. It also rejects dynamic program
+initialization, cycles, normal-ABI/native/virtual edges, and effect or HIR/MIR
+drift. The hidden bool/out/record representation and hosted
+status-70 boundary are backend choices over those verified facts, not new MIR
+semantics. This does not cover broader entry or result domains,
+failure-capable lifecycle bodies, partial construction, double failure,
+callbacks, embedding, or general program-initializer execution.
 
-Consequently `CppBackend` still emits from AST plus semantic/HIR data and does
-not consume MIR bodies. Do not treat that transition as permission to add
-semantic inference to the emitter. The migration plan is in
-[`docs/plans/optimization.md`](../plans/optimization.md).
+MIR v20
+retains version 19's explicit source or identity-fold
+provenance for every `Compute/Literal`; the verifier requires
+a rewritten literal to retain an exact dominating, same-typed MIR identity
+chain to its original literal. The backend therefore consumes the MIR proof
+rather than querying the legacy HIR replacement table. `CppBackend` re-verifies
+the complete input snapshot; eligible bodies use MIR exclusively, while
+ineligible bodies remain wholly on the named AST/semantic/HIR compatibility
+path. This bounded cutover does not make MIR the general body authority and is
+not permission to add
+semantic inference to the emitter. The remaining migration plan is in
+[`docs/plans/implementation-sequence.md`](../plans/implementation-sequence.md);
+the optimization plan supplies the supporting transformation design but is not
+the operational priority queue.

@@ -1,0 +1,6 @@
+int main() {
+  uint32_t zero = 0;
+  uint32_t one = 1;
+  uint32_t result = zero - one;
+  return int32_t(result);
+}

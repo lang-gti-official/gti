@@ -1,0 +1,5 @@
+mut int32_t inert_state = 0;
+
+int main() {
+  return inert_state;
+}

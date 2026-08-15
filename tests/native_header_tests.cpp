@@ -23,6 +23,7 @@ lang::BackendInput backendInput(const lang::FrontendResult &frontend,
           .semantics = frontend.semantics,
           .hir = frontend.hir,
           .mir = frontend.mir,
+          .sourceMir = &frontend.mir,
           .optimizations = optimizations,
           .target = lang::TargetInfo::host()};
 }

@@ -4,12 +4,17 @@
 > boundary is documented in
 > [`docs/architecture/optimization.md`](../architecture/optimization.md).
 
-Status: accepted; Milestone 1 in progress
+Status: accepted; bounded Milestone 1 foundation complete, first Milestone 2
+shadow proof sufficient, Milestone 3 `scalar-leaf-v1`, `scalar-cfg-v1`, and
+`scalar-direct-call-v1` plus `class-default-cleanup-v1` and
+`owned-lifecycle-call-v1` cutovers complete, failure-capable closure active
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). In particular, the
 first transforming slice must bring only the MIR editor and invalidation it
 uses; a general pass-manager framework is not scheduled before a real pass.
+The immediate operational priority is now production MIR consumption, not
+completing every compatibility fold in shadow mode.
 
 This proposal defines how GTI can grow from one typed-HIR constant-folding pass
 into a maintainable optimizer without making AST shape, the C++ emitter, or a
@@ -41,7 +46,9 @@ specified separately in
    not an excuse to keep source expressions as optimization identity.
 8. Require language-level proofs for removing checks, calls, drops, or other
    observable behavior. Native C++ optimizer behavior is never such a proof.
-9. Add pass infrastructure and observability before adding a broad pass set.
+9. Add only the pass infrastructure and observability required by a concrete
+   transform or production-emission client; backend cutover precedes broader
+   shadow-pass coverage.
 10. Treat `-O0` through `-O3` as different optimization effort, never different
     GTI semantics.
 
@@ -92,10 +99,15 @@ Milestone 1 now includes a second owned-MIR entry point and its first bounded
 editor client. An
 `OptimizationRequest` owns a MIR copy and returns an `OptimizedProgram` after
 reusable structural verification. At `-O1+`, primitive scalar literals flowing
-only through grouping identities are rewritten in shadow MIR and compared by
-HIR provenance with the compatibility constant result. The CLI passes that
-snapshot through `BackendInput::mir`, although `CppBackend` does not consume it
-yet. MIR lowering and optimization share reachability repair, value-use
+only through grouping identities are rewritten in MIR and compared by HIR
+provenance with the compatibility constant result. The CLI passes that
+snapshot through `BackendInput::mir`; `CppBackend` now re-verifies it and uses
+it as the sole body authority for the `scalar-leaf-v1`, `scalar-cfg-v1`, and
+`scalar-direct-call-v1` families plus `class-default-cleanup-v1` and
+`owned-lifecycle-call-v1`. The current literal-identity transform changes
+emitted values only for the first three.
+MIR lowering and optimization share
+reachability repair, value-use
 indexing, and verification implemented in `src/compiler/mir.cpp`. `MirPrinter`
 provides a complete deterministic snapshot, and exhaustive instruction,
 operation, and intrinsic effect tables use enum count sentinels plus compile-
@@ -104,12 +116,27 @@ Verification also tracks active loans through reachable CFG paths, requiring
 one producer, valid active uses and ends, balanced normal exits, and matching
 loan state at joins.
 
+MIR v20 added a separate bounded function-effect foundation rather than asking
+the optimizer or backend to infer failure from HIR. MIR v21 makes the canonical
+effect result cover functions, constructors, and destructors. The function
+component retains the closed acyclic scalar/static-call proof and adds the exact
+class-default-cleanup shape. A separate closed proof covers passive-scalar-class
+constructors with one exact initializer stage per field, their source
+destructors, and free-function graphs. The production owned-lifecycle selector
+adds exact source/MIR graph and lifecycle coherence before using that effect
+fact. Generic verification permits
+conservative true summaries but rejects an unproved false claim and checks each
+static call's exact `None` versus `DirectCall` propagation. Broader effect
+dimensions and recursive fixed-point proofs remain client-gated.
+
 The first editor accumulates guarded body/`{block,index}` literal replacements,
 repairs dirty value uses, verifies a copied program, and commits atomically.
 It records instruction/use invalidation while preserving CFG, reachability, and
 freshly recomputed dominance. A general pass manager, cached analyses, broader
-edit operations, and CLI dump options remain unimplemented. Shadow MIR still
-changes no generated artifact.
+edit operations, and CLI dump options remain unimplemented. The bounded
+literal-identity rewrite now changes generated artifacts only for the selected
+MIR-backed `scalar-leaf-v1`, `scalar-cfg-v1`, and `scalar-direct-call-v1`
+families.
 
 That bridge is safe for the current narrow folding pass, but it creates four
 long-term risks:
@@ -464,29 +491,41 @@ implemented. General pass/analysis management and dump options remain.
 - Keep the existing HIR `OptimizationResult` and C++ emitter behavior intact.
 - Verify that `-O0` is structurally identical and every queued edit is atomic.
 
-### Stage B: shadow the existing fold
+### Stage B: prove the shadow path
 
-Status: in progress. Primitive scalar grouping identities are implemented and
-cross-checked; other grouping values, unary, comparison, logical, arithmetic,
-and conversion families remain pending their exact representation/effect
-proofs.
+Status: bounded proof complete and sufficient for cutover. Primitive scalar
+grouping identities are implemented and cross-checked. Other grouping values,
+unary, comparison, logical, arithmetic, and conversion families remain useful
+future transform work, but they are not prerequisites for a production MIR
+body consumer.
 
-- Express the currently supported grouping, unary, comparison, and logical
-  constant rules over MIR.
-- Run the MIR pass in shadow mode while the HIR result still controls emission.
-- Cross-check equivalent source/HIR origins where a comparison is meaningful.
+- Preserve the implemented primitive identity cross-check until its body family
+  consumes optimized MIR.
+- Port another compatibility fold only when a measured transform client or an
+  active migration phase requires it.
 - Treat disagreement as a compiler test failure, not as permission to choose
   whichever result the C++ emitter prefers.
 
 ### Stage C: consume optimized MIR
 
-- Teach the C++ backend to emit one complete operation/body family from
-  optimized MIR.
-- During mixed emission, document one authoritative source for each body or
-  operation family. Never combine AST evaluation order with MIR-rewritten CFG
-  for the same body.
+Status: active immediate backend-authority recovery campaign; four production
+families are complete and the broader failure-free construction/normal-cleanup
+closure is active.
+
+- Retain `scalar-leaf-v1`, `scalar-cfg-v1`, `scalar-direct-call-v1`, and
+  `class-default-cleanup-v1` as completed optimized-MIR production families.
+- Continue directly through the largest coherent remaining failure-free
+  construction/normal-cleanup closure, then the failure-capable closures.
+- During mixed emission, retain one authoritative source for each complete
+  body. Never combine AST evaluation order with MIR-rewritten CFG for the same
+  body.
 - Retain AST and HIR only for declarations, source spelling, and representation
   facts not yet present in MIR.
+- Co-deliver missing M-EXEC/M-FAIL representation and verification with the
+  production family that consumes it; do not stop at an IR-only checkpoint.
+- Make each migrated production selection route non-fallback. Reusable
+  compatibility code may continue to serve unmigrated families and the public
+  direct-emitter API until the final cutover.
 - Test generated behavior at `-O0` and each enabled GTI level while requesting
   native `-O0` in structural optimizer tests so the native compiler cannot hide
   a GTI middle-end error.
@@ -495,8 +534,8 @@ proofs.
 
 - Remove `OptimizationResult::replacement(const HirProgram&, const Expr&)` and
   emitter dependence on HIR constant side tables.
-- Make `BackendInput` carry the optimized MIR snapshot and report.
-- Require every backend to consume the same snapshot.
+- `BackendInput` already carries the optimized MIR snapshot; make every backend
+  that emits executable bodies consume that snapshot.
 - Keep HIR available for instance/declaration metadata until MIR owns all
   backend-required program structure.
 
@@ -594,9 +633,9 @@ Acceptance criteria:
 - optimization changes have one documented impact and review checklist;
 - this documentation-only milestone does not change `VERSION`.
 
-### Milestone 1: MIR integrity and pass framework
+### Milestone 1: MIR integrity and bounded editor
 
-Status: in progress
+Status: bounded foundation complete; broader framework is client-gated
 
 - Extract reusable MIR validation, reachability, use indexing, deterministic
   printing, effect traits, controlled editors, and pass management.
@@ -612,20 +651,21 @@ Acceptance criteria:
 - adding a MIR enum member fails classification coverage until handled;
 - no generated artifact changes when optimization is disabled.
 
-### Milestone 2: MIR constant folding in shadow mode
+### Milestone 2: first MIR transform in shadow mode
 
-Status: in progress. The primitive scalar grouping family is implemented; this
-milestone is not complete until every currently supported safe compatibility
-fold has matching MIR and near-miss coverage.
+Status: bounded proof complete. The primitive scalar grouping family is
+implemented; matching every compatibility fold is explicitly not a prerequisite
+for Milestone 3.
 
-- Port only the currently supported safe folds.
-- Compare MIR and legacy HIR decisions.
-- Add deterministic statistics and remarks.
+- Preserve comparison of the implemented MIR and legacy HIR decision.
+- Add another fold, statistic, or remark only with a concrete optimization or
+  migration client.
 
 Acceptance criteria:
 
-- every current fold has matching MIR coverage and near-miss coverage;
-- shadow mode never controls emitted behavior;
+- the implemented primitive identity fold has matching MIR and near-miss
+  coverage;
+- shadow mode does not control bodies that remain on the compatibility path;
 - disagreements are visible in tests and reports;
 - MIR uses the same backend-neutral checked-integer evaluator as the legacy HIR
   pass: only value outcomes fold, while every failure outcome retains its
@@ -633,18 +673,29 @@ Acceptance criteria:
 
 ### Milestone 3: optimized MIR reaches the C++ backend
 
-- Emit a complete body or operation family from optimized MIR.
-- Expand MIR emission in coherent units.
+Status: active and immediate; `scalar-leaf-v1`, `scalar-cfg-v1`, and
+`scalar-direct-call-v1` plus `class-default-cleanup-v1` and
+`owned-lifecycle-call-v1` complete; the failure-capable closure is active.
+
+- Preserve the completed `scalar-leaf-v1`, `scalar-cfg-v1`, and
+  `scalar-direct-call-v1` plus `class-default-cleanup-v1` and
+  `owned-lifecycle-call-v1` optimized-MIR authority seams.
+- Expand those seams through the largest coherent failure-capable closed call
+  graph rather than separate operation migrations.
+- Expand MIR emission in broad failure-free, failure-capable, and final-cutover
+  phases, co-delivering missing executable facts rather than serializing every
+  MIR row ahead of backend work.
 - Retire the HIR source-expression replacement bridge when coverage is
   complete.
 
 Acceptance criteria:
 
 - `BackendInput::mir` is observably consumed;
-- one optimized MIR snapshot drives every backend;
+- one optimized MIR snapshot drives every executable-body backend;
 - no pass queries AST shape or C++ spelling;
+- migrated bodies have no AST/HIR execution fallback;
 - `-O0` and optimized differential tests pass with native optimization held
-  constant.
+  constant, with C++20/C++23 parity where representation differs.
 
 ### Milestone 4: local CFG and value optimization
 

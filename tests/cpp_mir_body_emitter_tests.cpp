@@ -1,0 +1,979 @@
+#include "../src/compiler/cpp_mir_body_emitter.h"
+
+#include "gti/frontend.h"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <filesystem>
+#include <iostream>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace {
+
+int failures = 0;
+
+void expect(bool condition, std::string_view message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+lang::FrontendResult analyze(std::string name, std::string source) {
+  lang::FrontendResult result =
+      lang::Frontend().analyze(std::move(name), std::move(source));
+  if (!result.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  return result;
+}
+
+lang::FrontendResult analyzeWithStandardLibrary(std::string name,
+                                                std::string source) {
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  lang::FrontendResult result = lang::Frontend().analyze(
+      std::move(name), std::move(source), {standardLibrary / "prelude.gti"}, {},
+      {standardLibrary});
+  if (!result.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  return result;
+}
+
+bool hasIssue(const lang::CppMirBodyEmissionAnalysis &analysis,
+              lang::CppMirBodyEmissionIssueKind kind) {
+  return std::any_of(analysis.issues.begin(), analysis.issues.end(),
+                     [kind](const lang::CppMirBodyEmissionIssue &issue) {
+                       return issue.kind == kind;
+                     });
+}
+
+lang::CppMirTypeRepresentationKind
+representationKind(const lang::SemanticType &type) {
+  switch (type.kind) {
+  case lang::SemanticType::Void:
+    return lang::CppMirTypeRepresentationKind::Void;
+  case lang::SemanticType::Int8:
+  case lang::SemanticType::Int16:
+  case lang::SemanticType::Int32:
+  case lang::SemanticType::Int64:
+  case lang::SemanticType::UInt8:
+  case lang::SemanticType::UInt16:
+  case lang::SemanticType::UInt32:
+  case lang::SemanticType::UInt64:
+  case lang::SemanticType::Float:
+  case lang::SemanticType::Double:
+  case lang::SemanticType::Bool:
+  case lang::SemanticType::Char:
+    return lang::CppMirTypeRepresentationKind::Scalar;
+  case lang::SemanticType::StringView:
+    return lang::CppMirTypeRepresentationKind::StringView;
+  case lang::SemanticType::NullPtr:
+    return lang::CppMirTypeRepresentationKind::NullPointer;
+  case lang::SemanticType::RawPointer:
+    return lang::CppMirTypeRepresentationKind::RawPointer;
+  case lang::SemanticType::Reference:
+    return lang::CppMirTypeRepresentationKind::Reference;
+  case lang::SemanticType::Array:
+    return lang::CppMirTypeRepresentationKind::FixedArray;
+  case lang::SemanticType::Class:
+    return lang::CppMirTypeRepresentationKind::Class;
+  case lang::SemanticType::Enum:
+    return lang::CppMirTypeRepresentationKind::Enum;
+  case lang::SemanticType::Function:
+    return lang::CppMirTypeRepresentationKind::Function;
+  case lang::SemanticType::Lambda:
+    return lang::CppMirTypeRepresentationKind::Lambda;
+  case lang::SemanticType::UniqueOwner:
+    return lang::CppMirTypeRepresentationKind::UniqueOwner;
+  case lang::SemanticType::SharedPointer:
+    return lang::CppMirTypeRepresentationKind::SharedPointer;
+  case lang::SemanticType::Storage:
+    return lang::CppMirTypeRepresentationKind::Storage;
+  case lang::SemanticType::Expected:
+    return lang::CppMirTypeRepresentationKind::Expected;
+  case lang::SemanticType::Unexpected:
+    return lang::CppMirTypeRepresentationKind::Unexpected;
+  case lang::SemanticType::TypeParameter:
+  case lang::SemanticType::TypePack:
+  case lang::SemanticType::TypeName:
+  case lang::SemanticType::Unknown:
+    return lang::CppMirTypeRepresentationKind::Meta;
+  }
+  return lang::CppMirTypeRepresentationKind::Meta;
+}
+
+void addType(lang::CppMirBodyEmissionMapRows &rows,
+             const lang::SemanticType &type) {
+  if (type == lang::SemanticType::Unknown) {
+    return;
+  }
+  if (std::none_of(rows.types.begin(), rows.types.end(),
+                   [&](const lang::CppMirTypeRepresentation &row) {
+                     return row.type == type;
+                   })) {
+    rows.types.push_back({.type = type,
+                          .kind = representationKind(type),
+                          .spelling = "test_type"});
+  }
+  for (const lang::SemanticType &argument : type.arguments) {
+    addType(rows, argument);
+  }
+  for (const lang::SemanticType &argument : type.lambdaEnclosingClassTypes) {
+    addType(rows, argument);
+  }
+  for (const lang::SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+    addType(rows, argument);
+  }
+}
+
+void addSymbol(lang::CppMirBodyEmissionMapRows &rows,
+               lang::CppMirSymbolRepresentation row) {
+  const bool present = std::any_of(
+      rows.symbols.begin(), rows.symbols.end(),
+      [&](const lang::CppMirSymbolRepresentation &current) {
+        return current.kind == row.kind && current.owner == row.owner &&
+               current.symbol == row.symbol && current.ordinal == row.ordinal;
+      });
+  if (!present) {
+    rows.symbols.push_back(std::move(row));
+  }
+}
+
+void addBodyTypesAndStorage(lang::CppMirBodyEmissionMapRows &rows,
+                            const lang::MirBody &body) {
+  addType(rows, body.returnType);
+  for (const lang::MirPlace &place : body.places) {
+    addType(rows, place.type);
+    if (place.root == lang::MirPlaceRootKind::Symbol && place.capture == 0 &&
+        place.symbol != 0 && place.projections.empty()) {
+      addSymbol(rows, {.kind = lang::CppMirSymbolRepresentationKind::Storage,
+                       .owner = 0,
+                       .symbol = place.symbol,
+                       .type = place.type,
+                       .spelling = "test_storage"});
+    }
+  }
+  for (const lang::MirDropObligation &obligation : body.dropObligations) {
+    addType(rows, obligation.dropType.type);
+  }
+  for (const lang::MirValue &value : body.values) {
+    addType(rows, value.info.type);
+  }
+  for (const lang::MirBlock &block : body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      addType(rows, instruction.info.type);
+      addType(rows, instruction.dispatchOwner);
+      for (const lang::SemanticType &type : instruction.parameterTypes) {
+        addType(rows, type);
+      }
+      for (const lang::SemanticType &type : instruction.closureCaptureTypes) {
+        addType(rows, type);
+      }
+      if (instruction.receiver) {
+        addType(rows, instruction.receiver->type);
+      }
+      for (const lang::MirOperand &operand : instruction.operands) {
+        addType(rows, operand.type);
+      }
+      for (const lang::MirPackFoldElement &element :
+           instruction.packFoldElements) {
+        addType(rows, element.elementType);
+        for (const lang::SemanticType &type : element.parameterTypes) {
+          addType(rows, type);
+        }
+      }
+    }
+    if (block.terminator.value) {
+      addType(rows, block.terminator.value->type);
+    }
+    for (const lang::MirSwitchTarget &target : block.terminator.switchTargets) {
+      if (target.value) {
+        addType(rows, target.value->type);
+      }
+    }
+  }
+}
+
+lang::CppMirBodyEmissionMapRows completeRows(
+    const lang::MirProgram &program,
+    std::optional<lang::CppMirEmissionCapabilityKind> omitted = std::nullopt) {
+  lang::CppMirBodyEmissionMapRows rows;
+  for (const lang::MirBodyAddress address :
+       lang::enumerateMirBodyAddresses(program)) {
+    rows.bodies.push_back({.address = address, .spelling = "test_body"});
+    const lang::MirBody *body = lang::findMirBody(program, address);
+    if (body != nullptr) {
+      addBodyTypesAndStorage(rows, *body);
+    }
+  }
+
+  for (const lang::MirClassInstance &instance : program.classInstances()) {
+    addType(rows, instance.type);
+    for (const lang::MirClassFieldInfo &field : instance.declaredFields) {
+      addType(rows, field.type);
+      addSymbol(rows, {.kind = lang::CppMirSymbolRepresentationKind::Field,
+                       .owner = instance.id,
+                       .symbol = field.symbol,
+                       .type = field.type,
+                       .spelling = "test_field"});
+    }
+  }
+  for (const lang::MirFunctionInstance &function :
+       program.functionInstances()) {
+    addType(rows, function.returnType);
+    for (const lang::SemanticType &type : function.parameterTypes) {
+      addType(rows, type);
+    }
+    for (const lang::MirCallableParameter &parameter :
+         function.callableParameters) {
+      addType(rows, parameter.callableType);
+      for (const lang::MirCallableSignature &signature : parameter.signatures) {
+        addType(rows, signature.returnType);
+        for (const lang::SemanticType &type : signature.parameterTypes) {
+          addType(rows, type);
+        }
+      }
+    }
+  }
+  for (const lang::MirConstructorInstance &constructor :
+       program.constructorInstances()) {
+    for (const lang::SemanticType &type : constructor.parameterTypes) {
+      addType(rows, type);
+    }
+    for (const lang::MirConstructorInitializer &initializer :
+         constructor.initializers) {
+      addType(rows, initializer.targetType);
+    }
+  }
+  for (const lang::MirLambdaInstance &lambda : program.lambdaInstances()) {
+    addType(rows, lambda.type);
+    addType(rows, lambda.returnType);
+    for (const lang::SemanticType &type : lambda.parameterTypes) {
+      addType(rows, type);
+    }
+    for (std::size_t index = 0; index < lambda.captureTypes.size(); ++index) {
+      addType(rows, lambda.captureTypes[index]);
+      if (index < lambda.captureSymbols.size() &&
+          lambda.captureSymbols[index] != 0) {
+        addSymbol(rows, {.kind = lang::CppMirSymbolRepresentationKind::Capture,
+                         .owner = lambda.id,
+                         .symbol = lambda.captureSymbols[index],
+                         .ordinal = index + 1,
+                         .type = lambda.captureTypes[index],
+                         .spelling = "test_capture"});
+      }
+    }
+  }
+  for (const lang::MirProgramInitializationStep &step :
+       program.programInitializationPlan().steps) {
+    const lang::MirPlace *storage =
+        program.module().findPlace(step.storagePlace);
+    if (storage != nullptr) {
+      addSymbol(rows, {.kind = lang::CppMirSymbolRepresentationKind::Storage,
+                       .owner = step.ownerClass,
+                       .symbol = step.symbol,
+                       .type = storage->type,
+                       .spelling = "test_program_storage"});
+    }
+  }
+  for (std::size_t value = 0;
+       value <
+       static_cast<std::size_t>(lang::CppMirEmissionCapabilityKind::Count);
+       ++value) {
+    const auto kind = static_cast<lang::CppMirEmissionCapabilityKind>(value);
+    if (!omitted || *omitted != kind) {
+      rows.capabilities.push_back(
+          {.kind = kind, .spelling = "test_capability"});
+    }
+  }
+  return rows;
+}
+
+const lang::MirFunctionInstance *
+firstSourceFunction(const lang::MirProgram &program) {
+  const auto found = std::find_if(
+      program.functionInstances().begin(), program.functionInstances().end(),
+      [](const lang::MirFunctionInstance &function) {
+        return function.definitionKind == lang::MirDefinitionKind::Source;
+      });
+  return found == program.functionInstances().end() ? nullptr : &*found;
+}
+
+void testExhaustiveEnumClassification() {
+  for (std::size_t value = 0;
+       value <= static_cast<std::size_t>(lang::MirInstructionKind::Count);
+       ++value) {
+    const auto encoding = lang::classifyCppMirInstructionKind(
+        static_cast<lang::MirInstructionKind>(value));
+    expect((value == static_cast<std::size_t>(lang::MirInstructionKind::Count))
+               ? encoding == lang::CppMirEmissionEncoding::Invalid
+               : encoding != lang::CppMirEmissionEncoding::Invalid,
+           "every named MIR instruction kind should have an exact class");
+  }
+  for (std::size_t value = 0;
+       value <= static_cast<std::size_t>(lang::MirOperation::Count); ++value) {
+    const auto encoding =
+        lang::classifyCppMirOperation(static_cast<lang::MirOperation>(value));
+    expect((value == static_cast<std::size_t>(lang::MirOperation::Count))
+               ? encoding == lang::CppMirEmissionEncoding::Invalid
+               : encoding != lang::CppMirEmissionEncoding::Invalid,
+           "every named MIR operation should have an exact class");
+  }
+
+  constexpr std::array operandKinds{
+      lang::MirOperandKind::Value,       lang::MirOperandKind::Constant,
+      lang::MirOperandKind::Address,     lang::MirOperandKind::Copy,
+      lang::MirOperandKind::Move,        lang::MirOperandKind::BorrowRead,
+      lang::MirOperandKind::BorrowWrite, lang::MirOperandKind::Loan};
+  for (const lang::MirOperandKind kind : operandKinds) {
+    expect(lang::classifyCppMirOperandKind(kind) !=
+               lang::CppMirEmissionEncoding::Invalid,
+           "every named MIR operand kind should have an exact class");
+  }
+  constexpr std::array rootKinds{
+      lang::MirPlaceRootKind::Binding, lang::MirPlaceRootKind::Symbol,
+      lang::MirPlaceRootKind::This,    lang::MirPlaceRootKind::Temporary,
+      lang::MirPlaceRootKind::Value,   lang::MirPlaceRootKind::Loan};
+  for (const lang::MirPlaceRootKind kind : rootKinds) {
+    expect(lang::classifyCppMirPlaceRootKind(kind) !=
+               lang::CppMirEmissionEncoding::Invalid,
+           "every named MIR place root should have an exact class");
+  }
+  constexpr std::array projections{
+      lang::MirProjectionKind::Field, lang::MirProjectionKind::Index,
+      lang::MirProjectionKind::Dereference, lang::MirProjectionKind::RawIndex,
+      lang::MirProjectionKind::RawDereference};
+  for (const lang::MirProjectionKind kind : projections) {
+    expect(lang::classifyCppMirProjectionKind(kind) !=
+               lang::CppMirEmissionEncoding::Invalid,
+           "every named MIR projection should have an exact class");
+  }
+  constexpr std::array terminators{lang::MirTerminatorKind::None,
+                                   lang::MirTerminatorKind::Goto,
+                                   lang::MirTerminatorKind::Branch,
+                                   lang::MirTerminatorKind::Switch,
+                                   lang::MirTerminatorKind::Invoke,
+                                   lang::MirTerminatorKind::Return,
+                                   lang::MirTerminatorKind::PropagateFailure,
+                                   lang::MirTerminatorKind::Unreachable,
+                                   lang::MirTerminatorKind::Exit};
+  for (const lang::MirTerminatorKind kind : terminators) {
+    expect((kind == lang::MirTerminatorKind::None)
+               ? lang::classifyCppMirTerminatorKind(kind) ==
+                     lang::CppMirEmissionEncoding::Invalid
+               : lang::classifyCppMirTerminatorKind(kind) !=
+                     lang::CppMirEmissionEncoding::Invalid,
+           "every executable MIR terminator should have an exact class");
+  }
+  constexpr std::array bodyKinds{lang::MirBodyKind::Module,
+                                 lang::MirBodyKind::FieldInitializers,
+                                 lang::MirBodyKind::StaticFieldInitializers,
+                                 lang::MirBodyKind::Function,
+                                 lang::MirBodyKind::Constructor,
+                                 lang::MirBodyKind::Destructor,
+                                 lang::MirBodyKind::Lambda,
+                                 lang::MirBodyKind::HostedStartup};
+  for (const lang::MirBodyKind kind : bodyKinds) {
+    expect(lang::classifyCppMirBodyKind(kind) !=
+               lang::CppMirEmissionEncoding::Invalid,
+           "every named MIR body kind should have an exact class");
+  }
+
+  expect(
+      lang::classifyCppMirInstructionKind(lang::MirInstructionKind::Modify) ==
+              lang::CppMirEmissionEncoding::MissingMirAuthority &&
+          lang::classifyCppMirOperation(lang::MirOperation::PackExpansion) ==
+              lang::CppMirEmissionEncoding::MissingMirAuthority &&
+          lang::classifyCppMirOperation(lang::MirOperation::Index) ==
+              lang::CppMirEmissionEncoding::NeedsCopiedRepresentation,
+      "known schedule gaps and safe bounds should remain distinct");
+  expect(
+      lang::classifyCppMirOperandKind(static_cast<lang::MirOperandKind>(999)) ==
+              lang::CppMirEmissionEncoding::Invalid &&
+          lang::classifyCppMirPlaceRootKind(static_cast<lang::MirPlaceRootKind>(
+              999)) == lang::CppMirEmissionEncoding::Invalid &&
+          lang::classifyCppMirProjectionKind(
+              static_cast<lang::MirProjectionKind>(999)) ==
+              lang::CppMirEmissionEncoding::Invalid &&
+          lang::classifyCppMirTerminatorKind(
+              static_cast<lang::MirTerminatorKind>(999)) ==
+              lang::CppMirEmissionEncoding::Invalid &&
+          lang::classifyCppMirBodyKind(static_cast<lang::MirBodyKind>(999)) ==
+              lang::CppMirEmissionEncoding::Invalid,
+      "unknown future enum values should fail closed");
+}
+
+void testReadyBodyAndRepresentationFailures() {
+  const lang::FrontendResult frontend = analyze("cpp-mir-body-ready.gti", R"(
+int32_t identity(int32_t value) { return value; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the generic ready-body fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirFunctionInstance *function = firstSourceFunction(frontend.mir);
+  expect(function != nullptr, "the ready fixture should lower one function");
+  if (function == nullptr) {
+    return;
+  }
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = function->id};
+
+  lang::CppMirBodyEmissionMapRows rows = completeRows(frontend.mir);
+  const lang::CppMirBodyEmissionAnalysis ready =
+      lang::CppMirBodyEmitter(frontend.mir, lang::CppMirBodyEmissionMap(rows))
+          .analyze(address);
+  expect(ready.ready(),
+         "a verified scalar identity body and complete copied map should be "
+         "ready, including legitimately untyped lifecycle records");
+
+  const lang::CppMirBodyEmissionAnalysis missing =
+      lang::CppMirBodyEmitter(frontend.mir, lang::CppMirBodyEmissionMap{})
+          .analyze(address);
+  expect(
+      missing.readiness ==
+              lang::CppMirBodyEmissionReadiness::MissingRepresentation &&
+          hasIssue(
+              missing,
+              lang::CppMirBodyEmissionIssueKind::MissingTypeRepresentation) &&
+          !hasIssue(missing,
+                    lang::CppMirBodyEmissionIssueKind::MissingPackExpansionMir),
+      "an absent copied map should be classified as representation debt");
+
+  rows.types.push_back(rows.types.front());
+  const lang::CppMirBodyEmissionAnalysis duplicate =
+      lang::CppMirBodyEmitter(frontend.mir,
+                              lang::CppMirBodyEmissionMap(std::move(rows)))
+          .analyze(address);
+  expect(
+      duplicate.readiness == lang::CppMirBodyEmissionReadiness::Incoherent &&
+          hasIssue(
+              duplicate,
+              lang::CppMirBodyEmissionIssueKind::DuplicateTypeRepresentation),
+      "duplicate copied type rows should fail closed as incoherent");
+}
+
+void testHostedStartupOwnsRemainingAuthorityGap() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-body-entry.gti", "int main() { return 0; }");
+  expect(frontend.canGenerateCode(),
+         "the hosted-entry fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto entry =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &function) {
+                     return function.entryKind != lang::ProgramEntryKind::None;
+                   });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the entry fixture should retain hosted-entry metadata");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(completeRows(frontend.mir));
+  const lang::CppMirBodyEmissionAnalysis entryAnalysis =
+      lang::CppMirBodyEmitter(frontend.mir, map)
+          .analyze({.kind = lang::MirBodyKind::Function, .owner = entry->id});
+  const lang::CppMirBodyEmissionAnalysis startupAnalysis =
+      lang::CppMirBodyEmitter(frontend.mir, map)
+          .analyze(
+              {.kind = lang::MirBodyKind::HostedStartup, .owner = entry->id});
+  expect(
+      entryAnalysis.ready() &&
+          !hasIssue(entryAnalysis,
+                    lang::CppMirBodyEmissionIssueKind::MissingHostedStartupMir),
+      "the source entry body should no longer claim ownership of generated "
+      "hosted startup");
+  expect(
+      startupAnalysis.readiness ==
+              lang::CppMirBodyEmissionReadiness::MissingMirAuthority &&
+          hasIssue(
+              startupAnalysis,
+              lang::CppMirBodyEmissionIssueKind::MissingFailureCleanupMir) &&
+          !hasIssue(startupAnalysis,
+                    lang::CppMirBodyEmissionIssueKind::MissingHostedStartupMir),
+      "the generated startup body should expose only its remaining Stage-E "
+      "failure-containment authority gap");
+
+  const lang::FrontendResult owned =
+      analyzeWithStandardLibrary("cpp-mir-body-owned-entry.gti", R"(
+#include <std/string>
+#include <std/vector>
+int main(int argc, std::vector<std::string> argv) { return argc; }
+)");
+  expect(owned.canGenerateCode(),
+         "the owned hosted-entry fixture should pass the frontend");
+  if (!owned.canGenerateCode()) {
+    return;
+  }
+  const auto ownedEntry = std::find_if(
+      owned.mir.functionInstances().begin(),
+      owned.mir.functionInstances().end(),
+      [](const lang::MirFunctionInstance &function) {
+        return function.entryKind == lang::ProgramEntryKind::OwnedArguments;
+      });
+  expect(ownedEntry != owned.mir.functionInstances().end(),
+         "the owned entry fixture should retain its generated startup plan");
+  if (ownedEntry == owned.mir.functionInstances().end()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionAnalysis ownedStartup =
+      lang::CppMirBodyEmitter(
+          owned.mir, lang::CppMirBodyEmissionMap(completeRows(owned.mir)))
+          .analyze({.kind = lang::MirBodyKind::HostedStartup,
+                    .owner = ownedEntry->id});
+  expect(
+      ownedStartup.readiness ==
+              lang::CppMirBodyEmissionReadiness::MissingMirAuthority &&
+          hasIssue(
+              ownedStartup,
+              lang::CppMirBodyEmissionIssueKind::MissingFailureCleanupMir) &&
+          hasIssue(ownedStartup, lang::CppMirBodyEmissionIssueKind::
+                                     MissingPartialConstructionRollbackMir) &&
+          !hasIssue(
+              ownedStartup,
+              lang::CppMirBodyEmissionIssueKind::MissingCallInputScheduleMir) &&
+          !hasIssue(
+              ownedStartup,
+              lang::CppMirBodyEmissionIssueKind::MissingOrderedCompoundMir) &&
+          std::all_of(ownedStartup.issues.begin(), ownedStartup.issues.end(),
+                      [](const lang::CppMirBodyEmissionIssue &issue) {
+                        return issue.kind == lang::CppMirBodyEmissionIssueKind::
+                                                 MissingFailureCleanupMir ||
+                               issue.kind ==
+                                   lang::CppMirBodyEmissionIssueKind::
+                                       MissingPartialConstructionRollbackMir;
+                      }),
+      "the exact generated owned startup schedule should expose only its "
+      "Stage-E cleanup and partial-rollback debts");
+}
+
+void testVerifiedProgramInitializationPlanClassification() {
+  const lang::FrontendResult dataOnly =
+      analyze("cpp-mir-body-data-only-module.gti", R"(
+constexpr int32_t seed = 4;
+mut int32_t zeroed;
+)");
+  expect(dataOnly.canGenerateCode(),
+         "the data-only Module classifier fixture should pass the frontend");
+  if (!dataOnly.canGenerateCode()) {
+    return;
+  }
+  lang::CppMirBodyEmissionMapRows dataRows = completeRows(dataOnly.mir);
+  dataRows.bodies.erase(
+      std::remove_if(dataRows.bodies.begin(), dataRows.bodies.end(),
+                     [](const lang::CppMirBodyNameRepresentation &row) {
+                       return row.address ==
+                              lang::MirBodyAddress{
+                                  .kind = lang::MirBodyKind::Module};
+                     }),
+      dataRows.bodies.end());
+  dataRows.capabilities.erase(
+      std::remove_if(
+          dataRows.capabilities.begin(), dataRows.capabilities.end(),
+          [](const lang::CppMirEmissionCapabilityRepresentation &row) {
+            return row.kind ==
+                   lang::CppMirEmissionCapabilityKind::ProgramInitialization;
+          }),
+      dataRows.capabilities.end());
+  const lang::CppMirBodyEmissionAnalysis dataAnalysis =
+      lang::CppMirBodyEmitter(dataOnly.mir,
+                              lang::CppMirBodyEmissionMap(std::move(dataRows)))
+          .analyze({.kind = lang::MirBodyKind::Module});
+  expect(
+      dataAnalysis.ready() && !dataOnly.mir.module().places.empty() &&
+          !hasIssue(
+              dataAnalysis,
+              lang::CppMirBodyEmissionIssueKind::MissingBodyRepresentation) &&
+          !hasIssue(dataAnalysis, lang::CppMirBodyEmissionIssueKind::
+                                      MissingCapabilityRepresentation) &&
+          !hasIssue(dataAnalysis, lang::CppMirBodyEmissionIssueKind::
+                                      MissingProgramInitializationMir),
+      "data-only tagged storage stages should require neither an "
+      "executable Module name nor a runtime initialization adapter");
+
+  const lang::FrontendResult dynamic =
+      analyze("cpp-mir-body-dynamic-module.gti", R"(
+int32_t initial_value() { return 5; }
+class Registry {
+public:
+  static mut int32_t value = initial_value();
+};
+)");
+  expect(dynamic.canGenerateCode(),
+         "the dynamic Module classifier fixture should pass the frontend");
+  if (!dynamic.canGenerateCode()) {
+    return;
+  }
+  const auto staticStep = std::find_if(
+      dynamic.mir.programInitializationPlan().steps.begin(),
+      dynamic.mir.programInitializationPlan().steps.end(),
+      [](const lang::MirProgramInitializationStep &step) {
+        return step.storageKind == lang::ProgramStorageKind::StaticField &&
+               step.role == lang::ProgramInitializationStepRole::Initializer;
+      });
+  expect(staticStep != dynamic.mir.programInitializationPlan().steps.end(),
+         "the dynamic classifier fixture should retain one planned static "
+         "initializer");
+
+  lang::CppMirBodyEmissionMapRows dynamicRows = completeRows(dynamic.mir);
+  const bool exactStaticStorage =
+      staticStep != dynamic.mir.programInitializationPlan().steps.end() &&
+      std::any_of(dynamicRows.symbols.begin(), dynamicRows.symbols.end(),
+                  [&](const lang::CppMirSymbolRepresentation &row) {
+                    return row.kind ==
+                               lang::CppMirSymbolRepresentationKind::Storage &&
+                           row.owner == staticStep->ownerClass &&
+                           row.symbol == staticStep->symbol;
+                  });
+  const lang::CppMirBodyEmissionAnalysis dynamicAnalysis =
+      lang::CppMirBodyEmitter(dynamic.mir,
+                              lang::CppMirBodyEmissionMap(dynamicRows))
+          .analyze({.kind = lang::MirBodyKind::Module});
+  expect(
+      exactStaticStorage &&
+          !hasIssue(dynamicAnalysis, lang::CppMirBodyEmissionIssueKind::
+                                         MissingProgramInitializationMir) &&
+          !hasIssue(
+              dynamicAnalysis,
+              lang::CppMirBodyEmissionIssueKind::MissingSymbolRepresentation),
+      "the verified Module plan should supply exact program-step and "
+      "static-storage owner authority to the private classifier");
+
+  dynamicRows.capabilities.erase(
+      std::remove_if(
+          dynamicRows.capabilities.begin(), dynamicRows.capabilities.end(),
+          [](const lang::CppMirEmissionCapabilityRepresentation &row) {
+            return row.kind ==
+                   lang::CppMirEmissionCapabilityKind::ProgramInitialization;
+          }),
+      dynamicRows.capabilities.end());
+  const lang::CppMirBodyEmissionAnalysis missingAdapter =
+      lang::CppMirBodyEmitter(
+          dynamic.mir, lang::CppMirBodyEmissionMap(std::move(dynamicRows)))
+          .analyze({.kind = lang::MirBodyKind::Module});
+  expect(missingAdapter.readiness ==
+                 lang::CppMirBodyEmissionReadiness::MissingRepresentation &&
+             hasIssue(missingAdapter, lang::CppMirBodyEmissionIssueKind::
+                                          MissingCapabilityRepresentation) &&
+             !hasIssue(missingAdapter, lang::CppMirBodyEmissionIssueKind::
+                                           MissingProgramInitializationMir),
+         "a verified dynamic plan should expose only the missing copied "
+         "runtime adapter, not a fictitious MIR authority gap");
+
+  lang::MirProgram stalePlan = dataOnly.mir;
+  auto &steps = const_cast<lang::MirProgramInitializationPlan &>(
+                    stalePlan.programInitializationPlan())
+                    .steps;
+  if (!steps.empty()) {
+    steps.front().storageInitialization = 0;
+  }
+  const lang::CppMirBodyEmissionAnalysis incoherent =
+      lang::CppMirBodyEmitter(
+          stalePlan, lang::CppMirBodyEmissionMap(completeRows(stalePlan)))
+          .analyze({.kind = lang::MirBodyKind::Module});
+  expect(incoherent.readiness ==
+                 lang::CppMirBodyEmissionReadiness::Incoherent &&
+             hasIssue(incoherent,
+                      lang::CppMirBodyEmissionIssueKind::InvalidMirProgram),
+         "a stale program plan must fail before classifier readiness");
+}
+
+void testSafeIndexUsesBoundsNotRawMemory() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-body-safe-index.gti", R"(
+int32_t at(int32_t values[2], uint64_t index) { return values[index]; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the safe fixed-array index fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirFunctionInstance *function = firstSourceFunction(frontend.mir);
+  expect(function != nullptr, "the index fixture should lower one function");
+  if (function == nullptr) {
+    return;
+  }
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = function->id};
+  const lang::CppMirBodyEmissionAnalysis noBounds =
+      lang::CppMirBodyEmitter(
+          frontend.mir,
+          lang::CppMirBodyEmissionMap(completeRows(
+              frontend.mir, lang::CppMirEmissionCapabilityKind::Bounds)))
+          .analyze(address);
+  const lang::CppMirBodyEmissionAnalysis noRawMemory =
+      lang::CppMirBodyEmitter(
+          frontend.mir,
+          lang::CppMirBodyEmissionMap(completeRows(
+              frontend.mir, lang::CppMirEmissionCapabilityKind::RawMemory)))
+          .analyze(address);
+  expect(
+      hasIssue(
+          noBounds,
+          lang::CppMirBodyEmissionIssueKind::MissingCapabilityRepresentation) &&
+          !hasIssue(noRawMemory, lang::CppMirBodyEmissionIssueKind::
+                                     MissingCapabilityRepresentation),
+      "safe Index should require a bounds/failure adapter, not raw-memory "
+      "authority");
+}
+
+void testConcreteGenericFieldOwner() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-body-generic-field.gti", R"(
+class Box<T> {
+  T value;
+public:
+  Box(T initial) : value(initial) {}
+  T read() { return this.value; }
+};
+
+int32_t use_int() {
+  Box<int32_t> value = Box<int32_t>(1);
+  return value.read();
+}
+
+uint8_t use_byte() {
+  Box<uint8_t> value = Box<uint8_t>(uint8_t(2));
+  return value.read();
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the two-instantiation field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  std::vector<const lang::MirClassInstance *> boxes;
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    if (instance.declaredFields.size() == 1) {
+      boxes.push_back(&instance);
+    }
+  }
+  expect(boxes.size() == 2 &&
+             boxes.front()->declaration == boxes.back()->declaration &&
+             boxes.front()->declaredFields.front().symbol ==
+                 boxes.back()->declaredFields.front().symbol,
+         "the fixture should retain two concrete owners for one source field");
+  if (boxes.size() != 2) {
+    return;
+  }
+
+  const auto methodFor = [&](lang::HirClassInstanceId owner) {
+    return std::find_if(
+        frontend.mir.functionInstances().begin(),
+        frontend.mir.functionInstances().end(),
+        [&](const lang::MirFunctionInstance &function) {
+          return function.owner == owner &&
+                 std::any_of(
+                     function.body.places.begin(), function.body.places.end(),
+                     [](const lang::MirPlace &place) {
+                       return std::any_of(
+                           place.projections.begin(), place.projections.end(),
+                           [](const lang::MirPlaceProjection &projection) {
+                             return projection.kind ==
+                                    lang::MirProjectionKind::Field;
+                           });
+                     });
+        });
+  };
+  const auto firstMethod = methodFor(boxes.front()->id);
+  const auto secondMethod = methodFor(boxes.back()->id);
+  expect(firstMethod != frontend.mir.functionInstances().end() &&
+             secondMethod != frontend.mir.functionInstances().end(),
+         "both concrete class instances should have field-reading MIR bodies");
+  if (firstMethod == frontend.mir.functionInstances().end() ||
+      secondMethod == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  lang::CppMirBodyEmissionMapRows complete = completeRows(frontend.mir);
+  const lang::CppMirBodyEmissionMap completeMap(complete);
+  const lang::CppMirBodyEmissionAnalysis first =
+      lang::CppMirBodyEmitter(frontend.mir, completeMap)
+          .analyze(
+              {.kind = lang::MirBodyKind::Function, .owner = firstMethod->id});
+  const lang::CppMirBodyEmissionAnalysis second =
+      lang::CppMirBodyEmitter(frontend.mir, completeMap)
+          .analyze(
+              {.kind = lang::MirBodyKind::Function, .owner = secondMethod->id});
+  expect(
+      !hasIssue(
+          first,
+          lang::CppMirBodyEmissionIssueKind::MissingSymbolRepresentation) &&
+          !hasIssue(
+              second,
+              lang::CppMirBodyEmissionIssueKind::MissingSymbolRepresentation),
+      "field lookup should use each projected place's concrete owner");
+
+  const lang::HirClassInstanceId removedOwner = boxes.front()->id;
+  const auto erased = std::remove_if(
+      complete.symbols.begin(), complete.symbols.end(),
+      [&](const lang::CppMirSymbolRepresentation &row) {
+        return row.kind == lang::CppMirSymbolRepresentationKind::Field &&
+               row.owner == removedOwner;
+      });
+  complete.symbols.erase(erased, complete.symbols.end());
+  const lang::CppMirBodyEmissionMap missingOwnerMap(std::move(complete));
+  const lang::CppMirBodyEmissionAnalysis missingOwner =
+      lang::CppMirBodyEmitter(frontend.mir, missingOwnerMap)
+          .analyze(
+              {.kind = lang::MirBodyKind::Function, .owner = firstMethod->id});
+  const lang::CppMirBodyEmissionAnalysis retainedOwner =
+      lang::CppMirBodyEmitter(frontend.mir, missingOwnerMap)
+          .analyze(
+              {.kind = lang::MirBodyKind::Function, .owner = secondMethod->id});
+  expect(
+      hasIssue(
+          missingOwner,
+          lang::CppMirBodyEmissionIssueKind::MissingSymbolRepresentation) &&
+          !hasIssue(
+              retainedOwner,
+              lang::CppMirBodyEmissionIssueKind::MissingSymbolRepresentation),
+      "removing one generic field owner must not alias the same source "
+      "SymbolId from another instantiation");
+}
+
+void testAmbiguousStaticStorageFailsClosed() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-body-storage-owner.gti", R"(
+mut int32_t state = 1;
+int32_t read_state() { return state; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the global-storage owner fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirFunctionInstance *function = firstSourceFunction(frontend.mir);
+  expect(function != nullptr, "the storage fixture should lower one function");
+  if (function == nullptr) {
+    return;
+  }
+  const auto place =
+      std::find_if(function->body.places.begin(), function->body.places.end(),
+                   [](const lang::MirPlace &candidate) {
+                     return candidate.root == lang::MirPlaceRootKind::Symbol &&
+                            candidate.capture == 0;
+                   });
+  expect(place != function->body.places.end(),
+         "the storage fixture should retain a symbol-root place");
+  if (place == function->body.places.end()) {
+    return;
+  }
+
+  lang::CppMirBodyEmissionMapRows rows = completeRows(frontend.mir);
+  rows.symbols.erase(
+      std::remove_if(
+          rows.symbols.begin(), rows.symbols.end(),
+          [&](const lang::CppMirSymbolRepresentation &row) {
+            return row.kind == lang::CppMirSymbolRepresentationKind::Storage &&
+                   row.symbol == place->symbol;
+          }),
+      rows.symbols.end());
+  rows.symbols.push_back({.kind = lang::CppMirSymbolRepresentationKind::Storage,
+                          .owner = 101,
+                          .symbol = place->symbol,
+                          .type = place->type,
+                          .spelling = "first_static_instance"});
+  rows.symbols.push_back({.kind = lang::CppMirSymbolRepresentationKind::Storage,
+                          .owner = 202,
+                          .symbol = place->symbol,
+                          .type = place->type,
+                          .spelling = "second_static_instance"});
+  const lang::CppMirBodyEmissionAnalysis analysis =
+      lang::CppMirBodyEmitter(frontend.mir,
+                              lang::CppMirBodyEmissionMap(std::move(rows)))
+          .analyze(
+              {.kind = lang::MirBodyKind::Function, .owner = function->id});
+  expect(
+      hasIssue(
+          analysis,
+          lang::CppMirBodyEmissionIssueKind::MissingProgramInitializationMir),
+      "same-Symbol static rows from multiple owners must stay ambiguous "
+      "without concrete initialization/storage authority");
+}
+
+void testOwningCheckedBodyNeedsWholeCleanupProof() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-body-owning-failure.gti", R"(
+class FailureCleanup {
+public:
+  int32_t bit;
+  FailureCleanup(int32_t value) : bit(value) { value + 1; }
+  ~FailureCleanup() { this.bit + 1; }
+};
+
+int32_t checked_increment(int32_t value) {
+  FailureCleanup scope = FailureCleanup(1);
+  return value + 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the owning checked-operation fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto function = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [](const lang::MirFunctionInstance &candidate) {
+        return !candidate.body.failureRecords.empty() &&
+               std::any_of(candidate.body.dropObligations.begin(),
+                           candidate.body.dropObligations.end(),
+                           [](const lang::MirDropObligation &obligation) {
+                             return obligation.dropType.requiresActiveCleanup;
+                           });
+      });
+  expect(function != frontend.mir.functionInstances().end(),
+         "the owning fixture should retain failure records and cleanup "
+         "obligations in one function body");
+  if (function == frontend.mir.functionInstances().end()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionAnalysis analysis =
+      lang::CppMirBodyEmitter(
+          frontend.mir, lang::CppMirBodyEmissionMap(completeRows(frontend.mir)))
+          .analyze(
+              {.kind = lang::MirBodyKind::Function, .owner = function->id});
+  expect(
+      analysis.readiness ==
+              lang::CppMirBodyEmissionReadiness::MissingMirAuthority &&
+          hasIssue(analysis,
+                   lang::CppMirBodyEmissionIssueKind::MissingFailureCleanupMir),
+      "local Invoke and lifetime helper rows must not promote a general "
+      "owning failure-cleanup body");
+}
+
+} // namespace
+
+int main() {
+  testExhaustiveEnumClassification();
+  testReadyBodyAndRepresentationFailures();
+  testHostedStartupOwnsRemainingAuthorityGap();
+  testVerifiedProgramInitializationPlanClassification();
+  testSafeIndexUsesBoundsNotRawMemory();
+  testConcreteGenericFieldOwner();
+  testAmbiguousStaticStorageFailsClosed();
+  testOwningCheckedBodyNeedsWholeCleanupProof();
+
+  if (failures != 0) {
+    std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";
+    return 1;
+  }
+  std::cout << "cpp MIR body-emitter tests passed\n";
+  return 0;
+}

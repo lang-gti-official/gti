@@ -1,0 +1,14 @@
+int32_t recursive_checked(int32_t value) {
+  if (value == 0) {
+    return value + 1;
+  }
+  return recursive_checked(value);
+}
+
+int main() {
+  int32_t result = recursive_checked(0);
+  if (result != 1) {
+    return 1;
+  }
+  return 0;
+}

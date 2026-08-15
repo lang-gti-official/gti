@@ -1,0 +1,52 @@
+mut int32_t pair_close_bits = 0;
+mut int32_t pair_first_close = 0;
+
+class PairFlag {
+public:
+  int32_t first;
+  int32_t second;
+
+  PairFlag(int32_t left, int32_t right) : first(left), second(right) {}
+
+  ~PairFlag() {
+    pair_close_bits = pair_close_bits | this.first;
+    if (pair_first_close == 0) {
+      pair_first_close = this.second;
+    }
+  }
+};
+
+int32_t use_pair() {
+  PairFlag value = PairFlag(1, 2);
+  return 0;
+}
+
+int32_t pair_wrapper() {
+  return use_pair();
+}
+
+class CheckedCleanup {
+public:
+  int32_t bit;
+
+  CheckedCleanup(int32_t value) : bit(value) {}
+
+  ~CheckedCleanup() {
+    pair_close_bits = pair_close_bits + this.bit;
+  }
+};
+
+int32_t use_checked_cleanup() {
+  CheckedCleanup value = CheckedCleanup(1);
+  return 0;
+}
+
+int main() {
+  if (pair_wrapper() != 0) {
+    return 1;
+  }
+  if (use_checked_cleanup() != 0) {
+    return 2;
+  }
+  return 0;
+}

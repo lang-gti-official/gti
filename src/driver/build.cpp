@@ -20,7 +20,7 @@
 namespace lang::driver {
 namespace {
 
-constexpr std::string_view cacheSchema = "gti-build-cache-v1";
+constexpr std::string_view cacheSchema = "gti-build-cache-v2";
 
 class Sha256 final {
 public:
@@ -665,6 +665,24 @@ bool addSourceIdentity(IdentityBuilder &identity,
                  static_cast<std::uint64_t>(record.unit->prelude));
     identity.add("source.size", static_cast<std::uint64_t>(source->size()));
     identity.add("source.sha256", digestText(*source));
+  }
+
+  const std::vector<SourceUnitId> &preludeRoots =
+      inputs.sourceGraph.preludeRoots();
+  identity.add("source.prelude-roots",
+               static_cast<std::uint64_t>(preludeRoots.size()));
+  for (const SourceUnitId root : preludeRoots) {
+    if (root == 0 || root >= namesById.size() || namesById[root].empty()) {
+      errorMessage = "source graph contains an invalid prelude root";
+      return false;
+    }
+    const SourceUnit *unit = inputs.sourceGraph.findUnit(root);
+    if (unit == nullptr ||
+        (unit->role != SourceUnitRole::Prelude && !unit->prelude)) {
+      errorMessage = "source graph prelude root does not name a prelude unit";
+      return false;
+    }
+    identity.add("source.prelude-root", namesById[root]);
   }
 
   std::vector<std::string> edges;
@@ -1470,7 +1488,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = "cache requires a managed project output policy";
     } else {
-      const std::filesystem::path versionRoot = request.cache()->root / "v1";
+      const std::filesystem::path versionRoot = request.cache()->root / "v2";
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {

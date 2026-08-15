@@ -897,23 +897,35 @@ standard-library need, and tooling impact.
 
 ## Operational Sequence
 
-The maintained prompt-sized sequence, blockers, parallel lanes, and current
-ready queue live in
-[`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
-the evaluation/full-expression, concurrency/memory-model, callable,
-defined-failure, and compatibility decisions, restriction ledger, I-CAP-01,
-C-TYPE-01, C-GLOBAL-01, the target/data-layout contract, and M-OWN-01/M-OWN-02
-place authority and M-LIFE-01's normal-exit temporary/drop authority are
-complete. The scalar/reference and eligible non-borrowed class-value ordinary-
-call and concrete ordinary-constructor M-EXEC-01 slices now have verified
-HIR/MIR input order; the first recommended unowned task is the operator and
-one-time assignment-place family because every readiness workload needs
-authoritative ordered materialization, not because lowering machinery is
-independently the product.
-`D-COMPAT-01` is complete on the independent release-policy lane. The executable
-compiler critical path starts with ordered MIR lowering, then co-delivered
-failure/runtime lowering, the first
-MIR-emitted family, and complete M-BACK-02 body-family migration.
+The maintained sequence, blockers, parallel lanes, and current ready queue live
+in [`implementation-sequence.md`](implementation-sequence.md). At this
+checkpoint the major executable contracts and substantial bounded MIR families
+are already present. `M-BACK-01`/`scalar-leaf-v1`,
+`M-BACK-02`/`scalar-cfg-v1`, and `M-BACK-02`/`scalar-direct-call-v1` have
+been joined by `M-BACK-02`/`class-default-cleanup-v1`,
+`owned-lifecycle-call-v1`, and hosted `scalar-failure-callgraph-v1`,
+establishing six bounded production MIR families while every other family
+still uses the compatibility emitter.
+MIR v20 introduced function definition provenance plus the verifier-bounded
+`mayRaiseDefinedFailure` vector. MIR v21 makes the canonical result cover
+functions, constructors, and destructors; retains exact acyclic
+scalar/static-call closures; adds the bounded class-default-cleanup
+function/destructor proof; and derives a separate exact passive-scalar-class
+constructor/destructor/function closure. `owned-lifecycle-call-v1` consumes
+that proof after exact graph/source/lifecycle coherence, and the hosted failure
+component reuses its exact class facts inside a separately closed entry graph.
+Generic
+verification permits conservative true summaries but rejects unproved false
+claims and propagation drift.
+The immediate critical path is the final backend-authority cutover. It
+inventories and migrates the remaining body and program-initialization
+families, then removes compatibility body emission, HIR replacement execution,
+and legacy native-failure helpers once their last users are gone. Broader
+M-FAIL lifecycle, double-failure, embedding, task, and callback containment
+remain explicit feature work rather than retroactive claims of the bounded
+hosted component. The whole `M-EXEC-01` row is not a barrier to each family
+cutover. New executable language work resumes after this campaign restores one
+production authority for all bodies.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

@@ -1,0 +1,6 @@
+int main() {
+  int64_t maximum = 2147483647;
+  int64_t one = 1;
+  int64_t wide = maximum + one;
+  return int32_t(wide);
+}

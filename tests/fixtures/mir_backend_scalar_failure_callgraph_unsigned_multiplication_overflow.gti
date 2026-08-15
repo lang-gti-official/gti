@@ -1,0 +1,6 @@
+int main() {
+  uint32_t maximum = 4294967295;
+  uint32_t two = 2;
+  uint32_t result = maximum * two;
+  return int32_t(result);
+}

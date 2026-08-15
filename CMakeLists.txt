@@ -237,6 +237,9 @@ add_library(
   "gti_cpp_backend" STATIC
   "src/compiler/cpp_backend.cpp"
   "src/compiler/cpp_emitter.cpp"
+  "src/compiler/cpp_mir_body_emitter.cpp"
+  "src/compiler/cpp_mir_program_plan.cpp"
+  "src/compiler/cpp_mir_representation_snapshot.cpp"
 )
 target_include_directories(
   "gti_cpp_backend"
@@ -247,7 +250,11 @@ target_include_directories(
 target_compile_features("gti_cpp_backend" PUBLIC cxx_std_20)
 target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 
-add_library("gti_runtime" STATIC "runtime/src/io.cpp")
+add_library(
+  "gti_runtime" STATIC
+  "runtime/src/failure.cpp"
+  "runtime/src/io.cpp"
+)
 target_include_directories(
   "gti_runtime"
   PUBLIC
@@ -429,6 +436,30 @@ if(BUILD_TESTING)
   target_compile_features("gti_c_abi_smoke" PRIVATE c_std_11)
   add_test(NAME c_abi_header_boundary COMMAND gti_c_abi_smoke)
 
+  add_executable("gti_runtime_failure_tests"
+                 "tests/runtime_failure_tests.cpp")
+  target_include_directories(
+    "gti_runtime_failure_tests"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime/src"
+  )
+  target_compile_features("gti_runtime_failure_tests" PRIVATE cxx_std_23)
+  target_link_libraries("gti_runtime_failure_tests" PRIVATE gti_runtime)
+  add_test(NAME runtime_failure_boundary COMMAND gti_runtime_failure_tests)
+
+  add_executable("gti_runtime_failure_header_smoke"
+                 "tests/runtime_failure_header_smoke.cpp")
+  target_compile_features("gti_runtime_failure_header_smoke" PRIVATE cxx_std_20)
+  target_link_libraries("gti_runtime_failure_header_smoke"
+                        PRIVATE gti_compiler gti_runtime)
+  add_test(NAME runtime_failure_header_coexistence
+           COMMAND gti_runtime_failure_header_smoke)
+
+  find_package(Threads REQUIRED)
+  add_executable("gti_runtime_failure_helper"
+                 "tests/runtime_failure_helper.cpp")
+  target_link_libraries("gti_runtime_failure_helper"
+                        PRIVATE gti_runtime Threads::Threads)
+
   add_executable("gti_compiler_library_smoke"
                  "tests/compiler_library_smoke.cpp")
   target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)
@@ -475,6 +506,18 @@ if(BUILD_TESTING)
   target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
   add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests)
 
+  add_executable("gti_mir_program_initialization_tests"
+                 "tests/mir_program_initialization_tests.cpp")
+  target_link_libraries("gti_mir_program_initialization_tests"
+                        PRIVATE gti_compiler)
+  add_test(NAME mir_program_initialization
+           COMMAND gti_mir_program_initialization_tests)
+
+  add_executable("gti_mir_hosted_startup_tests"
+                 "tests/mir_hosted_startup_tests.cpp")
+  target_link_libraries("gti_mir_hosted_startup_tests" PRIVATE gti_compiler)
+  add_test(NAME mir_hosted_startup COMMAND gti_mir_hosted_startup_tests)
+
   add_executable("gti_raw_pointer_tests" "tests/raw_pointer_tests.cpp")
   target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_cpp_backend)
   add_test(NAME raw_pointer_pipeline COMMAND gti_raw_pointer_tests)
@@ -504,6 +547,107 @@ if(BUILD_TESTING)
   target_link_libraries("gti_sum_type_tests" PRIVATE gti_cpp_backend)
   add_test(NAME sum_type_pipeline COMMAND gti_sum_type_tests)
 
+  add_executable("gti_mir_backend_tests" "tests/mir_backend_tests.cpp")
+  target_link_libraries("gti_mir_backend_tests" PRIVATE gti_cpp_backend)
+  add_test(NAME mir_backend_first_family COMMAND gti_mir_backend_tests)
+
+  add_executable("gti_cpp_mir_program_plan_tests"
+                 "tests/cpp_mir_program_plan_tests.cpp")
+  target_link_libraries("gti_cpp_mir_program_plan_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME cpp_mir_program_plan COMMAND gti_cpp_mir_program_plan_tests)
+
+  add_executable("gti_cpp_mir_body_emitter_tests"
+                 "tests/cpp_mir_body_emitter_tests.cpp")
+  target_link_libraries("gti_cpp_mir_body_emitter_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME cpp_mir_body_emitter COMMAND gti_cpp_mir_body_emitter_tests)
+
+  add_executable(
+    "gti_cpp_mir_representation_snapshot_tests"
+    "tests/cpp_mir_representation_snapshot_tests.cpp"
+  )
+  target_link_libraries("gti_cpp_mir_representation_snapshot_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME cpp_mir_representation_snapshot
+           COMMAND gti_cpp_mir_representation_snapshot_tests)
+
+  add_executable("gti_failure_descriptor_backend_tests"
+                 "tests/failure_descriptor_backend_tests.cpp")
+  target_link_libraries("gti_failure_descriptor_backend_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(
+    NAME failure_descriptor_backend
+    COMMAND gti_failure_descriptor_backend_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/failure_descriptor_backend.gti"
+  )
+
+  add_executable("gti_mir_backend_scalar_cfg_tests"
+                 "tests/mir_backend_scalar_cfg_tests.cpp")
+  target_link_libraries("gti_mir_backend_scalar_cfg_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(
+    NAME mir_backend_scalar_cfg
+    COMMAND gti_mir_backend_scalar_cfg_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_cfg.gti"
+  )
+
+  add_executable("gti_mir_backend_scalar_direct_call_tests"
+                 "tests/mir_backend_scalar_direct_call_tests.cpp")
+  target_link_libraries("gti_mir_backend_scalar_direct_call_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(
+    NAME mir_backend_scalar_direct_call
+    COMMAND gti_mir_backend_scalar_direct_call_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_direct_call.gti"
+  )
+
+  add_executable("gti_mir_backend_class_default_cleanup_tests"
+                 "tests/mir_backend_class_default_cleanup_tests.cpp")
+  target_link_libraries("gti_mir_backend_class_default_cleanup_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(
+    NAME mir_backend_class_default_cleanup
+    COMMAND gti_mir_backend_class_default_cleanup_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_class_default_cleanup.gti"
+  )
+
+  add_executable("gti_mir_backend_owned_lifecycle_tests"
+                 "tests/mir_backend_owned_lifecycle_tests.cpp")
+  target_link_libraries("gti_mir_backend_owned_lifecycle_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(
+    NAME mir_backend_owned_lifecycle
+    COMMAND gti_mir_backend_owned_lifecycle_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_owned_lifecycle.gti"
+  )
+
+  add_executable("gti_mir_backend_scalar_failure_callgraph_tests"
+                 "tests/mir_backend_scalar_failure_callgraph_tests.cpp")
+  target_link_libraries("gti_mir_backend_scalar_failure_callgraph_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(
+    NAME mir_backend_scalar_failure_callgraph
+    COMMAND gti_mir_backend_scalar_failure_callgraph_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_failure.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_reverse_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_recursive_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_cleanup_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_checked_ctor_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_checked_dtor_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_virtual_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_lambda_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_dynamic_global_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_failure_free_helper_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_c_linkage_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_class_field_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_lifecycle_user_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_array_user_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_generic_owner_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_no_detector_entry_near_miss.gti"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_nonowning_user.gti"
+  )
+
   add_executable("gti_layout_query_native_smoke"
                  "tests/layout_query_native_smoke.cpp")
   target_link_libraries("gti_layout_query_native_smoke" PRIVATE gti_compiler)
@@ -511,6 +655,12 @@ if(BUILD_TESTING)
            COMMAND gti_layout_query_native_smoke)
 
   if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME runtime_failure_subprocess
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_failure_test.py"
+              "$<TARGET_FILE:gti_runtime_failure_helper>"
+    )
     add_test(
       NAME release_version_policy
       COMMAND "${Python3_EXECUTABLE}"
@@ -545,6 +695,80 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/56-sum-types.gti"
     )
+    add_test(
+      NAME mir_backend_first_family_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_first_family.gti"
+    )
+    add_test(
+      NAME failure_descriptor_backend_compile
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/failure_descriptor_backend_compile_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/failure_descriptor_backend.gti"
+              "${CMAKE_CXX_COMPILER}"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(
+      NAME mir_backend_scalar_cfg_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_scalar_cfg_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_cfg.gti"
+    )
+    add_test(
+      NAME mir_backend_scalar_direct_call_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_scalar_direct_call_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_direct_call.gti"
+    )
+    add_test(
+      NAME mir_backend_class_default_cleanup_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_class_default_cleanup_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_class_default_cleanup.gti"
+    )
+    set_tests_properties(mir_backend_class_default_cleanup_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME mir_backend_owned_lifecycle_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_owned_lifecycle_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_owned_lifecycle.gti"
+    )
+    set_tests_properties(mir_backend_owned_lifecycle_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME mir_backend_scalar_failure_callgraph_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_scalar_failure_callgraph_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_success.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_all_operations_success.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_failure.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_division_zero.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_division_overflow.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_negative_shift.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_wide_shift.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_subtraction_overflow.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_multiplication_overflow.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_remainder_zero.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_negative_right_shift.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_wide_right_shift.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_negation_overflow.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_conversion_wide.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_conversion_negative.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_unsigned_addition_overflow.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_unsigned_subtraction_overflow.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_unsigned_multiplication_overflow.gti"
+    )
+    set_tests_properties(mir_backend_scalar_failure_callgraph_runtime
+                         PROPERTIES TIMEOUT 300)
     add_test(
       NAME native_record_c_oracle
       COMMAND "${Python3_EXECUTABLE}"

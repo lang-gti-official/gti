@@ -207,11 +207,15 @@ int main() { return selected() - 41; }
   expect(result.succeeded(),
          "the driver should compile a valid whole-program request");
   if (result.artifact) {
-    expect(result.artifact->contents.find("return 41;") != std::string::npos &&
-               result.artifact->contents.find("return 82;") ==
-                   std::string::npos,
-           "one resolved target must reach frontend conditionals and backend "
-           "emission");
+    expect(
+        result.artifact->contents.find(
+            "// GTI verified-MIR body: scalar-leaf-v1") != std::string::npos &&
+            result.artifact->contents.find("static_cast<std::int32_t>(41)") !=
+                std::string::npos &&
+            result.artifact->contents.find("static_cast<std::int32_t>(82)") ==
+                std::string::npos,
+        "one resolved target must reach frontend conditionals and backend "
+        "emission");
   }
 
   const lang::driver::CheckResult checked =
@@ -571,6 +575,7 @@ void testNativeCCompilerFailure() {
              writeFile(include / "gti/runtime.hpp", "") &&
              writeFile(include / "gti/runtime.h", "") &&
              writeFile(include / "gti/c_abi.h", "") &&
+             writeFile(include / "gti/runtime_failure.h", "") &&
              writeFile(temporary.root() / "libgti_runtime.a", "") &&
              writeFile(nativeObject, "previous object"),
          "native C compiler failure fixtures should be writable");
@@ -626,6 +631,7 @@ void testNativeCppCompilerFailure() {
              writeFile(include / "gti/runtime.hpp", "") &&
              writeFile(include / "gti/runtime.h", "") &&
              writeFile(include / "gti/c_abi.h", "") &&
+             writeFile(include / "gti/runtime_failure.h", "") &&
              writeFile(temporary.root() / "libgti_runtime.a", "") &&
              writeFile(nativeObject, "previous object"),
          "native C++ compiler failure fixtures should be writable");
@@ -672,6 +678,7 @@ void testOrderedExecutableBuildCommand() {
              writeFile(include / "gti/runtime.hpp", "") &&
              writeFile(include / "gti/runtime.h", "") &&
              writeFile(include / "gti/c_abi.h", "") &&
+             writeFile(include / "gti/runtime_failure.h", "") &&
              writeFile(temporary.root() / "libgti_runtime.a", "") &&
              writeFile(temporary.root() / "provider.c",
                        "int native_provider(void) { return 42; }\n") &&
@@ -876,7 +883,7 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   std::filesystem::create_directories(localRuntimeInclude / "gti");
   std::error_code copyError;
   for (const std::string_view header :
-       {"runtime.hpp", "runtime.h", "c_abi.h"}) {
+       {"runtime.hpp", "runtime.h", "c_abi.h", "runtime_failure.h"}) {
     std::filesystem::copy_file(discoveredToolchain.runtimeInclude / "gti" /
                                    header,
                                localRuntimeInclude / "gti" / header, copyError);
@@ -976,6 +983,11 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "publish a complete content-addressed cache entry");
   const std::string firstKey = first.cache.key;
   const std::filesystem::path firstEntry = first.cache.entry;
+  expect(
+      firstEntry.parent_path() == cache.root / "v2" &&
+          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v2\n"),
+      "the current one-root driver request should publish only the v2 "
+      "ordered-prelude cache schema");
 
   std::error_code removeError;
   std::filesystem::remove(output, removeError);
@@ -1213,13 +1225,21 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   std::filesystem::remove_all(firstEntry, removeError);
   expect(!removeError && readFile(output) == publishedExecutable,
          "deleting a cache entry should not damage the published executable");
+  const std::filesystem::path legacyEntry = cache.root / "v1" / firstKey;
+  std::filesystem::create_directories(legacyEntry);
+  expect(writeFile(legacyEntry / "metadata", "gti-build-cache-v1\n") &&
+             writeFile(legacyEntry / "generated.cpp", "stale") &&
+             writeFile(legacyEntry / "executable", "stale"),
+         "the legacy cache-schema fixture should be writable");
   const lang::driver::ExecutableBuildResult afterDeletion =
       build(lang::OptimizationLevel::O0);
   expect(afterDeletion.succeeded() &&
              afterDeletion.cache.status ==
                  lang::driver::BuildCacheStatus::Miss &&
-             afterDeletion.nativeProcess,
-         "a deleted cache entry should degrade to a clean rebuild");
+             afterDeletion.nativeProcess &&
+             afterDeletion.cache.entry.parent_path() == cache.root / "v2",
+         "a deleted v2 cache entry should ignore a same-key v1 entry and "
+         "degrade to a clean rebuild");
 }
 
 void testResourcesAndArtifactOwnership() {
@@ -1246,6 +1266,12 @@ void testResourcesAndArtifactOwnership() {
       "runtime validation should require the installed public C ABI header");
   expect(writeFile(include / "gti/c_abi.h", ""),
          "the C ABI header fixture should be writable");
+  expect(
+      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23) ==
+          lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+      "runtime validation should require the defined-failure ABI header");
+  expect(writeFile(include / "gti/runtime_failure.h", ""),
+         "the defined-failure ABI header fixture should be writable");
   expect(
       !lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23),
       "C++23 resource validation should not require expected-lite");

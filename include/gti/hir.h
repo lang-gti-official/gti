@@ -7,6 +7,7 @@
 #include "gti/semantic_analyzer.h"
 #include "gti/target.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -172,6 +173,7 @@ struct HirValue {
   std::optional<TokenKind> operation;
   std::optional<Literal> literal;
   std::optional<ConstantValue> constant;
+  bool programConstantSubstitution = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
@@ -324,6 +326,9 @@ struct HirBaseInstance {
   HirClassInstanceId instance = 0;
   SemanticType type = SemanticType::Unknown;
   bool interface = false;
+
+  friend bool operator==(const HirBaseInstance &,
+                         const HirBaseInstance &) = default;
 };
 
 struct HirClassInstance {
@@ -455,12 +460,61 @@ struct HirDestructorInstance {
   HirBody body;
 };
 
+struct HirProgramInitializationStep {
+  ProgramInitializationStepId id = 0;
+  SourceUnitId sourceUnit = 0;
+  ProgramStorageKind kind = ProgramStorageKind::NamespaceGlobal;
+  ProgramInitializationStepRole role =
+      ProgramInitializationStepRole::Initializer;
+  const VariableDecl *source = nullptr;
+  SymbolId symbol = 0;
+  HirClassInstanceId ownerClass = 0;
+  bool requiresActiveCleanup = false;
+  HirBindingId binding = 0;
+  std::optional<HirValueId> initializer;
+  HirStatementId statement = 0;
+};
+
+struct HirProgramInitializationPlan {
+  std::vector<SourceUnitId> unitOrder;
+  std::vector<HirProgramInitializationStep> steps;
+
+  [[nodiscard]] const HirProgramInitializationStep *
+  findStepForSymbol(SymbolId symbol) const {
+    const auto found =
+        std::find_if(steps.begin(), steps.end(), [symbol](const auto &step) {
+          return step.symbol == symbol;
+        });
+    return found == steps.end() ? nullptr : &*found;
+  }
+};
+
+struct HirHostedProgramEntryPlan {
+  FunctionId semanticEntry = 0;
+  FunctionId semanticAppendFunction = 0;
+  ConstructorId semanticVectorConstructor = 0;
+  ConstructorId semanticStringConstructor = 0;
+  HirFunctionInstanceId entry = 0;
+  HirFunctionInstanceId appendFunction = 0;
+  HirConstructorInstanceId vectorConstructor = 0;
+  HirConstructorInstanceId stringConstructor = 0;
+  ProgramEntryKind kind = ProgramEntryKind::None;
+  SourceUnitId sourceUnit = 0;
+  SourceSpan mainAnchor;
+  DefinedFailureOperation validateCount;
+  DefinedFailureOperation convertCount;
+};
+
 class HirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
 
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
+  }
+
+  [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const {
+    return semanticAnalysisSeal;
   }
 
   [[nodiscard]] const std::vector<HirClassInstance> &classInstances() const {
@@ -491,6 +545,16 @@ public:
   }
 
   [[nodiscard]] const HirBody &module() const { return moduleBody; }
+
+  [[nodiscard]] const HirProgramInitializationPlan &
+  programInitializationPlan() const {
+    return programInitialization;
+  }
+
+  [[nodiscard]] const std::optional<HirHostedProgramEntryPlan> &
+  hostedProgramEntryPlan() const {
+    return hostedProgramEntry;
+  }
 
   [[nodiscard]] std::size_t valueCount() const;
 
@@ -524,21 +588,36 @@ private:
 
   bool valid_ = true;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
+  SemanticAnalysisSeal semanticAnalysisSeal;
   std::vector<HirEnum> enums;
   std::vector<HirClassInstance> classes;
   std::vector<HirFunctionInstance> functions;
   std::vector<HirConstructorInstance> constructors;
   std::vector<HirDestructorInstance> destructors;
   std::vector<HirLambda> lambdas;
+  HirProgramInitializationPlan programInitialization;
+  std::optional<HirHostedProgramEntryPlan> hostedProgramEntry;
   HirBody moduleBody;
   std::unordered_map<const Expr *, std::vector<HirValueId>> sourceValueIds;
 };
+
+struct HirProgramPlanVerificationResult {
+  std::vector<std::string> errors;
+
+  [[nodiscard]] bool valid() const { return errors.empty(); }
+};
+
+[[nodiscard]] HirProgramPlanVerificationResult
+verifyHirProgramPlans(const SemanticModel &semantics,
+                      const HirProgram &program);
 
 struct HirLoweringResult {
   HirProgram program;
   std::vector<Diagnostic> diagnostics;
 
-  [[nodiscard]] bool valid() const { return diagnostics.empty(); }
+  [[nodiscard]] bool valid() const {
+    return diagnostics.empty() && program.valid();
+  }
 };
 
 class HirLowerer {

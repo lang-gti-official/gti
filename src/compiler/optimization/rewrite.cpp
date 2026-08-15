@@ -22,8 +22,10 @@ namespace {
     return 4;
   case MirBodyKind::Lambda:
     return 5;
+  case MirBodyKind::HostedStartup:
+    return 6;
   }
-  return 6;
+  return 7;
 }
 
 [[nodiscard]] auto bodyKey(MirBodyAddress address) {
@@ -49,71 +51,6 @@ void addError(MirEditResult &result, MirInstructionAddress address,
 }
 
 } // namespace
-
-std::vector<MirBodyAddress> MirProgramEditor::bodies() const {
-  std::vector<MirBodyAddress> result;
-  result.push_back({.kind = MirBodyKind::Module});
-  for (const MirClassInstance &instance : program.classInstances()) {
-    result.push_back(
-        {.kind = MirBodyKind::FieldInitializers, .owner = instance.id});
-    result.push_back(
-        {.kind = MirBodyKind::StaticFieldInitializers, .owner = instance.id});
-  }
-  for (const MirFunctionInstance &instance : program.functionInstances()) {
-    result.push_back({.kind = MirBodyKind::Function, .owner = instance.id});
-  }
-  for (const MirConstructorInstance &instance :
-       program.constructorInstances()) {
-    result.push_back({.kind = MirBodyKind::Constructor, .owner = instance.id});
-  }
-  for (const MirDestructorInstance &instance : program.destructorInstances()) {
-    result.push_back({.kind = MirBodyKind::Destructor, .owner = instance.id});
-  }
-  for (const MirLambdaInstance &instance : program.lambdaInstances()) {
-    result.push_back({.kind = MirBodyKind::Lambda, .owner = instance.id});
-  }
-  return result;
-}
-
-const MirBody *MirProgramEditor::body(MirBodyAddress address) const {
-  switch (address.kind) {
-  case MirBodyKind::Module:
-    return address.owner == 0 ? &program.module() : nullptr;
-  case MirBodyKind::FieldInitializers:
-  case MirBodyKind::StaticFieldInitializers:
-    if (const MirClassInstance *instance =
-            program.findClassInstance(address.owner)) {
-      return address.kind == MirBodyKind::FieldInitializers
-                 ? &instance->fieldInitializers
-                 : &instance->staticFieldInitializers;
-    }
-    return nullptr;
-  case MirBodyKind::Function:
-    if (const MirFunctionInstance *instance =
-            program.findFunctionInstance(address.owner)) {
-      return &instance->body;
-    }
-    return nullptr;
-  case MirBodyKind::Constructor:
-    if (const MirConstructorInstance *instance =
-            program.findConstructorInstance(address.owner)) {
-      return &instance->body;
-    }
-    return nullptr;
-  case MirBodyKind::Destructor:
-    if (const MirDestructorInstance *instance =
-            program.findDestructorInstance(address.owner)) {
-      return &instance->body;
-    }
-    return nullptr;
-  case MirBodyKind::Lambda:
-    if (const MirLambdaInstance *instance = program.findLambda(address.owner)) {
-      return &instance->body;
-    }
-    return nullptr;
-  }
-  return nullptr;
-}
 
 void MirProgramEditor::queueLiteralReplacement(
     MirInstructionAddress address, MirInstructionId expectedInstruction,
@@ -145,7 +82,7 @@ MirEditResult MirProgramEditor::apply() {
                "duplicate MIR instruction replacement");
       continue;
     }
-    const MirBody *target = body(patch.address.body);
+    const MirBody *target = findMirBody(program, patch.address.body);
     if (target == nullptr) {
       addError(result, patch.address, patch.expectedInstruction,
                "MIR replacement body does not exist");
@@ -171,6 +108,15 @@ MirEditResult MirProgramEditor::apply() {
                "MIR replacement target is not the expected computation");
       continue;
     }
+    if (patch.expectedOperation != MirOperation::Identity ||
+        instruction.operands.size() != 1 ||
+        instruction.operands.front().kind != MirOperandKind::Value ||
+        instruction.operands.front().value == 0) {
+      addError(result, patch.address, patch.expectedInstruction,
+               "MIR literal replacement is missing its exact identity "
+               "source");
+      continue;
+    }
     if (const auto *integer = std::get_if<std::uint64_t>(&patch.literal)) {
       const std::optional<CheckedIntegerDomain> domain =
           constantIntegerDomain(instruction.info.type);
@@ -187,68 +133,19 @@ MirEditResult MirProgramEditor::apply() {
   }
 
   MirProgram candidate = program;
-  const auto mutableBody = [&candidate](MirBodyAddress address) -> MirBody * {
-    switch (address.kind) {
-    case MirBodyKind::Module:
-      return address.owner == 0 ? &candidate.moduleBody : nullptr;
-    case MirBodyKind::FieldInitializers:
-    case MirBodyKind::StaticFieldInitializers:
-      for (MirClassInstance &instance : candidate.classes) {
-        if (instance.id == address.owner) {
-          return address.kind == MirBodyKind::FieldInitializers
-                     ? &instance.fieldInitializers
-                     : &instance.staticFieldInitializers;
-        }
-      }
-      return nullptr;
-    case MirBodyKind::Function:
-      for (MirFunctionInstance &instance : candidate.functions) {
-        if (instance.id == address.owner) {
-          return &instance.body;
-        }
-      }
-      return nullptr;
-    case MirBodyKind::Constructor:
-      for (MirConstructorInstance &instance : candidate.constructors) {
-        if (instance.id == address.owner) {
-          return &instance.body;
-        }
-      }
-      return nullptr;
-    case MirBodyKind::Destructor:
-      for (MirDestructorInstance &instance : candidate.destructors) {
-        if (instance.id == address.owner) {
-          return &instance.body;
-        }
-      }
-      return nullptr;
-    case MirBodyKind::Lambda:
-      for (MirLambdaInstance &instance : candidate.lambdas) {
-        if (instance.id == address.owner) {
-          return &instance.body;
-        }
-      }
-      return nullptr;
-    }
-    return nullptr;
-  };
-
   std::vector<MirBodyAddress> touched;
   for (const LiteralReplacement &patch : queued) {
-    MirBody *target = mutableBody(patch.address.body);
+    MirBody *target = findMirBody(candidate, patch.address.body);
     MirInstruction &instruction = target->blocks[patch.address.block - 1]
                                       .instructions[patch.address.index];
-    MirInstruction replacement;
-    replacement.id = instruction.id;
-    replacement.kind = MirInstructionKind::Compute;
-    replacement.hirValue = instruction.hirValue;
-    replacement.hirStatement = instruction.hirStatement;
-    replacement.unsafeOperation = instruction.unsafeOperation;
-    replacement.rawMemoryAccess = instruction.rawMemoryAccess;
-    replacement.result = instruction.result;
+    const MirValueId sourceValue = instruction.operands.front().value;
+    MirInstruction replacement = instruction;
     replacement.operation = MirOperation::Literal;
+    replacement.operands.clear();
     replacement.literal = patch.literal;
-    replacement.info = instruction.info;
+    replacement.literalProvenance =
+        MirLiteralProvenance{.kind = MirLiteralProvenanceKind::IdentityFold,
+                             .sourceValue = sourceValue};
     instruction = std::move(replacement);
     if (std::find(touched.begin(), touched.end(), patch.address.body) ==
         touched.end()) {
@@ -257,7 +154,7 @@ MirEditResult MirProgramEditor::apply() {
   }
 
   for (MirBodyAddress address : touched) {
-    MirBody *target = mutableBody(address);
+    MirBody *target = findMirBody(candidate, address);
     if (target == nullptr || !rebuildMirValueUses(*target)) {
       addError(result, {.body = address}, 0,
                "MIR replacement produced invalid value uses");

@@ -47,6 +47,7 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.endsLoan = true, .dependsOnLoan = true},
     MirEffectTraits{
         .movesValue = true, .initializesValue = true, .dropsValue = true},
+    unknownEffects(), // CallBody invokes the exact target MIR body.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -238,6 +239,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "drop",
     "end-borrow",
     "lifecycle",
+    "call-body",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -461,6 +463,11 @@ MirEffectTraits effects(const MirInstruction &instruction) {
   }
   result = merge(result, effects(instruction.operation));
   result = merge(result, effects(instruction.synchronization.kind));
+  if (instruction.hostedStartupOperation != 0) {
+    // Generated hosted operations may read native wrapper state even when
+    // their ordinary MIR opcode/operation pair is deliberately neutral.
+    result = merge(result, unknownEffects());
+  }
 
   for (const MirOperand &operand : instruction.operands) {
     switch (operand.kind) {

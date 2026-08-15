@@ -1,0 +1,58 @@
+int32_t safe_checked_operations(int32_t seed) {
+  int32_t added = seed + 2;
+  int32_t subtracted = added - 3;
+  int32_t multiplied = subtracted * 6;
+  int32_t divided = multiplied / 2;
+  int32_t remainder = divided % 5;
+  int32_t negated = -remainder;
+  int32_t shifted_left = remainder << 3;
+  int32_t negative_eight = -8;
+  int32_t shifted_right = negative_eight >> 1;
+  int32_t minimum = -2147483647 - 1;
+  int32_t special_remainder = minimum % -1;
+
+  uint32_t unsigned_seed = uint32_t(seed);
+  uint32_t unsigned_one = 1;
+  uint32_t unsigned_two = 2;
+  uint32_t unsigned_six = 6;
+  uint32_t unsigned_added = unsigned_seed + unsigned_one;
+  uint32_t unsigned_subtracted = unsigned_added - unsigned_two;
+  uint32_t unsigned_multiplied = unsigned_subtracted * unsigned_six;
+  int32_t converted_back = int32_t(unsigned_multiplied);
+
+  if (multiplied != 42) {
+    return 1;
+  }
+  if (divided != 21) {
+    return 2;
+  }
+  if (remainder != 1) {
+    return 3;
+  }
+  if (negated != -1) {
+    return 4;
+  }
+  if (shifted_left != 8) {
+    return 5;
+  }
+  if (shifted_right != -4) {
+    return 6;
+  }
+  if (special_remainder != 0) {
+    return 7;
+  }
+  if (converted_back != 42) {
+    return 8;
+  }
+  if (added != 10) {
+    return 9;
+  }
+  if (subtracted != 7) {
+    return 10;
+  }
+  return 0;
+}
+
+int main() {
+  return safe_checked_operations(8);
+}

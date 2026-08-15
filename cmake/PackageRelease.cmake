@@ -33,6 +33,8 @@ foreach(required_file
           "lib/cmake/GTI/GTIConfigVersion.cmake"
           "lib/cmake/GTI/GTITargets.cmake"
           "include/gti/c_abi.h"
+          "include/gti/failure.h"
+          "include/gti/runtime_failure.h"
           "include/gti/runtime.h"
           "include/gti/runtime.hpp"
           "share/gti/VERSION"

@@ -6,6 +6,58 @@ namespace lang {
 
 class SemanticVisitor::Impl final : public ExprVisitor, public StmtVisitor {
 public:
+  enum class ProgramEffectOwnerKind {
+    None,
+    Initializer,
+    Function,
+    Constructor,
+    Destructor,
+    FieldInitializers,
+    Lambda,
+  };
+
+  struct ProgramEffectOwner {
+    ProgramEffectOwnerKind kind = ProgramEffectOwnerKind::None;
+    std::size_t id = 0;
+
+    [[nodiscard]] bool valid() const {
+      return kind != ProgramEffectOwnerKind::None && id != 0;
+    }
+
+    friend bool operator==(const ProgramEffectOwner &,
+                           const ProgramEffectOwner &) = default;
+  };
+
+  struct ProgramEffectOwnerHash {
+    [[nodiscard]] std::size_t
+    operator()(const ProgramEffectOwner &owner) const {
+      return (owner.id << 3U) ^ static_cast<std::size_t>(owner.kind);
+    }
+  };
+
+  struct ProgramStorageEffectUse {
+    SymbolId symbol = 0;
+    SourceSpan span;
+    const Expr *expression = nullptr;
+    bool deferredConstantCandidate = false;
+  };
+
+  struct ProgramEffectEdge {
+    ProgramEffectOwner target;
+    SourceSpan span;
+  };
+
+  struct ProgramUnknownEffect {
+    SourceSpan span;
+    std::string reason;
+  };
+
+  struct ProgramEffectSummary {
+    std::vector<ProgramStorageEffectUse> uses;
+    std::vector<ProgramEffectEdge> edges;
+    std::vector<ProgramUnknownEffect> unknown;
+  };
+
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
                 bool toolingOccurrences)
       : target(std::move(target)), sourceGraph(sourceGraph),
@@ -66,6 +118,8 @@ public:
     semanticModel.clear();
     semanticModel.setExecutionProfile(target.executionProfile);
     semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
+    semanticModel.setAnalysisSeal(
+        makeSemanticAnalysisSeal(program, target, sourceGraph));
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     currentClass.reset();
     analyzingFieldInitializer = false;
@@ -81,6 +135,9 @@ public:
     instanceAnalysisActive = false;
     instanceBaseModel = nullptr;
     currentFunctionDeclaration = nullptr;
+    currentProgramEffectOwner = {};
+    programEffects.clear();
+    programStoragePlaceUseDepth = 0;
     contextualInitializerType.reset();
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
@@ -129,6 +186,7 @@ public:
     validateConfinedCallableContracts();
     validateConfinedCallableUses();
     semanticModel.finalizeCallableArguments();
+    finalizeProgramInitialization(program);
     semanticModel.finalizeOccurrences();
     return !hadError();
   }
@@ -185,6 +243,7 @@ public:
     semanticModel.clear();
     semanticModel.setExecutionProfile(target.executionProfile);
     semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
+    semanticModel.setAnalysisSeal({.target = target});
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     currentClass.reset();
     analyzingFieldInitializer = false;
@@ -200,6 +259,9 @@ public:
     instanceAnalysisActive = false;
     instanceBaseModel = nullptr;
     currentFunctionDeclaration = nullptr;
+    currentProgramEffectOwner = {};
+    programEffects.clear();
+    programStoragePlaceUseDepth = 0;
     contextualInitializerType.reset();
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
@@ -641,6 +703,7 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
+    const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
     LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
     std::vector<ValueControlFlowContext> enclosingValueControlFlow =
         std::move(valueControlFlow);
@@ -650,10 +713,14 @@ public:
     valueControlFlow.clear();
     ++functionDepth;
     ++constructorDepth;
+    currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Constructor,
+                                 .id = constructorInfo->id};
     beginScope();
 
     for (const Parameter &parameter : stmt.parameters()) {
       if (!parameter.name.lexeme.empty()) {
+        recordProgramCleanupEffects(typeOf(parameter),
+                                    tokenSpan(parameter.name));
         declare(parameter.name, typeOf(parameter),
                 parameter.mutability == Mutability::Mutable,
                 SemanticBindingKind::Parameter, nullptr, &parameter);
@@ -784,6 +851,7 @@ public:
       analyzingConstructorInitializer = enclosingConstructorInitializer;
       if (field != nullptr && initializer.arguments.size() == 1 &&
           fieldType.kind == SemanticType::Reference) {
+        forceProgramStorageBoundaryAccess(initializer.arguments.front());
         validateReferenceBinding(fieldType, valueType,
                                  initializer.arguments.front());
       } else if (field != nullptr && initializer.arguments.size() == 1 &&
@@ -829,13 +897,17 @@ public:
       }
     }
 
-    if (base != nullptr && !initializedBase &&
-        !baseHasAccessibleDefaultConstructor(*base, owner.id)) {
-      report(stmt.name(),
-             "Constructor must explicitly initialize base '" +
-                 typeSpelling(base->type) +
-                 "' because it has no accessible default constructor.",
-             "GTI-S2040");
+    if (base != nullptr && !initializedBase) {
+      if (!baseHasAccessibleDefaultConstructor(*base, owner.id)) {
+        report(stmt.name(),
+               "Constructor must explicitly initialize base '" +
+                   typeSpelling(base->type) +
+                   "' because it has no accessible default constructor.",
+               "GTI-S2040");
+      } else {
+        recordProgramDefaultConstructionEffects(base->type,
+                                                tokenSpan(stmt.name()));
+      }
     }
 
     for (const FieldInfo &field : owner.fields) {
@@ -855,6 +927,7 @@ public:
     loanFlow = std::move(enclosingLoanFlow);
     valueControlFlow = std::move(enclosingValueControlFlow);
     currentReturnType = enclosingReturnType;
+    currentProgramEffectOwner = enclosingEffectOwner;
     endTypeParameterScope();
   }
 
@@ -886,6 +959,7 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
+    const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
     LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
     std::vector<ValueControlFlowContext> enclosingValueControlFlow =
         std::move(valueControlFlow);
@@ -895,10 +969,14 @@ public:
     valueControlFlow.clear();
     ++functionDepth;
     ++destructorDepth;
+    currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Destructor,
+                                 .id = owner.id};
     beginScope();
 
     analyze(stmt.body()->statements());
     finalizeLoanFlow();
+    recordProgramCleanupEffects(SemanticType::classType(owner.id),
+                                tokenSpan(stmt.tilde()), false);
 
     endScope();
     --destructorDepth;
@@ -907,6 +985,7 @@ public:
     loanFlow = std::move(enclosingLoanFlow);
     valueControlFlow = std::move(enclosingValueControlFlow);
     currentReturnType = enclosingReturnType;
+    currentProgramEffectOwner = enclosingEffectOwner;
   }
 
   void visitDoWhileStmt(const DoWhileStmt &stmt) override {
@@ -1303,6 +1382,7 @@ public:
     const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
     const FunctionDecl *enclosingFunctionDeclaration =
         currentFunctionDeclaration;
+    const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
     if (currentClass && functionDepth == 0) {
       currentReceiverMutability = stmt.receiverMutability();
       currentStaticMemberFunction = stmt.isStatic();
@@ -1311,6 +1391,10 @@ public:
     valueControlFlow.clear();
     currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
     currentFunctionDeclaration = &stmt;
+    if (functionInfo != nullptr && functionInfo->id != 0) {
+      currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Function,
+                                   .id = functionInfo->id};
+    }
     ++functionDepth;
     beginScope();
     if (methodDeclaration && !stmt.isStatic()) {
@@ -1320,6 +1404,7 @@ public:
     for (const Parameter &parameter : stmt.parameters()) {
       if (!parameter.name.lexeme.empty()) {
         const SemanticType declaredType = typeOf(parameter);
+        recordProgramCleanupEffects(declaredType, tokenSpan(parameter.name));
         declare(parameter.name,
                 parameter.pack &&
                         declaredType.kind == SemanticType::TypeParameter
@@ -1362,6 +1447,7 @@ public:
     currentStaticMemberFunction = enclosingStaticMemberFunction;
     currentReturnType = enclosingReturnType;
     currentFunctionDeclaration = enclosingFunctionDeclaration;
+    currentProgramEffectOwner = enclosingEffectOwner;
     endRequirementScope();
     endTypeParameterScope();
   }
@@ -1602,6 +1688,7 @@ public:
       }
       const SemanticType valueType =
           analyzeInitializer(stmt.value(), currentReturnType.arguments[0]);
+      forceProgramStorageBoundaryAccess(stmt.value());
       validateReferenceReturn(currentReturnType, valueType, stmt.value());
       requireInitializedReceiver(stmt.keyword());
       return;
@@ -2154,6 +2241,9 @@ public:
     const SemanticType declaredType =
         typeOf(stmt.type(),
                stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
+    if (functionDepth > 0) {
+      recordProgramCleanupEffects(declaredType, tokenSpan(stmt.name()));
+    }
     const SemanticBindingKind bindingKind =
         currentClass && functionDepth == 0
             ? (stmt.isStatic() ? SemanticBindingKind::StaticField
@@ -2280,6 +2370,15 @@ public:
     }
     if (stmt.initializer()) {
       const bool enclosingFieldInitializer = analyzingFieldInitializer;
+      const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
+      if (globalStorage && symbol != 0) {
+        currentProgramEffectOwner = {
+            .kind = ProgramEffectOwnerKind::Initializer, .id = symbol};
+      } else if (instanceField && currentClass) {
+        currentProgramEffectOwner = {
+            .kind = ProgramEffectOwnerKind::FieldInitializers,
+            .id = *currentClass};
+      }
       analyzingFieldInitializer = currentClass && functionDepth == 0;
       const bool directInitializer = dynamic_cast<const DirectInitializer *>(
                                          stmt.initializer().get()) != nullptr;
@@ -2294,13 +2393,16 @@ public:
            typeTraits(declaredType).containsBorrowedState);
       if (establishesLoan) {
         ++suppressLoanPlaceAccessDepth;
+        ++programStoragePlaceUseDepth;
       }
       initializerType =
           analyzeInitializer(stmt.initializer(), expectedInitializer, true);
       if (establishesLoan) {
         --suppressLoanPlaceAccessDepth;
+        --programStoragePlaceUseDepth;
       }
       analyzingFieldInitializer = enclosingFieldInitializer;
+      currentProgramEffectOwner = enclosingEffectOwner;
     }
 
     const bool initializerAssignable =
@@ -4310,6 +4412,7 @@ public:
     const std::size_t enclosingDestructorDepth = destructorDepth;
     const std::size_t enclosingUnsafeDepth = unsafeDepth;
     const bool enclosingAnalyzingCallCallee = analyzingCallCallee;
+    const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
     const std::optional<SemanticType> enclosingInitializerType =
         contextualInitializerType;
     const std::optional<ContextualCallableResult> enclosingCallableResult =
@@ -4330,10 +4433,14 @@ public:
     unsafeDepth = 0;
     ++functionDepth;
     ++lambdaDepth;
+    currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Lambda,
+                                 .id = id};
     lambdaUncapturedLocals.push_back(std::move(unavailableLocals));
 
     for (const Parameter &parameter : expr.parameters()) {
       if (!parameter.name.lexeme.empty()) {
+        recordProgramCleanupEffects(typeOf(parameter),
+                                    tokenSpan(parameter.name));
         declare(parameter.name, typeOf(parameter),
                 parameter.mutability == Mutability::Mutable,
                 SemanticBindingKind::Parameter, nullptr, &parameter);
@@ -4367,6 +4474,7 @@ public:
     valueControlFlow = std::move(enclosingValueControlFlow);
     currentReceiverMutability = enclosingReceiverMutability;
     currentReturnType = enclosingReturnType;
+    currentProgramEffectOwner = enclosingEffectOwner;
     scopes = std::move(enclosingScopes);
 
     std::vector<SemanticType> captureTypes;
@@ -5268,6 +5376,9 @@ public:
     }
     const bool mutating = expr.oper().kind == TokenKind::PLUS_PLUS ||
                           expr.oper().kind == TokenKind::MINUS_MINUS;
+    if (expr.oper().kind == TokenKind::AMPERSAND) {
+      ++programStoragePlaceUseDepth;
+    }
     const SemanticType rightType =
         mutating ? analyze(expr.right(), OccurrenceRole::Reference |
                                              OccurrenceRole::Read |
@@ -5278,6 +5389,9 @@ public:
                         ? analyzeExpectedCallableResult(expr.right(),
                                                         SemanticType::Bool)
                         : analyze(expr.right()));
+    if (expr.oper().kind == TokenKind::AMPERSAND) {
+      --programStoragePlaceUseDepth;
+    }
 
     if (expr.oper().kind == TokenKind::AMPERSAND) {
       const ExpressionInfo *info = semanticModel.findExpression(*expr.right());
@@ -20844,6 +20958,18 @@ private:
                                : selected.constructor->declaration,
             .parameterTypes = selected.parameterTypes,
             .generatedDefault = selected.generatedDefault});
+    recordProgramArgumentBoundaryEffects(selected.parameterTypes,
+                                         initializer.arguments);
+    const SourceSpan span = tokenSpan(location);
+    if (selected.generatedDefault) {
+      recordProgramDefaultConstructionEffects(baseType, span);
+    } else {
+      addProgramEffectEdge({.kind = ProgramEffectOwnerKind::FieldInitializers,
+                            .id = baseType.classId},
+                           span);
+      recordProgramSelectedConstructorEffect(selected.constructor, baseType,
+                                             span);
+    }
   }
 
   void reportCAbiRecord(const Token &location, std::string message) {
@@ -22708,6 +22834,940 @@ private:
     }
   }
 
+  [[nodiscard]] static bool
+  canMaterializeProgramConstant(const ConstantValue &value) {
+    return !std::holds_alternative<ConstantCheckedIntegerResult>(value);
+  }
+
+  void recordProgramStorageEffect(const Expr &expression,
+                                  SemanticBindingKind bindingKind,
+                                  SymbolId symbol, OccurrenceRole roles) {
+    if (!currentProgramEffectOwner.valid() || symbol == 0 ||
+        (bindingKind != SemanticBindingKind::GlobalVariable &&
+         bindingKind != SemanticBindingKind::StaticField)) {
+      return;
+    }
+    const std::optional<ConstantValue> constant =
+        semanticModel.findConstant(expression);
+    const bool valueSubstitutionCandidate =
+        programStoragePlaceUseDepth == 0 &&
+        !hasRole(roles, OccurrenceRole::Write) &&
+        semanticModel.unsafeOperation(expression) !=
+            UnsafeOperationKind::AddressOf;
+    const bool substitution = constant && valueSubstitutionCandidate &&
+                              canMaterializeProgramConstant(*constant);
+    if (substitution) {
+      semanticModel.recordProgramConstantSubstitution(expression);
+      return;
+    }
+    programEffects[currentProgramEffectOwner].uses.push_back(
+        {.symbol = symbol,
+         .span = tokenSpan(expressionToken(expression)),
+         .expression = &expression,
+         .deferredConstantCandidate = valueSubstitutionCandidate});
+  }
+
+  void addProgramEffectEdge(ProgramEffectOwner target, const Expr &expression) {
+    addProgramEffectEdge(target, tokenSpan(expressionToken(expression)));
+  }
+
+  void clearProgramConstantSubstitutionsInBoundary(const Expr &expression,
+                                                   SymbolId symbol) {
+    ProgramEffectSummary &summary = programEffects[currentProgramEffectOwner];
+    for (ProgramStorageEffectUse &use : summary.uses) {
+      if (use.symbol == symbol && use.expression == &expression) {
+        use.deferredConstantCandidate = false;
+      }
+    }
+    if (semanticModel.findResolvedSymbol(expression) == symbol &&
+        semanticModel.isProgramConstantSubstitution(expression)) {
+      semanticModel.clearProgramConstantSubstitution(expression);
+    }
+    if (const auto *grouping = dynamic_cast<const Grouping *>(&expression)) {
+      if (grouping->expression()) {
+        clearProgramConstantSubstitutionsInBoundary(*grouping->expression(),
+                                                    symbol);
+      }
+    } else if (const auto *conversion =
+                   dynamic_cast<const Conversion *>(&expression)) {
+      if (conversion->value()) {
+        clearProgramConstantSubstitutionsInBoundary(*conversion->value(),
+                                                    symbol);
+      }
+    } else if (const auto *member = dynamic_cast<const Get *>(&expression)) {
+      if (member->object()) {
+        clearProgramConstantSubstitutionsInBoundary(*member->object(), symbol);
+      }
+    } else if (const auto *index = dynamic_cast<const Index *>(&expression)) {
+      if (index->object()) {
+        clearProgramConstantSubstitutionsInBoundary(*index->object(), symbol);
+      }
+    } else if (const auto *unary = dynamic_cast<const Unary *>(&expression)) {
+      if (unary->right()) {
+        clearProgramConstantSubstitutionsInBoundary(*unary->right(), symbol);
+      }
+    }
+  }
+
+  void forceProgramStorageBoundaryAccess(const ExprPtr &argument) {
+    if (!currentProgramEffectOwner.valid() || !argument) {
+      return;
+    }
+    const SemanticPlace place = semanticPlace(argument);
+    if (place.root == nullptr ||
+        (place.root->bindingKind != SemanticBindingKind::GlobalVariable &&
+         place.root->bindingKind != SemanticBindingKind::StaticField)) {
+      return;
+    }
+    const SymbolId symbol = toolingSymbolFor(*place.root);
+    if (symbol == 0) {
+      return;
+    }
+    clearProgramConstantSubstitutionsInBoundary(*argument, symbol);
+    ProgramEffectSummary &summary = programEffects[currentProgramEffectOwner];
+    const SourceSpan span = tokenSpan(expressionToken(*argument));
+    if (std::none_of(summary.uses.begin(), summary.uses.end(),
+                     [&](const ProgramStorageEffectUse &use) {
+                       return use.symbol == symbol &&
+                              use.span.source == span.source &&
+                              use.span.start == span.start &&
+                              use.span.end == span.end;
+                     })) {
+      summary.uses.push_back({.symbol = symbol,
+                              .span = span,
+                              .expression = argument.get(),
+                              .deferredConstantCandidate = false});
+    }
+  }
+
+  void recordProgramArgumentBoundaryEffects(
+      std::span<const SemanticType> parameterTypes,
+      std::span<const ExprPtr> arguments) {
+    const std::size_t count = std::min(parameterTypes.size(), arguments.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      if (parameterTypes[index].kind == SemanticType::Reference ||
+          parameterTypes[index].kind == SemanticType::RawPointer) {
+        forceProgramStorageBoundaryAccess(arguments[index]);
+      }
+    }
+  }
+
+  void addProgramEffectEdge(ProgramEffectOwner target, SourceSpan span) {
+    if (!currentProgramEffectOwner.valid() || !target.valid()) {
+      return;
+    }
+    programEffects[currentProgramEffectOwner].edges.push_back(
+        {.target = target, .span = std::move(span)});
+  }
+
+  void addUnknownProgramEffect(const Expr &expression, std::string reason) {
+    addUnknownProgramEffect(tokenSpan(expressionToken(expression)),
+                            std::move(reason));
+  }
+
+  void addUnknownProgramEffect(SourceSpan span, std::string reason) {
+    if (!currentProgramEffectOwner.valid()) {
+      return;
+    }
+    programEffects[currentProgramEffectOwner].unknown.push_back(
+        {.span = std::move(span), .reason = std::move(reason)});
+  }
+
+  [[nodiscard]] const ConstructorInfo *
+  programConstructor(ConstructorId id) const {
+    if (id == 0) {
+      return nullptr;
+    }
+    for (const ClassInfo &owner : classes) {
+      const auto found =
+          std::find_if(owner.constructors.begin(), owner.constructors.end(),
+                       [id](const ConstructorInfo &candidate) {
+                         return candidate.id == id;
+                       });
+      if (found != owner.constructors.end()) {
+        return &*found;
+      }
+    }
+    return nullptr;
+  }
+
+  void recordProgramDefaultConstructionEffects(
+      const SemanticType &type, const SourceSpan &span,
+      std::unordered_set<ClassId> &visiting) {
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size()) {
+      addUnknownProgramEffect(
+          span, "default construction has no exact resolved class lifecycle");
+      return;
+    }
+    if (!visiting.insert(type.classId).second) {
+      addUnknownProgramEffect(span, "default construction has a recursive base "
+                                    "lifecycle");
+      return;
+    }
+    const ClassInfo &owner = classInfo(type.classId);
+    if (hasOpenProgramCleanupShape(type)) {
+      addUnknownProgramEffect(
+          span, "generic default construction has no closed program-storage "
+                "effect summary");
+      visiting.erase(type.classId);
+      return;
+    }
+    addProgramEffectEdge(
+        {.kind = ProgramEffectOwnerKind::FieldInitializers, .id = owner.id},
+        span);
+
+    const auto recordBase = [&] {
+      const ClassBaseTypeInfo *base = concreteBase(owner);
+      if (base == nullptr) {
+        return;
+      }
+      const SemanticType baseType =
+          substituteType(base->type, classSubstitution(type));
+      recordProgramDefaultConstructionEffects(baseType, span, visiting);
+    };
+    if (const ConstructorInfo *declared = defaultConstructor(owner)) {
+      if (declared->declaration != nullptr &&
+          declared->declaration->body() != nullptr) {
+        addProgramEffectEdge(
+            {.kind = ProgramEffectOwnerKind::Constructor, .id = declared->id},
+            span);
+      } else if (declared->declaration != nullptr &&
+                 declared->declaration->specifier() &&
+                 declared->declaration->specifier()->kind ==
+                     SpecialMemberSpecifierKind::Defaulted) {
+        recordBase();
+      } else {
+        addUnknownProgramEffect(
+            span, "a selected GTI constructor has no executable body or "
+                  "compiler-generated default definition");
+      }
+    } else if (classCanGenerateDefaultConstructor(owner)) {
+      recordBase();
+    } else {
+      addUnknownProgramEffect(
+          span, "default construction has no exact available constructor");
+    }
+    visiting.erase(type.classId);
+  }
+
+  void recordProgramDefaultConstructionEffects(const SemanticType &type,
+                                               const SourceSpan &span) {
+    std::unordered_set<ClassId> visiting;
+    recordProgramDefaultConstructionEffects(type, span, visiting);
+  }
+
+  void
+  recordProgramSelectedConstructorEffect(const ConstructorInfo *constructor,
+                                         const SemanticType &constructedType,
+                                         const SourceSpan &span) {
+    if (constructor == nullptr || constructor->declaration == nullptr) {
+      addUnknownProgramEffect(
+          span, "a selected GTI constructor has no exact declaration");
+      return;
+    }
+    if (constructor->declaration->body() != nullptr) {
+      addProgramEffectEdge(
+          {.kind = ProgramEffectOwnerKind::Constructor, .id = constructor->id},
+          span);
+      return;
+    }
+    if (constructor->declaration->specifier() &&
+        constructor->declaration->specifier()->kind ==
+            SpecialMemberSpecifierKind::Defaulted) {
+      const ClassInfo &owner = classInfo(constructedType.classId);
+      if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
+        recordProgramDefaultConstructionEffects(
+            substituteType(base->type, classSubstitution(constructedType)),
+            span);
+      }
+      return;
+    }
+    addUnknownProgramEffect(
+        span, "a selected GTI constructor has no executable body");
+  }
+
+  [[nodiscard]] static bool
+  hasOpenProgramCleanupShape(const SemanticType &type) {
+    if (type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::TypePack) {
+      return true;
+    }
+    if (std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                    [](const CompileTimeValue &value) {
+                      return value.kind == CompileTimeValue::Parameter;
+                    })) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       hasOpenProgramCleanupShape);
+  }
+
+  void recordProgramCleanupEffects(const SemanticType &type,
+                                   const SourceSpan &span,
+                                   std::vector<SemanticType> &visiting,
+                                   bool includeDirectDestructor = true) {
+    if (!currentProgramEffectOwner.valid() || !requiresActiveCleanupFor(type)) {
+      return;
+    }
+    if (hasOpenProgramCleanupShape(type)) {
+      addUnknownProgramEffect(
+          span, "cleanup has an open generic lifecycle effect set");
+      return;
+    }
+    if (std::find(visiting.begin(), visiting.end(), type) != visiting.end()) {
+      return;
+    }
+    visiting.push_back(type);
+    const auto finish = [&] { visiting.pop_back(); };
+    switch (type.kind) {
+    case SemanticType::UniqueOwner:
+    case SemanticType::SharedPointer:
+    case SemanticType::Array:
+    case SemanticType::Expected:
+    case SemanticType::Unexpected:
+      for (const SemanticType &argument : type.arguments) {
+        if (argument != SemanticType::Void) {
+          recordProgramCleanupEffects(argument, span, visiting);
+        }
+      }
+      finish();
+      return;
+    case SemanticType::Lambda:
+      if (!type.hasLambdaShape()) {
+        addUnknownProgramEffect(
+            span, "lambda cleanup has no closed capture-type shape");
+        finish();
+        return;
+      }
+      for (const SemanticType &capture : type.lambdaCaptureTypes()) {
+        recordProgramCleanupEffects(capture, span, visiting);
+      }
+      finish();
+      return;
+    case SemanticType::Storage:
+      // Compiler-private raw storage cleanup cannot execute a GTI body.
+      finish();
+      return;
+    case SemanticType::Class:
+      break;
+    default:
+      finish();
+      return;
+    }
+    if (type.classId == 0 || type.classId > classes.size()) {
+      addUnknownProgramEffect(span,
+                              "cleanup has no exact resolved class lifecycle");
+      finish();
+      return;
+    }
+    const ClassInfo &owner = classInfo(type.classId);
+    if (includeDirectDestructor && owner.destructor &&
+        owner.destructor->declaration != nullptr) {
+      addProgramEffectEdge(
+          {.kind = ProgramEffectOwnerKind::Destructor, .id = owner.id}, span);
+    }
+    const GenericSubstitution substitution = classSubstitution(type);
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member != owner.members.end()) {
+        recordProgramCleanupEffects(
+            substituteType(member->second.symbol.type, substitution), span,
+            visiting);
+      }
+    }
+    for (const ClassBaseTypeInfo &base : owner.bases) {
+      if (!base.interface) {
+        recordProgramCleanupEffects(substituteType(base.type, substitution),
+                                    span, visiting);
+      }
+    }
+    finish();
+  }
+
+  void recordProgramCleanupEffects(const SemanticType &type,
+                                   const SourceSpan &span,
+                                   bool includeDirectDestructor = true) {
+    std::vector<SemanticType> visiting;
+    recordProgramCleanupEffects(type, span, visiting, includeDirectDestructor);
+  }
+
+  void recordProgramCallEffects(const Expr &expression) {
+    if (!currentProgramEffectOwner.valid()) {
+      return;
+    }
+    if (const auto *fold = dynamic_cast<const PackFold *>(&expression);
+        fold != nullptr && semanticModel.findPackFold(*fold) != nullptr) {
+      addUnknownProgramEffect(expression,
+                              "a pack-expanded GTI call has an open effect "
+                              "set");
+      return;
+    }
+    if (const ResolvedConstructionInfo *construction =
+            semanticModel.findConstruction(expression)) {
+      if (const auto *call = dynamic_cast<const Call *>(&expression)) {
+        recordProgramArgumentBoundaryEffects(construction->parameterTypes,
+                                             call->arguments());
+      } else if (const auto *initializer =
+                     dynamic_cast<const DirectInitializer *>(&expression)) {
+        recordProgramArgumentBoundaryEffects(construction->parameterTypes,
+                                             initializer->arguments());
+      }
+      if (construction->constructedType.kind == SemanticType::Class &&
+          construction->constructedType.classId != 0) {
+        if (hasOpenProgramCleanupShape(construction->constructedType)) {
+          addUnknownProgramEffect(
+              expression,
+              "a generic construction has no closed program-storage effect "
+              "summary");
+          return;
+        }
+        const SourceSpan span = tokenSpan(expressionToken(expression));
+        if (construction->generatedDefault || construction->constructor == 0) {
+          recordProgramDefaultConstructionEffects(construction->constructedType,
+                                                  span);
+        } else {
+          addProgramEffectEdge(
+              {.kind = ProgramEffectOwnerKind::FieldInitializers,
+               .id = construction->constructedType.classId},
+              span);
+          recordProgramSelectedConstructorEffect(
+              programConstructor(construction->constructor),
+              construction->constructedType, span);
+        }
+      }
+    }
+    if (const ResolvedOperatorInfo *operation =
+            semanticModel.findOperator(expression)) {
+      if (const auto *call = dynamic_cast<const Call *>(&expression)) {
+        recordProgramArgumentBoundaryEffects(operation->parameterTypes,
+                                             call->arguments());
+      } else if (const auto *binary = dynamic_cast<const Binary *>(&expression);
+                 binary != nullptr && !operation->parameterTypes.empty()) {
+        if (operation->parameterTypes.front().kind == SemanticType::Reference ||
+            operation->parameterTypes.front().kind ==
+                SemanticType::RawPointer) {
+          forceProgramStorageBoundaryAccess(binary->right());
+        }
+      } else if (const auto *index = dynamic_cast<const Index *>(&expression);
+                 index != nullptr && !operation->parameterTypes.empty()) {
+        if (operation->parameterTypes.front().kind == SemanticType::Reference ||
+            operation->parameterTypes.front().kind ==
+                SemanticType::RawPointer) {
+          forceProgramStorageBoundaryAccess(index->index());
+        }
+      }
+      const FunctionInfo *target =
+          operation->function == 0
+              ? nullptr
+              : semanticModel.findFunction(operation->function);
+      if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
+        return;
+      }
+      if (operation->dispatch != CallDispatch::Static || target == nullptr ||
+          !target->genericParameters.empty()) {
+        addUnknownProgramEffect(
+            expression,
+            "an overloaded operation has no closed static GTI target set");
+      } else if (target->declaration != nullptr &&
+                 target->declaration->runtimeBinding()) {
+        // Trusted runtime bindings cannot execute a hidden GTI body. Their
+        // explicit receiver/argument storage effects were retained above.
+        return;
+      } else if (target->declaration == nullptr ||
+                 target->declaration->body() == nullptr) {
+        addUnknownProgramEffect(
+            expression, "a selected GTI operation has no executable body");
+      } else {
+        addProgramEffectEdge(
+            {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
+            expression);
+      }
+      return;
+    }
+    const auto *call = dynamic_cast<const Call *>(&expression);
+    if (call == nullptr) {
+      return;
+    }
+    if (const ResolvedLambdaCallInfo *lambda =
+            semanticModel.findLambdaCall(*call)) {
+      recordProgramArgumentBoundaryEffects(lambda->parameterTypes,
+                                           call->arguments());
+      addProgramEffectEdge(
+          {.kind = ProgramEffectOwnerKind::Lambda, .id = lambda->lambda},
+          expression);
+      return;
+    }
+    if (semanticModel.findDeferredCallableCall(*call) != nullptr) {
+      const DeferredCallableCallInfo *deferred =
+          semanticModel.findDeferredCallableCall(*call);
+      recordProgramArgumentBoundaryEffects(deferred->parameterTypes,
+                                           call->arguments());
+      addUnknownProgramEffect(
+          expression,
+          "a deferred callable invocation has no closed target set");
+      return;
+    }
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    if (resolved == nullptr || resolved->intrinsic != IntrinsicKind::None) {
+      return;
+    }
+    recordProgramArgumentBoundaryEffects(resolved->parameterTypes,
+                                         call->arguments());
+    const FunctionInfo *target =
+        resolved->function == 0
+            ? nullptr
+            : semanticModel.findFunction(resolved->function);
+    if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
+      return;
+    }
+    if (resolved->dispatch != CallDispatch::Static || target == nullptr ||
+        !target->genericParameters.empty() ||
+        !resolved->typeArguments.empty() || !resolved->valueArguments.empty()) {
+      addUnknownProgramEffect(
+          expression, "a GTI call has no closed static non-generic target");
+      return;
+    }
+    if (target->declaration != nullptr &&
+        target->declaration->runtimeBinding()) {
+      // A trusted runtime boundary contributes only its explicit argument
+      // storage effects; it cannot call an unrecorded GTI body.
+      return;
+    }
+    if (target->declaration == nullptr ||
+        target->declaration->body() == nullptr) {
+      addUnknownProgramEffect(expression,
+                              "a selected GTI function has no executable "
+                              "body");
+      return;
+    }
+    addProgramEffectEdge(
+        {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
+        expression);
+  }
+
+  [[nodiscard]] std::vector<SourceUnitId>
+  programInitializationUnitOrder() const {
+    std::vector<SourceUnitId> result;
+    if (sourceGraph == nullptr) {
+      return result;
+    }
+    std::unordered_set<SourceUnitId> visited;
+    const std::function<void(SourceUnitId)> visit = [&](SourceUnitId unit) {
+      if (unit == 0 || !visited.insert(unit).second) {
+        return;
+      }
+      std::vector<const SourceDependency *> dependencies;
+      for (const SourceDependency &dependency :
+           sourceGraph->dependencyEdges()) {
+        if (dependency.source == unit &&
+            dependency.kind != SourceDependencyKind::Prelude) {
+          dependencies.push_back(&dependency);
+        }
+      }
+      std::sort(
+          dependencies.begin(), dependencies.end(),
+          [](const SourceDependency *left, const SourceDependency *right) {
+            if (left->includeOccurrence != right->includeOccurrence) {
+              return left->includeOccurrence < right->includeOccurrence;
+            }
+            const std::size_t leftStart =
+                left->directive ? left->directive->start : 0;
+            const std::size_t rightStart =
+                right->directive ? right->directive->start : 0;
+            return leftStart != rightStart ? leftStart < rightStart
+                                           : left->target < right->target;
+          });
+      std::unordered_set<SourceUnitId> direct;
+      for (const SourceDependency *dependency : dependencies) {
+        if (direct.insert(dependency->target).second) {
+          visit(dependency->target);
+        }
+      }
+      result.push_back(unit);
+    };
+    for (const SourceUnitId prelude : sourceGraph->preludeRoots()) {
+      visit(prelude);
+    }
+    visit(sourceGraph->entryUnit());
+    return result;
+  }
+
+  void collectProgramInitializationStatement(
+      const Stmt &statement, SourceUnitId sourceUnit,
+      std::optional<ClassId> enclosingClass,
+      std::vector<ProgramInitializationStep> &steps) const {
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(&statement)) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        for (const StmtPtr &child : *branch) {
+          collectProgramInitializationStatement(*child, sourceUnit,
+                                                enclosingClass, steps);
+        }
+      }
+      return;
+    }
+    if (const auto *space = dynamic_cast<const NamespaceDecl *>(&statement)) {
+      for (const StmtPtr &child : space->declarations()) {
+        collectProgramInitializationStatement(*child, sourceUnit,
+                                              enclosingClass, steps);
+      }
+      return;
+    }
+    if (const auto *external = dynamic_cast<const ExternCDecl *>(&statement)) {
+      for (const StmtPtr &child : external->declarations()) {
+        collectProgramInitializationStatement(*child, sourceUnit,
+                                              enclosingClass, steps);
+      }
+      return;
+    }
+    if (const auto *owner = dynamic_cast<const ClassDecl *>(&statement)) {
+      const ClassTypeInfo *info = semanticModel.findClassType(*owner);
+      if (info == nullptr || !info->genericParameters.empty()) {
+        return;
+      }
+      for (const StmtPtr &child : owner->members()) {
+        collectProgramInitializationStatement(*child, sourceUnit, info->id,
+                                              steps);
+      }
+      return;
+    }
+    const auto *variable = dynamic_cast<const VariableDecl *>(&statement);
+    if (variable == nullptr || (enclosingClass && !variable->isStatic())) {
+      return;
+    }
+    const BindingInfo *binding = semanticModel.findBinding(*variable);
+    if (binding == nullptr || binding->symbol == 0) {
+      return;
+    }
+    const SymbolRecord *symbol =
+        semanticModel.database().findSymbol(binding->symbol);
+    const SourceUnitId exactUnit =
+        symbol == nullptr ? sourceUnit : symbol->sourceUnit;
+    steps.push_back(
+        {.sourceUnit = exactUnit,
+         .kind = enclosingClass ? ProgramStorageKind::StaticField
+                                : ProgramStorageKind::NamespaceGlobal,
+         .role = (!variable->initializer() ||
+                  (variable->isConstexpr() && binding->constant &&
+                   canMaterializeProgramConstant(*binding->constant)))
+                     ? ProgramInitializationStepRole::DataOnly
+                     : ProgramInitializationStepRole::Initializer,
+         .declaration = variable,
+         .symbol = binding->symbol,
+         .ownerClass = enclosingClass.value_or(0),
+         .requiresActiveCleanup = requiresActiveCleanupFor(binding->type),
+         .declarationSpan = tokenSpan(variable->name())});
+  }
+
+  void
+  collectProgramEntryStatement(const Stmt &statement,
+                               const FunctionDecl *&entryDeclaration) const {
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(&statement)) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        for (const StmtPtr &child : *branch) {
+          collectProgramEntryStatement(*child, entryDeclaration);
+        }
+      }
+      return;
+    }
+    if (const auto *space = dynamic_cast<const NamespaceDecl *>(&statement)) {
+      for (const StmtPtr &child : space->declarations()) {
+        collectProgramEntryStatement(*child, entryDeclaration);
+      }
+      return;
+    }
+    if (const auto *external = dynamic_cast<const ExternCDecl *>(&statement)) {
+      for (const StmtPtr &child : external->declarations()) {
+        collectProgramEntryStatement(*child, entryDeclaration);
+      }
+      return;
+    }
+    if (const auto *owner = dynamic_cast<const ClassDecl *>(&statement)) {
+      for (const StmtPtr &child : owner->members()) {
+        collectProgramEntryStatement(*child, entryDeclaration);
+      }
+      return;
+    }
+    const auto *function = dynamic_cast<const FunctionDecl *>(&statement);
+    const FunctionInfo *info =
+        function == nullptr ? nullptr : semanticModel.findFunction(*function);
+    if (info != nullptr && info->entryKind != ProgramEntryKind::None) {
+      entryDeclaration = function;
+    }
+  }
+
+  [[nodiscard]] ConstructorId
+  findProgramEntryConstructor(const SemanticType &type,
+                              std::span<const SemanticType> parameters) const {
+    const ClassTypeInfo *classType = semanticModel.findClassType(type.classId);
+    const ClassLifecycleInfo *lifecycle =
+        classType == nullptr || classType->declaration == nullptr
+            ? nullptr
+            : semanticModel.findClassLifecycle(*classType->declaration);
+    if (lifecycle == nullptr) {
+      return 0;
+    }
+    for (const ConstructorInfo &constructor : lifecycle->constructors) {
+      if (constructor.kind == ConstructorKind::Ordinary &&
+          constructor.access == AccessModifier::Public &&
+          constructor.declaration != nullptr &&
+          constructor.parameterTypes.size() == parameters.size() &&
+          std::equal(constructor.parameterTypes.begin(),
+                     constructor.parameterTypes.end(), parameters.begin())) {
+        return constructor.id;
+      }
+    }
+    return 0;
+  }
+
+  [[nodiscard]] static DefinedFailureOperation
+  hostedFailure(const SourceSpan &anchor, DefinedFailureCode code,
+                DefinedFailureDetail detail) {
+    return {.localOrigins = {{.outcomes = {{.code = code, .detail = detail}},
+                              .sourceUnit = 0,
+                              .start = anchor.start,
+                              .end = anchor.end,
+                              .line = anchor.line}}};
+  }
+
+  void finalizeHostedProgramEntry(const Program &program) {
+    const FunctionDecl *entryDeclaration = nullptr;
+    for (const StmtPtr &statement : program.declarations()) {
+      collectProgramEntryStatement(*statement, entryDeclaration);
+    }
+    const FunctionInfo *entry =
+        entryDeclaration == nullptr
+            ? nullptr
+            : semanticModel.findFunction(*entryDeclaration);
+    if (entry == nullptr || entry->entryKind == ProgramEntryKind::None) {
+      semanticModel.setHostedProgramEntryPlan(std::nullopt);
+      return;
+    }
+    HostedProgramEntryPlan plan{
+        .entry = entry->id,
+        .kind = entry->entryKind,
+        .appendFunction = entry->entryArgumentAppendFunction,
+        .sourceUnit = entry->sourceUnit,
+        .mainAnchor = tokenSpan(entryDeclaration->name())};
+    if (entry->entryKind == ProgramEntryKind::OwnedArguments) {
+      if (entry->entryArgumentAppendFunction == 0 ||
+          entry->parameterTypes.size() != 2 ||
+          entry->parameterTypes[1].kind != SemanticType::Class ||
+          entry->parameterTypes[1].arguments.size() != 1) {
+        semanticModel.setHostedProgramEntryPlan(std::nullopt);
+        return;
+      }
+      const SemanticType &vectorType = entry->parameterTypes[1];
+      const SemanticType &stringType = vectorType.arguments.front();
+      plan.vectorConstructor = findProgramEntryConstructor(vectorType, {});
+      const std::array<SemanticType, 1> stringParameters{
+          SemanticType::StringView};
+      plan.stringConstructor =
+          findProgramEntryConstructor(stringType, stringParameters);
+      if (plan.vectorConstructor == 0 || plan.stringConstructor == 0) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2032", DiagnosticPhase::Semantics, plan.mainAnchor,
+            "The owned-argument main entry point has no exact ordinary "
+            "vector or string construction contract for hosted startup.");
+        diagnostic.hints.emplace_back(
+            "Use the canonical std::vector<std::string> and std::string "
+            "definitions supplied by the configured standard library.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        semanticModel.setHostedProgramEntryPlan(std::nullopt);
+        return;
+      }
+      plan.validateCount = hostedFailure(
+          plan.mainAnchor, DefinedFailureCode::HostedRuntimeContractFailure,
+          DefinedFailureDetail::NegativeArgumentCount);
+      plan.convertCount = hostedFailure(
+          plan.mainAnchor, DefinedFailureCode::NumericConversionOutOfRange,
+          DefinedFailureDetail::HostedArgumentCount);
+      for (DefinedFailureOperation *operation :
+           {&plan.validateCount, &plan.convertCount}) {
+        operation->localOrigins.front().sourceUnit = entry->sourceUnit;
+      }
+    }
+    semanticModel.setHostedProgramEntryPlan(std::move(plan));
+  }
+
+  void reportProgramInitializationAccess(
+      const ProgramInitializationStep &initializer, const SourceSpan &primary,
+      const ProgramStorageEffectUse *use, const ProgramUnknownEffect *unknown) {
+    const SymbolRecord *initializerSymbol =
+        semanticModel.database().findSymbol(initializer.symbol);
+    const SymbolRecord *targetSymbol =
+        use == nullptr ? nullptr
+                       : semanticModel.database().findSymbol(use->symbol);
+    const std::string initializerName =
+        initializerSymbol == nullptr ? initializer.declaration->name().lexeme
+                                     : initializerSymbol->qualifiedName;
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2068", DiagnosticPhase::Semantics, primary,
+        unknown != nullptr
+            ? "Cannot prove that initializer for '" + initializerName +
+                  "' avoids uninitialized program-wide storage because " +
+                  unknown->reason + "."
+            : "Initializer for '" + initializerName +
+                  "' may access program-wide storage '" +
+                  (targetSymbol == nullptr ? std::string("<unknown>")
+                                           : targetSymbol->qualifiedName) +
+                  "' before its initialization step completes.");
+    if (use != nullptr &&
+        (use->span.source != primary.source ||
+         use->span.start != primary.start || use->span.end != primary.end ||
+         use->span.line != primary.line)) {
+      diagnostic.related.push_back(
+          {use->span, "The transitive storage access occurs here."});
+    }
+    if (unknown != nullptr && (unknown->span.source != primary.source ||
+                               unknown->span.start != primary.start ||
+                               unknown->span.end != primary.end ||
+                               unknown->span.line != primary.line)) {
+      diagnostic.related.push_back(
+          {unknown->span,
+           "The transitive effect proof becomes incomplete here."});
+    }
+    if (targetSymbol != nullptr) {
+      diagnostic.related.push_back(
+          {targetSymbol->declarationSpan,
+           "This storage is initialized at its own later program step."});
+    }
+    diagnostic.related.push_back(
+        {initializer.declarationSpan,
+         "The rejected initializer is declared here."});
+    diagnostic.hints.emplace_back(
+        "Move the dependency earlier in source-unit/declaration order or "
+        "remove the access from this initializer's closed GTI call graph.");
+    diagnostics.push_back(std::move(diagnostic));
+  }
+
+  void
+  validateProgramInitializationEffects(const ProgramInitializationPlan &plan) {
+    std::unordered_map<SymbolId, ProgramInitializationStepId> stepForSymbol;
+    for (const ProgramInitializationStep &step : plan.steps) {
+      stepForSymbol.emplace(step.symbol, step.id);
+    }
+    for (const ProgramInitializationStep &initializer : plan.steps) {
+      if (initializer.role == ProgramInitializationStepRole::DataOnly) {
+        continue;
+      }
+      std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visiting;
+      std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visited;
+      const std::function<bool(ProgramEffectOwner, std::optional<SourceSpan>)>
+          visit = [&](ProgramEffectOwner owner,
+                      std::optional<SourceSpan> firstEdge) {
+            if (visited.contains(owner) || !visiting.insert(owner).second) {
+              return false;
+            }
+            const auto found = programEffects.find(owner);
+            if (found != programEffects.end()) {
+              const ProgramEffectSummary &summary = found->second;
+              if (!summary.unknown.empty()) {
+                const ProgramUnknownEffect &unknown = summary.unknown.front();
+                reportProgramInitializationAccess(
+                    initializer, firstEdge.value_or(unknown.span), nullptr,
+                    &unknown);
+                return true;
+              }
+              for (const ProgramStorageEffectUse &use : summary.uses) {
+                const auto target = stepForSymbol.find(use.symbol);
+                if (target == stepForSymbol.end() ||
+                    target->second >= initializer.id) {
+                  reportProgramInitializationAccess(
+                      initializer, firstEdge.value_or(use.span), &use, nullptr);
+                  return true;
+                }
+              }
+              for (const ProgramEffectEdge &edge : summary.edges) {
+                if (visit(edge.target,
+                          firstEdge ? firstEdge : std::optional(edge.span))) {
+                  return true;
+                }
+              }
+            }
+            visiting.erase(owner);
+            visited.insert(owner);
+            return false;
+          };
+      (void)visit({.kind = ProgramEffectOwnerKind::Initializer,
+                   .id = initializer.symbol},
+                  std::nullopt);
+    }
+  }
+
+  void finalizeDeferredProgramConstantSubstitutions(
+      const ProgramInitializationPlan &plan) {
+    std::unordered_map<SymbolId, const ConstantValue *> constants;
+    for (const ProgramInitializationStep &step : plan.steps) {
+      const BindingInfo *binding =
+          step.declaration == nullptr
+              ? nullptr
+              : semanticModel.findBinding(*step.declaration);
+      if (binding != nullptr && binding->constant &&
+          canMaterializeProgramConstant(*binding->constant)) {
+        constants.insert_or_assign(step.symbol, &*binding->constant);
+      }
+    }
+    for (auto &[_, summary] : programEffects) {
+      std::erase_if(summary.uses, [&](const ProgramStorageEffectUse &use) {
+        const auto constant = constants.find(use.symbol);
+        if (!use.deferredConstantCandidate || use.expression == nullptr ||
+            constant == constants.end()) {
+          return false;
+        }
+        semanticModel.recordConstant(*use.expression, *constant->second);
+        semanticModel.recordProgramConstantSubstitution(*use.expression);
+        return true;
+      });
+    }
+  }
+
+  void finalizeProgramInitialization(const Program &program) {
+    ProgramInitializationPlan plan;
+    plan.unitOrder = programInitializationUnitOrder();
+    if (sourceGraph == nullptr) {
+      for (const StmtPtr &statement : program.declarations()) {
+        collectProgramInitializationStatement(*statement, 0, std::nullopt,
+                                              plan.steps);
+      }
+    } else {
+      for (const SourceUnitId sourceUnit : plan.unitOrder) {
+        const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+        if (unit == nullptr) {
+          continue;
+        }
+        const std::size_t end =
+            std::min(program.declarations().size(),
+                     unit->declarationStart + unit->declarationCount);
+        std::vector<ProgramInitializationStep> unitSteps;
+        for (std::size_t index = unit->declarationStart; index < end; ++index) {
+          collectProgramInitializationStatement(*program.declarations()[index],
+                                                sourceUnit, std::nullopt,
+                                                unitSteps);
+        }
+        std::stable_sort(unitSteps.begin(), unitSteps.end(),
+                         [](const ProgramInitializationStep &left,
+                            const ProgramInitializationStep &right) {
+                           return left.declarationSpan.start <
+                                  right.declarationSpan.start;
+                         });
+        plan.steps.insert(plan.steps.end(), unitSteps.begin(), unitSteps.end());
+      }
+    }
+    for (std::size_t index = 0; index < plan.steps.size(); ++index) {
+      plan.steps[index].id = index + 1;
+    }
+    finalizeDeferredProgramConstantSubstitutions(plan);
+    validateProgramInitializationEffects(plan);
+    semanticModel.setProgramInitializationPlan(std::move(plan));
+    finalizeHostedProgramEntry(program);
+  }
+
   [[nodiscard]] SourceUnitId statementSourceUnit(const Stmt &statement) const {
     if (const auto *conditional =
             dynamic_cast<const ConditionalStmt *>(&statement)) {
@@ -23637,6 +24697,12 @@ private:
       }
     }
     semanticModel.recordResolvedSymbol(expr, symbolId);
+    recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
+    recordProgramCallEffects(expr);
+    if (info.category == ValueCategory::Value &&
+        requiresActiveCleanupFor(info.type)) {
+      recordProgramCleanupEffects(info.type, tokenSpan(expressionToken(expr)));
+    }
     recordSemanticLoanUse(symbolId);
     if (!token.generated) {
       semanticModel.recordOccurrence(
@@ -27803,6 +28869,11 @@ private:
   std::size_t unsafeDepth = 0;
   std::size_t suppressLoanPlaceAccessDepth = 0;
   std::vector<const Expr *> suppressedProjectedPlaceReads;
+  ProgramEffectOwner currentProgramEffectOwner;
+  std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
+                     ProgramEffectOwnerHash>
+      programEffects;
+  std::size_t programStoragePlaceUseDepth = 0;
   GenericParameterId nextGenericParameterId = 1;
   ConstructorId nextConstructorId = 1;
   FunctionId nextFunctionId = 1;

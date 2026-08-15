@@ -251,7 +251,8 @@ The current key includes:
 - the GTI release and project-manifest model identities, backend C++ standard,
   optimization, execution profile, target triple, and complete GTI data
   layout;
-- SHA-256 content identities for every loaded GTI unit, ordered logical source
+- the ordered `SourceGraph::preludeRoots()` logical identities, followed by
+  SHA-256 content identities for every loaded GTI unit, ordered logical source
   edges, and standard-library import names;
 - the native C++ compiler command, resolved executable content, and `--version`
   output;
@@ -269,8 +270,20 @@ invalidating an otherwise identical entry. Explicit external/native paths
 retain canonical path identity because native `__FILE__`, search order, and
 external ownership make those paths semantically observable.
 
-Entries live beneath `build/gti/cache/v1/<sha256>/` and contain generated C++,
-the executable, and strict metadata recording the digest and size of both.
+Prelude-root order is execution-semantic input, so it is hashed before the
+otherwise canonicalized unit/dependency facts; reordering roots changes the
+cache key even when their contents and edge set are identical. Current direct
+and project requests intentionally resolve one canonical standard-library
+prelude root and expose no free-form override. `SourceGraph` already preserves
+multiple roots for frontend callers. A later manifest/profile feature may
+supply more than one only through an immutable resolved policy, with direct,
+project, and CLI coverage for that ordering contract.
+
+Schema-v2 entries live beneath `build/gti/cache/v2/<sha256>/` and begin with the
+`gti-build-cache-v2` metadata marker. Older `v1` entries and metadata are not
+interpreted under the new ordered-root identity. Each v2 entry contains
+generated C++, the executable, and strict metadata recording the digest and
+size of both.
 Executable permissions are recorded as well. Metadata is published last and
 acts as the commit marker. A hit verifies every digest and the executable mode
 before atomically copying the executable to the requested output; it

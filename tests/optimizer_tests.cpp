@@ -1026,6 +1026,19 @@ int main() {
          "the verifier should reject external C identity on an ordinary GTI "
          "function");
 
+  lang::MirProgram missingFunctionDeclaration = frontend.mir;
+  auto &missingDeclarationFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          missingFunctionDeclaration.functionInstances());
+  if (!missingDeclarationFunctions.empty()) {
+    missingDeclarationFunctions.front().declaration = 0;
+  }
+  expect(!missingDeclarationFunctions.empty() &&
+             hasProgramVerificationMessage(missingFunctionDeclaration,
+                                           "identity or declaration"),
+         "the verifier should reject a function instance whose exact HIR "
+         "declaration identity was removed");
+
   if (mainHir != nullptr) {
     lang::MirProgram unexpectedEntryAdapter = frontend.mir;
     auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
@@ -1832,23 +1845,164 @@ int main() {
   }
 
   const std::string original = lang::MirPrinter().print(frontend.mir);
-  lang::MirProgram enumerationProgram = frontend.mir;
   const std::vector<lang::MirBodyAddress> bodyAddresses =
-      lang::MirProgramEditor(enumerationProgram).bodies();
+      lang::enumerateMirBodyAddresses(frontend.mir);
+  std::vector<lang::MirBodyAddress> expectedBodyAddresses{
+      {.kind = lang::MirBodyKind::Module}};
+  std::vector<const lang::MirBody *> expectedBodies{&frontend.mir.module()};
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    expectedBodyAddresses.push_back(
+        {.kind = lang::MirBodyKind::FieldInitializers, .owner = instance.id});
+    expectedBodyAddresses.push_back(
+        {.kind = lang::MirBodyKind::StaticFieldInitializers,
+         .owner = instance.id});
+    expectedBodies.push_back(&instance.fieldInitializers);
+    expectedBodies.push_back(&instance.staticFieldInitializers);
+  }
+  for (const lang::MirFunctionInstance &instance :
+       frontend.mir.functionInstances()) {
+    expectedBodyAddresses.push_back(
+        {.kind = lang::MirBodyKind::Function, .owner = instance.id});
+    expectedBodies.push_back(&instance.body);
+  }
+  for (const lang::MirConstructorInstance &instance :
+       frontend.mir.constructorInstances()) {
+    expectedBodyAddresses.push_back(
+        {.kind = lang::MirBodyKind::Constructor, .owner = instance.id});
+    expectedBodies.push_back(&instance.body);
+  }
+  for (const lang::MirDestructorInstance &instance :
+       frontend.mir.destructorInstances()) {
+    expectedBodyAddresses.push_back(
+        {.kind = lang::MirBodyKind::Destructor, .owner = instance.id});
+    expectedBodies.push_back(&instance.body);
+  }
+  for (const lang::MirLambdaInstance &instance :
+       frontend.mir.lambdaInstances()) {
+    expectedBodyAddresses.push_back(
+        {.kind = lang::MirBodyKind::Lambda, .owner = instance.id});
+    expectedBodies.push_back(&instance.body);
+  }
+  if (const auto &hosted = frontend.mir.hostedStartupPlan(); hosted) {
+    expectedBodyAddresses.push_back(
+        {.kind = lang::MirBodyKind::HostedStartup, .owner = hosted->entry});
+    expectedBodies.push_back(frontend.mir.hostedStartup());
+  }
   const auto hasBodyKind = [&](lang::MirBodyKind kind) {
     return std::any_of(
         bodyAddresses.begin(), bodyAddresses.end(),
         [kind](lang::MirBodyAddress address) { return address.kind == kind; });
   };
-  expect(hasBodyKind(lang::MirBodyKind::Module) &&
+  bool allAddressesResolveExactly = true;
+  for (std::size_t index = 0; index < bodyAddresses.size(); ++index) {
+    const lang::MirBodyAddress address = bodyAddresses[index];
+    const lang::MirBody *body = lang::findMirBody(frontend.mir, address);
+    allAddressesResolveExactly =
+        allAddressesResolveExactly && body != nullptr &&
+        index < expectedBodies.size() && body == expectedBodies[index] &&
+        body->kind == address.kind;
+  }
+  expect(bodyAddresses == expectedBodyAddresses &&
+             bodyAddresses == lang::enumerateMirBodyAddresses(frontend.mir) &&
+             hasBodyKind(lang::MirBodyKind::Module) &&
              hasBodyKind(lang::MirBodyKind::FieldInitializers) &&
              hasBodyKind(lang::MirBodyKind::StaticFieldInitializers) &&
              hasBodyKind(lang::MirBodyKind::Function) &&
              hasBodyKind(lang::MirBodyKind::Constructor) &&
              hasBodyKind(lang::MirBodyKind::Destructor) &&
-             hasBodyKind(lang::MirBodyKind::Lambda),
-         "the editor should enumerate every MIR body family in deterministic "
-         "program order");
+             hasBodyKind(lang::MirBodyKind::Lambda) &&
+             hasBodyKind(lang::MirBodyKind::HostedStartup) &&
+             allAddressesResolveExactly,
+         "core MIR should enumerate every address exactly once in stable "
+         "module/class/function/constructor/destructor/lambda/hosted order");
+
+  constexpr std::size_t missingOwner = std::numeric_limits<std::size_t>::max();
+  std::vector<lang::MirBodyAddress> missingAddresses{
+      {.kind = lang::MirBodyKind::Module, .owner = 1},
+      {.kind = lang::MirBodyKind::FieldInitializers, .owner = 0},
+      {.kind = lang::MirBodyKind::StaticFieldInitializers, .owner = 0},
+      {.kind = lang::MirBodyKind::Function, .owner = missingOwner},
+      {.kind = lang::MirBodyKind::Constructor, .owner = missingOwner},
+      {.kind = lang::MirBodyKind::Destructor, .owner = missingOwner},
+      {.kind = lang::MirBodyKind::Lambda, .owner = missingOwner},
+      {.kind = lang::MirBodyKind::HostedStartup, .owner = 0},
+      {.kind = lang::MirBodyKind::HostedStartup, .owner = missingOwner},
+      {.kind = static_cast<lang::MirBodyKind>(999), .owner = 0}};
+  if (const lang::HirFunctionInstance *nonEntry =
+          findHirFunction(frontend, "grouped_integer");
+      nonEntry != nullptr) {
+    missingAddresses.push_back(
+        {.kind = lang::MirBodyKind::HostedStartup, .owner = nonEntry->id});
+  }
+  expect(std::all_of(missingAddresses.begin(), missingAddresses.end(),
+                     [&](lang::MirBodyAddress address) {
+                       return lang::findMirBody(frontend.mir, address) ==
+                              nullptr;
+                     }),
+         "core MIR lookup should reject noncanonical module, zero, "
+         "out-of-range, non-entry hosted, and unknown-kind addresses");
+
+  lang::MirProgram staleOwnerInventory = frontend.mir;
+  auto &staleFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      staleOwnerInventory.functionInstances());
+  const lang::MirBodyAddress staleFunctionAddress =
+      staleFunctions.empty()
+          ? lang::MirBodyAddress{.kind = lang::MirBodyKind::Function}
+          : lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                 .owner = staleFunctions.front().id};
+  if (!staleFunctions.empty()) {
+    staleFunctions.front().id = missingOwner;
+  }
+  expect(!staleFunctions.empty() &&
+             lang::findMirBody(staleOwnerInventory, staleFunctionAddress) ==
+                 nullptr,
+         "core MIR lookup should not alias a stale in-range owner to the body "
+         "stored at that vector index");
+
+  lang::MirProgram mutableInventory = frontend.mir;
+  const std::vector<lang::MirBodyAddress> mutableAddresses =
+      lang::enumerateMirBodyAddresses(mutableInventory);
+  std::vector<lang::MirBody> snapshots;
+  snapshots.reserve(mutableAddresses.size());
+  for (const lang::MirBodyAddress address : mutableAddresses) {
+    const lang::MirBody *body = lang::findMirBody(mutableInventory, address);
+    if (body != nullptr) {
+      snapshots.push_back(*body);
+    }
+  }
+  const auto staticAddress = std::find_if(
+      mutableAddresses.begin(), mutableAddresses.end(),
+      [](lang::MirBodyAddress address) {
+        return address.kind == lang::MirBodyKind::StaticFieldInitializers;
+      });
+  lang::MirBody *mutableStatic =
+      staticAddress == mutableAddresses.end()
+          ? nullptr
+          : lang::findMirBody(mutableInventory, *staticAddress);
+  if (mutableStatic != nullptr) {
+    mutableStatic->returnType =
+        mutableStatic->returnType == lang::SemanticType::Void
+            ? lang::SemanticType::Int32
+            : lang::SemanticType::Void;
+  }
+  bool changedOnlyAddressedBody =
+      mutableStatic != nullptr && snapshots.size() == mutableAddresses.size();
+  for (std::size_t index = 0;
+       changedOnlyAddressedBody && index < mutableAddresses.size(); ++index) {
+    const lang::MirBody *body =
+        lang::findMirBody(mutableInventory, mutableAddresses[index]);
+    const bool shouldChange = mutableAddresses[index] == *staticAddress;
+    changedOnlyAddressedBody =
+        body != nullptr && ((*body != snapshots[index]) == shouldChange);
+  }
+  expect(changedOnlyAddressedBody &&
+             std::all_of(missingAddresses.begin(), missingAddresses.end(),
+                         [&](lang::MirBodyAddress address) {
+                           return lang::findMirBody(mutableInventory,
+                                                    address) == nullptr;
+                         }),
+         "mutable core MIR lookup should mutate only the addressed body and "
+         "reject the same missing addresses as const lookup");
   const lang::OptimizationPipeline pipeline;
   const lang::OptimizationResult compatibility = pipeline.run(
       frontend.hir, lang::OptimizationLevel::O1, lang::TargetInfo::host());
@@ -1859,7 +2013,9 @@ int main() {
                                 .level = lang::OptimizationLevel::O0,
                                 .compatibility = &compatibility});
   expect(o0.valid() && o0.report.passes.empty() &&
-             lang::MirPrinter().print(o0.mir) == original,
+             lang::MirPrinter().print(o0.sourceMir) == original &&
+             lang::MirPrinter().print(o0.mir) == original &&
+             lang::verifyMirOptimizationCoherence(o0.sourceMir, o0.mir).valid(),
          "O0 should preserve the owned MIR snapshot byte-for-byte and schedule "
          "no transform");
 
@@ -1884,11 +2040,128 @@ int main() {
           !report.invalidation.reachability && !report.invalidation.dominance,
       "the literal-identity report should expose exact edits, shadow "
       "agreement, repair, and bounded invalidation");
-  expect(lang::verifyMirProgram(o1.mir).valid() &&
-             lang::MirPrinter().print(o1.mir) != original &&
-             lang::MirPrinter().print(frontend.mir) == original,
-         "the shadow pass should produce valid changed MIR without mutating "
-         "the frontend-owned input");
+  expect(
+      lang::verifyMirProgram(o1.mir).valid() &&
+          lang::MirPrinter().print(o1.sourceMir) == original &&
+          lang::verifyMirOptimizationCoherence(o1.sourceMir, o1.mir).valid() &&
+          lang::MirPrinter().print(o1.mir) != original &&
+          lang::MirPrinter().print(frontend.mir) == original,
+      "the shadow pass should produce valid changed MIR without mutating "
+      "the retained source or frontend-owned input");
+
+  lang::MirProgram forgedHeader = o1.mir;
+  auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedHeader.functionInstances());
+  const bool changedHeader = !forgedFunctions.empty();
+  if (changedHeader) {
+    forgedFunctions.front().constexprFunction =
+        !forgedFunctions.front().constexprFunction;
+  }
+  expect(changedHeader && lang::verifyMirProgram(forgedHeader).valid() &&
+             !lang::verifyMirOptimizationCoherence(o1.sourceMir, forgedHeader)
+                  .valid(),
+         "optimization coherence should reject a generically valid constexpr "
+         "header mutation omitted by the MIR printer");
+
+  lang::MirProgram forgedDomain = o1.mir;
+  auto &domainFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedDomain.functionInstances());
+  const bool changedDomain = !domainFunctions.empty();
+  if (changedDomain) {
+    lang::MirBody &body = domainFunctions.front().body;
+    ++body.placeDomain.snapshot;
+    for (lang::MirPlace &place : body.places) {
+      if (place.key) {
+        place.key->domain = body.placeDomain;
+      }
+    }
+    for (lang::MirBlock &block : body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.ownership) {
+          instruction.ownership->place.domain = body.placeDomain;
+        }
+      }
+    }
+  }
+  expect(changedDomain && lang::verifyMirProgram(forgedDomain).valid() &&
+             lang::MirPrinter().print(forgedDomain) ==
+                 lang::MirPrinter().print(o1.mir) &&
+             !lang::verifyMirOptimizationCoherence(o1.sourceMir, forgedDomain)
+                  .valid(),
+         "optimization coherence should compare the exact place snapshot "
+         "even though the MIR printer normalizes that identity");
+
+  lang::MirProgram forgedHostedAddress = o1.mir;
+  auto &forgedHostedPlan =
+      const_cast<std::optional<lang::MirHostedStartupPlan> &>(
+          forgedHostedAddress.hostedStartupPlan());
+  const lang::HirFunctionInstance *replacementEntry =
+      findHirFunction(frontend, "grouped_integer");
+  auto &hostedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedHostedAddress.functionInstances());
+  const bool canRetargetHostedAddress =
+      forgedHostedPlan && replacementEntry != nullptr &&
+      forgedHostedPlan->entry != replacementEntry->id &&
+      forgedHostedPlan->entry <= hostedFunctions.size() &&
+      replacementEntry->id <= hostedFunctions.size();
+  if (canRetargetHostedAddress) {
+    const lang::HirFunctionInstanceId originalEntry = forgedHostedPlan->entry;
+    lang::MirFunctionInstance &original = hostedFunctions[originalEntry - 1];
+    lang::MirFunctionInstance &replacement =
+        hostedFunctions[replacementEntry->id - 1];
+    const auto callEntry = std::find_if(
+        forgedHostedPlan->operations.begin(),
+        forgedHostedPlan->operations.end(), [](const auto &operation) {
+          return operation.kind ==
+                 lang::MirHostedStartupOperationKind::CallEntry;
+        });
+    lang::MirBody *hosted =
+        const_cast<lang::MirBody *>(forgedHostedAddress.hostedStartup());
+    lang::MirInstruction *call = nullptr;
+    if (callEntry != forgedHostedPlan->operations.end() && hosted != nullptr &&
+        callEntry->block != 0 && callEntry->block <= hosted->blocks.size()) {
+      lang::MirBlock &block = hosted->blocks[callEntry->block - 1];
+      const auto found =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const lang::MirInstruction &instruction) {
+                         return instruction.id == callEntry->instruction;
+                       });
+      if (found != block.instructions.end()) {
+        call = &*found;
+      }
+    }
+    original.entryKind = lang::ProgramEntryKind::None;
+    replacement.entryKind = lang::ProgramEntryKind::NoArguments;
+    forgedHostedPlan->entry = replacement.id;
+    callEntry->failureBehavior =
+        replacement.mayRaiseDefinedFailure
+            ? lang::MirHostedStartupFailureBehavior::Propagate
+            : lang::MirHostedStartupFailureBehavior::None;
+    if (call != nullptr) {
+      call->functionTarget = replacement.id;
+      call->definedFailure = {};
+      call->definedFailure.propagation =
+          replacement.mayRaiseDefinedFailure
+              ? lang::FailurePropagationKind::DirectCall
+              : lang::FailurePropagationKind::None;
+    }
+  }
+  const std::vector<lang::MirBodyAddress> forgedHostedAddresses =
+      lang::enumerateMirBodyAddresses(forgedHostedAddress);
+  const lang::MirVerificationResult forgedHostedVerification =
+      lang::verifyMirProgram(forgedHostedAddress);
+  expect(canRetargetHostedAddress && forgedHostedVerification.valid() &&
+             !forgedHostedAddresses.empty() &&
+             forgedHostedAddresses.back() ==
+                 lang::MirBodyAddress{.kind = lang::MirBodyKind::HostedStartup,
+                                      .owner = replacementEntry == nullptr
+                                                   ? 0
+                                                   : replacementEntry->id} &&
+             !lang::verifyMirOptimizationCoherence(o1.sourceMir,
+                                                   forgedHostedAddress)
+                  .valid(),
+         "optimization coherence should freeze the exact final hosted body "
+         "address even after a structurally valid entry retarget");
 
   const lang::FrontendResult independent =
       lang::Frontend().analyze("mir-literal-identity-fold.gti", source);
@@ -1918,10 +2191,12 @@ int main() {
   struct PatchCandidate {
     lang::MirInstructionAddress address;
     lang::MirInstructionId instruction = 0;
+    lang::MirValueId sourceValue = 0;
     lang::Literal literal;
   };
   std::vector<PatchCandidate> candidates;
   std::size_t compatibilityMatches = 0;
+  std::size_t exactReplayMatches = 0;
   const std::vector<std::string> scalarFunctions{
       "grouped_integer", "grouped_float", "grouped_character",
       "grouped_boolean", "grouped_null"};
@@ -1958,6 +2233,9 @@ int main() {
                          .block = beforeBlock.id,
                          .index = instructionIndex},
              .instruction = oldInstruction.id,
+             .sourceValue = oldInstruction.operands.empty()
+                                ? 0
+                                : oldInstruction.operands.front().value,
              .literal = *newInstruction.literal});
         const lang::ConstantEvaluation evaluated =
             lang::evaluateConstantLiteral(
@@ -1965,22 +2243,44 @@ int main() {
                 lang::constantIntegerDomain(newInstruction.info.type));
         const lang::ConstantValue *expected =
             compatibility.replacement(oldInstruction.hirValue);
+        lang::MirInstruction exactReplay = oldInstruction;
+        exactReplay.operation = lang::MirOperation::Literal;
+        exactReplay.operands.clear();
+        exactReplay.literal = newInstruction.literal;
+        exactReplay.literalProvenance = {
+            .kind = lang::MirLiteralProvenanceKind::IdentityFold,
+            .sourceValue = oldInstruction.operands.empty()
+                               ? 0
+                               : oldInstruction.operands.front().value};
+        exactReplayMatches += exactReplay == newInstruction ? 1 : 0;
         if (evaluated.value && expected != nullptr &&
-            *evaluated.value == *expected &&
+            *evaluated.value == *expected && !oldInstruction.operands.empty() &&
             oldInstruction.id == newInstruction.id &&
             oldInstruction.result == newInstruction.result &&
             oldInstruction.hirValue == newInstruction.hirValue &&
             oldInstruction.hirStatement == newInstruction.hirStatement &&
-            oldInstruction.info.type == newInstruction.info.type) {
+            oldInstruction.info.type == newInstruction.info.type &&
+            newInstruction.literalProvenance.kind ==
+                lang::MirLiteralProvenanceKind::IdentityFold &&
+            newInstruction.literalProvenance.sourceValue ==
+                oldInstruction.operands.front().value) {
           ++compatibilityMatches;
         }
       }
     }
   }
   expect(candidates.size() == report.appliedEdits &&
-             compatibilityMatches == candidates.size(),
-         "every rewritten scalar grouping should preserve identity and match "
-         "the compatibility HIR constant exactly");
+             compatibilityMatches == candidates.size() &&
+             exactReplayMatches == candidates.size(),
+         "every rewritten scalar grouping should preserve identity, retain "
+         "all non-rewrite metadata, carry its exact MIR source proof, and "
+         "match the compatibility HIR constant exactly");
+  const std::string optimizedDump = lang::MirPrinter().print(o1.mir);
+  expect(original.find("literal-provenance=source") != std::string::npos &&
+             optimizedDump.find("literal-provenance=identity-fold:v") !=
+                 std::string::npos,
+         "MIR serialization should distinguish lowered literals from "
+         "identity-fold rewrites and retain the latter's source value");
 
   const auto operationCount = [](const lang::MirBody *body,
                                  lang::MirOperation operation) {
@@ -2015,12 +2315,13 @@ int main() {
                                 .mir = o1.mir,
                                 .level = lang::OptimizationLevel::O1,
                                 .compatibility = &compatibility});
-  expect(repeated.valid() && repeated.report.passes.size() == 1 &&
+  expect(!repeated.valid() && repeated.report.passes.size() == 1 &&
              !repeated.report.passes.front().changed &&
              repeated.report.passes.front().appliedEdits == 0 &&
              lang::MirPrinter().print(repeated.mir) ==
                  lang::MirPrinter().print(o1.mir),
-         "literal identity folding should be deterministic and idempotent");
+         "an already optimized program must not masquerade as the canonical "
+         "pre-optimization snapshot on a second pipeline run");
 
   for (const lang::OptimizationLevel level :
        {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
@@ -2052,6 +2353,100 @@ int main() {
          "the editor fixture should expose multiple independent patches");
   if (candidates.size() < 2) {
     return;
+  }
+
+  const auto instructionAt = [](lang::MirProgram &program,
+                                lang::MirInstructionAddress address) {
+    if (address.body.kind != lang::MirBodyKind::Function ||
+        address.body.owner == 0 ||
+        address.body.owner > program.functionInstances().size()) {
+      return static_cast<lang::MirInstruction *>(nullptr);
+    }
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    lang::MirBody &body = functions[address.body.owner - 1].body;
+    if (address.block == 0 || address.block > body.blocks.size() ||
+        address.index >= body.blocks[address.block - 1].instructions.size()) {
+      return static_cast<lang::MirInstruction *>(nullptr);
+    }
+    return &body.blocks[address.block - 1].instructions[address.index];
+  };
+  {
+    lang::MirProgram missingProof = o1.mir;
+    lang::MirInstruction *rewritten =
+        instructionAt(missingProof, candidates.front().address);
+    if (rewritten != nullptr) {
+      rewritten->literalProvenance = {};
+    }
+    expect(rewritten != nullptr &&
+               !lang::verifyMirProgram(missingProof).valid(),
+           "the verifier should reject a rewritten literal with its MIR "
+           "provenance removed");
+  }
+  {
+    lang::MirProgram nonDominatingProof = o1.mir;
+    lang::MirInstruction *rewritten =
+        instructionAt(nonDominatingProof, candidates.front().address);
+    if (rewritten != nullptr && rewritten->result) {
+      rewritten->literalProvenance.sourceValue = *rewritten->result;
+    }
+    expect(rewritten != nullptr && rewritten->result &&
+               !lang::verifyMirProgram(nonDominatingProof).valid(),
+           "the verifier should reject a literal rewrite whose claimed "
+           "source does not strictly dominate it");
+  }
+  {
+    lang::MirProgram unequalLiteral = o1.mir;
+    const auto integerCandidate = std::find_if(
+        candidates.begin(), candidates.end(), [](const PatchCandidate &value) {
+          return std::holds_alternative<std::uint64_t>(value.literal);
+        });
+    lang::MirInstruction *rewritten =
+        integerCandidate == candidates.end()
+            ? nullptr
+            : instructionAt(unequalLiteral, integerCandidate->address);
+    if (rewritten != nullptr && rewritten->literal) {
+      rewritten->literal = lang::Literal{std::uint64_t{41}};
+    }
+    expect(rewritten != nullptr &&
+               !lang::verifyMirProgram(unequalLiteral).valid(),
+           "the verifier should reject an in-domain rewrite literal that is "
+           "not exact along its retained identity chain");
+  }
+  {
+    lang::MirProgram invalidKind = o1.mir;
+    lang::MirInstruction *rewritten =
+        instructionAt(invalidKind, candidates.front().address);
+    if (rewritten != nullptr) {
+      rewritten->literalProvenance.kind = lang::MirLiteralProvenanceKind::Count;
+    }
+    expect(rewritten != nullptr && !lang::verifyMirProgram(invalidKind).valid(),
+           "the verifier should reject an unknown literal provenance kind");
+  }
+  {
+    lang::MirProgram leakedProof = frontend.mir;
+    lang::MirInstruction *identity =
+        instructionAt(leakedProof, candidates.front().address);
+    if (identity != nullptr) {
+      identity->literalProvenance = {
+          .kind = lang::MirLiteralProvenanceKind::IdentityFold,
+          .sourceValue = candidates.front().sourceValue};
+    }
+    expect(identity != nullptr && !lang::verifyMirProgram(leakedProof).valid(),
+           "the verifier should reject literal-rewrite provenance attached "
+           "to a non-literal instruction");
+  }
+  {
+    lang::MirProgram leakedLiteral = frontend.mir;
+    lang::MirInstruction *identity =
+        instructionAt(leakedLiteral, candidates.front().address);
+    if (identity != nullptr) {
+      identity->literal = lang::Literal{std::uint64_t{42}};
+    }
+    expect(identity != nullptr &&
+               !lang::verifyMirProgram(leakedLiteral).valid(),
+           "the verifier should reject literal payload metadata attached to "
+           "a non-literal instruction");
   }
 
   const auto queue = [](lang::MirProgramEditor &editor,
@@ -2126,6 +2521,28 @@ int main() {
                lang::MirPrinter().print(invalid) == before,
            "the editor should reject an integer replacement outside its exact "
            "result domain without committing any patch");
+  }
+  {
+    lang::MirProgram invalid = frontend.mir;
+    lang::MirInstruction *identity =
+        instructionAt(invalid, candidates.front().address);
+    if (identity != nullptr) {
+      identity->operands.clear();
+      (void)lang::rebuildMirValueUses(
+          const_cast<std::vector<lang::MirFunctionInstance> &>(
+              invalid
+                  .functionInstances())[candidates.front().address.body.owner -
+                                        1]
+              .body);
+    }
+    const std::string before = lang::MirPrinter().print(invalid);
+    lang::MirProgramEditor editor(invalid);
+    queue(editor, candidates.front());
+    const lang::MirEditResult edited = editor.apply();
+    expect(identity != nullptr && !edited.valid() && !edited.changed &&
+               lang::MirPrinter().print(invalid) == before,
+           "the editor should reject an identity with no exact source before "
+           "constructing rewrite provenance");
   }
 
   lang::MirProgram forward = frontend.mir;
@@ -2202,12 +2619,14 @@ void testMirDominanceAndValueAvailability() {
   const lang::ExpressionInfo intInfo{.type = lang::SemanticType::Int32};
   const auto literalInstruction = [&](lang::MirInstructionId instruction,
                                       lang::MirValueId result) {
-    return lang::MirInstruction{.id = instruction,
-                                .kind = lang::MirInstructionKind::Compute,
-                                .result = result,
-                                .operation = lang::MirOperation::Literal,
-                                .literal = lang::Literal{std::uint64_t{1}},
-                                .info = intInfo};
+    return lang::MirInstruction{
+        .id = instruction,
+        .kind = lang::MirInstructionKind::Compute,
+        .result = result,
+        .operation = lang::MirOperation::Literal,
+        .literal = lang::Literal{std::uint64_t{1}},
+        .literalProvenance = {.kind = lang::MirLiteralProvenanceKind::Source},
+        .info = intInfo};
   };
   const auto identityInstruction = [&](lang::MirInstructionId instruction,
                                        lang::MirValueId result,
@@ -2363,6 +2782,206 @@ void testMirDominanceAndValueAvailability() {
   expect(!lang::computeMirDominance(malformedCfg),
          "dominance analysis should reject an invalid CFG without invoking "
          "LLVM on malformed edges");
+
+  lang::MirBody scalarInitialization = finish(lang::MirBody{
+      .kind = lang::MirBodyKind::Function,
+      .placeDomain = {.snapshot = 1, .body = 1},
+      .entry = 1,
+      .returnType = lang::SemanticType::Int32,
+      .blocks =
+          {{.id = 1,
+            .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                           .value =
+                               lang::MirOperand{
+                                   .kind = lang::MirOperandKind::Constant,
+                                   .literal = lang::Literal{true},
+                                   .type = lang::SemanticType::Bool},
+                           .target = 2,
+                           .elseTarget = 3}},
+           {.id = 2,
+            .instructions = {literalInstruction(1, 1),
+                             {.id = 2,
+                              .kind = lang::MirInstructionKind::Initialize,
+                              .destination = 1,
+                              .operands = {{.kind = lang::MirOperandKind::Value,
+                                            .value = 1,
+                                            .type = lang::SemanticType::Int32}},
+                              .info = intInfo}},
+            .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4}},
+           {.id = 3,
+            .instructions = {literalInstruction(3, 2),
+                             {.id = 4,
+                              .kind = lang::MirInstructionKind::Initialize,
+                              .destination = 1,
+                              .operands = {{.kind = lang::MirOperandKind::Value,
+                                            .value = 2,
+                                            .type = lang::SemanticType::Int32}},
+                              .info = intInfo}},
+            .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4}},
+           {.id = 4,
+            .instructions = {{.id = 5,
+                              .kind = lang::MirInstructionKind::Load,
+                              .result = 3,
+                              .operands = {{.kind = lang::MirOperandKind::Copy,
+                                            .place = 1,
+                                            .type = lang::SemanticType::Int32}},
+                              .info = intInfo}},
+            .terminator = {.kind = lang::MirTerminatorKind::Return,
+                           .value =
+                               lang::MirOperand{
+                                   .kind = lang::MirOperandKind::Value,
+                                   .value = 3,
+                                   .type = lang::SemanticType::Int32}}}},
+      .places = {{.id = 1,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 1,
+                  .symbol = 1,
+                  .type = lang::SemanticType::Int32,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32),
+                  .key = lang::PlaceKey{.domain = {.snapshot = 1, .body = 1},
+                                        .root = 1}}},
+      .values = {{.id = 1,
+                  .sourceValue = 1,
+                  .info = intInfo,
+                  .definitionBlock = 2,
+                  .definition = 1},
+                 {.id = 2,
+                  .sourceValue = 2,
+                  .info = intInfo,
+                  .definitionBlock = 3,
+                  .definition = 3},
+                 {.id = 3,
+                  .sourceValue = 3,
+                  .info = intInfo,
+                  .definitionBlock = 4,
+                  .definition = 5}}});
+  expect(lang::verifyMirBody(scalarInitialization).valid(),
+         "scalar initialization on every predecessor should make a merge "
+         "load valid");
+
+  lang::MirBody scalarAlias = scalarInitialization;
+  scalarAlias.places.push_back(scalarAlias.places.front());
+  scalarAlias.places.back().id = 2;
+  scalarAlias.blocks.back().instructions.front().operands.front().place = 2;
+  (void)lang::rebuildMirValueUses(scalarAlias);
+  expect(lang::verifyMirBody(scalarAlias).valid(),
+         "scalar availability should follow exact storage identity across "
+         "duplicate MIR place records");
+
+  lang::MirBody missingScalarInitialization = scalarInitialization;
+  missingScalarInitialization.blocks.front().terminator.target = 4;
+  lang::rebuildMirReachability(missingScalarInitialization);
+  (void)lang::rebuildMirValueUses(missingScalarInitialization);
+  const lang::MirVerificationResult missingScalarResult =
+      lang::verifyMirBody(missingScalarInitialization);
+  expect(!missingScalarResult.valid() && !missingScalarResult.errors.empty() &&
+             missingScalarResult.errors.front().message.find(
+                 "definitely initialized scalar place") != std::string::npos,
+         "the verifier should reject a scalar load when one reachable "
+         "predecessor bypasses initialization");
+
+  lang::MirBody scalarTerminator = scalarInitialization;
+  scalarTerminator.blocks.back().instructions.clear();
+  scalarTerminator.blocks.back().terminator.value =
+      lang::MirOperand{.kind = lang::MirOperandKind::Copy,
+                       .place = 1,
+                       .type = lang::SemanticType::Int32};
+  scalarTerminator.values.pop_back();
+  (void)lang::rebuildMirValueUses(scalarTerminator);
+  expect(lang::verifyMirBody(scalarTerminator).valid(),
+         "a scalar place initialized on every path should be valid as a "
+         "direct return operand");
+
+  lang::MirBody missingTerminatorInitialization = scalarTerminator;
+  missingTerminatorInitialization.blocks.front().terminator.target = 4;
+  lang::rebuildMirReachability(missingTerminatorInitialization);
+  (void)lang::rebuildMirValueUses(missingTerminatorInitialization);
+  const lang::MirVerificationResult missingTerminatorResult =
+      lang::verifyMirBody(missingTerminatorInitialization);
+  expect(!missingTerminatorResult.valid() &&
+             !missingTerminatorResult.errors.empty() &&
+             missingTerminatorResult.errors.front().message.find(
+                 "terminator place access") != std::string::npos,
+         "the verifier should reject a direct terminator place operand when "
+         "one reachable path bypasses initialization");
+
+  lang::MirBody scalarAssignment = finish(lang::MirBody{
+      .kind = lang::MirBodyKind::Function,
+      .placeDomain = {.snapshot = 1, .body = 2},
+      .entry = 1,
+      .returnType = lang::SemanticType::Int32,
+      .blocks =
+          {{.id = 1,
+            .instructions = {literalInstruction(1, 1),
+                             {.id = 2,
+                              .kind = lang::MirInstructionKind::Assign,
+                              .result = 2,
+                              .destination = 1,
+                              .operands = {{.kind = lang::MirOperandKind::Value,
+                                            .value = 1,
+                                            .type = lang::SemanticType::Int32}},
+                              .operation = lang::MirOperation::Assign,
+                              .info = intInfo}},
+            .terminator = {.kind = lang::MirTerminatorKind::Return,
+                           .value =
+                               lang::MirOperand{
+                                   .kind = lang::MirOperandKind::Value,
+                                   .value = 2,
+                                   .type = lang::SemanticType::Int32}}}},
+      .places = {{.id = 1,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 1,
+                  .symbol = 1,
+                  .type = lang::SemanticType::Int32,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32),
+                  .key = lang::PlaceKey{.domain = {.snapshot = 1, .body = 2},
+                                        .root = 1},
+                  .initiallyAvailable = true}},
+      .values = {{.id = 1,
+                  .sourceValue = 1,
+                  .info = intInfo,
+                  .definitionBlock = 1,
+                  .definition = 1},
+                 {.id = 2,
+                  .sourceValue = 2,
+                  .info = intInfo,
+                  .definitionBlock = 1,
+                  .definition = 2}}});
+  expect(lang::verifyMirBody(scalarAssignment).valid(),
+         "assignment to an initially available scalar place should remain "
+         "valid MIR");
+  scalarAssignment.places.front().initiallyAvailable = false;
+  const lang::MirVerificationResult uninitializedAssignment =
+      lang::verifyMirBody(scalarAssignment);
+  expect(!uninitializedAssignment.valid() &&
+             !uninitializedAssignment.errors.empty() &&
+             uninitializedAssignment.errors.front().message.find(
+                 "assignment requires") != std::string::npos,
+         "an Assign instruction must not masquerade as a scalar place's "
+         "initialization");
+
+  lang::MirBody emptyScalarInitialization = scalarAssignment;
+  emptyScalarInitialization.places.front().initiallyAvailable = false;
+  lang::MirInstruction &declaration =
+      emptyScalarInitialization.blocks.front().instructions.back();
+  declaration.kind = lang::MirInstructionKind::Initialize;
+  declaration.result.reset();
+  declaration.operands.clear();
+  declaration.operation = lang::MirOperation::None;
+  emptyScalarInitialization.values.pop_back();
+  emptyScalarInitialization.blocks.front().terminator.value =
+      lang::MirOperand{.kind = lang::MirOperandKind::Copy,
+                       .place = 1,
+                       .type = lang::SemanticType::Int32};
+  (void)lang::rebuildMirValueUses(emptyScalarInitialization);
+  const lang::MirVerificationResult emptyInitializationRead =
+      lang::verifyMirBody(emptyScalarInitialization);
+  expect(!emptyInitializationRead.valid() &&
+             !emptyInitializationRead.errors.empty() &&
+             emptyInitializationRead.errors.front().message.find(
+                 "terminator place access") != std::string::npos,
+         "an operand-free scalar declaration must not establish definite "
+         "initialization for a later place read");
 }
 
 void testMirEffectClassification() {
@@ -2614,6 +3233,7 @@ int main() {
                indexed + unwrapped + invoked + int(unsigned_quotient) +
                int(unsigned_shifted) + virtual_value + callable_value);
 }
+
 )",
       {std::filesystem::path(__FILE__).parent_path().parent_path() /
        "stdlib/prelude.gti"});
@@ -2701,6 +3321,8 @@ int main() {
   bool sawIndexedLoad = false;
   bool sawConstructorPropagation = false;
   std::size_t directPropagations = 0;
+  bool sawFailureFreeDirectCall = false;
+  bool sawFailingDirectCall = false;
   std::size_t localOriginCount = 0;
   bool allAnchorsExact = true;
   bool allFailureEffectsTrap = true;
@@ -2731,13 +3353,32 @@ int main() {
                                     lang::FailurePropagationKind::DirectCall
                                 ? 1
                                 : 0;
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.dispatch == lang::CallDispatch::Static &&
+          instruction.functionTarget &&
+          instruction.intrinsic == lang::IntrinsicKind::None) {
+        const lang::MirFunctionInstance *target =
+            frontend.mir.findFunctionInstance(*instruction.functionTarget);
+        if (target != nullptr &&
+            target->linkage == lang::LanguageLinkage::Gti) {
+          sawFailureFreeDirectCall = sawFailureFreeDirectCall ||
+                                     (!target->mayRaiseDefinedFailure &&
+                                      instruction.definedFailure.propagation ==
+                                          lang::FailurePropagationKind::None);
+          sawFailingDirectCall = sawFailingDirectCall ||
+                                 (target->mayRaiseDefinedFailure &&
+                                  instruction.definedFailure.propagation ==
+                                      lang::FailurePropagationKind::DirectCall);
+        }
+      }
     }
   }
   expect(localOriginCount >= 8 && allAnchorsExact && sawIndexedLoad &&
-             sawConstructorPropagation && directPropagations >= 2 &&
+             sawConstructorPropagation && directPropagations >= 1 &&
+             sawFailureFreeDirectCall && sawFailingDirectCall &&
              allFailureEffectsTrap,
          "MIR should retain exact local origins, constructor/call propagation, "
-         "and optimizer barriers");
+         "no-fail call summaries, and optimizer barriers");
 
   bool sawVirtualPropagation = false;
   bool sawCallablePropagation = false;
@@ -2758,12 +3399,12 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v18\n") &&
+  expect(dump.starts_with("mir-body-v23\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
              dump.find("failure-propagation=direct-call") != std::string::npos,
-         "MIR v18 should serialize exact failure identities deterministically");
+         "MIR v23 should serialize exact failure identities deterministically");
 
   const auto firstOriginInstruction = [](lang::MirBody &body) {
     for (lang::MirBlock &block : body.blocks) {
@@ -2865,6 +3506,127 @@ int main() {
                          }),
          "program verification should reject a call that drops its exact "
          "failure propagation channel");
+}
+
+void testScalarDefinedFailureEffectClosure() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("scalar-defined-failure-effects.gti", R"(
+void declared_void();
+int32_t declared_scalar(int32_t value);
+
+int32_t stable_leaf(int32_t value) { return value; }
+int32_t stable_middle(int32_t value) { return stable_leaf(value); }
+int32_t stable_top(int32_t value) { return stable_middle(value); }
+
+int32_t cycle_left(int32_t value) { return cycle_right(value); }
+int32_t cycle_right(int32_t value) { return cycle_left(value); }
+
+int main() { return stable_top(0); }
+)");
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "the scalar/static-call failure-effect fixture should produce "
+         "verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto findMir = [&](std::string_view name) {
+    const lang::HirFunctionInstance *hir =
+        findHirFunction(frontend, std::string{name});
+    return hir == nullptr
+               ? static_cast<const lang::MirFunctionInstance *>(nullptr)
+               : frontend.mir.findFunctionInstance(hir->id);
+  };
+  const lang::MirFunctionInstance *declaredVoid = findMir("declared_void");
+  const lang::MirFunctionInstance *declaredScalar = findMir("declared_scalar");
+  const lang::MirFunctionInstance *leaf = findMir("stable_leaf");
+  const lang::MirFunctionInstance *middle = findMir("stable_middle");
+  const lang::MirFunctionInstance *top = findMir("stable_top");
+  const lang::MirFunctionInstance *cycleLeft = findMir("cycle_left");
+  const lang::MirFunctionInstance *cycleRight = findMir("cycle_right");
+  expect(declaredVoid != nullptr && declaredScalar != nullptr &&
+             declaredVoid->definitionKind ==
+                 lang::MirFunctionInstance::DefinitionKind::Declaration &&
+             declaredScalar->definitionKind ==
+                 lang::MirFunctionInstance::DefinitionKind::Declaration &&
+             declaredVoid->mayRaiseDefinedFailure &&
+             declaredScalar->mayRaiseDefinedFailure,
+         "bodyless void and scalar-return GTI declarations must remain "
+         "conservatively failure-capable");
+  expect(leaf != nullptr && middle != nullptr && top != nullptr &&
+             leaf->definitionKind ==
+                 lang::MirFunctionInstance::DefinitionKind::Source &&
+             middle->definitionKind ==
+                 lang::MirFunctionInstance::DefinitionKind::Source &&
+             top->definitionKind ==
+                 lang::MirFunctionInstance::DefinitionKind::Source &&
+             !leaf->mayRaiseDefinedFailure && !middle->mayRaiseDefinedFailure &&
+             !top->mayRaiseDefinedFailure,
+         "a leaf-to-middle-to-top scalar/static call chain should be proved "
+         "failure-free transitively");
+  expect(cycleLeft != nullptr && cycleRight != nullptr &&
+             cycleLeft->mayRaiseDefinedFailure &&
+             cycleRight->mayRaiseDefinedFailure,
+         "a recursive scalar/static call cycle must remain conservatively "
+         "failure-capable");
+
+  const auto hasCall = [](const lang::MirFunctionInstance *caller,
+                          const lang::MirFunctionInstance *callee,
+                          lang::FailurePropagationKind propagation) {
+    if (caller == nullptr || callee == nullptr) {
+      return false;
+    }
+    for (const lang::MirBlock &block : caller->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget == callee->id &&
+            instruction.definedFailure.propagation == propagation) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  expect(hasCall(middle, leaf, lang::FailurePropagationKind::None) &&
+             hasCall(top, middle, lang::FailurePropagationKind::None),
+         "transitively proved scalar calls should lower without a failure "
+         "propagation edge");
+  expect(hasCall(cycleLeft, cycleRight,
+                 lang::FailurePropagationKind::DirectCall) &&
+             hasCall(cycleRight, cycleLeft,
+                     lang::FailurePropagationKind::DirectCall),
+         "recursive calls should retain direct failure propagation");
+
+  lang::MirProgram forgedPrototype = frontend.mir;
+  auto &prototypeFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forgedPrototype.functionInstances());
+  if (declaredScalar != nullptr) {
+    prototypeFunctions[declaredScalar->id - 1].mayRaiseDefinedFailure = false;
+  }
+  expect(declaredScalar != nullptr &&
+             !lang::verifyMirProgram(forgedPrototype).valid(),
+         "generic MIR verification should reject a failure-free claim for a "
+         "bodyless GTI declaration");
+
+  lang::MirProgram forgedCycle = frontend.mir;
+  auto &cycleFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedCycle.functionInstances());
+  if (cycleLeft != nullptr) {
+    cycleFunctions[cycleLeft->id - 1].mayRaiseDefinedFailure = false;
+  }
+  expect(cycleLeft != nullptr && !lang::verifyMirProgram(forgedCycle).valid(),
+         "generic MIR verification should reject a failure-free claim for a "
+         "recursive scalar call cycle");
+
+  const std::string dump = lang::MirPrinter().print(frontend.mir);
+  expect(dump.find("definition=declaration may-raise-defined-failure=1") !=
+                 std::string::npos &&
+             dump.find("definition=source may-raise-defined-failure=0") !=
+                 std::string::npos,
+         "MIR v20 should serialize definition provenance beside the "
+         "defined-failure summary");
 }
 
 void testSynchronizationMirContract() {
@@ -4266,6 +5028,123 @@ int main() {
          "expression before a following owner mutation");
 }
 
+void testExactValueRootBorrowProducerIdentity() {
+  const std::filesystem::path repository =
+      std::filesystem::path(__FILE__).parent_path().parent_path();
+  const std::filesystem::path standardLibrary = repository / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "value-root-borrow-producer.gti", R"(
+#include <std/cstdio>
+
+int main() {
+  mut auto opened = std::fopen("bytes.bin", "rb");
+  if (!opened) { return 1; }
+  auto first = opened.value()->get();
+  auto second = std::fgetc(*opened.value());
+  auto third = opened.value()->get();
+  auto exhausted = opened.value()->get();
+  return 0;
+}
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  const lang::HirFunctionInstance *main = findHirFunction(frontend, "main");
+  const lang::MirFunctionInstance *mirMain =
+      main == nullptr ? nullptr : frontend.mir.findFunctionInstance(main->id);
+
+  struct ValueRootBorrow {
+    lang::MirLoanId loan = 0;
+    lang::MirPlaceId source = 0;
+  };
+  const auto valueRootBorrows = [](const lang::MirBody &body) {
+    std::vector<ValueRootBorrow> result;
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            instruction.borrowOrigin != lang::BorrowOriginKind::Receiver ||
+            !instruction.receiver || instruction.receiver->place == 0 ||
+            !instruction.loan) {
+          continue;
+        }
+        const lang::MirPlace *receiver =
+            body.findPlace(instruction.receiver->place);
+        const lang::MirLoan *loan = body.findLoan(*instruction.loan);
+        if (receiver != nullptr && loan != nullptr &&
+            receiver->root == lang::MirPlaceRootKind::Value &&
+            loan->source == receiver->id) {
+          result.push_back({.loan = loan->id, .source = loan->source});
+        }
+      }
+    }
+    return result;
+  };
+  const auto distinctValueRoot = [](const lang::MirBody &body,
+                                    const lang::MirPlace *source) {
+    if (source == nullptr) {
+      return static_cast<const lang::MirPlace *>(nullptr);
+    }
+    const auto found = std::find_if(
+        body.places.begin(), body.places.end(),
+        [&](const lang::MirPlace &place) {
+          return place.root == lang::MirPlaceRootKind::Value &&
+                 place.id != source->id && place.value != source->value &&
+                 place.type == source->type && place.projections.empty() &&
+                 source->projections.empty();
+        });
+    return found == body.places.end() ? nullptr : &*found;
+  };
+
+  const std::vector<ValueRootBorrow> accepted =
+      mirMain == nullptr ? std::vector<ValueRootBorrow>{}
+                         : valueRootBorrows(mirMain->body);
+  const lang::MirPlace *acceptedSource =
+      mirMain == nullptr || accepted.empty()
+          ? nullptr
+          : mirMain->body.findPlace(accepted.front().source);
+  const lang::MirPlace *distinct =
+      mirMain == nullptr ? nullptr
+                         : distinctValueRoot(mirMain->body, acceptedSource);
+  expect(frontend.canGenerateCode() && main != nullptr && mirMain != nullptr &&
+             !accepted.empty() && acceptedSource != nullptr &&
+             distinct != nullptr &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "an exact Value-root receiver should preserve its own call-result "
+         "loan identity when the producer has no earlier borrow source");
+  if (!frontend.canGenerateCode() || main == nullptr || mirMain == nullptr ||
+      accepted.empty() || acceptedSource == nullptr || distinct == nullptr) {
+    return;
+  }
+
+  lang::MirProgram wrongSource = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      wrongSource.functionInstances());
+  lang::MirFunctionInstance &wrongMain = functions[main->id - 1];
+  std::vector<ValueRootBorrow> wrongCandidates =
+      valueRootBorrows(wrongMain.body);
+  const lang::MirPlace *wrongAcceptedSource =
+      wrongCandidates.empty()
+          ? nullptr
+          : wrongMain.body.findPlace(wrongCandidates.front().source);
+  const lang::MirPlace *wrongDistinct =
+      distinctValueRoot(wrongMain.body, wrongAcceptedSource);
+  if (!wrongCandidates.empty() && wrongDistinct != nullptr) {
+    wrongMain.body.loans[wrongCandidates.front().loan - 1].source =
+        wrongDistinct->id;
+  }
+  const lang::MirVerificationResult rejected =
+      lang::verifyMirProgram(wrongSource);
+  expect(!wrongCandidates.empty() && wrongDistinct != nullptr &&
+             !rejected.valid() &&
+             std::any_of(rejected.errors.begin(), rejected.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find(
+                                      "does not preserve the selected receiver "
+                                      "or argument source identity") !=
+                                  std::string::npos;
+                         }),
+         "the verifier should reject a call-result loan retargeted to a "
+         "distinct exact Value-root receiver");
+}
+
 void testReturnEdgeLoanIdentity() {
   const lang::SemanticType reference = lang::SemanticType::referenceTo(
       lang::SemanticType::Int32, lang::AccessMode::ReadOnly);
@@ -5598,9 +6477,11 @@ int main() {
   testMirDominanceAndValueAvailability();
   testMirEffectClassification();
   testDefinedFailureIdentityAndPropagation();
+  testScalarDefinedFailureEffectClosure();
   testSynchronizationMirContract();
   testExclusiveReborrowMirFlow();
   testTransientBorrowNormalization();
+  testExactValueRootBorrowProducerIdentity();
   testReturnEdgeLoanIdentity();
   testCallableBoundaryMirMetadata();
   testOwnedCallableTransportMirMetadata();

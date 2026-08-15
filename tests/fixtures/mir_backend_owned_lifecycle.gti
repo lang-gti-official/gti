@@ -1,0 +1,74 @@
+mut int32_t close_bits = 0;
+mut int32_t first_close = 0;
+
+class ScopeFlag {
+public:
+  int32_t bit;
+
+  ScopeFlag(int32_t value) : bit(value) {}
+
+  ~ScopeFlag() {
+    close_bits = close_bits | this.bit;
+    if (first_close == 0) {
+      first_close = this.bit;
+    }
+  }
+};
+
+void consume(ScopeFlag flag) {}
+
+int32_t run_scopes() {
+  close_bits = 0;
+  first_close = 0;
+  int32_t scalar = 7;
+  {
+    ScopeFlag outer = ScopeFlag(1);
+    {
+      mut ScopeFlag inner = ScopeFlag(2);
+      consume(std::move(inner));
+    }
+  }
+  if (close_bits != 3) {
+    return 1;
+  }
+  if (first_close != 2) {
+    return 2;
+  }
+  if (scalar != 7) {
+    return 3;
+  }
+  return 0;
+}
+
+class CompatibilityDefaultField {
+public:
+  int32_t bit = 4;
+
+  CompatibilityDefaultField(int32_t value) : bit(value) {}
+
+  ~CompatibilityDefaultField() {
+    close_bits = close_bits | this.bit;
+  }
+};
+
+int32_t compatibility_default_field() {
+  CompatibilityDefaultField value = CompatibilityDefaultField(4);
+  return value.bit;
+}
+
+int32_t compatibility_checked(int32_t value) {
+  return value + 1;
+}
+
+int main() {
+  if (run_scopes() != 0) {
+    return 1;
+  }
+  if (compatibility_default_field() != 4) {
+    return 2;
+  }
+  if (compatibility_checked(4) != 5) {
+    return 3;
+  }
+  return 0;
+}

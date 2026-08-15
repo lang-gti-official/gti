@@ -78,6 +78,9 @@ struct DefinedFailureOrigin {
   std::size_t start = 0;
   std::size_t end = 0;
   int line = 1;
+
+  friend bool operator==(const DefinedFailureOrigin &,
+                         const DefinedFailureOrigin &) = default;
 };
 
 enum class FailurePropagationKind : std::uint8_t {
@@ -87,6 +90,8 @@ enum class FailurePropagationKind : std::uint8_t {
   Constructor,
   Callable,
   TaskJoin,
+  BodyCall,
+  Destructor,
   Count,
 };
 
@@ -97,6 +102,9 @@ struct DefinedFailureOperation {
   [[nodiscard]] bool empty() const {
     return localOrigins.empty() && propagation == FailurePropagationKind::None;
   }
+
+  friend bool operator==(const DefinedFailureOperation &,
+                         const DefinedFailureOperation &) = default;
 };
 
 [[nodiscard]] constexpr bool validDefinedFailureCode(DefinedFailureCode code) {

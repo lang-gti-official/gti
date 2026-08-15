@@ -1,0 +1,7 @@
+int32_t checked_multiply(int32_t value, int32_t factor) {
+  return value * factor;
+}
+
+int main() {
+  return checked_multiply(1073741824, 2);
+}

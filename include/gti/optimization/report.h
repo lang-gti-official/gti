@@ -21,6 +21,8 @@ struct OptimizationPassReport {
 struct OptimizationReport {
   bool verificationEnabled = false;
   MirVerificationResult inputVerification;
+  // Complete output validity, including exact coherence with the retained
+  // pre-optimization MIR snapshot.
   MirVerificationResult outputVerification;
   std::vector<OptimizationPassReport> passes;
 

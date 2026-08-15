@@ -210,6 +210,7 @@ void testSemanticLayoutAndAbi() {
                                    .semantics = result.semantics,
                                    .hir = result.hir,
                                    .mir = result.mir,
+                                   .sourceMir = &result.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("static_assert(sizeof(Packet) == 32") !=
@@ -604,6 +605,7 @@ int main() {
                                      .semantics = valid.semantics,
                                      .hir = valid.hir,
                                      .mir = valid.mir,
+                                     .sourceMir = &valid.mir,
                                      .optimizations = optimizations});
     expect(cpp.contents.find("struct NativeEngine;") != std::string::npos &&
                cpp.contents.find("struct NativeEngine {") ==

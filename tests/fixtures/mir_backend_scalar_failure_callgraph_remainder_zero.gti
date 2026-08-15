@@ -1,0 +1,7 @@
+int32_t checked_remainder(int32_t value, int32_t divisor) {
+  return value % divisor;
+}
+
+int main() {
+  return checked_remainder(7, 0);
+}

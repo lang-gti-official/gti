@@ -1,0 +1,71 @@
+int32_t mir_identity(int32_t value) {
+  return (value);
+}
+
+int32_t mir_constant() {
+  return (42);
+}
+
+int8_t mir_i8_identity(int8_t value) {
+  return value;
+}
+
+int32_t mir_second(int8_t first, int32_t second, uint64_t third) {
+  return second;
+}
+
+int64_t mir_i64_max() {
+  return 9223372036854775807;
+}
+
+uint64_t mir_u64_max() {
+  return 18446744073709551615;
+}
+
+void mir_noop() {}
+
+int32_t compatibility_identity(int32_t value) {
+  int32_t copy = value;
+  return copy;
+}
+
+int32_t compatibility_checked(int32_t value) {
+  return value + 1;
+}
+
+bool compatibility_bool_identity(bool value) {
+  return value;
+}
+
+char compatibility_char_identity(char value) {
+  return value;
+}
+
+int main() {
+  if (mir_identity(42) != compatibility_identity(42)) {
+    return 1;
+  }
+  if (mir_constant() != compatibility_checked(41)) {
+    return 2;
+  }
+  if (mir_i8_identity(int8_t(-128)) != int8_t(-128)) {
+    return 3;
+  }
+  if (mir_second(int8_t(-1), 42, uint64_t(99)) != 42) {
+    return 4;
+  }
+  if (mir_i64_max() != int64_t(9223372036854775807)) {
+    return 5;
+  }
+  if (mir_u64_max() != uint64_t(18446744073709551615)) {
+    return 6;
+  }
+  if (!compatibility_bool_identity(true)) {
+    return 7;
+  }
+  if (compatibility_char_identity('x') != 'x') {
+    return 8;
+  }
+  mir_noop();
+  return 0;
+}

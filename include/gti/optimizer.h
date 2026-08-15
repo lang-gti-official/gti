@@ -38,6 +38,10 @@ struct OptimizationRequest {
 };
 
 struct OptimizedProgram {
+  // Immutable authority snapshot presented to the optimizer. Backends compare
+  // the optimized program against this source MIR and admit only rewrites
+  // authorized by the controlled MIR editor.
+  MirProgram sourceMir;
   MirProgram mir;
   OptimizationReport report;
 

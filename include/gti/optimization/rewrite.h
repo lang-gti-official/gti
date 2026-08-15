@@ -7,14 +7,6 @@
 
 namespace lang {
 
-struct MirBodyAddress {
-  MirBodyKind kind = MirBodyKind::Module;
-  std::size_t owner = 0;
-
-  friend bool operator==(const MirBodyAddress &,
-                         const MirBodyAddress &) = default;
-};
-
 struct MirInstructionAddress {
   MirBodyAddress body;
   MirBlockId block = 0;
@@ -51,8 +43,14 @@ class MirProgramEditor final {
 public:
   explicit MirProgramEditor(MirProgram &program) : program(program) {}
 
-  [[nodiscard]] std::vector<MirBodyAddress> bodies() const;
-  [[nodiscard]] const MirBody *body(MirBodyAddress address) const;
+  // Compatibility accessors delegate to core MIR navigation. New passes can
+  // use enumerateMirBodyAddresses/findMirBody without constructing an editor.
+  [[nodiscard]] std::vector<MirBodyAddress> bodies() const {
+    return enumerateMirBodyAddresses(program);
+  }
+  [[nodiscard]] const MirBody *body(MirBodyAddress address) const {
+    return findMirBody(program, address);
+  }
 
   void queueLiteralReplacement(MirInstructionAddress address,
                                MirInstructionId expectedInstruction,

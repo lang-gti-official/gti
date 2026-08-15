@@ -333,6 +333,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("owner_access(pointer)") == std::string::npos,
          "raw dereference must not use checked-owner lowering");
@@ -722,6 +723,7 @@ int main() {
                                    .semantics = valid.semantics,
                                    .hir = valid.hir,
                                    .mir = valid.mir,
+                                   .sourceMir = &valid.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("extern \"C\"") != std::string::npos &&
              artifact.contents.find("const void*") != std::string::npos,

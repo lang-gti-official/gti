@@ -108,7 +108,137 @@ failurePropagationName(FailurePropagationKind kind) {
     return "callable";
   case FailurePropagationKind::TaskJoin:
     return "task-join";
+  case FailurePropagationKind::BodyCall:
+    return "body-call";
+  case FailurePropagationKind::Destructor:
+    return "destructor";
   case FailurePropagationKind::Count:
+    return "invalid";
+  }
+  return "invalid";
+}
+
+[[nodiscard]] constexpr std::string_view
+programStorageName(ProgramStorageKind kind) {
+  switch (kind) {
+  case ProgramStorageKind::NamespaceGlobal:
+    return "namespace-global";
+  case ProgramStorageKind::StaticField:
+    return "static-field";
+  }
+  return "invalid";
+}
+
+[[nodiscard]] constexpr std::string_view
+programInitializationRoleName(ProgramInitializationStepRole role) {
+  switch (role) {
+  case ProgramInitializationStepRole::DataOnly:
+    return "data-only";
+  case ProgramInitializationStepRole::Initializer:
+    return "initializer";
+  }
+  return "invalid";
+}
+
+[[nodiscard]] constexpr std::string_view
+programDataInitializationName(MirProgramDataInitializationKind kind) {
+  switch (kind) {
+  case MirProgramDataInitializationKind::None:
+    return "none";
+  case MirProgramDataInitializationKind::ImplicitZero:
+    return "implicit-zero";
+  case MirProgramDataInitializationKind::Constant:
+    return "constant";
+  case MirProgramDataInitializationKind::Count:
+    return "invalid";
+  }
+  return "invalid";
+}
+
+[[nodiscard]] constexpr std::string_view
+hostedStartupExitPolicyName(MirHostedStartupExitPolicy policy) {
+  switch (policy) {
+  case MirHostedStartupExitPolicy::ImmediateExit70:
+    return "immediate-exit-70";
+  case MirHostedStartupExitPolicy::Count:
+    return "invalid";
+  }
+  return "invalid";
+}
+
+[[nodiscard]] constexpr std::string_view
+hostedStartupFailureBehaviorName(MirHostedStartupFailureBehavior behavior) {
+  switch (behavior) {
+  case MirHostedStartupFailureBehavior::None:
+    return "none";
+  case MirHostedStartupFailureBehavior::Detect:
+    return "detect";
+  case MirHostedStartupFailureBehavior::Propagate:
+    return "propagate";
+  case MirHostedStartupFailureBehavior::Count:
+    return "invalid";
+  }
+  return "invalid";
+}
+
+[[nodiscard]] constexpr std::string_view
+hostedStartupOperationName(MirHostedStartupOperationKind kind) {
+  switch (kind) {
+  case MirHostedStartupOperationKind::ValidateArgumentCount:
+    return "validate-argument-count";
+  case MirHostedStartupOperationKind::ConvertArgumentCount:
+    return "convert-argument-count";
+  case MirHostedStartupOperationKind::CallProgramInitialization:
+    return "call-program-initialization";
+  case MirHostedStartupOperationKind::ConstructArgumentVector:
+    return "construct-argument-vector";
+  case MirHostedStartupOperationKind::InitializeArgumentIndex:
+    return "initialize-argument-index";
+  case MirHostedStartupOperationKind::EnterArgumentLoop:
+    return "enter-argument-loop";
+  case MirHostedStartupOperationKind::LoadArgumentIndex:
+    return "load-argument-index";
+  case MirHostedStartupOperationKind::TestArgumentIndex:
+    return "test-argument-index";
+  case MirHostedStartupOperationKind::BranchArgumentLoop:
+    return "branch-argument-loop";
+  case MirHostedStartupOperationKind::ReadArgumentView:
+    return "read-argument-view";
+  case MirHostedStartupOperationKind::PrepareStringConstructorArgument:
+    return "prepare-string-constructor-argument";
+  case MirHostedStartupOperationKind::ConstructArgumentString:
+    return "construct-argument-string";
+  case MirHostedStartupOperationKind::PrepareAppendReceiver:
+    return "prepare-append-receiver";
+  case MirHostedStartupOperationKind::PrepareAppendArgumentMove:
+    return "prepare-append-argument-move";
+  case MirHostedStartupOperationKind::CallAppend:
+    return "call-append";
+  case MirHostedStartupOperationKind::AdvanceArgumentIndex:
+    return "advance-argument-index";
+  case MirHostedStartupOperationKind::ContinueArgumentLoop:
+    return "continue-argument-loop";
+  case MirHostedStartupOperationKind::PrepareEntryCount:
+    return "prepare-entry-count";
+  case MirHostedStartupOperationKind::PrepareEntryArgumentsMove:
+    return "prepare-entry-arguments-move";
+  case MirHostedStartupOperationKind::CallEntry:
+    return "call-entry";
+  case MirHostedStartupOperationKind::ReturnEntry:
+    return "return-entry";
+  case MirHostedStartupOperationKind::RouteOperationFailure:
+    return "route-operation-failure";
+  case MirHostedStartupOperationKind::DropFailureCleanup:
+    return "drop-failure-cleanup";
+  case MirHostedStartupOperationKind::RouteCleanupFailure:
+    return "route-cleanup-failure";
+  case MirHostedStartupOperationKind::EndFailureCleanup:
+    return "end-failure-cleanup";
+  case MirHostedStartupOperationKind::ContainFailure:
+    return "contain-failure";
+  case MirHostedStartupOperationKind::TerminateCleanupFailure:
+    return "terminate-cleanup-failure";
+  case MirHostedStartupOperationKind::Count:
     return "invalid";
   }
   return "invalid";
@@ -117,7 +247,7 @@ failurePropagationName(FailurePropagationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v18 valid=" << program.valid() << '\n';
+    output << "mir-v24 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -138,6 +268,8 @@ public:
       }
       output << "]\n";
     }
+    programInitialization(program.programInitializationPlan());
+    hostedStartup(program.hostedStartupPlan());
     output << "module\n";
     body(program.module(), 0);
 
@@ -286,7 +418,20 @@ public:
       }
       output << " virtual=" << instance.virtualMethod
              << " pure=" << instance.pureVirtual
-             << " override=" << instance.overrideMethod << " roots=[";
+             << " override=" << instance.overrideMethod << " definition=";
+      switch (instance.definitionKind) {
+      case MirFunctionInstance::DefinitionKind::Source:
+        output << "source";
+        break;
+      case MirFunctionInstance::DefinitionKind::RuntimeBinding:
+        output << "runtime";
+        break;
+      case MirFunctionInstance::DefinitionKind::Declaration:
+        output << "declaration";
+        break;
+      }
+      output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
+             << " roots=[";
       list(instance.virtualRoots);
       output << "] callables=[";
       for (std::size_t index = 0; index < instance.callableParameters.size();
@@ -315,6 +460,19 @@ public:
       }
       output << "] borrow=" << number(instance.borrowOrigin) << ':'
              << instance.borrowParameter << ':' << number(instance.borrowAccess)
+             << " definition=";
+      switch (instance.definitionKind) {
+      case MirDefinitionKind::Source:
+        output << "source";
+        break;
+      case MirDefinitionKind::RuntimeBinding:
+        output << "runtime";
+        break;
+      case MirDefinitionKind::Declaration:
+        output << "declaration";
+        break;
+      }
+      output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
              << " initializers=[";
       for (std::size_t index = 0; index < instance.initializers.size();
            ++index) {
@@ -328,6 +486,19 @@ public:
     for (const MirDestructorInstance &instance :
          program.destructorInstances()) {
       output << "destructor @" << instance.id << " owner=" << instance.owner
+             << " definition=";
+      switch (instance.definitionKind) {
+      case MirDefinitionKind::Source:
+        output << "source";
+        break;
+      case MirDefinitionKind::RuntimeBinding:
+        output << "runtime";
+        break;
+      case MirDefinitionKind::Declaration:
+        output << "declaration";
+        break;
+      }
+      output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
              << '\n';
       body(instance.body, instance.id);
     }
@@ -366,16 +537,85 @@ public:
       output << "]\n";
       body(instance.body, instance.id);
     }
+    if (program.hostedStartupPlan() && program.hostedStartup() != nullptr) {
+      output << "hosted-startup-body\n";
+      body(*program.hostedStartup(), program.hostedStartupPlan()->entry);
+    }
     return output.str();
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v18\n";
+    output << "mir-body-v24\n";
     body(value, 0);
     return output.str();
   }
 
 private:
+  void programInitialization(const MirProgramInitializationPlan &plan) {
+    output << "program-initialization units=" << plan.units.size()
+           << " steps=" << plan.steps.size() << '\n';
+    for (const MirProgramInitializationUnit &unit : plan.units) {
+      output << "  unit source=" << unit.sourceUnit << " steps=[";
+      list(unit.steps);
+      output << "]\n";
+    }
+    for (const MirProgramInitializationStep &step : plan.steps) {
+      output << "  step @" << step.id << " source=" << step.sourceUnit
+             << " storage=" << programStorageName(step.storageKind)
+             << " role=" << programInitializationRoleName(step.role)
+             << " symbol=" << step.symbol << " owner-class=" << step.ownerClass
+             << " active-cleanup=" << step.requiresActiveCleanup
+             << " binding=" << step.binding << " place=p" << step.storagePlace
+             << " entry=bb" << step.entryBlock << " initialize=i"
+             << step.storageInitialization << " data-kind="
+             << programDataInitializationName(step.dataInitialization)
+             << " data=";
+      if (step.dataConstant) {
+        constant(*step.dataConstant);
+      } else {
+        output << '-';
+      }
+      output << " statement=" << step.statement << " initializer=v"
+             << step.initializer << " full-expression=" << step.fullExpression
+             << '\n';
+    }
+  }
+
+  void hostedStartup(const std::optional<MirHostedStartupPlan> &plan) {
+    if (!plan) {
+      output << "hosted-startup none\n";
+      return;
+    }
+    output << "hosted-startup kind=" << number(plan->kind)
+           << " entry=" << plan->entry << " append=" << plan->appendFunction
+           << " vector-constructor=" << plan->vectorConstructor
+           << " string-constructor=" << plan->stringConstructor
+           << " source=unit" << plan->sourceAnchor.sourceUnit << ':'
+           << plan->sourceAnchor.line << '@' << plan->sourceAnchor.start << ".."
+           << plan->sourceAnchor.end << " program-initialization="
+           << number(plan->programInitializationTarget.kind) << ':'
+           << plan->programInitializationTarget.owner
+           << " exit=" << hostedStartupExitPolicyName(plan->exitPolicy)
+           << " index-place=p" << plan->argumentIndexPlace << " vector-place=p"
+           << plan->argumentVectorPlace << " count=%" << plan->stabilizedCount
+           << " vector=%" << plan->argumentVector << " result=%"
+           << plan->entryResult << " operations=" << plan->operations.size()
+           << '\n';
+    for (const MirHostedStartupOperation &operation : plan->operations) {
+      output << "  hosted-operation @" << operation.id
+             << " kind=" << hostedStartupOperationName(operation.kind)
+             << " failure="
+             << hostedStartupFailureBehaviorName(operation.failureBehavior)
+             << " block=bb" << operation.block << " instruction=i"
+             << operation.instruction << " place=p" << operation.place
+             << " value=%" << operation.value << " drop=drop"
+             << operation.dropObligation << " failure-record=fail"
+             << operation.failureRecord << " cleanup-boundary=cleanup"
+             << operation.cleanupBoundary
+             << " terminator=" << operation.terminator << '\n';
+    }
+  }
+
   template <typename Value> void list(const std::vector<Value> &values) {
     for (std::size_t index = 0; index < values.size(); ++index) {
       separator(index);
@@ -435,6 +675,30 @@ private:
           }
         },
         *value);
+  }
+
+  void constant(const ConstantValue &value) {
+    std::visit(
+        [this](const auto &constantValue) {
+          using Value = std::decay_t<decltype(constantValue)>;
+          if constexpr (std::is_same_v<Value, ConstantInteger>) {
+            output << "integer:" << constantValue.negative << ':'
+                   << constantValue.magnitude << ':'
+                   << static_cast<unsigned int>(constantValue.domain.width)
+                   << ':' << constantValue.domain.signedValue;
+          } else if constexpr (std::is_same_v<Value, NullConstant>) {
+            output << "null";
+          } else if constexpr (std::is_same_v<Value,
+                                              ConstantCheckedIntegerResult>) {
+            output << "checked:"
+                   << static_cast<unsigned int>(constantValue.domain.width)
+                   << ':' << constantValue.domain.signedValue << ':'
+                   << constantValue.value.has_value();
+          } else {
+            literal(std::optional<Literal>{Literal{constantValue}});
+          }
+        },
+        value);
   }
 
   void type(const SemanticType &value) {
@@ -627,10 +891,13 @@ private:
   }
 
   void dropObligation(const MirDropObligation &value) {
-    output << "  drop" << value.id << " hir=" << value.hirObligation
+    output << "  drop" << value.id
+           << " hosted-operation=" << value.hostedStartupOperation
+           << " hir=" << value.hirObligation
            << " construction-order=" << value.constructionOrder
            << " kind=" << number(value.kind) << " place=p" << value.place
            << " binding=" << value.binding << " value=v" << value.value
+           << " generated-value=%" << value.generatedValue
            << " hir-full-expression=" << value.hirFullExpression
            << " full-expression=" << value.fullExpression << " type=";
     type(value.dropType.type);
@@ -661,11 +928,12 @@ private:
   }
 
   void place(const MirPlace &value) {
-    output << "  p" << value.id << " root=" << number(value.root)
-           << " binding=" << value.binding << " symbol=" << value.symbol
-           << " capture=" << value.capture << " temporary=" << value.temporary
-           << " value=" << value.value << " loan=" << value.loan
-           << " projections=[";
+    output << "  p" << value.id
+           << " hosted-operation=" << value.hostedStartupOperation
+           << " root=" << number(value.root) << " binding=" << value.binding
+           << " symbol=" << value.symbol << " capture=" << value.capture
+           << " temporary=" << value.temporary << " value=" << value.value
+           << " loan=" << value.loan << " projections=[";
     for (std::size_t index = 0; index < value.projections.size(); ++index) {
       separator(index);
       projection(value.projections[index]);
@@ -698,7 +966,9 @@ private:
   }
 
   void value(const MirValue &value) {
-    output << "  %" << value.id << " source=v" << value.sourceValue << ' ';
+    output << "  %" << value.id
+           << " hosted-operation=" << value.hostedStartupOperation
+           << " source=v" << value.sourceValue << ' ';
     info(value.info);
     output << " defined=bb" << value.definitionBlock << ":i" << value.definition
            << '\n';
@@ -706,9 +976,12 @@ private:
 
   void instruction(const MirInstruction &value) {
     output << "    i" << value.id << ' ' << name(value.kind)
+           << " hosted-operation=" << value.hostedStartupOperation
            << " hir-value=" << value.hirValue
            << " hir-statement=" << value.hirStatement
-           << " call-site=" << value.callSite << " call-input-role=";
+           << " call-site=" << value.callSite
+           << " constructor-initializer=" << value.constructorInitializer
+           << " call-input-role=";
     if (value.callInputRole) {
       output << callInputRoleName(*value.callInputRole);
     } else {
@@ -788,6 +1061,23 @@ private:
     borrowOriginPlace(value.borrowPlace);
     output << " operation=" << name(value.operation) << " literal=";
     literal(value.literal);
+    output << " literal-provenance=";
+    switch (value.literalProvenance.kind) {
+    case MirLiteralProvenanceKind::None:
+      output << '-';
+      break;
+    case MirLiteralProvenanceKind::Source:
+      output << "source";
+      break;
+    case MirLiteralProvenanceKind::IdentityFold:
+      output << "identity-fold:v" << value.literalProvenance.sourceValue;
+      break;
+    case MirLiteralProvenanceKind::Count:
+      output << "invalid:v" << value.literalProvenance.sourceValue;
+      break;
+    }
+    output << " program-constant-substitution="
+           << value.programConstantSubstitution;
     output << " enum-owner=";
     optional(value.enumOwner);
     output << " enum-value=";
@@ -845,6 +1135,13 @@ private:
     optional(value.functionTarget);
     output << " constructor=";
     optional(value.constructorTarget);
+    output << " body-target=";
+    if (value.bodyTarget) {
+      output << number(value.bodyTarget->kind) << ':'
+             << value.bodyTarget->owner;
+    } else {
+      output << '-';
+    }
     output << " constructor-kind=" << number(value.constructorKind)
            << " lambda=";
     optional(value.lambdaTarget);
@@ -897,6 +1194,7 @@ private:
 
   void terminator(const MirTerminator &value) {
     output << "    term " << number(value.kind)
+           << " hosted-operation=" << value.hostedStartupOperation
            << " hir-value=" << value.hirValue
            << " hir-statement=" << value.hirStatement << " value=";
     if (value.value) {
@@ -931,7 +1229,9 @@ private:
 
   void block(const MirBlock &value) {
     output << "  bb" << value.id << " reachable=" << value.reachable
-           << " failure-parameter=fail" << value.failureParameter << '\n';
+           << " program-initialization-step=" << value.programInitializationStep
+           << " failure-parameter=fail" << value.failureParameter
+           << " active-failure=fail" << value.activeFailure << '\n';
     for (const MirInstruction &item : value.instructions) {
       instruction(item);
     }
@@ -966,7 +1266,8 @@ private:
     }
     output << " cleanup-boundaries " << value.cleanupBoundaries.size() << '\n';
     for (const MirCleanupBoundary &item : value.cleanupBoundaries) {
-      output << "  cleanup-boundary" << item.id << " kind=" << number(item.kind)
+      output << "  cleanup-boundary" << item.id << " hosted-operation="
+             << item.hostedStartupOperation << " kind=" << number(item.kind)
              << " obligations=[";
       list(item.obligations);
       output << "]\n";
@@ -977,9 +1278,19 @@ private:
     }
     output << " failure-records " << value.failureRecords.size() << '\n';
     for (const MirFailureRecord &item : value.failureRecords) {
-      output << "  fail" << item.id << " producer=bb" << item.producerBlock
-             << ":i" << item.producerInstruction << " parameter=bb"
+      output << "  fail" << item.id
+             << " hosted-operation=" << item.hostedStartupOperation
+             << " producer=bb" << item.producerBlock << ":i"
+             << item.producerInstruction << " parameter=bb"
              << item.parameterBlock << '\n';
+    }
+    output << " program-constant-substitutions "
+           << value.programConstantSubstitutions.size() << '\n';
+    for (const MirProgramConstantSubstitution &item :
+         value.programConstantSubstitutions) {
+      output << "  hir-value=" << item.hirValue << " constant=";
+      constant(item.constant);
+      output << '\n';
     }
     output << " values " << value.values.size() << '\n';
     for (const MirValue &item : value.values) {

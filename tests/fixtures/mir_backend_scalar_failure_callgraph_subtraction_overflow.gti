@@ -1,0 +1,8 @@
+int32_t checked_subtract(int32_t value, int32_t amount) {
+  return value - amount;
+}
+
+int main() {
+  int32_t minimum = -2147483647 - 1;
+  return checked_subtract(minimum, 1);
+}

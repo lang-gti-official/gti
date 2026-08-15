@@ -228,6 +228,8 @@ successorsForDominance(const MirBody &body, const MirTerminator &terminator) {
   case MirTerminatorKind::PropagateFailure:
   case MirTerminatorKind::Unreachable:
   case MirTerminatorKind::Exit:
+  case MirTerminatorKind::ContainFailure:
+  case MirTerminatorKind::TerminateCleanupFailure:
     break;
   case MirTerminatorKind::None:
     return std::nullopt;

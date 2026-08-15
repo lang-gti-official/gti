@@ -1,0 +1,8 @@
+int32_t checked_negate(int32_t value) {
+  return -value;
+}
+
+int main() {
+  int32_t minimum = -2147483647 - 1;
+  return checked_negate(minimum);
+}

@@ -44,9 +44,11 @@ SourceGraph SourceLoader::load(
   std::vector<SourceUnitId> preludes;
   const std::filesystem::path canonicalEntry = canonicalPath(entryPath);
   for (const std::filesystem::path &preludePath : preludePaths) {
-    preludes.push_back(loadFile(canonicalPath(preludePath), false, true,
-                                nullptr, std::nullopt,
-                                SourceUnitRole::Prelude));
+    const SourceUnitId prelude =
+        loadFile(canonicalPath(preludePath), false, true, nullptr, std::nullopt,
+                 SourceUnitRole::Prelude);
+    preludes.push_back(prelude);
+    graph.addPreludeRoot(prelude);
   }
   const std::optional<std::string> entryStandardLibraryName =
       standardLibraryNameForExistingPath(canonicalEntry);

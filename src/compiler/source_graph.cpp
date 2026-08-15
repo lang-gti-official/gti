@@ -17,6 +17,10 @@ const std::vector<SourceDependency> &SourceGraph::dependencyEdges() const {
   return dependencies;
 }
 
+const std::vector<SourceUnitId> &SourceGraph::preludeRoots() const {
+  return configuredPreludeRoots;
+}
+
 const SourceUnit *SourceGraph::findUnit(SourceUnitId id) const {
   return id == 0 || id > units.size() ? nullptr : &units[id - 1];
 }
@@ -86,6 +90,7 @@ std::vector<SourceUnitId> SourceGraph::compilationOrder() const {
 void SourceGraph::clear() {
   units.clear();
   dependencies.clear();
+  configuredPreludeRoots.clear();
   unitsByPath.clear();
   entry = 0;
 }
@@ -116,6 +121,10 @@ SourceGraph::addUnit(std::filesystem::path path, bool isEntry, bool isPrelude,
 
 void SourceGraph::addDependency(SourceDependency dependency) {
   dependencies.push_back(std::move(dependency));
+}
+
+void SourceGraph::addPreludeRoot(SourceUnitId id) {
+  configuredPreludeRoots.push_back(id);
 }
 
 bool SourceGraph::hasDirectDependency(SourceUnitId source,

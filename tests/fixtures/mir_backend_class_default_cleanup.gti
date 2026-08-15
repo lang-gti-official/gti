@@ -1,0 +1,81 @@
+mut int32_t cleanup_trace = 0;
+
+class Early {
+public:
+  ~Early() {
+    cleanup_trace = 1;
+  }
+};
+
+class Late {
+public:
+  ~Late() {
+    cleanup_trace = 2;
+  }
+};
+
+int32_t selected_default_cleanup() {
+  Early early{};
+  Late late{};
+  return cleanup_trace;
+}
+
+class ExplicitDefault {
+public:
+  ExplicitDefault() {}
+  ~ExplicitDefault() {}
+};
+
+uint32_t compatibility_declared_constructor() {
+  ExplicitDefault value{};
+  return 0;
+}
+
+class FieldOwner {
+  uint32_t value = 3;
+
+public:
+  ~FieldOwner() {}
+};
+
+uint32_t compatibility_field_owner() {
+  FieldOwner value{};
+  return 0;
+}
+
+void compatibility_nested_scope() {
+  {
+    Early value{};
+  }
+}
+
+uint32_t compatibility_branch(bool choose) {
+  if (choose) {
+    Late value{};
+  }
+  return 0;
+}
+
+class CheckedCleanup {
+public:
+  ~CheckedCleanup() {
+    cleanup_trace += 1;
+  }
+};
+
+void compatibility_checked_cleanup() {
+  CheckedCleanup value{};
+}
+
+int main() {
+  int32_t first = selected_default_cleanup();
+  if (first != 0 or cleanup_trace != 1) {
+    return 1;
+  }
+
+  int32_t second = selected_default_cleanup();
+  if (second != 1 or cleanup_trace != 1) {
+    return 2;
+  }
+  return 0;
+}

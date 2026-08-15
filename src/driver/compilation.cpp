@@ -85,12 +85,14 @@ CompilationResult compileWithBackendInputs(const CompilationRequest &request,
   };
 
   try {
-    result.artifact = backend.generate({.program = frontend.program,
-                                        .semantics = frontend.semantics,
-                                        .hir = frontend.hir,
-                                        .mir = optimizedProgram.mir,
-                                        .optimizations = optimizations,
-                                        .target = request.target()});
+    result.artifact =
+        backend.generate({.program = frontend.program,
+                          .semantics = frontend.semantics,
+                          .hir = frontend.hir,
+                          .mir = optimizedProgram.mir,
+                          .sourceMir = &optimizedProgram.sourceMir,
+                          .optimizations = optimizations,
+                          .target = request.target()});
   } catch (const std::exception &exception) {
     return backendFailure(exception.what());
   } catch (...) {

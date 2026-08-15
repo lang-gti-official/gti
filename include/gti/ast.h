@@ -3,6 +3,8 @@
 #include "gti/target.h"
 #include "gti/token.h"
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1835,14 +1837,37 @@ private:
 class Program {
 public:
   explicit Program(StmtList declarations = {})
-      : declarations_(std::move(declarations)) {}
+      : declarations_(std::move(declarations)), snapshotId_(nextSnapshotId()) {}
+
+  Program(const Program &) = delete;
+  Program &operator=(const Program &) = delete;
+
+  Program(Program &&other) noexcept
+      : declarations_(std::move(other.declarations_)),
+        snapshotId_(std::exchange(other.snapshotId_, nextSnapshotId())) {}
+
+  Program &operator=(Program &&other) noexcept {
+    if (this != &other) {
+      declarations_ = std::move(other.declarations_);
+      snapshotId_ = std::exchange(other.snapshotId_, nextSnapshotId());
+    }
+    return *this;
+  }
 
   [[nodiscard]] const StmtList &declarations() const { return declarations_; }
+
+  [[nodiscard]] std::uint64_t snapshotId() const { return snapshotId_; }
 
   [[nodiscard]] StmtList takeDeclarations() { return std::move(declarations_); }
 
 private:
+  [[nodiscard]] static std::uint64_t nextSnapshotId() {
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+  }
+
   StmtList declarations_;
+  std::uint64_t snapshotId_ = 0;
 };
 
 } // namespace lang

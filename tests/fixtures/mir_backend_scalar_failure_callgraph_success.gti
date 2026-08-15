@@ -1,0 +1,51 @@
+mut int32_t failure_cleanup_bits    ;
+mut int32_t failure_first_close    ;
+
+class FailureScope {
+public:
+  int32_t bit;
+
+  FailureScope(int32_t value) : bit(value) {}
+
+  ~FailureScope() {
+    failure_cleanup_bits = failure_cleanup_bits | this.bit;
+    if (failure_first_close == 0) {
+      failure_first_close = this.bit;
+    }
+  }
+};
+
+int32_t checked_increment(int32_t value) {
+  FailureScope leaf = FailureScope(1);
+  return value + 1;
+}
+
+int32_t forward_increment(int32_t value) {
+  FailureScope caller = FailureScope(2);
+  if (value < 0) {
+    return value - 1;
+  }
+  return checked_increment(value);
+}
+
+int main() {
+  failure_cleanup_bits = 0;
+  failure_first_close = 0;
+  {
+    FailureScope boundary = FailureScope(4);
+    int32_t result = forward_increment(40);
+    if (result != 41) {
+      return 1;
+    }
+    if (failure_cleanup_bits != 3) {
+      return 2;
+    }
+  }
+  if (failure_cleanup_bits != 7) {
+    return 3;
+  }
+  if (failure_first_close != 1) {
+    return 4;
+  }
+  return 0;
+}

@@ -69,7 +69,7 @@ parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 and writes artifacts beneath
 `build/gti/<profile>/<arch>-<vendor>-<os>/` for standalone packages (and the
 package-qualified workspace layout above), with verified-payload whole-program
-cache entries beneath `build/gti/cache/v1/` for builds without declared native
+cache entries beneath `build/gti/cache/v2/` for builds without declared native
 source files, native search directories, opaque native arguments, native link
 operands, name-resolved link inputs, or dependency-injecting native environment
 search paths. Those native configurations bypass the cache until

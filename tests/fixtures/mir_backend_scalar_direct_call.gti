@@ -1,0 +1,205 @@
+int32_t direct_identity_leaf(int32_t value) {
+  return value;
+}
+
+int32_t direct_alternate_leaf(int32_t value) {
+  return value ^ 5;
+}
+
+int32_t direct_identity(int32_t value) {
+  return direct_identity_leaf(value);
+}
+
+int32_t direct_pair(int32_t left, int32_t right) {
+  return left & ~right;
+}
+
+int32_t direct_first(int32_t left, int32_t right) {
+  return left;
+}
+
+int32_t direct_zero() {
+  return 7;
+}
+
+void direct_ping() {}
+
+void direct_sink(int32_t value) {
+  if (value == 0) {
+    return;
+  }
+}
+
+int32_t selected_forward(int32_t value) {
+  return direct_identity(value);
+}
+
+int32_t selected_order() {
+  mut int32_t state = 0;
+  return direct_first(state = 3, state = 7);
+}
+
+void selected_void() {
+  direct_ping();
+}
+
+int32_t direct_chain_middle(int32_t value) {
+  return direct_identity(value);
+}
+
+int32_t selected_chain(int32_t value) {
+  return direct_chain_middle(value);
+}
+
+int32_t direct_chain(int32_t value) {
+  return direct_identity(value);
+}
+
+int32_t direct_unused(int32_t value) {
+  return direct_identity_leaf(value);
+}
+
+int32_t direct_choose(bool first, int32_t left, int32_t right) {
+  if (first) {
+    return direct_chain(left);
+  }
+  return direct_chain(right);
+}
+
+int32_t direct_nested(int32_t left, int32_t right) {
+  return direct_pair(direct_identity(left), direct_identity(right));
+}
+
+int32_t direct_call_zero() {
+  return direct_zero();
+}
+
+int32_t direct_literal() {
+  return direct_identity((42));
+}
+
+void direct_call_void(int32_t value) {
+  direct_sink(value);
+}
+
+bool direct_heterogeneous_leaf(int8_t small, uint64_t wide, bool flag,
+                               char code) {
+  if (flag) {
+    return code == 'A';
+  }
+  return wide == wide;
+}
+
+bool direct_heterogeneous(int8_t small, uint64_t wide, bool flag, char code) {
+  return direct_heterogeneous_leaf(small, wide, flag, code);
+}
+
+int32_t direct_loop(bool repeat, mut int32_t value) {
+  mut bool running = repeat;
+  while (running) {
+    value = direct_identity(value);
+    running = false;
+  }
+  return direct_identity(value);
+}
+
+namespace direct_support {
+  int32_t scoped_leaf(int32_t value) {
+    return value ^ 1;
+  }
+}
+
+int32_t direct_cross_namespace(int32_t value) {
+  return direct_support::scoped_leaf(value);
+}
+
+int32_t checked_target(int32_t value) {
+  return value + 1;
+}
+
+int32_t compatibility_checked_target(int32_t value) {
+  return checked_target(value);
+}
+
+int32_t compatibility_checked_call(int32_t value) {
+  return compatibility_checked_target(value);
+}
+
+class StaticTarget {
+public:
+  static int32_t pass(int32_t value) {
+    return value;
+  }
+};
+
+int32_t compatibility_static_member(int32_t value) {
+  return StaticTarget::pass(value);
+}
+
+static int32_t compatibility_internal_target(int32_t value) {
+  return value;
+}
+
+int32_t compatibility_internal_call(int32_t value) {
+  return compatibility_internal_target(value);
+}
+
+constexpr int32_t constexpr_target(int32_t value) {
+  return value;
+}
+
+int32_t compatibility_constexpr_target(int32_t value) {
+  return constexpr_target(value);
+}
+
+int32_t compatibility_constexpr_call(int32_t value) {
+  return compatibility_constexpr_target(value);
+}
+
+int32_t compatibility_recursive(int32_t value) {
+  return compatibility_recursive(value);
+}
+
+int32_t compatibility_for_target(int32_t value) {
+  for (; false; false) {}
+  return value;
+}
+
+int32_t compatibility_for_call(int32_t value) {
+  return compatibility_for_target(value);
+}
+
+int main() {
+  int8_t small_one = 1;
+  int8_t small_two = 2;
+  uint64_t wide_eight = 8;
+  uint64_t wide_nine = 9;
+  selected_void();
+  direct_call_void(3);
+  if (selected_forward(7) != 7 or selected_order() != 3 or
+      selected_chain(13) != 13) {
+    return 1;
+  }
+  if (direct_choose(true, 5, 6) != 5 or
+      direct_choose(false, 5, 6) != 6) {
+    return 2;
+  }
+  if (direct_nested(8, 4) != 8 or direct_call_zero() != 7 or
+      direct_literal() != 42 or
+      direct_loop(true, 11) != 11) {
+    return 3;
+  }
+  if (!direct_heterogeneous(small_one, wide_eight, true, 'A') or
+      !direct_heterogeneous(small_two, wide_nine, false, 'z')) {
+    return 4;
+  }
+  if (direct_cross_namespace(6) != 7 or
+      compatibility_checked_call(8) != 9 or
+      compatibility_static_member(6) != 6 or
+      compatibility_internal_call(8) != 8 or
+      compatibility_constexpr_call(9) != 9 or
+      compatibility_for_call(10) != 10) {
+    return 5;
+  }
+  return 0;
+}

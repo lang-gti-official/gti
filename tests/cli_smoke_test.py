@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+import re
 import shlex
 import subprocess
 import sys
@@ -2173,6 +2174,40 @@ def main():
                 "GTI runtime error: numeric conversion is out of range",
             ),
         ]
+        hosted_arithmetic_failures = {
+            "addition-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                1,
+                43,
+                44,
+                "addition",
+            ),
+            "multiplication-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                1,
+                48,
+                49,
+                "multiplication",
+            ),
+            "division-zero": (
+                "GTI-R0002",
+                "division_by_zero",
+                1,
+                46,
+                47,
+                "integer_division",
+            ),
+            "negation-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                2,
+                54,
+                55,
+                "negation",
+            ),
+        }
         for name, failure_source, expected_error in arithmetic_failures:
             failure_path = root / f"{name}.gti"
             failure_executable = root / name
@@ -2184,10 +2219,27 @@ def main():
                 capture_output=True,
                 check=False,
             )
-            assert failure.returncode != 0
-            assert expected_error in failure.stderr, (
-                f"{name} produced unexpected stderr: {failure.stderr}"
-            )
+            if name in hosted_arithmetic_failures:
+                code, category, line, start, end, detail = (
+                    hosted_arithmetic_failures[name]
+                )
+                report = re.fullmatch(
+                    rf'GTI runtime failure \[{code}\] {category} in '
+                    rf'[0-9a-f]{{64}} at "{re.escape(failure_path.name)}":'
+                    rf"{line}@{start}\.\.{end}: {detail}\n",
+                    failure.stderr,
+                )
+                assert failure.returncode == 70
+                assert failure.stdout == ""
+                assert report is not None, (
+                    f"{name} produced unexpected hosted report: "
+                    f"{failure.stderr}"
+                )
+            else:
+                assert failure.returncode != 0
+                assert expected_error in failure.stderr, (
+                    f"{name} produced unexpected stderr: {failure.stderr}"
+                )
 
         constant_overflow_failures = [
             (
@@ -2268,8 +2320,14 @@ def main():
             capture_output=True,
             check=False,
         )
-        assert modulo_failure.returncode != 0
-        assert "GTI runtime error: modulo by zero" in modulo_failure.stderr
+        assert modulo_failure.returncode == 70
+        assert modulo_failure.stdout == ""
+        assert re.fullmatch(
+            r"GTI runtime failure \[GTI-R0003\] modulo_by_zero in "
+            r'[0-9a-f]{64} at "modulo-zero\.gti":1@50\.\.51: '
+            r"integer_modulo\n",
+            modulo_failure.stderr,
+        )
 
         shift_count_source = root / "shift-count.gti"
         shift_count_executable = root / "shift-count"
@@ -2292,8 +2350,13 @@ def main():
             capture_output=True,
             check=False,
         )
-        assert shift_failure.returncode != 0
-        assert "shift count exceeds operand width" in shift_failure.stderr
+        assert shift_failure.returncode == 70
+        assert shift_failure.stdout == ""
+        assert re.fullmatch(
+            r"GTI runtime failure \[GTI-R0005\] shift_count_out_of_range in "
+            r'[0-9a-f]{64} at "shift-count\.gti":1@47\.\.49: right_shift\n',
+            shift_failure.stderr,
+        )
 
         cpp20_executable = root / "main-cpp20"
         run([gti, str(source), "-o", str(cpp20_executable), "--std", "c++20"])

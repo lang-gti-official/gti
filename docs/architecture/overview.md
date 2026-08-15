@@ -41,18 +41,42 @@ validity together, which keeps AST-address semantic side tables alive.
   foundation with normal-exit temporary/drop authority, but it does not yet own
   every D-EXEC ordered materialization schedule, program-initialization step,
   partial-constructor rollback, layout, ABI, or failure cleanup rule.
+- MIR v20 introduced the first bounded function-level defined-failure
+  dimension. MIR v21 makes the canonical effect result cover functions,
+  constructors, and destructors and serializes definition provenance plus
+  `mayRaiseDefinedFailure` for all three. The function vector retains the exact
+  scalar/static-call proof and adds the bounded class-default-cleanup closure.
+  A separate closed passive-scalar-class proof covers exact source constructor
+  initializer stages, matching destructors, and free-function graphs. The
+  production `owned-lifecycle-call-v1` selector adds exact graph, source, and
+  lifecycle-schedule coherence before using that proof. The hosted
+  `scalar-failure-callgraph-v1` selector reuses only the exact class proof
+  inside its own closed no-argument entry graph, then emits checked records,
+  propagation, failure cleanup, and containment atomically. Generic
+  verification accepts conservative
+  `true` but requires every `false` to be independently proved from MIR. Exact
+  static calls use `None` only for proved-failure-free targets and otherwise
+  retain `DirectCall` propagation.
 - M-OWN-01 selected one value-owned place/relation and ownership-state
   authority contract. M-OWN-02 implements its directly owned fixed-array
   slice: semantics records shared constant-index keys/events, HIR carries a
   body-qualified domain, and MIR verifies reachable available/moved/restored
   state. Dynamic indexes and raw/opaque provenance remain conservative;
   M-LIFE-01 separately supplies typed normal-exit drop obligations.
-- Optimization still has two paths: HIR constant replacements affect C++
-  emission, while the MIR path currently verifies and returns an unchanged
-  owned snapshot.
+- Optimization still has two paths: HIR constant replacements affect
+  compatibility C++ emission, while the MIR path verifies an owned snapshot
+  and at `-O1+` may apply its bounded literal-identity rewrite. That optimized
+  MIR is now the sole production body authority for the failure-free
+  `scalar-leaf-v1`, `scalar-cfg-v1`, and `scalar-direct-call-v1` families and
+  the bounded `class-default-cleanup-v1`, `owned-lifecycle-call-v1`, and hosted
+  `scalar-failure-callgraph-v1` families, but not yet for general bodies.
 - `BackendInput` carries AST, semantics, HIR, optimized MIR, and HIR
-  replacements. `CppBackend` currently emits by traversing the AST with
-  semantic/HIR side data and does not consume MIR bodies.
+  replacements. `CppBackend` re-verifies MIR, emits every eligible
+  `scalar-leaf-v1`, `scalar-cfg-v1`, `scalar-direct-call-v1`,
+  `class-default-cleanup-v1`, `owned-lifecycle-call-v1`, or
+  `scalar-failure-callgraph-v1` body from it, and sends each ineligible body
+  wholly through the named AST/semantic/HIR compatibility path. No body mixes
+  the two authorities.
 - Substantial compiler algorithms compile behind public declarations.
   `gti_compiler` owns source loading through optimization and compiler support;
   the separate `gti_cpp_backend` archive owns C++ representation and emission.

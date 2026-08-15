@@ -1,0 +1,11 @@
+int32_t checked_add(int32_t left, int32_t right) {
+  return left + right;
+}
+
+int32_t checked_divide(int32_t left, int32_t right) {
+  return left / right;
+}
+
+int main() {
+  return 0;
+}

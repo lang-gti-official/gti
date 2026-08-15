@@ -1,7 +1,11 @@
 # Place Identity And Ownership-State Authority
 
 Status: M-OWN-01 design, M-OWN-02 bounded implementation, and M-LIFE-01
-normal-exit lifecycle substrate complete; M-EXEC-01 is next
+normal-exit lifecycle substrate complete; `M-BACK-01`/`scalar-leaf-v1` and
+`M-BACK-02`/`scalar-cfg-v1`, `scalar-direct-call-v1`, plus
+`class-default-cleanup-v1` are complete, and remaining per-family M-EXEC work
+now co-delivers with the active broader failure-free construction/normal-cleanup
+M-BACK-02 closure
 
 This plan fixes one backend-independent identity and relation contract for GTI
 places. It also assigns ownership-state validity to semantic analysis, concrete

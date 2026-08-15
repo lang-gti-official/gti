@@ -76,6 +76,7 @@ public:
   [[nodiscard]] SourceUnitId entryUnit() const;
   [[nodiscard]] const std::vector<SourceUnit> &sourceUnits() const;
   [[nodiscard]] const std::vector<SourceDependency> &dependencyEdges() const;
+  [[nodiscard]] const std::vector<SourceUnitId> &preludeRoots() const;
   [[nodiscard]] const SourceUnit *findUnit(SourceUnitId id) const;
   [[nodiscard]] SourceUnitId sourceUnitForPath(std::string_view path) const;
   [[nodiscard]] bool isCompilerTrusted(SourceUnitId id) const;
@@ -99,6 +100,8 @@ private:
 
   void addDependency(SourceDependency dependency);
 
+  void addPreludeRoot(SourceUnitId id);
+
   [[nodiscard]] bool hasDirectDependency(SourceUnitId source,
                                          SourceUnitId target) const;
 
@@ -107,6 +110,7 @@ private:
 
   std::vector<SourceUnit> units;
   std::vector<SourceDependency> dependencies;
+  std::vector<SourceUnitId> configuredPreludeRoots;
   std::unordered_map<std::string, SourceUnitId> unitsByPath;
   SourceUnitId entry = 0;
 };

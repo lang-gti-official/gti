@@ -329,6 +329,7 @@ int main() {
                          .semantics = frontend.semantics,
                          .hir = frontend.hir,
                          .mir = frontend.mir,
+                         .sourceMir = &frontend.mir,
                          .optimizations = optimized});
   expect(backend->name() == "cpp" &&
              artifact.kind == lang::BackendArtifactKind::Source &&
@@ -1149,11 +1150,11 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v18\n") &&
+  expect(dump.starts_with("mir-body-v24\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
-         "MIR v18 should serialize staged class-value parameter ownership");
+         "MIR v24 should serialize staged class-value parameter ownership");
 }
 
 void testOrderedOrdinaryConstructorInputs() {
@@ -2239,7 +2240,8 @@ int main() { return lifetime(true) - 13; }
   if (missingCleanupMemberConsume != nullptr) {
     for (lang::MirCleanupBoundary &boundary :
          missingCleanupMemberConsume->body.cleanupBoundaries) {
-      if (boundary.obligations.size() >= 2) {
+      if (boundary.kind == lang::MirCleanupBoundaryKind::Normal &&
+          boundary.obligations.size() >= 2) {
         boundary.obligations.erase(boundary.obligations.begin());
         erasedCleanupMember = true;
         break;
@@ -2924,12 +2926,21 @@ int main(mut int argc, mut arguments_type argv) {
   const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
   const lang::FunctionInfo *mainInfo =
       main == nullptr ? nullptr : valid.semantics.findFunction(*main);
+  const std::optional<lang::HostedProgramEntryPlan> &semanticHosted =
+      valid.semantics.hostedProgramEntryPlan();
   expect(valid.canGenerateCode() && valid.diagnostics.empty() &&
              mainInfo != nullptr &&
              mainInfo->entryKind == lang::ProgramEntryKind::OwnedArguments &&
-             mainInfo->entryArgumentAppendFunction != 0,
+             mainInfo->entryArgumentAppendFunction != 0 && semanticHosted &&
+             semanticHosted->entry == mainInfo->id &&
+             semanticHosted->appendFunction ==
+                 mainInfo->entryArgumentAppendFunction &&
+             semanticHosted->vectorConstructor != 0 &&
+             semanticHosted->stringConstructor != 0 &&
+             !semanticHosted->validateCount.empty() &&
+             !semanticHosted->convertCount.empty(),
          "semantics should accept the resolved owned program-argument entry "
-         "contract and retain its adapter identity");
+         "contract and retain its exact startup targets and failure origins");
 
   const lang::HirFunctionInstance *hirMain = nullptr;
   for (const lang::HirFunctionInstance &instance :
@@ -2950,6 +2961,8 @@ int main(mut int argc, mut arguments_type argv) {
       mirMain == nullptr || !mirMain->entryArgumentAppendTarget
           ? nullptr
           : valid.mir.findFunctionInstance(*mirMain->entryArgumentAppendTarget);
+  const std::optional<lang::HirHostedProgramEntryPlan> &hirHosted =
+      valid.hir.hostedProgramEntryPlan();
   expect(hirMain != nullptr && mirMain != nullptr &&
              hirMain->entryKind == lang::ProgramEntryKind::OwnedArguments &&
              mirMain->entryKind == lang::ProgramEntryKind::OwnedArguments &&
@@ -2958,10 +2971,139 @@ int main(mut int argc, mut arguments_type argv) {
              mirMain->entryArgumentAppendTarget ==
                  hirMain->entryArgumentAppendTarget &&
              mirAppend->returnType == lang::SemanticType::Void &&
-             mirAppend->parameterTypes.size() == 1 &&
+             mirAppend->parameterTypes.size() == 1 && hirHosted &&
+             hirHosted->entry == hirMain->id &&
+             hirHosted->appendFunction == hirAppend->id &&
+             hirHosted->vectorConstructor != 0 &&
+             hirHosted->stringConstructor != 0 &&
+             hirHosted->semanticEntry == semanticHosted->entry &&
+             hirHosted->semanticAppendFunction ==
+                 semanticHosted->appendFunction &&
+             lang::verifyHirProgramPlans(valid.semantics, valid.hir).valid() &&
              lang::verifyMirProgram(valid.mir).valid(),
          "HIR and MIR should retain the concrete checked owned-argument "
          "append target and entry adapter contract");
+
+  lang::HirProgram corruptedHosted = valid.hir;
+  auto &corruptedHostedPlan =
+      const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+          corruptedHosted.hostedProgramEntryPlan());
+  if (corruptedHostedPlan) {
+    corruptedHostedPlan->semanticAppendFunction = 0;
+  }
+  expect(!lang::verifyHirProgramPlans(valid.semantics, corruptedHosted).valid(),
+         "HIR plan verification should reject hosted-entry provenance "
+         "corrupted after semantic lowering");
+
+  lang::HirProgram wrongHostedAppend = valid.hir;
+  auto &wrongHostedAppendPlan =
+      const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+          wrongHostedAppend.hostedProgramEntryPlan());
+  if (wrongHostedAppendPlan) {
+    wrongHostedAppendPlan->appendFunction = wrongHostedAppendPlan->entry;
+  }
+  lang::HirProgram wrongHostedVectorConstructor = valid.hir;
+  auto &wrongHostedVectorPlan =
+      const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+          wrongHostedVectorConstructor.hostedProgramEntryPlan());
+  if (wrongHostedVectorPlan) {
+    wrongHostedVectorPlan->vectorConstructor =
+        wrongHostedVectorPlan->stringConstructor;
+  }
+  lang::HirProgram wrongHostedStringConstructor = valid.hir;
+  auto &wrongHostedStringPlan =
+      const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+          wrongHostedStringConstructor.hostedProgramEntryPlan());
+  if (wrongHostedStringPlan) {
+    wrongHostedStringPlan->stringConstructor =
+        wrongHostedStringPlan->vectorConstructor;
+  }
+  expect(!lang::verifyHirProgramPlans(valid.semantics, wrongHostedAppend)
+                 .valid() &&
+             !lang::verifyHirProgramPlans(valid.semantics,
+                                          wrongHostedVectorConstructor)
+                  .valid() &&
+             !lang::verifyHirProgramPlans(valid.semantics,
+                                          wrongHostedStringConstructor)
+                  .valid(),
+         "hosted HIR verification should reject substituted append, vector "
+         "constructor, and string constructor instances");
+
+  lang::HirProgram wrongHostedOwner = valid.hir;
+  auto &wrongHostedOwnerPlan =
+      const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+          wrongHostedOwner.hostedProgramEntryPlan());
+  auto &wrongHostedFunctions =
+      const_cast<std::vector<lang::HirFunctionInstance> &>(
+          wrongHostedOwner.functionInstances());
+  if (wrongHostedOwnerPlan && wrongHostedOwnerPlan->appendFunction != 0 &&
+      wrongHostedOwnerPlan->appendFunction <= wrongHostedFunctions.size()) {
+    wrongHostedFunctions[wrongHostedOwnerPlan->appendFunction - 1]
+        .owner.reset();
+  }
+  expect(
+      !lang::verifyHirProgramPlans(valid.semantics, wrongHostedOwner).valid(),
+      "hosted HIR verification should reject an append specialization "
+      "whose exact concrete owner identity is lost");
+
+  const auto mutateHostedFailure = [](lang::HirProgram &program, auto mutate) {
+    auto &plan = const_cast<std::optional<lang::HirHostedProgramEntryPlan> &>(
+        program.hostedProgramEntryPlan());
+    if (plan && !plan->validateCount.localOrigins.empty()) {
+      mutate(plan->validateCount.localOrigins.front());
+    }
+  };
+  lang::HirProgram wrongHostedFailureCode = valid.hir;
+  mutateHostedFailure(wrongHostedFailureCode,
+                      [](lang::DefinedFailureOrigin &origin) {
+                        if (!origin.outcomes.empty()) {
+                          origin.outcomes.front().code =
+                              lang::DefinedFailureCode::AllocationFailure;
+                        }
+                      });
+  lang::HirProgram wrongHostedFailureDetail = valid.hir;
+  mutateHostedFailure(wrongHostedFailureDetail,
+                      [](lang::DefinedFailureOrigin &origin) {
+                        if (!origin.outcomes.empty()) {
+                          origin.outcomes.front().detail =
+                              lang::DefinedFailureDetail::HostedArgumentCount;
+                        }
+                      });
+  lang::HirProgram wrongHostedFailureSite = valid.hir;
+  mutateHostedFailure(
+      wrongHostedFailureSite,
+      [](lang::DefinedFailureOrigin &origin) { ++origin.start; });
+  expect(
+      !lang::verifyHirProgramPlans(valid.semantics, wrongHostedFailureCode)
+              .valid() &&
+          !lang::verifyHirProgramPlans(valid.semantics,
+                                       wrongHostedFailureDetail)
+               .valid() &&
+          !lang::verifyHirProgramPlans(valid.semantics, wrongHostedFailureSite)
+               .valid(),
+      "hosted HIR verification should exact-check adapter failure code, "
+      "detail, and main-anchor site");
+
+  const lang::FrontendResult noArguments = lang::Frontend().analyze(
+      "no-argument-entry-plan.gti", "int main() { return 0; }\n");
+  const auto &semanticNoArguments =
+      noArguments.semantics.hostedProgramEntryPlan();
+  const auto &hirNoArguments = noArguments.hir.hostedProgramEntryPlan();
+  expect(noArguments.canGenerateCode() && semanticNoArguments &&
+             semanticNoArguments->kind == lang::ProgramEntryKind::NoArguments &&
+             semanticNoArguments->appendFunction == 0 &&
+             semanticNoArguments->vectorConstructor == 0 &&
+             semanticNoArguments->stringConstructor == 0 &&
+             semanticNoArguments->validateCount.empty() &&
+             semanticNoArguments->convertCount.empty() && hirNoArguments &&
+             hirNoArguments->entry != 0 &&
+             hirNoArguments->appendFunction == 0 &&
+             hirNoArguments->vectorConstructor == 0 &&
+             hirNoArguments->stringConstructor == 0 &&
+             lang::verifyHirProgramPlans(noArguments.semantics, noArguments.hir)
+                 .valid(),
+         "no-argument hosted startup should retain one exact entry and no "
+         "owned-argument targets or failure origins");
 
   lang::MirProgram corruptedAdapter = valid.mir;
   auto &corruptedFunctions =
@@ -3050,6 +3192,642 @@ int main(int count, std::vector<std::string> values) { return count; }
          "main should reject arbitrary containers, source lookalikes, and raw "
          "native argument pointers without widening pointer-to-pointer "
          "semantics or granting spelling-based behavior");
+}
+
+void testProgramInitializationPlans() {
+  lang::FrontendOptions hirOptions;
+  hirOptions.stopAfter = lang::FrontendPhase::Hir;
+  const lang::FrontendResult ordered =
+      lang::Frontend(hirOptions).analyze("program-initialization-plan.gti", R"(
+constexpr int32_t negative = -7;
+constexpr bool enabled = true;
+constexpr char marker = 'G';
+constexpr double ratio = 1.5;
+mut int32_t zeroed;
+mut int32_t negative_copy = negative;
+mut bool enabled_copy = enabled;
+mut char marker_copy = marker;
+mut double ratio_copy = ratio;
+
+class Registry {
+public:
+  static mut int32_t value = negative_copy;
+};
+
+int main() { return Registry::value + zeroed + negative_copy + 7; }
+)");
+  if (!ordered.semanticValid || !ordered.hirValid) {
+    for (const lang::Diagnostic &diagnostic : ordered.diagnostics) {
+      std::cerr << "Unexpected program-initialization diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  const lang::ProgramInitializationPlan &semanticPlan =
+      ordered.semantics.programInitializationPlan();
+  const lang::HirProgramInitializationPlan &hirPlan =
+      ordered.hir.programInitializationPlan();
+  const std::vector<std::string> expectedNames{
+      "negative",      "enabled",      "marker",      "ratio",      "zeroed",
+      "negative_copy", "enabled_copy", "marker_copy", "ratio_copy", "value"};
+  std::vector<std::string> actualNames;
+  for (const lang::ProgramInitializationStep &step : semanticPlan.steps) {
+    actualNames.push_back(step.declaration == nullptr
+                              ? std::string{}
+                              : step.declaration->name().lexeme);
+  }
+  const bool dataRoles =
+      semanticPlan.steps.size() == expectedNames.size() &&
+      std::all_of(semanticPlan.steps.begin(), semanticPlan.steps.begin() + 5,
+                  [](const lang::ProgramInitializationStep &step) {
+                    return step.role ==
+                           lang::ProgramInitializationStepRole::DataOnly;
+                  }) &&
+      std::all_of(semanticPlan.steps.begin() + 5, semanticPlan.steps.end(),
+                  [](const lang::ProgramInitializationStep &step) {
+                    return step.role ==
+                           lang::ProgramInitializationStepRole::Initializer;
+                  });
+  const std::size_t substitutions = static_cast<std::size_t>(std::count_if(
+      ordered.hir.module().values.begin(), ordered.hir.module().values.end(),
+      [](const lang::HirValue &value) {
+        return value.programConstantSubstitution && value.constant.has_value();
+      }));
+  expect(
+      ordered.semanticValid && ordered.hirValid &&
+          ordered.diagnostics.empty() && actualNames == expectedNames &&
+          dataRoles &&
+          semanticPlan.steps.back().kind ==
+              lang::ProgramStorageKind::StaticField &&
+          hirPlan.steps.size() == semanticPlan.steps.size() &&
+          ordered.hir.module().roots.size() == 5 && substitutions >= 4 &&
+          lang::verifyHirProgramPlans(ordered.semantics, ordered.hir).valid(),
+      "semantics and HIR should retain one deterministic global/static "
+      "plan, explicit data-only roles, and representable constant "
+      "substitutions");
+
+  const lang::FrontendResult deferredConstant =
+      lang::Frontend().analyze("deferred-program-constant.gti", R"(
+class DeferredGlobals {
+public:
+  static mut int32_t first = DeferredGlobals::later;
+  static constexpr int32_t later = -7;
+};
+int main() { return DeferredGlobals::first + DeferredGlobals::later + 7; }
+)");
+  const lang::ProgramInitializationStep *deferredFirst =
+      deferredConstant.semantics.programInitializationPlan().steps.empty()
+          ? nullptr
+          : &deferredConstant.semantics.programInitializationPlan().steps[0];
+  const lang::Expr *deferredUse =
+      deferredFirst == nullptr || deferredFirst->declaration == nullptr
+          ? nullptr
+          : deferredFirst->declaration->initializer().get();
+  const lang::HirValue *deferredHirValue = nullptr;
+  if (deferredUse != nullptr) {
+    const std::vector<lang::HirValueId> &ids =
+        deferredConstant.hir.valueIdsForSource(*deferredUse);
+    if (ids.size() == 1) {
+      deferredHirValue = deferredConstant.hir.module().findValue(ids.front());
+    }
+  }
+  std::size_t deferredMarkers = 0;
+  bool deferredLoad = false;
+  if (deferredHirValue != nullptr) {
+    for (const lang::MirBlock &block : deferredConstant.mir.module().blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.hirValue != deferredHirValue->id) {
+          continue;
+        }
+        deferredMarkers += instruction.programConstantSubstitution ? 1U : 0U;
+        deferredLoad =
+            deferredLoad || instruction.kind == lang::MirInstructionKind::Load;
+      }
+    }
+  }
+  expect(
+      deferredConstant.canGenerateCode() && deferredFirst != nullptr &&
+          deferredUse != nullptr &&
+          deferredConstant.semantics.isProgramConstantSubstitution(
+              *deferredUse) &&
+          deferredHirValue != nullptr &&
+          deferredHirValue->programConstantSubstitution &&
+          deferredConstant.mir.module().programConstantSubstitutions.size() ==
+              1 &&
+          deferredMarkers == 1 && !deferredLoad &&
+          lang::verifyHirProgramPlans(deferredConstant.semantics,
+                                      deferredConstant.hir)
+              .valid() &&
+          lang::verifyMirProgram(deferredConstant.mir).valid(),
+      "a later constexpr value should be deferred, substituted as exact "
+      "HIR/MIR data, and never loaded from its later storage step");
+
+  const lang::FrontendResult substitutionLocality =
+      lang::Frontend().analyze("program-constant-boundary-locality.gti", R"(
+class SubstitutionLocality {
+public:
+  static int32_t inspect(int32_t& value) { return value; }
+  static mut int32_t first = SubstitutionLocality::later;
+  static constexpr int32_t later = -7;
+  static mut int32_t forced =
+      SubstitutionLocality::inspect((SubstitutionLocality::later));
+};
+int main() { return SubstitutionLocality::first +
+                    SubstitutionLocality::forced + 7; }
+)");
+  const lang::VariableDecl *localityFirst = nullptr;
+  const lang::VariableDecl *localityForced = nullptr;
+  for (const lang::ProgramInitializationStep &step :
+       substitutionLocality.semantics.programInitializationPlan().steps) {
+    if (step.declaration != nullptr &&
+        step.declaration->name().lexeme == "first") {
+      localityFirst = step.declaration;
+    } else if (step.declaration != nullptr &&
+               step.declaration->name().lexeme == "forced") {
+      localityForced = step.declaration;
+    }
+  }
+  const auto *forcedCall = localityForced == nullptr
+                               ? nullptr
+                               : dynamic_cast<const lang::Call *>(
+                                     localityForced->initializer().get());
+  const lang::Expr *forcedBoundary =
+      forcedCall == nullptr || forcedCall->arguments().empty()
+          ? nullptr
+          : forcedCall->arguments().front().get();
+  const auto *forcedGrouping =
+      dynamic_cast<const lang::Grouping *>(forcedBoundary);
+  const lang::Expr *forcedInner =
+      forcedGrouping == nullptr ? nullptr : forcedGrouping->expression().get();
+  const lang::Expr *firstUse =
+      localityFirst == nullptr ? nullptr : localityFirst->initializer().get();
+  const auto exactModuleHirValue =
+      [&](const lang::Expr *source) -> const lang::HirValue * {
+    if (source == nullptr) {
+      return nullptr;
+    }
+    const std::vector<lang::HirValueId> &ids =
+        substitutionLocality.hir.valueIdsForSource(*source);
+    return ids.size() == 1
+               ? substitutionLocality.hir.module().findValue(ids.front())
+               : nullptr;
+  };
+  const lang::HirValue *localityFirstHir = exactModuleHirValue(firstUse);
+  const lang::HirValue *localityForcedBoundaryHir =
+      exactModuleHirValue(forcedBoundary);
+  const lang::HirValue *localityForcedInnerHir =
+      exactModuleHirValue(forcedInner);
+  bool forcedBoundaryAccess = false;
+  if (localityForcedBoundaryHir != nullptr) {
+    for (const lang::MirBlock &block :
+         substitutionLocality.mir.module().blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        for (const lang::MirOperand &operand : instruction.operands) {
+          const lang::MirPlace *place =
+              (operand.kind == lang::MirOperandKind::BorrowRead ||
+               operand.kind == lang::MirOperandKind::BorrowWrite)
+                  ? substitutionLocality.mir.module().findPlace(operand.place)
+                  : nullptr;
+          forcedBoundaryAccess =
+              forcedBoundaryAccess ||
+              (place != nullptr &&
+               place->sourceValue == localityForcedBoundaryHir->id);
+        }
+      }
+    }
+  }
+  expect(substitutionLocality.canGenerateCode() && firstUse != nullptr &&
+             forcedBoundary != nullptr && forcedInner != nullptr &&
+             substitutionLocality.semantics.isProgramConstantSubstitution(
+                 *firstUse) &&
+             !substitutionLocality.semantics.isProgramConstantSubstitution(
+                 *forcedBoundary) &&
+             !substitutionLocality.semantics.isProgramConstantSubstitution(
+                 *forcedInner) &&
+             localityFirstHir != nullptr &&
+             localityFirstHir->programConstantSubstitution &&
+             localityForcedBoundaryHir != nullptr &&
+             !localityForcedBoundaryHir->programConstantSubstitution &&
+             localityForcedInnerHir != nullptr &&
+             !localityForcedInnerHir->programConstantSubstitution &&
+             forcedBoundaryAccess &&
+             lang::verifyMirProgram(substitutionLocality.mir).valid(),
+         "forcing one grouped reference boundary should retain storage access "
+         "only "
+         "at that exact boundary without clearing an earlier substitution "
+         "for the same program-storage symbol");
+
+  const lang::HirProgramInitializationStep *zeroed = nullptr;
+  const lang::HirProgramInitializationStep *staticValue = nullptr;
+  for (const lang::HirProgramInitializationStep &step : hirPlan.steps) {
+    if (step.source != nullptr && step.source->name().lexeme == "zeroed") {
+      zeroed = &step;
+    } else if (step.source != nullptr &&
+               step.source->name().lexeme == "value") {
+      staticValue = &step;
+    }
+  }
+  const lang::HirClassInstance *staticOwner =
+      staticValue == nullptr || staticValue->ownerClass == 0
+          ? nullptr
+          : &ordered.hir.classInstances()[staticValue->ownerClass - 1];
+  expect(zeroed != nullptr &&
+             zeroed->role == lang::ProgramInitializationStepRole::DataOnly &&
+             !zeroed->initializer && zeroed->statement == 0 &&
+             staticValue != nullptr && staticValue->statement != 0 &&
+             staticOwner != nullptr &&
+             staticOwner->staticFieldInitializers.bindings.empty() &&
+             staticOwner->staticFieldInitializers.values.empty() &&
+             staticOwner->staticFieldInitializers.statements.empty() &&
+             staticOwner->staticFieldInitializers.roots.empty() &&
+             staticOwner->staticFieldInitializers.placeDomain.snapshot ==
+                 ordered.hir.module().placeDomain.snapshot &&
+             staticOwner->staticFieldInitializers.placeDomain.body != 0 &&
+             staticOwner->staticFieldInitializers.placeDomain !=
+                 ordered.hir.module().placeDomain,
+         "zero-initialized mutable storage should be sealed data and a "
+         "planned class static should have one module root plus a distinct "
+         "canonical empty class-body domain");
+
+  lang::HirProgram corrupted = ordered.hir;
+  auto &corruptedPlan = const_cast<lang::HirProgramInitializationPlan &>(
+      corrupted.programInitializationPlan());
+  if (corruptedPlan.steps.size() > 5) {
+    corruptedPlan.steps[5].role = lang::ProgramInitializationStepRole::DataOnly;
+  }
+  expect(!lang::verifyHirProgramPlans(ordered.semantics, corrupted).valid(),
+         "HIR plan verification should reject a role/root mutation after "
+         "semantic lowering");
+
+  lang::HirProgram missingInitializer = ordered.hir;
+  auto &missingInitializerPlan =
+      const_cast<lang::HirProgramInitializationPlan &>(
+          missingInitializer.programInitializationPlan());
+  if (missingInitializerPlan.steps.size() > 5) {
+    const lang::HirStatementId statement =
+        missingInitializerPlan.steps[5].statement;
+    missingInitializerPlan.steps[5].initializer.reset();
+    auto &module = const_cast<lang::HirBody &>(missingInitializer.module());
+    const auto root =
+        std::find_if(module.statements.begin(), module.statements.end(),
+                     [statement](const lang::HirStatement &candidate) {
+                       return candidate.id == statement;
+                     });
+    if (root != module.statements.end()) {
+      root->value.reset();
+    }
+  }
+  expect(!lang::verifyHirProgramPlans(ordered.semantics, missingInitializer)
+              .valid(),
+         "HIR plan verification should reject an executable initializer "
+         "whose step and statement both lose the source value");
+
+  lang::HirProgram extraModuleValue = ordered.hir;
+  auto &extraModuleBody =
+      const_cast<lang::HirBody &>(extraModuleValue.module());
+  if (!extraModuleBody.values.empty()) {
+    lang::HirValue extra = extraModuleBody.values.back();
+    extra.id = static_cast<lang::HirValueId>(
+        1 + std::max_element(
+                extraModuleBody.values.begin(), extraModuleBody.values.end(),
+                [](const lang::HirValue &left, const lang::HirValue &right) {
+                  return left.id < right.id;
+                })
+                ->id);
+    extraModuleBody.values.push_back(std::move(extra));
+  }
+  expect(
+      !lang::verifyHirProgramPlans(ordered.semantics, extraModuleValue).valid(),
+      "HIR plan verification should reject an unrooted extra module value");
+
+  lang::HirProgram wrongBindingInfo = ordered.hir;
+  auto &wrongBindingBody =
+      const_cast<lang::HirBody &>(wrongBindingInfo.module());
+  if (!wrongBindingBody.bindings.empty()) {
+    wrongBindingBody.bindings.front().info.access = lang::AccessMode::Mutable;
+  }
+  expect(
+      !lang::verifyHirProgramPlans(ordered.semantics, wrongBindingInfo).valid(),
+      "HIR plan verification should reject ID-preserving binding metadata "
+      "changes");
+
+  const auto mutateFirstSubstitution = [&](lang::HirProgram &program,
+                                           auto mutate) {
+    auto &body = const_cast<lang::HirBody &>(program.module());
+    const auto value = std::find_if(body.values.begin(), body.values.end(),
+                                    [](const lang::HirValue &item) {
+                                      return item.programConstantSubstitution;
+                                    });
+    if (value != body.values.end()) {
+      mutate(*value);
+    }
+  };
+  lang::HirProgram wrongSubstitutionMarker = ordered.hir;
+  mutateFirstSubstitution(wrongSubstitutionMarker, [](lang::HirValue &value) {
+    value.programConstantSubstitution = false;
+  });
+  lang::HirProgram wrongSubstitutionConstant = ordered.hir;
+  mutateFirstSubstitution(wrongSubstitutionConstant, [](lang::HirValue &value) {
+    value.constant = lang::ConstantInteger{
+        .magnitude = 99,
+        .domain = lang::CheckedIntegerDomain{.width = 32, .signedValue = true}};
+  });
+  lang::HirProgram wrongSubstitutionInfo = ordered.hir;
+  mutateFirstSubstitution(wrongSubstitutionInfo, [](lang::HirValue &value) {
+    value.info.type = lang::SemanticType::UInt64;
+  });
+  expect(
+      !lang::verifyHirProgramPlans(ordered.semantics, wrongSubstitutionMarker)
+              .valid() &&
+          !lang::verifyHirProgramPlans(ordered.semantics,
+                                       wrongSubstitutionConstant)
+               .valid() &&
+          !lang::verifyHirProgramPlans(ordered.semantics, wrongSubstitutionInfo)
+               .valid(),
+      "HIR plan verification should exact-check each reachable constant "
+      "substitution marker, value, and ExpressionInfo");
+
+  lang::HirProgram wrongStaticMetadata = ordered.hir;
+  auto &wrongStaticClasses = const_cast<std::vector<lang::HirClassInstance> &>(
+      wrongStaticMetadata.classInstances());
+  if (staticValue != nullptr && staticValue->ownerClass != 0 &&
+      staticValue->ownerClass <= wrongStaticClasses.size() &&
+      !wrongStaticClasses[staticValue->ownerClass - 1].staticFields.empty()) {
+    wrongStaticClasses[staticValue->ownerClass - 1]
+        .staticFields.front()
+        .requiresActiveCleanup = true;
+  }
+  expect(!lang::verifyHirProgramPlans(ordered.semantics, wrongStaticMetadata)
+              .valid(),
+         "HIR plan verification should reject mutated static-field lifecycle "
+         "metadata while retaining the same plan IDs");
+
+  const std::string directSource = R"(
+class Globals {
+public:
+  static mut int32_t first = Globals::later;
+  static mut int32_t later = 1;
+  static mut int32_t self = Globals::self;
+};
+int main() { return Globals::first + Globals::later + Globals::self; }
+)";
+  const lang::FrontendResult direct =
+      lang::Frontend().analyze("later-program-storage.gti", directSource);
+  const lang::Diagnostic *directDiagnostic =
+      findDiagnosticByCode(direct.diagnostics, "GTI-S2068");
+  const std::size_t directAccess =
+      directSource.find("Globals::later") + std::string("Globals::").size();
+  const std::size_t directTarget = directSource.find("later = 1");
+  const std::size_t directInitializer = directSource.find("first =");
+  expect(!direct.semanticValid &&
+             countDiagnosticCode(direct.diagnostics, "GTI-S2068") == 2 &&
+             directDiagnostic != nullptr &&
+             directDiagnostic->phase == lang::DiagnosticPhase::Semantics &&
+             directDiagnostic->severity == lang::DiagnosticSeverity::Error &&
+             directDiagnostic->primary.source ==
+                 std::filesystem::weakly_canonical("later-program-storage.gti")
+                     .string() &&
+             directDiagnostic->primary.start == directAccess &&
+             directDiagnostic->primary.end == directAccess + 5 &&
+             directDiagnostic->primary.line == 4 &&
+             directDiagnostic->message ==
+                 "Initializer for 'Globals::first' may access program-wide "
+                 "storage 'Globals::later' before its initialization step "
+                 "completes." &&
+             directDiagnostic->related.size() == 2 &&
+             directDiagnostic->related[0].span.start == directTarget &&
+             directDiagnostic->related[0].span.end == directTarget + 5 &&
+             directDiagnostic->related[0].span.line == 5 &&
+             directDiagnostic->related[0].message ==
+                 "This storage is initialized at its own later program step." &&
+             directDiagnostic->related[1].span.start == directInitializer &&
+             directDiagnostic->related[1].span.end == directInitializer + 5 &&
+             directDiagnostic->related[1].span.line == 4 &&
+             directDiagnostic->related[1].message ==
+                 "The rejected initializer is declared here." &&
+             directDiagnostic->hints ==
+                 std::vector<std::string>{
+                     "Move the dependency earlier in source-unit/declaration "
+                     "order or remove the access from this initializer's "
+                     "closed GTI call graph."} &&
+             directDiagnostic->fixes.empty(),
+         "GTI-S2068 should reject direct later and self storage access with "
+         "an exact access span, declaration relations, ordering guidance, "
+         "and no unsafe fix-it");
+
+  const lang::FrontendResult zeroBeforeStep =
+      lang::Frontend().analyze("later-zero-storage.gti", R"(
+class Globals {
+public:
+  static mut int32_t first = Globals::zeroed;
+  static mut int32_t zeroed;
+};
+int main() { return Globals::first; }
+)");
+  expect(!zeroBeforeStep.semanticValid &&
+             countDiagnosticCode(zeroBeforeStep.diagnostics, "GTI-S2068") == 1,
+         "a later data-only zero-initialization step must not create an "
+         "early-value loophole");
+
+  const lang::FrontendResult transitive =
+      lang::Frontend().analyze("transitive-later-program-storage.gti", R"(
+class Globals {
+public:
+  static int32_t read_later() { return Globals::later; }
+  static mut int32_t first = Globals::read_later();
+  static mut int32_t later = 1;
+};
+int main() { return Globals::first; }
+)");
+  expect(!transitive.semanticValid &&
+             countDiagnosticCode(transitive.diagnostics, "GTI-S2068") == 1 &&
+             hasRelatedDiagnostic(transitive.diagnostics,
+                                  "transitive storage access"),
+         "later-storage proof should close over exact non-generic GTI calls");
+
+  const lang::FrontendResult referenceBoundary =
+      lang::Frontend().analyze("reference-later-program-storage.gti", R"(
+class Globals {
+public:
+  static int32_t inspect(int32_t& value) { return value; }
+  static mut int32_t first = Globals::inspect(Globals::later);
+  static constexpr int32_t later = -3;
+};
+int main() { return Globals::first; }
+)");
+  expect(!referenceBoundary.semanticValid &&
+             countDiagnosticCode(referenceBoundary.diagnostics, "GTI-S2068") ==
+                 1,
+         "a bare constexpr passed through an exact reference parameter must "
+         "remain a storage access rather than constant substitution");
+
+  const lang::FrontendResult referenceReturn =
+      lang::Frontend().analyze("reference-return-later-storage.gti", R"(
+class ReferenceReturnGlobals {
+public:
+  static int32_t& borrow_later() {
+    return ReferenceReturnGlobals::later;
+  }
+  static mut int32_t first = ReferenceReturnGlobals::borrow_later();
+  static constexpr int32_t later = -7;
+};
+int main() { return ReferenceReturnGlobals::first; }
+)");
+  expect(!referenceReturn.semanticValid &&
+             countDiagnosticCode(referenceReturn.diagnostics, "GTI-S2068") ==
+                 1 &&
+             hasRelatedDiagnostic(referenceReturn.diagnostics,
+                                  "transitive storage access"),
+         "a reference return must preserve the later constexpr as a storage "
+         "access in the transitive initializer proof");
+
+  const lang::FrontendResult bodylessGti =
+      lang::Frontend().analyze("bodyless-gti-later-storage.gti", R"(
+int32_t opaque();
+class BodylessGlobals {
+public:
+  static mut int32_t first = opaque();
+  static mut int32_t later = 1;
+};
+int main() { return BodylessGlobals::first; }
+)");
+  expect(!bodylessGti.semanticValid &&
+             countDiagnosticCode(bodylessGti.diagnostics, "GTI-S2068") == 1 &&
+             hasDiagnostic(bodylessGti.diagnostics, "no executable body"),
+         "an ordinary bodyless GTI declaration should be unknown rather than "
+         "silently treated as storage-effect-free");
+
+  const lang::FrontendResult storedReferenceBoundary =
+      lang::Frontend().analyze("stored-reference-later-storage.gti", R"(
+class RefBox {
+  int32_t& value;
+public:
+  RefBox(int32_t& source) : value(source) {}
+};
+class Globals {
+public:
+  static int32_t make_box() {
+    RefBox box = RefBox(Globals::later);
+    return 1;
+  }
+  static mut int32_t first = Globals::make_box();
+  static constexpr int32_t later = 4;
+};
+int main() { return Globals::first; }
+)");
+  expect(!storedReferenceBoundary.semanticValid &&
+             countDiagnosticCode(storedReferenceBoundary.diagnostics,
+                                 "GTI-S2068") == 1,
+         "stored-reference construction must force its later constexpr "
+         "argument to remain a storage access");
+
+  const lang::FrontendResult nativeAddressBoundary =
+      lang::Frontend().analyze("native-address-later-storage.gti", R"(
+extern "C" { void observe(const int32_t* value); }
+class Globals {
+public:
+  static int32_t call_native() {
+    unsafe { observe(&Globals::later); }
+    return 1;
+  }
+  static mut int32_t first = Globals::call_native();
+  static constexpr int32_t later = 5;
+};
+int main() { return Globals::first; }
+)");
+  expect(!nativeAddressBoundary.semanticValid &&
+             countDiagnosticCode(nativeAddressBoundary.diagnostics,
+                                 "GTI-S2068") == 1,
+         "native calls may hide no GTI body edge, but their raw-address "
+         "arguments must remain program-storage accesses");
+
+  const lang::FrontendResult constructorAccess =
+      lang::Frontend().analyze("constructor-later-storage.gti", R"(
+class Probe {
+public:
+  Probe() { Probe::later = 1; }
+  static int32_t make_probe() { Probe probe = Probe(); return 1; }
+  static mut int32_t first = Probe::make_probe();
+  static mut int32_t later = 0;
+};
+int main() { return Probe::first; }
+)");
+  expect(!constructorAccess.semanticValid &&
+             countDiagnosticCode(constructorAccess.diagnostics, "GTI-S2068") ==
+                 1,
+         "construction effects should include the exact selected constructor "
+         "body even when no destructor exists");
+
+  const lang::FrontendResult implicitBaseConstructor =
+      lang::Frontend().analyze("implicit-base-later-storage.gti", R"(
+class ImplicitBase {
+public:
+  ImplicitBase() { ImplicitBaseProbe::later = 1; }
+};
+class ImplicitBaseProbe : public ImplicitBase {
+public:
+  ImplicitBaseProbe() {}
+  static int32_t make_probe() {
+    ImplicitBaseProbe probe = ImplicitBaseProbe();
+    return 1;
+  }
+  static mut int32_t first = ImplicitBaseProbe::make_probe();
+  static mut int32_t later = 0;
+};
+int main() { return ImplicitBaseProbe::first; }
+)");
+  expect(!implicitBaseConstructor.semanticValid &&
+             countDiagnosticCode(implicitBaseConstructor.diagnostics,
+                                 "GTI-S2068") == 1,
+         "implicit base construction should include the exact selected base "
+         "constructor effects before accepting a program initializer");
+
+  const lang::FrontendResult destructorAccess =
+      lang::Frontend().analyze("destructor-later-storage.gti", R"(
+class Probe {
+public:
+  Probe() {}
+  ~Probe() { Probe::later = 1; }
+  static int32_t make_probe() { Probe probe = Probe(); return 1; }
+  static mut int32_t first = Probe::make_probe();
+  static mut int32_t later = 0;
+};
+int main() { return Probe::first; }
+)");
+  expect(!destructorAccess.semanticValid &&
+             countDiagnosticCode(destructorAccess.diagnostics, "GTI-S2068") ==
+                 1,
+         "lexical and temporary cleanup should close over exact destructor "
+         "effects before accepting a program initializer");
+
+  const lang::FrontendResult earlierDestructor =
+      lang::Frontend().analyze("earlier-destructor-storage.gti", R"(
+class Probe {
+public:
+  Probe() {}
+  ~Probe() { Probe::earlier = 1; }
+  static mut int32_t earlier = 0;
+  static int32_t make_probe() { Probe probe = Probe(); return 1; }
+  static mut int32_t result = Probe::make_probe();
+};
+int main() { return Probe::result; }
+)");
+  expect(earlierDestructor.semanticValid &&
+             !hasDiagnosticCode(earlierDestructor.diagnostics, "GTI-S2068"),
+         "the same closed destructor effect should be accepted when its "
+         "program storage step is earlier");
+
+  const lang::FrontendResult genericStatic =
+      lang::Frontend().analyze("generic-static-plan-exclusion.gti", R"(
+class Registry<T> {
+public:
+  static mut int32_t value = 0;
+};
+)");
+  expect(!genericStatic.semanticValid &&
+             hasDiagnosticCode(genericStatic.diagnostics, "GTI-S2039") &&
+             genericStatic.semantics.programInitializationPlan().steps.empty(),
+         "generic class statics should remain outside the whole-program plan "
+         "until their language-level qualified identity is supported");
 }
 
 void testSourceUnitDependencyGraph() {
@@ -3232,6 +4010,157 @@ void testSourceUnitDependencyGraph() {
              preludeGraph.sourceGraph.isVisible(preludeId, preludeDetailId),
          "implicit preludes should remain acyclic without re-exporting their "
          "private dependencies");
+
+  const std::filesystem::path orderedPreludeA = root / "ordered-prelude-a.gti";
+  const std::filesystem::path orderedPreludeADependency =
+      root / "ordered-prelude-a-dependency.gti";
+  const std::filesystem::path orderedPreludeB = root / "ordered-prelude-b.gti";
+  const std::filesystem::path orderedPreludeBDependency =
+      root / "ordered-prelude-b-dependency.gti";
+  const std::filesystem::path orderedIncludeA = root / "ordered-a.gti";
+  const std::filesystem::path orderedIncludeB = root / "ordered-b.gti";
+  const std::filesystem::path orderedShared = root / "ordered-shared.gti";
+  const std::string orderedPreludeAKey = canonical(orderedPreludeA);
+  const std::string orderedPreludeADependencyKey =
+      canonical(orderedPreludeADependency);
+  const std::string orderedPreludeBKey = canonical(orderedPreludeB);
+  const std::string orderedPreludeBDependencyKey =
+      canonical(orderedPreludeBDependency);
+  const std::string orderedIncludeAKey = canonical(orderedIncludeA);
+  const std::string orderedIncludeBKey = canonical(orderedIncludeB);
+  const std::string orderedSharedKey = canonical(orderedShared);
+  const std::unordered_map<std::string, std::string> orderedOverrides{
+      {orderedPreludeAKey, "#include \"ordered-prelude-a-dependency.gti\"\n"
+                           "mut int32_t prelude_a = 1;\n"},
+      {orderedPreludeADependencyKey, "mut int32_t prelude_a_dependency = 1;\n"},
+      {orderedPreludeBKey, "#include \"ordered-prelude-b-dependency.gti\"\n"
+                           "mut int32_t prelude_b = 1;\n"},
+      {orderedPreludeBDependencyKey, "mut int32_t prelude_b_dependency = 1;\n"},
+      {orderedIncludeAKey, "#include \"ordered-shared.gti\"\n"
+                           "mut int32_t include_a = 1;\n"},
+      {orderedIncludeBKey, "#include \"ordered-shared.gti\"\n"
+                           "mut int32_t include_b = 1;\n"},
+      {orderedSharedKey, "mut int32_t shared_dependency = 1;\n"}};
+  const std::string orderedEntryAB =
+      "#include \"ordered-a.gti\"\n"
+      "#include \"ordered-b.gti\"\n"
+      "#if target.os == \"never\"\n"
+      "mut int32_t inactive_target_storage = 1;\n"
+      "#else\n"
+      "mut int32_t active_target_storage = 1;\n"
+      "#endif\n"
+      "int main() { return 0; }\n";
+  const std::string orderedEntryBA =
+      "#include \"ordered-b.gti\"\n"
+      "#include \"ordered-a.gti\"\n"
+      "#if target.os == \"never\"\n"
+      "mut int32_t inactive_target_storage = 1;\n"
+      "#else\n"
+      "mut int32_t active_target_storage = 1;\n"
+      "#endif\n"
+      "int main() { return 0; }\n";
+  lang::FrontendOptions orderedOptions;
+  orderedOptions.stopAfter = lang::FrontendPhase::Hir;
+  const lang::FrontendResult orderedAB =
+      lang::Frontend(orderedOptions)
+          .analyze(entry, orderedEntryAB, {orderedPreludeA, orderedPreludeB},
+                   orderedOverrides);
+  const lang::FrontendResult orderedBA =
+      lang::Frontend(orderedOptions)
+          .analyze(entry, orderedEntryBA, {orderedPreludeB, orderedPreludeA},
+                   orderedOverrides);
+  const auto unitNames = [](const lang::FrontendResult &result) {
+    std::vector<std::string> names;
+    for (const lang::SourceUnitId id :
+         result.semantics.programInitializationPlan().unitOrder) {
+      const lang::SourceUnit *unit = result.sourceGraph.findUnit(id);
+      names.push_back(unit == nullptr ? std::string{}
+                                      : unit->path.filename().string());
+    }
+    return names;
+  };
+  const auto storageNames = [](const lang::FrontendResult &result) {
+    std::vector<std::string> names;
+    for (const lang::ProgramInitializationStep &step :
+         result.semantics.programInitializationPlan().steps) {
+      names.push_back(step.declaration == nullptr
+                          ? std::string{}
+                          : step.declaration->name().lexeme);
+    }
+    return names;
+  };
+  const std::vector<std::string> orderedABUnits = unitNames(orderedAB);
+  const std::vector<std::string> orderedABStorage = storageNames(orderedAB);
+  const std::vector<std::string> orderedBAUnits = unitNames(orderedBA);
+  const std::vector<std::string> orderedBAStorage = storageNames(orderedBA);
+  expect(
+      orderedAB.semanticValid && orderedAB.hirValid &&
+          orderedBA.semanticValid && orderedBA.hirValid &&
+          orderedABUnits ==
+              std::vector<std::string>{
+                  "ordered-prelude-a-dependency.gti", "ordered-prelude-a.gti",
+                  "ordered-prelude-b-dependency.gti", "ordered-prelude-b.gti",
+                  "ordered-shared.gti", "ordered-a.gti", "ordered-b.gti",
+                  "main.gti"} &&
+          orderedABStorage ==
+              std::vector<std::string>{"prelude_a_dependency", "prelude_a",
+                                       "prelude_b_dependency", "prelude_b",
+                                       "shared_dependency", "include_a",
+                                       "include_b", "active_target_storage"} &&
+          orderedBAUnits ==
+              std::vector<std::string>{
+                  "ordered-prelude-b-dependency.gti", "ordered-prelude-b.gti",
+                  "ordered-prelude-a-dependency.gti", "ordered-prelude-a.gti",
+                  "ordered-shared.gti", "ordered-b.gti", "ordered-a.gti",
+                  "main.gti"} &&
+          orderedBAStorage ==
+              std::vector<std::string>{"prelude_b_dependency", "prelude_b",
+                                       "prelude_a_dependency", "prelude_a",
+                                       "shared_dependency", "include_b",
+                                       "include_a", "active_target_storage"} &&
+          std::count(orderedABUnits.begin(), orderedABUnits.end(),
+                     "ordered-shared.gti") == 1 &&
+          std::none_of(orderedABStorage.begin(), orderedABStorage.end(),
+                       [](const std::string &name) {
+                         return name == "inactive_target_storage";
+                       }),
+      "program initialization should use dependency-first first-visit order, "
+      "configured prelude order, lexical include order, and only the active "
+      "target branch");
+
+  lang::SourceLoader loadedOrderedLoader;
+  lang::SourceGraph loadedOrderedGraph = loadedOrderedLoader.load(
+      entry, orderedEntryAB, {orderedPreludeA, orderedPreludeB},
+      orderedOverrides);
+  const lang::SourceGraph copiedOrderedGraph = loadedOrderedGraph;
+  const lang::FrontendResult loadedOrdered =
+      lang::Frontend(orderedOptions)
+          .analyzeLoaded(entry, std::move(loadedOrderedGraph),
+                         loadedOrderedLoader.sources());
+  expect(!loadedOrderedLoader.hadError() &&
+             copiedOrderedGraph.preludeRoots() ==
+                 orderedAB.sourceGraph.preludeRoots() &&
+             loadedOrdered.semanticValid && loadedOrdered.hirValid &&
+             loadedOrdered.sourceGraph.preludeRoots() ==
+                 orderedAB.sourceGraph.preludeRoots() &&
+             loadedOrdered.semantics.programInitializationPlan().unitOrder ==
+                 orderedAB.semantics.programInitializationPlan().unitOrder &&
+             loadedOrdered.semantics.analysisSeal().sourceGraph ==
+                 orderedAB.semantics.analysisSeal().sourceGraph,
+         "SourceGraph copy and Frontend::analyzeLoaded should preserve exact "
+         "ordered prelude and initialization identities");
+
+  lang::SourceLoader reusableOrderedLoader;
+  const lang::SourceGraph reusableFirst = reusableOrderedLoader.load(
+      entry, orderedEntryAB, {orderedPreludeA, orderedPreludeB},
+      orderedOverrides);
+  const lang::SourceGraph reusableSecond =
+      reusableOrderedLoader.load(entry, "int main() { return 0; }\n", {}, {});
+  expect(reusableFirst.preludeRoots().size() == 2 &&
+             reusableSecond.preludeRoots().empty() &&
+             reusableSecond.sourceUnits().size() == 1,
+         "SourceLoader reuse should clear stale configured prelude roots and "
+         "source-graph state before the next load");
 
   const lang::FrontendResult invalidDependency =
       lang::Frontend().analyze(entry,
@@ -4189,6 +5118,7 @@ int main() {
                                    .semantics = valid.semantics,
                                    .hir = valid.hir,
                                    .mir = valid.mir,
+                                   .sourceMir = &valid.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const std::int32_t value") == std::string::npos &&
@@ -4919,7 +5849,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v18\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v24\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -6543,6 +7473,7 @@ void testNonNullReferences() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const Counter &counter") != std::string::npos &&
@@ -6803,6 +7734,8 @@ int main() {
 )";
   const lang::FrontendResult valid =
       lang::Frontend().analyze("global-borrow-returns.gti", source);
+  const lang::MirVerificationResult validMirVerification =
+      lang::verifyMirProgram(valid.mir);
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected global-borrow-return diagnostic: "
@@ -6810,7 +7743,16 @@ int main() {
                 << '\n';
     }
   }
+  if (!validMirVerification.valid()) {
+    for (const lang::MirVerificationError &error :
+         validMirVerification.errors) {
+      std::cerr << "Unexpected global-borrow MIR error: " << error.owner << ':'
+                << error.block << ':' << error.instruction << ' '
+                << error.message << '\n';
+    }
+  }
   expect(valid.canGenerateCode() && valid.mirValid && valid.mir.valid() &&
+             validMirVerification.valid() &&
              !hasDiagnosticCode(valid.diagnostics, "GTI-S2055"),
          "an unsafe global/static dereference should be contained by its "
          "accessor while safe callers receive a checked mutable borrow");
@@ -6856,6 +7798,9 @@ int main() {
   }
   const lang::MirFunctionInstance *getMir =
       getHir == nullptr ? nullptr : valid.mir.findFunctionInstance(getHir->id);
+  if (!validMirVerification.valid() && getMir != nullptr) {
+    std::cerr << lang::MirPrinter().print(getMir->body) << '\n';
+  }
   expect(getHir != nullptr && getMir != nullptr &&
              getHir->returnBorrowOrigin == lang::BorrowOriginKind::Global &&
              getHir->returnBorrowPlace == getInfo->returnBorrowPlace &&
@@ -6918,7 +7863,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v18 ") &&
+  expect(mirDump.starts_with("mir-v24 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -6932,6 +7877,7 @@ int main() {
                                    .semantics = valid.semantics,
                                    .hir = valid.hir,
                                    .mir = valid.mir,
+                                   .sourceMir = &valid.mir,
                                    .optimizations = optimizations});
   const std::string emittedGet =
       getInfo == nullptr ? std::string{}
@@ -7131,6 +8077,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("const T &") != std::string::npos &&
              artifact.contents.find("inline const T &storage_read") !=
@@ -8908,6 +9855,7 @@ int main() { return 0; }
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("const T &value") != std::string::npos &&
              artifact.contents.find("BorrowingIterator(const "
@@ -10154,6 +11102,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("class unique_ptr") != std::string::npos &&
              artifact.contents.find("std::unique_ptr<T> owner = nullptr") !=
@@ -10329,6 +11278,7 @@ int main() {
                                    .semantics = nullState.semantics,
                                    .hir = nullState.hir,
                                    .mir = nullState.mir,
+                                   .sourceMir = &nullState.mir,
                                    .optimizations = nullOptimizations});
   expect(nullArtifact.contents.find("unique_ptr(const std::nullptr_t empty)") !=
                  std::string::npos &&
@@ -10622,6 +11572,7 @@ int main() {
        .semantics = frontend.semantics,
        .hir = frontend.hir,
        .mir = frontend.mir,
+       .sourceMir = &frontend.mir,
        .optimizations = lang::OptimizationPipeline().run(
            frontend.hir, lang::OptimizationLevel::O0)});
   expect(artifact.contents.find("unique_owner_upcast<") != std::string::npos &&
@@ -10927,6 +11878,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("::gti_internal::backend::storage<T> data") !=
@@ -11140,6 +12092,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
              "std::construct_at(slot(offset), std::forward<Args>(args)...)") !=
@@ -11247,6 +12200,7 @@ int main() {
        .semantics = vectorFrontend.semantics,
        .hir = vectorFrontend.hir,
        .mir = vectorFrontend.mir,
+       .sourceMir = &vectorFrontend.mir,
        .optimizations = lang::OptimizationPipeline().run(
            vectorFrontend.hir, lang::OptimizationLevel::O0)});
   expect(vectorArtifact.contents.find("storage_shift_right") !=
@@ -11584,6 +12538,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const Buffer<std::int32_t> value") ==
@@ -11897,6 +12852,7 @@ int main() { return run() - 4; }
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(generated.contents.find("do {") != std::string::npos &&
              generated.contents.find("while (value < 5);") != std::string::npos,
@@ -12059,16 +13015,16 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
-  expect(generated.contents.find(
-             "static_cast<std::remove_cvref_t<decltype(((condition) ? "
-             "(left) : (right)))>>(((condition) ? (left) : (right)))") !=
+  expect(generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
                  std::string::npos &&
              generated.contents.find("((condition) ? (std::move(left)) : "
                                      "(std::move(right)))") !=
                  std::string::npos,
-         "the C++ backend should force an owned lazy result while preserving "
-         "explicit ownership transfer");
+         "the C++ backend should emit scalar conditional control flow from "
+         "verified MIR while preserving explicit ownership transfer on the "
+         "compatibility path");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-conditional-expression.gti", R"(
@@ -15932,6 +16888,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   const lang::ClassTypeInfo *cleanupType =
       cleanupClass == nullptr ? nullptr
@@ -16137,6 +17094,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("___gti_operator_arrow") != std::string::npos &&
              artifact.contents.find("___gti_operator_dereference") !=
@@ -16330,6 +17288,20 @@ int main() {
   expect(frontend.canGenerateCode(),
          "operator() should support exact arbitrary-arity member overloads");
 
+  const lang::MirVerificationResult callableVerification =
+      lang::verifyMirProgram(frontend.mir);
+  if (!callableVerification.valid()) {
+    for (const lang::MirVerificationError &error :
+         callableVerification.errors) {
+      std::cerr << "Unexpected call-operator MIR error: " << error.owner << ':'
+                << error.block << ':' << error.instruction << ' '
+                << error.message << '\n';
+    }
+  }
+  expect(callableVerification.valid(),
+         "operator() source accepted for code generation should have a fully "
+         "verified MIR program");
+
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
@@ -16338,6 +17310,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("___gti_operator_call") != std::string::npos &&
              artifact.contents.find(" operator()(") == std::string::npos,
@@ -16709,6 +17682,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("___gti_operator_call() &&") !=
@@ -17057,6 +18031,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   const bool emittedRangeCore =
       artifact.contents.find("__gti_range_") != std::string::npos &&
@@ -20122,6 +21097,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("__gti_fn_1_pow") != std::string::npos &&
              artifact.contents.find("__gti_fn_2_pow") != std::string::npos &&
@@ -20293,6 +21269,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("std::array<std::uint32_t, 2048> video = "
                                 "std::array<std::uint32_t, 2048>{}") !=
@@ -20484,6 +21461,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const auto integer = 1") != std::string::npos &&
@@ -20803,6 +21781,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("const auto [left, right] = values;") !=
                  std::string::npos &&
@@ -21062,6 +22041,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
              "const auto add = [offset](const std::int32_t value) -> "
@@ -21955,6 +22935,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
              "::gti_internal::backend::invoke_read(operation, ") !=
@@ -22654,6 +23635,7 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
              "return ::gti_internal::backend::invoke_read(predicate, ") !=
@@ -22994,7 +23976,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v18 ") &&
+             mirDump.starts_with("mir-v24 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -25025,6 +26007,7 @@ int main() {
   testMirTemporaryAndDropObligations();
   testDefiniteReturnAnalysis();
   testProgramArgumentsEntryPoint();
+  testProgramInitializationPlans();
   testSourceUnitDependencyGraph();
   testStandardLibraryImports();
   testPackageImports();

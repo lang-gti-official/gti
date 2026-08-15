@@ -1,0 +1,36 @@
+mut int32_t comma_closed = 0;
+
+class CommaFlag {
+public:
+  int32_t bit;
+
+  CommaFlag(int32_t value) : bit(value) {}
+
+  ~CommaFlag() {
+    comma_closed = comma_closed | this.bit;
+  }
+};
+
+int32_t use_plain() {
+  CommaFlag value = CommaFlag(2);
+  return 0;
+}
+
+int32_t use_comma() {
+  CommaFlag value = CommaFlag(1);
+  int32_t observed = (4, 7);
+  return observed;
+}
+
+int main() {
+  if (use_plain() != 0) {
+    return 1;
+  }
+  if (use_comma() != 7) {
+    return 2;
+  }
+  if (comma_closed != 3) {
+    return 3;
+  }
+  return 0;
+}

@@ -225,8 +225,9 @@ void testLanguagePipeline() {
   lang::MirProgram malformed = result.mir;
   lang::MirProgramEditor editor(malformed);
   bool queuedMalformedFloat = false;
-  for (const lang::MirBodyAddress bodyAddress : editor.bodies()) {
-    const lang::MirBody *body = editor.body(bodyAddress);
+  for (const lang::MirBodyAddress bodyAddress :
+       lang::enumerateMirBodyAddresses(malformed)) {
+    const lang::MirBody *body = lang::findMirBody(malformed, bodyAddress);
     if (body == nullptr || queuedMalformedFloat) {
       continue;
     }

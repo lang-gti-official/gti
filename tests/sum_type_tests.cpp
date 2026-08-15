@@ -202,6 +202,7 @@ void testSemanticAndIrModel() {
                                    .semantics = result.semantics,
                                    .hir = result.hir,
                                    .mir = result.mir,
+                                   .sourceMir = &result.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("union Bits {") != std::string::npos &&

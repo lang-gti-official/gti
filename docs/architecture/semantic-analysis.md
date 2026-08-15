@@ -32,8 +32,9 @@ on declaration-wide registration. It currently:
 6. derives transfer/share facts and validates inherited interface capability
    requirements;
 7. records class types and lifecycle facts;
-8. analyzes declaration bodies in lexical scopes; and
-9. finalizes callable forwarding/arguments and semantic occurrences.
+8. analyzes declaration bodies in lexical scopes;
+9. finalizes callable forwarding and argument contracts; and
+10. finalizes the program-initialization plan and semantic occurrences.
 
 This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
@@ -45,22 +46,36 @@ strict left-to-right expressions, full-expression boundaries, and a lexical
 dependency-first program-initialization walk. Semantics now selects the AST
 roots of each full expression, including separate loop-condition/increment and
 constructor-initializer groups. HIR maps those roots to concrete identities; it
-does not rediscover endpoints from lowered statement kinds. Semantics must
-still add active ordered child roles, complete transient-loan endpoints, and
-one `ProgramInitializationPlan` derived from `SourceGraph` plus source spans.
-It must also reject a program-wide initializer unless safe GTI call/effect
-facts prove that it cannot access a later initialization step.
+does not rediscover endpoints from lowered statement kinds.
 
-Those general ordered facts are not represented today. The analyzer already
-selects full-expression roots, short-circuit branches, and several loan
-endpoints, but it
-conservatively rejects an overlapping transient borrow and mutation in either
-call-argument order. The combined AST's dependency parsing order is not a
-substitute for the program-initialization plan. M-LIFE-01 supplies downstream
-full-expression and drop obligations; M-EXEC-01 must add the ordered
-child/materialization and program-initialization facts. The semantic
-restriction may be narrowed only when the matching production backend family
-consumes them.
+Semantics additionally owns one immutable `ProgramInitializationPlan`. It
+visits configured prelude roots in their preserved order and then the entry
+unit, follows explicit include edges in lexical dependency-first order with
+first-visit deduplication, and excludes inactive target branches. Namespace
+globals and non-generic static fields then enter the plan in source order. Each
+storage step has an explicit `DataOnly` or `Initializer` role: implicit zero
+initialization and exactly materializable `constexpr` data are data-only, while
+an executable source initializer owns an initializer step. Generic-class
+static storage remains concrete-instance HIR state and is deliberately outside
+this program-wide plan.
+
+A use of later program storage is permitted only when the frontend records an
+exact representable constant substitution for that expression. Reads, writes,
+address or reference formation, borrows, and reference-boundary arguments are
+storage accesses even when the declaration is `constexpr`. The analyzer closes
+each executable initializer's effects over exact calls, constructors,
+destructors, field/base initialization, and cleanup. An ordinary bodyless GTI
+declaration, open generic cleanup shape, or other missing summary is unknown;
+`GTI-S2068` rejects a later-storage access or unknown transitive effect before
+HIR. This proof does not infer safety from a backend or from `findConstant()`.
+
+`SemanticAnalysisSeal` binds the stable `Program` snapshot, full `TargetInfo`,
+active-statement preorder, and exact ordered source-graph/prelude provenance.
+HIR copies that seal and must match the same program and target before
+lowering. The general ordered-expression work is still incomplete: active
+ordered child roles and some transient-loan endpoints remain M-EXEC-01 work,
+and the analyzer therefore retains conservative borrow restrictions for
+families whose production schedule is not yet authoritative.
 
 ## SemanticModel
 
@@ -81,7 +96,9 @@ compiler IDs. Important facts include:
   initializers;
 - class bases, override roots, abstract/polymorphic state, and destruction;
 - array extents, switch constants, lambdas, target selections, moves, loans,
-  unsafe operations, selected execution profile, and completion context.
+  unsafe operations, selected execution profile, and completion context;
+- the semantic analysis seal, exact program-initialization plan, exact
+  program-constant substitutions, and the selected hosted-entry plan.
 
 The `TargetInfo` supplied before analysis also carries the one GTI-owned scalar
 `TargetDataLayout`. `Frontend` rejects an unsupported value before constructing
@@ -500,20 +517,26 @@ without copying a callee category set or changing the origin anchor. Exact
 `nullptr_t` contextual construction is reclassified after constructor
 selection so the late contextual step cannot lose its constructor channel.
 
-This is not yet the executable general record. Hosted-startup and remaining
-trusted host origins, artifact-local site interning, function-effect
-refinement, failure successors, cleanup unwinding, containment, and runtime
-records remain M-FAIL-01 work. Existing transitional backend helpers are not
-evidence that those pieces exist.
+The failure-metadata builder now interns exact frontend origin records into
+artifact-local sites, including the two hosted-plan operations below. This is
+not yet a general executable hosted-startup body: generated startup control
+flow, remaining trusted host origins, broader function-effect refinement,
+failure successors, cleanup unwinding, and containment remain M-FAIL-01 /
+M-EXEC-01 work. Existing transitional backend helpers are not evidence that
+those pieces exist.
 
-The selected owned-argument program-entry record must also state that its
-compiler-generated hosted-startup operation has exactly three local origins:
-`hosted_runtime_contract_failure/negative_argument_count`,
-`numeric_conversion_out_of_range/hosted_argument_count`, and
-`allocation_failure/hosted_arguments`. These facts and the source `main`
-declaration anchor are semantic program-entry metadata even though no source
-expression spells the native adapter operation; a backend may not synthesize
-their meaning.
+For an owned-argument entry, `HostedProgramEntryPlan` records the exact source
+entry, canonical vector/string constructors, append target, source unit, and
+`main` anchor. It owns exactly the two adapter-local operations that no source
+expression spells:
+`hosted_runtime_contract_failure/negative_argument_count` and
+`numeric_conversion_out_of_range/hosted_argument_count`. Allocation detectors
+remain on the exact vector constructor, string constructor, and append callee
+records; the adapter does not re-site them. The stable
+`allocation_failure/hosted_arguments` detail is reserved but currently has no
+producer. HIR copies this plan as data. A backend may not rediscover any target,
+origin, or anchor, and generated executable hosted-startup HIR/MIR remains a
+later cutover stage.
 
 M-LIFE-01 adds the v1 restriction on cleanup-owning namespace globals and
 static fields after the existing more-specific unique-owner, storage, and

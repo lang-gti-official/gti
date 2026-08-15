@@ -135,13 +135,58 @@ flow. A generated boundary/runtime pair may serialize,
 observe, return, or terminate with the completed record, but it may not infer a
 category, choose caller cleanup, or use a generated/native source location.
 
-The intended runtime surface provides fixed record/descriptor types,
-allocation-free lookup and formatting, an observer-call primitive, report I/O,
-and process-terminal arbitration through one versioned path. Generated hosted,
-task, callback, and E-EMBED-01 wrappers own containment policy, cleanup
-completion, context guards, and record return/storage. This does not make the
+`runtime/include/gti/runtime_failure.h` now provides the version-one C
+boundary. Its
+stable code and detail ordinals exactly match the compiler vocabulary. On the
+supported 64-bit runtime ABI, the ordinary record is 48 bytes, an allowed
+outcome is 8 bytes, a site descriptor is 56 bytes, an artifact descriptor is
+72 bytes, and the two-record emergency envelope is 104 bytes. Every reserved
+field must be zero. A nonzero record identity and one-based site must match the
+artifact descriptor and the site's exact allowed `(code, detail)` set. The
+all-zero identity with site zero is the sole descriptor-free runtime sentinel
+and resolves to `"<runtime>":0@0..0`.
+
+The production C++ backend now emits one immutable ABI-v1 artifact descriptor
+from the exact verified MIR metadata snapshot. Internal constant tables retain
+the artifact identity, canonical descriptor bytes, one-based sites, counted
+logical-source bytes, unsigned-64 line and byte spans, and the canonical
+allowed outcomes for every site. Empty-site artifacts retain their canonical
+bytes and identity with a null site pointer. The selected
+`scalar-failure-callgraph-v1` component creates an exact record on a local MIR
+failure edge, forwards it through its hidden ABI, and calls the hosted terminal
+primitive after verified cleanup. Other generated compatibility bodies do not
+gain record or containment authority from descriptor emission alone. The
+public compatibility-only `CppEmitter` API has no MIR snapshot and does not
+emit these tables.
+
+The runtime formats and writes ordinary and cleanup-failure reports without
+allocation, invokes the optional hosted observer over a protected record copy,
+and arbitrates one process-wide terminal winner. Observer re-entry, mutation of
+the presented copy, or an escaping C++ exception preserves and reports the
+original record before immediate status-70 termination. POSIX report writes
+retry `EINTR`, complete partial writes, and contain a broken-pipe `SIGPIPE` in
+the reporting thread; Windows uses binary `WriteFile` so the final LF is not
+translated. Report-write failure is nonrecursive and does not change terminal
+status. The bounded generated hosted adapter now owns containment for the
+selected scalar failure component. Future general hosted, task, callback, and
+E-EMBED-01 wrappers still own their containment policy, cleanup completion,
+context guards, and record return/storage. This boundary does not make the
 failure record the ABI of a public GTI class and does not establish a general
 callable ABI.
+
+Quoted source names use a strict UTF-8 decoder and a checked-in interval table
+for Unicode 15.1 `L*`, `M*`, `N*`, `P*`, `S*`, and `Zs`. The table is generated
+from the official `DerivedGeneralCategory.txt` whose pinned SHA-256 is
+`760720ac034f96b630a3055879a744e0907184e8aa811e89ba34583a7a487e85`:
+
+```sh
+python3 scripts/generate_failure_unicode_table.py \
+  /path/to/15.1.0/DerivedGeneralCategory.txt \
+  runtime/src/failure_unicode_15_1.inc --check
+```
+
+Runtime formatting never consults a host locale, host Unicode library, LLVM,
+or a newer Unicode release.
 
 Public source-defined vector/string bounds require a narrow trusted,
 identity-bound origin/check capability supplied by M-FAIL-01. I-CAP-01 has
@@ -152,11 +197,15 @@ applications cannot forge its identity or choose an arbitrary category/detail.
 This keeps public `vector`/`string` origins in source/library policy without
 asking a backend to inspect names or call stacks.
 
-**Current gap:** `runtime.h` has no failure entry, observer, or record. The C++
-emitter instead generates several English-message helpers that call
-`std::abort()`, while native expected observers can throw or assert. Those are
-transitional implementation paths to remove under M-FAIL-01 and Q-FAIL-01;
-they are not alternate runtime policy.
+**Current gap:** `scalar-failure-callgraph-v1` is the first generated hosted
+consumer, not a general failure cutover. The C++ compatibility emitter still
+generates several English-message helpers that call `std::abort()`, while
+native expected observers can throw or assert. Those unselected paths do not
+complete compiler-managed failure cleanup, pass the fixed record to the
+runtime, or produce the specified status/report. They are removed only by
+their matching closed M-BACK-02 migrations; they are not alternate runtime
+policy. Double-failure cleanup and task/callback/embedding containment remain
+open.
 
 ## Source And Tooling Privacy
 

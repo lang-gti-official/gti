@@ -1,0 +1,137 @@
+bool cfg_not(bool value) {
+  return !value;
+}
+
+char cfg_char(bool upper) {
+  if (upper) {
+    return 'A';
+  }
+  return 'z';
+}
+
+int32_t cfg_bits(int32_t value) {
+  return value ^ 3;
+}
+
+bool cfg_less(int32_t left, int32_t right) {
+  return left < right;
+}
+
+int32_t cfg_choose(bool first, int32_t left, int32_t right) {
+  if (first) {
+    return left;
+  }
+  return right;
+}
+
+int32_t cfg_local(bool replace, int32_t initial) {
+  mut int32_t result = initial;
+  if (replace) {
+    result = 17;
+  }
+  return result;
+}
+
+int32_t cfg_switch(int32_t selector) {
+  mut int32_t result = 30;
+  switch (selector) {
+  case 1:
+    result = 11;
+    break;
+  case 2:
+    result = 22;
+    break;
+  default:
+    result = 33;
+    break;
+  }
+  return result;
+}
+
+bool cfg_short(bool left, bool right) {
+  return left and right;
+}
+
+int32_t cfg_loop(bool choose) {
+  mut bool running = true;
+  mut int32_t result = 3;
+  while (running) {
+    running = false;
+    if (choose) {
+      result = 8;
+      continue;
+    }
+    result = 5;
+  }
+  return result;
+}
+
+int32_t cfg_fold(bool first) {
+  if (first) {
+    return ((41));
+  }
+  return ((42));
+}
+
+int32_t compatibility_checked(bool add, int32_t value) {
+  if (add) {
+    return value + 1;
+  }
+  return value;
+}
+
+int32_t compatibility_call_target(int32_t value) {
+  return value + 1;
+}
+
+int32_t compatibility_call(bool invoke, int32_t value) {
+  if (invoke) {
+    return compatibility_call_target(value);
+  }
+  return value;
+}
+
+int32_t compatibility_reference(bool read, int32_t& value) {
+  if (read) {
+    return value;
+  }
+  return 0;
+}
+
+int main() {
+  int32_t observed = 77;
+  if (!cfg_not(false) or cfg_not(true)) {
+    return 1;
+  }
+  if (cfg_char(true) != 'A' or cfg_char(false) != 'z') {
+    return 2;
+  }
+  if (cfg_bits(10) != 9 or !cfg_less(-2, 4)) {
+    return 3;
+  }
+  if (cfg_choose(true, 5, 6) != 5 or cfg_choose(false, 5, 6) != 6) {
+    return 4;
+  }
+  if (cfg_local(true, 4) != 17 or cfg_local(false, 4) != 4) {
+    return 5;
+  }
+  if (cfg_switch(1) != 11 or cfg_switch(2) != 22 or
+      cfg_switch(9) != 33) {
+    return 6;
+  }
+  if (!cfg_short(true, true) or cfg_short(true, false)) {
+    return 7;
+  }
+  if (cfg_loop(true) != 8 or cfg_loop(false) != 5) {
+    return 8;
+  }
+  if (cfg_fold(true) != 41 or cfg_fold(false) != 42) {
+    return 9;
+  }
+  if (compatibility_checked(true, 4) != 5 or
+      compatibility_call(true, 6) != 7 or
+      compatibility_reference(true, observed) != 77) {
+    return 10;
+  }
+  return 0;
+}

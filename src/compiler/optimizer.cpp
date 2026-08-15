@@ -315,8 +315,8 @@ foldLiteralIdentities(MirProgram &program,
   LiteralIdentityFoldResult result{
       .report = {.name = "fold-literal-identities"}};
   MirProgramEditor editor(program);
-  for (const MirBodyAddress bodyAddress : editor.bodies()) {
-    const MirBody *body = editor.body(bodyAddress);
+  for (const MirBodyAddress bodyAddress : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, bodyAddress);
     if (body == nullptr) {
       continue;
     }
@@ -362,7 +362,8 @@ foldLiteralIdentities(MirProgram &program,
 } // namespace
 
 OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
-  OptimizedProgram result{.mir = std::move(request.mir)};
+  OptimizedProgram result{.sourceMir = request.mir,
+                          .mir = std::move(request.mir)};
   result.report.verificationEnabled = request.options.verifyMir;
 
   if (request.options.verifyMir) {
@@ -389,7 +390,8 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
   }
 
   if (request.options.verifyMir) {
-    result.report.outputVerification = verifyMirProgram(result.mir);
+    result.report.outputVerification =
+        verifyMirOptimizationCoherence(result.sourceMir, result.mir);
   }
   return result;
 }

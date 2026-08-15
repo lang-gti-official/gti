@@ -14,6 +14,13 @@ target_link_libraries(gti_installed_compiler_smoke PRIVATE GTI::compiler)
 add_test(NAME installed_compiler_library
          COMMAND gti_installed_compiler_smoke)
 
+add_executable(gti_installed_runtime_failure_header_smoke
+               ../runtime_failure_header_smoke.cpp)
+target_link_libraries(gti_installed_runtime_failure_header_smoke
+                      PRIVATE GTI::compiler GTI::runtime)
+add_test(NAME installed_runtime_failure_header_coexistence
+         COMMAND gti_installed_runtime_failure_header_smoke)
+
 add_executable(gti_installed_cpp_backend_smoke
                ../cpp_backend_library_smoke.cpp)
 target_link_libraries(gti_installed_cpp_backend_smoke
