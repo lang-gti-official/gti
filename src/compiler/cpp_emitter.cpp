@@ -1,4 +1,6 @@
 #include "gti/cpp_emitter.h"
+
+#include "cpp_representation.h"
 #include "gti/ast.h"
 #include "gti/mir.h"
 #include "gti/optimizer.h"
@@ -13481,47 +13483,7 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
 
   [[nodiscard]] std::string
   emittedFunctionName(const FunctionDecl &function) const {
-    if (function.operatorName()) {
-      switch (function.operatorName()->kind) {
-      case OverloadedOperator::Equal:
-      case OverloadedOperator::NotEqual:
-      case OverloadedOperator::Less:
-      case OverloadedOperator::LessEqual:
-      case OverloadedOperator::Greater:
-      case OverloadedOperator::GreaterEqual:
-      case OverloadedOperator::Assignment:
-        return std::string(
-            operatorSourceSpelling(function.operatorName()->kind));
-      case OverloadedOperator::Dereference:
-      case OverloadedOperator::PreIncrement:
-      case OverloadedOperator::Arrow:
-      case OverloadedOperator::Subscript:
-      case OverloadedOperator::Call:
-      case OverloadedOperator::ContextualBool:
-        break;
-      }
-    }
-    if (function.runtimeBinding()) {
-      return function.name().lexeme;
-    }
-    const FunctionInfo *info = semantics.findFunction(function);
-    if (function.hasCLinkage()) {
-      return info != nullptr && !info->externalSymbol.empty()
-                 ? info->externalSymbol
-                 : function.name().lexeme;
-    }
-    if (info != nullptr && info->entryPoint &&
-        info->returnType == SemanticType::Int32) {
-      return "__gti_entry";
-    }
-    if (info == nullptr || info->id == 0) {
-      return function.name().lexeme;
-    }
-    if (info->virtualMethod) {
-      return function.name().lexeme;
-    }
-    return "__gti_fn_" + std::to_string(info->id) + "_" +
-           function.name().lexeme;
+    return cppFunctionSpelling(semantics, function);
   }
 
   [[nodiscard]] bool isIntrinsicFunction(const FunctionDecl &function) const {
@@ -14188,186 +14150,7 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitSemanticType(const SemanticType &type) {
-    switch (type.kind) {
-    case SemanticType::Void:
-      output << "void";
-      return;
-    case SemanticType::Int8:
-      output << "std::int8_t";
-      return;
-    case SemanticType::Int16:
-      output << "std::int16_t";
-      return;
-    case SemanticType::Int32:
-      output << "std::int32_t";
-      return;
-    case SemanticType::Int64:
-      output << "std::int64_t";
-      return;
-    case SemanticType::UInt8:
-      output << "std::uint8_t";
-      return;
-    case SemanticType::UInt16:
-      output << "std::uint16_t";
-      return;
-    case SemanticType::UInt32:
-      output << "std::uint32_t";
-      return;
-    case SemanticType::UInt64:
-      output << "std::uint64_t";
-      return;
-    case SemanticType::Float:
-      output << "float";
-      return;
-    case SemanticType::Double:
-      output << "double";
-      return;
-    case SemanticType::Bool:
-      output << "bool";
-      return;
-    case SemanticType::Char:
-      output << "std::uint8_t";
-      return;
-    case SemanticType::StringView:
-      output << "std::string_view";
-      return;
-    case SemanticType::NullPtr:
-      output << "std::nullptr_t";
-      return;
-    case SemanticType::RawPointer:
-      if (type.pointerAccess == AccessMode::ReadOnly) {
-        output << "const ";
-      }
-      if (!type.arguments.empty()) {
-        emitSemanticType(type.arguments.front());
-      } else {
-        output << "void";
-      }
-      output << '*';
-      return;
-    case SemanticType::Array:
-      output << "std::array<";
-      if (!type.arguments.empty()) {
-        emitSemanticType(type.arguments.front());
-      } else {
-        output << "void";
-      }
-      output << ", ";
-      if (type.arrayLengthParameterId != 0) {
-        const GenericParameterInfo *parameter =
-            semantics.findGenericParameter(type.arrayLengthParameterId);
-        output << (parameter == nullptr ? "0" : parameter->name.lexeme);
-      } else {
-        output << type.arrayLength;
-      }
-      output << '>';
-      return;
-    case SemanticType::Class: {
-      const ClassTypeInfo *classInfo = semantics.findClassType(type.classId);
-      if (classInfo == nullptr || classInfo->declaration == nullptr) {
-        output << "void";
-        return;
-      }
-      output << (classInfo->cOpaqueHandle ? "::" : "::__gti_program::");
-      for (const std::string &scope : classInfo->namespaceScope) {
-        output << (scope == "std" ? emittedStandardNamespace
-                                  : std::string_view(scope))
-               << "::";
-      }
-      output << classInfo->declaration->name().lexeme;
-      if (!type.arguments.empty() || !type.valueArguments.empty()) {
-        output << '<';
-        bool separator = false;
-        for (const SemanticType &argument : type.arguments) {
-          if (separator) {
-            output << ", ";
-          }
-          emitSemanticType(argument);
-          separator = true;
-        }
-        for (const CompileTimeValue &argument : type.valueArguments) {
-          if (separator) {
-            output << ", ";
-          }
-          if (argument.kind == CompileTimeValue::UInt64) {
-            output << argument.value;
-          } else if (argument.kind == CompileTimeValue::Parameter) {
-            const GenericParameterInfo *parameter =
-                semantics.findGenericParameter(argument.parameterId);
-            output << (parameter == nullptr ? "0" : parameter->name.lexeme);
-          } else {
-            output << '0';
-          }
-          separator = true;
-        }
-        output << '>';
-      }
-      return;
-    }
-    case SemanticType::Enum: {
-      const EnumTypeInfo *enumInfo = semantics.findEnumType(type.enumId);
-      if (enumInfo == nullptr || enumInfo->declaration == nullptr) {
-        output << "void";
-        return;
-      }
-      output << "::__gti_program::";
-      for (const std::string &scope : enumInfo->namespaceScope) {
-        output << (scope == "std" ? emittedStandardNamespace
-                                  : std::string_view(scope))
-               << "::";
-      }
-      output << enumInfo->declaration->name().lexeme;
-      return;
-    }
-    case SemanticType::Reference:
-      if (type.referenceAccess == AccessMode::ReadOnly) {
-        output << "const ";
-      }
-      if (!type.arguments.empty()) {
-        emitSemanticType(type.arguments.front());
-      } else {
-        output << "void";
-      }
-      output << " &";
-      return;
-    case SemanticType::UniqueOwner:
-      output << "std::unique_ptr<";
-      if (!type.arguments.empty()) {
-        emitSemanticType(type.arguments.front());
-      }
-      output << '>';
-      return;
-    case SemanticType::Storage:
-      output << "::gti_internal::backend::storage<";
-      if (!type.arguments.empty()) {
-        emitSemanticType(type.arguments.front());
-      }
-      output << '>';
-      return;
-    case SemanticType::TypeParameter:
-    case SemanticType::TypePack: {
-      const GenericParameterInfo *parameter =
-          semantics.findGenericParameter(type.genericParameterId);
-      output << (parameter == nullptr ? "void" : parameter->name.lexeme);
-      if (type.kind == SemanticType::TypePack && type.concretePack) {
-        output << "...";
-      }
-      return;
-    }
-    case SemanticType::Expected:
-      output << (standard == CppStandard::Cpp23 ? "std::expected<"
-                                                : "::nonstd::expected<");
-      if (type.arguments.size() == 2) {
-        emitSemanticType(type.arguments[0]);
-        output << ", ";
-        emitSemanticType(type.arguments[1]);
-      }
-      output << '>';
-      return;
-    default:
-      output << "void";
-      return;
-    }
+    output << cppSemanticTypeSpelling(semantics, standard, type);
   }
 
   void emitArrayType(const TypeRef &type, std::size_t extentIndex) {
@@ -14595,12 +14378,12 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
 
   [[nodiscard]] static std::string
   emittedStaticVariableBaseName(SymbolId symbol, std::string_view name) {
-    return "__gti_static_" + std::to_string(symbol) + "_" + std::string(name);
+    return cppStaticStorageBaseSpelling(symbol, name);
   }
 
   [[nodiscard]] static std::string
   emittedStaticVariableName(SymbolId symbol, std::string_view name) {
-    return emittedStaticVariableBaseName(symbol, name) + "::value";
+    return cppStaticStorageValueSpelling(symbol, name);
   }
 
   [[nodiscard]] std::string

@@ -238,6 +238,7 @@ add_library(
   "gti_cpp_backend" STATIC
   "src/compiler/cpp_backend.cpp"
   "src/compiler/cpp_emitter.cpp"
+  "src/compiler/cpp_representation.cpp"
   "src/compiler/cpp_mir_body_emitter.cpp"
   "src/compiler/cpp_mir_program_plan.cpp"
   "src/compiler/cpp_mir_representation_snapshot.cpp"

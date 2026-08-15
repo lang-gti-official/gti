@@ -81,6 +81,10 @@ for the current implementation when a document is stale or ambiguous.
   — gives call-site braces an exact generic `T[N]` meaning without importing
   `std::initializer_list`, list-preferred overloads, common-type inference, or
   CTAD.
+- [016: Single lowered backend input](decisions/016-single-lowered-backend-input.md)
+  — converges executable C++ generation on one immutable lowered-program
+  input (verified MIR bodies plus deterministic representation tables) and
+  ends per-body AST/HIR consultation at the backend boundary.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

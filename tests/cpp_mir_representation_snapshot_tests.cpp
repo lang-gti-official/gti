@@ -1,4 +1,5 @@
 #include "../src/compiler/cpp_mir_representation_snapshot.h"
+#include "../src/compiler/cpp_representation.h"
 
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
@@ -1194,6 +1195,84 @@ void testAtomicBackendRouteAndIncoherentRejection() {
          "snapshot before publishing bytes");
 }
 
+// ADR 016 phase-4 agreement gate: every extracted representation authority
+// must spell exactly the bytes the compatibility emitter writes, so table
+// rows can never drift from emitted output while both paths coexist.
+void testRepresentationSpellingAuthorities() {
+  const lang::FrontendResult frontend = analyzeRichProgram();
+  expect(frontend.canGenerateCode(),
+         "the spelling-authority fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::FunctionDecl *helper = nullptr;
+  const lang::EnumDecl *exitCode = nullptr;
+  for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
+    if (const auto *function =
+            dynamic_cast<const lang::FunctionDecl *>(declaration.get());
+        function != nullptr && function->name().lexeme == "helper") {
+      helper = function;
+    }
+    if (const auto *enumeration =
+            dynamic_cast<const lang::EnumDecl *>(declaration.get());
+        enumeration != nullptr && enumeration->name().lexeme == "ExitCode") {
+      exitCode = enumeration;
+    }
+  }
+  expect(helper != nullptr && exitCode != nullptr,
+         "the fixture should declare the helper function and ExitCode enum");
+  if (helper == nullptr || exitCode == nullptr) {
+    return;
+  }
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
+                                   .optimizations = optimizations});
+
+  const std::string helperSpelling =
+      lang::cppFunctionSpelling(frontend.semantics, *helper);
+  const lang::FunctionInfo *helperInfo =
+      frontend.semantics.findFunction(*helper);
+  expect(helperInfo != nullptr &&
+             helperSpelling ==
+                 "__gti_fn_" + std::to_string(helperInfo->id) + "_helper" &&
+             artifact.contents.find(helperSpelling + "(") != std::string::npos,
+         "the function-spelling authority should produce the exact emitted "
+         "helper definition name");
+
+  lang::SemanticType int32Type;
+  int32Type.kind = lang::SemanticType::Int32;
+  const lang::EnumTypeInfo *exitCodeInfo =
+      frontend.semantics.findEnumType(*exitCode);
+  lang::SemanticType enumType;
+  enumType.kind = lang::SemanticType::Enum;
+  enumType.enumId = exitCodeInfo == nullptr ? 0 : exitCodeInfo->id;
+  const std::string enumSpelling = lang::cppSemanticTypeSpelling(
+      frontend.semantics, lang::CppStandard::Cpp20, enumType);
+  expect(lang::cppSemanticTypeSpelling(frontend.semantics,
+                                       lang::CppStandard::Cpp20,
+                                       int32Type) == "std::int32_t" &&
+             artifact.contents.find("std::int32_t") != std::string::npos &&
+             exitCodeInfo != nullptr &&
+             enumSpelling == "::__gti_program::ExitCode",
+         "the type-spelling authority should produce the exact emitted "
+         "scalar and enum spellings");
+
+  expect(lang::cppStaticStorageBaseSpelling(7, "x") == "__gti_static_7_x" &&
+             lang::cppStaticStorageValueSpelling(7, "x") ==
+                 "__gti_static_7_x::value",
+         "the static-storage spelling authority should match the emitted "
+         "holder and value forms");
+}
+
 } // namespace
 
 int main() {
@@ -1207,6 +1286,7 @@ int main() {
   testMissingAndStaleFactsFailClosed();
   testRuntimeBindingRole();
   testAtomicBackendRouteAndIncoherentRejection();
+  testRepresentationSpellingAuthorities();
 
   if (failures != 0) {
     std::cerr << failures
