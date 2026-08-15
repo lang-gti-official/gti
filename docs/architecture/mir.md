@@ -539,7 +539,12 @@ owned-parameter and other unstaged initializer forms) routes no
 defined-failure edges at all — the lowering decides body-wide before any
 edge is placed and the verifier holds the matching body-wide rule — so its
 checked operations stay on the compatibility failure authority instead of
-leaking through verified MIR. Base subobjects, owned-parameter stages, and
+leaking through verified MIR. Owned-parameter class fields stage the same way: the
+moved value's obligation reparents into the armed rollback obligation, so
+those constructors keep routing failure edges, and every constructor failure
+edge drains temporaries, scope bindings, and armed rollback obligations as
+one globally reverse construction-ordered sequence behind a single failure
+boundary. Base subobjects, non-class owned-parameter fields, and
 field/static initializer bodies remain M-FAIL-01 work.
 
 M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate

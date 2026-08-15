@@ -121,7 +121,6 @@ public:
           const bool stageEligible =
               initializer.kind == ConstructorInitializerTargetKind::Field &&
               !initializer.storesReference && !initializer.generatedDefault &&
-              !initializer.ownedParameter &&
               initializer.arguments.size() == 1 &&
               initializer.targetType.kind == SemanticType::Class;
           for (std::size_t index = 0; index < initializer.arguments.size();
@@ -219,7 +218,6 @@ public:
                           ConstructorInitializerTargetKind::Field &&
                       !initializer.storesReference &&
                       !initializer.generatedDefault &&
-                      !initializer.ownedParameter &&
                       initializer.arguments.size() == 1 &&
                       field->info.type == initializer.targetType &&
                       initializer.targetType.kind == SemanticType::Class &&
@@ -977,45 +975,98 @@ private:
     terminate(std::move(invoke));
 
     current = failureBlock;
-    emitFailureTemporaryCleanup(temporaryDrops, consumedDrops);
-    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
-      emitFailureScopeCleanup(*scope, consumedDrops, endedLoans);
+    if (output.kind == MirBodyKind::Constructor) {
+      emitConstructorFailureDrain(consumedDrops, endedLoans);
+    } else {
+      emitFailureTemporaryCleanup(temporaryDrops, consumedDrops);
+      for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+        emitFailureScopeCleanup(*scope, consumedDrops, endedLoans);
+      }
     }
-    emitFailureConstructorRollback();
     terminate({.kind = MirTerminatorKind::PropagateFailure,
                .failureRecord = failureRecord});
     current = normalBlock;
   }
 
-  // Completed constructor subobjects live in `this`, outside every temporary
-  // and scope cleanup set, so a defined-failure edge drains the armed
-  // rollback obligations here in reverse stage order before propagating.
-  void emitFailureConstructorRollback() {
-    if (output.kind != MirBodyKind::Constructor ||
-        constructorRollback.empty()) {
-      return;
-    }
-    std::vector<MirDropObligationId> cleanup;
-    cleanup.reserve(constructorRollback.size());
-    for (auto armed = constructorRollback.rbegin();
-         armed != constructorRollback.rend(); ++armed) {
-      const MirDropObligation *obligation = output.findDropObligation(*armed);
-      if (obligation == nullptr) {
-        valid = false;
-        continue;
+  // A constructor failure edge drains live temporaries, scope bindings, and
+  // armed ConstructionRollback obligations as one globally reverse
+  // construction-ordered sequence behind a single failure boundary. Rollback
+  // obligations are armed mid-prologue, so they interleave between the
+  // parameter bindings seeded before them and the temporaries created after
+  // them; a phase-ordered drain cannot satisfy the primary-chain global
+  // ordering rule.
+  void emitConstructorFailureDrain(
+      const std::vector<MirDropObligationId> &consumedDrops,
+      const std::vector<MirLoanId> &endedLoans) {
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+      for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
+           ++loan) {
+        if (!containsLoan(endedLoans, *loan)) {
+          (void)appendInstruction(
+              {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
+        }
       }
-      const MirPlace *place = output.findPlace(obligation->place);
-      if (place == nullptr) {
+    }
+
+    struct DrainEntry {
+      MirDropObligationId obligation = 0;
+      bool conditional = false;
+    };
+    std::vector<DrainEntry> entries;
+    for (const TemporaryDrop &temporary : temporaryDrops) {
+      if (!containsDrop(consumedDrops, temporary.obligation)) {
+        entries.push_back({temporary.obligation, temporary.conditional});
+      }
+    }
+    for (const Scope &scope : scopes) {
+      for (const MirPlaceId placeId : scope.drops) {
+        const MirPlace *place = output.findPlace(placeId);
+        const MirDropObligationId obligation =
+            place != nullptr && place->root == MirPlaceRootKind::Binding
+                ? dropObligationForBinding(place->binding)
+                : 0;
+        if (obligation == 0) {
+          valid = false;
+          continue;
+        }
+        if (!containsDrop(consumedDrops, obligation)) {
+          entries.push_back({obligation, false});
+        }
+      }
+    }
+    for (const MirDropObligationId armed : constructorRollback) {
+      entries.push_back({armed, false});
+    }
+
+    std::sort(entries.begin(), entries.end(),
+              [&](const DrainEntry &left, const DrainEntry &right) {
+                const MirDropObligation *first =
+                    output.findDropObligation(left.obligation);
+                const MirDropObligation *second =
+                    output.findDropObligation(right.obligation);
+                return (first == nullptr ? 0 : first->constructionOrder) >
+                       (second == nullptr ? 0 : second->constructionOrder);
+              });
+
+    std::vector<MirDropObligationId> cleanup;
+    cleanup.reserve(entries.size());
+    for (const DrainEntry &entry : entries) {
+      const MirDropObligation *obligation =
+          output.findDropObligation(entry.obligation);
+      const MirPlace *place =
+          obligation == nullptr ? nullptr : output.findPlace(obligation->place);
+      if (obligation == nullptr || place == nullptr) {
         valid = false;
         continue;
       }
       (void)appendFailureCleanupDrop(
-          *armed, obligation->place,
+          entry.obligation, obligation->place,
           ExpressionInfo{.type = place->type,
                          .category = ValueCategory::Place,
                          .access = place->access,
-                         .traits = place->traits});
-      cleanup.push_back(*armed);
+                         .traits = place->traits},
+          entry.conditional);
+      cleanup.push_back(entry.obligation);
     }
     appendFailureCleanupBoundary(std::move(cleanup));
   }

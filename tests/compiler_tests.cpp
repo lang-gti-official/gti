@@ -25998,7 +25998,7 @@ void testSupportFacilities() {
          "LLVM-backed facilities should agree on availability");
 }
 
-void testUnarmedConstructorTransferSuppressesFailureEdges() {
+void testOwnedParameterStageArmsRollback() {
   const std::string source = R"(
 class Resource {
 public:
@@ -26042,14 +26042,44 @@ int main() {
   if (holderConstructor == nullptr) {
     return;
   }
-  expect(!lang::mirBodyRoutesFailureEdges(holderConstructor->body),
-         "an unarmed owned-parameter transfer must suppress failure-edge "
-         "routing for the whole constructor body");
-  expect(holderConstructor->body.failureRecords.empty(),
-         "the checked operation after the unarmed transfer must not receive "
-         "a defined-failure edge");
+  const lang::MirBody &holderBody = holderConstructor->body;
+  const bool ownedArmed = std::any_of(
+      holderBody.dropObligations.begin(), holderBody.dropObligations.end(),
+      [&](const lang::MirDropObligation &obligation) {
+        return obligation.kind ==
+               lang::MirDropObligationKind::ConstructionRollback;
+      });
+  expect(ownedArmed && lang::mirBodyRoutesFailureEdges(holderBody),
+         "a staged owned-parameter field should arm rollback and keep the "
+         "constructor routing failure edges");
+  expect(!holderBody.failureRecords.empty(),
+         "the checked operation after the staged owned-parameter transfer "
+         "should keep its defined-failure edge");
+  bool failureDropsMovedField = false;
+  for (const lang::MirBlock &block : holderBody.blocks) {
+    if (block.failureParameter == 0) {
+      continue;
+    }
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::Drop ||
+          instruction.lifecycle.size() != 1 ||
+          !instruction.lifecycle.front().failureCleanup) {
+        continue;
+      }
+      const lang::MirDropObligation *obligation =
+          holderBody.findDropObligation(instruction.lifecycle.front().source);
+      failureDropsMovedField =
+          failureDropsMovedField ||
+          (obligation != nullptr &&
+           obligation->kind ==
+               lang::MirDropObligationKind::ConstructionRollback);
+    }
+  }
+  expect(failureDropsMovedField,
+         "the failure edge should drain the moved-in subobject through its "
+         "armed rollback obligation");
   expect(lang::verifyMirProgram(frontend.mir).valid(),
-         "the suppressed constructor should remain verified MIR");
+         "the staged owned-parameter constructor should remain verified MIR");
 }
 
 void testConstructorPartialRollbackRepresentation() {
@@ -26208,7 +26238,7 @@ int main() {
 int main() {
   lang::installCrashHandlers("gti_tests");
   testConstructorPartialRollbackRepresentation();
-  testUnarmedConstructorTransferSuppressesFailureEdges();
+  testOwnedParameterStageArmsRollback();
   testFrontendStopPhase();
   testToolingOccurrenceOptOut();
   testTargetTripleParsing();

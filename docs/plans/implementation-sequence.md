@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.163.0
+Checkpoint: 0.164.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,15 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Owned-parameter class fields unified onto rollback (0.164.0).** The
+  stage branch admits owned-parameter initializers, the moved value's
+  obligation reparents into the armed rollback obligation (the verifier's
+  owned-move contract accepts that consumption beside the legacy transfer),
+  and constructor failure edges now drain temporaries, scope bindings, and
+  rollback as one globally reverse construction-ordered sequence behind a
+  single boundary — the phase-ordered drain could not satisfy the
+  primary-chain rule once parameter bindings sat below armed rollback.
+  Non-class owned fields (unique owners) keep the legacy transfer contract.
 - **Unarmed constructor transfers fail closed (0.163.0).** A constructor
   with any silent subobject transfer into `this` (owned-parameter and other
   unstaged forms) routes no defined-failure edges: lowering prescans the

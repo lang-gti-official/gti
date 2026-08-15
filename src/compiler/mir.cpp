@@ -6737,18 +6737,32 @@ hasOneExactExecutableValueUse(const MirBody &body, MirValueId valueId,
     return false;
   }
   const MirDropObligationId obligation = obligations.front();
-  std::size_t transfers = 0;
+  std::size_t consumed = 0;
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
-      transfers += static_cast<std::size_t>(std::count_if(
+      consumed += static_cast<std::size_t>(std::count_if(
           instruction.lifecycle.begin(), instruction.lifecycle.end(),
           [&](const MirLifecycleEvent &event) {
-            return event.kind == MirLifecycleEventKind::TransferOut &&
-                   event.source == obligation;
+            if (event.source != obligation) {
+              return false;
+            }
+            if (event.kind == MirLifecycleEventKind::TransferOut) {
+              return true;
+            }
+            // A staged owned-parameter field consumes the moved value by
+            // reparenting it into the armed ConstructionRollback obligation
+            // instead of transferring it out silently.
+            if (event.kind != MirLifecycleEventKind::Reparent) {
+              return false;
+            }
+            const MirDropObligation *target =
+                body.findDropObligation(event.target);
+            return target != nullptr &&
+                   target->kind == MirDropObligationKind::ConstructionRollback;
           }));
     }
   }
-  return transfers == 1;
+  return consumed == 1;
 }
 
 [[nodiscard]] const MirInstruction *
@@ -12573,7 +12587,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           field != constructorOwner->declaredFields.end() &&
           initializer.kind == ConstructorInitializerTargetKind::Field &&
           !initializer.storesReference && !initializer.generatedDefault &&
-          !initializer.ownedParameter && initializer.arguments.size() == 1 &&
+          initializer.arguments.size() == 1 &&
           field->type == initializer.targetType &&
           initializer.targetType.kind == SemanticType::Class;
       // Constructor full-expression boundaries are shared lifecycle facts,
