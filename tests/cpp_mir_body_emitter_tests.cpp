@@ -1,6 +1,9 @@
 #include "../src/compiler/cpp_mir_body_emitter.h"
+#include "../src/compiler/cpp_mir_representation_snapshot.h"
 
+#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/optimizer.h"
 
 #include <algorithm>
 #include <array>
@@ -1069,6 +1072,121 @@ void testExampleCorpusEmissionReadiness() {
          "regress below its recorded floor");
 }
 
+// ADR 016 phases 4-5 agreement gate: the production rows builder plus the
+// general text step must reproduce, byte for byte, every scalar-cfg and
+// scalar-direct-call body the transitional emitter publishes, for every
+// shipped example. The artifact's own markers select the bodies, so this
+// gate tracks production admission without modeling the selectors.
+void testGeneralTextStepMatchesProductionEmission() {
+  const std::filesystem::path repository =
+      std::filesystem::path(__FILE__).parent_path().parent_path();
+  const std::filesystem::path examples = repository / "examples";
+  std::vector<std::filesystem::path> sources;
+  if (std::filesystem::is_directory(examples)) {
+    for (const std::filesystem::directory_entry &entry :
+         std::filesystem::directory_iterator(examples)) {
+      if (entry.is_regular_file() && entry.path().extension() == ".gti") {
+        sources.push_back(entry.path());
+      }
+    }
+  }
+  std::sort(sources.begin(), sources.end());
+  expect(!sources.empty(), "the example corpus should be discoverable");
+
+  const std::string_view markerPrefix = "// GTI verified-MIR body: ";
+  std::size_t generalBodies = 0;
+  std::size_t matchedBodies = 0;
+  bool deterministic = true;
+  for (const std::filesystem::path &source : sources) {
+    std::ifstream input(source);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::filesystem::path standardLibrary = repository / "stdlib";
+    const lang::FrontendResult frontend = lang::Frontend().analyze(
+        source.filename().string(), buffer.str(),
+        {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+    if (!frontend.canGenerateCode()) {
+      continue;
+    }
+    const lang::OptimizationResult optimizations =
+        lang::OptimizationPipeline().run(frontend.hir,
+                                         lang::OptimizationLevel::O0);
+    const lang::BackendArtifact artifact =
+        lang::CppBackend().generate({.program = frontend.program,
+                                     .semantics = frontend.semantics,
+                                     .hir = frontend.hir,
+                                     .mir = frontend.mir,
+                                     .sourceMir = &frontend.mir,
+                                     .optimizations = optimizations});
+
+    lang::CppMirBodyEmissionMapRows rows = lang::buildCppMirBodyEmissionMapRows(
+        frontend.semantics, frontend.mir, lang::CppStandard::Cpp23);
+    const lang::CppMirBodyEmissionMapRows again =
+        lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
+                                             lang::CppStandard::Cpp23);
+    deterministic =
+        deterministic && rows.types == again.types &&
+        rows.bodies == again.bodies && rows.symbols == again.symbols &&
+        rows.enums == again.enums && rows.capabilities == again.capabilities;
+
+    const lang::CppMirBodyEmissionMap map(std::move(rows));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    const std::string &generated = artifact.contents;
+    for (std::size_t position = generated.find(markerPrefix);
+         position != std::string::npos;
+         position = generated.find(markerPrefix, position + 1)) {
+      const std::size_t labelStart = position + markerPrefix.size();
+      const std::size_t labelEnd = generated.find(' ', labelStart);
+      if (labelEnd == std::string::npos) {
+        continue;
+      }
+      const std::string label =
+          generated.substr(labelStart, labelEnd - labelStart);
+      if (label != "scalar-cfg-v1" && label != "scalar-direct-call-v1") {
+        continue;
+      }
+      const std::string_view instanceMarker = "function-instance ";
+      const std::size_t instanceStart =
+          generated.find(instanceMarker, labelEnd);
+      const std::size_t lineEnd = generated.find('\n', labelEnd);
+      if (instanceStart == std::string::npos || lineEnd == std::string::npos ||
+          instanceStart > lineEnd) {
+        continue;
+      }
+      ++generalBodies;
+      const std::size_t instance = static_cast<std::size_t>(std::stoull(
+          generated.substr(instanceStart + instanceMarker.size(),
+                           lineEnd - instanceStart - instanceMarker.size())));
+      const std::size_t lineStart = generated.rfind('\n', position) + 1;
+      const std::size_t markerIndent = position - lineStart;
+      if (markerIndent < 2 || markerIndent % 2 != 0) {
+        continue;
+      }
+      const lang::CppMirBodyEmissionText emission = emitter.emitBodyText(
+          {.kind = lang::MirBodyKind::Function, .owner = instance}, label,
+          label == "scalar-cfg-v1", markerIndent / 2 - 1);
+      if (emission.emitted() &&
+          generated.find(emission.text) != std::string::npos) {
+        ++matchedBodies;
+      } else {
+        std::cerr << "general text step disagreed for " << label
+                  << " function-instance " << instance << " in "
+                  << source.filename().string() << '\n';
+      }
+    }
+  }
+
+  std::cout << "general text-step agreement: bodies=" << generalBodies
+            << " matched=" << matchedBodies << '\n';
+  expect(deterministic,
+         "the production rows builder should be run-to-run deterministic");
+  expect(generalBodies >= 30,
+         "the corpus should keep exercising the migrated per-body families");
+  expect(matchedBodies == generalBodies,
+         "every production scalar-cfg/direct body must byte-match the "
+         "general text step's emission");
+}
+
 } // namespace
 
 int main() {
@@ -1081,6 +1199,7 @@ int main() {
   testAmbiguousStaticStorageFailsClosed();
   testOwningCheckedBodyNeedsWholeCleanupProof();
   testExampleCorpusEmissionReadiness();
+  testGeneralTextStepMatchesProductionEmission();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

@@ -1,8 +1,10 @@
 #pragma once
 
+#include "cpp_mir_body_emitter.h"
 #include "cpp_mir_program_plan.h"
 
 #include "gti/ast.h"
+#include "gti/cpp_emitter.h"
 #include "gti/hir.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/target.h"
@@ -57,6 +59,18 @@ buildCppMirRepresentationSnapshot(const Program &program,
                                   const SemanticModel &semantics,
                                   const HirProgram &hir, const MirProgram &mir,
                                   const TargetInfo &target);
+
+// Builds the deterministic copied representation rows the generic MIR body
+// emitter consumes (ADR 016 phase 4). Spellings come only from the extracted
+// cpp_representation authorities, so a row can never drift from an emitted
+// byte. The walk is MIR-ordered and pointer-free: types referenced by any MIR
+// body (with their argument closures), field rows for every concrete class
+// instance, qualified call-target names for source free functions, and enum
+// rows for every non-payload enum MIR references. Facts outside this
+// inventory are deliberately absent so unsupported shapes stay fail-closed.
+[[nodiscard]] CppMirBodyEmissionMapRows
+buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
+                               const MirProgram &mir, CppStandard standard);
 
 enum class CppMirBackendProgramRoute {
   Compatibility,

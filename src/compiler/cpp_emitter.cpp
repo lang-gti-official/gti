@@ -1,5 +1,7 @@
 #include "gti/cpp_emitter.h"
 
+#include "cpp_mir_body_emitter.h"
+#include "cpp_mir_representation_snapshot.h"
 #include "cpp_representation.h"
 #include "gti/ast.h"
 #include "gti/mir.h"
@@ -13136,82 +13138,41 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     throw std::logic_error("verified MIR scalar-CFG terminator is unsupported");
   }
 
+  // Both per-body scalar families delegate their text to the generic MIR
+  // body emitter (ADR 016 phase 5): admission stays in the family gates, and
+  // the general text step is the single body-text authority for them. A
+  // selected body the general emitter cannot produce is emission drift.
+  void emitGeneralMirBodyText(const MirFunctionInstance &function,
+                              std::string_view familyLabel,
+                              bool fieldBoundThisPlaces) {
+    if (mir == nullptr) {
+      throw std::logic_error("general MIR body emission requires verified MIR");
+    }
+    if (!generalEmissionMap) {
+      generalEmissionMap.emplace(
+          buildCppMirBodyEmissionMapRows(semantics, *mir, standard));
+    }
+    const CppMirBodyEmissionText emission =
+        CppMirBodyEmitter(*mir, *generalEmissionMap)
+            .emitBodyText({.kind = MirBodyKind::Function, .owner = function.id},
+                          familyLabel, fieldBoundThisPlaces, indentation);
+    if (!emission.emitted()) {
+      std::string message =
+          "selected verified-MIR body is not ready for general emission";
+      for (const CppMirBodyEmissionIssue &issue : emission.analysis.issues) {
+        message += "; ";
+        message += issue.detail;
+        message += " (function-instance " + std::to_string(function.id) +
+                   " block " + std::to_string(issue.block) + " instruction " +
+                   std::to_string(issue.instruction) + ")";
+      }
+      throw std::logic_error(message);
+    }
+    output << emission.text;
+  }
+
   void emitMirScalarCfgBody(const MirFunctionInstance &function) {
-    output << "{\n";
-    ++indentation;
-    writeIndent();
-    output << "// GTI verified-MIR body: scalar-cfg-v1 function-instance "
-           << function.id << "\n";
-    for (const MirPlace &place : function.body.places) {
-      if (place.root == MirPlaceRootKind::This) {
-        // The bare receiver place is only the projection carrier and is never
-        // referenced. A field place binds by reference so every load reads
-        // the live member; receivers here are read-only, so no write occurs.
-        if (place.projections.empty()) {
-          continue;
-        }
-        const SymbolRecord *field =
-            semantics.database().findSymbol(place.projections.front().field);
-        if (field == nullptr || field->name.empty()) {
-          throw std::logic_error(
-              "verified scalar-CFG MIR lost an exact field symbol");
-        }
-        writeIndent();
-        output << "const auto &__gti_mir_p_" << place.id << " = (*this)."
-               << field->name << ";\n";
-        continue;
-      }
-      writeIndent();
-      emitSemanticType(place.type);
-      output << " __gti_mir_p_" << place.id;
-      if (const std::optional<std::size_t> parameter =
-              mirScalarCfgParameterIndex(place, function)) {
-        output << " = __gti_mir_arg_" << *parameter;
-      } else {
-        output << "{}";
-      }
-      output << ";\n";
-    }
-    for (const MirValue &value : function.body.values) {
-      writeIndent();
-      emitSemanticType(value.info.type);
-      output << " __gti_mir_v_" << value.id << "{};\n";
-    }
-    writeIndent();
-    output << "std::size_t __gti_mir_bb = " << function.body.entry << ";\n";
-    writeIndent();
-    output << "for (;;) {\n";
-    ++indentation;
-    writeIndent();
-    output << "switch (__gti_mir_bb) {\n";
-    ++indentation;
-    for (const MirBlock &block : function.body.blocks) {
-      writeIndent();
-      output << "case " << block.id << ": {\n";
-      ++indentation;
-      for (const MirInstruction &instruction : block.instructions) {
-        emitMirScalarDirectInstruction(instruction);
-      }
-      emitMirScalarCfgTerminator(block.terminator);
-      --indentation;
-      writeIndent();
-      output << "}\n";
-    }
-    writeIndent();
-    output << "default:\n";
-    ++indentation;
-    writeIndent();
-    output << "std::abort();\n";
-    --indentation;
-    --indentation;
-    writeIndent();
-    output << "}\n";
-    --indentation;
-    writeIndent();
-    output << "}\n";
-    --indentation;
-    writeIndent();
-    output << "}\n";
+    emitGeneralMirBodyText(function, "scalar-cfg-v1", true);
   }
 
   void emitMirScalarDirectTarget(const MirInstruction &instruction) {
@@ -13274,64 +13235,7 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitMirScalarDirectBody(const MirFunctionInstance &function) {
-    output << "{\n";
-    ++indentation;
-    writeIndent();
-    output << "// GTI verified-MIR body: scalar-direct-call-v1 "
-              "function-instance "
-           << function.id << "\n";
-    for (const MirPlace &place : function.body.places) {
-      writeIndent();
-      emitSemanticType(place.type);
-      output << " __gti_mir_p_" << place.id;
-      if (const std::optional<std::size_t> parameter =
-              mirScalarCfgParameterIndex(place, function)) {
-        output << " = __gti_mir_arg_" << *parameter;
-      } else {
-        output << "{}";
-      }
-      output << ";\n";
-    }
-    for (const MirValue &value : function.body.values) {
-      writeIndent();
-      emitSemanticType(value.info.type);
-      output << " __gti_mir_v_" << value.id << "{};\n";
-    }
-    writeIndent();
-    output << "std::size_t __gti_mir_bb = " << function.body.entry << ";\n";
-    writeIndent();
-    output << "for (;;) {\n";
-    ++indentation;
-    writeIndent();
-    output << "switch (__gti_mir_bb) {\n";
-    ++indentation;
-    for (const MirBlock &block : function.body.blocks) {
-      writeIndent();
-      output << "case " << block.id << ": {\n";
-      ++indentation;
-      for (const MirInstruction &instruction : block.instructions) {
-        emitMirScalarDirectInstruction(instruction);
-      }
-      emitMirScalarCfgTerminator(block.terminator);
-      --indentation;
-      writeIndent();
-      output << "}\n";
-    }
-    writeIndent();
-    output << "default:\n";
-    ++indentation;
-    writeIndent();
-    output << "std::abort();\n";
-    --indentation;
-    --indentation;
-    writeIndent();
-    output << "}\n";
-    --indentation;
-    writeIndent();
-    output << "}\n";
-    --indentation;
-    writeIndent();
-    output << "}\n";
+    emitGeneralMirBodyText(function, "scalar-direct-call-v1", false);
   }
 
   void emitMirClassDefaultCleanupGlobal(SymbolId symbol) {
@@ -15390,6 +15294,9 @@ namespace gti_internal::backend {
   const FunctionDecl *ownedArgumentsEntry = nullptr;
   std::size_t indentation = 0;
   std::size_t classDepth = 0;
+  // Copied representation rows for the generic MIR body emitter, built once
+  // per emission from the extracted spelling authorities (ADR 016 phase 4).
+  std::optional<CppMirBodyEmissionMap> generalEmissionMap;
   std::size_t payloadSwitchCounter = 0;
   bool emittingField = false;
   bool emittingScheduledType = false;

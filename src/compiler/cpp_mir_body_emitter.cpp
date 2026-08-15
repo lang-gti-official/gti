@@ -1,9 +1,13 @@
 #include "cpp_mir_body_emitter.h"
 
 #include <algorithm>
+#include <limits>
 #include <optional>
+#include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 namespace lang {
 namespace {
@@ -1717,6 +1721,477 @@ CppMirEmissionEncoding classifyCppMirBodyKind(MirBodyKind kind) {
     return CppMirEmissionEncoding::NeedsCopiedRepresentation;
   }
   return CppMirEmissionEncoding::Invalid;
+}
+
+namespace {
+
+// General per-instance text step (ADR 016 phase 5). Ported verbatim from the
+// transitional emitter's scalar-cfg/scalar-direct-call body emission so
+// production text is byte-identical across the delegation; every naming or
+// type consultation is replaced by a copied representation row. Constructs
+// outside this vocabulary after a Ready analysis are emission drift and
+// throw, exactly as the transitional emitter throws.
+class ScalarBodyTextEmitter {
+public:
+  ScalarBodyTextEmitter(const MirProgram &program,
+                        const CppMirBodyEmissionMap &representations,
+                        std::size_t indentation)
+      : program(program), representations(representations),
+        indentation(indentation) {}
+
+  [[nodiscard]] std::string emit(const MirFunctionInstance &function,
+                                 std::string_view familyLabel,
+                                 bool fieldBoundThisPlaces) {
+    output.str("");
+    output << "{\n";
+    ++indentation;
+    writeIndent();
+    output << "// GTI verified-MIR body: " << familyLabel
+           << " function-instance " << function.id << "\n";
+    for (const MirPlace &place : function.body.places) {
+      if (fieldBoundThisPlaces && place.root == MirPlaceRootKind::This) {
+        // The bare receiver place is only the projection carrier and is never
+        // referenced. A field place binds by reference so every load reads
+        // the live member; receivers here are read-only, so no write occurs.
+        if (place.projections.empty()) {
+          continue;
+        }
+        writeIndent();
+        output << "const auto &__gti_mir_p_" << place.id << " = (*this)."
+               << fieldSpelling(function, place.projections.front().field)
+               << ";\n";
+        continue;
+      }
+      writeIndent();
+      output << typeSpelling(place.type) << " __gti_mir_p_" << place.id;
+      if (const std::optional<std::size_t> parameter =
+              parameterIndex(place, function)) {
+        output << " = __gti_mir_arg_" << *parameter;
+      } else {
+        output << "{}";
+      }
+      output << ";\n";
+    }
+    for (const MirValue &value : function.body.values) {
+      writeIndent();
+      output << typeSpelling(value.info.type) << " __gti_mir_v_" << value.id
+             << "{};\n";
+    }
+    writeIndent();
+    output << "std::size_t __gti_mir_bb = " << function.body.entry << ";\n";
+    writeIndent();
+    output << "for (;;) {\n";
+    ++indentation;
+    writeIndent();
+    output << "switch (__gti_mir_bb) {\n";
+    ++indentation;
+    for (const MirBlock &block : function.body.blocks) {
+      writeIndent();
+      output << "case " << block.id << ": {\n";
+      ++indentation;
+      for (const MirInstruction &instruction : block.instructions) {
+        emitInstruction(instruction);
+      }
+      emitTerminator(block.terminator);
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    }
+    writeIndent();
+    output << "default:\n";
+    ++indentation;
+    writeIndent();
+    output << "std::abort();\n";
+    --indentation;
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    return output.str();
+  }
+
+private:
+  void writeIndent() {
+    for (std::size_t index = 0; index < indentation; ++index) {
+      output << "  ";
+    }
+  }
+
+  [[nodiscard]] const std::string &typeSpelling(const SemanticType &type) {
+    const auto found = std::find_if(
+        representations.types().begin(), representations.types().end(),
+        [&](const CppMirTypeRepresentation &row) { return row.type == type; });
+    if (found == representations.types().end() || found->spelling.empty()) {
+      throw std::logic_error(
+          "general MIR body emission lost a copied type row");
+    }
+    return found->spelling;
+  }
+
+  [[nodiscard]] const std::string &
+  fieldSpelling(const MirFunctionInstance &function, SymbolId field) {
+    if (!function.owner) {
+      throw std::logic_error(
+          "general MIR body emission lost the receiver class instance");
+    }
+    const auto found = std::find_if(
+        representations.symbols().begin(), representations.symbols().end(),
+        [&](const CppMirSymbolRepresentation &row) {
+          return row.kind == CppMirSymbolRepresentationKind::Field &&
+                 row.owner == *function.owner && row.symbol == field &&
+                 row.ordinal == 0;
+        });
+    if (found == representations.symbols().end() || found->spelling.empty()) {
+      throw std::logic_error(
+          "general MIR body emission lost an exact field symbol row");
+    }
+    return found->spelling;
+  }
+
+  [[nodiscard]] const std::string &bodySpelling(HirFunctionInstanceId target) {
+    const MirBodyAddress address{.kind = MirBodyKind::Function,
+                                 .owner = target};
+    const auto found = std::find_if(
+        representations.bodies().begin(), representations.bodies().end(),
+        [&](const CppMirBodyNameRepresentation &row) {
+          return row.address == address;
+        });
+    if (found == representations.bodies().end() || found->spelling.empty()) {
+      throw std::logic_error(
+          "general MIR body emission lost an exact call-target name row");
+    }
+    return found->spelling;
+  }
+
+  [[nodiscard]] static std::optional<std::size_t>
+  parameterIndex(const MirPlace &place, const MirFunctionInstance &function) {
+    const auto parameter =
+        std::find(function.parameterBindings.begin(),
+                  function.parameterBindings.end(), place.binding);
+    if (parameter == function.parameterBindings.end()) {
+      return std::nullopt;
+    }
+    return static_cast<std::size_t>(
+        std::distance(function.parameterBindings.begin(), parameter));
+  }
+
+  [[nodiscard]] static bool
+  isSyntheticLogicalConstant(const MirOperand &operand) {
+    return operand.kind == MirOperandKind::Constant && operand.value == 0 &&
+           operand.place == 0 && operand.loan == 0 && operand.literal &&
+           operand.type == SemanticType::Bool &&
+           std::holds_alternative<bool>(*operand.literal);
+  }
+
+  void emitIntegerLiteral(std::uint64_t value) {
+    output << value;
+    if (value >
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      output << "ULL";
+    }
+  }
+
+  void emitLiteral(const Literal &literal, const SemanticType &type) {
+    if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
+      output << "static_cast<" << typeSpelling(type) << ">(";
+      emitIntegerLiteral(*integer);
+      output << ')';
+      return;
+    }
+    if (const auto *character = std::get_if<CharacterLiteral>(&literal)) {
+      output << "std::uint8_t{" << static_cast<unsigned int>(character->value)
+             << '}';
+      return;
+    }
+    if (const auto *boolean = std::get_if<bool>(&literal)) {
+      output << (*boolean ? "true" : "false");
+      return;
+    }
+    throw std::logic_error(
+        "verified MIR scalar-CFG literal has an unsupported representation");
+  }
+
+  void emitOperand(const MirOperand &operand,
+                   bool allowSyntheticLogicalConstant = false) {
+    if (operand.kind == MirOperandKind::Value) {
+      output << "__gti_mir_v_" << operand.value;
+      return;
+    }
+    if (allowSyntheticLogicalConstant && isSyntheticLogicalConstant(operand)) {
+      emitLiteral(*operand.literal, operand.type);
+      return;
+    }
+    throw std::logic_error(
+        "verified MIR scalar-CFG operand is not a proven value");
+  }
+
+  void emitCompute(const MirInstruction &instruction) {
+    output << "__gti_mir_v_" << *instruction.result << " = ";
+    if (instruction.operation == MirOperation::Literal) {
+      emitLiteral(*instruction.literal, instruction.info.type);
+      output << ";\n";
+      return;
+    }
+    if (instruction.operation == MirOperation::Identity) {
+      emitOperand(instruction.operands.front());
+      output << ";\n";
+      return;
+    }
+    if (instruction.operation == MirOperation::LogicalNot) {
+      output << '!';
+      emitOperand(instruction.operands.front());
+      output << ";\n";
+      return;
+    }
+    if (instruction.operation == MirOperation::Positive ||
+        instruction.operation == MirOperation::BitwiseNot) {
+      output << "static_cast<" << typeSpelling(instruction.info.type) << ">("
+             << (instruction.operation == MirOperation::Positive ? '+' : '~');
+      emitOperand(instruction.operands.front());
+      output << ");\n";
+      return;
+    }
+    const auto spelling = [&]() -> std::string_view {
+      switch (instruction.operation) {
+      case MirOperation::BitwiseAnd:
+        return "&";
+      case MirOperation::BitwiseOr:
+        return "|";
+      case MirOperation::BitwiseXor:
+        return "^";
+      case MirOperation::Equal:
+        return "==";
+      case MirOperation::NotEqual:
+        return "!=";
+      case MirOperation::Less:
+        return "<";
+      case MirOperation::LessEqual:
+        return "<=";
+      case MirOperation::Greater:
+        return ">";
+      case MirOperation::GreaterEqual:
+        return ">=";
+      default:
+        throw std::logic_error(
+            "verified MIR scalar-CFG compute operation is unsupported");
+      }
+    }();
+    const bool castResult = instruction.operation == MirOperation::BitwiseAnd ||
+                            instruction.operation == MirOperation::BitwiseOr ||
+                            instruction.operation == MirOperation::BitwiseXor;
+    if (castResult) {
+      output << "static_cast<" << typeSpelling(instruction.info.type) << ">(";
+    }
+    emitOperand(instruction.operands[0]);
+    output << ' ' << spelling << ' ';
+    emitOperand(instruction.operands[1]);
+    if (castResult) {
+      output << ')';
+    }
+    output << ";\n";
+  }
+
+  void emitPlainInstruction(const MirInstruction &instruction) {
+    writeIndent();
+    if (instruction.kind == MirInstructionKind::Lifecycle) {
+      output << "// GTI MIR full-expression boundary "
+             << instruction.fullExpressionEnd << "\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Compute) {
+      emitCompute(instruction);
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Load) {
+      output << "__gti_mir_v_" << *instruction.result << " = __gti_mir_p_"
+             << instruction.operands.front().place << ";\n";
+      return;
+    }
+    output << "__gti_mir_p_" << *instruction.destination << " = ";
+    emitOperand(instruction.operands.front(),
+                instruction.kind == MirInstructionKind::Initialize);
+    output << ";\n";
+    if (instruction.kind == MirInstructionKind::Assign) {
+      writeIndent();
+      output << "__gti_mir_v_" << *instruction.result << " = __gti_mir_p_"
+             << *instruction.destination << ";\n";
+    }
+  }
+
+  void emitInstruction(const MirInstruction &instruction) {
+    if (instruction.kind != MirInstructionKind::CallInput &&
+        instruction.kind != MirInstructionKind::Call) {
+      emitPlainInstruction(instruction);
+      return;
+    }
+    writeIndent();
+    if (instruction.kind == MirInstructionKind::CallInput) {
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+      emitOperand(instruction.operands.front());
+      output << ";\n";
+      return;
+    }
+    if (!instruction.functionTarget) {
+      throw std::logic_error(
+          "verified MIR direct call lost its exact target declaration");
+    }
+    if (instruction.result) {
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+    }
+    output << bodySpelling(*instruction.functionTarget);
+    output << '(';
+    for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      emitOperand(instruction.operands[index]);
+    }
+    output << ");\n";
+  }
+
+  void emitSwitchInteger(const EnumConstant &value, const SemanticType &type) {
+    if (!value.negative) {
+      output << value.magnitude;
+      if (type == SemanticType::UInt64 &&
+          value.magnitude > static_cast<std::uint64_t>(
+                                std::numeric_limits<std::int64_t>::max())) {
+        output << "ULL";
+      }
+      return;
+    }
+
+    std::uint64_t signedLimit = 0;
+    switch (type.kind) {
+    case SemanticType::Int8:
+      signedLimit = std::uint64_t{1} << 7U;
+      break;
+    case SemanticType::Int16:
+      signedLimit = std::uint64_t{1} << 15U;
+      break;
+    case SemanticType::Int32:
+      signedLimit = std::uint64_t{1} << 31U;
+      break;
+    case SemanticType::Int64:
+      signedLimit = std::uint64_t{1} << 63U;
+      break;
+    default:
+      break;
+    }
+    if (signedLimit != 0 && value.magnitude == signedLimit) {
+      output << "(-" << signedLimit - 1 << "LL - 1LL)";
+      return;
+    }
+    output << '-' << value.magnitude;
+  }
+
+  void emitTerminator(const MirTerminator &terminator) {
+    switch (terminator.kind) {
+    case MirTerminatorKind::Goto:
+      writeIndent();
+      output << "__gti_mir_bb = " << terminator.target << ";\n";
+      writeIndent();
+      output << "continue;\n";
+      return;
+    case MirTerminatorKind::Branch:
+      writeIndent();
+      output << "__gti_mir_bb = ";
+      emitOperand(*terminator.value);
+      output << " ? " << terminator.target << " : " << terminator.elseTarget
+             << ";\n";
+      writeIndent();
+      output << "continue;\n";
+      return;
+    case MirTerminatorKind::Switch:
+      writeIndent();
+      output << "switch (";
+      emitOperand(*terminator.value);
+      output << ") {\n";
+      ++indentation;
+      for (const MirSwitchTarget &target : terminator.switchTargets) {
+        writeIndent();
+        output << "case static_cast<" << typeSpelling(target.value->type)
+               << ">(";
+        emitSwitchInteger(target.value->value, target.value->type);
+        output << "):\n";
+        ++indentation;
+        writeIndent();
+        output << "__gti_mir_bb = " << target.target << ";\n";
+        writeIndent();
+        output << "break;\n";
+        --indentation;
+      }
+      writeIndent();
+      output << "default:\n";
+      ++indentation;
+      writeIndent();
+      output << "__gti_mir_bb = " << terminator.target << ";\n";
+      writeIndent();
+      output << "break;\n";
+      --indentation;
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      writeIndent();
+      output << "continue;\n";
+      return;
+    case MirTerminatorKind::Return:
+      writeIndent();
+      output << "return";
+      if (terminator.value) {
+        output << ' ';
+        emitOperand(*terminator.value);
+      }
+      output << ";\n";
+      return;
+    case MirTerminatorKind::Unreachable:
+      writeIndent();
+      output << "std::abort();\n";
+      return;
+    default:
+      break;
+    }
+    throw std::logic_error("verified MIR scalar-CFG terminator is unsupported");
+  }
+
+  const MirProgram &program;
+  const CppMirBodyEmissionMap &representations;
+  std::size_t indentation;
+  std::ostringstream output;
+};
+
+} // namespace
+
+std::optional<CppMirTypeRepresentationKind>
+cppMirExpectedTypeRepresentation(const SemanticType &type) {
+  return expectedTypeRepresentation(type);
+}
+
+CppMirBodyEmissionText CppMirBodyEmitter::emitBodyText(
+    MirBodyAddress address, std::string_view familyLabel,
+    bool fieldBoundThisPlaces, std::size_t indentation) const {
+  CppMirBodyEmissionText result;
+  result.analysis = analyze(address);
+  if (!result.analysis.ready()) {
+    return result;
+  }
+  if (address.kind != MirBodyKind::Function) {
+    throw std::logic_error(
+        "general MIR body text emission supports function bodies only");
+  }
+  const MirFunctionInstance *function =
+      program_.findFunctionInstance(address.owner);
+  if (function == nullptr) {
+    throw std::logic_error(
+        "general MIR body text emission lost its exact function instance");
+  }
+  result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
+                    .emit(*function, familyLabel, fieldBoundThisPlaces);
+  return result;
 }
 
 CppMirBodyEmissionAnalysis

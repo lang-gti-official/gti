@@ -1,5 +1,7 @@
 #include "cpp_mir_representation_snapshot.h"
 
+#include "cpp_representation.h"
+
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -1478,6 +1480,227 @@ selectCppMirBackendProgramRoute(const CppMirProgramPlan &plan) {
   // shares this one whole-program representation emitter with the atomic
   // UnsupportedSurface migration route; neither status dispatches per body.
   return CppMirBackendProgramRoute::Compatibility;
+}
+
+namespace {
+
+// Deterministic first-seen type-row collection with the exact argument
+// closure the emission analysis recurses through.
+struct RowsBuilder {
+  const SemanticModel &semantics;
+  const MirProgram &mir;
+  CppStandard standard;
+  CppMirBodyEmissionMapRows rows;
+
+  void addType(const SemanticType &type) {
+    if (type == SemanticType::Unknown) {
+      return;
+    }
+    const std::optional<CppMirTypeRepresentationKind> kind =
+        cppMirExpectedTypeRepresentation(type);
+    if (kind && std::none_of(rows.types.begin(), rows.types.end(),
+                             [&](const CppMirTypeRepresentation &row) {
+                               return row.type == type;
+                             })) {
+      rows.types.push_back(
+          {.type = type,
+           .kind = *kind,
+           .spelling = cppSemanticTypeSpelling(semantics, standard, type)});
+    }
+    for (const SemanticType &argument : type.arguments) {
+      addType(argument);
+    }
+    for (const SemanticType &argument : type.lambdaEnclosingClassTypes) {
+      addType(argument);
+    }
+    for (const SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+      addType(argument);
+    }
+  }
+
+  void addEnum(EnumId owner) {
+    if (owner == 0 || std::any_of(rows.enums.begin(), rows.enums.end(),
+                                  [owner](const CppMirEnumRepresentation &row) {
+                                    return row.owner == owner;
+                                  })) {
+      return;
+    }
+    const EnumTypeInfo *info = semantics.findEnumType(owner);
+    // Payload enums carry variant inventories this builder does not copy
+    // yet; omitting the row keeps every payload-consuming body fail-closed.
+    if (info == nullptr || info->payload) {
+      return;
+    }
+    SemanticType type;
+    type.kind = SemanticType::Enum;
+    type.enumId = owner;
+    rows.enums.push_back(
+        {.owner = owner,
+         .spelling = cppSemanticTypeSpelling(semantics, standard, type),
+         .underlyingType = info->underlyingType});
+    addType(info->underlyingType);
+  }
+
+  void addOperand(const MirOperand &operand) { addType(operand.type); }
+
+  void addBody(const MirBody &body) {
+    for (const MirPlace &place : body.places) {
+      addType(place.type);
+    }
+    for (const MirValue &value : body.values) {
+      addType(value.info.type);
+    }
+    addType(body.returnType);
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        addType(instruction.info.type);
+        for (const SemanticType &type : instruction.parameterTypes) {
+          addType(type);
+        }
+        for (const SemanticType &type : instruction.closureCaptureTypes) {
+          addType(type);
+        }
+        if (instruction.receiver) {
+          addOperand(*instruction.receiver);
+        }
+        for (const MirOperand &operand : instruction.operands) {
+          addOperand(operand);
+        }
+        if (instruction.enumOwner) {
+          addEnum(*instruction.enumOwner);
+        }
+      }
+      if (block.terminator.value) {
+        addOperand(*block.terminator.value);
+      }
+      for (const MirSwitchTarget &target : block.terminator.switchTargets) {
+        if (!target.value) {
+          continue;
+        }
+        addType(target.value->type);
+        if (target.value->enumOwner != 0) {
+          addEnum(target.value->enumOwner);
+        }
+      }
+    }
+  }
+};
+
+} // namespace
+
+CppMirBodyEmissionMapRows
+buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
+                               const MirProgram &mir, CppStandard standard) {
+  RowsBuilder builder{.semantics = semantics, .mir = mir, .standard = standard};
+
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
+    if (const MirBody *body = findMirBody(mir, address)) {
+      builder.addBody(*body);
+    }
+  }
+
+  // The emission analysis also requires instance-level owner metadata types
+  // that need not appear inside any body structure: signatures, owner class
+  // types, constructor initializer targets, and lambda captures.
+  for (const MirClassInstance &instance : mir.classInstances()) {
+    builder.addType(instance.type);
+  }
+  for (const MirFunctionInstance &function : mir.functionInstances()) {
+    builder.addType(function.returnType);
+    for (const SemanticType &type : function.parameterTypes) {
+      builder.addType(type);
+    }
+    for (const MirCallableParameter &parameter : function.callableParameters) {
+      builder.addType(parameter.callableType);
+      for (const MirCallableSignature &signature : parameter.signatures) {
+        builder.addType(signature.returnType);
+        for (const SemanticType &type : signature.parameterTypes) {
+          builder.addType(type);
+        }
+      }
+    }
+  }
+  for (const MirConstructorInstance &constructor : mir.constructorInstances()) {
+    for (const SemanticType &type : constructor.parameterTypes) {
+      builder.addType(type);
+    }
+    for (const MirConstructorInitializer &initializer :
+         constructor.initializers) {
+      builder.addType(initializer.targetType);
+    }
+  }
+  for (const MirLambdaInstance &lambda : mir.lambdaInstances()) {
+    builder.addType(lambda.type);
+    builder.addType(lambda.returnType);
+    for (const SemanticType &type : lambda.parameterTypes) {
+      builder.addType(type);
+    }
+    for (const SemanticType &type : lambda.captureTypes) {
+      builder.addType(type);
+    }
+  }
+
+  for (const MirClassInstance &instance : mir.classInstances()) {
+    for (const MirClassFieldInfo &field : instance.declaredFields) {
+      const SymbolRecord *record =
+          semantics.database().findSymbol(field.symbol);
+      if (record == nullptr || record->name.empty()) {
+        continue;
+      }
+      builder.rows.symbols.push_back(
+          {.kind = CppMirSymbolRepresentationKind::Field,
+           .owner = instance.id,
+           .symbol = field.symbol,
+           .ordinal = 0,
+           .type = field.type,
+           .spelling = record->name});
+      builder.addType(field.type);
+    }
+  }
+
+  for (const MirFunctionInstance &function : mir.functionInstances()) {
+    // Every source-defined body gets its emitted definition name; only the
+    // namespace-scope GTI form is also a valid call-target spelling, and the
+    // scalar call family's gates admit exactly that form. Declarations have
+    // no emitted definition and stay rowless so a call to one fails closed.
+    if (function.definitionKind !=
+        MirFunctionInstance::DefinitionKind::Source) {
+      continue;
+    }
+    const FunctionInfo *info = semantics.findFunction(function.declaration);
+    if (info == nullptr || info->declaration == nullptr) {
+      continue;
+    }
+    std::string spelling;
+    if (function.owner) {
+      const MirClassInstance *ownerInstance =
+          mir.findClassInstance(*function.owner);
+      if (ownerInstance == nullptr) {
+        continue;
+      }
+      spelling =
+          cppSemanticTypeSpelling(semantics, standard, ownerInstance->type);
+      spelling += "::";
+    } else if (!info->declaration->hasCLinkage() &&
+               !info->declaration->runtimeBinding()) {
+      spelling = "::__gti_program";
+      for (std::size_t index = 0; index < info->namespaceScope.size();
+           ++index) {
+        const std::string &scope = info->namespaceScope[index];
+        spelling += "::";
+        spelling += index == 0 && scope == "std"
+                        ? std::string(cppEmittedStandardNamespace)
+                        : scope;
+      }
+      spelling += "::";
+    }
+    spelling += cppFunctionSpelling(semantics, *info->declaration);
+    builder.rows.bodies.push_back(
+        {.address = {.kind = MirBodyKind::Function, .owner = function.id},
+         .spelling = std::move(spelling)});
+  }
+
+  return builder.rows;
 }
 
 } // namespace lang

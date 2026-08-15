@@ -3,7 +3,9 @@
 #include "gti/mir.h"
 
 #include <cstddef>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lang {
@@ -174,6 +176,13 @@ enum class CppMirEmissionEncoding {
   Invalid,
 };
 
+// The exact representation-row kind the emission analysis expects for a
+// semantic type, or nullopt for Unknown. The production rows builder mirrors
+// this mapping so a built row can never be structurally stale against the
+// analysis.
+[[nodiscard]] std::optional<CppMirTypeRepresentationKind>
+cppMirExpectedTypeRepresentation(const SemanticType &type);
+
 [[nodiscard]] CppMirEmissionEncoding
 classifyCppMirInstructionKind(MirInstructionKind kind);
 [[nodiscard]] CppMirEmissionEncoding
@@ -261,9 +270,23 @@ struct CppMirProgramEmissionAnalysis {
   }
 };
 
-// Fail-closed generic body-emission front gate. This class deliberately has no
-// Program, AST, HirBody, SemanticModel, or OptimizationResult input. A future
-// text-emission step may run only after this analysis is Ready; current known
+// One general text emission attempt. `text` is complete exactly when the
+// fail-closed analysis is Ready and every construct in the body is inside the
+// text step's ported vocabulary; there is never partial text.
+struct CppMirBodyEmissionText {
+  CppMirBodyEmissionAnalysis analysis;
+  std::string text;
+
+  [[nodiscard]] bool emitted() const {
+    return analysis.ready() && !text.empty();
+  }
+};
+
+// Fail-closed generic body-emission front gate and general per-instance text
+// step (ADR 016). This class deliberately has no Program, AST, HirBody,
+// SemanticModel, or OptimizationResult input: analysis checks MIR against the
+// copied representation rows, and text emission consumes only MIR and those
+// rows. Text emission runs only after this analysis is Ready; current known
 // gaps are therefore explicit rather than delegated to the compatibility
 // emitter.
 class CppMirBodyEmitter {
@@ -275,6 +298,19 @@ public:
   [[nodiscard]] CppMirBodyEmissionAnalysis
   analyze(MirBodyAddress address) const;
   [[nodiscard]] CppMirProgramEmissionAnalysis analyzeProgram() const;
+
+  // General per-instance body text for the scalar vocabulary the migrated
+  // per-body families cover today. `familyLabel` is the production
+  // verified-MIR marker label, `fieldBoundThisPlaces` selects the scalar-cfg
+  // receiver-field binding for This-rooted places (the direct family declares
+  // such places as ordinary locals), and `indentation` is the caller's
+  // two-space indentation depth at the body's opening brace. Analysis runs
+  // first; a non-Ready body returns its issues and no text. A Ready body
+  // whose construct falls outside the ported vocabulary is emission drift and
+  // throws, matching the transitional emitter's fail-closed behavior.
+  [[nodiscard]] CppMirBodyEmissionText
+  emitBodyText(MirBodyAddress address, std::string_view familyLabel,
+               bool fieldBoundThisPlaces, std::size_t indentation) const;
 
 private:
   const MirProgram &program_;

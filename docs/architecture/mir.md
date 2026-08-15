@@ -42,6 +42,20 @@ implicit-zero/constant storage stages remain `DataOnly`, while any merged
 production-family labels are inventory only and cannot establish generic-
 emitter coverage.
 
+The generic body emitter now also carries the first production text step
+(ADR 016 phases 4-5). `buildCppMirBodyEmissionMapRows` copies deterministic
+representation rows — type, field-symbol, body-name/call-target, and
+non-payload enum spellings drawn only from the extracted
+`cpp_representation` authorities — and `CppMirBodyEmitter::emitBodyText`
+emits one Ready function body from MIR and those rows alone, with no
+Program, semantic, or HIR input. The transitional emitter's scalar-cfg and
+scalar-direct-call families delegate their body text to this step: admission
+stays in the family gates, one general text authority produces the bytes,
+and a selected body the general step cannot emit is an internal error rather
+than a silent fallback. The body-emitter suite pins byte agreement between
+this step and every production-published scalar body across the example
+corpus.
+
 The sealed private builder derives hosted-entry thunks from the exact MIR entry
 function. It derives one `ProgramInitialization` owner marker exactly when the
 verified merged Module plan contains an `Initializer` step. Exact `Module/0`

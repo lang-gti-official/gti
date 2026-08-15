@@ -182,7 +182,10 @@ shadow infrastructure:
    emission for the remaining constructor, destructor, lambda, and
    program/module initialization work rather than proving another narrow
    family; remove AST/HIR body emission, native failure helpers, and the HIR
-   replacement bridge. AST, semantics, and HIR remain available only for
+   replacement bridge. The general per-instance text step and the production
+   representation-row builder are in place: scalar-cfg and scalar-direct-call
+   body text is produced by `CppMirBodyEmitter::emitBodyText` from MIR plus
+   copied rows, byte-identical to the family emission it replaced. AST, semantics, and HIR remain available only for
    declarations, concrete identities, layout, ABI, and representation facts.
    The evidence standard is recorded under "Cutover Evidence After The
    Differential Oracle" below.
