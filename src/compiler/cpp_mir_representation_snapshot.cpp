@@ -1692,6 +1692,13 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Bounds,
        .spelling = "mir_checked_array_access_v1"});
+  // Borrow names the loan erasure contract (ADR 018): loans lower to
+  // typed pointers with deref-at-use, constness follows access mode,
+  // endpoints are compile-proven with no runtime action, and references
+  // survive only at ABI boundaries.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::Borrow,
+       .spelling = "mir_loan_pointer_v1"});
   // Aggregate names the value-initialization representation the emitted
   // artifact uses for empty aggregates: the row type's braced value
   // initialization (std::array<T, N>{}).

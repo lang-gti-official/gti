@@ -1099,6 +1099,7 @@ void testGeneralTextStepMatchesProductionEmission() {
   bool deterministic = true;
   bool intrinsicBodies = false;
   bool checkedIntrinsicBodies = false;
+  bool loanBodies = false;
   for (const std::filesystem::path &source : sources) {
     std::ifstream input(source);
     std::stringstream buffer;
@@ -1173,6 +1174,10 @@ void testGeneralTextStepMatchesProductionEmission() {
               std::string::npos) {
         intrinsicBodies = true;
       }
+      if (emission.text.find("__gti_mir_loan_") != std::string::npos &&
+          emission.text.find("return *__gti_mir_loan_") != std::string::npos) {
+        loanBodies = true;
+      }
       if (emission.text.find("checked_add") != std::string::npos ||
           emission.text.find("checked_sub") != std::string::npos ||
           emission.text.find("checked_mul") != std::string::npos) {
@@ -1191,6 +1196,10 @@ void testGeneralTextStepMatchesProductionEmission() {
 
   std::cout << "general text-step agreement: bodies=" << generalBodies
             << " matched=" << matchedBodies << '\n';
+  expect(loanBodies,
+         "the corpus should emit at least one loan-erasure body (ADR 018): "
+         "a pointer loan local, an address-of borrow, and a dereferenced "
+         "loan return");
   expect(intrinsicBodies,
          "the corpus should emit at least one wrapping/saturating intrinsic "
          "helper call from verified MIR");

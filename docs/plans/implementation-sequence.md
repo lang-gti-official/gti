@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.184.0
+Checkpoint: 0.185.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,20 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Loan erasure slice 1a implemented (0.185.0, ADR 018).** The general
+  emitter carries the core loan machinery: one hoisted pointer local per
+  MIR loan identity (`const` follows access mode), `Borrow` as address-of
+  through a composable place expression (bindings, storage globals,
+  receiver fields, receiver field elements, sibling-array elements, loan
+  carriers), `EndBorrow` as a boundary comment, and a returned loan as
+  `return *__gti_mir_loan_<id>;` under the reference-returning ABI
+  signature. The Borrow capability row ships as `mir_loan_pointer_v1`.
+  Local and Return loan kinds are admitted; call-result, stored, and
+  parameter loans decline until their slices. The first production
+  consumer is a loan-returning accessor emitting as a generic-owner
+  member specialization, pinned corpus-wide in the byte-agreement
+  census; remaining slice-1 shapes (reference parameters, dereference
+  projections for the iterator operators) follow.
 - **Loan erasure representation ratified (ADR 018).** Loans erase to
   typed pointers with deref-at-use inside lowered bodies and C++
   references at ABI boundaries — the same lowering a production compiler

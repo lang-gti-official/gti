@@ -1911,6 +1911,17 @@ public:
       if (arrayElementAccess(facts.body, place)) {
         continue;
       }
+      // A loan carrier place spells through its loan pointer (ADR 018).
+      if (place.root == MirPlaceRootKind::Loan) {
+        continue;
+      }
+      // A This-rooted field element spells through the live member.
+      if (place.root == MirPlaceRootKind::This &&
+          place.projections.size() == 2 &&
+          place.projections[0].kind == MirProjectionKind::Field &&
+          place.projections[1].kind == MirProjectionKind::Index) {
+        continue;
+      }
       // Receiver-place handling is derived from MIR, not selected by the
       // caller: a This-rooted place is the projection carrier (skipped) or
       // one projected field bound by reference to the live member. No
@@ -1950,6 +1961,18 @@ public:
       }
       writeIndent();
       output << typeSpelling(value.info.type) << " __gti_mir_v_" << value.id
+             << "{};\n";
+    }
+    for (const MirLoan &loan : facts.body.loans) {
+      const MirPlace *source = facts.body.findPlace(loan.source);
+      if (source == nullptr) {
+        throw std::logic_error("verified MIR loan lost its source place");
+      }
+      writeIndent();
+      if (loan.access == AccessMode::ReadOnly) {
+        output << "const ";
+      }
+      output << typeSpelling(source->type) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
     }
     if (failureForm) {
@@ -2387,6 +2410,28 @@ private:
       emitCompute(instruction);
       return;
     }
+    if (instruction.kind == MirInstructionKind::Borrow) {
+      const MirLoan *loan = nullptr;
+      for (const MirLoan &candidate : facts.body.loans) {
+        if (instruction.loan && candidate.id == *instruction.loan) {
+          loan = &candidate;
+        }
+      }
+      const MirPlace *source =
+          loan == nullptr ? nullptr : facts.body.findPlace(loan->source);
+      if (source == nullptr) {
+        throw std::logic_error("verified MIR borrow lost its loan source");
+      }
+      output << "__gti_mir_loan_" << loan->id << " = &";
+      emitPlaceExpression(facts, *source);
+      output << ";\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::EndBorrow) {
+      output << "// GTI MIR end-borrow loan "
+             << (instruction.loan ? *instruction.loan : 0) << "\n";
+      return;
+    }
     if (failureForm && instruction.kind == MirInstructionKind::Drop &&
         instruction.lifecycle.size() == 1 &&
         instruction.lifecycle.front().failureCleanup) {
@@ -2424,6 +2469,14 @@ private:
       if (source != nullptr && source->root == MirPlaceRootKind::Symbol) {
         output << "__gti_mir_v_" << *instruction.result << " = "
                << storageSpelling(source->symbol) << ";\n";
+        return;
+      }
+      if (source != nullptr && (source->root == MirPlaceRootKind::Loan ||
+                                (source->root == MirPlaceRootKind::This &&
+                                 source->projections.size() == 2))) {
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+        emitPlaceExpression(facts, *source);
+        output << ";\n";
         return;
       }
       if (source != nullptr) {
@@ -2769,6 +2822,11 @@ private:
       output << "continue;\n";
       return;
     case MirTerminatorKind::Return:
+      if (terminator.returnLoan && *terminator.returnLoan != 0) {
+        writeIndent();
+        output << "return *__gti_mir_loan_" << *terminator.returnLoan << ";\n";
+        return;
+      }
       if (failureForm) {
         writeIndent();
         output << "// GTI MIR return publication\n";
@@ -2798,6 +2856,63 @@ private:
       break;
     }
     throw std::logic_error("verified MIR scalar-CFG terminator is unsupported");
+  }
+
+  // Spells an lvalue expression for a place the loan machinery touches:
+  // ordinary bindings, storage globals, receiver fields, receiver field
+  // elements, sibling-array elements, and loan carriers (ADR 018).
+  void emitPlaceExpression(const ScalarBodyFacts &facts,
+                           const MirPlace &place) {
+    if (place.root == MirPlaceRootKind::Loan) {
+      output << "(*__gti_mir_loan_" << place.loan << ')';
+      for (const MirPlaceProjection &projection : place.projections) {
+        if (projection.kind == MirProjectionKind::Field) {
+          output << '.' << fieldSpelling(facts, projection.field);
+        } else {
+          throw std::logic_error(
+              "loan carrier projection is outside the vocabulary");
+        }
+      }
+      return;
+    }
+    if (place.root == MirPlaceRootKind::Symbol) {
+      output << storageSpelling(place.symbol);
+      return;
+    }
+    if (place.root == MirPlaceRootKind::This) {
+      if (place.projections.size() == 1 &&
+          place.projections[0].kind == MirProjectionKind::Field) {
+        output << "__gti_mir_p_" << place.id;
+        return;
+      }
+      if (place.projections.size() == 2 &&
+          place.projections[0].kind == MirProjectionKind::Field &&
+          place.projections[1].kind == MirProjectionKind::Index) {
+        output << "(*this)." << fieldSpelling(facts, place.projections[0].field)
+               << '[';
+        if (place.projections[1].constantIndex) {
+          output << "static_cast<std::size_t>("
+                 << *place.projections[1].constantIndex << ")";
+        } else {
+          output << "static_cast<std::size_t>(__gti_mir_v_"
+                 << place.projections[1].index << ')';
+        }
+        output << ']';
+        return;
+      }
+    }
+    if (const std::optional<ArrayElementAccess> access =
+            arrayElementAccess(facts.body, place)) {
+      output << "__gti_mir_p_" << access->array << '[';
+      emitElementIndex(*access);
+      output << ']';
+      return;
+    }
+    if (place.projections.empty()) {
+      output << "__gti_mir_p_" << place.id;
+      return;
+    }
+    throw std::logic_error("place expression is outside the loan vocabulary");
   }
 
   void emitElementIndex(const ArrayElementAccess &access) {
@@ -3050,6 +3165,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       body.entry > body.blocks.size()) {
     return false;
   }
+  const auto loanById = [&](MirLoanId id) -> const MirLoan * {
+    for (const MirLoan &loan : body.loans) {
+      if (loan.id == id) {
+        return &loan;
+      }
+    }
+    return nullptr;
+  };
+  // Loan erasure (ADR 018): every loan needs a resolvable source place
+  // whose type row spells the pointer local; call-result, stored, and
+  // parameter loans wait for their own slices.
+  for (const MirLoan &loan : body.loans) {
+    if (body.findPlace(loan.source) == nullptr ||
+        (loan.kind != MirLoanKind::Local && loan.kind != MirLoanKind::Return)) {
+      return false;
+    }
+  }
 
   const auto typeRow = [&](const SemanticType &type) {
     const auto found = std::find_if(
@@ -3180,6 +3312,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (place.root == MirPlaceRootKind::Loan) {
+      const MirLoan *loan = loanById(place.loan);
+      if (loan == nullptr || !typeRow(place.type) ||
+          !std::all_of(place.projections.begin(), place.projections.end(),
+                       [&](const MirPlaceProjection &projection) {
+                         return projection.kind == MirProjectionKind::Field &&
+                                fieldRow(projection.field);
+                       })) {
+        return false;
+      }
+      continue;
+    }
+    if (place.root == MirPlaceRootKind::This && place.projections.size() == 2 &&
+        place.projections[0].kind == MirProjectionKind::Field &&
+        place.projections[1].kind == MirProjectionKind::Index) {
+      if (!fieldRow(place.projections[0].field) || !typeRow(place.type)) {
+        return false;
+      }
+      continue;
+    }
     if (!place.projections.empty() || !typeRow(place.type)) {
       return false;
     }
@@ -3212,6 +3364,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         continue;
       }
+      case MirInstructionKind::Borrow: {
+        const MirLoan *loan =
+            instruction.loan ? loanById(*instruction.loan) : nullptr;
+        if (loan == nullptr || !instruction.localFailureSites.empty()) {
+          return false;
+        }
+        const MirPlace *source = body.findPlace(loan->source);
+        if (source == nullptr || !typeRow(source->type)) {
+          return false;
+        }
+        continue;
+      }
+      case MirInstructionKind::EndBorrow:
+        if (!instruction.loan || loanById(*instruction.loan) == nullptr) {
+          return false;
+        }
+        continue;
       case MirInstructionKind::Drop: {
         if (failureForm && instruction.lifecycle.size() == 1 &&
             instruction.lifecycle.front().failureCleanup &&
@@ -3576,6 +3745,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     case MirTerminatorKind::Return:
+      if (block.terminator.returnLoan && *block.terminator.returnLoan != 0) {
+        if (loanById(*block.terminator.returnLoan) == nullptr) {
+          return false;
+        }
+        continue;
+      }
       if (block.terminator.value && !valueOperand(*block.terminator.value)) {
         return false;
       }

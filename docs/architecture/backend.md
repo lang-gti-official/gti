@@ -245,7 +245,11 @@ generic emitter replaces that single whole-program route.
   body and wrapper are declared side by side in the class and defined
   through the ordinary deferred qualified form; the hosted main keeps
   exactly one termination call of its own, while each wrapper carries its
-  boundary's. A generic free function keeps its compatibility
+  boundary's. Loans erase per ADR 018: one pointer local per
+  MIR loan identity, address-of at `Borrow`, boundary comments at
+  `EndBorrow`, and dereferenced loan returns under reference-returning
+  ABI signatures, with the Borrow capability row naming the contract as
+  `mir_loan_pointer_v1`. A generic free function keeps its compatibility
   template while every admitted concrete instance publishes per instance
   as an explicit specialization (success form) or a transformed overload
   plus specialization wrapper (failure form), forward-declared beside the
