@@ -249,7 +249,11 @@ generic emitter replaces that single whole-program route.
   MIR loan identity, address-of at `Borrow`, boundary comments at
   `EndBorrow`, and dereferenced loan returns under reference-returning
   ABI signatures, with the Borrow capability row naming the contract as
-  `mir_loan_pointer_v1`. A generic free function keeps its compatibility
+  `mir_loan_pointer_v1`. Reference parameters keep their C++ references
+  at the signature and bind pointer carriers in the body, with
+  dereference-projected places spelling through the carrier's field
+  chain; operator members participate through the same specialization
+  path as ordinary members, their friend adapters unchanged. A generic free function keeps its compatibility
   template while every admitted concrete instance publishes per instance
   as an explicit specialization (success form) or a transformed overload
   plus specialization wrapper (failure form), forward-declared beside the

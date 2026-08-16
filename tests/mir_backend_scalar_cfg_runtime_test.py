@@ -18,6 +18,8 @@ SELECTED = (
     "cfg_short",
     "cfg_loop",
     "cfg_fold",
+    # Converts under ADR 018: reference parameter bound as pointer carrier.
+    "compatibility_reference",
 )
 # Standard-library scalar bodies selected per body once compiler-private
 # declarations were admitted; the fixture links them through the prelude.
@@ -50,7 +52,6 @@ COMPATIBILITY = (
     "compatibility_checked",
     "compatibility_call_target",
     "compatibility_call",
-    "compatibility_reference",
 )
 
 

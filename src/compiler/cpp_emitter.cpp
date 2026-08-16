@@ -5099,8 +5099,13 @@ private:
                                 isMirScalarCfgType(type.arguments[0]) &&
                                 (type.arguments[1].kind == SemanticType::Enum ||
                                  isMirScalarCfgType(type.arguments[1]));
+    // A reference parameter keeps its C++ reference at the ABI while the
+    // body binds a pointer carrier (ADR 018); what the body does with it
+    // stays with the vocabulary probe.
+    const bool referenceParameter =
+        type.kind == SemanticType::Reference && type.arguments.size() == 1;
     return isMirScalarCfgType(type) || type.kind == SemanticType::StringView ||
-           scalarExpected;
+           scalarExpected || referenceParameter;
   }
 
   [[nodiscard]] static bool isMirScalarCfgLiteral(const Literal &literal,
@@ -6236,13 +6241,16 @@ private:
     if (info == nullptr || info->ownerClass == 0 || info->staticMember ||
         info->parameterPack || info->internalLinkage ||
         !info->externalSymbol.empty() ||
-        info->linkage != LanguageLinkage::Gti ||
-        function.operatorName().has_value()) {
+        info->linkage != LanguageLinkage::Gti) {
       return;
     }
     for (const MirFunctionInstance &instance : mir->functionInstances()) {
       if (instance.declaration != info->id || !instance.owner ||
-          instance.staticMember || instance.overloadedOperator.has_value() ||
+          instance.staticMember ||
+          instance.overloadedOperator !=
+              (function.operatorName()
+                   ? std::optional(function.operatorName()->kind)
+                   : std::nullopt) ||
           instance.entryKind != ProgramEntryKind::None ||
           !generalBodyAdmitted(instance.id)) {
         continue;

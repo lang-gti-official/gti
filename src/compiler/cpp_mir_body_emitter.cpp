@@ -1922,6 +1922,32 @@ public:
           place.projections[1].kind == MirProjectionKind::Index) {
         continue;
       }
+      // A dereference-projected place spells through its base carrier.
+      if (place.root == MirPlaceRootKind::Binding &&
+          !place.projections.empty() &&
+          place.projections[0].kind == MirProjectionKind::Dereference) {
+        continue;
+      }
+      // A reference parameter keeps its C++ reference at the signature and
+      // binds a pointer carrier in the body (ADR 018).
+      if (place.root == MirPlaceRootKind::Binding &&
+          place.projections.empty() &&
+          place.type.kind == SemanticType::Reference) {
+        const std::optional<std::size_t> parameter =
+            parameterIndex(place, facts);
+        if (!parameter) {
+          throw std::logic_error(
+              "reference local outside parameter binding is not in the loan "
+              "vocabulary");
+        }
+        writeIndent();
+        if (place.type.referenceAccess == AccessMode::ReadOnly) {
+          output << "const ";
+        }
+        output << "auto *__gti_mir_p_" << place.id << " = &__gti_mir_arg_"
+               << *parameter << ";\n";
+        continue;
+      }
       // Receiver-place handling is derived from MIR, not selected by the
       // caller: a This-rooted place is the projection carrier (skipped) or
       // one projected field bound by reference to the live member. No
@@ -2471,9 +2497,13 @@ private:
                << storageSpelling(source->symbol) << ";\n";
         return;
       }
-      if (source != nullptr && (source->root == MirPlaceRootKind::Loan ||
-                                (source->root == MirPlaceRootKind::This &&
-                                 source->projections.size() == 2))) {
+      if (source != nullptr &&
+          (source->root == MirPlaceRootKind::Loan ||
+           (source->root == MirPlaceRootKind::This &&
+            source->projections.size() == 2) ||
+           (source->root == MirPlaceRootKind::Binding &&
+            !source->projections.empty() &&
+            source->projections[0].kind == MirProjectionKind::Dereference))) {
         output << "__gti_mir_v_" << *instruction.result << " = ";
         emitPlaceExpression(facts, *source);
         output << ";\n";
@@ -2908,6 +2938,30 @@ private:
       output << ']';
       return;
     }
+    if (place.root == MirPlaceRootKind::Binding && !place.projections.empty() &&
+        place.projections[0].kind == MirProjectionKind::Dereference) {
+      const MirPlace *base = nullptr;
+      for (const MirPlace &candidate : facts.body.places) {
+        if (candidate.id != place.id &&
+            candidate.root == MirPlaceRootKind::Binding &&
+            candidate.binding == place.binding &&
+            candidate.projections.empty()) {
+          base = &candidate;
+        }
+      }
+      if (base == nullptr) {
+        throw std::logic_error("dereference projection lost its base carrier");
+      }
+      output << "(*__gti_mir_p_" << base->id << ')';
+      for (std::size_t index = 1; index < place.projections.size(); ++index) {
+        if (place.projections[index].kind != MirProjectionKind::Field) {
+          throw std::logic_error(
+              "dereference chain projection is outside the vocabulary");
+        }
+        output << '.' << fieldSpelling(facts, place.projections[index].field);
+      }
+      return;
+    }
     if (place.projections.empty()) {
       output << "__gti_mir_p_" << place.id;
       return;
@@ -3120,6 +3174,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   const MirBody *bodyPointer = nullptr;
   std::optional<HirClassInstanceId> owner;
   ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+  const std::vector<HirBindingId> *parameterBindings = nullptr;
   switch (address.kind) {
   case MirBodyKind::Function: {
     const MirFunctionInstance *function =
@@ -3141,6 +3196,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     bodyPointer = &function->body;
     owner = function->owner;
     receiverMutability = function->receiverMutability;
+    parameterBindings = &function->parameterBindings;
     break;
   }
   case MirBodyKind::Destructor: {
@@ -3328,6 +3384,39 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         place.projections[0].kind == MirProjectionKind::Field &&
         place.projections[1].kind == MirProjectionKind::Index) {
       if (!fieldRow(place.projections[0].field) || !typeRow(place.type)) {
+        return false;
+      }
+      continue;
+    }
+    if (place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
+        place.type.kind == SemanticType::Reference) {
+      // The reference must be a parameter: the signature keeps the C++
+      // reference and the body binds its pointer carrier (ADR 018).
+      if (parameterBindings == nullptr || !typeRow(place.type) ||
+          std::find(parameterBindings->begin(), parameterBindings->end(),
+                    place.binding) == parameterBindings->end()) {
+        return false;
+      }
+      continue;
+    }
+    if (place.root == MirPlaceRootKind::Binding && !place.projections.empty() &&
+        place.projections[0].kind == MirProjectionKind::Dereference) {
+      const MirPlace *base = nullptr;
+      for (const MirPlace &candidate : body.places) {
+        if (candidate.id != place.id &&
+            candidate.root == MirPlaceRootKind::Binding &&
+            candidate.binding == place.binding &&
+            candidate.projections.empty()) {
+          base = &candidate;
+        }
+      }
+      if (base == nullptr || base->type.kind != SemanticType::Reference ||
+          !typeRow(place.type) ||
+          !std::all_of(place.projections.begin() + 1, place.projections.end(),
+                       [&](const MirPlaceProjection &projection) {
+                         return projection.kind == MirProjectionKind::Field &&
+                                fieldRow(projection.field);
+                       })) {
         return false;
       }
       continue;

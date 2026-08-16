@@ -196,11 +196,23 @@ void expectEmissionRejected(const lang::FrontendResult &frontend,
 
 void expectSelectedDefinitions(std::string_view generated) {
   constexpr std::string_view selected[] = {
-      "cfg_not",   "cfg_char",   "cfg_bits",  "cfg_less", "cfg_choose",
-      "cfg_local", "cfg_switch", "cfg_short", "cfg_loop", "cfg_fold",
+      "cfg_not",
+      "cfg_char",
+      "cfg_bits",
+      "cfg_less",
+      "cfg_choose",
+      "cfg_local",
+      "cfg_switch",
+      "cfg_short",
+      "cfg_loop",
+      "cfg_fold",
+      // The reference-parameter reader converts under ADR 018: the
+      // signature keeps the C++ reference and the body binds a pointer
+      // carrier.
+      "compatibility_reference",
   };
   expect(count(generated, marker) == std::size(selected),
-         "exactly the ten bounded scalar CFG bodies should use verified MIR "
+         "exactly the eligible scalar CFG bodies should use verified MIR "
          "emission");
   for (const std::string_view name : selected) {
     expect(functionDefinition(generated, name).find(marker) !=
@@ -214,7 +226,6 @@ void expectSelectedDefinitions(std::string_view generated) {
       "compatibility_checked",
       "compatibility_call_target",
       "compatibility_call",
-      "compatibility_reference",
   };
   for (const std::string_view name : compatibility) {
     expect(functionDefinition(generated, name).find(marker) ==
@@ -487,6 +498,7 @@ public:
   bool same(int left, int right) { return left == right; }
   int reads_this() { return this.stored; }
   void store(int next) mut { this.stored = next; }
+  bool same_as(Chooser& other) { return this.stored == other.stored; }
 };
 
 int main() {
@@ -498,6 +510,10 @@ int main() {
   chooser.store(9);
   if (chooser.reads_this() != 9) {
     return 2;
+  }
+  mut Chooser twin = Chooser(9);
+  if (!chooser.same_as(twin)) {
+    return 3;
   }
   return 0;
 }
@@ -546,8 +562,15 @@ int main() {
              storeBody.find(" = (*this).stored;") != std::string_view::npos,
          "the mutable receiver must bind its field place as a non-const "
          "reference to the live member");
-  expect(count(artifact.contents, marker) == 4,
-         "exactly the four eligible member bodies should carry the family "
+  const std::string_view sameBody =
+      memberDefinition(artifact.contents, "same_as");
+  expect(sameBody.find(marker) != std::string_view::npos &&
+             sameBody.find("= &__gti_mir_arg_0;") != std::string_view::npos &&
+             sameBody.find("(*__gti_mir_p_") != std::string_view::npos,
+         "a reference parameter should bind its pointer carrier and read "
+         "the other object's field through the dereference chain (ADR 018)");
+  expect(count(artifact.contents, marker) == 5,
+         "exactly the five eligible member bodies should carry the family "
          "marker");
 }
 

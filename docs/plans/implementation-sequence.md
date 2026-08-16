@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.185.0
+Checkpoint: 0.186.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,20 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Loan erasure slice 1b: reference parameters, dereference chains,
+  operator members (0.186.0, ADR 018).** A reference parameter keeps its
+  C++ reference at the signature boundary and binds a pointer carrier in
+  the body (`const auto *__gti_mir_p_N = &__gti_mir_arg_K;`); a
+  dereference-projected place spells through its base carrier with field
+  chains (`(*__gti_mir_p_N).field`); and operator members of generic
+  owners join the member-specialization path — the friend adapters
+  dispatch through the member unchanged, so the exclusion was
+  unnecessary. The signature boundary admits single-argument reference
+  parameters, and the fixture's reference-reader sibling
+  (`compatibility_reference`) converts, inverting its old compatibility
+  pin. Corpus markers 1030 -> 1038 with byte-identical stdout; the
+  member fixture pins the pointer-carrier binding and dereference chain
+  end to end.
 - **Loan erasure slice 1a implemented (0.185.0, ADR 018).** The general
   emitter carries the core loan machinery: one hoisted pointer local per
   MIR loan identity (`const` follows access mode), `Borrow` as address-of
