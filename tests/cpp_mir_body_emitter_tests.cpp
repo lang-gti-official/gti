@@ -1194,9 +1194,10 @@ void testGeneralTextStepMatchesProductionEmission() {
   expect(intrinsicBodies,
          "the corpus should emit at least one wrapping/saturating intrinsic "
          "helper call from verified MIR");
-  expect(!checkedIntrinsicBodies,
-         "no checked arithmetic intrinsic may appear inside a general MIR "
-         "body: its Expected result is outside the scalar vocabulary");
+  expect(checkedIntrinsicBodies,
+         "the corpus should emit at least one checked-result intrinsic "
+         "helper call from verified MIR now that Expected sums joined the "
+         "signature boundary (0.183.0)");
   expect(deterministic,
          "the production rows builder should be run-to-run deterministic");
   expect(generalBodies >= 30,

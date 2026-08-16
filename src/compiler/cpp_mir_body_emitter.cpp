@@ -2513,6 +2513,24 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::IntegerCheckedAdd ||
+         instruction.intrinsic == IntrinsicKind::IntegerCheckedSubtract ||
+         instruction.intrinsic == IntrinsicKind::IntegerCheckedMultiply)) {
+      if (!instruction.result || instruction.operands.size() != 2 ||
+          instruction.info.type.arguments.size() != 2) {
+        throw std::logic_error(
+            "verified MIR checked-result intrinsic lost its exact shape");
+      }
+      output << "__gti_mir_v_" << *instruction.result << " = "
+             << cppIntegerArithmeticIntrinsicSpelling(instruction.intrinsic)
+             << '<' << typeSpelling(instruction.info.type.arguments[1]) << ">(";
+      emitOperand(instruction.operands[0]);
+      output << ", ";
+      emitOperand(instruction.operands[1]);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic ==
              IntrinsicKind::NumericTypeParameterConversion ||
          instruction.intrinsic == IntrinsicKind::NumericAliasConversion)) {
@@ -3437,6 +3455,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.operands.size() == 1 &&
               valueOperand(instruction.operands.front()) &&
               typeRow(instruction.info.type)) {
+            continue;
+          }
+          // A checked-result intrinsic produces its failure inside the
+          // Expected value — no edges — and spells as the shipped helper
+          // with the error type as its template argument.
+          if ((instruction.intrinsic == IntrinsicKind::IntegerCheckedAdd ||
+               instruction.intrinsic == IntrinsicKind::IntegerCheckedSubtract ||
+               instruction.intrinsic ==
+                   IntrinsicKind::IntegerCheckedMultiply) &&
+              !instruction.functionTarget && instruction.result &&
+              instruction.localFailureSites.empty() &&
+              instruction.operands.size() == 2 &&
+              std::all_of(instruction.operands.begin(),
+                          instruction.operands.end(), valueOperand) &&
+              instruction.info.type.kind == SemanticType::Expected &&
+              instruction.info.type.arguments.size() == 2 &&
+              typeRow(instruction.info.type) &&
+              typeRow(instruction.info.type.arguments[1])) {
             continue;
           }
           // An arithmetic intrinsic call names no body: it spells directly

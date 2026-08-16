@@ -5081,7 +5081,15 @@ private:
   // Owning class types stay outside the signature boundary.
   [[nodiscard]] static bool
   isMirScalarCfgSignatureType(const SemanticType &type) {
-    return isMirScalarCfgType(type) || type.kind == SemanticType::StringView;
+    // An Expected of a scalar payload and an enum (or scalar) error is a
+    // passive value-semantic sum: parameters and returns copy freely.
+    const bool scalarExpected = type.kind == SemanticType::Expected &&
+                                type.arguments.size() == 2 &&
+                                isMirScalarCfgType(type.arguments[0]) &&
+                                (type.arguments[1].kind == SemanticType::Enum ||
+                                 isMirScalarCfgType(type.arguments[1]));
+    return isMirScalarCfgType(type) || type.kind == SemanticType::StringView ||
+           scalarExpected;
   }
 
   [[nodiscard]] static bool isMirScalarCfgLiteral(const Literal &literal,

@@ -195,8 +195,11 @@ generic emitter replaces that single whole-program route.
   in the six wrapping/saturating integer-arithmetic kinds spells directly
   as its shipped `::gti_internal::backend` helper over two staged scalar
   operands (`cppIntegerArithmeticIntrinsicSpelling` is the single spelling
-  authority shared with compatibility emission); the checked kinds produce
-  an `Expected` result outside the scalar vocabulary and decline per body. The closed-graph
+  authority shared with compatibility emission); the checked kinds produce their failure inside an
+  `Expected` value with no edges and spell as the shipped helper with the
+  error type as its template argument; an Expected of a scalar payload
+  and an enum (or scalar) error joins the signature boundary as a
+  passive value-semantic sum. The closed-graph
   `scalar-direct-call-v1` selector keeps priority over this per-body
   capability for the whole components it owns.
 - `scalar-direct-call-v1` adds exact ordered scalar `CallInput`/`Call` stages

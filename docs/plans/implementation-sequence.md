@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.182.0
+Checkpoint: 0.183.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,17 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Expected-returning checked intrinsics in the general vocabulary
+  (0.183.0).** A checked-result arithmetic intrinsic produces its failure
+  inside the Expected value with no edges, and now spells as the shipped
+  `::gti_internal::backend::checked_*` helper with the error type as its
+  template argument; the signature boundary admits an Expected of a
+  scalar payload and an enum (or scalar) error as a passive
+  value-semantic sum. The entire checked_add/sub/mul wrapper cohort
+  converts through the specialization machinery: corpus markers
+  948 -> 1020 with byte-identical stdout, and the byte-agreement census
+  pin inverts from "no checked helper may appear" to "at least one
+  must".
 - **Per-instance template specializations from verified MIR (0.182.0).**
   A generic free-function declaration keeps its compatibility C++
   template, and every admitted MIR instance with concretely spellable
