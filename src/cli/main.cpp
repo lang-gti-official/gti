@@ -62,6 +62,7 @@ struct ProjectOptions {
   std::optional<lang::OptimizationLevel> optimization;
   std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
+  bool emitMir = false;
   std::vector<std::string> programArguments;
   bool verbose = false;
   bool useCache = true;
@@ -143,6 +144,8 @@ void printUsage(std::ostream &stream) {
          "                       Override single-threaded or concurrent "
          "semantics.\n"
          "  -O0, -O1, -O2, -O3  Override the profile optimization level.\n"
+         "      --emit-mir       Emit the deterministic verified-MIR "
+         "serialization instead of building.\n"
          "      --keep-cpp       Retain generated C++ in the intermediate "
          "directory.\n"
          "      --no-keep-cpp    Remove generated C++ after a successful "
@@ -463,6 +466,15 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.profileSelected = true;
       continue;
     }
+    if (argument == "--emit-mir") {
+      if (options.command != ProjectCommand::Build) {
+        std::cerr << "gti: --emit-mir is not supported by gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      options.emitMir = true;
+      continue;
+    }
     if (argument == "--cxx") {
       if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --cxx is not valid for gti "
@@ -590,6 +602,10 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       return ArgumentResult::ExitFailure;
     }
     options.target = argument;
+  }
+  if (options.emitMir && options.keepCpp.value_or(false)) {
+    std::cerr << "gti: --emit-mir and --keep-cpp cannot be used together\n";
+    return ArgumentResult::ExitFailure;
   }
   return ArgumentResult::Run;
 }
@@ -1185,6 +1201,36 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
+
+  if (options.command == ProjectCommand::Build && options.emitMir) {
+    const lang::driver::CompilationResult compilation =
+        lang::driver::compileToMir(lang::driver::CompilationRequest(
+            plan.entry(), toolchain.standardLibrary, plan.target(),
+            plan.optimization(), plan.cppStandard(), plan.packageSources()));
+    if (!compilation.succeeded()) {
+      return reportCompilationFailure(compilation);
+    }
+    std::filesystem::path output = plan.output();
+    output += ".mir";
+    if (const std::optional<std::filesystem::path> collision =
+            lang::driver::findLoadedSourceCollision(output,
+                                                    compilation.sources)) {
+      std::cerr << "gti: refusing to overwrite loaded source '"
+                << collision->string() << "' with emitted MIR output '"
+                << output.string() << "'\n";
+      return exitCode(ExitStatus::Usage);
+    }
+    std::error_code directoryError;
+    std::filesystem::create_directories(output.parent_path(), directoryError);
+    if (directoryError || !writeFile(output, compilation.artifact->contents)) {
+      return exitCode(ExitStatus::Io);
+    }
+    std::cout << "Emitted MIR " << plan.targetName() << " ["
+              << plan.profileName() << ", "
+              << lang::driver::targetTriple(plan.target()) << "] -> "
+              << output.string() << '\n';
+    return exitCode(ExitStatus::Success);
+  }
 
   if (options.command == ProjectCommand::Check) {
     const lang::driver::CheckResult result =

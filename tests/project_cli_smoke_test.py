@@ -308,6 +308,26 @@ def main():
         run([str(executable)])
         assert not (project / "build/gti/release").exists()
 
+        emitted = run([gti, "build", "--emit-mir"], cwd=nested)
+        assert "Emitted MIR sample [dev," in emitted.stdout
+        mir_artifacts = sorted(dev_directory.rglob("sample.mir"))
+        assert len(mir_artifacts) == 1
+        mir_head = mir_artifacts[0].read_text(encoding="utf-8").splitlines()[0]
+        assert mir_head.startswith("mir-v") and "valid=1" in mir_head
+        conflicted = run(
+            [gti, "build", "--emit-mir", "--keep-cpp"],
+            expected=64,
+            cwd=nested,
+        )
+        assert (
+            "--emit-mir and --keep-cpp cannot be used together"
+            in conflicted.stderr
+        )
+        unsupported = run(
+            [gti, "run", "--emit-mir"], expected=64, cwd=nested
+        )
+        assert "--emit-mir is not supported by gti run" in unsupported.stderr
+
         generated = executable.parent / ".gti-intermediate/sample.gti.cpp"
         assert generated.is_file()
         direct_cpp = root / "direct.cpp"

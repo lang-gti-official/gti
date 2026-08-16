@@ -672,7 +672,9 @@ directly to atomic publication. The loaded graph is produced by `SourceLoader`
 in both cases; a miss moves it into the frontend rather than loading it again.
 
 `check` stops after frontend analysis. `--emit-cpp` stops after backend
-generation. `run` adds a process step after publishing. Independent targets
+generation, and project `gti build --emit-mir` (implemented) stops after MIR
+verification and serializes the verified snapshot beside the profile output.
+`run` adds a process step after publishing. Independent targets
 may execute concurrently, but operations for one whole-program target remain
 ordered.
 

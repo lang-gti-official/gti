@@ -236,6 +236,16 @@ artifact is an inspection surface for the backend-authority migration; the
 serialization contract remains
 [`docs/architecture/mir.md`](mir.md).
 
+Project builds expose the same mode: `gti build --emit-mir` resolves the
+manifest target, profile, and overrides exactly as an executable build, then
+runs the identical `compileToMir` path over the resolved plan and writes
+`<target>.mir` beside the profile's executable output under
+`build/gti/<profile>/<triple>/`. It performs no native compilation, ignores
+the cache, applies the same loaded-source overwrite guard, and is rejected
+for `gti check`, `gti run`, and `gti test` and alongside `--keep-cpp`. The
+direct and project modes therefore emit byte-identical serializations for
+the same resolved configuration.
+
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,
