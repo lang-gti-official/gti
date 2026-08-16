@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.178.0
+Checkpoint: 0.179.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,18 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Member bodies join the defined-failure boundary (0.179.0).** The
+  per-body failure route admits ordinary non-operator members of one
+  concrete non-generic class instantiation, mirroring the success route's
+  member boundary: the transformed member and its same-signature wrapper
+  are declared side by side in the class and defined through the deferred
+  qualified form, with receiver constness following the declared
+  mutability and the seal requiring exact receiver-mutability agreement.
+  The prelude's `file_handle::release` cohort converts in every program
+  (corpus markers 820 -> 880, failure-form bodies 4 -> 64, stdout
+  byte-identical). The hosted suite's single-termination pin re-scopes to
+  the hosted main, since each boundary wrapper now legitimately carries
+  its own termination call.
 - **String-view literals in the general vocabulary (0.178.0).** The probe
   and text step admit `std::string` literals of `StringView` type, spelled
   through the new single authority `cppMirStringViewLiteralSpelling`

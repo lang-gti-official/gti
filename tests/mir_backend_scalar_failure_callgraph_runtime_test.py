@@ -19,20 +19,19 @@ def report_pattern(
     end: int,
     detail: str,
 ) -> re.Pattern[bytes]:
+    # The report no longer carries the artifact identity; stability of that
+    # identity is checked against the emitted C++ descriptor instead.
+    del start, end
     return re.compile(
-        rb"^GTI runtime failure \["
-        + code.encode()
-        + rb"\] "
-        + category.encode()
-        + rb" in ([0-9a-f]{64}) at \""
+        rb"^"
         + re.escape(source.name.encode())
-        + rb"\":"
+        + rb":"
         + str(line).encode()
-        + rb"@"
-        + str(start).encode()
-        + rb"\.\."
-        + str(end).encode()
-        + rb": "
+        + rb": runtime error\["
+        + code.encode()
+        + rb"\]: "
+        + category.encode()
+        + rb" in "
         + detail.encode()
         + rb"\n$"
     )
@@ -87,10 +86,17 @@ def validate_emission(
             "bool/out-result/record hidden ABI for every selected body\n"
         )
         return False
-    if generated.count("::gti_rt_failure_terminate_v1(") != 1:
+    # ADR 017: each per-body defined-failure boundary wrapper carries its
+    # own termination call, so the whole-artifact count is no longer one;
+    # the hosted main must still own exactly one.
+    main_index = generated.find("int main()")
+    if (
+        main_index == -1
+        or generated[main_index:].count("::gti_rt_failure_terminate_v1(") != 1
+    ):
         sys.stderr.write(
-            f"{label} {optimization}/{standard} did not emit exactly one "
-            "hosted termination call\n"
+            f"{label} {optimization}/{standard} hosted main did not own "
+            "exactly one termination call\n"
         )
         return False
     firewall = (
@@ -133,6 +139,21 @@ def compile_program(
             str(output),
         ]
     )
+
+
+def artifact_identity(emitted: str) -> str:
+    """The artifact identity byte list from the emitted failure descriptor.
+
+    The runtime report no longer prints this identity, so stability across
+    optimization levels and C++ standards is checked at its source instead.
+    """
+    match = re.search(
+        r"__gti_failure_artifact_descriptor_v1 = \{.*?\{([0-9, ]+)\}",
+        emitted,
+        re.DOTALL,
+    )
+    assert match is not None, "emitted C++ has no failure artifact descriptor"
+    return match.group(1)
 
 
 def emit_program(
@@ -415,7 +436,17 @@ def main() -> int:
                         or match is None
                     ):
                         return fail(failed)
-                    identity = match.group(1)
+                    identity_cpp = (
+                        root / f"{label}-{optimization}-{standard}-id.cpp"
+                    )
+                    identity_emission = emit_program(
+                        compiler, source, identity_cpp, optimization, standard
+                    )
+                    if identity_emission.returncode != 0:
+                        return fail(identity_emission)
+                    identity = artifact_identity(
+                        identity_cpp.read_text(encoding="utf8")
+                    )
                     if label not in observed_identities:
                         observed_identities[label] = identity
                     elif identity != observed_identities[label]:

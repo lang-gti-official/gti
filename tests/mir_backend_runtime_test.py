@@ -91,12 +91,13 @@ def main() -> int:
                     or generated.count(
                         "// GTI verified-MIR body: scalar-cfg-failure-v1"
                     )
-                    != 1
+                    != 2
                 ):
                     sys.stderr.write(
                         "checked sibling should emit the transformed "
                         "failure-form body plus its defined-failure boundary "
-                        "wrapper (ADR 017)\n"
+                        "wrapper (ADR 017; the second failure-form body is "
+                        "the prelude's file_handle release member)\n"
                     )
                     return 1
                 if (

@@ -1551,6 +1551,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (stmt.body()) {
       if (currentClass != nullptr && !emittingDeferredMember) {
         output << ";\n";
+        if (mirGeneralFailure != nullptr) {
+          // The boundary wrapper keeps the original member name and
+          // signature; declare it beside the transformed member.
+          writeIndent();
+          emitFunctionSignature(stmt, mirGeneralFailure);
+          output << ";\n";
+        }
         deferredMemberDefinitions.push_back(
             {.kind = DeferredMemberKind::Function,
              .owner = currentClass,
@@ -1574,8 +1581,10 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << ' ';
         emitGeneralFailureBodyText(*mirGeneralFailure);
         emitGeneralFailureWrapper(stmt, *mirGeneralFailure);
-        emitStructuralOperatorAdapter(stmt);
-        emitCallableAdapter(stmt);
+        if (!emittingDeferredMember) {
+          emitStructuralOperatorAdapter(stmt);
+          emitCallableAdapter(stmt);
+        }
         return;
       }
       if (mirBody != nullptr) {
@@ -6031,7 +6040,7 @@ private:
         !info->genericParameters.empty() || !info->requirements.empty() ||
         info->parameterPack || info->entryPoint ||
         info->entryKind != ProgramEntryKind::None || info->staticMember ||
-        info->internalLinkage || info->ownerClass != 0 ||
+        info->internalLinkage || function.operatorName().has_value() ||
         info->linkage != LanguageLinkage::Gti ||
         !info->externalSymbol.empty() || info->virtualMethod ||
         info->pureVirtual || info->overrideMethod ||
@@ -6056,6 +6065,19 @@ private:
     if (selected == nullptr || !selected->mayRaiseDefinedFailure) {
       return nullptr;
     }
+    // A member is admitted only when its owner is one concrete non-generic
+    // instantiation, mirroring the success route's member boundary.
+    if (info->ownerClass != 0) {
+      if (!selected->owner) {
+        return nullptr;
+      }
+      const MirClassInstance *ownerInstance =
+          mir->findClassInstance(*selected->owner);
+      if (ownerInstance == nullptr || !ownerInstance->type.arguments.empty() ||
+          !ownerInstance->type.valueArguments.empty()) {
+        return nullptr;
+      }
+    }
     prepareMirScalarFailureSelection();
     if (mirScalarFailureFunctions.contains(selected->id)) {
       return nullptr;
@@ -6069,7 +6091,9 @@ private:
         selected->parameterTypes != info->parameterTypes ||
         selected->returnType != info->returnType ||
         hirInstance->body.placeDomain != selected->body.placeDomain ||
-        selected->owner.has_value() || selected->staticMember ||
+        selected->owner.has_value() != (info->ownerClass != 0) ||
+        selected->staticMember ||
+        selected->receiverMutability != function.receiverMutability() ||
         selected->overloadedOperator.has_value()) {
       throw std::logic_error(
           "admitted failure-form MIR metadata does not match its HIR and "
@@ -6080,7 +6104,12 @@ private:
 
   void emitGeneralFailureSignature(const FunctionDecl &function,
                                    const MirFunctionInstance &instance) {
-    output << "bool " << emittedFunctionName(function) << "__gti_mir_failure(";
+    output << "bool ";
+    if (emittingDeferredMember) {
+      emitCurrentClassSpecialization();
+      output << "::";
+    }
+    output << emittedFunctionName(function) << "__gti_mir_failure(";
     emitMirOwnedLifecycleParameters(instance.parameterTypes);
     if (!instance.parameterTypes.empty()) {
       output << ", ";
@@ -6088,6 +6117,10 @@ private:
     emitSemanticType(instance.returnType);
     output << " *__gti_mir_out_result, "
               "::gti_failure_record_v1 *__gti_mir_failure_record)";
+    if (classDepth > 0 && !function.isStatic() &&
+        function.receiverMutability() == ReceiverMutability::ReadOnly) {
+      output << " const";
+    }
   }
 
   void emitGeneralFailureBodyText(const MirFunctionInstance &instance) {
