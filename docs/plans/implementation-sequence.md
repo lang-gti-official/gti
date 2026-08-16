@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.166.0
+Checkpoint: 0.167.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,16 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Construction readiness measured and pinned (0.167.0).** The rows now
+  carry every function instance's emitted name (runtime bindings and
+  C-linkage declarations included), the executable module body's own row,
+  executable field-initializer body rows, and the DefinedFailure sealed
+  helper the artifacts already ship. Under production rows, every
+  constructor and field-initializer body of the owned-lifecycle fixture is
+  analysis-Ready — pinned in the body-emitter suite — leaving exactly the
+  destructor double-failure envelope, the withheld capability families,
+  and the Stage-E containment proofs between the atomic families and
+  dissolution.
 - **Field-initializer bodies joined failure control flow (0.166.0).**
   Owning declaration initializers arm ConstructionRollback obligations on
   their field binding places at the persistent-storage Initialize site,

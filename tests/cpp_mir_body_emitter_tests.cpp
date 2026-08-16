@@ -1236,6 +1236,56 @@ void testCleanupFixtureFunctionBodiesAreReady() {
          "be analysis-Ready under production rows");
 }
 
+// Milestone gate for the rollback campaign: every constructor and
+// field-initializer body of the owned-lifecycle fixture is analysis-Ready
+// under production rows. Its destructor waits on the double-failure
+// envelope and the prelude function bodies on deliberately withheld
+// capability rows; the construction half must never regress.
+void testOwnedLifecycleConstructionBodiesReady() {
+  const std::filesystem::path repository =
+      std::filesystem::path(__FILE__).parent_path().parent_path();
+  const std::filesystem::path fixture =
+      repository / "tests" / "fixtures" / "mir_backend_owned_lifecycle.gti";
+  const std::filesystem::path standardLibrary = repository / "stdlib";
+  std::ifstream input(fixture);
+  std::stringstream buffer;
+  buffer << input.rdbuf();
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      fixture.string(), buffer.str(), {standardLibrary / "prelude.gti"}, {},
+      {standardLibrary});
+  expect(frontend.canGenerateCode(),
+         "the owned-lifecycle fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::CppMirProgramEmissionAnalysis program = emitter.analyzeProgram();
+  bool constructionReady = program.issues.empty();
+  std::size_t constructionBodies = 0;
+  for (const lang::CppMirBodyEmissionAnalysis &body : program.bodies) {
+    if (body.body.kind != lang::MirBodyKind::Constructor &&
+        body.body.kind != lang::MirBodyKind::FieldInitializers) {
+      continue;
+    }
+    ++constructionBodies;
+    if (!body.ready()) {
+      constructionReady = false;
+      std::cerr << "owned-lifecycle construction body kind="
+                << static_cast<int>(body.body.kind)
+                << " owner=" << body.body.owner << " not ready: "
+                << (body.issues.empty() ? std::string("<no issue>")
+                                        : body.issues.front().detail)
+                << '\n';
+    }
+  }
+  expect(constructionBodies >= 3 && constructionReady,
+         "every owned-lifecycle constructor and field-initializer body must "
+         "stay analysis-Ready under production rows; destructors wait on the "
+         "double-failure envelope");
+}
+
 } // namespace
 
 int main() {
@@ -1250,6 +1300,7 @@ int main() {
   testExampleCorpusEmissionReadiness();
   testGeneralTextStepMatchesProductionEmission();
   testCleanupFixtureFunctionBodiesAreReady();
+  testOwnedLifecycleConstructionBodiesReady();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

@@ -1658,12 +1658,45 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
                      "::~" + info->declaration->name().lexeme});
   }
 
-  // The one sealed lifetime helper the runtime ships today. Naming it here
-  // is what lets Construct/Drop-bearing bodies become analysis-Ready; the
+  // The executable module body carries its own name row like every other
+  // executable body; it is never a call target.
+  if (!mir.programInitializationPlan().steps.empty()) {
+    builder.rows.bodies.push_back(
+        {.address = {.kind = MirBodyKind::Module, .owner = 0},
+         .spelling = "::__gti_program::__gti_module_initialization"});
+  }
+
+  // The sealed helpers the emitted artifact actually ships today. Naming
+  // them here is what lets bodies that need them become analysis-Ready; the
   // text step's vocabulary still decides what actually emits.
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::LifetimeStorage,
        .spelling = "::gti_internal::backend::mir_lifetime_slot"});
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::DefinedFailure,
+       .spelling = "mir_failure_status_v1"});
+
+  // Executable per-instance field-initializer bodies carry their own name
+  // row like every other executable body; the spelling is the owner scope
+  // of the definitions the transitional emitter writes for them. They are
+  // never call targets.
+  for (const MirClassInstance &instance : mir.classInstances()) {
+    const MirBody &fieldBody = instance.fieldInitializers;
+    const bool executable =
+        !fieldBody.blocks.empty() &&
+        std::any_of(
+            fieldBody.blocks.begin(), fieldBody.blocks.end(),
+            [](const MirBlock &block) { return !block.instructions.empty(); });
+    if (!executable) {
+      continue;
+    }
+    builder.rows.bodies.push_back(
+        {.address = {.kind = MirBodyKind::FieldInitializers,
+                     .owner = instance.id},
+         .spelling =
+             cppSemanticTypeSpelling(semantics, standard, instance.type) +
+             "::__gti_field_initializers"});
+  }
   for (const MirLambdaInstance &lambda : mir.lambdaInstances()) {
     builder.addType(lambda.type);
     builder.addType(lambda.returnType);
@@ -1738,14 +1771,11 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   }
 
   for (const MirFunctionInstance &function : mir.functionInstances()) {
-    // Every source-defined body gets its emitted definition name; only the
-    // namespace-scope GTI form is also a valid call-target spelling, and the
-    // scalar call family's gates admit exactly that form. Declarations have
-    // no emitted definition and stay rowless so a call to one fails closed.
-    if (function.definitionKind !=
-        MirFunctionInstance::DefinitionKind::Source) {
-      continue;
-    }
+    // Every function instance gets its emitted name row: source definitions
+    // carry their definition spelling, runtime bindings and C-linkage
+    // declarations their exact external names. Only the namespace-scope
+    // source-defined GTI form is also a valid call-target spelling; the
+    // scalar call family's gates admit exactly that form.
     const FunctionInfo *info = semantics.findFunction(function.declaration);
     if (info == nullptr || info->declaration == nullptr) {
       continue;
