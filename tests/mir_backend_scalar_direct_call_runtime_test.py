@@ -52,6 +52,10 @@ SELECTED = (
     # String-view literals joined the vocabulary in 0.178.0.
     "println",
     "print_decimal_digit",
+    # Both print overloads carry markers; the second entry keeps the
+    # name-derived count honest for the char overload admitted once
+    # unchecked conversions joined the vocabulary (0.181.0).
+    "print",
     # Callers the old whole-graph contract had to reject even though their
     # own bodies are ordinary: their ineligible callees stay on the
     # compatibility path while the calls emit from verified MIR.

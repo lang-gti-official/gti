@@ -8939,11 +8939,15 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
 
         switch (instruction.kind) {
         case MirInstructionKind::Compute:
+          // A literal may also be a passive string view: materializing a
+          // view literal cannot raise. Every other operation stays scalar.
           valid = instruction.callSite == 0 && !instruction.callInputRole &&
                   !instruction.destination && !instruction.receiver &&
                   instruction.parameterTypes.empty() &&
                   !instruction.functionTarget && instruction.result &&
-                  scalarInfo(instruction.info) &&
+                  (instruction.operation == MirOperation::Literal
+                       ? passiveInfo(instruction.info)
+                       : scalarInfo(instruction.info)) &&
                   scalarOperation(instruction.operation) &&
                   instruction.definedFailure.empty() &&
                   instruction.fullExpressionEnd == 0 &&

@@ -161,7 +161,7 @@ destructor conservatively at `true`. Its function component retains version
 20's source-defined, closed, acyclic scalar-CFG/static-call proof and also
 recognizes the exact `class-default-cleanup-v1` construction and normal-cleanup
 schedule. The proof additionally admits passive string-view parameters,
-places, values, and call operands (a trivially droppable value view cannot
+places, values, literals, and call operands (a trivially droppable value view cannot
 raise), accepts a C-linkage or runtime-binding call target by its
 `FailurePropagationKind::None` language contract instead of recursing into
 a body that does not exist, and accepts the six wrapping/saturating

@@ -6091,7 +6091,8 @@ private:
         !info->callableParameters.empty() ||
         !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
                      isMirScalarCfgType) ||
-        !isMirScalarCfgType(info->returnType)) {
+        !(info->returnType == SemanticType::Void ||
+          isMirScalarCfgType(info->returnType))) {
       return nullptr;
     }
     const MirFunctionInstance *selected = nullptr;
@@ -6156,9 +6157,11 @@ private:
     if (!instance.parameterTypes.empty()) {
       output << ", ";
     }
-    emitSemanticType(instance.returnType);
-    output << " *__gti_mir_out_result, "
-              "::gti_failure_record_v1 *__gti_mir_failure_record)";
+    if (instance.returnType != SemanticType::Void) {
+      emitSemanticType(instance.returnType);
+      output << " *__gti_mir_out_result, ";
+    }
+    output << "::gti_failure_record_v1 *__gti_mir_failure_record)";
     if (classDepth > 0 && !function.isStatic() &&
         function.receiverMutability() == ReceiverMutability::ReadOnly) {
       output << " const";
@@ -6192,9 +6195,12 @@ private:
     emitFunctionSignature(function, &instance);
     output << " {\n";
     ++indentation;
-    writeIndent();
-    emitSemanticType(instance.returnType);
-    output << " __gti_mir_boundary_result{};\n";
+    const bool voidBoundary = instance.returnType == SemanticType::Void;
+    if (!voidBoundary) {
+      writeIndent();
+      emitSemanticType(instance.returnType);
+      output << " __gti_mir_boundary_result{};\n";
+    }
     writeIndent();
     output << "::gti_failure_record_v1 __gti_mir_boundary_record{};\n";
     writeIndent();
@@ -6203,10 +6209,17 @@ private:
          ++index) {
       output << "__gti_mir_arg_" << index << ", ";
     }
-    output << "&__gti_mir_boundary_result, &__gti_mir_boundary_record)) {\n";
+    if (!voidBoundary) {
+      output << "&__gti_mir_boundary_result, ";
+    }
+    output << "&__gti_mir_boundary_record)) {\n";
     ++indentation;
     writeIndent();
-    output << "return __gti_mir_boundary_result;\n";
+    if (voidBoundary) {
+      output << "return;\n";
+    } else {
+      output << "return __gti_mir_boundary_result;\n";
+    }
     --indentation;
     writeIndent();
     output << "}\n";
@@ -9865,6 +9878,30 @@ struct mir_failure_status_v1 {
 
 inline constexpr mir_failure_status_v1 mir_failure_success_v1{
     GTI_FAILURE_CODE_NONE_V1, GTI_FAILURE_DETAIL_NONE_V1};
+
+template <typename Value, std::size_t Length>
+inline mir_failure_status_v1
+mir_checked_array_read_v1(const std::array<Value, Length> &array,
+                          std::uint64_t index, Value *result) noexcept {
+  if (index >= Length) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
+  }
+  *result = array[static_cast<std::size_t>(index)];
+  return mir_failure_success_v1;
+}
+
+template <typename Value, typename Stored, std::size_t Length>
+inline mir_failure_status_v1
+mir_checked_array_write_v1(std::array<Stored, Length> &array,
+                           std::uint64_t index, Value value) noexcept {
+  if (index >= Length) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
+  }
+  array[static_cast<std::size_t>(index)] = static_cast<Stored>(value);
+  return mir_failure_success_v1;
+}
 
 template <typename Target, typename Left, typename Right>
 inline mir_failure_status_v1 mir_checked_add_v1(Left left, Right right,

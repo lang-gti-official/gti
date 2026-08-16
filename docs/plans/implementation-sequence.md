@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.180.0
+Checkpoint: 0.181.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,25 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Fixed arrays, the void failure ABI, and detector constants
+  (0.181.0).** The general vocabulary gains fixed-array places
+  (`std::array` rows), empty `Aggregate` value initialization, one-Index
+  element places spelled as subscription on their sibling array,
+  bounds-checked element loads and stores through the new shipped
+  `mir_checked_array_read/write_v1` helpers (exact
+  `INDEX_OUT_OF_BOUNDS`/`FIXED_ARRAY` record data), proven-safe dynamic
+  indexes as plain subscription, unchecked `Convert` as `static_cast`,
+  `numeric_cast` conversion intrinsics, constant operands on checked
+  detectors, and the void transformed ABI (no out-parameter; the wrapper
+  returns through the boundary). The Bounds and Aggregate capability rows
+  now name genuinely shipped surfaces, the analysis retires its blanket
+  dynamic-index rejection in favor of per-instruction vocabulary, and the
+  effect proof admits string-view literals (the digit-printing chain's
+  last conservative link). Corpus markers 880 -> 942 with byte-identical
+  stdout; a dynamic out-of-bounds read reaches the defined contract at
+  exit 70 (pinned end to end); the integer print chain is fully
+  probe-admitted and awaits per-instance specialization emission for
+  template-emitted generic prelude bodies — the next campaign.
 - **Transformed-callee calls in the failure form (0.180.0, ADR 017
   slice 2).** A failure-form body may call a failure-capable GTI callee
   through the callee's own transformed body: the call assigns a

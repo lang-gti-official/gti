@@ -41,6 +41,10 @@ STDLIB_SELECTED = (
     # String-view literals joined the vocabulary in 0.178.0.
     "println",
     "print_decimal_digit",
+    # Both print overloads carry markers; the second entry keeps the
+    # name-derived count honest for the char overload admitted once
+    # unchecked conversions joined the vocabulary (0.181.0).
+    "print",
 )
 COMPATIBILITY = (
     "compatibility_checked",

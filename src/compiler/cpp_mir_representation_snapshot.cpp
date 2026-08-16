@@ -1686,6 +1686,18 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::NativeInterop,
        .spelling = "gti_rt_c_symbols_v1"});
+  // Bounds names the shipped checked fixed-array access family: the
+  // mir_checked_array_read/write_v1 helpers carry the bounds check, the
+  // status protocol, and the exact INDEX_OUT_OF_BOUNDS record data.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::Bounds,
+       .spelling = "mir_checked_array_access_v1"});
+  // Aggregate names the value-initialization representation the emitted
+  // artifact uses for empty aggregates: the row type's braced value
+  // initialization (std::array<T, N>{}).
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::Aggregate,
+       .spelling = "cpp_value_initialization_v1"});
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Intrinsic,
        .spelling = "gti_internal_backend_helpers_v1"});

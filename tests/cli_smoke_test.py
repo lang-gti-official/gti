@@ -2370,7 +2370,18 @@ def main():
                 capture_output=True,
                 check=False,
             )
-            if name in constant_overflow_defined:
+            if name == "constant-division-overflow":
+                # Migrated to the per-body defined-failure boundary by the
+                # 0.181.0 constant-operand detector rules. Fragment
+                # assertions hold across report-format revisions.
+                assert failure.returncode == 70
+                assert failure.stdout == ""
+                assert "GTI-R0001" in failure.stderr
+                assert "integer_overflow" in failure.stderr
+                assert "negation" in failure.stderr, (
+                    f"{name} produced unexpected report: {failure.stderr}"
+                )
+            elif name in constant_overflow_defined:
                 code, category, line, start, end, detail = (
                     constant_overflow_defined[name]
                 )

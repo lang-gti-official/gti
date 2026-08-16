@@ -12,6 +12,34 @@
 namespace lang {
 namespace {
 
+// A fixed-array element place carries one Index projection over its
+// unprojected sibling array place (same binding); the access spells as
+// subscription on the sibling with a dynamic value or constant index.
+struct ArrayElementAccess {
+  MirPlaceId array = 0;
+  MirValueId index = 0;
+  std::optional<std::uint64_t> constantIndex;
+};
+
+[[nodiscard]] inline std::optional<ArrayElementAccess>
+arrayElementAccess(const MirBody &body, const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || place.binding == 0 ||
+      place.projections.size() != 1 ||
+      place.projections[0].kind != MirProjectionKind::Index) {
+    return std::nullopt;
+  }
+  for (const MirPlace &candidate : body.places) {
+    if (candidate.id != place.id &&
+        candidate.root == MirPlaceRootKind::Binding &&
+        candidate.binding == place.binding && candidate.projections.empty() &&
+        candidate.type.kind == SemanticType::Array) {
+      return ArrayElementAccess{candidate.id, place.projections[0].index,
+                                place.projections[0].constantIndex};
+    }
+  }
+  return std::nullopt;
+}
+
 template <typename Enum>
 [[nodiscard]] constexpr std::size_t ordinal(Enum value) {
   return static_cast<std::size_t>(value);
@@ -1131,13 +1159,12 @@ private:
         break;
       }
       case MirProjectionKind::Index:
+        // A dynamic index is representable since the checked fixed-array
+        // access family shipped: a site-carrying access spells the checked
+        // helper and its record, and a proven-safe access spells a plain
+        // subscription. The Bounds capability row names that family; the
+        // text vocabulary decides each instruction.
         requireCapability(CppMirEmissionCapabilityKind::Bounds);
-        if (!projection.constantIndex) {
-          add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow, 0,
-              0,
-              "dynamic safe-index projection has no exact checked "
-              "instruction, failure record, or Invoke successor");
-        }
         if (currentType && currentType->kind == SemanticType::Array &&
             currentType->arguments.size() == 1) {
           // Copy before assignment: the element lives inside the vector the
@@ -1509,9 +1536,24 @@ private:
                 : "compiler-generated hosted failure propagation lacks the "
                   "Stage-E cleanup and terminal containment path");
       } else if (!instructionHasInvoke(block, instruction)) {
-        add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
-            block.id, instruction.id,
-            "checked operation has no exact Invoke/record/cleanup successor");
+        // A proven-safe element access records its site without a failure
+        // edge: flow analysis discharged the bounds check, so no Invoke,
+        // record, or cleanup successor exists to demand.
+        const MirPlace *elementPlace = nullptr;
+        if (instruction.kind == MirInstructionKind::Load &&
+            instruction.operands.size() == 1) {
+          elementPlace = body.findPlace(instruction.operands.front().place);
+        } else if (instruction.kind == MirInstructionKind::Assign &&
+                   instruction.destination) {
+          elementPlace = body.findPlace(*instruction.destination);
+        }
+        if (elementPlace == nullptr ||
+            !arrayElementAccess(body, *elementPlace)) {
+          add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
+              block.id, instruction.id,
+              "checked operation has no exact Invoke/record/cleanup "
+              "successor");
+        }
       }
       if (result.body.kind == MirBodyKind::Constructor &&
           !constructorRollbackAuthority) {
@@ -1865,6 +1907,10 @@ public:
       if (place.root == MirPlaceRootKind::Symbol) {
         continue;
       }
+      // An element place spells as subscription on its sibling array.
+      if (arrayElementAccess(facts.body, place)) {
+        continue;
+      }
       // Receiver-place handling is derived from MIR, not selected by the
       // caller: a This-rooted place is the projection carrier (skipped) or
       // one projected field bound by reference to the live member. No
@@ -1919,12 +1965,23 @@ public:
                    << instruction.id
                    << " = ::gti_internal::backend::mir_failure_success_v1;\n";
           }
+          if ((instruction.kind == MirInstructionKind::Load ||
+               instruction.kind == MirInstructionKind::Assign) &&
+              instruction.localFailureSites.size() == 1) {
+            writeIndent();
+            output << "::gti_internal::backend::mir_failure_status_v1 "
+                      "__gti_mir_failure_status_"
+                   << instruction.id
+                   << " = ::gti_internal::backend::mir_failure_success_v1;\n";
+          }
           if (instruction.kind == MirInstructionKind::Call &&
               transformedCallee(instruction) != nullptr) {
             writeIndent();
             output << "bool __gti_mir_call_success_" << instruction.id
                    << " = false;\n";
-            if (!instruction.result) {
+            if (!instruction.result &&
+                transformedCallee(instruction)->returnType !=
+                    SemanticType::Void) {
               writeIndent();
               output << typeSpelling(transformedCallee(instruction)->returnType)
                      << " __gti_mir_discard_" << instruction.id << "{};\n";
@@ -2212,6 +2269,16 @@ private:
       output << ";\n";
       return;
     }
+    if (instruction.operation == MirOperation::Aggregate) {
+      output << typeSpelling(instruction.info.type) << "{};\n";
+      return;
+    }
+    if (instruction.operation == MirOperation::Convert) {
+      output << "static_cast<" << typeSpelling(instruction.info.type) << ">(";
+      emitOperand(instruction.operands.front());
+      output << ");\n";
+      return;
+    }
     if (instruction.operation == MirOperation::LogicalNot) {
       output << '!';
       emitOperand(instruction.operands.front());
@@ -2304,7 +2371,12 @@ private:
           if (index != 0) {
             output << ", ";
           }
-          emitOperand(instruction.operands[index]);
+          const MirOperand &operand = instruction.operands[index];
+          if (operand.kind == MirOperandKind::Constant && operand.literal) {
+            emitLiteral(*operand.literal, operand.type);
+          } else {
+            emitOperand(operand);
+          }
         }
         if (!instruction.operands.empty()) {
           output << ", ";
@@ -2354,6 +2426,25 @@ private:
                << storageSpelling(source->symbol) << ";\n";
         return;
       }
+      if (source != nullptr) {
+        if (const std::optional<ArrayElementAccess> access =
+                arrayElementAccess(facts.body, *source)) {
+          if (failureForm && !instruction.localFailureSites.empty()) {
+            output << "__gti_mir_failure_status_" << instruction.id
+                   << " = ::gti_internal::backend::mir_checked_array_read_v1("
+                      "__gti_mir_p_"
+                   << access->array << ", ";
+            emitElementIndexValue(*access);
+            output << ", &__gti_mir_v_" << *instruction.result << ");\n";
+            return;
+          }
+          output << "__gti_mir_v_" << *instruction.result << " = __gti_mir_p_"
+                 << access->array << '[';
+          emitElementIndex(*access);
+          output << "];\n";
+          return;
+        }
+      }
       output << "__gti_mir_v_" << *instruction.result << " = __gti_mir_p_"
              << instruction.operands.front().place << ";\n";
       return;
@@ -2364,6 +2455,35 @@ private:
       if (slot != nullptr && slotPlace(*slot)) {
         output << "// GTI MIR reparent into p" << *instruction.destination
                << "\n";
+        return;
+      }
+    }
+    if (const MirPlace *destinationPlace =
+            facts.body.findPlace(*instruction.destination)) {
+      if (const std::optional<ArrayElementAccess> access =
+              arrayElementAccess(facts.body, *destinationPlace)) {
+        if (failureForm && !instruction.localFailureSites.empty()) {
+          output << "__gti_mir_failure_status_" << instruction.id
+                 << " = ::gti_internal::backend::mir_checked_array_write_v1("
+                    "__gti_mir_p_"
+                 << access->array << ", ";
+          emitElementIndexValue(*access);
+          output << ", ";
+          emitOperand(instruction.operands.front());
+          output << ");\n";
+        } else {
+          output << "__gti_mir_p_" << access->array << '[';
+          emitElementIndex(*access);
+          output << "] = ";
+          emitOperand(instruction.operands.front());
+          output << ";\n";
+        }
+        if (instruction.kind == MirInstructionKind::Assign) {
+          writeIndent();
+          output << "__gti_mir_v_" << *instruction.result << " = ";
+          emitOperand(instruction.operands.front());
+          output << ";\n";
+        }
         return;
       }
     }
@@ -2390,6 +2510,21 @@ private:
       output << "__gti_mir_v_" << *instruction.result << " = ";
       emitOperand(instruction.operands.front());
       output << ";\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic ==
+             IntrinsicKind::NumericTypeParameterConversion ||
+         instruction.intrinsic == IntrinsicKind::NumericAliasConversion)) {
+      if (!instruction.result || instruction.operands.size() != 1) {
+        throw std::logic_error(
+            "verified MIR numeric-conversion intrinsic lost its operand");
+      }
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::numeric_cast<"
+             << typeSpelling(instruction.info.type) << ">(";
+      emitOperand(instruction.operands.front());
+      output << ");\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -2425,6 +2560,10 @@ private:
       for (const MirOperand &operand : instruction.operands) {
         emitOperand(operand);
         output << ", ";
+      }
+      if (transformedCallee(instruction)->returnType == SemanticType::Void) {
+        output << "__gti_mir_failure_record);\n";
+        return;
       }
       if (instruction.result) {
         output << "&__gti_mir_v_" << *instruction.result;
@@ -2516,9 +2655,16 @@ private:
         output << "continue;\n";
         return;
       }
+      const bool elementDetector =
+          producer != nullptr &&
+          (producer->kind == MirInstructionKind::Load ||
+           producer->kind == MirInstructionKind::Assign) &&
+          producer->localFailureSites.size() == 1;
       if (producer == nullptr ||
-          producer->kind != MirInstructionKind::Compute ||
-          cppMirCheckedOperationHelperSpelling(producer->operation).empty()) {
+          (!elementDetector &&
+           (producer->kind != MirInstructionKind::Compute ||
+            cppMirCheckedOperationHelperSpelling(producer->operation)
+                .empty()))) {
         throw std::logic_error(
             "verified MIR invoke is outside the failure vocabulary");
       }
@@ -2606,16 +2752,14 @@ private:
       return;
     case MirTerminatorKind::Return:
       if (failureForm) {
-        if (!terminator.value) {
-          throw std::logic_error(
-              "failure-form MIR return lost its published result");
-        }
         writeIndent();
         output << "// GTI MIR return publication\n";
-        writeIndent();
-        output << "*__gti_mir_out_result = ";
-        emitOperand(*terminator.value);
-        output << ";\n";
+        if (terminator.value) {
+          writeIndent();
+          output << "*__gti_mir_out_result = ";
+          emitOperand(*terminator.value);
+          output << ";\n";
+        }
         writeIndent();
         output << "return true;\n";
         return;
@@ -2636,6 +2780,22 @@ private:
       break;
     }
     throw std::logic_error("verified MIR scalar-CFG terminator is unsupported");
+  }
+
+  void emitElementIndex(const ArrayElementAccess &access) {
+    if (access.constantIndex) {
+      output << "static_cast<std::size_t>(" << *access.constantIndex << ")";
+      return;
+    }
+    output << "static_cast<std::size_t>(__gti_mir_v_" << access.index << ")";
+  }
+
+  void emitElementIndexValue(const ArrayElementAccess &access) {
+    if (access.constantIndex) {
+      output << "UINT64_C(" << *access.constantIndex << ")";
+      return;
+    }
+    output << "__gti_mir_v_" << access.index;
   }
 
   [[nodiscard]] const MirFunctionInstance *
@@ -2840,7 +3000,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const std::optional<CppMirTypeRepresentationKind> returnKind =
           cppMirExpectedTypeRepresentation(function->returnType);
       if (!function->mayRaiseDefinedFailure || !returnKind ||
-          *returnKind != CppMirTypeRepresentationKind::Scalar) {
+          (*returnKind != CppMirTypeRepresentationKind::Scalar &&
+           *returnKind != CppMirTypeRepresentationKind::Void)) {
         return false;
       }
     }
@@ -2993,6 +3154,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (const std::optional<ArrayElementAccess> access =
+            arrayElementAccess(body, place)) {
+      const MirPlace *array = body.findPlace(access->array);
+      if (array == nullptr || !typeRow(array->type) || !typeRow(place.type)) {
+        return false;
+      }
+      continue;
+    }
     if (!place.projections.empty() || !typeRow(place.type)) {
       return false;
     }
@@ -3050,13 +3219,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // A checked detector spells as its status helper and its failure
           // edge writes one exact record: one site, one origin, both known
           // to the program's failure metadata.
+          const auto detectorOperand = [&](const MirOperand &operand) {
+            return valueOperand(operand) ||
+                   (operand.kind == MirOperandKind::Constant &&
+                    operand.literal.has_value() && typeRow(operand.type));
+          };
           if (instruction.localFailureSites.size() != 1 ||
               instruction.definedFailure.localOrigins.size() != 1 ||
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr ||
               instruction.operands.empty() || instruction.operands.size() > 2 ||
               !std::all_of(instruction.operands.begin(),
-                           instruction.operands.end(), valueOperand) ||
+                           instruction.operands.end(), detectorOperand) ||
               !typeRow(instruction.info.type)) {
             return false;
           }
@@ -3078,6 +3252,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         case MirOperation::Positive:
         case MirOperation::BitwiseNot:
           if (instruction.operands.size() != 1 ||
+              !valueOperand(instruction.operands.front()) ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        case MirOperation::Aggregate:
+          // The empty aggregate spells as the row type's value
+          // initialization; element-carrying aggregates stay outside.
+          if (!instruction.operands.empty() ||
+              !instruction.localFailureSites.empty() ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        case MirOperation::Convert:
+          // An unchecked conversion is proven in-range by MIR; a checked
+          // one carries sites and belongs to the failure vocabulary's
+          // detector rules above.
+          if (!instruction.localFailureSites.empty() ||
+              instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !typeRow(instruction.info.type)) {
             return false;
@@ -3109,12 +3303,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           return false;
         }
       }
-      case MirInstructionKind::Load:
+      case MirInstructionKind::Load: {
         if (!instruction.result || instruction.operands.size() != 1 ||
             instruction.operands.front().place == 0) {
           return false;
         }
+        if (!instruction.localFailureSites.empty()) {
+          // A bounds-checked element load is a failure detector: exactly
+          // one site and origin, spelled through the checked-read helper.
+          const MirPlace *source =
+              body.findPlace(instruction.operands.front().place);
+          if (!failureForm || source == nullptr ||
+              !arrayElementAccess(body, *source) ||
+              instruction.localFailureSites.size() != 1 ||
+              instruction.definedFailure.localOrigins.size() != 1 ||
+              program_.failureMetadata().findSite(
+                  instruction.localFailureSites.front()) == nullptr ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+        }
         continue;
+      }
       case MirInstructionKind::Initialize: {
         if (!instruction.destination || instruction.operands.size() != 1) {
           return false;
@@ -3153,6 +3363,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             destination->root == MirPlaceRootKind::This &&
             receiverMutability != ReceiverMutability::Mutable) {
           return false;
+        }
+        if (!instruction.localFailureSites.empty()) {
+          // A bounds-checked element store is a failure detector spelled
+          // through the checked-write helper.
+          if (!failureForm || destination == nullptr ||
+              !arrayElementAccess(body, *destination) ||
+              instruction.localFailureSites.size() != 1 ||
+              instruction.definedFailure.localOrigins.size() != 1 ||
+              program_.failureMetadata().findSite(
+                  instruction.localFailureSites.front()) == nullptr) {
+            return false;
+          }
         }
         continue;
       }
@@ -3195,15 +3417,30 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 target->definitionKind !=
                     MirFunctionInstance::DefinitionKind::Source ||
                 !returnKind ||
-                *returnKind != CppMirTypeRepresentationKind::Scalar ||
-                !typeRow(target->returnType)) {
+                (*returnKind != CppMirTypeRepresentationKind::Scalar &&
+                 *returnKind != CppMirTypeRepresentationKind::Void) ||
+                (*returnKind == CppMirTypeRepresentationKind::Scalar &&
+                 !typeRow(target->returnType))) {
               return false;
             }
           }
         }
         if (instruction.intrinsic != IntrinsicKind::None) {
-          // An intrinsic call names no body: it spells directly as the
-          // shipped arithmetic helper over its two staged scalar operands.
+          // A numeric-conversion intrinsic spells as the shipped
+          // numeric_cast helper over one staged operand.
+          if ((instruction.intrinsic ==
+                   IntrinsicKind::NumericTypeParameterConversion ||
+               instruction.intrinsic ==
+                   IntrinsicKind::NumericAliasConversion) &&
+              !instruction.functionTarget && instruction.result &&
+              instruction.localFailureSites.empty() &&
+              instruction.operands.size() == 1 &&
+              valueOperand(instruction.operands.front()) &&
+              typeRow(instruction.info.type)) {
+            continue;
+          }
+          // An arithmetic intrinsic call names no body: it spells directly
+          // as the shipped helper over its two staged scalar operands.
           if (instruction.functionTarget ||
               !scalarSpellableArithmeticIntrinsic(instruction.intrinsic) ||
               !instruction.result || instruction.operands.size() != 2 ||
@@ -3264,6 +3501,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         continue;
       }
+      if ((producer->kind == MirInstructionKind::Load ||
+           producer->kind == MirInstructionKind::Assign) &&
+          producer->localFailureSites.size() == 1) {
+        continue;
+      }
       if (producer->kind != MirInstructionKind::Compute ||
           cppMirCheckedOperationHelperSpelling(producer->operation).empty() ||
           producer->localFailureSites.size() != 1) {
@@ -3298,10 +3540,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     case MirTerminatorKind::Return:
-      if (failureForm &&
-          (!block.terminator.value || !valueOperand(*block.terminator.value))) {
-        return false;
-      }
       if (block.terminator.value && !valueOperand(*block.terminator.value)) {
         return false;
       }

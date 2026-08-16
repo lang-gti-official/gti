@@ -242,7 +242,13 @@ generic emitter replaces that single whole-program route.
   body and wrapper are declared side by side in the class and defined
   through the ordinary deferred qualified form; the hosted main keeps
   exactly one termination call of its own, while each wrapper carries its
-  boundary's. A failure-form body reaches a failure-capable GTI callee
+  boundary's. Fixed arrays join both forms: array places spell as
+  their `std::array` rows, empty aggregates value-initialize, a
+  proven-safe dynamic index subscripts directly, and a site-carrying
+  element access spells the shipped `mir_checked_array_read/write_v1`
+  helper whose status drives the ordinary record and edge machinery. A
+  void body transforms without an out-parameter. A failure-form body
+  reaches a failure-capable GTI callee
   through the callee's transformed body directly — per-call success bool,
   record pointer forwarded unchanged, the paired `Invoke` branching on the
   bool — and admission is a greatest fixpoint over the transformed set, so

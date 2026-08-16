@@ -77,11 +77,12 @@ def main() -> int:
                 if emission.returncode != 0:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
-                if generated.count(marker) != 21:
+                if generated.count(marker) != 22:
                     sys.stderr.write(
-                        "generated C++ did not select exactly the twenty-one "
+                        "generated C++ did not select exactly the twenty-two "
                         "verified scalar MIR bodies (twelve fixture bodies "
-                        "plus nine prelude bodies)\n"
+                        "plus ten prelude bodies, counting both print "
+                        "overloads)\n"
                     )
                     return 1
                 checked = function_definition(generated, "compatibility_checked")
@@ -222,6 +223,56 @@ def main() -> int:
             sys.stderr.write(
                 "transformed-callee chain did not propagate the leaf's "
                 f"record: exit={executed.returncode} "
+                f"stderr={executed.stderr}\n"
+            )
+            return 1
+
+    bounds_source = (
+        "uint8_t pick(uint64_t index) {\n"
+        "  mut uint8_t[4] values = {};\n"
+        "  values[0] = 7;\n"
+        "  return values[index];\n"
+        "}\n"
+        "int main() {\n"
+        "  if (pick(uint64_t(0)) != 7) {\n"
+        "    return 1;\n"
+        "  }\n"
+        "  [[discard]] pick(uint64_t(9));\n"
+        "  return 3;\n"
+        "}\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="gti-mir-bounds-") as temporary:
+        root = pathlib.Path(temporary)
+        source_path = root / "bounds-failure.gti"
+        source_path.write_text(bounds_source, encoding="utf8")
+        executable = root / "bounds-failure"
+        built = run([str(compiler), str(source_path), "-o", str(executable)])
+        if built.returncode != 0:
+            return fail(built)
+        generated = run(
+            [str(compiler), str(source_path), "--emit-cpp", "-o",
+             str(root / "bounds.cpp")]
+        )
+        if (
+            generated.returncode != 0
+            or "mir_checked_array_read_v1("
+            not in (root / "bounds.cpp").read_text(encoding="utf8")
+        ):
+            sys.stderr.write(
+                "the bounds fixture should read its element through the "
+                "checked fixed-array helper from verified MIR\n"
+            )
+            return 1
+        executed = run([str(executable)])
+        if (
+            executed.returncode != 70
+            or "GTI-R0007" not in executed.stderr
+            or "index_out_of_bounds" not in executed.stderr
+            or ":4" not in executed.stderr
+        ):
+            sys.stderr.write(
+                "the dynamic out-of-bounds read did not reach the defined "
+                f"contract: exit={executed.returncode} "
                 f"stderr={executed.stderr}\n"
             )
             return 1
