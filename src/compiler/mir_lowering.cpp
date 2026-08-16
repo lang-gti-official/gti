@@ -978,7 +978,8 @@ private:
     terminate(std::move(invoke));
 
     current = failureBlock;
-    if (output.kind == MirBodyKind::Constructor) {
+    if (output.kind == MirBodyKind::Constructor ||
+        output.kind == MirBodyKind::FieldInitializers) {
       emitConstructorFailureDrain(consumedDrops, endedLoans);
     } else {
       emitFailureTemporaryCleanup(temporaryDrops, consumedDrops);
@@ -1078,7 +1079,8 @@ private:
   // caller: the constructed object owns them from here, so no rollback
   // obligation stays active across a normal exit edge.
   void retireConstructorRollback() {
-    if (output.kind != MirBodyKind::Constructor ||
+    if ((output.kind != MirBodyKind::Constructor &&
+         output.kind != MirBodyKind::FieldInitializers) ||
         constructorRollback.empty()) {
       return;
     }
@@ -1229,7 +1231,8 @@ private:
     appendLifecycle(instruction, {.kind = MirLifecycleEventKind::TransferOut,
                                   .source = sourceObligation});
     (void)removeTemporary(sourceObligation);
-    if (output.kind == MirBodyKind::Constructor &&
+    if ((output.kind == MirBodyKind::Constructor ||
+         output.kind == MirBodyKind::FieldInitializers) &&
         instruction.kind == MirInstructionKind::Lifecycle) {
       constructorUnarmedTransfer = true;
     }
@@ -1237,7 +1240,8 @@ private:
 
   [[nodiscard]] bool routeFailureEdgesHere() const {
     return supportsMirFailureControlFlow(output.kind) &&
-           (output.kind != MirBodyKind::Constructor ||
+           ((output.kind != MirBodyKind::Constructor &&
+             output.kind != MirBodyKind::FieldInitializers) ||
             !constructorUnarmedTransfer);
   }
 
@@ -4696,8 +4700,36 @@ private:
                                      .target = target});
       }
     } else if (temporaryIsActive(sourceObligation) &&
+               output.kind == MirBodyKind::FieldInitializers) {
+      // A completed per-instance field arms rollback exactly like a
+      // constructor stage: the object under construction owns it from
+      // normal completion, and any later defined-failure edge in this body
+      // must destroy it in reverse order.
+      const MirPlace *destinationPlace = output.findPlace(destination);
+      const MirDropObligation *sourceDrop =
+          output.findDropObligation(sourceObligation);
+      if (destinationPlace != nullptr && sourceDrop != nullptr &&
+          destinationPlace->root == MirPlaceRootKind::Binding &&
+          destinationPlace->binding != 0 &&
+          destinationPlace->projections.empty()) {
+        const MirDropObligationId rollback = output.dropObligations.size() + 1;
+        output.dropObligations.push_back(
+            {.id = rollback,
+             .constructionOrder = rollback,
+             .kind = MirDropObligationKind::ConstructionRollback,
+             .place = destination,
+             .dropType = sourceDrop->dropType});
+        appendReparentOrTypedTransfer(initialize, sourceObligation, rollback);
+        (void)removeTemporary(sourceObligation);
+        constructorRollback.push_back(rollback);
+      } else {
+        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::TransferOut,
+                                     .source = sourceObligation});
+        (void)removeTemporary(sourceObligation);
+        constructorUnarmedTransfer = true;
+      }
+    } else if (temporaryIsActive(sourceObligation) &&
                (output.kind == MirBodyKind::Module ||
-                output.kind == MirBodyKind::FieldInitializers ||
                 output.kind == MirBodyKind::StaticFieldInitializers)) {
       // Persistent storage is owned outside this body, so it has no local drop
       // obligation to reparent into. The Initialize still consumes the exact

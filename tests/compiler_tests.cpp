@@ -1915,10 +1915,15 @@ int main() { return lifetime(true) - 13; }
       for (const lang::MirInstruction &instruction : block.instructions) {
         for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
           if (instruction.kind == lang::MirInstructionKind::Initialize &&
-              event.kind == lang::MirLifecycleEventKind::TransferOut) {
+              event.kind == lang::MirLifecycleEventKind::Reparent) {
+            const lang::MirDropObligation *target =
+                mirHolder->fieldInitializers.findDropObligation(event.target);
             const lang::MirDropObligation *obligation =
                 mirHolder->fieldInitializers.findDropObligation(event.source);
             if (obligation != nullptr && token != nullptr &&
+                target != nullptr &&
+                target->kind ==
+                    lang::MirDropObligationKind::ConstructionRollback &&
                 obligation->dropType.classInstance == token->id) {
               persistentFieldSource = event.source;
             }
@@ -2577,7 +2582,7 @@ int main() { return lifetime(true) - 13; }
         const auto transfer = std::find_if(
             instruction.lifecycle.begin(), instruction.lifecycle.end(),
             [](const lang::MirLifecycleEvent &event) {
-              return event.kind == lang::MirLifecycleEventKind::TransferOut;
+              return event.kind == lang::MirLifecycleEventKind::Reparent;
             });
         if (instruction.kind == lang::MirInstructionKind::Initialize &&
             transfer != instruction.lifecycle.end()) {
@@ -2616,7 +2621,7 @@ int main() { return lifetime(true) - 13; }
           continue;
         }
         for (lang::MirLifecycleEvent &event : instruction.lifecycle) {
-          if (event.kind == lang::MirLifecycleEventKind::TransferOut) {
+          if (event.kind == lang::MirLifecycleEventKind::Reparent) {
             transfers.push_back(&event);
           }
         }
@@ -2634,8 +2639,8 @@ int main() { return lifetime(true) - 13; }
   expect(!wrongFieldTransferBindingResult.valid() &&
              hasVerificationMessage(wrongFieldTransferBindingResult,
                                     "does not match its instruction"),
-         "MIR verification should bind an Initialize TransferOut to its exact "
-         "source operand");
+         "MIR verification should bind an Initialize field reparent to its "
+         "exact source operand");
 
   lang::MirProgram borrowedTransfer = frontend.mir;
   lang::MirClassInstance *borrowedTransferHolder =
@@ -2648,7 +2653,7 @@ int main() { return lifetime(true) - 13; }
         const bool transfers = std::any_of(
             instruction.lifecycle.begin(), instruction.lifecycle.end(),
             [](const lang::MirLifecycleEvent &event) {
-              return event.kind == lang::MirLifecycleEventKind::TransferOut;
+              return event.kind == lang::MirLifecycleEventKind::Reparent;
             });
         if (!transfers || instruction.operands.empty() ||
             instruction.operands.front().kind != lang::MirOperandKind::Value) {
@@ -2657,7 +2662,7 @@ int main() { return lifetime(true) - 13; }
         const lang::MirLifecycleEvent &event = *std::find_if(
             instruction.lifecycle.begin(), instruction.lifecycle.end(),
             [](const lang::MirLifecycleEvent &candidate) {
-              return candidate.kind == lang::MirLifecycleEventKind::TransferOut;
+              return candidate.kind == lang::MirLifecycleEventKind::Reparent;
             });
         const lang::MirDropObligation *source =
             borrowedTransferHolder->fieldInitializers.findDropObligation(
@@ -2681,8 +2686,8 @@ int main() { return lifetime(true) - 13; }
   expect(changedTransferOperandToBorrow && !borrowedTransferResult.valid() &&
              hasVerificationMessage(borrowedTransferResult,
                                     "does not match its instruction"),
-         "MIR verification should reject TransferOut forged onto a Copy or "
-         "borrowed operand");
+         "MIR verification should reject a field reparent forged onto a Copy "
+         "or borrowed operand");
 
   lang::MirProgram forgedCallParameterRole = frontend.mir;
   lang::MirFunctionInstance *forgedCallParameterLifetime =
@@ -25998,6 +26003,83 @@ void testSupportFacilities() {
          "LLVM-backed facilities should agree on availability");
 }
 
+void testFieldInitializerRollbackAndFailureEdges() {
+  const std::string source = R"(
+static mut int32_t seed = 4;
+
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t s) : value(s) {}
+  ~Resource() {}
+};
+
+class Bundle {
+public:
+  Resource held = Resource(5);
+  int32_t doubled = seed + seed;
+  Bundle() {}
+};
+
+int main() {
+  Bundle bundle = Bundle();
+  return bundle.held.value + bundle.doubled - 13;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("field-initializer-rollback.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the field-initializer rollback fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirBody *bundleInitializers = nullptr;
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    if (instance.declaredFields.size() == 2) {
+      bundleInitializers = &instance.fieldInitializers;
+    }
+  }
+  expect(bundleInitializers != nullptr,
+         "the fixture should lower Bundle's field-initializer body");
+  if (bundleInitializers == nullptr) {
+    return;
+  }
+  const lang::MirDropObligation *rollback = nullptr;
+  for (const lang::MirDropObligation &obligation :
+       bundleInitializers->dropObligations) {
+    if (obligation.kind == lang::MirDropObligationKind::ConstructionRollback) {
+      rollback = &obligation;
+    }
+  }
+  expect(rollback != nullptr &&
+             lang::mirBodyRoutesFailureEdges(*bundleInitializers) &&
+             !bundleInitializers->failureRecords.empty(),
+         "the owning declaration initializer should arm rollback and the "
+         "checked initializer should keep its failure edge");
+  if (rollback == nullptr) {
+    return;
+  }
+  bool failureDrainsHeld = false;
+  for (const lang::MirBlock &block : bundleInitializers->blocks) {
+    if (block.failureParameter == 0) {
+      continue;
+    }
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      failureDrainsHeld =
+          failureDrainsHeld ||
+          (instruction.kind == lang::MirInstructionKind::Drop &&
+           instruction.lifecycle.size() == 1 &&
+           instruction.lifecycle.front().failureCleanup &&
+           instruction.lifecycle.front().source == rollback->id);
+    }
+  }
+  expect(failureDrainsHeld,
+         "the field-initializer failure edge must destroy the completed "
+         "owning field");
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "the rollback-bearing field-initializer program should verify");
+}
+
 void testOwnedParameterStageArmsRollback() {
   const std::string source = R"(
 class Resource {
@@ -26280,6 +26362,7 @@ int main() {
   lang::installCrashHandlers("gti_tests");
   testConstructorPartialRollbackRepresentation();
   testOwnedParameterStageArmsRollback();
+  testFieldInitializerRollbackAndFailureEdges();
   testFrontendStopPhase();
   testToolingOccurrenceOptOut();
   testTargetTripleParsing();

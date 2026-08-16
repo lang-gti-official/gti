@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.165.0
+Checkpoint: 0.166.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,17 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Field-initializer bodies joined failure control flow (0.166.0).**
+  Owning declaration initializers arm ConstructionRollback obligations on
+  their field binding places at the persistent-storage Initialize site,
+  FieldInitializers bodies route defined-failure edges under the same
+  body-wide unarmed-transfer suppression (with the unarmed definition
+  sharpened to attached transfers without ownership continuation), failure
+  edges drain through the merged global reverse-order sequence, and the
+  emission analysis retires MissingConstructionScheduleMir exactly for
+  fully armed bodies. Remaining before family dissolution: base
+  subobjects, static-field initializer bodies, and the destructor
+  double-failure envelope.
 - **Owned-parameter class fields unified onto rollback (0.164.0).** The
   stage branch admits owned-parameter initializers, the moved value's
   obligation reparents into the armed rollback obligation (the verifier's

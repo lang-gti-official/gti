@@ -827,7 +827,11 @@ private:
       }
       return;
     case MirBodyKind::FieldInitializers:
-      if (!isCanonicalNoExecutionInitializer(body)) {
+      // A field-initializer body whose every owning transfer armed rollback
+      // routes failure edges and carries the complete construction
+      // schedule; only a body with an unarmed transfer keeps the issue.
+      if (!isCanonicalNoExecutionInitializer(body) &&
+          !mirBodyRoutesFailureEdges(body)) {
         add(CppMirBodyEmissionIssueKind::MissingConstructionScheduleMir, 0, 0,
             "declaration field initializers lack a complete constructor "
             "destination and partial-construction schedule");

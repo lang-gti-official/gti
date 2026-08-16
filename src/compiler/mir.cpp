@@ -2674,15 +2674,18 @@ bool supportsMirFailureControlFlow(MirBodyKind kind) {
   // transfer to the caller. Field/static initializer bodies remain excluded
   // until their construction schedules are staged the same way.
   return kind == MirBodyKind::Module || kind == MirBodyKind::Function ||
-         kind == MirBodyKind::Constructor || kind == MirBodyKind::Destructor ||
-         kind == MirBodyKind::Lambda || kind == MirBodyKind::HostedStartup;
+         kind == MirBodyKind::Constructor ||
+         kind == MirBodyKind::FieldInitializers ||
+         kind == MirBodyKind::Destructor || kind == MirBodyKind::Lambda ||
+         kind == MirBodyKind::HostedStartup;
 }
 
 bool mirBodyRoutesFailureEdges(const MirBody &body) {
   if (!supportsMirFailureControlFlow(body.kind)) {
     return false;
   }
-  if (body.kind != MirBodyKind::Constructor) {
+  if (body.kind != MirBodyKind::Constructor &&
+      body.kind != MirBodyKind::FieldInitializers) {
     return true;
   }
   // A constructor that silently transfers any subobject into `this` without
@@ -2691,9 +2694,17 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
   // the compatibility failure authority instead of leaking through verified
   // MIR. Rollback retirement transfers are exempt; they end obligations the
   // failure edges already drained or the caller now owns.
+  // A TransferOut is unarmed when its source is not a rollback obligation
+  // and its instruction carries no ownership continuation: the rollback
+  // retirement (rollback-kind source) and the typed-transfer form (a paired
+  // event that targets a live local obligation) are exempt.
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.kind != MirInstructionKind::Lifecycle) {
+      bool continuesOwnership = false;
+      for (const MirLifecycleEvent &event : instruction.lifecycle) {
+        continuesOwnership = continuesOwnership || event.target != 0;
+      }
+      if (continuesOwnership) {
         continue;
       }
       for (const MirLifecycleEvent &event : instruction.lifecycle) {
@@ -3633,11 +3644,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      "failure-record table has an invalid identity or edge");
     }
   }
-  if (body.kind == MirBodyKind::Constructor &&
+  if ((body.kind == MirBodyKind::Constructor ||
+       body.kind == MirBodyKind::FieldInitializers) &&
       !mirBodyRoutesFailureEdges(body) && !body.failureRecords.empty()) {
     return failure(body, owner,
-                   "constructor with an unarmed subobject transfer must not "
-                   "carry defined-failure edges");
+                   "construction body with an unarmed subobject transfer "
+                   "must not carry defined-failure edges");
   }
   const auto validOperand = [&](const MirOperand &operand) {
     switch (operand.kind) {
@@ -4531,11 +4543,15 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         ((valueKind != (obligation.value != 0)) && !rollbackKind) ||
         (rollbackKind && (obligation.value != 0 || obligation.binding != 0)) ||
         !exactFullExpression || (obligation.initiallyActive && !bindingKind) ||
-        (rollbackKind &&
-         (body.kind != MirBodyKind::Constructor ||
-          place->root != MirPlaceRootKind::This ||
+        (rollbackKind && body.kind == MirBodyKind::Constructor &&
+         (place->root != MirPlaceRootKind::This ||
           place->projections.size() != 1 ||
           place->projections.front().kind != MirProjectionKind::Field)) ||
+        (rollbackKind && body.kind == MirBodyKind::FieldInitializers &&
+         (place->root != MirPlaceRootKind::Binding || place->binding == 0 ||
+          !place->projections.empty())) ||
+        (rollbackKind && body.kind != MirBodyKind::Constructor &&
+         body.kind != MirBodyKind::FieldInitializers) ||
         (preparedKind && (place->root != MirPlaceRootKind::Temporary ||
                           place->temporary == 0 || place->sourceValue == 0)) ||
         (obligation.dropType.type.kind == SemanticType::Class &&
@@ -5000,7 +5016,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                // standalone retirement instruction.
                (instruction.kind == MirInstructionKind::Lifecycle &&
                 source->kind == MirDropObligationKind::ConstructionRollback &&
-                body.kind == MirBodyKind::Constructor) ||
+                (body.kind == MirBodyKind::Constructor ||
+                 body.kind == MirBodyKind::FieldInitializers)) ||
                ((instruction.kind == MirInstructionKind::Compute ||
                  instruction.kind == MirInstructionKind::Initialize ||
                  instruction.kind == MirInstructionKind::CallInput ||
