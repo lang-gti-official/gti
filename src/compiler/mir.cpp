@@ -8847,7 +8847,6 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
           place.symbol == 0 && place.capture == 0 && place.temporary == 0 &&
           place.value == 0 && place.loan == 0 && !place.initiallyAvailable &&
           function.owner.has_value() &&
-          function.receiverMutability == ReceiverMutability::ReadOnly &&
           ((place.projections.empty() &&
             place.type.kind == SemanticType::Class) ||
            (place.projections.size() == 1 &&

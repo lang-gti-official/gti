@@ -156,14 +156,16 @@ generic emitter replaces that single whole-program route.
   backedges. It excludes calls, checked-failure arithmetic, references,
   pointers, loans, drops, cleanup, construction, and failure edges. A member
   is resolved per instance rather than per declaration: zero instances, a
-  generic owner, several instantiations, or a mutable receiver keep the
-  member wholly on compatibility emission, and emitted member definitions use
-  the ordinary deferred qualified form. A read-only member may additionally
-  read scalar fields through `this`: the bare receiver is a class-typed
-  projection carrier that is never referenced, each single-`Field` projected
-  place binds by reference to the live member spelling, and reads of another
-  object's fields, projection chains, and every write remain outside the
-  family. The family also admits calls per body: an eligible call names a
+  generic owner, or several instantiations keep the member wholly on
+  compatibility emission, and emitted member definitions use the ordinary
+  deferred qualified form. A member may additionally read — and, on a
+  mutable receiver, write — scalar fields through `this`: the bare receiver
+  is a class-typed projection carrier that is never referenced, each
+  single-`Field` projected place binds by reference to the live member
+  spelling with constness keyed to the declared receiver mutability, the
+  vocabulary probe rejects any store to a receiver field under a read-only
+  receiver, and reads of another object's fields and projection chains
+  remain outside the family. The family also admits calls per body: an eligible call names a
   static proved-failure-free source free function through the exact ordered
   `CallInput`/`Call` stages, the HIR gate consults the MIR failure summary so
   a may-raise or conservatively-true target declines gracefully, and the

@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.168.0
+Checkpoint: 0.171.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,15 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Mutable-receiver field writes admitted (0.171.0).** The scalar-CFG
+  declaration gate no longer rejects mutable receivers: a member storing to
+  its own scalar fields through `this` emits from verified MIR, with the
+  field place bound as a non-const reference exactly when the declared
+  receiver is mutable. The store direction is fail-closed at the vocabulary
+  probe — an `Initialize` or `Assign` destination rooted at `This` under a
+  read-only receiver declines the body — and the failure-free function
+  proof drops its read-only-receiver restriction, since a scalar store
+  through the receiver cannot raise.
 - **Class-default-cleanup function route dissolved (0.170.0).** The
   general emitter gains the lifetime-slot vocabulary — sealed slot
   declarations spelled from the LifetimeStorage capability row,

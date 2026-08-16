@@ -5810,11 +5810,6 @@ private:
           isMirScalarCfgType(info->returnType))) {
       return nullptr;
     }
-    if (info->ownerClass != 0 &&
-        function.receiverMutability() != ReceiverMutability::ReadOnly) {
-      return nullptr;
-    }
-
     const MirFunctionInstance *selected = nullptr;
     bool ambiguousInstances = false;
     for (const MirFunctionInstance &candidate : mir->functionInstances()) {
@@ -5889,7 +5884,7 @@ private:
         hirInstance->body.placeDomain != selected->body.placeDomain ||
         selected->owner.has_value() != (info->ownerClass != 0) ||
         selected->staticMember ||
-        selected->receiverMutability != ReceiverMutability::ReadOnly ||
+        selected->receiverMutability != function.receiverMutability() ||
         selected->overloadedOperator !=
             (function.operatorName()
                  ? std::optional(function.operatorName()->kind)

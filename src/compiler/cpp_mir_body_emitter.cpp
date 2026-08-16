@@ -1811,17 +1811,23 @@ public:
       }
       // Receiver-place handling is derived from MIR, not selected by the
       // caller: a This-rooted place is the projection carrier (skipped) or
-      // one projected read-only field (bound by reference to the live
-      // member). No admitted body declares a receiver as an ordinary local.
+      // one projected field bound by reference to the live member. No
+      // admitted body declares a receiver as an ordinary local.
       if (place.root == MirPlaceRootKind::This) {
         // The bare receiver place is only the projection carrier and is never
         // referenced. A field place binds by reference so every load reads
-        // the live member; receivers here are read-only, so no write occurs.
+        // the live member and every store lands in it. Constness follows the
+        // receiver, not the per-place access mode: a store destination and a
+        // read of the same field share one binding, and the probe rejects
+        // stores to This-rooted places under a read-only receiver.
         if (place.projections.empty()) {
           continue;
         }
         writeIndent();
-        output << "const auto &__gti_mir_p_" << place.id << " = (*this)."
+        output << (function.receiverMutability == ReceiverMutability::Mutable
+                       ? "auto &__gti_mir_p_"
+                       : "const auto &__gti_mir_p_")
+               << place.id << " = (*this)."
                << fieldSpelling(function, place.projections.front().field)
                << ";\n";
         continue;
@@ -2618,6 +2624,14 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
           return false;
         }
         const MirPlace *destination = body.findPlace(*instruction.destination);
+        // A store into a receiver field is only expressible through the
+        // mutable-receiver binding; under a read-only receiver the text step
+        // would bind the field const and the emitted C++ would not compile.
+        if (destination != nullptr &&
+            destination->root == MirPlaceRootKind::This &&
+            function->receiverMutability != ReceiverMutability::Mutable) {
+          return false;
+        }
         if (destination != nullptr && slotPlace(*destination)) {
           // The reparenting Initialize is the slot construct's paired
           // destination and emits as a comment only.
@@ -2632,13 +2646,20 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
         }
         continue;
       }
-      case MirInstructionKind::Assign:
+      case MirInstructionKind::Assign: {
         if (!instruction.destination || !instruction.result ||
             instruction.operands.size() != 1 ||
             !valueOperand(instruction.operands.front())) {
           return false;
         }
+        const MirPlace *destination = body.findPlace(*instruction.destination);
+        if (destination != nullptr &&
+            destination->root == MirPlaceRootKind::This &&
+            function->receiverMutability != ReceiverMutability::Mutable) {
+          return false;
+        }
         continue;
+      }
       case MirInstructionKind::CallInput:
         if (!instruction.result || instruction.receiver ||
             instruction.operands.size() != 1 ||

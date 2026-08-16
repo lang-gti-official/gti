@@ -471,7 +471,7 @@ void testConcreteMemberSelection() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("mir-scalar-cfg-member.gti", R"(
 class Chooser {
-  int stored;
+  mut int stored;
 
 public:
   Chooser(int input) : stored(input) {}
@@ -486,16 +486,20 @@ public:
   }
   bool same(int left, int right) { return left == right; }
   int reads_this() { return this.stored; }
-  void bumps(mut int, int) mut {}
+  void store(int next) mut { this.stored = next; }
 };
 
 int main() {
-  Chooser chooser = Chooser(3);
-  if (chooser.mask(true, 6, 3) == 2 and chooser.same(4, 4) and
-      chooser.reads_this() == 3) {
-    return 0;
+  mut Chooser chooser = Chooser(3);
+  if (chooser.mask(true, 6, 3) != 2 or !chooser.same(4, 4) or
+      chooser.reads_this() != 3) {
+    return 1;
   }
-  return 1;
+  chooser.store(9);
+  if (chooser.reads_this() != 9) {
+    return 2;
+  }
+  return 0;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -531,8 +535,19 @@ int main() {
                  .find("(*this).stored") != std::string_view::npos,
          "the emitted field place should bind by reference to the live "
          "member spelling");
-  expect(count(artifact.contents, marker) == 3,
-         "exactly the three eligible member bodies should carry the family "
+  const std::string_view storeBody =
+      memberDefinition(artifact.contents, "store");
+  expect(storeBody.find(marker) != std::string_view::npos,
+         "a mutable-receiver member storing to one scalar field should emit "
+         "from verified MIR");
+  expect(storeBody.find("auto &__gti_mir_p_") != std::string_view::npos &&
+             storeBody.find("const auto &__gti_mir_p_") ==
+                 std::string_view::npos &&
+             storeBody.find(" = (*this).stored;") != std::string_view::npos,
+         "the mutable receiver must bind its field place as a non-const "
+         "reference to the live member");
+  expect(count(artifact.contents, marker) == 4,
+         "exactly the four eligible member bodies should carry the family "
          "marker");
 }
 
