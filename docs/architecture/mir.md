@@ -162,7 +162,9 @@ destructor conservatively at `true`. Its function component retains version
 recognizes the exact `class-default-cleanup-v1` construction and normal-cleanup
 schedule. The proof additionally admits passive string-view parameters,
 places, values, literals, and call operands (a trivially droppable value view cannot
-raise), accepts a C-linkage or runtime-binding call target by its
+raise), admits reference parameters together with scalar field loads through
+their dereference carriers (reading through a compile-proven borrow cannot
+raise, exactly like a read-only receiver's field load), accepts a C-linkage or runtime-binding call target by its
 `FailurePropagationKind::None` language contract instead of recursing into
 a body that does not exist, and accepts the six wrapping/saturating
 integer-arithmetic intrinsic calls, which carry no failure channel. Its destructor component can prove `false` for bounded source bodies

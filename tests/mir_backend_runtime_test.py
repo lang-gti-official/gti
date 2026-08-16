@@ -227,6 +227,83 @@ def main() -> int:
             )
             return 1
 
+    member_source = (
+        "class Meter {\n"
+        "  int32_t raw;\n"
+        "\n"
+        "public:\n"
+        "  Meter(int32_t input) : raw(input) {}\n"
+        "  int32_t checked_scale(int32_t factor) { return this.raw * factor; }\n"
+        "  int32_t through(int32_t factor) { return this.checked_scale(factor); }\n"
+        "};\n"
+        "int main() {\n"
+        "  Meter meter = Meter(6);\n"
+        "  if (meter.through(7) != 42) {\n"
+        "    return 1;\n"
+        "  }\n"
+        "  [[discard]] meter.through(2147483647);\n"
+        "  return 3;\n"
+        "}\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="gti-mir-member-") as temporary:
+        root = pathlib.Path(temporary)
+        source_path = root / "member-chain.gti"
+        source_path.write_text(member_source, encoding="utf8")
+        executable = root / "member-chain"
+        built = run([str(compiler), str(source_path), "-o", str(executable)])
+        if built.returncode != 0:
+            return fail(built)
+        emitted = root / "member-chain.cpp"
+        emission = run(
+            [
+                str(compiler),
+                str(source_path),
+                "--emit-cpp",
+                "-o",
+                str(emitted),
+            ]
+        )
+        if emission.returncode != 0:
+            return fail(emission)
+        generated = emitted.read_text(encoding="utf8")
+        # The receiver-carrying call spells its staged borrowed place and
+        # the qualified transformed member name; both member bodies emit
+        # in the failure form.
+        if (
+            "stages a borrowed place" not in generated
+            or "(*this).::__gti_program::Meter::" not in generated
+            or "checked_scale__gti_mir_failure(" not in generated
+            or generated.count(
+                "// GTI verified-MIR body: scalar-cfg-failure-v1"
+            )
+            < 2
+        ):
+            sys.stderr.write(
+                "the member chain should reach checked_scale through the "
+                "transformed receiver-call convention: a staged borrowed "
+                "receiver and the qualified derived member name\n"
+            )
+            return 1
+        executed = run([str(executable)])
+        # The record written inside the transformed member must surface
+        # through the caller's receiver call and the boundary wrapper: the
+        # report cites checked_scale's multiplication, not the caller's
+        # line, and the success path returned 42 before the failing call.
+        if (
+            executed.returncode != 70
+            or "GTI-R0001" not in executed.stderr
+            or "integer_overflow" not in executed.stderr
+            or "member-chain.gti" not in executed.stderr
+            or ":6" not in executed.stderr
+            or executed.stdout != ""
+        ):
+            sys.stderr.write(
+                "transformed receiver-call chain did not propagate the "
+                f"member's record: exit={executed.returncode} "
+                f"stderr={executed.stderr}\n"
+            )
+            return 1
+
     chainprint_source = (
         "int main() {\n"
         "  std::println(42);\n"

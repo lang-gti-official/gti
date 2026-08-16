@@ -217,6 +217,30 @@ hasExecutableProgramInitialization(const MirProgram &program) {
          input->callInputIndex == index;
 }
 
+// A borrow-staged call input carries a read borrow of a place instead of a
+// scalar value: the call spells the place expression directly, so the
+// staged value never materializes as a local.
+[[nodiscard]] const MirInstruction *
+borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
+  const MirInstruction *input = definitionFor(body, operand);
+  return input != nullptr && input->kind == MirInstructionKind::CallInput &&
+                 input->operands.size() == 1 &&
+                 input->operands.front().kind == MirOperandKind::BorrowRead &&
+                 input->operands.front().place != 0
+             ? input
+             : nullptr;
+}
+
+[[nodiscard]] bool isBorrowStagedResult(const MirBody &body,
+                                        const MirValue &value) {
+  const MirInstruction *definition = findInstruction(body, value.definition);
+  return definition != nullptr &&
+         definition->kind == MirInstructionKind::CallInput &&
+         definition->operands.size() == 1 &&
+         definition->operands.front().kind == MirOperandKind::BorrowRead &&
+         definition->operands.front().place != 0;
+}
+
 [[nodiscard]] bool hasCompleteCallInputSchedule(const MirBody &body,
                                                 const MirInstruction &call) {
   if (call.callSite == 0) {
@@ -1985,6 +2009,11 @@ public:
       if (value.info.type.kind == SemanticType::Class) {
         continue;
       }
+      // A borrow-staged call input never materializes: the call spells its
+      // place expression directly, so the staged value has no local.
+      if (isBorrowStagedResult(facts.body, value)) {
+        continue;
+      }
       writeIndent();
       output << typeSpelling(value.info.type) << " __gti_mir_v_" << value.id
              << "{};\n";
@@ -2590,6 +2619,12 @@ private:
     }
     writeIndent();
     if (instruction.kind == MirInstructionKind::CallInput) {
+      if (instruction.operands.front().kind == MirOperandKind::BorrowRead) {
+        // The staged borrow never materializes; the call spells the place.
+        output << "// call input " << *instruction.result
+               << " stages a borrowed place\n";
+        return;
+      }
       output << "__gti_mir_v_" << *instruction.result << " = ";
       emitOperand(instruction.operands.front());
       output << ";\n";
@@ -2646,20 +2681,60 @@ private:
       output << ");\n";
       return;
     }
-    if (!instruction.functionTarget || instruction.receiver) {
+    if (!instruction.functionTarget) {
       throw std::logic_error(
-          "verified MIR direct call lost its exact target declaration or "
-          "carries a receiver the scalar vocabulary cannot spell");
+          "verified MIR direct call lost its exact target declaration");
     }
+    // A receiver-carrying call spells its staged borrowed place followed by
+    // the qualified member name: the explicit qualification states the
+    // static dispatch MIR proved.
+    const MirPlace *receiverPlace = nullptr;
+    if (instruction.receiver) {
+      const MirInstruction *staged =
+          borrowStagedCallInput(facts.body, *instruction.receiver);
+      receiverPlace =
+          staged == nullptr
+              ? nullptr
+              : facts.body.findPlace(staged->operands.front().place);
+      if (receiverPlace == nullptr) {
+        throw std::logic_error(
+            "verified MIR receiver call lost its staged borrowed place");
+      }
+    }
+    const auto emitCallArgument = [&](const MirOperand &operand,
+                                      bool marshalled) {
+      if (const MirInstruction *staged =
+              borrowStagedCallInput(facts.body, operand)) {
+        const MirPlace *place =
+            facts.body.findPlace(staged->operands.front().place);
+        if (place == nullptr) {
+          throw std::logic_error(
+              "verified MIR call lost a staged borrowed argument place");
+        }
+        emitPlaceExpression(facts, *place);
+        return;
+      }
+      if (marshalled) {
+        output << "::gti_internal::backend::to_c_string_view(";
+      }
+      emitOperand(operand);
+      if (marshalled) {
+        output << ')';
+      }
+    };
     if (failureForm && transformedCallee(instruction) != nullptr) {
       // The callee's transformed body carries the derived name and writes
       // the caller's record on failure; the paired Invoke branches on the
       // success bool.
-      output << "__gti_mir_call_success_" << instruction.id << " = "
-             << bodySpelling(*instruction.functionTarget)
+      output << "__gti_mir_call_success_" << instruction.id << " = ";
+      if (receiverPlace != nullptr) {
+        emitPlaceExpression(facts, *receiverPlace);
+        output << '.';
+      }
+      output << bodySpelling(*instruction.functionTarget)
              << "__gti_mir_failure(";
       for (const MirOperand &operand : instruction.operands) {
-        emitOperand(operand);
+        emitCallArgument(operand, false);
         output << ", ";
       }
       if (transformedCallee(instruction)->returnType == SemanticType::Void) {
@@ -2677,6 +2752,10 @@ private:
     if (instruction.result) {
       output << "__gti_mir_v_" << *instruction.result << " = ";
     }
+    if (receiverPlace != nullptr) {
+      emitPlaceExpression(facts, *receiverPlace);
+      output << '.';
+    }
     output << bodySpelling(*instruction.functionTarget);
     output << '(';
     const MirFunctionInstance *target =
@@ -2689,16 +2768,9 @@ private:
       }
       // The C prototype takes ::gti_c_string_view; the shipped converter
       // marshals the value view exactly as compatibility call sites do.
-      const bool marshalled =
-          cBoundary &&
-          instruction.operands[index].type.kind == SemanticType::StringView;
-      if (marshalled) {
-        output << "::gti_internal::backend::to_c_string_view(";
-      }
-      emitOperand(instruction.operands[index]);
-      if (marshalled) {
-        output << ')';
-      }
+      emitCallArgument(instruction.operands[index],
+                       cBoundary && instruction.operands[index].type.kind ==
+                                        SemanticType::StringView);
     }
     output << ");\n";
   }
@@ -2910,6 +2982,10 @@ private:
       return;
     }
     if (place.root == MirPlaceRootKind::This) {
+      if (place.projections.empty()) {
+        output << "(*this)";
+        return;
+      }
       if (place.projections.size() == 1 &&
           place.projections[0].kind == MirProjectionKind::Field) {
         output << "__gti_mir_p_" << place.id;
@@ -3429,13 +3505,51 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (value.info.type.kind == SemanticType::Class) {
       continue;
     }
+    // A borrow-staged call input never materializes as a local, so its
+    // staged value needs no representation row.
+    if (isBorrowStagedResult(body, value)) {
+      continue;
+    }
     if (!typeRow(value.info.type)) {
       return false;
     }
   }
 
   for (const MirBlock &block : body.blocks) {
+    // Borrow-staged call inputs whose consuming call has not yet appeared.
+    // Between staging and the call, the spelled place expression must stay
+    // valid: only value-producing reads may intervene, none may observe a
+    // staged value, and the block must not end with staging pending.
+    std::vector<MirValueId> pendingStaged;
+    const auto referencesPendingStaged = [&](const MirInstruction &between) {
+      for (const MirOperand &operand : between.operands) {
+        if (operand.kind == MirOperandKind::Value &&
+            std::find(pendingStaged.begin(), pendingStaged.end(),
+                      operand.value) != pendingStaged.end()) {
+          return true;
+        }
+      }
+      return between.receiver &&
+             between.receiver->kind == MirOperandKind::Value &&
+             std::find(pendingStaged.begin(), pendingStaged.end(),
+                       between.receiver->value) != pendingStaged.end();
+    };
     for (const MirInstruction &instruction : block.instructions) {
+      if (!pendingStaged.empty()) {
+        const bool consumingCall =
+            instruction.kind == MirInstructionKind::Call &&
+            instruction.intrinsic == IntrinsicKind::None;
+        if (!consumingCall &&
+            (instruction.kind != MirInstructionKind::CallInput &&
+             instruction.kind != MirInstructionKind::Load &&
+             instruction.kind != MirInstructionKind::Compute &&
+             instruction.kind != MirInstructionKind::Call)) {
+          return false;
+        }
+        if (!consumingCall && referencesPendingStaged(instruction)) {
+          return false;
+        }
+      }
       switch (instruction.kind) {
       case MirInstructionKind::Lifecycle:
         continue;
@@ -3654,23 +3768,70 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         continue;
       }
-      case MirInstructionKind::CallInput:
+      case MirInstructionKind::CallInput: {
         if (!instruction.result || instruction.receiver ||
-            instruction.operands.size() != 1 ||
-            !valueOperand(instruction.operands.front())) {
+            instruction.operands.size() != 1) {
+          return false;
+        }
+        const MirOperand &staged = instruction.operands.front();
+        if (staged.kind == MirOperandKind::BorrowRead) {
+          // A read-borrow call input stages a place the call spells
+          // directly; write-staged receivers wait for measured demand.
+          if (staged.place == 0 || body.findPlace(staged.place) == nullptr) {
+            return false;
+          }
+          pendingStaged.push_back(*instruction.result);
+          continue;
+        }
+        if (!valueOperand(staged)) {
           return false;
         }
         continue;
-      case MirInstructionKind::Call:
-        // A receiver-carrying call is outside the vocabulary: the text step
-        // spells only the namespace-scope target form, so emitting one
-        // would drop the receiver. Inside the failure form a call is
-        // admissible only when its exact target is proved failure-free —
-        // such a call cannot raise, so it pairs with no Invoke edge and
-        // spells identically to the success form; a failure-capable callee
-        // needs the transformed convention and declines until that slice.
+      }
+      case MirInstructionKind::Call: {
+        // A receiver-carrying call spells its staged borrowed place and the
+        // qualified member name — the explicit qualification states the
+        // static dispatch MIR proved. Admission requires a read-only,
+        // source-defined GTI member target; write-staged receivers wait
+        // for measured demand.
+        std::vector<MirValueId> consumedStaged;
         if (instruction.receiver) {
-          return false;
+          if (instruction.intrinsic != IntrinsicKind::None ||
+              instruction.dispatch != CallDispatch::Static) {
+            return false;
+          }
+          const MirInstruction *staged =
+              borrowStagedCallInput(body, *instruction.receiver);
+          const MirPlace *receiverPlace =
+              staged == nullptr
+                  ? nullptr
+                  : body.findPlace(staged->operands.front().place);
+          if (receiverPlace == nullptr) {
+            return false;
+          }
+          const MirFunctionInstance *target =
+              instruction.functionTarget
+                  ? program_.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          if (target == nullptr || !target->owner || target->staticMember ||
+              target->virtualMethod || target->pureVirtual ||
+              target->overrideMethod ||
+              target->receiverMutability != ReceiverMutability::ReadOnly ||
+              target->linkage != LanguageLinkage::Gti ||
+              target->definitionKind !=
+                  MirFunctionInstance::DefinitionKind::Source) {
+            return false;
+          }
+          // The staged place must BE the member's owner object: a place
+          // that merely reaches it through an implicit owner dereference
+          // would misdirect the spelled member access.
+          const MirClassInstance *ownerInstance =
+              program_.findClassInstance(*target->owner);
+          if (ownerInstance == nullptr ||
+              receiverPlace->type != ownerInstance->type) {
+            return false;
+          }
+          consumedStaged.push_back(*staged->result);
         }
         if (failureForm) {
           const MirFunctionInstance *target =
@@ -3745,10 +3906,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         }
         if (!instruction.functionTarget ||
-            !bodyRow(*instruction.functionTarget) ||
-            !std::all_of(instruction.operands.begin(),
-                         instruction.operands.end(), valueOperand)) {
+            !bodyRow(*instruction.functionTarget)) {
           return false;
+        }
+        for (const MirOperand &operand : instruction.operands) {
+          if (const MirInstruction *staged =
+                  borrowStagedCallInput(body, operand)) {
+            // A borrow-staged argument passes the place as a C++ lvalue;
+            // the callee's reference parameter binds it directly.
+            consumedStaged.push_back(*staged->result);
+            continue;
+          }
+          if (!valueOperand(operand)) {
+            return false;
+          }
         }
         if (const MirFunctionInstance *target =
                 program_.findFunctionInstance(*instruction.functionTarget);
@@ -3761,10 +3932,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
         }
+        // Every staged borrow in flight must feed exactly this call: a
+        // borrowed place must not outlive its block or bypass a call that
+        // could observe or invalidate it.
+        if (consumedStaged.size() != pendingStaged.size() ||
+            !std::all_of(consumedStaged.begin(), consumedStaged.end(),
+                         [&](MirValueId id) {
+                           return std::find(pendingStaged.begin(),
+                                            pendingStaged.end(),
+                                            id) != pendingStaged.end();
+                         })) {
+          return false;
+        }
+        pendingStaged.clear();
         continue;
+      }
       default:
         return false;
       }
+    }
+    if (!pendingStaged.empty()) {
+      // A staged borrow must be consumed by a call in its own block.
+      return false;
     }
     switch (block.terminator.kind) {
     case MirTerminatorKind::Invoke: {

@@ -6034,12 +6034,28 @@ private:
               }
               const MirFunctionInstance *target =
                   mir->findFunctionInstance(*instruction.functionTarget);
-              if (target != nullptr && target->mayRaiseDefinedFailure &&
-                  target->linkage == LanguageLinkage::Gti &&
-                  target->definitionKind ==
-                      MirFunctionInstance::DefinitionKind::Source &&
-                  !generalFailureAdmitted->contains(target->id)) {
+              if (target == nullptr || !target->mayRaiseDefinedFailure ||
+                  target->linkage != LanguageLinkage::Gti ||
+                  target->definitionKind !=
+                      MirFunctionInstance::DefinitionKind::Source) {
+                continue;
+              }
+              if (!generalFailureAdmitted->contains(target->id)) {
                 calleesAvailable = false;
+                continue;
+              }
+              // A member callee is reachable only through its emitted
+              // transformed member, so admission must mirror the selector's
+              // actual decision — a body-text-admissible member of a
+              // generic owner never emits a transformed form.
+              if (target->owner) {
+                const HirFunctionInstance *targetHir =
+                    hir.findFunctionInstance(target->id);
+                if (targetHir == nullptr || targetHir->source == nullptr ||
+                    selectedMirGeneralFailureFunction(*targetHir->source) !=
+                        target) {
+                  calleesAvailable = false;
+                }
               }
             }
           }
@@ -6108,15 +6124,14 @@ private:
         !info->genericParameters.empty() || !info->requirements.empty() ||
         info->parameterPack || info->entryPoint ||
         info->entryKind != ProgramEntryKind::None || info->staticMember ||
-        info->internalLinkage || function.operatorName().has_value() ||
-        info->linkage != LanguageLinkage::Gti ||
+        info->internalLinkage || info->linkage != LanguageLinkage::Gti ||
         !info->externalSymbol.empty() || info->virtualMethod ||
         info->pureVirtual || info->overrideMethod ||
         info->intrinsic != IntrinsicKind::None ||
         info->returnBorrowOrigin != BorrowOriginKind::None ||
         !info->callableParameters.empty() ||
         !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
-                     isMirScalarCfgType) ||
+                     isMirScalarCfgSignatureType) ||
         !(info->returnType == SemanticType::Void ||
           isMirScalarCfgType(info->returnType))) {
       return nullptr;
@@ -6163,7 +6178,10 @@ private:
         selected->owner.has_value() != (info->ownerClass != 0) ||
         selected->staticMember ||
         selected->receiverMutability != function.receiverMutability() ||
-        selected->overloadedOperator.has_value()) {
+        selected->overloadedOperator !=
+            (function.operatorName()
+                 ? std::optional(function.operatorName()->kind)
+                 : std::nullopt)) {
       throw std::logic_error(
           "admitted failure-form MIR metadata does not match its HIR and "
           "semantic declaration");

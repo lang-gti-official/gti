@@ -8848,6 +8848,13 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
       return true;
     }
     const MirBody &body = function.body;
+    // A reference parameter cannot raise by itself: the reference is a
+    // compile-proven borrow, and what the body reads through it is
+    // guarded by the place rules below.
+    const auto passiveParameterType = [&](const SemanticType &type) {
+      return passiveType(type) || (type.kind == SemanticType::Reference &&
+                                   type.arguments.size() == 1);
+    };
     bool valid =
         function.id == id && function.declaration != 0 &&
         function.definitionKind ==
@@ -8856,7 +8863,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         function.externalSymbol.empty() &&
         function.parameterTypes.size() == function.parameterBindings.size() &&
         std::all_of(function.parameterTypes.begin(),
-                    function.parameterTypes.end(), passiveType) &&
+                    function.parameterTypes.end(), passiveParameterType) &&
         (function.returnType == SemanticType::Void ||
          passiveType(function.returnType)) &&
         body.kind == MirBodyKind::Function &&
@@ -8885,7 +8892,29 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             place.projections.front().kind == MirProjectionKind::Field &&
             scalarType(place.type) && place.traits.drop == DropKind::Trivial &&
             !place.traits.containsBorrowedState));
-      valid = valid && (ordinaryScalar || receiverField);
+      // A reference parameter's scalar field load cannot raise either: the
+      // bare reference binding and its dereference are only projection
+      // carriers, and the projected place reads one trivially droppable
+      // scalar field through the compile-proven borrow.
+      const bool referenceParameterField =
+          place.root == MirPlaceRootKind::Binding && place.loan == 0 &&
+          std::find(function.parameterBindings.begin(),
+                    function.parameterBindings.end(),
+                    place.binding) != function.parameterBindings.end() &&
+          ((place.projections.empty() &&
+            place.type.kind == SemanticType::Reference &&
+            place.type.arguments.size() == 1) ||
+           (!place.projections.empty() &&
+            place.projections.front().kind == MirProjectionKind::Dereference &&
+            ((place.projections.size() == 1 &&
+              place.type.kind == SemanticType::Class) ||
+             (place.projections.size() == 2 &&
+              place.projections[1].kind == MirProjectionKind::Field &&
+              scalarType(place.type) &&
+              place.traits.drop == DropKind::Trivial &&
+              !place.traits.containsBorrowedState))));
+      valid =
+          valid && (ordinaryScalar || receiverField || referenceParameterField);
     }
     for (const MirValue &value : body.values) {
       valid = valid && passiveInfo(value.info);

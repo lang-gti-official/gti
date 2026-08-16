@@ -499,6 +499,7 @@ public:
   int reads_this() { return this.stored; }
   void store(int next) mut { this.stored = next; }
   bool same_as(Chooser& other) { return this.stored == other.stored; }
+  bool twins_with(Chooser& other) { return this.same_as(other); }
 };
 
 int main() {
@@ -514,6 +515,9 @@ int main() {
   mut Chooser twin = Chooser(9);
   if (!chooser.same_as(twin)) {
     return 3;
+  }
+  if (!chooser.twins_with(twin)) {
+    return 4;
   }
   return 0;
 }
@@ -569,8 +573,18 @@ int main() {
              sameBody.find("(*__gti_mir_p_") != std::string_view::npos,
          "a reference parameter should bind its pointer carrier and read "
          "the other object's field through the dereference chain (ADR 018)");
-  expect(count(artifact.contents, marker) == 5,
-         "exactly the five eligible member bodies should carry the family "
+  const std::string_view twinsBody =
+      memberDefinition(artifact.contents, "twins_with");
+  expect(twinsBody.find(marker) != std::string_view::npos &&
+             twinsBody.find("stages a borrowed place") !=
+                 std::string_view::npos &&
+             twinsBody.find("(*this).::__gti_program::") !=
+                 std::string_view::npos &&
+             twinsBody.find("((*__gti_mir_p_") != std::string_view::npos,
+         "a receiver-carrying call should spell its staged borrowed places "
+         "as the receiver expression and the qualified member name");
+  expect(count(artifact.contents, marker) == 6,
+         "exactly the six eligible member bodies should carry the family "
          "marker");
 }
 

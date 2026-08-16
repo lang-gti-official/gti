@@ -253,7 +253,15 @@ generic emitter replaces that single whole-program route.
   at the signature and bind pointer carriers in the body, with
   dereference-projected places spelling through the carrier's field
   chain; operator members participate through the same specialization
-  path as ordinary members, their friend adapters unchanged. A generic free function keeps its compatibility
+  path as ordinary members, their friend adapters unchanged. A
+  receiver-carrying call stages its receiver and by-reference arguments
+  as read borrows of spellable places and spells them at the call as
+  the receiver expression followed by the qualified member name — the
+  explicit qualification states the static dispatch MIR proved — in
+  both the success and the transformed defined-failure conventions; a
+  staged borrow must feed exactly its own block's call, and a place
+  reaching the member only through an implicit owner dereference
+  declines. A generic free function keeps its compatibility
   template while every admitted concrete instance publishes per instance
   as an explicit specialization (success form) or a transformed overload
   plus specialization wrapper (failure form), forward-declared beside the

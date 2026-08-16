@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.186.0
+Checkpoint: 0.187.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,26 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Receiver-carrying calls: borrow-staged call inputs and qualified
+  member-call spelling (0.187.0).** A receiver or by-reference argument
+  stages as a read borrow of a spellable place; the call spells the
+  staged place followed by the qualified member name in both the
+  success and the transformed defined-failure conventions, pinned
+  behaviorally by a member chain whose transformed receiver call
+  propagates the leaf record (exit 70, the member's own line). The
+  failure selector admits operator members and reference parameters for
+  concrete owners; the admission fixpoint sharpens member-callee
+  availability to the selector's actual decision, so a member of a
+  generic owner — which never emits a transformed form — correctly
+  drops its callers; and the failure-free effect proof admits reference
+  parameters with scalar field loads through their dereference carriers
+  (v0.177's lesson: flip the summary, do not teach call sites to
+  compensate). A staged receiver reached only through an implicit owner
+  dereference declines — caught fail-loud by the native sweep before
+  the type-identity rule closed it. Corpus markers 1038 -> 1048 with
+  byte-identical stdout and exit codes; READY-NOVOCAB function bodies
+  72 -> 46, retiring the iterator-comparison pool except the
+  string-owner operators the storage fixpoint correctly withholds.
 - **Loan erasure slice 1b: reference parameters, dereference chains,
   operator members (0.186.0, ADR 018).** A reference parameter keeps its
   C++ reference at the signature boundary and binds a pointer carrier in
