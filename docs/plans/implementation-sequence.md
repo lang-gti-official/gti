@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.187.0
+Checkpoint: 0.188.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,22 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Constructor bodies join general MIR emission, success form
+  (0.188.0).** A constructor projects onto the shared scalar body facts
+  like a mutable-receiver member — its receiver is inherently mutable
+  under construction — and spells its verified initializer schedule
+  inside the constructor body with no C++ member-initializer list.
+  Fail-closed selection keeps every shape the body form cannot
+  preserve: generic declarations keep their compatibility template
+  (native compile on the length-parameterized constructor caught the
+  missing gate), bases, unions, polymorphic and C-ABI owners decline,
+  failure-capable construction stays with the rollback machinery, the
+  family routes keep precedence, and the owner's in-class field
+  initializers must be observation-free (bare default-initialization
+  and literal stores only) so running them under the body form is
+  indistinguishable from initializer-list suppression. Corpus markers
+  1048 -> 1072 with byte-identical stdout and exit codes across all 57
+  examples.
 - **Receiver-carrying calls: borrow-staged call inputs and qualified
   member-call spelling (0.187.0).** A receiver or by-reference argument
   stages as a read borrow of a spellable place; the call spells the

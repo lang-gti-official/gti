@@ -44,6 +44,7 @@ public:
     indentation = 0;
     generalCfgAdmitted.reset();
     generalDtorAdmitted.reset();
+    generalCtorAdmitted.reset();
     generalFailureAdmitted.reset();
     forwardedAliases.clear();
     forwardedTypeAliases.clear();
@@ -1344,12 +1345,16 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (mirOwned == nullptr) {
       mirOwned = selectedMirOwnedLifecycleConstructor(stmt);
     }
+    const MirConstructorInstance *mirGeneral =
+        mirOwned == nullptr ? selectedMirGeneralConstructor(stmt) : nullptr;
     emitTemplateDeclaration(stmt.genericParameters());
     if (currentClass != nullptr && !emittingDeferredMember) {
       writeIndent();
       output << "explicit " << stmt.name().lexeme << '(';
       if (mirOwned != nullptr) {
         emitMirOwnedLifecycleParameters(mirOwned->parameterTypes);
+      } else if (mirGeneral != nullptr) {
+        emitMirOwnedLifecycleParameters(mirGeneral->parameterTypes);
       } else {
         emitParameters(stmt.parameters());
       }
@@ -1365,6 +1370,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     output << "explicit " << stmt.name().lexeme << '(';
     if (mirOwned != nullptr) {
       emitMirOwnedLifecycleParameters(mirOwned->parameterTypes);
+    } else if (mirGeneral != nullptr) {
+      emitMirOwnedLifecycleParameters(mirGeneral->parameterTypes);
     } else {
       emitParameters(stmt.parameters());
     }
@@ -1373,6 +1380,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       emitMirOwnedLifecycleConstructorInitializerList(*mirOwned);
       output << ' ';
       emitMirOwnedLifecycleConstructorBody(*mirOwned);
+      return;
+    }
+    if (mirGeneral != nullptr) {
+      // The verified schedule spells inside the body; the selector proved
+      // no initializer list is required for this owner's shape.
+      output << ' ';
+      emitGeneralMirConstructorBodyText(*mirGeneral);
       return;
     }
     if (!stmt.initializers().empty()) {
@@ -5987,6 +6001,7 @@ private:
     }
     generalCfgAdmitted.emplace();
     generalDtorAdmitted.emplace();
+    generalCtorAdmitted.emplace();
     generalFailureAdmitted.emplace();
     const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
     const CppMirProgramEmissionAnalysis analysis = emitter.analyzeProgram();
@@ -6004,6 +6019,8 @@ private:
           generalCfgAdmitted->insert(body.body.owner);
         } else if (body.body.kind == MirBodyKind::Destructor) {
           generalDtorAdmitted->insert(body.body.owner);
+        } else if (body.body.kind == MirBodyKind::Constructor) {
+          generalCtorAdmitted->insert(body.body.owner);
         }
       } else if (body.body.kind == MirBodyKind::Function &&
                  emitter.supportsFailureBodyText(body.body)) {
@@ -6085,6 +6102,15 @@ private:
     }
     ensureGeneralAdmission();
     return generalDtorAdmitted->contains(instance);
+  }
+
+  [[nodiscard]] bool
+  generalConstructorBodyAdmitted(HirConstructorInstanceId instance) const {
+    if (mir == nullptr || !generalEmissionMap) {
+      return false;
+    }
+    ensureGeneralAdmission();
+    return generalCtorAdmitted->contains(instance);
   }
 
   [[nodiscard]] bool
@@ -7002,6 +7028,116 @@ private:
           "eligible owned lifecycle constructor lost exact verified MIR");
     }
     return lowered;
+  }
+
+  // General per-body constructor selection (success form). A constructor is
+  // selected when its verified body is inside the general vocabulary, the
+  // family routes have not claimed it, and the owner is one concrete class
+  // whose shape the body-schedule representation preserves exactly: the
+  // general form spells the verified initializer schedule inside the
+  // constructor body without a C++ member-initializer list, so any base
+  // subobject or in-class field initializer — which an initializer list
+  // would order or suppress — declines fail-closed.
+  [[nodiscard]] const MirConstructorInstance *
+  selectedMirGeneralConstructor(const ConstructorDecl &declaration) const {
+    if (mir == nullptr) {
+      return nullptr;
+    }
+    // A generic constructor declaration keeps its compatibility template:
+    // the emitted declaration carries the template head, which a concrete
+    // instance signature cannot satisfy.
+    if (!declaration.genericParameters().empty()) {
+      return nullptr;
+    }
+    // The family routes keep precedence over per-body selection.
+    if (selectedMirScalarFailureConstructor(declaration) != nullptr ||
+        selectedMirOwnedLifecycleConstructor(declaration) != nullptr) {
+      return nullptr;
+    }
+    const HirConstructorInstance *hirConstructor = nullptr;
+    for (const HirConstructorInstance &candidate : hir.constructorInstances()) {
+      if (candidate.source != &declaration) {
+        continue;
+      }
+      if (hirConstructor != nullptr) {
+        return nullptr;
+      }
+      hirConstructor = &candidate;
+    }
+    if (hirConstructor == nullptr) {
+      return nullptr;
+    }
+    const MirConstructorInstance *selected =
+        mir->findConstructorInstance(hirConstructor->id);
+    if (selected == nullptr ||
+        selected->definitionKind != MirDefinitionKind::Source ||
+        selected->borrowOrigin != BorrowOriginKind::None ||
+        !selected->body.failureRecords.empty() ||
+        !selected->body.loans.empty() ||
+        !selected->body.dropObligations.empty() ||
+        !selected->body.cleanupBoundaries.empty()) {
+      return nullptr;
+    }
+    // The owner's in-class field initializers still run under the body
+    // form (no initializer list suppresses them), so they must be
+    // observation-free: literal materialization and literal stores make
+    // default-then-assign identical to initializer-list suppression.
+    // Anything that could read program state or raise declines.
+    const auto passiveFieldInitializers = [](const MirBody &body) {
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          switch (instruction.kind) {
+          case MirInstructionKind::Lifecycle:
+            continue;
+          case MirInstructionKind::Compute:
+            if (instruction.operation != MirOperation::Literal ||
+                !instruction.localFailureSites.empty()) {
+              return false;
+            }
+            continue;
+          case MirInstructionKind::Initialize:
+            // An operand-less Initialize is the bare default
+            // (value-initialization); a staged one may carry exactly one
+            // literal-derived value or constant.
+            if (!instruction.localFailureSites.empty() ||
+                instruction.operands.size() > 1 ||
+                (instruction.operands.size() == 1 &&
+                 instruction.operands.front().kind != MirOperandKind::Value &&
+                 instruction.operands.front().kind !=
+                     MirOperandKind::Constant)) {
+              return false;
+            }
+            continue;
+          default:
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+    const MirClassInstance *ownerInstance =
+        mir->findClassInstance(selected->owner);
+    if (ownerInstance == nullptr || !ownerInstance->type.arguments.empty() ||
+        !ownerInstance->type.valueArguments.empty() ||
+        !ownerInstance->bases.empty() ||
+        !ownerInstance->structuralBases.empty() || ownerInstance->abstract ||
+        ownerInstance->polymorphic || ownerInstance->cAbiRecord ||
+        ownerInstance->unionLayout.has_value() ||
+        ownerInstance->requiresActiveCleanup ||
+        !passiveFieldInitializers(ownerInstance->fieldInitializers)) {
+      return nullptr;
+    }
+    if (!generalConstructorBodyAdmitted(selected->id)) {
+      return nullptr;
+    }
+    if (selected->owner != hirConstructor->owner ||
+        selected->parameterTypes != hirConstructor->parameterTypes ||
+        hirConstructor->body.placeDomain != selected->body.placeDomain) {
+      throw std::logic_error(
+          "admitted general constructor MIR metadata does not match its HIR "
+          "declaration");
+    }
+    return selected;
   }
 
   [[nodiscard]] static bool hasOnlyMirOwnedLifecycleMetadata(
@@ -11393,6 +11529,25 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     emitGeneralMirBodyText(function, "scalar-cfg-v1");
   }
 
+  void
+  emitGeneralMirConstructorBodyText(const MirConstructorInstance &constructor) {
+    if (mir == nullptr || !generalEmissionMap) {
+      throw std::logic_error("general MIR body emission requires verified MIR");
+    }
+    const CppMirBodyEmissionText emission =
+        CppMirBodyEmitter(*mir, *generalEmissionMap)
+            .emitBodyText(
+                {.kind = MirBodyKind::Constructor, .owner = constructor.id},
+                "scalar-cfg-v1", indentation);
+    if (!emission.emitted()) {
+      throw std::logic_error(
+          "selected verified-MIR constructor body is not ready for general "
+          "emission (constructor-instance " +
+          std::to_string(constructor.id) + ")");
+    }
+    output << emission.text;
+  }
+
   void emitGeneralMirDestructorBodyText(const MirDestructorInstance &destructor,
                                         std::string_view familyLabel) {
     if (mir == nullptr || !generalEmissionMap) {
@@ -12547,6 +12702,10 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
               mirConstructor =
                   selectedMirOwnedLifecycleConstructor(*definition.constructor);
             }
+            const MirConstructorInstance *mirGeneralConstructor =
+                mirConstructor == nullptr
+                    ? selectedMirGeneralConstructor(*definition.constructor)
+                    : nullptr;
             emitTemplateDeclaration(
                 definition.constructor->genericParameters());
             writeIndent();
@@ -12554,10 +12713,20 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
             output << "::" << definition.owner->name().lexeme << '(';
             if (mirConstructor != nullptr) {
               emitMirOwnedLifecycleParameters(mirConstructor->parameterTypes);
+            } else if (mirGeneralConstructor != nullptr) {
+              emitMirOwnedLifecycleParameters(
+                  mirGeneralConstructor->parameterTypes);
             } else {
               emitParameters(definition.constructor->parameters());
             }
             output << ')';
+            if (mirGeneralConstructor != nullptr) {
+              // The verified schedule spells inside the body; the selector
+              // proved no initializer list is required for this owner.
+              output << ' ';
+              emitGeneralMirConstructorBodyText(*mirGeneralConstructor);
+              break;
+            }
             if (mirConstructor != nullptr) {
               emitMirOwnedLifecycleConstructorInitializerList(*mirConstructor);
             } else if (!definition.constructor->initializers().empty()) {
@@ -13315,6 +13484,8 @@ namespace gti_internal::backend {
       generalCfgAdmitted;
   mutable std::optional<std::unordered_set<HirDestructorInstanceId>>
       generalDtorAdmitted;
+  mutable std::optional<std::unordered_set<HirConstructorInstanceId>>
+      generalCtorAdmitted;
   mutable std::optional<std::unordered_set<HirFunctionInstanceId>>
       generalFailureAdmitted;
   std::size_t payloadSwitchCounter = 0;

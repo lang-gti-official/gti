@@ -583,9 +583,16 @@ int main() {
              twinsBody.find("((*__gti_mir_p_") != std::string_view::npos,
          "a receiver-carrying call should spell its staged borrowed places "
          "as the receiver expression and the qualified member name");
-  expect(count(artifact.contents, marker) == 6,
-         "exactly the six eligible member bodies should carry the family "
-         "marker");
+  expect(artifact.contents.find("scalar-cfg-v1 constructor-instance") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "Chooser::Chooser(std::int32_t __gti_mir_arg_0) {") !=
+                 std::string::npos,
+         "the concrete constructor should spell its verified initializer "
+         "schedule inside the body from general MIR emission");
+  expect(count(artifact.contents, marker) == 7,
+         "exactly the six eligible member bodies plus the constructor "
+         "should carry the family marker");
 }
 
 // A member access whose object is a local binding rather than `this` reads

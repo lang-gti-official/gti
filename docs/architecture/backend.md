@@ -261,7 +261,12 @@ generic emitter replaces that single whole-program route.
   both the success and the transformed defined-failure conventions; a
   staged borrow must feed exactly its own block's call, and a place
   reaching the member only through an implicit owner dereference
-  declines. A generic free function keeps its compatibility
+  declines. Constructor bodies emit in the success form as
+  mutable-receiver schedules spelled inside the constructor body with
+  no member-initializer list; selection requires a concrete, base-free,
+  non-generic owner whose in-class field initializers are
+  observation-free, keeps family precedence, and leaves
+  failure-capable construction with the rollback machinery. A generic free function keeps its compatibility
   template while every admitted concrete instance publishes per instance
   as an explicit specialization (success form) or a transformed overload
   plus specialization wrapper (failure form), forward-declared beside the

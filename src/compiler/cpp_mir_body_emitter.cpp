@@ -1910,6 +1910,23 @@ public:
         familyLabel);
   }
 
+  [[nodiscard]] std::string emit(const MirConstructorInstance &constructor,
+                                 std::string_view familyLabel) {
+    // A constructor projects like a mutable-receiver member: its receiver
+    // is inherently mutable while the object is under construction, and
+    // its banner names a constructor-instance.
+    return emit(
+        ScalarBodyFacts{.body = constructor.body,
+                        .id = constructor.id,
+                        .instanceLabel = "constructor-instance",
+                        .owner = constructor.owner == 0
+                                     ? std::optional<HirClassInstanceId>()
+                                     : std::optional(constructor.owner),
+                        .parameterBindings = constructor.parameterBindings,
+                        .receiverMutability = ReceiverMutability::Mutable},
+        familyLabel);
+  }
+
   [[nodiscard]] std::string emit(const ScalarBodyFacts &facts,
                                  std::string_view familyLabel) {
     output.str("");
@@ -3289,6 +3306,33 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     receiverMutability = ReceiverMutability::Mutable;
     break;
   }
+  case MirBodyKind::Constructor: {
+    // The success form spells the verified initializer schedule inside the
+    // constructor body; failure-capable construction stays with the
+    // rollback machinery until its own slice.
+    if (failureForm) {
+      return false;
+    }
+    const MirConstructorInstance *constructor =
+        program_.findConstructorInstance(address.owner);
+    if (constructor == nullptr || constructor->owner == 0 ||
+        constructor->borrowOrigin != BorrowOriginKind::None ||
+        !constructor->body.failureRecords.empty() ||
+        !std::all_of(constructor->initializers.begin(),
+                     constructor->initializers.end(),
+                     [](const MirConstructorInitializer &initializer) {
+                       return initializer.kind ==
+                                  ConstructorInitializerTargetKind::Field &&
+                              !initializer.storesReference;
+                     })) {
+      return false;
+    }
+    bodyPointer = &constructor->body;
+    owner = constructor->owner;
+    receiverMutability = ReceiverMutability::Mutable;
+    parameterBindings = &constructor->parameterBindings;
+    break;
+  }
   default:
     return false;
   }
@@ -4072,9 +4116,21 @@ CppMirBodyEmitter::emitBodyText(MirBodyAddress address,
                       .emit(*destructor, familyLabel);
     return result;
   }
+  case MirBodyKind::Constructor: {
+    const MirConstructorInstance *constructor =
+        program_.findConstructorInstance(address.owner);
+    if (constructor == nullptr) {
+      throw std::logic_error(
+          "general MIR body text emission lost its exact constructor "
+          "instance");
+    }
+    result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
+                      .emit(*constructor, familyLabel);
+    return result;
+  }
   default:
-    throw std::logic_error("general MIR body text emission supports function "
-                           "and destructor bodies only");
+    throw std::logic_error("general MIR body text emission supports function, "
+                           "constructor, and destructor bodies only");
   }
 }
 
