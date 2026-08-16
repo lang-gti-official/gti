@@ -84,9 +84,19 @@ def main() -> int:
                         "plus six native-calling prelude bodies)\n"
                     )
                     return 1
-                if "return ::gti_internal::backend::add(value, 1);" not in generated:
+                checked = function_definition(generated, "compatibility_checked")
+                if (
+                    "__gti_mir_failure(" not in checked
+                    or "gti_rt_failure_terminate_v1" not in checked
+                    or generated.count(
+                        "// GTI verified-MIR body: scalar-cfg-failure-v1"
+                    )
+                    != 1
+                ):
                     sys.stderr.write(
-                        "checked sibling did not remain on the compatibility path\n"
+                        "checked sibling should emit the transformed "
+                        "failure-form body plus its defined-failure boundary "
+                        "wrapper (ADR 017)\n"
                     )
                     return 1
                 if (
@@ -158,6 +168,40 @@ def main() -> int:
                     "same verified MIR identity fold\n"
                 )
                 return 1
+
+    failing_source = (
+        "int32_t checked_increment(int32_t value) {\n"
+        "  return value + 1;\n"
+        "}\n"
+        "int main() {\n"
+        "  mut int32_t total = checked_increment(41);\n"
+        "  if (total != 42) {\n"
+        "    return 1;\n"
+        "  }\n"
+        "  total = checked_increment(2147483647);\n"
+        "  return 3;\n"
+        "}\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="gti-mir-failure-") as temporary:
+        root = pathlib.Path(temporary)
+        source_path = root / "leaf-failure.gti"
+        source_path.write_text(failing_source, encoding="utf8")
+        executable = root / "leaf-failure"
+        built = run([str(compiler), str(source_path), "-o", str(executable)])
+        if built.returncode != 0:
+            return fail(built)
+        executed = run([str(executable)])
+        if (
+            executed.returncode != 70
+            or "GTI runtime failure [GTI-R0001] integer_overflow"
+            not in executed.stderr
+            or executed.stdout != ""
+        ):
+            sys.stderr.write(
+                "migrated leaf failure did not reach the defined contract: "
+                f"exit={executed.returncode} stderr={executed.stderr}\n"
+            )
+            return 1
 
     return 0
 

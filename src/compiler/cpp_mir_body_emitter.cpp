@@ -1814,9 +1814,9 @@ class ScalarBodyTextEmitter {
 public:
   ScalarBodyTextEmitter(const MirProgram &program,
                         const CppMirBodyEmissionMap &representations,
-                        std::size_t indentation)
+                        std::size_t indentation, bool failureForm = false)
       : program(program), representations(representations),
-        indentation(indentation) {}
+        indentation(indentation), failureForm(failureForm) {}
 
   [[nodiscard]] std::string emit(const MirFunctionInstance &function,
                                  std::string_view familyLabel) {
@@ -1906,6 +1906,22 @@ public:
       output << typeSpelling(value.info.type) << " __gti_mir_v_" << value.id
              << "{};\n";
     }
+    if (failureForm) {
+      for (const MirBlock &block : facts.body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          if (instruction.kind == MirInstructionKind::Compute &&
+              !cppMirCheckedOperationHelperSpelling(instruction.operation)
+                   .empty() &&
+              !instruction.localFailureSites.empty()) {
+            writeIndent();
+            output << "::gti_internal::backend::mir_failure_status_v1 "
+                      "__gti_mir_failure_status_"
+                   << instruction.id
+                   << " = ::gti_internal::backend::mir_failure_success_v1;\n";
+          }
+        }
+      }
+    }
     writeIndent();
     output << "std::size_t __gti_mir_bb = " << facts.body.entry << ";\n";
     writeIndent();
@@ -1918,10 +1934,15 @@ public:
       writeIndent();
       output << "case " << block.id << ": {\n";
       ++indentation;
+      if (failureForm && block.failureParameter != 0) {
+        writeIndent();
+        output << "// GTI MIR failure-record " << block.failureParameter
+               << " cleanup\n";
+      }
       for (const MirInstruction &instruction : block.instructions) {
         emitInstruction(instruction, facts);
       }
-      emitTerminator(block.terminator);
+      emitTerminator(block.terminator, facts);
       --indentation;
       writeIndent();
       output << "}\n";
@@ -2252,7 +2273,35 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Compute) {
+      if (failureForm &&
+          !cppMirCheckedOperationHelperSpelling(instruction.operation)
+               .empty() &&
+          !instruction.localFailureSites.empty()) {
+        output << "__gti_mir_failure_status_" << instruction.id << " = "
+               << cppMirCheckedOperationHelperSpelling(instruction.operation)
+               << '<' << typeSpelling(instruction.info.type) << ">(";
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          if (index != 0) {
+            output << ", ";
+          }
+          emitOperand(instruction.operands[index]);
+        }
+        if (!instruction.operands.empty()) {
+          output << ", ";
+        }
+        output << "&__gti_mir_v_" << *instruction.result << ");\n";
+        return;
+      }
       emitCompute(instruction);
+      return;
+    }
+    if (failureForm && instruction.kind == MirInstructionKind::Drop &&
+        instruction.lifecycle.size() == 1 &&
+        instruction.lifecycle.front().failureCleanup) {
+      output << "// GTI MIR failure cleanup drop-obligation "
+             << instruction.lifecycle.front().source << " place "
+             << *instruction.destination << "\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Construct) {
@@ -2411,7 +2460,53 @@ private:
     output << '-' << value.magnitude;
   }
 
-  void emitTerminator(const MirTerminator &terminator) {
+  void emitTerminator(const MirTerminator &terminator,
+                      const ScalarBodyFacts &facts) {
+    switch (terminator.kind) {
+    case MirTerminatorKind::Invoke: {
+      const MirInstruction *producer =
+          failureForm
+              ? findInstruction(facts.body, terminator.invokeInstruction)
+              : nullptr;
+      if (producer == nullptr ||
+          producer->kind != MirInstructionKind::Compute ||
+          cppMirCheckedOperationHelperSpelling(producer->operation).empty()) {
+        throw std::logic_error(
+            "verified MIR invoke is outside the failure vocabulary");
+      }
+      writeIndent();
+      output << "if (__gti_mir_failure_status_" << producer->id
+             << ".code == GTI_FAILURE_CODE_NONE_V1) {\n";
+      ++indentation;
+      writeIndent();
+      output << "__gti_mir_bb = " << terminator.target << ";\n";
+      --indentation;
+      writeIndent();
+      output << "} else {\n";
+      ++indentation;
+      emitFailureRecordWrite(*producer);
+      writeIndent();
+      output << "__gti_mir_bb = " << terminator.elseTarget << ";\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      writeIndent();
+      output << "continue;\n";
+      return;
+    }
+    case MirTerminatorKind::PropagateFailure:
+      if (!failureForm) {
+        break;
+      }
+      writeIndent();
+      output << "// GTI MIR propagate failure-record "
+             << terminator.failureRecord << " after cleanup\n";
+      writeIndent();
+      output << "return false;\n";
+      return;
+    default:
+      break;
+    }
     switch (terminator.kind) {
     case MirTerminatorKind::Goto:
       writeIndent();
@@ -2462,6 +2557,21 @@ private:
       output << "continue;\n";
       return;
     case MirTerminatorKind::Return:
+      if (failureForm) {
+        if (!terminator.value) {
+          throw std::logic_error(
+              "failure-form MIR return lost its published result");
+        }
+        writeIndent();
+        output << "// GTI MIR return publication\n";
+        writeIndent();
+        output << "*__gti_mir_out_result = ";
+        emitOperand(*terminator.value);
+        output << ";\n";
+        writeIndent();
+        output << "return true;\n";
+        return;
+      }
       writeIndent();
       output << "return";
       if (terminator.value) {
@@ -2480,9 +2590,56 @@ private:
     throw std::logic_error("verified MIR scalar-CFG terminator is unsupported");
   }
 
+  [[nodiscard]] static const MirInstruction *
+  findInstruction(const MirBody &body, MirInstructionId id) {
+    const MirInstruction *found = nullptr;
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.id != id) {
+          continue;
+        }
+        if (found != nullptr) {
+          throw std::logic_error("verified MIR duplicated an instruction id");
+        }
+        found = &instruction;
+      }
+    }
+    return found;
+  }
+
+  // The record's contents are wholly MIR-owned: the detector's exact site
+  // plus the program's artifact identity (ADR 017).
+  void emitFailureRecordWrite(const MirInstruction &instruction) {
+    if (instruction.localFailureSites.size() != 1 ||
+        instruction.definedFailure.localOrigins.size() != 1 ||
+        program.failureMetadata().findSite(
+            instruction.localFailureSites.front()) == nullptr) {
+      throw std::logic_error(
+          "failure-form MIR detector lost its canonical site");
+    }
+    writeIndent();
+    output << "*__gti_mir_failure_record = ::gti_failure_record_v1{\n";
+    ++indentation;
+    writeIndent();
+    output << "GTI_FAILURE_ABI_VERSION_V1, __gti_mir_failure_status_"
+           << instruction.id << ".code, __gti_mir_failure_status_"
+           << instruction.id << ".detail, UINT32_C("
+           << instruction.localFailureSites.front() << "), UINT32_C(0), {";
+    const auto &bytes = program.failureMetadata().artifactIdentity().bytes;
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << static_cast<unsigned int>(bytes[index]);
+    }
+    output << "}};\n";
+    --indentation;
+  }
+
   const MirProgram &program;
   const CppMirBodyEmissionMap &representations;
   std::size_t indentation;
+  bool failureForm = false;
   std::ostringstream output;
 };
 
@@ -2491,6 +2648,31 @@ private:
 std::optional<CppMirTypeRepresentationKind>
 cppMirExpectedTypeRepresentation(const SemanticType &type) {
   return expectedTypeRepresentation(type);
+}
+
+std::string_view cppMirCheckedOperationHelperSpelling(MirOperation operation) {
+  switch (operation) {
+  case MirOperation::Add:
+    return "::gti_internal::backend::mir_checked_add_v1";
+  case MirOperation::Subtract:
+    return "::gti_internal::backend::mir_checked_subtract_v1";
+  case MirOperation::Multiply:
+    return "::gti_internal::backend::mir_checked_multiply_v1";
+  case MirOperation::Divide:
+    return "::gti_internal::backend::mir_checked_divide_v1";
+  case MirOperation::Remainder:
+    return "::gti_internal::backend::mir_checked_remainder_v1";
+  case MirOperation::ShiftLeft:
+    return "::gti_internal::backend::mir_checked_shift_left_v1";
+  case MirOperation::ShiftRight:
+    return "::gti_internal::backend::mir_checked_shift_right_v1";
+  case MirOperation::Negate:
+    return "::gti_internal::backend::mir_checked_negate_v1";
+  case MirOperation::Convert:
+    return "::gti_internal::backend::mir_checked_convert_v1";
+  default:
+    return {};
+  }
 }
 
 std::string_view
@@ -2520,9 +2702,21 @@ cppIntegerArithmeticIntrinsicSpelling(IntrinsicKind intrinsic) {
 }
 
 bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
+  return supportsBodyTextImpl(address, false);
+}
+
+bool CppMirBodyEmitter::supportsFailureBodyText(MirBodyAddress address) const {
+  return supportsBodyTextImpl(address, true);
+}
+
+bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
+                                             bool failureForm) const {
   // The vocabulary is shared between function and destructor bodies; the
   // probe needs only the body, the owning class instance for field rows,
-  // and the receiver mutability for the store direction.
+  // and the receiver mutability for the store direction. The failure form
+  // (ADR 017) restricts to leaf function bodies under the transformed
+  // private ABI and additionally admits checked detectors and failure
+  // control flow.
   const MirBody *bodyPointer = nullptr;
   std::optional<HirClassInstanceId> owner;
   ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
@@ -2533,12 +2727,25 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
     if (function == nullptr) {
       return false;
     }
+    if (failureForm) {
+      // The transformed ABI publishes through a scalar out-parameter; a
+      // body that cannot raise keeps its plain form instead.
+      const std::optional<CppMirTypeRepresentationKind> returnKind =
+          cppMirExpectedTypeRepresentation(function->returnType);
+      if (!function->mayRaiseDefinedFailure || !returnKind ||
+          *returnKind != CppMirTypeRepresentationKind::Scalar) {
+        return false;
+      }
+    }
     bodyPointer = &function->body;
     owner = function->owner;
     receiverMutability = function->receiverMutability;
     break;
   }
   case MirBodyKind::Destructor: {
+    if (failureForm) {
+      return false;
+    }
     const MirDestructorInstance *destructor =
         program_.findDestructorInstance(address.owner);
     if (destructor == nullptr || destructor->owner == 0) {
@@ -2709,6 +2916,11 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
         continue;
       }
       case MirInstructionKind::Drop: {
+        if (failureForm && instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle.front().failureCleanup &&
+            instruction.destination) {
+          continue;
+        }
         const MirPlace *slot = instruction.destination
                                    ? body.findPlace(*instruction.destination)
                                    : nullptr;
@@ -2720,6 +2932,25 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
       case MirInstructionKind::Compute: {
         if (!instruction.result) {
           return false;
+        }
+        if (failureForm &&
+            !cppMirCheckedOperationHelperSpelling(instruction.operation)
+                 .empty() &&
+            !instruction.localFailureSites.empty()) {
+          // A checked detector spells as its status helper and its failure
+          // edge writes one exact record: one site, one origin, both known
+          // to the program's failure metadata.
+          if (instruction.localFailureSites.size() != 1 ||
+              instruction.definedFailure.localOrigins.size() != 1 ||
+              program_.failureMetadata().findSite(
+                  instruction.localFailureSites.front()) == nullptr ||
+              instruction.operands.empty() || instruction.operands.size() > 2 ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand) ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
         }
         switch (instruction.operation) {
         case MirOperation::Literal:
@@ -2825,9 +3056,23 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
       case MirInstructionKind::Call:
         // A receiver-carrying call is outside the vocabulary: the text step
         // spells only the namespace-scope target form, so emitting one
-        // would drop the receiver.
+        // would drop the receiver. Inside the failure form a call is
+        // admissible only when its exact target is proved failure-free —
+        // such a call cannot raise, so it pairs with no Invoke edge and
+        // spells identically to the success form; a failure-capable callee
+        // needs the transformed convention and declines until that slice.
         if (instruction.receiver) {
           return false;
+        }
+        if (failureForm) {
+          const MirFunctionInstance *target =
+              instruction.functionTarget
+                  ? program_.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          if (instruction.functionTarget &&
+              (target == nullptr || target->mayRaiseDefinedFailure)) {
+            return false;
+          }
         }
         if (instruction.intrinsic != IntrinsicKind::None) {
           // An intrinsic call names no body: it spells directly as the
@@ -2864,6 +3109,32 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
       }
     }
     switch (block.terminator.kind) {
+    case MirTerminatorKind::Invoke: {
+      if (!failureForm || block.terminator.target == 0 ||
+          block.terminator.elseTarget == 0) {
+        return false;
+      }
+      // The invoke's producer must be this block's checked detector so the
+      // status local and the record write are both spellable.
+      const MirInstruction *producer = nullptr;
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.id == block.terminator.invokeInstruction) {
+          producer = &instruction;
+        }
+      }
+      if (producer == nullptr ||
+          producer->kind != MirInstructionKind::Compute ||
+          cppMirCheckedOperationHelperSpelling(producer->operation).empty() ||
+          producer->localFailureSites.size() != 1) {
+        return false;
+      }
+      continue;
+    }
+    case MirTerminatorKind::PropagateFailure:
+      if (!failureForm || block.terminator.failureRecord == 0) {
+        return false;
+      }
+      continue;
     case MirTerminatorKind::Goto:
     case MirTerminatorKind::Unreachable:
       continue;
@@ -2886,6 +3157,10 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
       continue;
     }
     case MirTerminatorKind::Return:
+      if (failureForm &&
+          (!block.terminator.value || !valueOperand(*block.terminator.value))) {
+        return false;
+      }
       if (block.terminator.value && !valueOperand(*block.terminator.value)) {
         return false;
       }
@@ -2933,6 +3208,31 @@ CppMirBodyEmitter::emitBodyText(MirBodyAddress address,
     throw std::logic_error("general MIR body text emission supports function "
                            "and destructor bodies only");
   }
+}
+
+CppMirBodyEmissionText
+CppMirBodyEmitter::emitFailureBodyText(MirBodyAddress address,
+                                       std::string_view familyLabel,
+                                       std::size_t indentation) const {
+  CppMirBodyEmissionText result;
+  result.analysis = analyze(address);
+  if (!result.analysis.ready()) {
+    return result;
+  }
+  if (address.kind != MirBodyKind::Function) {
+    throw std::logic_error(
+        "failure-form MIR body text emission supports function bodies only");
+  }
+  const MirFunctionInstance *function =
+      program_.findFunctionInstance(address.owner);
+  if (function == nullptr) {
+    throw std::logic_error(
+        "failure-form MIR body text emission lost its function instance");
+  }
+  result.text =
+      ScalarBodyTextEmitter(program_, representations_, indentation, true)
+          .emit(*function, familyLabel);
+  return result;
 }
 
 CppMirBodyEmissionAnalysis

@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.175.0
+Checkpoint: 0.176.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,26 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Per-body defined-failure boundary, first slice (0.176.0, ADR 017).**
+  The general emitter gains the failure form of its vocabulary: checked
+  detectors spell as `mir_checked_*_v1` status helpers through one shared
+  spelling authority, `Invoke` branches on the status and writes the exact
+  MIR-owned record (site from the instruction, artifact identity from the
+  program's failure metadata) on the failure edge, `PropagateFailure`
+  returns false after its cleanup block, and `Return` publishes through
+  the transformed out-parameter. A leaf failure-capable free function
+  emits the transformed private body plus a same-signature boundary
+  wrapper that routes failure into `gti_rt_failure_terminate_v1` — the
+  structured report and exit 70 of the defined contract — so callers stay
+  unchanged and no call-graph closure is required. Calls inside the
+  failure form are admitted only toward proved-failure-free targets;
+  failure-capable callees await the transformed-callee slice, and member
+  receivers await the member site. Migrated behavior: leaf checked
+  arithmetic now reports through the defined contract instead of the
+  legacy abort (cli scenarios moved to the structured table; the
+  first-family fixture pins the transformed body, wrapper, and a
+  failure-path run at exit 70). Corpus markers 643 -> 647 with stdout
+  byte-identical; the larger yield arrives with the follow-up slices.
 - **String-view signatures and the C marshalling boundary (0.175.0).** The
   scalar-CFG signature gate admits `SemanticType::StringView` parameters
   and returns — a passive value-semantic view spelled `std::string_view`

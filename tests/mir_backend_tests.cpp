@@ -191,11 +191,15 @@ void testSelectedFamilyAndCompatibilityFallback() {
   expect(o0Artifact.contents.find("__gti_mir_arg_0") != std::string::npos &&
              o0Artifact.contents.find("__gti_mir_v_") != std::string::npos,
          "the selected definitions should name MIR parameters and SSA values");
-  expect(o0Artifact.contents.find(
-             "return ::gti_internal::backend::add(value, 1);") !=
-             std::string::npos,
-         "a checked arithmetic sibling should remain wholly on the "
-         "compatibility path");
+  // The checked sibling migrated to the per-body defined-failure boundary
+  // (ADR 017): its transformed body emits from verified MIR and the
+  // same-signature wrapper routes failure into the structured contract.
+  expect(count(o0Artifact.contents,
+               "// GTI verified-MIR body: scalar-cfg-failure-v1") == 1 &&
+             functionDefinition(o0Artifact.contents, "compatibility_checked")
+                     .find("gti_rt_failure_terminate_v1") != std::string::npos,
+         "the checked arithmetic sibling should emit its transformed "
+         "failure-form body plus the defined-failure boundary wrapper");
   expect(functionDefinition(o0Artifact.contents, "compatibility_identity")
                  .find("// GTI verified-MIR body: scalar-cfg-v1") !=
              std::string_view::npos,

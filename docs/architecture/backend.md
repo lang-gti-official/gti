@@ -228,6 +228,12 @@ generic emitter replaces that single whole-program route.
   and functions remain wholly compatible. Comma, logical/conditional
   expression sub-CFG, loops, and switches are not admitted by this bounded
   family.
+- The per-body defined-failure boundary (ADR 017) emits a leaf
+  failure-capable free function as its transformed private body
+  (`scalar-cfg-failure-v1`) plus a same-signature wrapper that routes the
+  exact MIR failure record into `gti_rt_failure_terminate_v1`; callers stay
+  unchanged, and each migrated body reports through the structured
+  contract and exit 70 instead of the legacy abort.
 - `scalar-failure-callgraph-v1` admits one unique no-argument `int32_t` hosted
   entry and its exact closed, acyclic graph of source-defined GTI free
   functions with `int32_t` parameters/results. The body domain reuses the

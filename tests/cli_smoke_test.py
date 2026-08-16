@@ -2203,6 +2203,25 @@ def main():
             ),
         ]
         hosted_arithmetic_failures = {
+            # Migrated to the per-body defined-failure boundary (ADR 017):
+            # the leaf checked callee reports through the structured
+            # contract even though main stays on compatibility emission.
+            "unsigned-subtraction-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                1,
+                63,
+                64,
+                "subtraction",
+            ),
+            "division-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                2,
+                105,
+                106,
+                "division",
+            ),
             "addition-overflow": (
                 "GTI-R0001",
                 "integer_overflow",
@@ -2299,6 +2318,36 @@ def main():
                 "GTI runtime error: integer negation overflow",
             ),
         ]
+        # Leaf checked bodies migrated to the per-body defined-failure
+        # boundary (ADR 017) report through the structured contract; the
+        # division and negation shapes stay on compatibility emission and
+        # keep the legacy report.
+        constant_overflow_defined = {
+            "constant-addition-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                1,
+                36,
+                37,
+                "addition",
+            ),
+            "constant-unsigned-underflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                1,
+                27,
+                28,
+                "subtraction",
+            ),
+            "constant-multiplication-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                1,
+                36,
+                37,
+                "multiplication",
+            ),
+        }
         for name, overflow_function, expected_error in constant_overflow_failures:
             failure_path = root / f"{name}.gti"
             failure_executable = root / name
@@ -2322,10 +2371,23 @@ def main():
                 capture_output=True,
                 check=False,
             )
-            assert failure.returncode != 0
-            assert expected_error in failure.stderr, (
-                f"{name} produced unexpected stderr: {failure.stderr}"
-            )
+            if name in constant_overflow_defined:
+                code, category, line, start, end, detail = (
+                    constant_overflow_defined[name]
+                )
+                assert failure.returncode == 70
+                assert failure.stdout == ""
+                assert re.fullmatch(
+                    rf'GTI runtime failure \[{code}\] {category} in '
+                    rf'[0-9a-f]{{64}} at "{re.escape(failure_path.name)}":'
+                    rf"{line}@{start}\.\.{end}: {detail}\n",
+                    failure.stderr,
+                ), f"{name} produced unexpected hosted report: {failure.stderr}"
+            else:
+                assert failure.returncode != 0
+                assert expected_error in failure.stderr, (
+                    f"{name} produced unexpected stderr: {failure.stderr}"
+                )
 
         modulo_zero_source = root / "modulo-zero.gti"
         modulo_zero_executable = root / "modulo-zero"

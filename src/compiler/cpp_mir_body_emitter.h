@@ -183,6 +183,13 @@ enum class CppMirEmissionEncoding {
 [[nodiscard]] std::optional<CppMirTypeRepresentationKind>
 cppMirExpectedTypeRepresentation(const SemanticType &type);
 
+// The single spelling authority for the shipped checked-operation helper
+// family (`mir_failure_status_v1`): the fully qualified `mir_checked_*_v1`
+// helper a backend spells for a checked MIR operation, and an empty view
+// for every other operation.
+[[nodiscard]] std::string_view
+cppMirCheckedOperationHelperSpelling(MirOperation operation);
+
 // The single spelling authority for the shipped integer-arithmetic helper
 // family (`gti_internal_backend_helpers_v1`): the fully qualified helper a
 // backend spells for one of the nine wrapping/saturating/checked intrinsic
@@ -328,7 +335,24 @@ public:
   // general emitter can publish, so selection never re-models emission.
   [[nodiscard]] bool supportsBodyText(MirBodyAddress address) const;
 
+  // The failure form of the vocabulary (ADR 017): the body emits under the
+  // transformed private ABI — checked operations produce
+  // `mir_failure_status_v1` results, `Invoke` branches on the status and
+  // writes the exact MIR failure record on the failure edge,
+  // `PropagateFailure` returns false after its cleanup block, and `Return`
+  // publishes through the out-parameter before returning true. The current
+  // slice admits leaf bodies only: no calls, a non-void scalar result, and
+  // every failure detector carrying exactly one site and origin.
+  [[nodiscard]] bool supportsFailureBodyText(MirBodyAddress address) const;
+
+  [[nodiscard]] CppMirBodyEmissionText
+  emitFailureBodyText(MirBodyAddress address, std::string_view familyLabel,
+                      std::size_t indentation) const;
+
 private:
+  [[nodiscard]] bool supportsBodyTextImpl(MirBodyAddress address,
+                                          bool failureForm) const;
+
   const MirProgram &program_;
   const CppMirBodyEmissionMap &representations_;
 };

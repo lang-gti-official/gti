@@ -44,6 +44,7 @@ public:
     indentation = 0;
     generalCfgAdmitted.reset();
     generalDtorAdmitted.reset();
+    generalFailureAdmitted.reset();
     forwardedAliases.clear();
     forwardedTypeAliases.clear();
     forwardedExternC.clear();
@@ -1183,7 +1184,7 @@ inline Target post_decrement(Target &target) {
 )";
 
     prepareMirScalarFailureSelection();
-    if (mirScalarFailureEntry != 0) {
+    if (mirScalarFailureEntry != 0 || anyGeneralFailureBodyAdmitted()) {
       emitMirScalarFailureHelpers();
     }
 
@@ -1525,10 +1526,16 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     const MirFunctionInstance *mirBody =
         mirCfg != nullptr ? mirCfg
                           : (mirCleanup != nullptr ? mirCleanup : mirOwned);
+    const MirFunctionInstance *mirGeneralFailure =
+        mirFailure == nullptr && mirBody == nullptr
+            ? selectedMirGeneralFailureFunction(stmt)
+            : nullptr;
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     if (mirFailure != nullptr) {
       emitMirScalarFailureSignature(stmt, *mirFailure);
+    } else if (mirGeneralFailure != nullptr) {
+      emitGeneralFailureSignature(stmt, *mirGeneralFailure);
     } else {
       emitFunctionSignature(stmt, mirBody);
     }
@@ -1559,6 +1566,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         }
         output << ' ';
         emitMirScalarFailureBody(*mirFailure);
+        emitStructuralOperatorAdapter(stmt);
+        emitCallableAdapter(stmt);
+        return;
+      }
+      if (mirGeneralFailure != nullptr) {
+        output << ' ';
+        emitGeneralFailureBodyText(*mirGeneralFailure);
+        emitGeneralFailureWrapper(stmt, *mirGeneralFailure);
         emitStructuralOperatorAdapter(stmt);
         emitCallableAdapter(stmt);
         return;
@@ -4004,10 +4019,19 @@ private:
         const MirFunctionInstance *mirBody =
             mirCfg != nullptr ? mirCfg
                               : (mirCleanup != nullptr ? mirCleanup : mirOwned);
+        const MirFunctionInstance *mirGeneralFailure =
+            mirFailure == nullptr && mirBody == nullptr
+                ? selectedMirGeneralFailureFunction(*function)
+                : nullptr;
         emitTemplateDeclaration(function->genericParameters());
         writeIndent();
         if (mirFailure != nullptr) {
           emitMirScalarFailureSignature(*function, *mirFailure);
+        } else if (mirGeneralFailure != nullptr) {
+          emitGeneralFailureSignature(*function, *mirGeneralFailure);
+          output << ";\n";
+          writeIndent();
+          emitFunctionSignature(*function, mirGeneralFailure);
         } else {
           emitFunctionSignature(*function, mirBody);
         }
@@ -5929,6 +5953,7 @@ private:
     }
     generalCfgAdmitted.emplace();
     generalDtorAdmitted.emplace();
+    generalFailureAdmitted.emplace();
     const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
     const CppMirProgramEmissionAnalysis analysis = emitter.analyzeProgram();
     // Program- or row-level validation issues admit nothing; per-body
@@ -5937,13 +5962,18 @@ private:
       return;
     }
     for (const CppMirBodyEmissionAnalysis &body : analysis.bodies) {
-      if (!body.ready() || !emitter.supportsBodyText(body.body)) {
+      if (!body.ready()) {
         continue;
       }
-      if (body.body.kind == MirBodyKind::Function) {
-        generalCfgAdmitted->insert(body.body.owner);
-      } else if (body.body.kind == MirBodyKind::Destructor) {
-        generalDtorAdmitted->insert(body.body.owner);
+      if (emitter.supportsBodyText(body.body)) {
+        if (body.body.kind == MirBodyKind::Function) {
+          generalCfgAdmitted->insert(body.body.owner);
+        } else if (body.body.kind == MirBodyKind::Destructor) {
+          generalDtorAdmitted->insert(body.body.owner);
+        }
+      } else if (body.body.kind == MirBodyKind::Function &&
+                 emitter.supportsFailureBodyText(body.body)) {
+        generalFailureAdmitted->insert(body.body.owner);
       }
     }
   }
@@ -5963,6 +5993,161 @@ private:
     }
     ensureGeneralAdmission();
     return generalDtorAdmitted->contains(instance);
+  }
+
+  [[nodiscard]] bool
+  generalFailureBodyAdmitted(HirFunctionInstanceId instance) const {
+    if (mir == nullptr || !generalEmissionMap) {
+      return false;
+    }
+    ensureGeneralAdmission();
+    return generalFailureAdmitted->contains(instance);
+  }
+
+  [[nodiscard]] bool anyGeneralFailureBodyAdmitted() const {
+    if (mir == nullptr || !generalEmissionMap) {
+      return false;
+    }
+    ensureGeneralAdmission();
+    return !generalFailureAdmitted->empty();
+  }
+
+  // Per-body defined-failure boundary (ADR 017): a leaf failure-capable
+  // free function emits under the transformed private ABI plus a
+  // same-signature wrapper. The hosted family keeps precedence for the
+  // closed graph it owns.
+  [[nodiscard]] const MirFunctionInstance *
+  selectedMirGeneralFailureFunction(const FunctionDecl &function) const {
+    if (mir == nullptr) {
+      return nullptr;
+    }
+    const FunctionInfo *info = semantics.findFunction(function);
+    if (info == nullptr || info->declaration != &function) {
+      throw std::logic_error(
+          "C++ backend source function does not belong to its semantic "
+          "snapshot");
+    }
+    if (function.hasCLinkage() || function.requiresClause() ||
+        !function.genericParameters().empty() || info->id == 0 ||
+        !info->genericParameters.empty() || !info->requirements.empty() ||
+        info->parameterPack || info->entryPoint ||
+        info->entryKind != ProgramEntryKind::None || info->staticMember ||
+        info->internalLinkage || info->ownerClass != 0 ||
+        info->linkage != LanguageLinkage::Gti ||
+        !info->externalSymbol.empty() || info->virtualMethod ||
+        info->pureVirtual || info->overrideMethod ||
+        info->intrinsic != IntrinsicKind::None ||
+        info->returnBorrowOrigin != BorrowOriginKind::None ||
+        !info->callableParameters.empty() ||
+        !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
+                     isMirScalarCfgType) ||
+        !isMirScalarCfgType(info->returnType)) {
+      return nullptr;
+    }
+    const MirFunctionInstance *selected = nullptr;
+    for (const MirFunctionInstance &candidate : mir->functionInstances()) {
+      if (candidate.declaration != info->id) {
+        continue;
+      }
+      if (selected != nullptr) {
+        return nullptr;
+      }
+      selected = &candidate;
+    }
+    if (selected == nullptr || !selected->mayRaiseDefinedFailure) {
+      return nullptr;
+    }
+    prepareMirScalarFailureSelection();
+    if (mirScalarFailureFunctions.contains(selected->id)) {
+      return nullptr;
+    }
+    if (!generalFailureBodyAdmitted(selected->id)) {
+      return nullptr;
+    }
+    const HirFunctionInstance *hirInstance =
+        hir.findFunctionInstance(selected->id);
+    if (hirInstance == nullptr || hirInstance->source != &function ||
+        selected->parameterTypes != info->parameterTypes ||
+        selected->returnType != info->returnType ||
+        hirInstance->body.placeDomain != selected->body.placeDomain ||
+        selected->owner.has_value() || selected->staticMember ||
+        selected->overloadedOperator.has_value()) {
+      throw std::logic_error(
+          "admitted failure-form MIR metadata does not match its HIR and "
+          "semantic declaration");
+    }
+    return selected;
+  }
+
+  void emitGeneralFailureSignature(const FunctionDecl &function,
+                                   const MirFunctionInstance &instance) {
+    output << "bool " << emittedFunctionName(function) << "__gti_mir_failure(";
+    emitMirOwnedLifecycleParameters(instance.parameterTypes);
+    if (!instance.parameterTypes.empty()) {
+      output << ", ";
+    }
+    emitSemanticType(instance.returnType);
+    output << " *__gti_mir_out_result, "
+              "::gti_failure_record_v1 *__gti_mir_failure_record)";
+  }
+
+  void emitGeneralFailureBodyText(const MirFunctionInstance &instance) {
+    if (mir == nullptr || !generalEmissionMap) {
+      throw std::logic_error("general MIR body emission requires verified MIR");
+    }
+    const CppMirBodyEmissionText emission =
+        CppMirBodyEmitter(*mir, *generalEmissionMap)
+            .emitFailureBodyText(
+                {.kind = MirBodyKind::Function, .owner = instance.id},
+                "scalar-cfg-failure-v1", indentation);
+    if (!emission.emitted()) {
+      throw std::logic_error(
+          "selected failure-form verified-MIR body is not ready for general "
+          "emission (function-instance " +
+          std::to_string(instance.id) + ")");
+    }
+    output << emission.text;
+  }
+
+  // The boundary wrapper carries the original name and signature so every
+  // caller stays unchanged; on failure the record reaches the defined
+  // contract through the runtime terminator (ADR 017).
+  void emitGeneralFailureWrapper(const FunctionDecl &function,
+                                 const MirFunctionInstance &instance) {
+    writeIndent();
+    emitFunctionSignature(function, &instance);
+    output << " {\n";
+    ++indentation;
+    writeIndent();
+    emitSemanticType(instance.returnType);
+    output << " __gti_mir_boundary_result{};\n";
+    writeIndent();
+    output << "::gti_failure_record_v1 __gti_mir_boundary_record{};\n";
+    writeIndent();
+    output << "if (" << emittedFunctionName(function) << "__gti_mir_failure(";
+    for (std::size_t index = 0; index < instance.parameterTypes.size();
+         ++index) {
+      output << "__gti_mir_arg_" << index << ", ";
+    }
+    output << "&__gti_mir_boundary_result, &__gti_mir_boundary_record)) {\n";
+    ++indentation;
+    writeIndent();
+    output << "return __gti_mir_boundary_result;\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    writeIndent();
+    output << "::gti_rt_failure_terminate_v1(\n";
+    writeIndent();
+    output << "  &__gti_mir_boundary_record,\n";
+    writeIndent();
+    output << "  &::gti_internal::backend::__gti_failure_artifact_"
+              "descriptor_v1,\n";
+    writeIndent();
+    output << "  nullptr, nullptr);\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
   }
 
   // Resolves a destructor declaration to its single lowered instance and
@@ -10338,34 +10523,6 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     output << "}\n";
   }
 
-  [[nodiscard]] static std::string_view
-  mirScalarFailureCheckedHelper(MirOperation operation) {
-    switch (operation) {
-    case MirOperation::Add:
-      return "mir_checked_add_v1";
-    case MirOperation::Subtract:
-      return "mir_checked_subtract_v1";
-    case MirOperation::Multiply:
-      return "mir_checked_multiply_v1";
-    case MirOperation::Divide:
-      return "mir_checked_divide_v1";
-    case MirOperation::Remainder:
-      return "mir_checked_remainder_v1";
-    case MirOperation::ShiftLeft:
-      return "mir_checked_shift_left_v1";
-    case MirOperation::ShiftRight:
-      return "mir_checked_shift_right_v1";
-    case MirOperation::Negate:
-      return "mir_checked_negate_v1";
-    case MirOperation::Convert:
-      return "mir_checked_convert_v1";
-    default:
-      break;
-    }
-    throw std::logic_error(
-        "verified scalar failure MIR lost its checked operation");
-  }
-
   [[nodiscard]] const MirInstruction *
   mirScalarFailureInstruction(const MirBody &body, MirInstructionId id) const {
     const MirInstruction *result = nullptr;
@@ -10421,9 +10578,14 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   void
   emitMirScalarFailureCheckedInstruction(const MirInstruction &instruction) {
     writeIndent();
-    output << "__gti_mir_failure_status_" << instruction.id
-           << " = ::gti_internal::backend::"
-           << mirScalarFailureCheckedHelper(instruction.operation) << '<';
+    const std::string_view helper =
+        cppMirCheckedOperationHelperSpelling(instruction.operation);
+    if (helper.empty()) {
+      throw std::logic_error(
+          "verified scalar failure MIR lost its checked operation");
+    }
+    output << "__gti_mir_failure_status_" << instruction.id << " = " << helper
+           << '<';
     emitSemanticType(instruction.info.type);
     output << ">(";
     for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
@@ -12819,6 +12981,8 @@ namespace gti_internal::backend {
       generalCfgAdmitted;
   mutable std::optional<std::unordered_set<HirDestructorInstanceId>>
       generalDtorAdmitted;
+  mutable std::optional<std::unordered_set<HirFunctionInstanceId>>
+      generalFailureAdmitted;
   std::size_t payloadSwitchCounter = 0;
   bool emittingField = false;
   bool emittingScheduledType = false;
