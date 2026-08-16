@@ -2123,9 +2123,10 @@ private:
       output << ";\n";
       return;
     }
-    if (!instruction.functionTarget) {
+    if (!instruction.functionTarget || instruction.receiver) {
       throw std::logic_error(
-          "verified MIR direct call lost its exact target declaration");
+          "verified MIR direct call lost its exact target declaration or "
+          "carries a receiver the scalar vocabulary cannot spell");
     }
     if (instruction.result) {
       output << "__gti_mir_v_" << *instruction.result << " = ";
@@ -2422,13 +2423,17 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
         }
         continue;
       case MirInstructionKind::CallInput:
-        if (!instruction.result || instruction.operands.size() != 1 ||
+        if (!instruction.result || instruction.receiver ||
+            instruction.operands.size() != 1 ||
             !valueOperand(instruction.operands.front())) {
           return false;
         }
         continue;
       case MirInstructionKind::Call:
-        if (!instruction.functionTarget ||
+        // A receiver-carrying call is outside the vocabulary: the text step
+        // spells only the namespace-scope target form, so emitting one
+        // would drop the receiver.
+        if (!instruction.functionTarget || instruction.receiver ||
             !bodyRow(*instruction.functionTarget) ||
             !std::all_of(instruction.operands.begin(),
                          instruction.operands.end(), valueOperand)) {

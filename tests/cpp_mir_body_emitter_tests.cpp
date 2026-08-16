@@ -1238,9 +1238,10 @@ void testCleanupFixtureFunctionBodiesAreReady() {
 
 // Milestone gate for the rollback campaign: every constructor and
 // field-initializer body of the owned-lifecycle fixture is analysis-Ready
-// under production rows. Its destructor waits on the double-failure
-// envelope and the prelude function bodies on deliberately withheld
-// capability rows; the construction half must never regress.
+// under production rows, and the scalar user destructor summarizes
+// provably failure-free since the effect-proof widening. Native-closing
+// prelude destructors and the prelude function bodies legitimately keep
+// their containment flags and withheld capability rows.
 void testOwnedLifecycleConstructionBodiesReady() {
   const std::filesystem::path repository =
       std::filesystem::path(__FILE__).parent_path().parent_path();
@@ -1264,7 +1265,12 @@ void testOwnedLifecycleConstructionBodiesReady() {
   const lang::CppMirProgramEmissionAnalysis program = emitter.analyzeProgram();
   bool constructionReady = program.issues.empty();
   std::size_t constructionBodies = 0;
+  std::size_t readyDestructors = 0;
   for (const lang::CppMirBodyEmissionAnalysis &body : program.bodies) {
+    if (body.body.kind == lang::MirBodyKind::Destructor) {
+      readyDestructors += body.ready() ? 1 : 0;
+      continue;
+    }
     if (body.body.kind != lang::MirBodyKind::Constructor &&
         body.body.kind != lang::MirBodyKind::FieldInitializers) {
       continue;
@@ -1282,8 +1288,11 @@ void testOwnedLifecycleConstructionBodiesReady() {
   }
   expect(constructionBodies >= 3 && constructionReady,
          "every owned-lifecycle constructor and field-initializer body must "
-         "stay analysis-Ready under production rows; destructors wait on the "
-         "double-failure envelope");
+         "stay analysis-Ready under production rows");
+  expect(readyDestructors >= 1,
+         "the scalar user destructor should summarize provably failure-free "
+         "and reach analysis-Ready; native-closing prelude destructors "
+         "legitimately keep their containment flags");
 }
 
 } // namespace

@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.167.0
+Checkpoint: 0.168.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,19 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Failure-free effect proofs widened (0.168.0).** The function proof
+  admits read-only receivers' scalar field loads (the projection carrier
+  plus one trivially droppable projected field cannot raise), and the
+  destructor proof grows from the single-block literal/assign shape to the
+  scalar-CFG shape: receiver field reads, loads, the scalar operation set,
+  and Goto/Branch/Return control flow over proven values, with writes still
+  confined to storage places. The owned-lifecycle fixture's scalar user
+  destructor now summarizes provably failure-free, so its categorical
+  double-failure flag never fires; the native-closing prelude destructor
+  legitimately keeps its containment flag, so the double-failure envelope
+  remains the path for native-cleanup destructors specifically. The emission probe and text step reject
+  receiver-carrying calls at both layers, closing the hole the widening
+  would otherwise open (a member call spelled without its receiver).
 - **Construction readiness measured and pinned (0.167.0).** The rows now
   carry every function instance's emitted name (runtime bindings and
   C-linkage declarations included), the executable module body's own row,

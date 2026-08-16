@@ -8409,8 +8409,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         destructor->definitionKind != MirDefinitionKind::Source ||
         destructor->body.kind != MirBodyKind::Destructor ||
         destructor->body.returnType != SemanticType::Void ||
-        destructor->body.blocks.size() != 1 ||
-        !destructor->body.loans.empty() ||
+        destructor->body.blocks.empty() || !destructor->body.loans.empty() ||
         !destructor->body.dropObligations.empty() ||
         !destructor->body.cleanupBoundaries.empty() ||
         !destructor->body.failureRecords.empty() ||
@@ -8420,109 +8419,157 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
     const MirBody &body = destructor->body;
     if (!std::all_of(body.places.begin(), body.places.end(),
                      [&](const MirPlace &place) {
-                       return place.root == MirPlaceRootKind::Symbol &&
-                              place.binding == 0 && place.symbol != 0 &&
-                              place.capture == 0 && place.temporary == 0 &&
-                              place.value == 0 && place.loan == 0 &&
-                              place.projections.empty() && !place.key &&
-                              !place.initiallyAvailable &&
-                              scalarType(place.type) &&
-                              place.traits.drop == DropKind::Trivial &&
-                              !place.traits.containsBorrowedState;
+                       const bool storage =
+                           place.root == MirPlaceRootKind::Symbol &&
+                           place.binding == 0 && place.symbol != 0 &&
+                           place.capture == 0 && place.temporary == 0 &&
+                           place.value == 0 && place.loan == 0 &&
+                           place.projections.empty() && !place.key &&
+                           !place.initiallyAvailable &&
+                           scalarType(place.type) &&
+                           place.traits.drop == DropKind::Trivial &&
+                           !place.traits.containsBorrowedState;
+                       // A destructor reading one of its receiver's scalar
+                       // fields cannot raise; writes stay confined to storage
+                       // places below.
+                       const bool receiverField =
+                           place.root == MirPlaceRootKind::This &&
+                           place.binding == 0 && place.symbol == 0 &&
+                           place.capture == 0 && place.temporary == 0 &&
+                           place.value == 0 && place.loan == 0 &&
+                           !place.initiallyAvailable &&
+                           ((place.projections.empty() &&
+                             place.type.kind == SemanticType::Class) ||
+                            (place.projections.size() == 1 &&
+                             place.projections.front().kind ==
+                                 MirProjectionKind::Field &&
+                             scalarType(place.type) &&
+                             place.traits.drop == DropKind::Trivial &&
+                             !place.traits.containsBorrowedState));
+                       return storage || receiverField;
                      }) ||
         !std::all_of(
             body.values.begin(), body.values.end(),
             [&](const MirValue &value) { return scalarInfo(value.info); })) {
       return false;
     }
-    const MirBlock &block = body.blocks.front();
-    if (!block.reachable || block.failureParameter != 0 ||
-        block.terminator.kind != MirTerminatorKind::Return ||
-        block.terminator.value || block.terminator.invokeInstruction != 0 ||
-        block.terminator.failureRecord != 0 || block.terminator.target != 0 ||
-        block.terminator.elseTarget != 0 ||
-        !block.terminator.switchTargets.empty() ||
-        !block.terminator.successLifecycle.empty()) {
-      return false;
-    }
-    for (const MirInstruction &instruction : block.instructions) {
-      const bool common =
-          instruction.unsafeOperation == UnsafeOperationKind::None &&
-          !instruction.rawMemoryAccess && instruction.callSite == 0 &&
-          instruction.constructorInitializer == 0 &&
-          !instruction.callInputRole && instruction.callInputIndex == 0 &&
-          instruction.callInputKind == HirCallInputKind::Value &&
-          !instruction.preparedParameterDrop &&
-          !instruction.successResultDrop && !instruction.receiver &&
-          instruction.parameterTypes.empty() &&
-          instruction.closureCaptureTypes.empty() &&
-          instruction.closureCaptureModes.empty() &&
-          instruction.packFoldSymbol == 0 &&
-          instruction.packFoldParameter == 0 &&
-          instruction.packFoldFunction == 0 &&
-          instruction.packFoldArgument == 0 &&
-          instruction.packFoldFixedPlaces.empty() &&
-          instruction.packFoldElements.empty() && !instruction.loan &&
-          instruction.borrowOrigin == BorrowOriginKind::None &&
-          instruction.borrowArgument == 0 &&
-          instruction.borrowAccess == AccessMode::ReadOnly &&
-          !instruction.borrowPlace && !instruction.enumOwner &&
-          !instruction.enumValue && !instruction.enumVariant &&
-          !instruction.payloadIndex &&
-          instruction.intrinsic == IntrinsicKind::None &&
-          instruction.synchronization.kind ==
-              SynchronizationOperationKind::None &&
-          instruction.definedFailure.empty() &&
-          instruction.localFailureSites.empty() &&
-          instruction.dispatch == CallDispatch::Static &&
-          instruction.dispatchOwner == SemanticType::Unknown &&
-          !instruction.functionTarget && !instruction.constructorTarget &&
-          instruction.constructorKind == ConstructorKind::Ordinary &&
-          !instruction.lambdaTarget && instruction.callableArguments.empty() &&
-          !instruction.callableBoundary && !instruction.callableInvocation &&
-          !instruction.ownership;
-      if (!common) {
-        return false;
-      }
-      if (instruction.kind == MirInstructionKind::Compute) {
-        if (!instruction.result || instruction.destination ||
-            !scalarInfo(instruction.info) ||
-            instruction.operation != MirOperation::Literal ||
-            !instruction.literal || !instruction.operands.empty() ||
-            !instruction.lifecycle.empty() ||
-            instruction.fullExpressionEnd != 0 ||
-            instruction.cleanupBoundaryEnd != 0) {
-          return false;
-        }
-        continue;
-      }
-      if (instruction.kind == MirInstructionKind::Assign) {
-        const MirPlace *place = instruction.destination
-                                    ? body.findPlace(*instruction.destination)
-                                    : nullptr;
-        if (!instruction.result || place == nullptr ||
-            place->root != MirPlaceRootKind::Symbol ||
-            !scalarInfo(instruction.info) ||
-            instruction.operation != MirOperation::Assign ||
-            instruction.literal || instruction.operands.size() != 1 ||
-            instruction.operands.front().kind != MirOperandKind::Value ||
-            !instruction.lifecycle.empty() ||
-            instruction.fullExpressionEnd != 0 ||
-            instruction.cleanupBoundaryEnd != 0) {
-          return false;
-        }
-        continue;
-      }
-      if (instruction.kind != MirInstructionKind::Lifecycle ||
-          instruction.result || instruction.destination ||
-          !instruction.operands.empty() ||
-          instruction.operation != MirOperation::None || instruction.literal ||
-          !instruction.lifecycle.empty() ||
-          instruction.fullExpressionEnd == 0 ||
-          instruction.cleanupBoundaryEnd != 0) {
+    for (const MirBlock &block : body.blocks) {
+      const MirTerminator &terminator = block.terminator;
+      const bool exitShape =
+          block.failureParameter == 0 && terminator.invokeInstruction == 0 &&
+          terminator.failureRecord == 0 && terminator.switchTargets.empty() &&
+          terminator.successLifecycle.empty() &&
+          ((terminator.kind == MirTerminatorKind::Goto &&
+            terminator.target != 0 && !terminator.value) ||
+           (terminator.kind == MirTerminatorKind::Branch && terminator.value &&
+            terminator.value->kind == MirOperandKind::Value) ||
+           (terminator.kind == MirTerminatorKind::Return && !terminator.value));
+      if (!exitShape) {
         return false;
       }
     }
+    for (const MirBlock &enclosing : body.blocks)
+      for (const MirInstruction &instruction : enclosing.instructions) {
+        const bool common =
+            instruction.unsafeOperation == UnsafeOperationKind::None &&
+            !instruction.rawMemoryAccess && instruction.callSite == 0 &&
+            instruction.constructorInitializer == 0 &&
+            !instruction.callInputRole && instruction.callInputIndex == 0 &&
+            instruction.callInputKind == HirCallInputKind::Value &&
+            !instruction.preparedParameterDrop &&
+            !instruction.successResultDrop && !instruction.receiver &&
+            instruction.parameterTypes.empty() &&
+            instruction.closureCaptureTypes.empty() &&
+            instruction.closureCaptureModes.empty() &&
+            instruction.packFoldSymbol == 0 &&
+            instruction.packFoldParameter == 0 &&
+            instruction.packFoldFunction == 0 &&
+            instruction.packFoldArgument == 0 &&
+            instruction.packFoldFixedPlaces.empty() &&
+            instruction.packFoldElements.empty() && !instruction.loan &&
+            instruction.borrowOrigin == BorrowOriginKind::None &&
+            instruction.borrowArgument == 0 &&
+            instruction.borrowAccess == AccessMode::ReadOnly &&
+            !instruction.borrowPlace && !instruction.enumOwner &&
+            !instruction.enumValue && !instruction.enumVariant &&
+            !instruction.payloadIndex &&
+            instruction.intrinsic == IntrinsicKind::None &&
+            instruction.synchronization.kind ==
+                SynchronizationOperationKind::None &&
+            instruction.definedFailure.empty() &&
+            instruction.localFailureSites.empty() &&
+            instruction.dispatch == CallDispatch::Static &&
+            instruction.dispatchOwner == SemanticType::Unknown &&
+            !instruction.functionTarget && !instruction.constructorTarget &&
+            instruction.constructorKind == ConstructorKind::Ordinary &&
+            !instruction.lambdaTarget &&
+            instruction.callableArguments.empty() &&
+            !instruction.callableBoundary && !instruction.callableInvocation &&
+            !instruction.ownership;
+        if (!common) {
+          return false;
+        }
+        if (instruction.kind == MirInstructionKind::Compute) {
+          const bool literalForm =
+              instruction.operation == MirOperation::Literal &&
+              instruction.literal.has_value() && instruction.operands.empty();
+          const bool operandForm =
+              instruction.operation != MirOperation::Literal &&
+              scalarOperation(instruction.operation) && !instruction.literal &&
+              std::all_of(instruction.operands.begin(),
+                          instruction.operands.end(),
+                          [](const MirOperand &operand) {
+                            return operand.kind == MirOperandKind::Value;
+                          });
+          if (!instruction.result || instruction.destination ||
+              !scalarInfo(instruction.info) || (!literalForm && !operandForm) ||
+              !instruction.lifecycle.empty() ||
+              instruction.fullExpressionEnd != 0 ||
+              instruction.cleanupBoundaryEnd != 0) {
+            return false;
+          }
+          continue;
+        }
+        if (instruction.kind == MirInstructionKind::Load) {
+          if (!instruction.result || instruction.destination ||
+              !scalarInfo(instruction.info) ||
+              instruction.operation != MirOperation::None ||
+              instruction.literal || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Copy ||
+              !instruction.lifecycle.empty() ||
+              instruction.fullExpressionEnd != 0 ||
+              instruction.cleanupBoundaryEnd != 0) {
+            return false;
+          }
+          continue;
+        }
+        if (instruction.kind == MirInstructionKind::Assign) {
+          const MirPlace *place = instruction.destination
+                                      ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+          if (!instruction.result || place == nullptr ||
+              place->root != MirPlaceRootKind::Symbol ||
+              !scalarInfo(instruction.info) ||
+              instruction.operation != MirOperation::Assign ||
+              instruction.literal || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Value ||
+              !instruction.lifecycle.empty() ||
+              instruction.fullExpressionEnd != 0 ||
+              instruction.cleanupBoundaryEnd != 0) {
+            return false;
+          }
+          continue;
+        }
+        if (instruction.kind != MirInstructionKind::Lifecycle ||
+            instruction.result || instruction.destination ||
+            !instruction.operands.empty() ||
+            instruction.operation != MirOperation::None ||
+            instruction.literal || !instruction.lifecycle.empty() ||
+            instruction.fullExpressionEnd == 0 ||
+            instruction.cleanupBoundaryEnd != 0) {
+          return false;
+        }
+      }
     return true;
   };
   if (destructorEffects != nullptr) {
@@ -8786,12 +8833,28 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         verifyMirBody(body, function.id).valid();
 
     for (const MirPlace &place : body.places) {
-      valid = valid &&
-              (place.root == MirPlaceRootKind::Binding ||
-               place.root == MirPlaceRootKind::Temporary) &&
-              place.projections.empty() && scalarType(place.type) &&
-              place.traits.drop == DropKind::Trivial &&
-              !place.traits.containsBorrowedState && place.loan == 0;
+      const bool ordinaryScalar =
+          (place.root == MirPlaceRootKind::Binding ||
+           place.root == MirPlaceRootKind::Temporary) &&
+          place.projections.empty() && scalarType(place.type) &&
+          place.traits.drop == DropKind::Trivial &&
+          !place.traits.containsBorrowedState && place.loan == 0;
+      // A read-only receiver's scalar field load cannot raise a defined
+      // failure: the bare receiver place is only the projection carrier and
+      // the projected place reads one trivially droppable scalar field.
+      const bool receiverField =
+          place.root == MirPlaceRootKind::This && place.binding == 0 &&
+          place.symbol == 0 && place.capture == 0 && place.temporary == 0 &&
+          place.value == 0 && place.loan == 0 && !place.initiallyAvailable &&
+          function.owner.has_value() &&
+          function.receiverMutability == ReceiverMutability::ReadOnly &&
+          ((place.projections.empty() &&
+            place.type.kind == SemanticType::Class) ||
+           (place.projections.size() == 1 &&
+            place.projections.front().kind == MirProjectionKind::Field &&
+            scalarType(place.type) && place.traits.drop == DropKind::Trivial &&
+            !place.traits.containsBorrowedState));
+      valid = valid && (ordinaryScalar || receiverField);
     }
     for (const MirValue &value : body.values) {
       valid = valid && scalarInfo(value.info);
