@@ -77,11 +77,11 @@ def main() -> int:
                 if emission.returncode != 0:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
-                if generated.count(marker) != 19:
+                if generated.count(marker) != 21:
                     sys.stderr.write(
-                        "generated C++ did not select exactly the nineteen "
+                        "generated C++ did not select exactly the twenty-one "
                         "verified scalar MIR bodies (twelve fixture bodies "
-                        "plus seven prelude bodies)\n"
+                        "plus nine prelude bodies)\n"
                     )
                     return 1
                 checked = function_definition(generated, "compatibility_checked")
@@ -193,7 +193,7 @@ def main() -> int:
         executed = run([str(executable)])
         if (
             executed.returncode != 70
-            or "GTI runtime failure [GTI-R0001] integer_overflow"
+            or "runtime error[GTI-R0001]: integer_overflow"
             not in executed.stderr
             or executed.stdout != ""
         ):

@@ -2287,8 +2287,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << "std::uint8_t{" << static_cast<unsigned int>(value->value)
              << '}';
     } else if (const auto *value = std::get_if<std::string>(&literal)) {
-      output << "std::string_view{" << quote(*value) << ", " << value->size()
-             << '}';
+      output << cppMirStringViewLiteralSpelling(*value);
     } else if (const auto *value = std::get_if<bool>(&literal)) {
       output << (*value ? "true" : "false");
     } else {
@@ -12545,8 +12544,7 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
       output << "std::uint8_t{" << static_cast<unsigned int>(value->value)
              << '}';
     } else if (const auto *value = std::get_if<std::string>(&constant)) {
-      output << "std::string_view{" << quote(*value) << ", " << value->size()
-             << '}';
+      output << cppMirStringViewLiteralSpelling(*value);
     } else if (const auto *value = std::get_if<bool>(&constant)) {
       output << (*value ? "true" : "false");
     } else if (const auto *checked =

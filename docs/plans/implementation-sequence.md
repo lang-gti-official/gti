@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.177.0
+Checkpoint: 0.178.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,15 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **String-view literals in the general vocabulary (0.178.0).** The probe
+  and text step admit `std::string` literals of `StringView` type, spelled
+  through the new single authority `cppMirStringViewLiteralSpelling`
+  (`std::string_view{"…", N}` with escaped data and explicit length); the
+  compatibility emitter's two literal sites delegate to it and its local
+  `quote` helper is gone. This unlocked `println`, `print_decimal_digit`,
+  and their instantiations across every program: corpus markers
+  704 -> 820, stdout byte-identical, suite and oracle green (fixture
+  prelude lists gain both names; first-family count 19 -> 21).
 - **Failure-free effect proof widened to views, native calls, and
   intrinsics (0.177.0).** `deriveMirFunctionDefinedFailureEffects` admits
   passive string views throughout its function component, accepts

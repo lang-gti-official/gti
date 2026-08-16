@@ -172,7 +172,11 @@ generic emitter replaces that single whole-program route.
   its lifecycle-cleanup helper: the destructor receiver is inherently
   mutable, and mutable scalar globals spell through storage rows for loads
   and stores alike. A destructor with checked operations, or any body
-  outside the vocabulary, declines to compatibility emission per body. The signature boundary also admits the passive
+  outside the vocabulary, declines to compatibility emission per body. String-view literals spell through the single
+  `cppMirStringViewLiteralSpelling` authority — the exact
+  `std::string_view{"…", N}` braced form both backends emit, with escaped
+  data and a load-bearing explicit length. The signature boundary also
+  admits the passive
   string view: a value-semantic C-ABI view whose representation row spells
   `std::string_view`, copied freely through parameters, returns, loads, and
   assignments; at a C-linkage call the view argument is marshalled through

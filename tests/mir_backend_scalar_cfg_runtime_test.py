@@ -38,6 +38,9 @@ STDLIB_SELECTED = (
     # calls in 0.177.0, so print's whole callee chain now proves and the
     # body emits from verified MIR.
     "print",
+    # String-view literals joined the vocabulary in 0.178.0.
+    "println",
+    "print_decimal_digit",
 )
 COMPATIBILITY = (
     "compatibility_checked",

@@ -2163,6 +2163,14 @@ private:
       output << (*boolean ? "true" : "false");
       return;
     }
+    if (const auto *text = std::get_if<std::string>(&literal)) {
+      if (type.kind != SemanticType::StringView) {
+        throw std::logic_error(
+            "verified MIR string literal is not a string view");
+      }
+      output << cppMirStringViewLiteralSpelling(*text);
+      return;
+    }
     throw std::logic_error(
         "verified MIR scalar-CFG literal has an unsupported representation");
   }
@@ -2650,6 +2658,48 @@ cppMirExpectedTypeRepresentation(const SemanticType &type) {
   return expectedTypeRepresentation(type);
 }
 
+std::string cppMirStringViewLiteralSpelling(std::string_view value) {
+  std::string result = "std::string_view{\"";
+  for (const char character : value) {
+    switch (character) {
+    case '\\':
+      result += "\\\\";
+      break;
+    case '"':
+      result += "\\\"";
+      break;
+    case '\n':
+      result += "\\n";
+      break;
+    case '\r':
+      result += "\\r";
+      break;
+    case '\t':
+      result += "\\t";
+      break;
+    case '\0':
+      result += "\\000";
+      break;
+    default: {
+      const auto byte = static_cast<unsigned char>(character);
+      if (byte < 32 || byte >= 127) {
+        result += '\\';
+        result += static_cast<char>('0' + ((byte >> 6U) & 0x07U));
+        result += static_cast<char>('0' + ((byte >> 3U) & 0x07U));
+        result += static_cast<char>('0' + (byte & 0x07U));
+      } else {
+        result += character;
+      }
+      break;
+    }
+    }
+  }
+  result += "\", ";
+  result += std::to_string(value.size());
+  result += '}';
+  return result;
+}
+
 std::string_view cppMirCheckedOperationHelperSpelling(MirOperation operation) {
   switch (operation) {
   case MirOperation::Add:
@@ -2853,6 +2903,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (std::holds_alternative<std::uint64_t>(*literal)) {
       return typeRow(type);
+    }
+    if (std::holds_alternative<std::string>(*literal)) {
+      return type.kind == SemanticType::StringView && typeRow(type);
     }
     return std::holds_alternative<CharacterLiteral>(*literal) ||
            std::holds_alternative<bool>(*literal);

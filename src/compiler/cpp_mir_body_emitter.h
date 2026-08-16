@@ -183,6 +183,13 @@ enum class CppMirEmissionEncoding {
 [[nodiscard]] std::optional<CppMirTypeRepresentationKind>
 cppMirExpectedTypeRepresentation(const SemanticType &type);
 
+// The single spelling authority for a string-view literal: the exact
+// `std::string_view{"…", N}` braced form both backends spell, with the
+// data escaped byte-for-byte (embedded NULs included, so the explicit
+// length is load-bearing).
+[[nodiscard]] std::string
+cppMirStringViewLiteralSpelling(std::string_view value);
+
 // The single spelling authority for the shipped checked-operation helper
 // family (`mir_failure_status_v1`): the fully qualified `mir_checked_*_v1`
 // helper a backend spells for a checked MIR operation, and an empty view
