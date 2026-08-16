@@ -688,14 +688,21 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  // A single generic instantiation resolves to one instance, but its HIR body
-  // is substituted and no longer matches the source declaration shape, so the
-  // member must decline gracefully rather than fail closed.
+  // A member of a generic owner publishes per admitted concrete instance
+  // as an explicit member specialization (0.184.0): the deferred template
+  // definition stays for unadmitted instantiations, and the declaration-
+  // keyed substituted-body hazard that once regressed examples 07/17 does
+  // not apply to the per-instance form.
   const lang::BackendArtifact artifact =
       emit(frontend, optimized.mir, compatibility);
-  expect(count(artifact.contents, marker) == 0,
-         "a member of a generic owner must stay wholly on compatibility "
-         "emission even with exactly one instantiation");
+  expect(count(artifact.contents, marker) == 1,
+         "the generic owner's admitted member instance should emit exactly "
+         "one specialized verified-MIR body");
+  expect(artifact.contents.find(
+             "template <> bool __gti_program::Wrap<std::int32_t>::") !=
+             std::string::npos,
+         "the admitted member should publish as the explicit specialization "
+         "of its concrete owner");
 }
 
 void testIncoherentSwitchRejected(const std::filesystem::path &fixture) {

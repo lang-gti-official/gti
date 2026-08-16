@@ -250,7 +250,10 @@ generic emitter replaces that single whole-program route.
   as an explicit specialization (success form) or a transformed overload
   plus specialization wrapper (failure form), forward-declared beside the
   primary template; pack and parameter-typed instances stay on the
-  primary. Fixed arrays join both forms: array places spell as
+  primary. A member of a generic owner publishes the same way — the
+  explicit member specialization declared right after the class
+  definition — for success-form instances of owners that spell as
+  genuine template-ids. Fixed arrays join both forms: array places spell as
   their `std::array` rows, empty aggregates value-initialize, a
   proven-safe dynamic index subscripts directly, and a site-carrying
   element access spells the shipped `mir_checked_array_read/write_v1`

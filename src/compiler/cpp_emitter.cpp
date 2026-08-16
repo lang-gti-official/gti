@@ -1300,6 +1300,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     --indentation;
     writeIndent();
     output << "};\n";
+    if (!stmt.genericParameters().empty()) {
+      // An explicit member specialization must be declared before the
+      // first use instantiates the member; the definitions follow with
+      // the deferred qualified forms.
+      for (const StmtPtr &member : stmt.members()) {
+        if (const auto *memberFunction =
+                dynamic_cast<const FunctionDecl *>(member.get())) {
+          emitGeneralMemberSpecializations(*memberFunction, true);
+        }
+      }
+    }
     emitCAbiRecordAssertions(stmt, classInfo);
     emitUnionAssertions(stmt, classInfo);
     std::vector<const VariableDecl *> staticFields;
@@ -6203,6 +6214,84 @@ private:
   // as a suffix-named overload (parameter types disambiguate instances of
   // one declaration) and the boundary wrapper as the specialization, so
   // deduced calls and the transformed convention both resolve unchanged.
+  [[nodiscard]] static bool typeIsConcrete(const SemanticType &type) {
+    if (type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::TypePack) {
+      return false;
+    }
+    return std::all_of(type.arguments.begin(), type.arguments.end(),
+                       typeIsConcrete);
+  }
+
+  // A member of a generic class publishes per admitted concrete instance
+  // as the explicit specialization of that member: the deferred template
+  // definition stays for unadmitted instantiations, and each admitted
+  // body's text comes from verified MIR.
+  void emitGeneralMemberSpecializations(const FunctionDecl &function,
+                                        bool declarationsOnly = false) {
+    if (mir == nullptr || !generalEmissionMap) {
+      return;
+    }
+    const FunctionInfo *info = semantics.findFunction(function);
+    if (info == nullptr || info->ownerClass == 0 || info->staticMember ||
+        info->parameterPack || info->internalLinkage ||
+        !info->externalSymbol.empty() ||
+        info->linkage != LanguageLinkage::Gti ||
+        function.operatorName().has_value()) {
+      return;
+    }
+    for (const MirFunctionInstance &instance : mir->functionInstances()) {
+      if (instance.declaration != info->id || !instance.owner ||
+          instance.staticMember || instance.overloadedOperator.has_value() ||
+          instance.entryKind != ProgramEntryKind::None ||
+          !generalBodyAdmitted(instance.id)) {
+        continue;
+      }
+      const HirFunctionInstance *hirInstance =
+          hir.findFunctionInstance(instance.id);
+      const MirClassInstance *ownerInstance =
+          mir->findClassInstance(*instance.owner);
+      if (hirInstance == nullptr || hirInstance->source != &function ||
+          ownerInstance == nullptr || !typeIsConcrete(ownerInstance->type) ||
+          ownerInstance->type.arguments.empty() ||
+          !typeIsConcrete(instance.returnType) ||
+          !std::all_of(instance.parameterTypes.begin(),
+                       instance.parameterTypes.end(), typeIsConcrete) ||
+          hirInstance->body.placeDomain != instance.body.placeDomain) {
+        continue;
+      }
+      // The specialization form requires the owner to spell as a genuine
+      // template-id; a class whose representation collapses to a native
+      // alias cannot carry a member specialization.
+      const std::string ownerSpelling =
+          cppSemanticTypeSpelling(semantics, standard, ownerInstance->type);
+      if (ownerSpelling.find('<') == std::string::npos) {
+        continue;
+      }
+      writeIndent();
+      output << "template <> ";
+      emitSemanticType(instance.returnType);
+      // A leading :: after the return type would bind as a qualifier
+      // (maximal munch), so the owner spells without its global prefix;
+      // lookup from the emission namespace resolves identically.
+      output << ' '
+             << (ownerSpelling.rfind("::", 0) == 0 ? ownerSpelling.substr(2)
+                                                   : ownerSpelling)
+             << "::" << emittedFunctionName(function) << '(';
+      emitMirOwnedLifecycleParameters(instance.parameterTypes);
+      output << ')';
+      if (instance.receiverMutability == ReceiverMutability::ReadOnly) {
+        output << " const";
+      }
+      if (declarationsOnly) {
+        output << ";\n";
+        continue;
+      }
+      output << ' ';
+      emitGeneralMirBodyText(instance, "scalar-cfg-v1");
+    }
+  }
+
   void emitSpecializationSignature(const FunctionDecl &function,
                                    const MirFunctionInstance &instance) {
     output << "template <> ";
@@ -12419,6 +12508,9 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
         case DeferredMemberKind::Function:
           if (definition.function != nullptr) {
             definition.function->accept(*this);
+            if (!definition.owner->genericParameters().empty()) {
+              emitGeneralMemberSpecializations(*definition.function);
+            }
           }
           break;
         case DeferredMemberKind::Constructor:

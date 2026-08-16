@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.183.0
+Checkpoint: 0.184.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,22 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Member specializations for generic owners (0.184.0).** The
+  specialization machinery extends to member functions of generic
+  classes: each admitted concrete instance publishes as the explicit
+  member specialization (`template <> RET Owner<Args>::name(...)`)
+  holding the general body text, declared immediately after the class
+  definition so no use can instantiate the member first, with the
+  deferred template definition remaining for unadmitted instantiations.
+  Owners whose representation collapses to a native alias decline (their
+  spelling is no template-id), and a leading global qualifier is dropped
+  after the return type to avoid maximal-munch misparsing — both caught
+  fail-loud by the native sweep during development. The historical
+  single-generic-instantiation hazard (substituted HIR bodies regressing
+  examples 07/17 under declaration-keyed emission) does not apply to the
+  per-instance form, and its old boundary pin inverts. Corpus markers
+  1020 -> 1029; success-form only, since a transformed sibling cannot be
+  specialized into a template.
 - **Expected-returning checked intrinsics in the general vocabulary
   (0.183.0).** A checked-result arithmetic intrinsic produces its failure
   inside the Expected value with no edges, and now spells as the shipped
