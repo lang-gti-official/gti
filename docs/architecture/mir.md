@@ -160,7 +160,12 @@ synchronization, or the other future O-MIR-02 effect dimensions.
 destructor conservatively at `true`. Its function component retains version
 20's source-defined, closed, acyclic scalar-CFG/static-call proof and also
 recognizes the exact `class-default-cleanup-v1` construction and normal-cleanup
-schedule. Its destructor component can prove `false` for bounded source bodies
+schedule. The proof additionally admits passive string-view parameters,
+places, values, and call operands (a trivially droppable value view cannot
+raise), accepts a C-linkage or runtime-binding call target by its
+`FailurePropagationKind::None` language contract instead of recursing into
+a body that does not exist, and accepts the six wrapping/saturating
+integer-arithmetic intrinsic calls, which carry no failure channel. Its destructor component can prove `false` for bounded source bodies
 over the admitted scalar/class operations. A second closed proof admits exact
 source constructors whose base-free passive-scalar class has one verified
 initializer stage per declared field, their matching source destructors, and

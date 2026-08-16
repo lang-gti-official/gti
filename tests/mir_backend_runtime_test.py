@@ -77,11 +77,11 @@ def main() -> int:
                 if emission.returncode != 0:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
-                if generated.count(marker) != 18:
+                if generated.count(marker) != 19:
                     sys.stderr.write(
-                        "generated C++ did not select exactly the eighteen "
+                        "generated C++ did not select exactly the nineteen "
                         "verified scalar MIR bodies (twelve fixture bodies "
-                        "plus six native-calling prelude bodies)\n"
+                        "plus seven prelude bodies)\n"
                     )
                     return 1
                 checked = function_definition(generated, "compatibility_checked")

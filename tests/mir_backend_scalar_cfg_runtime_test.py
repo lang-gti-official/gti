@@ -34,6 +34,10 @@ STDLIB_SELECTED = (
     # call marshals the view through the shipped to_c_string_view converter.
     "write_stdout",
     "open_file_read",
+    # The failure-free effect proof widened to passive views and native
+    # calls in 0.177.0, so print's whole callee chain now proves and the
+    # body emits from verified MIR.
+    "print",
 )
 COMPATIBILITY = (
     "compatibility_checked",

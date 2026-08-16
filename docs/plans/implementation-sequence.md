@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.176.0
+Checkpoint: 0.177.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,19 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Failure-free effect proof widened to views, native calls, and
+  intrinsics (0.177.0).** `deriveMirFunctionDefinedFailureEffects` admits
+  passive string views throughout its function component, accepts
+  C-linkage/runtime-binding call targets by their `None`-propagation
+  language contract, and accepts wrapping/saturating intrinsic calls.
+  Prelude I/O bodies whose may-raise summaries were purely conservative
+  (`write_stdout`, `print`, and their chains) now prove failure-free at
+  the MIR layer, their callers re-lower without Invoke edges, and the
+  bodies convert through the existing success route — the phase-correct
+  resolution of the transformed-callee question for conservative chains,
+  produced at the layer that owns effect facts. Corpus markers 647 -> 704
+  with byte-identical stdout; suite and oracle green; fixture prelude
+  lists gain `print` (first-family count 18 -> 19).
 - **Per-body defined-failure boundary, first slice (0.176.0, ADR 017).**
   The general emitter gains the failure form of its vocabulary: checked
   detectors spell as `mir_checked_*_v1` status helpers through one shared

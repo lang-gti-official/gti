@@ -8373,6 +8373,38 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
     return scalarType(info.type) && info.traits.drop == DropKind::Trivial &&
            !info.traits.containsBorrowedState;
   };
+  // The passive string view cannot raise: it is a trivially droppable
+  // value-semantic view, so loading, copying, and passing one is as
+  // failure-free as a scalar.
+  const auto passiveType = [&](const SemanticType &type) {
+    return scalarType(type) || type.kind == SemanticType::StringView;
+  };
+  const auto passiveInfo = [&](const ExpressionInfo &info) {
+    return passiveType(info.type) && info.traits.drop == DropKind::Trivial &&
+           !info.traits.containsBorrowedState;
+  };
+  // A C-linkage or runtime-binding target carries
+  // FailurePropagationKind::None by language contract: the native surface
+  // has no defined-failure channel, so the call proves failure-free without
+  // recursing into a body that does not exist.
+  const auto nativeNoFailureTarget = [](const MirFunctionInstance &target) {
+    return target.linkage == LanguageLinkage::C ||
+           target.definitionKind ==
+               MirFunctionInstance::DefinitionKind::RuntimeBinding;
+  };
+  const auto wrappingIntrinsic = [](IntrinsicKind intrinsic) {
+    switch (intrinsic) {
+    case IntrinsicKind::IntegerWrappingAdd:
+    case IntrinsicKind::IntegerWrappingSubtract:
+    case IntrinsicKind::IntegerWrappingMultiply:
+    case IntrinsicKind::IntegerSaturatingAdd:
+    case IntrinsicKind::IntegerSaturatingSubtract:
+    case IntrinsicKind::IntegerSaturatingMultiply:
+      return true;
+    default:
+      return false;
+    }
+  };
   const auto scalarOwnership = [](const std::optional<OwnershipEvent> &event) {
     return !event ||
            ((event->kind == OwnershipEventKind::Read ||
@@ -8824,9 +8856,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         function.externalSymbol.empty() &&
         function.parameterTypes.size() == function.parameterBindings.size() &&
         std::all_of(function.parameterTypes.begin(),
-                    function.parameterTypes.end(), scalarType) &&
+                    function.parameterTypes.end(), passiveType) &&
         (function.returnType == SemanticType::Void ||
-         scalarType(function.returnType)) &&
+         passiveType(function.returnType)) &&
         body.kind == MirBodyKind::Function &&
         body.returnType == function.returnType && body.loans.empty() &&
         body.dropObligations.empty() && body.cleanupBoundaries.empty() &&
@@ -8836,7 +8868,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
       const bool ordinaryScalar =
           (place.root == MirPlaceRootKind::Binding ||
            place.root == MirPlaceRootKind::Temporary) &&
-          place.projections.empty() && scalarType(place.type) &&
+          place.projections.empty() && passiveType(place.type) &&
           place.traits.drop == DropKind::Trivial &&
           !place.traits.containsBorrowedState && place.loan == 0;
       // A read-only receiver's scalar field load cannot raise a defined
@@ -8856,7 +8888,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
       valid = valid && (ordinaryScalar || receiverField);
     }
     for (const MirValue &value : body.values) {
-      valid = valid && scalarInfo(value.info);
+      valid = valid && passiveInfo(value.info);
     }
 
     std::unordered_set<MirInstructionId> exactCalls;
@@ -8882,7 +8914,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             !instruction.borrowPlace && !instruction.enumOwner &&
             !instruction.enumValue && !instruction.enumVariant &&
             !instruction.payloadIndex &&
-            instruction.intrinsic == IntrinsicKind::None &&
+            (instruction.intrinsic == IntrinsicKind::None ||
+             (instruction.kind == MirInstructionKind::Call &&
+              wrappingIntrinsic(instruction.intrinsic))) &&
             instruction.synchronization.kind ==
                 SynchronizationOperationKind::None &&
             instruction.localFailureSites.empty() &&
@@ -8929,7 +8963,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                   !instruction.destination && !instruction.receiver &&
                   instruction.parameterTypes.empty() &&
                   !instruction.functionTarget && instruction.result &&
-                  scalarInfo(instruction.info) &&
+                  passiveInfo(instruction.info) &&
                   instruction.operation == MirOperation::None &&
                   !instruction.literal && instruction.definedFailure.empty() &&
                   instruction.fullExpressionEnd == 0 &&
@@ -8942,7 +8976,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
               instruction.destination && !instruction.receiver &&
               instruction.parameterTypes.empty() &&
               !instruction.functionTarget && !instruction.result &&
-              scalarInfo(instruction.info) &&
+              passiveInfo(instruction.info) &&
               instruction.operation == MirOperation::None &&
               !instruction.literal && instruction.definedFailure.empty() &&
               instruction.fullExpressionEnd == 0 &&
@@ -8979,7 +9013,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                   !instruction.destination && !instruction.receiver &&
                   instruction.parameterTypes.empty() &&
                   !instruction.functionTarget && instruction.result &&
-                  scalarInfo(instruction.info) &&
+                  passiveInfo(instruction.info) &&
                   instruction.operation == MirOperation::None &&
                   !instruction.literal && instruction.definedFailure.empty() &&
                   instruction.fullExpressionEnd == 0 &&
@@ -8987,6 +9021,31 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                   instruction.operands.front().kind == MirOperandKind::Value;
           break;
         case MirInstructionKind::Call: {
+          if (instruction.intrinsic != IntrinsicKind::None) {
+            // A wrapping/saturating arithmetic intrinsic carries no failure
+            // channel: None propagation, no sites, scalar operands.
+            valid =
+                wrappingIntrinsic(instruction.intrinsic) &&
+                instruction.callSite != 0 && !instruction.callInputRole &&
+                !instruction.destination && !instruction.receiver &&
+                !instruction.functionTarget && instruction.result &&
+                scalarInfo(instruction.info) &&
+                instruction.definedFailure.empty() &&
+                instruction.definedFailure.propagation ==
+                    FailurePropagationKind::None &&
+                !instruction.operands.empty() &&
+                instruction.operands.size() <= 2 &&
+                std::all_of(instruction.operands.begin(),
+                            instruction.operands.end(),
+                            [&](const MirOperand &operand) {
+                              return operand.kind == MirOperandKind::Value &&
+                                     scalarType(operand.type);
+                            });
+            if (valid) {
+              exactCalls.insert(instruction.id);
+            }
+            break;
+          }
           const MirFunctionInstance *target =
               instruction.functionTarget
                   ? program.findFunctionInstance(*instruction.functionTarget)
@@ -8998,7 +9057,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                   instruction.operands.size() ==
                       instruction.parameterTypes.size() &&
                   std::all_of(instruction.parameterTypes.begin(),
-                              instruction.parameterTypes.end(), scalarType) &&
+                              instruction.parameterTypes.end(), passiveType) &&
                   instruction.operation == MirOperation::None &&
                   !instruction.literal && !instruction.ownership &&
                   (instruction.definedFailure.propagation ==
@@ -9016,7 +9075,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                       instruction.operands.begin(), instruction.operands.end(),
                       [&](const MirOperand &operand) {
                         if (operand.kind != MirOperandKind::Value ||
-                            !scalarType(operand.type)) {
+                            !passiveType(operand.type)) {
                           return false;
                         }
                         const MirValue *value = body.findValue(operand.value);
@@ -9028,7 +9087,10 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                                input->kind == MirInstructionKind::CallInput &&
                                input->callSite == instruction.callSite;
                       }) &&
-                  self(self, *instruction.functionTarget);
+                  (nativeNoFailureTarget(*target)
+                       ? instruction.definedFailure.propagation ==
+                             FailurePropagationKind::None
+                       : self(self, *instruction.functionTarget));
           if (valid) {
             exactCalls.insert(instruction.id);
           }
