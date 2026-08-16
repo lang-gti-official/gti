@@ -91,13 +91,23 @@ def main() -> int:
                     or generated.count(
                         "// GTI verified-MIR body: scalar-cfg-failure-v1"
                     )
-                    != 2
+                    != 4
                 ):
                     sys.stderr.write(
-                        "checked sibling should emit the transformed "
-                        "failure-form body plus its defined-failure boundary "
-                        "wrapper (ADR 017; the second failure-form body is "
-                        "the prelude's file_handle release member)\n"
+                        "the four failure-form bodies should emit their "
+                        "transformed bodies plus boundary wrappers (ADR 017: "
+                        "compatibility_checked, checked_leaf, checked_caller, "
+                        "and the prelude's file_handle release member)\n"
+                    )
+                    return 1
+                if (
+                    "checked_leaf__gti_mir_failure(" not in generated
+                    or "__gti_mir_call_success_" not in generated
+                ):
+                    sys.stderr.write(
+                        "checked_caller should reach checked_leaf through "
+                        "the transformed convention: a direct derived-name "
+                        "call branching on the call-success bool\n"
                     )
                     return 1
                 if (
@@ -170,6 +180,52 @@ def main() -> int:
                 )
                 return 1
 
+    chain_source = (
+        "int32_t chain_leaf(int32_t value) {\n"
+        "  return value + 1;\n"
+        "}\n"
+        "int32_t chain_caller(int32_t value) {\n"
+        "  return chain_leaf(value) + 2;\n"
+        "}\n"
+        "int main() {\n"
+        "  if (chain_caller(39) != 42) {\n"
+        "    return 1;\n"
+        "  }\n"
+        "  [[discard]] chain_caller(2147483647);\n"
+        "  return 3;\n"
+        "}\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="gti-mir-chain-") as temporary:
+        root = pathlib.Path(temporary)
+        source_path = root / "chain-failure.gti"
+        source_path.write_text(chain_source, encoding="utf8")
+        executable = root / "chain-failure"
+        built = run([str(compiler), str(source_path), "-o", str(executable)])
+        if built.returncode != 0:
+            return fail(built)
+        executed = run([str(executable)])
+        # The record written inside the transformed leaf must surface
+        # unchanged through the caller's Invoke edge and the boundary
+        # wrapper: the clang-style report cites the leaf's line, not the
+        # caller's.
+        # Fragment assertions hold on both sides of the in-flight report
+        # format migration: code, category, source name, and the leaf's
+        # line are the contract pinned here.
+        if (
+            executed.returncode != 70
+            or "GTI-R0001" not in executed.stderr
+            or "integer_overflow" not in executed.stderr
+            or "chain-failure.gti" not in executed.stderr
+            or ":2" not in executed.stderr
+            or executed.stdout != ""
+        ):
+            sys.stderr.write(
+                "transformed-callee chain did not propagate the leaf's "
+                f"record: exit={executed.returncode} "
+                f"stderr={executed.stderr}\n"
+            )
+            return 1
+
     failing_source = (
         "int32_t checked_increment(int32_t value) {\n"
         "  return value + 1;\n"
@@ -194,8 +250,8 @@ def main() -> int:
         executed = run([str(executable)])
         if (
             executed.returncode != 70
-            or "runtime error[GTI-R0001]: integer_overflow"
-            not in executed.stderr
+            or "GTI-R0001" not in executed.stderr
+            or "integer_overflow" not in executed.stderr
             or executed.stdout != ""
         ):
             sys.stderr.write(

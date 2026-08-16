@@ -242,7 +242,11 @@ generic emitter replaces that single whole-program route.
   body and wrapper are declared side by side in the class and defined
   through the ordinary deferred qualified form; the hosted main keeps
   exactly one termination call of its own, while each wrapper carries its
-  boundary's.
+  boundary's. A failure-form body reaches a failure-capable GTI callee
+  through the callee's transformed body directly — per-call success bool,
+  record pointer forwarded unchanged, the paired `Invoke` branching on the
+  bool — and admission is a greatest fixpoint over the transformed set, so
+  a body whose may-raise callee cannot transform declines with it.
 - `scalar-failure-callgraph-v1` admits one unique no-argument `int32_t` hosted
   entry and its exact closed, acyclic graph of source-defined GTI free
   functions with `int32_t` parameters/results. The body domain reuses the

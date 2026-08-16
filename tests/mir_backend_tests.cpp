@@ -103,6 +103,14 @@ int32_t compatibility_checked(int32_t value) {
   return value + 1;
 }
 
+int32_t checked_leaf(int32_t value) {
+  return value + 1;
+}
+
+int32_t checked_caller(int32_t value) {
+  return checked_leaf(value) + 2;
+}
+
 bool compatibility_bool_identity(bool value) {
   return value;
 }
@@ -114,6 +122,9 @@ char compatibility_char_identity(char value) {
 int main() {
   if (mir_identity(42) != compatibility_identity(42)) {
     return 1;
+  }
+  if (checked_caller(39) != 42) {
+    return 9;
   }
   if (mir_constant() != compatibility_checked(41)) {
     return 2;
@@ -195,11 +206,17 @@ void testSelectedFamilyAndCompatibilityFallback() {
   // (ADR 017): its transformed body emits from verified MIR and the
   // same-signature wrapper routes failure into the structured contract.
   expect(count(o0Artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-failure-v1") == 1 &&
+               "// GTI verified-MIR body: scalar-cfg-failure-v1") == 3 &&
              functionDefinition(o0Artifact.contents, "compatibility_checked")
                      .find("gti_rt_failure_terminate_v1") != std::string::npos,
          "the checked arithmetic sibling should emit its transformed "
          "failure-form body plus the defined-failure boundary wrapper");
+  expect(o0Artifact.contents.find("checked_leaf__gti_mir_failure(") !=
+                 std::string::npos &&
+             o0Artifact.contents.find("__gti_mir_call_success_") !=
+                 std::string::npos,
+         "checked_caller should reach checked_leaf through the transformed "
+         "convention");
   expect(functionDefinition(o0Artifact.contents, "compatibility_identity")
                  .find("// GTI verified-MIR body: scalar-cfg-v1") !=
              std::string_view::npos,

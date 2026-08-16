@@ -5984,6 +5984,48 @@ private:
         generalFailureAdmitted->insert(body.body.owner);
       }
     }
+    // Greatest-fixpoint filter (ADR 017): a transformed body may call a
+    // failure-capable GTI callee only through the callee's own transformed
+    // body, so drop admissions whose may-raise callees fall outside the
+    // set until it stabilizes. Mutual recursion inside the set survives;
+    // hosted-family callees stay outside this slice's convention and
+    // therefore drop their callers.
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (auto iterator = generalFailureAdmitted->begin();
+           iterator != generalFailureAdmitted->end();) {
+        const MirFunctionInstance *instance =
+            mir->findFunctionInstance(*iterator);
+        bool calleesAvailable = instance != nullptr;
+        if (instance != nullptr) {
+          for (const MirBlock &block : instance->body.blocks) {
+            for (const MirInstruction &instruction : block.instructions) {
+              if (instruction.kind != MirInstructionKind::Call ||
+                  !instruction.functionTarget ||
+                  instruction.intrinsic != IntrinsicKind::None) {
+                continue;
+              }
+              const MirFunctionInstance *target =
+                  mir->findFunctionInstance(*instruction.functionTarget);
+              if (target != nullptr && target->mayRaiseDefinedFailure &&
+                  target->linkage == LanguageLinkage::Gti &&
+                  target->definitionKind ==
+                      MirFunctionInstance::DefinitionKind::Source &&
+                  !generalFailureAdmitted->contains(target->id)) {
+                calleesAvailable = false;
+              }
+            }
+          }
+        }
+        if (calleesAvailable) {
+          ++iterator;
+        } else {
+          iterator = generalFailureAdmitted->erase(iterator);
+          changed = true;
+        }
+      }
+    }
   }
 
   [[nodiscard]] bool generalBodyAdmitted(HirFunctionInstanceId instance) const {

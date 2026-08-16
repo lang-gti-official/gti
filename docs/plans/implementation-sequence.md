@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.179.0
+Checkpoint: 0.180.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,25 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Transformed-callee calls in the failure form (0.180.0, ADR 017
+  slice 2).** A failure-form body may call a failure-capable GTI callee
+  through the callee's own transformed body: the call assigns a
+  per-call success bool, forwards the caller's record pointer unchanged,
+  publishes into the scalar result (or a typed discard), and the paired
+  `Invoke` branches on the success bool with no record write of its own.
+  Admission becomes a greatest fixpoint: locally supported bodies drop
+  out until every may-raise callee's transformed body is inside the set,
+  so mutual recursion survives and hosted-family callees (a different
+  spelling of the same convention) decline this slice. The first-family
+  fixture proves the protocol end to end — a caller chain whose leaf
+  overflow surfaces the leaf's own site through the caller's edge and
+  the boundary wrapper at exit 70 — and its behavioral check caught a
+  real miscompile during development (a stale result-assignment prefix
+  clobbering the out-parameter after the call returned). Corpus markers
+  hold at 880: the corpus's remaining failure-capable chains end in
+  fixed-array or ownership vocabulary, so this slice's corpus yield
+  arrives with those; the machinery is consumed and pinned by the
+  fixture chain today.
 - **Member bodies join the defined-failure boundary (0.179.0).** The
   per-body failure route admits ordinary non-operator members of one
   concrete non-generic class instantiation, mirroring the success route's

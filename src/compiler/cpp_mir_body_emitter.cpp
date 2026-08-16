@@ -1919,6 +1919,17 @@ public:
                    << instruction.id
                    << " = ::gti_internal::backend::mir_failure_success_v1;\n";
           }
+          if (instruction.kind == MirInstructionKind::Call &&
+              transformedCallee(instruction) != nullptr) {
+            writeIndent();
+            output << "bool __gti_mir_call_success_" << instruction.id
+                   << " = false;\n";
+            if (!instruction.result) {
+              writeIndent();
+              output << typeSpelling(transformedCallee(instruction)->returnType)
+                     << " __gti_mir_discard_" << instruction.id << "{};\n";
+            }
+          }
         }
       }
     }
@@ -2404,6 +2415,25 @@ private:
           "verified MIR direct call lost its exact target declaration or "
           "carries a receiver the scalar vocabulary cannot spell");
     }
+    if (failureForm && transformedCallee(instruction) != nullptr) {
+      // The callee's transformed body carries the derived name and writes
+      // the caller's record on failure; the paired Invoke branches on the
+      // success bool.
+      output << "__gti_mir_call_success_" << instruction.id << " = "
+             << bodySpelling(*instruction.functionTarget)
+             << "__gti_mir_failure(";
+      for (const MirOperand &operand : instruction.operands) {
+        emitOperand(operand);
+        output << ", ";
+      }
+      if (instruction.result) {
+        output << "&__gti_mir_v_" << *instruction.result;
+      } else {
+        output << "&__gti_mir_discard_" << instruction.id;
+      }
+      output << ", __gti_mir_failure_record);\n";
+      return;
+    }
     if (instruction.result) {
       output << "__gti_mir_v_" << *instruction.result << " = ";
     }
@@ -2476,6 +2506,16 @@ private:
           failureForm
               ? findInstruction(facts.body, terminator.invokeInstruction)
               : nullptr;
+      if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
+          transformedCallee(*producer) != nullptr) {
+        writeIndent();
+        output << "__gti_mir_bb = __gti_mir_call_success_" << producer->id
+               << " ? " << terminator.target << " : " << terminator.elseTarget
+               << ";\n";
+        writeIndent();
+        output << "continue;\n";
+        return;
+      }
       if (producer == nullptr ||
           producer->kind != MirInstructionKind::Compute ||
           cppMirCheckedOperationHelperSpelling(producer->operation).empty()) {
@@ -2596,6 +2636,23 @@ private:
       break;
     }
     throw std::logic_error("verified MIR scalar-CFG terminator is unsupported");
+  }
+
+  [[nodiscard]] const MirFunctionInstance *
+  transformedCallee(const MirInstruction &instruction) const {
+    if (instruction.kind != MirInstructionKind::Call ||
+        !instruction.functionTarget ||
+        instruction.intrinsic != IntrinsicKind::None) {
+      return nullptr;
+    }
+    const MirFunctionInstance *target =
+        program.findFunctionInstance(*instruction.functionTarget);
+    return target != nullptr && target->mayRaiseDefinedFailure &&
+                   target->linkage == LanguageLinkage::Gti &&
+                   target->definitionKind ==
+                       MirFunctionInstance::DefinitionKind::Source
+               ? target
+               : nullptr;
   }
 
   [[nodiscard]] static const MirInstruction *
@@ -3122,9 +3179,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.functionTarget
                   ? program_.findFunctionInstance(*instruction.functionTarget)
                   : nullptr;
-          if (instruction.functionTarget &&
-              (target == nullptr || target->mayRaiseDefinedFailure)) {
+          if (instruction.functionTarget && target == nullptr) {
             return false;
+          }
+          if (target != nullptr && target->mayRaiseDefinedFailure) {
+            // A failure-capable callee is reached through the transformed
+            // convention: the call publishes into a scalar result (or a
+            // typed discard) and forwards the caller's record pointer.
+            // Whether the callee's transformed body actually exists is the
+            // admission fixpoint's question, answered before any body from
+            // this program is selected.
+            const std::optional<CppMirTypeRepresentationKind> returnKind =
+                cppMirExpectedTypeRepresentation(target->returnType);
+            if (target->linkage != LanguageLinkage::Gti ||
+                target->definitionKind !=
+                    MirFunctionInstance::DefinitionKind::Source ||
+                !returnKind ||
+                *returnKind != CppMirTypeRepresentationKind::Scalar ||
+                !typeRow(target->returnType)) {
+              return false;
+            }
           }
         }
         if (instruction.intrinsic != IntrinsicKind::None) {
@@ -3167,16 +3241,30 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           block.terminator.elseTarget == 0) {
         return false;
       }
-      // The invoke's producer must be this block's checked detector so the
-      // status local and the record write are both spellable.
+      // The invoke's producer must be this block's checked detector (the
+      // status local and record write are spellable) or its transformed
+      // call (the callee wrote the record; the edge branches on the call's
+      // success bool).
       const MirInstruction *producer = nullptr;
       for (const MirInstruction &instruction : block.instructions) {
         if (instruction.id == block.terminator.invokeInstruction) {
           producer = &instruction;
         }
       }
-      if (producer == nullptr ||
-          producer->kind != MirInstructionKind::Compute ||
+      if (producer == nullptr) {
+        return false;
+      }
+      if (producer->kind == MirInstructionKind::Call) {
+        const MirFunctionInstance *target =
+            producer->functionTarget
+                ? program_.findFunctionInstance(*producer->functionTarget)
+                : nullptr;
+        if (target == nullptr || !target->mayRaiseDefinedFailure) {
+          return false;
+        }
+        continue;
+      }
+      if (producer->kind != MirInstructionKind::Compute ||
           cppMirCheckedOperationHelperSpelling(producer->operation).empty() ||
           producer->localFailureSites.size() != 1) {
         return false;
