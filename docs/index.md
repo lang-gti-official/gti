@@ -83,6 +83,7 @@ for the current implementation when a document is stale or ambiguous.
   CTAD.
 - [016: Single lowered backend input](decisions/016-single-lowered-backend-input.md)
 - [017: Per-body defined-failure boundary](decisions/017-per-body-defined-failure-boundary.md)
+- [018: Loan erasure representation](decisions/018-loan-erasure-representation.md)
   — converges executable C++ generation on one immutable lowered-program
   input (verified MIR bodies plus deterministic representation tables) and
   ends per-body AST/HIR consultation at the backend boundary.

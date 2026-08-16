@@ -1091,6 +1091,16 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Loan erasure representation ratified (ADR 018).** Loans erase to
+  typed pointers with deref-at-use inside lowered bodies and C++
+  references at ABI boundaries — the same lowering a production compiler
+  applies to references — with compile-proven endpoints emitting as
+  boundary comments and the Borrow capability row naming the contract
+  (`mir_loan_pointer_v1`). The measured pool splits 49 storage-free
+  failure-free bodies (slice 1), 31 storage-free checked bodies
+  (slice 2), and 100 storage-bound bodies sequenced behind
+  `P-STORAGE-01`. Success-edge loans cross the transformed failure ABI
+  as pointer out-parameters when a measured pool demands it.
 - **Member specializations for generic owners (0.184.0).** The
   specialization machinery extends to member functions of generic
   classes: each admitted concrete instance publishes as the explicit
