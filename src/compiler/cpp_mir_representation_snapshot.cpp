@@ -1675,6 +1675,20 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::DefinedFailure,
        .spelling = "mir_failure_status_v1"});
+  // Native interop names the artifact's shipped C-symbol surface: every
+  // `gti_rt_*` call a MIR body can emit targets a prototype the artifact
+  // declares (runtime/include/gti/runtime.h) and links from gti_runtime,
+  // spelled identically to compatibility emission through its body-name
+  // row. Intrinsic names the shipped `::gti_internal::backend` helper
+  // family the compatibility path lowers intrinsics through; the text
+  // vocabulary still declines any intrinsic call it cannot spell, so the
+  // row moves analysis honesty, not emission.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::NativeInterop,
+       .spelling = "gti_rt_c_symbols_v1"});
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::Intrinsic,
+       .spelling = "gti_internal_backend_helpers_v1"});
 
   // Executable per-instance field-initializer bodies carry their own name
   // row like every other executable body; the spelling is the owner scope

@@ -77,10 +77,11 @@ def main() -> int:
                 if emission.returncode != 0:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
-                if generated.count(marker) != 12:
+                if generated.count(marker) != 16:
                     sys.stderr.write(
-                        "generated C++ did not select exactly the twelve "
-                        "verified scalar MIR bodies\n"
+                        "generated C++ did not select exactly the sixteen "
+                        "verified scalar MIR bodies (twelve fixture bodies "
+                        "plus four native-calling prelude bodies)\n"
                     )
                     return 1
                 if "return ::gti_internal::backend::add(value, 1);" not in generated:

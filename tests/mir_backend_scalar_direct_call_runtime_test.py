@@ -35,6 +35,12 @@ SELECTED = (
     "scoped_leaf",
     "is_valid",
     "get",
+    # Native-calling prelude bodies admitted once the NativeInterop
+    # capability row named the shipped gti_rt_* C-symbol surface.
+    "write_stdout_byte",
+    "read_stdin_byte",
+    "read_file_byte",
+    "close_file",
     # Callers the old whole-graph contract had to reject even though their
     # own bodies are ordinary: their ineligible callees stay on the
     # compatibility path while the calls emit from verified MIR.

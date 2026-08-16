@@ -24,6 +24,12 @@ SELECTED = (
 STDLIB_SELECTED = (
     "is_valid",
     "get",
+    # Native-calling prelude bodies admitted once the NativeInterop
+    # capability row named the shipped gti_rt_* C-symbol surface.
+    "write_stdout_byte",
+    "read_stdin_byte",
+    "read_file_byte",
+    "close_file",
 )
 COMPATIBILITY = (
     "compatibility_checked",

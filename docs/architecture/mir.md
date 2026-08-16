@@ -107,7 +107,7 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v29`/`mir-body-v29`.
+The deterministic serialization is currently `mir-v30`/`mir-body-v30`.
 Version 20 introduced function-definition provenance and the first MIR-owned
 defined-failure effect summary. Each concrete function records
 `DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a

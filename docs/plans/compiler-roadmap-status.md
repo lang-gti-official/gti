@@ -5,7 +5,9 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.154.0
+Checkpoint version: 0.173.0 (last full ledger refresh at 0.154.0; the
+backend-authority campaign's per-release record lives in
+[`implementation-sequence.md`](implementation-sequence.md))
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable

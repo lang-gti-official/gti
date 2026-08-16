@@ -173,7 +173,8 @@ generic emitter replaces that single whole-program route.
   mutable, and mutable scalar globals spell through storage rows for loads
   and stores alike. A destructor with checked operations, or any body
   outside the vocabulary, declines to compatibility emission per body. The family also admits calls per body: an eligible call names a
-  static proved-failure-free source free function through the exact ordered
+  static proved-failure-free source-defined or runtime-binding free
+  function through the exact ordered
   `CallInput`/`Call` stages, the HIR gate consults the MIR failure summary so
   a may-raise or conservatively-true target declines gracefully, and the
   callee's own body authority is decided independently. The closed-graph

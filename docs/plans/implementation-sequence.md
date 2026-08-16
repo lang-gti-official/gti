@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.172.0
+Checkpoint: 0.173.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,24 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **NativeInterop and Intrinsic capability rows shipped (0.173.0).** The
+  backend boundary now names the two shipped helper surfaces the analysis
+  was withholding: `gti_rt_c_symbols_v1` (the runtime's C prototypes,
+  declared by every emitted artifact and linked from gti_runtime) and
+  `gti_internal_backend_helpers_v1` (the intrinsic lowering family). The
+  honesty survey found exactly four native symbols emitted inside MIR
+  bodies across the corpus (`gti_rt_write_stdout_byte`,
+  `gti_rt_read_stdin_byte`, `gti_rt_read_file_byte`, `gti_rt_close_file`),
+  each spelled through its body-name row byte-identically to compatibility
+  emission; no intrinsic body emits because the text vocabulary declines
+  what it cannot spell. Yield measured by the body census: general
+  admission 186 -> 881 bodies and production corpus markers 157 -> 385,
+  with the differential oracle and full native sweep green. The census
+  also established the remaining large buckets: 362 Ready function bodies
+  blocked on the failure-record ABI, 266 on deeper capabilities, and the
+  initializer/module kinds are mostly empty Exit-terminated skeletons
+  (137 non-empty field-initializer bodies) whose authority migration is a
+  representation change, not a body-text slice.
 - **Class-default-cleanup destructor route dissolved (0.172.0).** The
   general emitter admits `MirBodyKind::Destructor` bodies: the probe and
   text step share one body-facts projection (a destructor has no
