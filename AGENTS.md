@@ -44,6 +44,27 @@ one-off implementation-note or redesign files when an existing category fits.
    planned behavior as current.
 6. Keep generated, vendored, and unrelated user files out of task diffs.
 
+## Release Channels And VERSION
+
+Two channels publish this repository, and they answer different questions.
+
+- **Nightly** republishes one rolling `nightly` release per commit on `main`.
+  It is automatic, replaces its own assets, and needs no `VERSION` change.
+  Every merged commit reaches users through this channel.
+- **Stable** publishes `v<VERSION>` when `VERSION` changes. It is the channel
+  someone pins to.
+
+Advance `VERSION` only when a user of the toolchain would observe the change:
+language surface, CLI or driver behavior, diagnostics they would see, packaged
+contents, or a fix to any of those. Bump the patch component for a fix and the
+minor component for new or changed surface.
+
+Do **not** advance `VERSION` for work that is invisible from outside the
+toolchain, including internal refactors, moving authority between compiler
+phases, added tests, documentation, or plan updates. Nightly already delivers
+that work. A commit that changes no user-visible behavior should leave
+`VERSION` alone, and most commits during an internal campaign will.
+
 ## Outcome Priority
 
 - Substantial compiler, language, runtime, or library work must name the

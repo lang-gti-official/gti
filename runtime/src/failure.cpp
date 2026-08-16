@@ -340,16 +340,6 @@ bool writeFailureCode(ReportOutput &output, gti_failure_code_v1 code) {
   return output.bytes(value, sizeof(value) - 1);
 }
 
-bool writeIdentity(ReportOutput &output, const std::uint8_t identity[32]) {
-  constexpr char hex[] = "0123456789abcdef";
-  char encoded[64];
-  for (std::size_t index = 0; index < 32; ++index) {
-    encoded[index * 2] = hex[identity[index] >> 4];
-    encoded[index * 2 + 1] = hex[identity[index] & 0x0F];
-  }
-  return output.bytes(encoded, sizeof(encoded));
-}
-
 void writeEscapedByte(ReportOutput &output, std::uint8_t byte) {
   constexpr char hex[] = "0123456789ABCDEF";
   const char escaped[] = {'\\', 'x', hex[byte >> 4], hex[byte & 0x0F]};
@@ -448,39 +438,40 @@ bool writeEscapedSource(ReportOutput &output, gti_c_string_view source) {
   return output.valid;
 }
 
-bool writeLocation(ReportOutput &output, const ResolvedFailure &failure) {
-  if (!writeIdentity(output, failure.record->artifact_identity) ||
-      !output.literal(" at \"")) {
-    return false;
-  }
+// `<source>:<line>`, matching the compiler diagnostic prefix. The runtime has
+// no column: a site descriptor carries only a line and a byte range, and
+// deriving a column would require reading the source, which the reporting path
+// cannot do. It allocates nothing, opens nothing, and writes one line.
+bool writeSourceLocation(ReportOutput &output, const ResolvedFailure &failure) {
   if (failure.runtimeSite) {
-    return output.literal("<runtime>\":0@0..0");
+    return output.literal("<runtime>:0");
   }
   return writeEscapedSource(output, failure.site->logical_source) &&
-         output.literal("\":") && writeUnsigned(output, failure.site->line) &&
-         output.literal("@") && writeUnsigned(output, failure.site->start) &&
-         output.literal("..") && writeUnsigned(output, failure.site->end);
+         output.literal(":") && writeUnsigned(output, failure.site->line);
+}
+
+bool writeSourcePrefix(ReportOutput &output, const ResolvedFailure &failure) {
+  return writeSourceLocation(output, failure) && output.literal(": ");
 }
 
 bool writeOrdinaryReport(ReportOutput &output, const ResolvedFailure &failure) {
-  return output.literal("GTI runtime failure [") &&
+  return writeSourcePrefix(output, failure) &&
+         output.literal("runtime error[") &&
          writeFailureCode(output, failure.record->code) &&
-         output.literal("] ") &&
+         output.literal("]: ") &&
          output.text(kFailureCategories[failure.record->code]) &&
-         output.literal(" in ") && writeLocation(output, failure) &&
-         output.literal(": ") &&
+         output.literal(" in ") &&
          output.text(kFailureDetails[failure.record->detail]) &&
          output.literal("\n");
 }
 
 bool writeCleanupReport(ReportOutput &output, const ResolvedFailure &primary,
                         const ResolvedFailure &secondary) {
-  return output.literal("GTI runtime failure [GTI-R0014] ") &&
-         output.literal("failure_during_cleanup in ") &&
-         writeLocation(output, secondary) &&
-         output.literal(": failure during cleanup; primary [") &&
+  return writeSourcePrefix(output, secondary) &&
+         output.literal("runtime error[GTI-R0014]: failure_during_cleanup; "
+                        "primary [") &&
          writeFailureCode(output, primary.record->code) &&
-         output.literal("] in ") && writeLocation(output, primary) &&
+         output.literal("] at ") && writeSourceLocation(output, primary) &&
          output.literal("; secondary [") &&
          writeFailureCode(output, secondary.record->code) &&
          output.literal("]\n");

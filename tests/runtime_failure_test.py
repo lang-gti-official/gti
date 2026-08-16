@@ -10,15 +10,10 @@ def identity(seed: int) -> bytes:
     return b"".join(f"{(seed + index) & 0xFF:02x}".encode() for index in range(32))
 
 
-ORDINARY = (
-    b"GTI runtime failure [GTI-R0001] integer_overflow in "
-    + identity(1)
-    + b' at "unit.gti":7@12..19: addition\n'
-)
+ORDINARY = b"unit.gti:7: runtime error[GTI-R0001]: integer_overflow in addition\n"
 RUNTIME = (
-    b"GTI runtime failure [GTI-R0011] allocation_failure in "
-    + b"0" * 64
-    + b' at "<runtime>":0@0..0: hosted_arguments\n'
+    b"<runtime>:0: runtime error[GTI-R0011]: "
+    b"allocation_failure in hosted_arguments\n"
 )
 UNICODE_SOURCE = (
     b'A \\"\\\\\\t\\r\\n'
@@ -29,29 +24,20 @@ UNICODE_SOURCE = (
     + b"\\xC0\\xAF\\xE2\\x00"
 )
 UNICODE = (
-    b"GTI runtime failure [GTI-R0007] index_out_of_bounds in "
-    + identity(0x40)
-    + b' at "'
-    + UNICODE_SOURCE
-    + b'":9@21..23: string\n'
+    UNICODE_SOURCE
+    + b":9: runtime error[GTI-R0007]: index_out_of_bounds in string\n"
 )
 CLEANUP = (
-    b"GTI runtime failure [GTI-R0014] failure_during_cleanup in "
-    + identity(0x80)
-    + b' at "cleanup.gti":11@31..32: failure during cleanup; primary '
-    + b"[GTI-R0001] in "
-    + identity(1)
-    + b' at "unit.gti":7@12..19; secondary [GTI-R0002]\n'
+    b"cleanup.gti:11: runtime error[GTI-R0014]: failure_during_cleanup; "
+    b"primary [GTI-R0001] at unit.gti:7; secondary [GTI-R0002]\n"
 )
 OTHER = (
-    b"GTI runtime failure [GTI-R0003] modulo_by_zero in "
-    + identity(0xA0)
-    + b' at "other.gti":13@41..42: integer_modulo\n'
+    b"other.gti:13: runtime error[GTI-R0003]: "
+    b"modulo_by_zero in integer_modulo\n"
 )
 CANONICAL_OUTCOMES = (
-    b"GTI runtime failure [GTI-R0001] integer_overflow in "
-    + identity(1)
-    + b' at "unit.gti":7@12..19: multiplication\n'
+    b"unit.gti:7: runtime error[GTI-R0001]: "
+    b"integer_overflow in multiplication\n"
 )
 
 

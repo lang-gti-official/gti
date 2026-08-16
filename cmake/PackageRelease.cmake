@@ -7,13 +7,34 @@ foreach(required_variable
   endif()
 endforeach()
 
+if(NOT DEFINED GTI_CHANNEL OR "${GTI_CHANNEL}" STREQUAL "")
+  set(GTI_CHANNEL "stable")
+endif()
+if(NOT GTI_CHANNEL STREQUAL "stable" AND NOT GTI_CHANNEL STREQUAL "nightly")
+  message(FATAL_ERROR "GTI_CHANNEL must be stable or nightly")
+endif()
+
 file(STRINGS "${GTI_SOURCE_DIR}/VERSION" GTI_VERSION LIMIT_COUNT 1)
 if(NOT GTI_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "VERSION does not contain a valid semantic version")
 endif()
 
-if(DEFINED GTI_EXPECTED_TAG AND
-   NOT GTI_EXPECTED_TAG STREQUAL "v${GTI_VERSION}")
+# A nightly archive is named for its channel rather than its version: the
+# channel republishes one release per commit, so its tag never matches VERSION.
+# Consumers tell nightly builds apart by BUILD_ID, not by VERSION.
+if(GTI_CHANNEL STREQUAL "nightly")
+  if(NOT DEFINED GTI_BUILD_ID OR "${GTI_BUILD_ID}" STREQUAL "")
+    message(FATAL_ERROR "GTI_BUILD_ID is required for the nightly channel")
+  endif()
+  if(NOT GTI_BUILD_ID MATCHES "^[0-9a-fA-F]+$")
+    message(FATAL_ERROR "GTI_BUILD_ID must be a commit identity")
+  endif()
+  if(DEFINED GTI_EXPECTED_TAG AND NOT GTI_EXPECTED_TAG STREQUAL "nightly")
+    message(FATAL_ERROR
+            "Nightly tag ${GTI_EXPECTED_TAG} must be nightly")
+  endif()
+elseif(DEFINED GTI_EXPECTED_TAG AND
+       NOT GTI_EXPECTED_TAG STREQUAL "v${GTI_VERSION}")
   message(FATAL_ERROR
           "Release tag ${GTI_EXPECTED_TAG} does not match VERSION ${GTI_VERSION}")
 endif()
@@ -52,8 +73,19 @@ foreach(required_file
   endif()
 endforeach()
 
+# Stamp the build identity into the staged toolchain before archiving. On the
+# nightly channel VERSION does not change between builds, so this is the only
+# fact an installed toolchain can compare to decide whether it is current.
+if(GTI_CHANNEL STREQUAL "nightly")
+  file(WRITE "${GTI_STAGE_DIR}/share/gti/BUILD_ID" "${GTI_BUILD_ID}\n")
+endif()
+
 file(MAKE_DIRECTORY "${GTI_OUTPUT_DIR}")
-set(GTI_ARCHIVE_NAME "gti-v${GTI_VERSION}-${GTI_PLATFORM}.tar.gz")
+if(GTI_CHANNEL STREQUAL "nightly")
+  set(GTI_ARCHIVE_NAME "gti-nightly-${GTI_PLATFORM}.tar.gz")
+else()
+  set(GTI_ARCHIVE_NAME "gti-v${GTI_VERSION}-${GTI_PLATFORM}.tar.gz")
+endif()
 set(GTI_ARCHIVE_PATH "${GTI_OUTPUT_DIR}/${GTI_ARCHIVE_NAME}")
 
 execute_process(

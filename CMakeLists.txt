@@ -675,6 +675,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_release_version.py"
     )
     add_test(
+      NAME tree_sitter_queries
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/tree_sitter_query_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tree-sitter-gti/src/node-types.json"
+              "${CMAKE_CURRENT_SOURCE_DIR}/queries/gti"
+    )
+    add_test(
       NAME output_determinism
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/determinism_test.py"

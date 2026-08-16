@@ -2271,9 +2271,8 @@ def main():
                     hosted_arithmetic_failures[name]
                 )
                 report = re.fullmatch(
-                    rf'GTI runtime failure \[{code}\] {category} in '
-                    rf'[0-9a-f]{{64}} at "{re.escape(failure_path.name)}":'
-                    rf"{line}@{start}\.\.{end}: {detail}\n",
+                    rf"{re.escape(failure_path.name)}:{line}: "
+                    rf"runtime error\[{code}\]: {category} in {detail}\n",
                     failure.stderr,
                 )
                 assert failure.returncode == 70
@@ -2378,9 +2377,8 @@ def main():
                 assert failure.returncode == 70
                 assert failure.stdout == ""
                 assert re.fullmatch(
-                    rf'GTI runtime failure \[{code}\] {category} in '
-                    rf'[0-9a-f]{{64}} at "{re.escape(failure_path.name)}":'
-                    rf"{line}@{start}\.\.{end}: {detail}\n",
+                    rf"{re.escape(failure_path.name)}:{line}: "
+                    rf"runtime error\[{code}\]: {category} in {detail}\n",
                     failure.stderr,
                 ), f"{name} produced unexpected hosted report: {failure.stderr}"
             else:
@@ -2413,9 +2411,8 @@ def main():
         assert modulo_failure.returncode == 70
         assert modulo_failure.stdout == ""
         assert re.fullmatch(
-            r"GTI runtime failure \[GTI-R0003\] modulo_by_zero in "
-            r'[0-9a-f]{64} at "modulo-zero\.gti":1@50\.\.51: '
-            r"integer_modulo\n",
+            r"modulo-zero\.gti:1: runtime error\[GTI-R0003\]: "
+            r"modulo_by_zero in integer_modulo\n",
             modulo_failure.stderr,
         )
 
@@ -2443,8 +2440,8 @@ def main():
         assert shift_failure.returncode == 70
         assert shift_failure.stdout == ""
         assert re.fullmatch(
-            r"GTI runtime failure \[GTI-R0005\] shift_count_out_of_range in "
-            r'[0-9a-f]{64} at "shift-count\.gti":1@47\.\.49: right_shift\n',
+            r"shift-count\.gti:1: runtime error\[GTI-R0005\]: "
+            r"shift_count_out_of_range in right_shift\n",
             shift_failure.stderr,
         )
 
