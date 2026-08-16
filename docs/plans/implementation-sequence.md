@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.188.0
+Checkpoint: 0.189.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,26 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Initializer bodies join general MIR emission: field and static
+  slices (0.189.0).** A concrete class whose verified
+  field-initializer body is passive — one straight-line block ending in
+  Exit whose only work is literal materialization, bare
+  default-initialization, and lifecycle boundaries — hands its in-class
+  initializer spelling to the general route: staged literals spell from
+  the MIR schedule through the shared range-asserting literal writer,
+  bare defaults spell no initializer text, and the class publishes a
+  field-initializers-instance marker after its definition. The
+  verified-empty static-field-initializers body publishes its own
+  marker. Fail-closed declines keep every other shape with
+  compatibility: checked detectors (the in-class negative-literal
+  initializers), storage reads, generic owners (template text is
+  instance-shared), C-ABI records and unions (token-equivalence with
+  the bridge header), and unsupported literal representations — the
+  raw-pointer literal initially threw instead of declining, caught by
+  the suite. Corpus markers 1072 -> 1261 (65 field + 124 static
+  initializer bodies) with byte-identical stdout and exit codes; the
+  Module bodies and checked field initializers remain for the next
+  slice of this row.
 - **Constructor bodies join general MIR emission, success form
   (0.188.0).** A constructor projects onto the shared scalar body facts
   like a mutable-receiver member — its receiver is inherently mutable

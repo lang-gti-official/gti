@@ -1257,11 +1257,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     const ClassLifecycleInfo *enclosingLifecycle = currentClassLifecycle;
     const ClassDecl *enclosingClass = currentClass;
     const AccessModifier enclosingAccess = currentClassAccess;
+    const std::optional<GeneralClassInitializerSelection>
+        enclosingInitializers = std::move(currentClassGeneralInitializers);
     currentClass = &stmt;
     currentClassAccess = stmt.kind() == ClassKind::Class
                              ? AccessModifier::Private
                              : AccessModifier::Public;
     currentClassLifecycle = semantics.findClassLifecycle(stmt);
+    currentClassGeneralInitializers = selectedMirGeneralClassInitializers(stmt);
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     output << (stmt.kind() == ClassKind::Struct  ? "struct "
@@ -1301,6 +1304,23 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     --indentation;
     writeIndent();
     output << "};\n";
+    if (currentClassGeneralInitializers) {
+      // The initializer bodies' markers follow the definition they own:
+      // the in-class field initializer spellings above came from the
+      // verified schedule, and the static body is verified empty.
+      if (currentClassGeneralInitializers->fieldsSupported) {
+        writeIndent();
+        output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                  "field-initializers-instance "
+               << currentClassGeneralInitializers->instance << "\n";
+      }
+      if (currentClassGeneralInitializers->staticsVerifiedEmpty) {
+        writeIndent();
+        output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                  "static-field-initializers-instance "
+               << currentClassGeneralInitializers->instance << "\n";
+      }
+    }
     if (!stmt.genericParameters().empty()) {
       // An explicit member specialization must be declared before the
       // first use instantiates the member; the definitions follow with
@@ -1324,6 +1344,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     currentClassLifecycle = enclosingLifecycle;
     currentClass = enclosingClass;
     currentClassAccess = enclosingAccess;
+    currentClassGeneralInitializers = std::move(enclosingInitializers);
   }
 
   void visitConditionalStmt(const ConditionalStmt &stmt) override {
@@ -7030,6 +7051,67 @@ private:
     return lowered;
   }
 
+  // The current concrete class's verified initializer schedules: in-class
+  // field initializer spellings keyed by the field's storage symbol, plus
+  // the verified-empty static-initializer fact.
+  struct GeneralClassInitializerSelection {
+    HirClassInstanceId instance = 0;
+    bool fieldsSupported = false;
+    bool staticsVerifiedEmpty = false;
+    std::unordered_map<SymbolId, std::string> fields;
+  };
+
+  // General initializer-body selection (task: FieldInitializers and
+  // StaticFieldInitializers). A concrete class whose verified initializer
+  // bodies are passive hands their in-class initializer spelling to the
+  // general route; the C-ABI record and union definitions must stay
+  // token-equivalent to their bridge-header branches and keep the
+  // compatibility spelling.
+  [[nodiscard]] std::optional<GeneralClassInitializerSelection>
+  selectedMirGeneralClassInitializers(const ClassDecl &declaration) const {
+    if (mir == nullptr || !generalEmissionMap ||
+        !declaration.genericParameters().empty() ||
+        declaration.kind() == ClassKind::Union) {
+      return std::nullopt;
+    }
+    const ClassTypeInfo *info = semantics.findClassType(declaration);
+    if (info == nullptr || info->id == 0 || info->cAbiRecord) {
+      return std::nullopt;
+    }
+    const MirClassInstance *selected = nullptr;
+    for (const MirClassInstance &candidate : mir->classInstances()) {
+      if (candidate.declaration != info->id) {
+        continue;
+      }
+      if (selected != nullptr) {
+        return std::nullopt;
+      }
+      selected = &candidate;
+    }
+    if (selected == nullptr || !selected->type.arguments.empty() ||
+        !selected->type.valueArguments.empty()) {
+      return std::nullopt;
+    }
+    const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
+    GeneralClassInitializerSelection result;
+    result.instance = selected->id;
+    const CppMirInitializerScheduleText fields = emitter.initializerSchedule(
+        {.kind = MirBodyKind::FieldInitializers, .owner = selected->id});
+    if (fields.supported) {
+      result.fieldsSupported = true;
+      for (const CppMirFieldInitializerSpelling &field : fields.fields) {
+        result.fields.emplace(field.field, field.spelling);
+      }
+    }
+    const CppMirInitializerScheduleText statics = emitter.initializerSchedule(
+        {.kind = MirBodyKind::StaticFieldInitializers, .owner = selected->id});
+    result.staticsVerifiedEmpty = statics.supported && statics.fields.empty();
+    if (!result.fieldsSupported && !result.staticsVerifiedEmpty) {
+      return std::nullopt;
+    }
+    return result;
+  }
+
   // General per-body constructor selection (success form). A constructor is
   // selected when its verified body is inside the general vocabulary, the
   // family routes have not claimed it, and the owner is one concrete class
@@ -12591,6 +12673,24 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitVariableInitializer(const VariableDecl &variable) {
+    // A non-static field of a class whose verified field-initializer body
+    // the general route owns spells its in-class initializer from MIR: the
+    // staged literal, or no initializer text for the bare default.
+    // Constexpr fields stay frontend-evaluated.
+    if (emittingField && !variable.isStatic() && !variable.isConstexpr() &&
+        currentClassGeneralInitializers &&
+        currentClassGeneralInitializers->fieldsSupported) {
+      if (const BindingInfo *binding = semantics.findBinding(variable);
+          binding != nullptr && binding->symbol != 0) {
+        const auto field =
+            currentClassGeneralInitializers->fields.find(binding->symbol);
+        if (field != currentClassGeneralInitializers->fields.end() &&
+            !field->second.empty()) {
+          output << " = " << field->second;
+        }
+        return;
+      }
+    }
     if (variable.isConstexpr()) {
       if (const BindingInfo *binding = semantics.findBinding(variable);
           binding != nullptr && binding->constant) {
@@ -13486,6 +13586,8 @@ namespace gti_internal::backend {
       generalDtorAdmitted;
   mutable std::optional<std::unordered_set<HirConstructorInstanceId>>
       generalCtorAdmitted;
+  std::optional<GeneralClassInitializerSelection>
+      currentClassGeneralInitializers;
   mutable std::optional<std::unordered_set<HirFunctionInstanceId>>
       generalFailureAdmitted;
   std::size_t payloadSwitchCounter = 0;

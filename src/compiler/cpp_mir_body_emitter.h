@@ -306,6 +306,26 @@ struct CppMirBodyEmissionText {
   }
 };
 
+// One field-initializer stage of a passive initializer body: the field's
+// storage symbol and the spelled literal value, or an empty spelling for the
+// bare default (no in-class initializer text).
+struct CppMirFieldInitializerSpelling {
+  SymbolId field = 0;
+  std::string spelling;
+};
+
+// The extracted schedule of a passive FieldInitializers,
+// StaticFieldInitializers, or Module body: one straight-line block ending in
+// Exit whose only work is literal materialization and per-field Initialize
+// stages. `supported` is false for any other shape (checked detectors,
+// storage reads, cross-field references), which stays with the
+// compatibility route.
+struct CppMirInitializerScheduleText {
+  CppMirBodyEmissionAnalysis analysis;
+  bool supported = false;
+  std::vector<CppMirFieldInitializerSpelling> fields;
+};
+
 // Fail-closed generic body-emission front gate and general per-instance text
 // step (ADR 016). This class deliberately has no Program, AST, HirBody,
 // SemanticModel, or OptimizationResult input: analysis checks MIR against the
@@ -355,6 +375,12 @@ public:
   [[nodiscard]] CppMirBodyEmissionText
   emitFailureBodyText(MirBodyAddress address, std::string_view familyLabel,
                       std::size_t indentation) const;
+
+  // Extracts the passive initializer schedule of a FieldInitializers,
+  // StaticFieldInitializers, or Module body so the emission site can spell
+  // in-class initializers (and verified-empty markers) from MIR.
+  [[nodiscard]] CppMirInitializerScheduleText
+  initializerSchedule(MirBodyAddress address) const;
 
 private:
   [[nodiscard]] bool supportsBodyTextImpl(MirBodyAddress address,

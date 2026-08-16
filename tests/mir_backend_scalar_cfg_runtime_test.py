@@ -79,10 +79,12 @@ def function_definition(generated: str, source_name: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    if generated.count(MARKER) != len(SELECTED) + len(STDLIB_SELECTED):
+    # The prelude's verified-empty static-field-initializer marker joins
+    # the named function bodies (the initializer slice).
+    if generated.count(MARKER) != len(SELECTED) + len(STDLIB_SELECTED) + 1:
         sys.stderr.write(
             f"{optimization}/{standard} did not select exactly the verified "
-            "scalar CFG MIR bodies\n"
+            "scalar CFG MIR bodies plus the initializer marker\n"
         )
         return False
     for name in SELECTED + STDLIB_SELECTED:

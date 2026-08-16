@@ -590,9 +590,16 @@ int main() {
                  std::string::npos,
          "the concrete constructor should spell its verified initializer "
          "schedule inside the body from general MIR emission");
-  expect(count(artifact.contents, marker) == 7,
-         "exactly the six eligible member bodies plus the constructor "
-         "should carry the family marker");
+  expect(artifact.contents.find("scalar-cfg-v1 field-initializers-instance") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "scalar-cfg-v1 static-field-initializers-instance") !=
+                 std::string::npos,
+         "the concrete class's passive initializer bodies should publish "
+         "their verified schedule and verified-empty markers");
+  expect(count(artifact.contents, marker) == 9,
+         "exactly the six eligible member bodies, the constructor, and the "
+         "two initializer bodies should carry the family marker");
 }
 
 // A member access whose object is a local binding rather than `this` reads

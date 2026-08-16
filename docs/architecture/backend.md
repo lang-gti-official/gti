@@ -266,7 +266,13 @@ generic emitter replaces that single whole-program route.
   no member-initializer list; selection requires a concrete, base-free,
   non-generic owner whose in-class field initializers are
   observation-free, keeps family precedence, and leaves
-  failure-capable construction with the rollback machinery. A generic free function keeps its compatibility
+  failure-capable construction with the rollback machinery. Passive
+  initializer bodies emit through the initializer-schedule surface: a
+  concrete class's field-initializer literals spell from MIR into the
+  in-class initializers (bare defaults spell no text) and the class
+  publishes field- and static-field-initializer markers after its
+  definition; checked, storage-reading, generic-owner, C-ABI, and
+  union shapes decline to compatibility. A generic free function keeps its compatibility
   template while every admitted concrete instance publishes per instance
   as an explicit specialization (success form) or a transformed overload
   plus specialization wrapper (failure form), forward-declared beside the

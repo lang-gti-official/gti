@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 
@@ -1908,6 +1909,33 @@ public:
                         .parameterBindings = emptyParameterBindings(),
                         .receiverMutability = ReceiverMutability::Mutable},
         familyLabel);
+  }
+
+  // Spells one literal value through the shared literal writer so the
+  // initializer-schedule surface reuses the exact range assertions and type
+  // spellings of the body text step.
+  [[nodiscard]] std::string literalSpelling(const Literal &literal,
+                                            const SemanticType &type) {
+    output.str("");
+    emitLiteral(literal, type);
+    return output.str();
+  }
+
+  // Mirrors emitLiteral's dispatch without throwing, so a probing caller
+  // can decline unsupported literal representations fail-closed.
+  [[nodiscard]] static bool spellableLiteral(const Literal &literal,
+                                             const SemanticType &type) {
+    if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
+      return integerFitsType(*integer, type);
+    }
+    if (std::holds_alternative<CharacterLiteral>(literal) ||
+        std::holds_alternative<bool>(literal)) {
+      return true;
+    }
+    if (std::holds_alternative<std::string>(literal)) {
+      return type.kind == SemanticType::StringView;
+    }
+    return false;
   }
 
   [[nodiscard]] std::string emit(const MirConstructorInstance &constructor,
@@ -4156,6 +4184,96 @@ CppMirBodyEmitter::emitFailureBodyText(MirBodyAddress address,
   result.text =
       ScalarBodyTextEmitter(program_, representations_, indentation, true)
           .emit(*function, familyLabel);
+  return result;
+}
+
+CppMirInitializerScheduleText
+CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
+  CppMirInitializerScheduleText result;
+  result.analysis = analyze(address);
+  if (!result.analysis.ready()) {
+    return result;
+  }
+  const MirBody *body = nullptr;
+  switch (address.kind) {
+  case MirBodyKind::FieldInitializers:
+  case MirBodyKind::StaticFieldInitializers: {
+    const MirClassInstance *owner = program_.findClassInstance(address.owner);
+    if (owner == nullptr) {
+      return result;
+    }
+    body = address.kind == MirBodyKind::FieldInitializers
+               ? &owner->fieldInitializers
+               : &owner->staticFieldInitializers;
+    break;
+  }
+  case MirBodyKind::Module:
+    body = &program_.module();
+    break;
+  default:
+    return result;
+  }
+  // The passive schedule is one straight-line block ending in Exit whose
+  // only work is literal materialization, per-field Initialize stages, and
+  // lifecycle boundaries. Checked detectors, storage reads, and every other
+  // shape stay with the compatibility route.
+  if (body->blocks.size() != 1 || body->entry != 1 ||
+      body->blocks.front().terminator.kind != MirTerminatorKind::Exit ||
+      !body->loans.empty() || !body->dropObligations.empty() ||
+      !body->cleanupBoundaries.empty() || !body->failureRecords.empty()) {
+    return result;
+  }
+  ScalarBodyTextEmitter writer(program_, representations_, 0);
+  std::unordered_map<MirValueId, const MirInstruction *> literals;
+  for (const MirInstruction &instruction : body->blocks.front().instructions) {
+    switch (instruction.kind) {
+    case MirInstructionKind::Lifecycle:
+      continue;
+    case MirInstructionKind::Compute:
+      if (instruction.operation != MirOperation::Literal ||
+          !instruction.result || !instruction.literal ||
+          !instruction.operands.empty() ||
+          !instruction.localFailureSites.empty() ||
+          !ScalarBodyTextEmitter::spellableLiteral(*instruction.literal,
+                                                   instruction.info.type)) {
+        return result;
+      }
+      literals.emplace(*instruction.result, &instruction);
+      continue;
+    case MirInstructionKind::Initialize: {
+      const MirPlace *destination =
+          instruction.destination ? body->findPlace(*instruction.destination)
+                                  : nullptr;
+      if (destination == nullptr ||
+          destination->root != MirPlaceRootKind::Binding ||
+          !destination->projections.empty() || destination->symbol == 0 ||
+          !instruction.localFailureSites.empty() ||
+          instruction.operands.size() > 1) {
+        return result;
+      }
+      if (instruction.operands.empty()) {
+        // The bare default: the field carries no in-class initializer text.
+        result.fields.push_back({.field = destination->symbol});
+        continue;
+      }
+      const MirOperand &operand = instruction.operands.front();
+      const auto literal = operand.kind == MirOperandKind::Value
+                               ? literals.find(operand.value)
+                               : literals.end();
+      if (literal == literals.end()) {
+        return result;
+      }
+      result.fields.push_back(
+          {.field = destination->symbol,
+           .spelling = writer.literalSpelling(*literal->second->literal,
+                                              literal->second->info.type)});
+      continue;
+    }
+    default:
+      return result;
+    }
+  }
+  result.supported = true;
   return result;
 }
 

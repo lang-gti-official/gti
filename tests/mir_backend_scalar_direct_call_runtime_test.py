@@ -100,10 +100,12 @@ def function_definition(generated: str, source_name: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    if generated.count(MARKER) != len(SELECTED):
+    # Three verified initializer-body markers (the prelude's static
+    # marker and the fixture classes') join the named function bodies.
+    if generated.count(MARKER) != len(SELECTED) + 3:
         sys.stderr.write(
             f"{optimization}/{standard} did not select exactly the verified "
-            "scalar MIR bodies\n"
+            "scalar MIR bodies plus the initializer markers\n"
         )
         return False
     for name in SELECTED:
