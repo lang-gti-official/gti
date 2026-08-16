@@ -7,17 +7,25 @@ import sys
 import tempfile
 
 
-FUNCTION_MARKER = (
-    "// GTI verified-MIR body: class-default-cleanup-v1 function-instance "
-)
+# The function route dissolved into analysis-driven per-body admission:
+# selected_default_cleanup now publishes under the general route's label
+# while keeping the exact lifetime-slot text contract below.
+FUNCTION_MARKER = "// GTI verified-MIR body: scalar-cfg-v1 function-instance "
 DESTRUCTOR_MARKER = (
     "// GTI verified-MIR body: class-default-cleanup-v1 destructor-instance "
 )
-COMPATIBILITY_FUNCTIONS = (
+# Bodies the old whole-family contract had to reject even though their own
+# lifetimes are ordinary: per-body admission emits them through the same
+# slot vocabulary (a declared zero-argument constructor still runs through
+# `.construct()`, and scoped or conditional lifetimes carry their verified
+# MIR drops).
+MIGRATED_FUNCTIONS = (
     "compatibility_declared_constructor",
     "compatibility_field_owner",
     "compatibility_nested_scope",
     "compatibility_branch",
+)
+COMPATIBILITY_FUNCTIONS = (
     "compatibility_checked_cleanup",
 )
 COMPATIBILITY_DESTRUCTORS = (
@@ -76,9 +84,6 @@ def selected_slot(body: str, class_name: str) -> str | None:
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
     mode = f"{optimization}/{standard}"
-    if generated.count(FUNCTION_MARKER) != 1:
-        sys.stderr.write(f"{mode} did not select exactly one cleanup function\n")
-        return False
     if generated.count(DESTRUCTOR_MARKER) != 2:
         sys.stderr.write(f"{mode} did not select exactly two cleanup destructors\n")
         return False
@@ -118,8 +123,18 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
                 f"{mode} did not emit {class_name}'s lifecycle helper from MIR\n"
             )
             return False
+    for name in MIGRATED_FUNCTIONS:
+        body = function_definition(generated, name)
+        if FUNCTION_MARKER not in body or ".construct()" not in body or \
+                ".destroy()" not in body:
+            sys.stderr.write(
+                f"{mode} did not emit migrated {name} through the slot "
+                "vocabulary\n"
+            )
+            return False
     for name in COMPATIBILITY_FUNCTIONS:
-        if FUNCTION_MARKER in function_definition(generated, name):
+        body = function_definition(generated, name)
+        if ".construct()" in body or ".destroy()" in body:
             sys.stderr.write(f"{mode} selected ineligible function {name}\n")
             return False
     for name in COMPATIBILITY_DESTRUCTORS:

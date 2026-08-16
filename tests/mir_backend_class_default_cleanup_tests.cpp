@@ -17,8 +17,11 @@
 
 namespace {
 
+// The function route dissolved into analysis-driven per-body admission:
+// slot-vocabulary bodies publish under the general route's label while the
+// destructor-definition route keeps the family label below.
 constexpr std::string_view functionMarker =
-    "// GTI verified-MIR body: class-default-cleanup-v1 function-instance ";
+    "// GTI verified-MIR body: scalar-cfg-v1 function-instance ";
 constexpr std::string_view destructorMarker =
     "// GTI verified-MIR body: class-default-cleanup-v1 destructor-instance ";
 int failures = 0;
@@ -251,8 +254,6 @@ bool destructorIsBounded(const lang::MirDestructorInstance *destructor) {
 }
 
 void expectSelectedDefinitions(std::string_view generated) {
-  expect(count(generated, functionMarker) == 1,
-         "exactly one bounded class-local function should be MIR-emitted");
   expect(count(generated, destructorMarker) == 2,
          "exactly the Early and Late destructors should be MIR-emitted");
 
@@ -279,16 +280,23 @@ void expectSelectedDefinitions(std::string_view generated) {
                  std::string_view::npos,
          "both selected lifecycle helpers should execute destructor MIR");
 
-  constexpr std::array<std::string_view, 5> compatibilityFunctions = {
+  // Ordinary lifetimes the whole-family contract had to reject now emit
+  // per body through the same slot vocabulary.
+  constexpr std::array<std::string_view, 4> migratedFunctions = {
       "compatibility_declared_constructor", "compatibility_field_owner",
-      "compatibility_nested_scope", "compatibility_branch",
-      "compatibility_checked_cleanup"};
-  for (const std::string_view name : compatibilityFunctions) {
-    expect(functionDefinition(generated, name).find(functionMarker) ==
-               std::string_view::npos,
-           std::string{"the near-miss function should remain compatible: "} +
+      "compatibility_nested_scope", "compatibility_branch"};
+  for (const std::string_view name : migratedFunctions) {
+    const std::string_view body = functionDefinition(generated, name);
+    expect(body.find(functionMarker) != std::string_view::npos &&
+               body.find(".construct()") != std::string_view::npos &&
+               body.find(".destroy()") != std::string_view::npos,
+           std::string{"the migrated function should emit through the slot "
+                       "vocabulary: "} +
                std::string{name});
   }
+  expect(functionDefinition(generated, "compatibility_checked_cleanup")
+                 .find(".construct()") == std::string_view::npos,
+         "the checked-cleanup near miss should remain compatible");
   constexpr std::array<std::string_view, 3> compatibilityDestructors = {
       "ExplicitDefault", "FieldOwner", "CheckedCleanup"};
   for (const std::string_view name : compatibilityDestructors) {

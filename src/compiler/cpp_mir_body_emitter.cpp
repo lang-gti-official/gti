@@ -644,7 +644,8 @@ private:
     if (found == representations.capabilities().end()) {
       add(CppMirBodyEmissionIssueKind::MissingCapabilityRepresentation, block,
           instruction,
-          "copied map lacks a required sealed representation helper");
+          "copied map lacks a required sealed representation helper (kind " +
+              std::to_string(static_cast<unsigned>(kind)) + ")");
     }
   }
 
@@ -1796,6 +1797,18 @@ public:
     output << "// GTI verified-MIR body: " << familyLabel
            << " function-instance " << function.id << "\n";
     for (const MirPlace &place : function.body.places) {
+      // An owning class local lives in a sealed lifetime slot so failure
+      // and scope cleanup can destroy it exactly once from verified MIR.
+      if (slotPlace(place)) {
+        writeIndent();
+        output << lifetimeSlotSpelling() << '<' << typeSpelling(place.type)
+               << "> __gti_mir_p_" << place.id << ";\n";
+        continue;
+      }
+      // A storage-rooted place reads or writes its named global directly.
+      if (place.root == MirPlaceRootKind::Symbol) {
+        continue;
+      }
       // Receiver-place handling is derived from MIR, not selected by the
       // caller: a This-rooted place is the projection carrier (skipped) or
       // one projected read-only field (bound by reference to the live
@@ -1824,6 +1837,9 @@ public:
       output << ";\n";
     }
     for (const MirValue &value : function.body.values) {
+      if (value.info.type.kind == SemanticType::Class) {
+        continue;
+      }
       writeIndent();
       output << typeSpelling(value.info.type) << " __gti_mir_v_" << value.id
              << "{};\n";
@@ -1841,7 +1857,7 @@ public:
       output << "case " << block.id << ": {\n";
       ++indentation;
       for (const MirInstruction &instruction : block.instructions) {
-        emitInstruction(instruction);
+        emitInstruction(instruction, function);
       }
       emitTerminator(block.terminator);
       --indentation;
@@ -1871,6 +1887,65 @@ private:
     for (std::size_t index = 0; index < indentation; ++index) {
       output << "  ";
     }
+  }
+
+  [[nodiscard]] static MirPlaceId
+  constructDestination(const MirFunctionInstance &function,
+                       const MirInstruction &construct) {
+    if (!construct.result) {
+      return 0;
+    }
+    MirPlaceId selected = 0;
+    for (const MirBlock &block : function.body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Initialize ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Value ||
+            instruction.operands.front().value != *construct.result ||
+            !instruction.destination) {
+          continue;
+        }
+        if (selected != 0) {
+          return 0;
+        }
+        selected = *instruction.destination;
+      }
+    }
+    return selected;
+  }
+
+  [[nodiscard]] bool slotPlace(const MirPlace &place) const {
+    return place.root == MirPlaceRootKind::Binding &&
+           place.type.kind == SemanticType::Class && place.projections.empty();
+  }
+
+  [[nodiscard]] const std::string &lifetimeSlotSpelling() {
+    const auto found = std::find_if(
+        representations.capabilities().begin(),
+        representations.capabilities().end(),
+        [](const CppMirEmissionCapabilityRepresentation &row) {
+          return row.kind == CppMirEmissionCapabilityKind::LifetimeStorage;
+        });
+    if (found == representations.capabilities().end() ||
+        found->spelling.empty()) {
+      throw std::logic_error(
+          "general MIR body emission lost the sealed lifetime-slot helper");
+    }
+    return found->spelling;
+  }
+
+  [[nodiscard]] const std::string &storageSpelling(SymbolId symbol) {
+    const auto found = std::find_if(
+        representations.symbols().begin(), representations.symbols().end(),
+        [&](const CppMirSymbolRepresentation &row) {
+          return row.kind == CppMirSymbolRepresentationKind::Storage &&
+                 row.owner == 0 && row.symbol == symbol && row.ordinal == 0;
+        });
+    if (found == representations.symbols().end() || found->spelling.empty()) {
+      throw std::logic_error(
+          "general MIR body emission lost an exact storage symbol row");
+    }
+    return found->spelling;
   }
 
   [[nodiscard]] const std::string &typeSpelling(const SemanticType &type) {
@@ -2083,21 +2158,67 @@ private:
     output << ";\n";
   }
 
-  void emitPlainInstruction(const MirInstruction &instruction) {
+  void emitPlainInstruction(const MirInstruction &instruction,
+                            const MirFunctionInstance &function) {
     writeIndent();
     if (instruction.kind == MirInstructionKind::Lifecycle) {
-      output << "// GTI MIR full-expression boundary "
-             << instruction.fullExpressionEnd << "\n";
+      if (instruction.fullExpressionEnd != 0) {
+        output << "// GTI MIR full-expression boundary "
+               << instruction.fullExpressionEnd << "\n";
+      } else {
+        output << "// GTI MIR cleanup boundary "
+               << instruction.cleanupBoundaryEnd << "\n";
+      }
       return;
     }
     if (instruction.kind == MirInstructionKind::Compute) {
       emitCompute(instruction);
       return;
     }
+    if (instruction.kind == MirInstructionKind::Construct) {
+      const MirPlaceId destination =
+          constructDestination(function, instruction);
+      const MirPlace *slot =
+          destination == 0 ? nullptr : function.body.findPlace(destination);
+      if (slot == nullptr || !slotPlace(*slot)) {
+        throw std::logic_error(
+            "verified MIR class construction lost its reparent slot");
+      }
+      output << "__gti_mir_p_" << destination << ".construct();\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Drop) {
+      const MirPlace *slot =
+          instruction.destination
+              ? function.body.findPlace(*instruction.destination)
+              : nullptr;
+      if (slot == nullptr || !slotPlace(*slot)) {
+        throw std::logic_error(
+            "verified MIR class drop lost its lifetime slot");
+      }
+      output << "__gti_mir_p_" << *instruction.destination << ".destroy();\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Load) {
+      const MirPlace *source =
+          function.body.findPlace(instruction.operands.front().place);
+      if (source != nullptr && source->root == MirPlaceRootKind::Symbol) {
+        output << "__gti_mir_v_" << *instruction.result << " = "
+               << storageSpelling(source->symbol) << ";\n";
+        return;
+      }
       output << "__gti_mir_v_" << *instruction.result << " = __gti_mir_p_"
              << instruction.operands.front().place << ";\n";
       return;
+    }
+    if (instruction.kind == MirInstructionKind::Initialize &&
+        instruction.destination) {
+      const MirPlace *slot = function.body.findPlace(*instruction.destination);
+      if (slot != nullptr && slotPlace(*slot)) {
+        output << "// GTI MIR reparent into p" << *instruction.destination
+               << "\n";
+        return;
+      }
     }
     output << "__gti_mir_p_" << *instruction.destination << " = ";
     emitOperand(instruction.operands.front(),
@@ -2110,10 +2231,11 @@ private:
     }
   }
 
-  void emitInstruction(const MirInstruction &instruction) {
+  void emitInstruction(const MirInstruction &instruction,
+                       const MirFunctionInstance &function) {
     if (instruction.kind != MirInstructionKind::CallInput &&
         instruction.kind != MirInstructionKind::Call) {
-      emitPlainInstruction(instruction);
+      emitPlainInstruction(instruction, function);
       return;
     }
     writeIndent();
@@ -2306,6 +2428,50 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
   const auto valueOperand = [](const MirOperand &operand) {
     return operand.kind == MirOperandKind::Value;
   };
+  const auto slotPlace = [](const MirPlace &place) {
+    return place.root == MirPlaceRootKind::Binding &&
+           place.type.kind == SemanticType::Class && place.projections.empty();
+  };
+  const auto lifetimeSlotRow = [&]() {
+    return std::any_of(
+        representations_.capabilities().begin(),
+        representations_.capabilities().end(),
+        [](const CppMirEmissionCapabilityRepresentation &row) {
+          return row.kind == CppMirEmissionCapabilityKind::LifetimeStorage &&
+                 !row.spelling.empty();
+        });
+  };
+  const auto storageRow = [&](SymbolId symbol) {
+    return std::any_of(
+        representations_.symbols().begin(), representations_.symbols().end(),
+        [&](const CppMirSymbolRepresentation &row) {
+          return row.kind == CppMirSymbolRepresentationKind::Storage &&
+                 row.owner == 0 && row.symbol == symbol && row.ordinal == 0 &&
+                 !row.spelling.empty();
+        });
+  };
+  const auto constructSlot = [&](const MirInstruction &construct) {
+    if (!construct.result) {
+      return MirPlaceId{0};
+    }
+    MirPlaceId selected = 0;
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Initialize ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Value ||
+            instruction.operands.front().value != *construct.result ||
+            !instruction.destination) {
+          continue;
+        }
+        if (selected != 0) {
+          return MirPlaceId{0};
+        }
+        selected = *instruction.destination;
+      }
+    }
+    return selected;
+  };
   const auto syntheticBool = [](const MirOperand &operand) {
     return operand.kind == MirOperandKind::Constant && operand.value == 0 &&
            operand.place == 0 && operand.loan == 0 && operand.literal &&
@@ -2336,11 +2502,27 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
       }
       continue;
     }
+    if (slotPlace(place)) {
+      if (!lifetimeSlotRow() || !typeRow(place.type)) {
+        return false;
+      }
+      continue;
+    }
+    if (place.root == MirPlaceRootKind::Symbol) {
+      if (place.capture != 0 || !place.projections.empty() ||
+          !storageRow(place.symbol)) {
+        return false;
+      }
+      continue;
+    }
     if (!place.projections.empty() || !typeRow(place.type)) {
       return false;
     }
   }
   for (const MirValue &value : body.values) {
+    if (value.info.type.kind == SemanticType::Class) {
+      continue;
+    }
     if (!typeRow(value.info.type)) {
       return false;
     }
@@ -2351,6 +2533,29 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
       switch (instruction.kind) {
       case MirInstructionKind::Lifecycle:
         continue;
+      case MirInstructionKind::Construct: {
+        // The slot vocabulary spells argument-less generated-default
+        // construction only; a declared constructor's arguments would be
+        // silently dropped by `.construct()`.
+        const MirPlaceId destination = constructSlot(instruction);
+        const MirPlace *slot =
+            destination == 0 ? nullptr : body.findPlace(destination);
+        if (slot == nullptr || !slotPlace(*slot) || instruction.receiver ||
+            !instruction.operands.empty() ||
+            instruction.constructorKind != ConstructorKind::Ordinary) {
+          return false;
+        }
+        continue;
+      }
+      case MirInstructionKind::Drop: {
+        const MirPlace *slot = instruction.destination
+                                   ? body.findPlace(*instruction.destination)
+                                   : nullptr;
+        if (slot == nullptr || !slotPlace(*slot)) {
+          return false;
+        }
+        continue;
+      }
       case MirInstructionKind::Compute: {
         if (!instruction.result) {
           return false;
@@ -2408,13 +2613,25 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
           return false;
         }
         continue;
-      case MirInstructionKind::Initialize:
-        if (!instruction.destination || instruction.operands.size() != 1 ||
-            (!valueOperand(instruction.operands.front()) &&
-             !syntheticBool(instruction.operands.front()))) {
+      case MirInstructionKind::Initialize: {
+        if (!instruction.destination || instruction.operands.size() != 1) {
+          return false;
+        }
+        const MirPlace *destination = body.findPlace(*instruction.destination);
+        if (destination != nullptr && slotPlace(*destination)) {
+          // The reparenting Initialize is the slot construct's paired
+          // destination and emits as a comment only.
+          if (!valueOperand(instruction.operands.front())) {
+            return false;
+          }
+          continue;
+        }
+        if (!valueOperand(instruction.operands.front()) &&
+            !syntheticBool(instruction.operands.front())) {
           return false;
         }
         continue;
+      }
       case MirInstructionKind::Assign:
         if (!instruction.destination || !instruction.result ||
             instruction.operands.size() != 1 ||

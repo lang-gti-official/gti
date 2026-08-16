@@ -1091,6 +1091,19 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Class-default-cleanup function route dissolved (0.170.0).** The
+  general emitter gains the lifetime-slot vocabulary — sealed slot
+  declarations spelled from the LifetimeStorage capability row,
+  argument-less generated-default `.construct()`/`.destroy()`, storage
+  reads through symbol rows, reparenting Initializes, and cleanup-boundary
+  markers — and the family's function selector, its HIR/MIR body walks,
+  and its text route are deleted. Per-body admission also emits the
+  ordinary lifetimes the whole-family contract had to reject (declared
+  zero-argument constructors, field-initialized classes, scoped and
+  conditional locals), with the argument-carrying Construct bound
+  fail-closed because `.construct()` cannot spell constructor arguments.
+  The destructor-definition route remains the class-lifecycle authority
+  until general Destructor-body emission lands.
 - **Failure-free effect proofs widened (0.168.0).** The function proof
   admits read-only receivers' scalar field loads (the projection carrier
   plus one trivially droppable projected field cannot raise), and the

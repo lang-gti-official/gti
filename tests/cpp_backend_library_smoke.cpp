@@ -51,9 +51,10 @@ int main() { return choose(true, relay(), 9) - 7 + cleanup_leaf(); }
                  artifact.contents.find(
                      "// GTI verified-MIR body: scalar-cfg-v1") !=
                      std::string_view::npos &&
-                 artifact.contents.find(
-                     "// GTI verified-MIR body: class-default-cleanup-v1 "
-                     "function-instance") != std::string_view::npos &&
+                 artifact.contents.find(".construct()") !=
+                     std::string_view::npos &&
+                 artifact.contents.find(".destroy()") !=
+                     std::string_view::npos &&
                  artifact.contents.find(
                      "// GTI verified-MIR body: class-default-cleanup-v1 "
                      "destructor-instance") != std::string_view::npos

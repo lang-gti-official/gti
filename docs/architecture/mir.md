@@ -48,9 +48,9 @@ representation rows — type, field-symbol, body-name/call-target, and
 non-payload enum spellings drawn only from the extracted
 `cpp_representation` authorities — and `CppMirBodyEmitter::emitBodyText`
 emits one Ready function body from MIR and those rows alone, with no
-Program, semantic, or HIR input. The former scalar-leaf and scalar-direct-call
-families are dissolved into the general scalar-cfg route, whose admission
-is analysis-driven: the emitter's fail-closed
+Program, semantic, or HIR input. The former scalar-leaf, scalar-direct-call, and
+class-default-cleanup function families are dissolved into the general
+route, whose admission is analysis-driven: the emitter's fail-closed
 readiness plus its `supportsBodyText` vocabulary probe decide per body, so
 selection never re-models emission through a HIR body shape and a declined
 body stays on the compatibility path. One general text authority produces
