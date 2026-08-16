@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.164.0
+Checkpoint: 0.165.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1099,7 +1099,8 @@ analysis, HIR, MIR, and the backend.
   rollback as one globally reverse construction-ordered sequence behind a
   single boundary — the phase-ordered drain could not satisfy the
   primary-chain rule once parameter bindings sat below armed rollback.
-  Non-class owned fields (unique owners) keep the legacy transfer contract.
+  Unique-owner fields joined the staged form in 0.165.0; remaining legacy
+  transfers cover only shapes outside the single-owning-argument stage.
 - **Unarmed constructor transfers fail closed (0.163.0).** A constructor
   with any silent subobject transfer into `this` (owned-parameter and other
   unstaged forms) routes no defined-failure edges: lowering prescans the

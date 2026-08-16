@@ -26080,6 +26080,47 @@ int main() {
          "armed rollback obligation");
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "the staged owned-parameter constructor should remain verified MIR");
+
+  const lang::FrontendResult owner =
+      analyzeTrustedPreludeFixture("unique-owner-stage.gti", R"(
+class Entity {
+public:
+  int32_t id = 7;
+};
+
+class Slot {
+  std::unique_ptr<Entity> value;
+
+public:
+  Slot(std::unique_ptr<Entity> value) : value(std::move(value)) {}
+};
+
+int main() {
+  mut std::unique_ptr<Entity> entity = std::make_unique<Entity>();
+  Slot slot = Slot(std::move(entity));
+  return 0;
+}
+)");
+  expect(owner.canGenerateCode(),
+         "the unique-owner field fixture should pass the frontend");
+  if (!owner.canGenerateCode()) {
+    return;
+  }
+  bool uniqueOwnerArmed = false;
+  for (const lang::MirConstructorInstance &constructor :
+       owner.mir.constructorInstances()) {
+    for (const lang::MirDropObligation &obligation :
+         constructor.body.dropObligations) {
+      uniqueOwnerArmed =
+          uniqueOwnerArmed ||
+          (obligation.kind ==
+               lang::MirDropObligationKind::ConstructionRollback &&
+           obligation.dropType.type.kind == lang::SemanticType::UniqueOwner);
+    }
+  }
+  expect(uniqueOwnerArmed && lang::verifyMirProgram(owner.mir).valid(),
+         "a unique-owner field completed from one owning argument should arm "
+         "rollback and stay verified");
 }
 
 void testConstructorPartialRollbackRepresentation() {

@@ -12589,7 +12589,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           !initializer.storesReference && !initializer.generatedDefault &&
           initializer.arguments.size() == 1 &&
           field->type == initializer.targetType &&
-          initializer.targetType.kind == SemanticType::Class;
+          (initializer.targetType.kind == SemanticType::Class ||
+           initializer.targetType.kind == SemanticType::UniqueOwner);
       // Constructor full-expression boundaries are shared lifecycle facts,
       // not scalar-stage markers: reference, nested-construction, and
       // generated-default initializers can legitimately publish one. Only the

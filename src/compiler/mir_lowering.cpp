@@ -122,7 +122,8 @@ public:
               initializer.kind == ConstructorInitializerTargetKind::Field &&
               !initializer.storesReference && !initializer.generatedDefault &&
               initializer.arguments.size() == 1 &&
-              initializer.targetType.kind == SemanticType::Class;
+              (initializer.targetType.kind == SemanticType::Class ||
+               initializer.targetType.kind == SemanticType::UniqueOwner);
           for (std::size_t index = 0; index < initializer.arguments.size();
                ++index) {
             if (initializer.storesReference || (stageEligible && index == 0) ||
@@ -220,7 +221,9 @@ public:
                       !initializer.generatedDefault &&
                       initializer.arguments.size() == 1 &&
                       field->info.type == initializer.targetType &&
-                      initializer.targetType.kind == SemanticType::Class &&
+                      (initializer.targetType.kind == SemanticType::Class ||
+                       initializer.targetType.kind ==
+                           SemanticType::UniqueOwner) &&
                       !field->info.traits.containsBorrowedState
                   ? dropObligationForValue(initializer.arguments.front())
                   : 0;

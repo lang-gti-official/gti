@@ -544,8 +544,9 @@ moved value's obligation reparents into the armed rollback obligation, so
 those constructors keep routing failure edges, and every constructor failure
 edge drains temporaries, scope bindings, and armed rollback obligations as
 one globally reverse construction-ordered sequence behind a single failure
-boundary. Base subobjects, non-class owned-parameter fields, and
-field/static initializer bodies remain M-FAIL-01 work.
+boundary. Unique-owner fields stage the same way as class
+fields. Base subobjects and field/static initializer bodies remain
+M-FAIL-01 work.
 
 M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
 available/moved/uninitialized fixed point over lifecycle events. Parameters
