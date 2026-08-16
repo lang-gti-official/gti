@@ -23,7 +23,7 @@ namespace {
 constexpr std::string_view functionMarker =
     "// GTI verified-MIR body: scalar-cfg-v1 function-instance ";
 constexpr std::string_view destructorMarker =
-    "// GTI verified-MIR body: class-default-cleanup-v1 destructor-instance ";
+    "// GTI verified-MIR body: scalar-cfg-v1 destructor-instance ";
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -254,8 +254,9 @@ bool destructorIsBounded(const lang::MirDestructorInstance *destructor) {
 }
 
 void expectSelectedDefinitions(std::string_view generated) {
-  expect(count(generated, destructorMarker) == 2,
-         "exactly the Early and Late destructors should be MIR-emitted");
+  expect(count(generated, destructorMarker) == 4,
+         "the Early, Late, ExplicitDefault, and FieldOwner destructors "
+         "should be MIR-emitted");
 
   const std::string_view selected =
       functionDefinition(generated, "selected_default_cleanup");
@@ -297,14 +298,21 @@ void expectSelectedDefinitions(std::string_view generated) {
   expect(functionDefinition(generated, "compatibility_checked_cleanup")
                  .find(".construct()") == std::string_view::npos,
          "the checked-cleanup near miss should remain compatible");
-  constexpr std::array<std::string_view, 3> compatibilityDestructors = {
-      "ExplicitDefault", "FieldOwner", "CheckedCleanup"};
-  for (const std::string_view name : compatibilityDestructors) {
-    expect(lifecycleDefinition(generated, name).find(destructorMarker) ==
+  // Per-body admission also emits the ordinary destructors the dissolved
+  // route's whole-family contract had to reject.
+  constexpr std::array<std::string_view, 2> migratedDestructors = {
+      "ExplicitDefault", "FieldOwner"};
+  for (const std::string_view name : migratedDestructors) {
+    expect(lifecycleDefinition(generated, name).find(destructorMarker) !=
                std::string_view::npos,
-           std::string{"the near-miss destructor should remain compatible: "} +
+           std::string{"the migrated destructor should execute MIR: "} +
                std::string{name});
   }
+  expect(
+      lifecycleDefinition(generated, "CheckedCleanup").find(destructorMarker) ==
+          std::string_view::npos,
+      "the checked-arithmetic destructor near miss should remain "
+      "compatible: CheckedCleanup");
 
   expect(generated.find("verified MIR lifetime slot escaped without Drop") !=
              std::string_view::npos,

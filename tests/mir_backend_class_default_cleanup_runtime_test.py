@@ -12,7 +12,7 @@ import tempfile
 # while keeping the exact lifetime-slot text contract below.
 FUNCTION_MARKER = "// GTI verified-MIR body: scalar-cfg-v1 function-instance "
 DESTRUCTOR_MARKER = (
-    "// GTI verified-MIR body: class-default-cleanup-v1 destructor-instance "
+    "// GTI verified-MIR body: scalar-cfg-v1 destructor-instance "
 )
 # Bodies the old whole-family contract had to reject even though their own
 # lifetimes are ordinary: per-body admission emits them through the same
@@ -28,9 +28,11 @@ MIGRATED_FUNCTIONS = (
 COMPATIBILITY_FUNCTIONS = (
     "compatibility_checked_cleanup",
 )
-COMPATIBILITY_DESTRUCTORS = (
+MIGRATED_DESTRUCTORS = (
     "ExplicitDefault",
     "FieldOwner",
+)
+COMPATIBILITY_DESTRUCTORS = (
     "CheckedCleanup",
 )
 
@@ -84,8 +86,8 @@ def selected_slot(body: str, class_name: str) -> str | None:
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
     mode = f"{optimization}/{standard}"
-    if generated.count(DESTRUCTOR_MARKER) != 2:
-        sys.stderr.write(f"{mode} did not select exactly two cleanup destructors\n")
+    if generated.count(DESTRUCTOR_MARKER) != 4:
+        sys.stderr.write(f"{mode} did not select exactly four MIR destructors\n")
         return False
 
     selected = function_definition(generated, "selected_default_cleanup")
@@ -136,6 +138,12 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
         body = function_definition(generated, name)
         if ".construct()" in body or ".destroy()" in body:
             sys.stderr.write(f"{mode} selected ineligible function {name}\n")
+            return False
+    for name in MIGRATED_DESTRUCTORS:
+        if DESTRUCTOR_MARKER not in lifecycle_definition(generated, name):
+            sys.stderr.write(
+                f"{mode} did not emit migrated destructor {name} from MIR\n"
+            )
             return False
     for name in COMPATIBILITY_DESTRUCTORS:
         if DESTRUCTOR_MARKER in lifecycle_definition(generated, name):

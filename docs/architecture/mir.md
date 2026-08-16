@@ -839,14 +839,15 @@ stale failure CFG. If an otherwise eligible direct graph carries a conservative
 true summary, production emission rejects the noncanonical drift rather than
 silently falling back. At `-O1` and above, the
 primitive literal-identity rewrite controls emitted values for any selected
-scalar family. `class-default-cleanup-v1` instead admits exact generated-default
-construction of empty concrete class locals and their source-defined,
-MIR-proved-failure-free destructors in one root scope. Each local has a
+scalar family. The former `class-default-cleanup-v1` shape — generated-default
+construction of concrete class locals and their source-defined,
+MIR-proved-failure-free destructors — now emits through the general
+per-body route. Each local has a
 `Construct` plus `Initialize`/`Reparent` schedule, the scalar return value is
 loaded before cleanup, and reverse lexical `Drop` instructions end at one
-normal cleanup boundary before `Return`. Declared constructors, fields, bases,
-nested scopes, branches, calls, loans, and failure edges remain outside that
-family. `owned-lifecycle-call-v1` extends the failure-free boundary to one
+normal cleanup boundary before `Return`; per-body admission also takes
+declared zero-argument constructors, field-initialized classes, scoped and
+conditional locals, and ordinary declared destructor bodies. `owned-lifecycle-call-v1` extends the failure-free boundary to one
 atomic acyclic graph of eligible source free functions and exact concrete
 passive-scalar-field classes. Constructor bodies retain one ordered
 `Load`/`Initialize`/boundary stage per field and its exact formal binding;

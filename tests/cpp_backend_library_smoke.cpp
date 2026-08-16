@@ -56,7 +56,7 @@ int main() { return choose(true, relay(), 9) - 7 + cleanup_leaf(); }
                  artifact.contents.find(".destroy()") !=
                      std::string_view::npos &&
                  artifact.contents.find(
-                     "// GTI verified-MIR body: class-default-cleanup-v1 "
+                     "// GTI verified-MIR body: scalar-cfg-v1 "
                      "destructor-instance") != std::string_view::npos
              ? 0
              : 1;

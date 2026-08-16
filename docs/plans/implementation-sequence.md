@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.171.0
+Checkpoint: 0.172.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,20 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Class-default-cleanup destructor route dissolved (0.172.0).** The
+  general emitter admits `MirBodyKind::Destructor` bodies: the probe and
+  text step share one body-facts projection (a destructor has no
+  parameters and an inherently mutable receiver), and the store path
+  learned to spell Symbol-rooted destinations through storage rows — the
+  probe had always admitted global stores, but the text step previously
+  emitted an undeclared binding for them (caught fail-loud by the fixture's
+  native compile). The lifecycle-cleanup site now consults the general
+  route first, and the family's destructor selector, body emitter, and
+  every remaining `class-default-cleanup` predicate are deleted (~360
+  lines); the label no longer exists in the compiler. Per-body admission
+  also emits the ordinary destructors the family had to reject
+  (`ExplicitDefault`, `FieldOwner`, and two empty corpus destructors),
+  while the checked-arithmetic near miss stays compatible.
 - **Mutable-receiver field writes admitted (0.171.0).** The scalar-CFG
   declaration gate no longer rejects mutable receivers: a member storing to
   its own scalar fields through `this` emits from verified MIR, with the

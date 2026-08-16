@@ -1234,6 +1234,29 @@ void testCleanupFixtureFunctionBodiesAreReady() {
   expect(scalarFunctionBodies >= 3 && functionBodiesReady,
          "every non-entry failure-free cleanup-fixture function body should "
          "be analysis-Ready under production rows");
+
+  // The destructor-definition route dissolved into the same per-body
+  // admission: every failure-free declared destructor body is Ready and
+  // inside the text vocabulary, and the checked-arithmetic near miss
+  // (CheckedCleanup) stays outside admission.
+  std::size_t admittedDestructorBodies = 0;
+  std::size_t declinedDestructorBodies = 0;
+  for (const lang::MirDestructorInstance &destructor :
+       frontend.mir.destructorInstances()) {
+    if (destructor.definitionKind != lang::MirDefinitionKind::Source) {
+      continue;
+    }
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Destructor,
+                                       .owner = destructor.id};
+    if (emitter.analyze(address).ready() && emitter.supportsBodyText(address)) {
+      ++admittedDestructorBodies;
+    } else {
+      ++declinedDestructorBodies;
+    }
+  }
+  expect(admittedDestructorBodies == 4 && declinedDestructorBodies == 1,
+         "exactly the four ordinary declared destructor bodies should be "
+         "admitted and the checked-arithmetic near miss declined");
 }
 
 // Milestone gate for the rollback campaign: every constructor and

@@ -43,6 +43,7 @@ public:
     output.clear();
     indentation = 0;
     generalCfgAdmitted.reset();
+    generalDtorAdmitted.reset();
     forwardedAliases.clear();
     forwardedTypeAliases.clear();
     forwardedExternC.clear();
@@ -5914,26 +5915,86 @@ private:
     return selected;
   }
 
+  void ensureGeneralAdmission() const {
+    if (generalCfgAdmitted) {
+      return;
+    }
+    generalCfgAdmitted.emplace();
+    generalDtorAdmitted.emplace();
+    const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
+    const CppMirProgramEmissionAnalysis analysis = emitter.analyzeProgram();
+    // Program- or row-level validation issues admit nothing; per-body
+    // readiness and the text vocabulary admit each body individually.
+    if (!analysis.issues.empty()) {
+      return;
+    }
+    for (const CppMirBodyEmissionAnalysis &body : analysis.bodies) {
+      if (!body.ready() || !emitter.supportsBodyText(body.body)) {
+        continue;
+      }
+      if (body.body.kind == MirBodyKind::Function) {
+        generalCfgAdmitted->insert(body.body.owner);
+      } else if (body.body.kind == MirBodyKind::Destructor) {
+        generalDtorAdmitted->insert(body.body.owner);
+      }
+    }
+  }
+
   [[nodiscard]] bool generalBodyAdmitted(HirFunctionInstanceId instance) const {
     if (mir == nullptr || !generalEmissionMap) {
       return false;
     }
-    if (!generalCfgAdmitted) {
-      generalCfgAdmitted.emplace();
-      const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
-      const CppMirProgramEmissionAnalysis analysis = emitter.analyzeProgram();
-      // Program- or row-level validation issues admit nothing; per-body
-      // readiness and the text vocabulary admit each body individually.
-      if (analysis.issues.empty()) {
-        for (const CppMirBodyEmissionAnalysis &body : analysis.bodies) {
-          if (body.body.kind == MirBodyKind::Function && body.ready() &&
-              emitter.supportsBodyText(body.body)) {
-            generalCfgAdmitted->insert(body.body.owner);
-          }
-        }
-      }
-    }
+    ensureGeneralAdmission();
     return generalCfgAdmitted->contains(instance);
+  }
+
+  [[nodiscard]] bool
+  generalDestructorBodyAdmitted(HirDestructorInstanceId instance) const {
+    if (mir == nullptr || !generalEmissionMap) {
+      return false;
+    }
+    ensureGeneralAdmission();
+    return generalDtorAdmitted->contains(instance);
+  }
+
+  // Resolves a destructor declaration to its single lowered instance and
+  // asks the general emitter for admission. Zero or several instantiations
+  // decline gracefully (a generic owner keeps its destructors on
+  // compatibility emission, mirroring member functions); an admitted
+  // instance whose HIR and MIR metadata disagree is incoherent verified MIR.
+  [[nodiscard]] const MirDestructorInstance *
+  selectedMirGeneralDestructor(const DestructorDecl &destructor) const {
+    if (mir == nullptr || destructor.body() == nullptr) {
+      return nullptr;
+    }
+    const HirDestructorInstance *hirDestructor = nullptr;
+    for (const HirDestructorInstance &candidate : hir.destructorInstances()) {
+      if (candidate.source != &destructor) {
+        continue;
+      }
+      if (hirDestructor != nullptr) {
+        return nullptr;
+      }
+      hirDestructor = &candidate;
+    }
+    if (hirDestructor == nullptr || hirDestructor->owner == 0) {
+      return nullptr;
+    }
+    const MirDestructorInstance *selected =
+        mir->findDestructorInstance(hirDestructor->id);
+    if (selected == nullptr) {
+      return nullptr;
+    }
+    if (!generalDestructorBodyAdmitted(selected->id)) {
+      return nullptr;
+    }
+    if (selected->definitionKind != MirDefinitionKind::Source ||
+        selected->owner != hirDestructor->owner ||
+        selected->body.placeDomain != hirDestructor->body.placeDomain) {
+      throw std::logic_error(
+          "admitted MIR destructor metadata does not match its HIR instance");
+    }
+    return selected;
   }
 
   [[nodiscard]] static const MirInstruction *
@@ -5960,412 +6021,6 @@ private:
            (!requireMutable || record->mutableBinding) &&
            !record->internalLinkage && !record->compilerPrivate &&
            record->qualifiedName == record->name && !record->name.empty();
-  }
-
-  [[nodiscard]] bool isHirClassDefaultCleanupDestructorBody(
-      const HirDestructorInstance &destructor) const {
-    const HirBody &body = destructor.body;
-    if (destructor.id == 0 || destructor.owner == 0 ||
-        destructor.source == nullptr || destructor.source->body() == nullptr ||
-        !body.bindings.empty() || !body.loans.empty() ||
-        !body.dropObligations.empty() || body.statements.empty() ||
-        body.roots.size() != body.statements.size() ||
-        body.fullExpressions.size() != body.statements.size() ||
-        body.values.size() != body.statements.size() * 2 ||
-        destructor.source->body()->statements().size() !=
-            body.statements.size()) {
-      return false;
-    }
-
-    for (std::size_t index = 0; index < body.statements.size(); ++index) {
-      const HirStatement &statement = body.statements[index];
-      const StmtPtr &sourceStatement =
-          destructor.source->body()->statements()[index];
-      const auto *expressionStatement =
-          dynamic_cast<const ExpressionStmt *>(sourceStatement.get());
-      if (statement.id == 0 || statement.kind != HirStatementKind::Expression ||
-          statement.source != sourceStatement.get() ||
-          expressionStatement == nullptr || !statement.value ||
-          body.roots[index] != statement.id) {
-        return false;
-      }
-      const HirValue *assignment = body.findValue(*statement.value);
-      if (assignment == nullptr ||
-          assignment->kind != HirValueKind::Assignment ||
-          assignment->source != expressionStatement->expression().get() ||
-          assignment->symbol == 0 ||
-          assignment->operation != TokenKind::EQUAL ||
-          assignment->operands.size() != 1 || assignment->literal ||
-          assignment->unsafeOperation != UnsafeOperationKind::None ||
-          !assignment->definedFailure.empty() || assignment->dropObligation ||
-          assignment->ownership || assignment->constructorTarget ||
-          assignment->functionTarget || assignment->lambdaTarget ||
-          !isClassDefaultCleanupGlobal(assignment->symbol,
-                                       assignment->info.type, true)) {
-        return false;
-      }
-      const HirValue *literal = body.findValue(assignment->operands.front());
-      if (literal == nullptr || literal->kind != HirValueKind::Literal ||
-          literal->source == nullptr || !literal->literal ||
-          literal->info.type != assignment->info.type ||
-          !isMirScalarCfgLiteral(*literal->literal, literal->info.type) ||
-          !literal->operands.empty() || literal->operation ||
-          literal->unsafeOperation != UnsafeOperationKind::None ||
-          !literal->definedFailure.empty() || literal->dropObligation ||
-          literal->ownership) {
-        return false;
-      }
-      const HirFullExpression &full = body.fullExpressions[index];
-      if (full.id != index + 1 || full.statement != statement.id ||
-          full.constructorInitializer != 0 ||
-          full.roots != std::vector<HirValueId>{assignment->id} ||
-          assignment->fullExpression != full.id ||
-          literal->fullExpression != full.id) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  [[nodiscard]] bool
-  isHirClassDefaultCleanupClass(const HirClassInstance &instance) const {
-    if (instance.id == 0 || instance.source == nullptr ||
-        instance.type.kind != SemanticType::Class ||
-        instance.type.classId != instance.declaration ||
-        !instance.typeArguments.empty() || !instance.valueArguments.empty() ||
-        !instance.source->genericParameters().empty() ||
-        !instance.source->bases().empty() || !instance.bases.empty() ||
-        !instance.fields.empty() || !instance.staticFields.empty() ||
-        !instance.fieldInitializers.bindings.empty() ||
-        !instance.fieldInitializers.loans.empty() ||
-        !instance.fieldInitializers.dropObligations.empty() ||
-        !instance.fieldInitializers.values.empty() ||
-        !instance.fieldInitializers.statements.empty() ||
-        !instance.fieldInitializers.fullExpressions.empty() ||
-        !instance.staticFieldInitializers.bindings.empty() ||
-        !instance.staticFieldInitializers.loans.empty() ||
-        !instance.staticFieldInitializers.dropObligations.empty() ||
-        !instance.staticFieldInitializers.values.empty() ||
-        !instance.staticFieldInitializers.statements.empty() ||
-        !instance.staticFieldInitializers.fullExpressions.empty() ||
-        instance.abstract || instance.polymorphic || instance.cAbiRecord ||
-        instance.unionLayout || !instance.destructor ||
-        !instance.requiresActiveDropState || !instance.requiresActiveCleanup) {
-      return false;
-    }
-    const ClassTypeInfo *info = semantics.findClassType(*instance.source);
-    const ClassLifecycleInfo *lifecycle =
-        semantics.findClassLifecycle(*instance.source);
-    const HirDestructorInstance *destructor =
-        hir.findDestructorInstance(*instance.destructor);
-    if (info == nullptr || lifecycle == nullptr || destructor == nullptr ||
-        info->id != instance.declaration ||
-        info->declaration != instance.source || info->kind != instance.kind ||
-        !info->genericParameters.empty() || !info->fields.empty() ||
-        !info->staticFields.empty() || !info->bases.empty() || info->abstract ||
-        info->polymorphic || info->cAbiRecord || info->cOpaqueHandle ||
-        info->unionLayout || info->compilerPrivate ||
-        info->compilerCapability != CompilerCapabilityTypeKind::None ||
-        lifecycle->id != instance.declaration ||
-        lifecycle->declaration != instance.source ||
-        !lifecycle->constructors.empty() ||
-        lifecycle->defaultConstructor != SpecialMemberStatus::Generated ||
-        lifecycle->destructor != SpecialMemberStatus::Declared ||
-        !lifecycle->declaredDestructor ||
-        lifecycle->declaredDestructor->declaration != destructor->source ||
-        lifecycle->declaredDestructor->access != AccessModifier::Public ||
-        !lifecycle->requiresActiveDropState || lifecycle->polymorphic ||
-        destructor->owner != instance.id ||
-        !isHirClassDefaultCleanupDestructorBody(*destructor)) {
-      return false;
-    }
-    std::size_t destructorMembers = 0;
-    for (const StmtPtr &member : instance.source->members()) {
-      if (dynamic_cast<const AccessSpecifierDecl *>(member.get()) != nullptr) {
-        continue;
-      }
-      const auto *declared = dynamic_cast<const DestructorDecl *>(member.get());
-      if (declared == nullptr || declared != destructor->source) {
-        return false;
-      }
-      ++destructorMembers;
-    }
-    return destructorMembers == 1;
-  }
-
-  [[nodiscard]] bool
-  isMirClassDefaultCleanupClass(const MirClassInstance &lowered,
-                                const HirClassInstance &source) const {
-    const auto sameEmptyInitializerBody = [](const MirBody &mirBody,
-                                             const HirBody &hirBody,
-                                             MirBodyKind expectedKind) {
-      if (!hirBody.bindings.empty() || !hirBody.loans.empty() ||
-          !hirBody.dropObligations.empty() || !hirBody.values.empty() ||
-          !hirBody.statements.empty() || !hirBody.roots.empty() ||
-          !hirBody.fullExpressions.empty() || mirBody.kind != expectedKind ||
-          mirBody.placeDomain != hirBody.placeDomain || mirBody.entry != 1 ||
-          mirBody.returnType != SemanticType::Void || !mirBody.places.empty() ||
-          !mirBody.loans.empty() || !mirBody.fullExpressions.empty() ||
-          !mirBody.cleanupBoundaries.empty() ||
-          !mirBody.dropObligations.empty() || !mirBody.failureRecords.empty() ||
-          !mirBody.values.empty() || mirBody.blocks.size() != 1) {
-        return false;
-      }
-      const MirBlock &block = mirBody.blocks.front();
-      const MirTerminator &terminator = block.terminator;
-      return block.id == mirBody.entry && block.reachable &&
-             block.failureParameter == 0 && block.instructions.empty() &&
-             terminator.kind == MirTerminatorKind::Exit && !terminator.value &&
-             terminator.hirValue == 0 && terminator.hirStatement == 0 &&
-             !terminator.returnLoan && terminator.invokeInstruction == 0 &&
-             terminator.failureRecord == 0 && terminator.target == 0 &&
-             terminator.elseTarget == 0 && terminator.switchTargets.empty() &&
-             terminator.successLifecycle.empty();
-    };
-    return isHirClassDefaultCleanupClass(source) && lowered.id == source.id &&
-           lowered.declaration == source.declaration &&
-           lowered.type == source.type && lowered.kind == source.kind &&
-           lowered.bases.empty() && lowered.structuralBases.empty() &&
-           !lowered.abstract && !lowered.polymorphic && !lowered.cAbiRecord &&
-           !lowered.cAbiLayout && !lowered.unionLayout &&
-           lowered.destructor == source.destructor &&
-           lowered.requiresActiveDropState == source.requiresActiveDropState &&
-           lowered.requiresActiveCleanup == source.requiresActiveCleanup &&
-           lowered.declaredFields.empty() && lowered.fields.empty() &&
-           lowered.fieldDropOrder.empty() &&
-           sameEmptyInitializerBody(lowered.fieldInitializers,
-                                    source.fieldInitializers,
-                                    MirBodyKind::FieldInitializers) &&
-           sameEmptyInitializerBody(lowered.staticFieldInitializers,
-                                    source.staticFieldInitializers,
-                                    MirBodyKind::StaticFieldInitializers);
-  }
-
-  [[nodiscard]] bool isMirClassDefaultCleanupDestructorBody(
-      const MirDestructorInstance &lowered,
-      const HirDestructorInstance &source) const {
-    const MirBody &body = lowered.body;
-    if (!isHirClassDefaultCleanupDestructorBody(source) ||
-        lowered.id != source.id || lowered.owner != source.owner ||
-        lowered.definitionKind != MirDefinitionKind::Source ||
-        lowered.mayRaiseDefinedFailure ||
-        body.kind != MirBodyKind::Destructor ||
-        body.placeDomain != source.body.placeDomain || body.entry != 1 ||
-        body.returnType != SemanticType::Void || body.blocks.size() != 1 ||
-        body.blocks.front().id != body.entry ||
-        !body.blocks.front().reachable ||
-        body.blocks.front().failureParameter != 0 || !body.loans.empty() ||
-        !body.dropObligations.empty() || !body.cleanupBoundaries.empty() ||
-        !body.failureRecords.empty() ||
-        body.places.size() != source.body.statements.size() ||
-        body.values.size() != source.body.values.size() ||
-        body.fullExpressions.size() != source.body.fullExpressions.size() ||
-        body.blocks.front().instructions.size() !=
-            source.body.statements.size() * 3) {
-      return false;
-    }
-
-    const MirTerminator &terminator = body.blocks.front().terminator;
-    if (terminator.kind != MirTerminatorKind::Return || terminator.value ||
-        terminator.hirValue != 0 || terminator.hirStatement != 0 ||
-        terminator.returnLoan || terminator.invokeInstruction != 0 ||
-        terminator.failureRecord != 0 || terminator.target != 0 ||
-        terminator.elseTarget != 0 || !terminator.switchTargets.empty() ||
-        !terminator.successLifecycle.empty()) {
-      return false;
-    }
-
-    for (std::size_t index = 0; index < source.body.statements.size();
-         ++index) {
-      const HirStatement &hirStatement = source.body.statements[index];
-      const HirValue *hirAssignment =
-          hirStatement.value ? source.body.findValue(*hirStatement.value)
-                             : nullptr;
-      const HirValue *hirLiteral =
-          hirAssignment == nullptr || hirAssignment->operands.size() != 1
-              ? nullptr
-              : source.body.findValue(hirAssignment->operands.front());
-      const MirInstruction &literal =
-          body.blocks.front().instructions[index * 3];
-      const MirInstruction &assignment =
-          body.blocks.front().instructions[index * 3 + 1];
-      const MirInstruction &boundary =
-          body.blocks.front().instructions[index * 3 + 2];
-      const MirPlace *place = assignment.destination
-                                  ? body.findPlace(*assignment.destination)
-                                  : nullptr;
-      const MirValue *literalResult =
-          literal.result ? body.findValue(*literal.result) : nullptr;
-      const MirValue *assignmentResult =
-          assignment.result ? body.findValue(*assignment.result) : nullptr;
-      if (hirAssignment == nullptr || hirLiteral == nullptr ||
-          literal.kind != MirInstructionKind::Compute ||
-          literal.operation != MirOperation::Literal || !literal.result ||
-          !literal.literal || !hasOnlyMirScalarCfgMetadata(literal) ||
-          literal.ownership ||
-          !isMirScalarCfgResult(literal, body, body.entry) ||
-          literal.hirValue != hirLiteral->id ||
-          !sameMirScalarLeafInfo(literal.info, hirLiteral->info) ||
-          !isCoherentMirScalarLiteral(literal, body, source.body,
-                                      *hirLiteral) ||
-          literalResult == nullptr ||
-          literalResult->sourceValue != hirLiteral->id ||
-          assignment.kind != MirInstructionKind::Assign ||
-          assignment.operation != MirOperation::Assign || !assignment.result ||
-          !assignment.destination || assignment.operands.size() != 1 ||
-          assignment.ownership || !hasOnlyMirScalarCfgMetadata(assignment) ||
-          !isMirScalarCfgResult(assignment, body, body.entry) ||
-          assignment.hirValue != hirAssignment->id ||
-          !sameMirScalarLeafInfo(assignment.info, hirAssignment->info) ||
-          assignment.operands.front().kind != MirOperandKind::Value ||
-          assignment.operands.front().value != *literal.result ||
-          assignment.operands.front().type != literal.info.type ||
-          assignmentResult == nullptr ||
-          assignmentResult->sourceValue != hirAssignment->id ||
-          place == nullptr || place->root != MirPlaceRootKind::Symbol ||
-          place->binding != 0 || place->symbol != hirAssignment->symbol ||
-          place->capture != 0 || place->temporary != 0 || place->value != 0 ||
-          place->loan != 0 || !place->projections.empty() || place->key ||
-          place->initiallyAvailable ||
-          place->sourceValue != hirAssignment->id ||
-          place->type != hirAssignment->info.type ||
-          place->access != hirAssignment->info.access ||
-          !sameMirScalarLeafTraits(place->traits, hirAssignment->info.traits) ||
-          !isClassDefaultCleanupGlobal(place->symbol, place->type, true) ||
-          boundary.kind != MirInstructionKind::Lifecycle ||
-          boundary.hirValue != hirAssignment->id ||
-          boundary.hirStatement != hirStatement.id || boundary.result ||
-          boundary.destination || !boundary.operands.empty() ||
-          boundary.operation != MirOperation::None || boundary.literal ||
-          boundary.ownership || !boundary.lifecycle.empty() ||
-          !hasOnlyMirScalarCfgMetadata(boundary) ||
-          boundary.fullExpressionEnd != index + 1 ||
-          boundary.cleanupBoundaryEnd != 0) {
-        return false;
-      }
-      const MirFullExpression &mirFull = body.fullExpressions[index];
-      const HirFullExpression &hirFull = source.body.fullExpressions[index];
-      if (mirFull.id != hirFull.id || mirFull.hirExpression != hirFull.id ||
-          mirFull.statement != hirFull.statement ||
-          mirFull.constructorInitializer != hirFull.constructorInitializer ||
-          mirFull.roots != hirFull.roots) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  [[nodiscard]] const MirDestructorInstance *
-  selectedMirClassDefaultCleanupDestructor(
-      const DestructorDecl &destructor) const {
-    if (mir == nullptr || destructor.body() == nullptr) {
-      return nullptr;
-    }
-    const HirDestructorInstance *hirDestructor = nullptr;
-    for (const HirDestructorInstance &candidate : hir.destructorInstances()) {
-      if (candidate.source == &destructor) {
-        if (hirDestructor != nullptr) {
-          throw std::logic_error(
-              "C++ backend found duplicate HIR cleanup destructors");
-        }
-        hirDestructor = &candidate;
-      }
-    }
-    if (hirDestructor == nullptr || hirDestructor->owner == 0 ||
-        hirDestructor->owner > hir.classInstances().size()) {
-      return nullptr;
-    }
-    const HirClassInstance &hirClass =
-        hir.classInstances()[hirDestructor->owner - 1];
-    if (!isHirClassDefaultCleanupClass(hirClass)) {
-      return nullptr;
-    }
-    const MirClassInstance *mirClass = mir->findClassInstance(hirClass.id);
-    const MirDestructorInstance *mirDestructor =
-        mir->findDestructorInstance(hirDestructor->id);
-    if (mirClass == nullptr ||
-        !isMirClassDefaultCleanupClass(*mirClass, hirClass) ||
-        mirDestructor == nullptr ||
-        !isMirClassDefaultCleanupDestructorBody(*mirDestructor,
-                                                *hirDestructor)) {
-      throw std::logic_error(
-          "eligible class cleanup destructor is not coherent verified MIR");
-    }
-    return mirDestructor;
-  }
-
-  [[nodiscard]] static bool
-  hasOnlyMirClassDefaultCleanupMetadata(const MirInstruction &instruction) {
-    return instruction.callSite == 0 &&
-           instruction.constructorInitializer == 0 &&
-           !instruction.callInputRole && instruction.callInputIndex == 0 &&
-           instruction.callInputKind == HirCallInputKind::Value &&
-           !instruction.preparedParameterDrop &&
-           !instruction.successResultDrop &&
-           instruction.unsafeOperation == UnsafeOperationKind::None &&
-           !instruction.rawMemoryAccess && !instruction.receiver &&
-           instruction.parameterTypes.empty() &&
-           instruction.closureCaptureTypes.empty() &&
-           instruction.closureCaptureModes.empty() &&
-           instruction.packFoldSymbol == 0 &&
-           instruction.packFoldParameter == 0 &&
-           instruction.packFoldFunction == 0 &&
-           instruction.packFoldArgument == 0 &&
-           instruction.packFoldFixedPlaces.empty() &&
-           instruction.packFoldElements.empty() && !instruction.loan &&
-           instruction.borrowOrigin == BorrowOriginKind::None &&
-           instruction.borrowArgument == 0 &&
-           instruction.borrowAccess == AccessMode::ReadOnly &&
-           !instruction.borrowPlace && !instruction.enumOwner &&
-           !instruction.enumValue && !instruction.enumVariant &&
-           !instruction.payloadIndex &&
-           instruction.intrinsic == IntrinsicKind::None &&
-           instruction.synchronization.kind ==
-               SynchronizationOperationKind::None &&
-           instruction.definedFailure.empty() &&
-           instruction.localFailureSites.empty() &&
-           instruction.definedFailure.propagation ==
-               FailurePropagationKind::None &&
-           instruction.dispatch == CallDispatch::Static &&
-           instruction.dispatchOwner == SemanticType::Unknown &&
-           !instruction.functionTarget && !instruction.constructorTarget &&
-           instruction.constructorKind == ConstructorKind::Ordinary &&
-           !instruction.lambdaTarget && instruction.callableArguments.empty() &&
-           !instruction.callableBoundary && !instruction.callableInvocation;
-  }
-
-  [[nodiscard]] static const MirDropObligation *
-  mirClassDefaultCleanupDrop(const MirBody &body, HirDropObligationId hirId) {
-    const MirDropObligation *selected = nullptr;
-    for (const MirDropObligation &candidate : body.dropObligations) {
-      if (candidate.hirObligation != hirId) {
-        continue;
-      }
-      if (selected != nullptr) {
-        return nullptr;
-      }
-      selected = &candidate;
-    }
-    return selected;
-  }
-
-  [[nodiscard]] static bool isMirClassDefaultCleanupLifecycle(
-      const MirLifecycleEvent &event, MirLifecycleEventKind kind,
-      MirDropObligationId source, MirDropObligationId target) {
-    return event.kind == kind && event.source == source &&
-           event.target == target && !event.conditional &&
-           !event.failureCleanup;
-  }
-
-  [[nodiscard]] static bool sameMirClassDefaultCleanupOwnership(
-      const std::optional<OwnershipEvent> &left,
-      const std::optional<OwnershipEvent> &right) {
-    if (!left || !right) {
-      return !left && !right;
-    }
-    return left->kind == right->kind && left->place == right->place &&
-           left->before == right->before && left->after == right->after &&
-           left->reachable == right->reachable;
   }
 
   [[nodiscard]] static bool
@@ -11236,48 +10891,30 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     emitGeneralMirBodyText(function, "scalar-cfg-v1");
   }
 
-  void emitMirClassDefaultCleanupGlobal(SymbolId symbol) {
-    const SymbolRecord *record = semantics.database().findSymbol(symbol);
-    if (record == nullptr || record->kind != SymbolKind::GlobalVariable ||
-        record->qualifiedName != record->name || record->name.empty()) {
-      throw std::logic_error(
-          "verified MIR class cleanup lost its exact global binding");
+  void emitGeneralMirDestructorBodyText(const MirDestructorInstance &destructor,
+                                        std::string_view familyLabel) {
+    if (mir == nullptr || !generalEmissionMap) {
+      throw std::logic_error("general MIR body emission requires verified MIR");
     }
-    output << "::__gti_program::" << record->name;
-  }
-
-  void emitMirClassDefaultCleanupDestructorBody(
-      const MirDestructorInstance &destructor) {
+    const CppMirBodyEmissionText emission =
+        CppMirBodyEmitter(*mir, *generalEmissionMap)
+            .emitBodyText(
+                {.kind = MirBodyKind::Destructor, .owner = destructor.id},
+                familyLabel, indentation);
+    if (!emission.emitted()) {
+      std::string message =
+          "selected verified-MIR body is not ready for general emission";
+      for (const CppMirBodyEmissionIssue &issue : emission.analysis.issues) {
+        message += "; ";
+        message += issue.detail;
+        message += " (destructor-instance " + std::to_string(destructor.id) +
+                   " block " + std::to_string(issue.block) + " instruction " +
+                   std::to_string(issue.instruction) + ")";
+      }
+      throw std::logic_error(message);
+    }
     writeIndent();
-    output << "// GTI verified-MIR body: class-default-cleanup-v1 "
-              "destructor-instance "
-           << destructor.id << "\n";
-    for (const MirValue &value : destructor.body.values) {
-      writeIndent();
-      emitSemanticType(value.info.type);
-      output << " __gti_mir_cleanup_v_" << value.id << "{};\n";
-    }
-    for (const MirInstruction &instruction :
-         destructor.body.blocks.front().instructions) {
-      writeIndent();
-      if (instruction.kind == MirInstructionKind::Compute) {
-        output << "__gti_mir_cleanup_v_" << *instruction.result << " = ";
-        emitMirScalarCfgLiteral(*instruction.literal, instruction.info.type);
-        output << ";\n";
-        continue;
-      }
-      if (instruction.kind == MirInstructionKind::Assign) {
-        output << "__gti_mir_cleanup_v_" << *instruction.result << " = (";
-        const MirPlace *place =
-            destructor.body.findPlace(*instruction.destination);
-        emitMirClassDefaultCleanupGlobal(place->symbol);
-        output << " = __gti_mir_cleanup_v_"
-               << instruction.operands.front().value << ");\n";
-        continue;
-      }
-      output << "// GTI MIR full-expression boundary "
-             << instruction.fullExpressionEnd << "\n";
-    }
+    output << emission.text;
   }
 
   [[nodiscard]] std::string
@@ -12521,11 +12158,12 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
             writeIndent();
             output << lifecycleActiveName(*definition.lifecycle)
                    << " = false;\n";
-            const MirDestructorInstance *mirDestructor =
-                selectedMirClassDefaultCleanupDestructor(
+            const MirDestructorInstance *mirGeneralDestructor =
+                selectedMirGeneralDestructor(
                     *definition.lifecycle->declaredDestructor->declaration);
-            if (mirDestructor != nullptr) {
-              emitMirClassDefaultCleanupDestructorBody(*mirDestructor);
+            if (mirGeneralDestructor != nullptr) {
+              emitGeneralMirDestructorBodyText(*mirGeneralDestructor,
+                                               "scalar-cfg-v1");
             } else {
               const MirDestructorInstance *mirOwnedDestructor = [&] {
                 const MirDestructorInstance *selected =
@@ -13192,11 +12830,13 @@ namespace gti_internal::backend {
   // Copied representation rows for the generic MIR body emitter, built and
   // owned at the backend boundary (ADR 016 phase 4).
   std::optional<CppMirBodyEmissionMap> generalEmissionMap;
-  // Function instances the general emitter admits: Ready under its
-  // fail-closed analysis and inside its text vocabulary. Computed once per
-  // emission from the emitter's own authorities.
+  // Function and destructor instances the general emitter admits: Ready
+  // under its fail-closed analysis and inside its text vocabulary. Computed
+  // once per emission from the emitter's own authorities.
   mutable std::optional<std::unordered_set<HirFunctionInstanceId>>
       generalCfgAdmitted;
+  mutable std::optional<std::unordered_set<HirDestructorInstanceId>>
+      generalDtorAdmitted;
   std::size_t payloadSwitchCounter = 0;
   bool emittingField = false;
   bool emittingScheduledType = false;

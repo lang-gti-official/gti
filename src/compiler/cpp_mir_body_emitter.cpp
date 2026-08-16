@@ -1780,6 +1780,19 @@ namespace {
 // type consultation is replaced by a copied representation row. Constructs
 // outside this vocabulary after a Ready analysis are emission drift and
 // throw, exactly as the transitional emitter throws.
+// The per-body facts the scalar text step spells from. Function and
+// destructor instances project onto the same shape: a destructor has no
+// parameters, its receiver is inherently mutable, and its banner names a
+// destructor-instance.
+struct ScalarBodyFacts {
+  const MirBody &body;
+  std::uint64_t id;
+  std::string_view instanceLabel;
+  std::optional<HirClassInstanceId> owner;
+  const std::vector<HirBindingId> &parameterBindings;
+  ReceiverMutability receiverMutability;
+};
+
 class ScalarBodyTextEmitter {
 public:
   ScalarBodyTextEmitter(const MirProgram &program,
@@ -1790,13 +1803,39 @@ public:
 
   [[nodiscard]] std::string emit(const MirFunctionInstance &function,
                                  std::string_view familyLabel) {
+    return emit(
+        ScalarBodyFacts{.body = function.body,
+                        .id = function.id,
+                        .instanceLabel = "function-instance",
+                        .owner = function.owner,
+                        .parameterBindings = function.parameterBindings,
+                        .receiverMutability = function.receiverMutability},
+        familyLabel);
+  }
+
+  [[nodiscard]] std::string emit(const MirDestructorInstance &destructor,
+                                 std::string_view familyLabel) {
+    return emit(
+        ScalarBodyFacts{.body = destructor.body,
+                        .id = destructor.id,
+                        .instanceLabel = "destructor-instance",
+                        .owner = destructor.owner == 0
+                                     ? std::optional<HirClassInstanceId>()
+                                     : std::optional(destructor.owner),
+                        .parameterBindings = emptyParameterBindings(),
+                        .receiverMutability = ReceiverMutability::Mutable},
+        familyLabel);
+  }
+
+  [[nodiscard]] std::string emit(const ScalarBodyFacts &facts,
+                                 std::string_view familyLabel) {
     output.str("");
     output << "{\n";
     ++indentation;
     writeIndent();
-    output << "// GTI verified-MIR body: " << familyLabel
-           << " function-instance " << function.id << "\n";
-    for (const MirPlace &place : function.body.places) {
+    output << "// GTI verified-MIR body: " << familyLabel << " "
+           << facts.instanceLabel << " " << facts.id << "\n";
+    for (const MirPlace &place : facts.body.places) {
       // An owning class local lives in a sealed lifetime slot so failure
       // and scope cleanup can destroy it exactly once from verified MIR.
       if (slotPlace(place)) {
@@ -1824,25 +1863,25 @@ public:
           continue;
         }
         writeIndent();
-        output << (function.receiverMutability == ReceiverMutability::Mutable
+        output << (facts.receiverMutability == ReceiverMutability::Mutable
                        ? "auto &__gti_mir_p_"
                        : "const auto &__gti_mir_p_")
                << place.id << " = (*this)."
-               << fieldSpelling(function, place.projections.front().field)
+               << fieldSpelling(facts, place.projections.front().field)
                << ";\n";
         continue;
       }
       writeIndent();
       output << typeSpelling(place.type) << " __gti_mir_p_" << place.id;
       if (const std::optional<std::size_t> parameter =
-              parameterIndex(place, function)) {
+              parameterIndex(place, facts)) {
         output << " = __gti_mir_arg_" << *parameter;
       } else {
         output << "{}";
       }
       output << ";\n";
     }
-    for (const MirValue &value : function.body.values) {
+    for (const MirValue &value : facts.body.values) {
       if (value.info.type.kind == SemanticType::Class) {
         continue;
       }
@@ -1851,19 +1890,19 @@ public:
              << "{};\n";
     }
     writeIndent();
-    output << "std::size_t __gti_mir_bb = " << function.body.entry << ";\n";
+    output << "std::size_t __gti_mir_bb = " << facts.body.entry << ";\n";
     writeIndent();
     output << "for (;;) {\n";
     ++indentation;
     writeIndent();
     output << "switch (__gti_mir_bb) {\n";
     ++indentation;
-    for (const MirBlock &block : function.body.blocks) {
+    for (const MirBlock &block : facts.body.blocks) {
       writeIndent();
       output << "case " << block.id << ": {\n";
       ++indentation;
       for (const MirInstruction &instruction : block.instructions) {
-        emitInstruction(instruction, function);
+        emitInstruction(instruction, facts);
       }
       emitTerminator(block.terminator);
       --indentation;
@@ -1889,6 +1928,12 @@ public:
   }
 
 private:
+  [[nodiscard]] static const std::vector<HirBindingId> &
+  emptyParameterBindings() {
+    static const std::vector<HirBindingId> empty;
+    return empty;
+  }
+
   void writeIndent() {
     for (std::size_t index = 0; index < indentation; ++index) {
       output << "  ";
@@ -1896,13 +1941,13 @@ private:
   }
 
   [[nodiscard]] static MirPlaceId
-  constructDestination(const MirFunctionInstance &function,
+  constructDestination(const ScalarBodyFacts &facts,
                        const MirInstruction &construct) {
     if (!construct.result) {
       return 0;
     }
     MirPlaceId selected = 0;
-    for (const MirBlock &block : function.body.blocks) {
+    for (const MirBlock &block : facts.body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
         if (instruction.kind != MirInstructionKind::Initialize ||
             instruction.operands.size() != 1 ||
@@ -1965,9 +2010,9 @@ private:
     return found->spelling;
   }
 
-  [[nodiscard]] const std::string &
-  fieldSpelling(const MirFunctionInstance &function, SymbolId field) {
-    if (!function.owner) {
+  [[nodiscard]] const std::string &fieldSpelling(const ScalarBodyFacts &facts,
+                                                 SymbolId field) {
+    if (!facts.owner) {
       throw std::logic_error(
           "general MIR body emission lost the receiver class instance");
     }
@@ -1975,7 +2020,7 @@ private:
         representations.symbols().begin(), representations.symbols().end(),
         [&](const CppMirSymbolRepresentation &row) {
           return row.kind == CppMirSymbolRepresentationKind::Field &&
-                 row.owner == *function.owner && row.symbol == field &&
+                 row.owner == *facts.owner && row.symbol == field &&
                  row.ordinal == 0;
         });
     if (found == representations.symbols().end() || found->spelling.empty()) {
@@ -2001,15 +2046,15 @@ private:
   }
 
   [[nodiscard]] static std::optional<std::size_t>
-  parameterIndex(const MirPlace &place, const MirFunctionInstance &function) {
+  parameterIndex(const MirPlace &place, const ScalarBodyFacts &facts) {
     const auto parameter =
-        std::find(function.parameterBindings.begin(),
-                  function.parameterBindings.end(), place.binding);
-    if (parameter == function.parameterBindings.end()) {
+        std::find(facts.parameterBindings.begin(),
+                  facts.parameterBindings.end(), place.binding);
+    if (parameter == facts.parameterBindings.end()) {
       return std::nullopt;
     }
     return static_cast<std::size_t>(
-        std::distance(function.parameterBindings.begin(), parameter));
+        std::distance(facts.parameterBindings.begin(), parameter));
   }
 
   [[nodiscard]] static bool
@@ -2164,8 +2209,20 @@ private:
     output << ";\n";
   }
 
+  // A store destination is the declared binding unless the place is
+  // Symbol-rooted: a storage place has no local binding and reads and
+  // writes its named global through the storage row, exactly like Load.
+  [[nodiscard]] std::string destinationSpelling(const ScalarBodyFacts &facts,
+                                                MirPlaceId destination) {
+    const MirPlace *place = facts.body.findPlace(destination);
+    if (place != nullptr && place->root == MirPlaceRootKind::Symbol) {
+      return storageSpelling(place->symbol);
+    }
+    return "__gti_mir_p_" + std::to_string(destination);
+  }
+
   void emitPlainInstruction(const MirInstruction &instruction,
-                            const MirFunctionInstance &function) {
+                            const ScalarBodyFacts &facts) {
     writeIndent();
     if (instruction.kind == MirInstructionKind::Lifecycle) {
       if (instruction.fullExpressionEnd != 0) {
@@ -2182,10 +2239,9 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Construct) {
-      const MirPlaceId destination =
-          constructDestination(function, instruction);
+      const MirPlaceId destination = constructDestination(facts, instruction);
       const MirPlace *slot =
-          destination == 0 ? nullptr : function.body.findPlace(destination);
+          destination == 0 ? nullptr : facts.body.findPlace(destination);
       if (slot == nullptr || !slotPlace(*slot)) {
         throw std::logic_error(
             "verified MIR class construction lost its reparent slot");
@@ -2196,7 +2252,7 @@ private:
     if (instruction.kind == MirInstructionKind::Drop) {
       const MirPlace *slot =
           instruction.destination
-              ? function.body.findPlace(*instruction.destination)
+              ? facts.body.findPlace(*instruction.destination)
               : nullptr;
       if (slot == nullptr || !slotPlace(*slot)) {
         throw std::logic_error(
@@ -2207,7 +2263,7 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Load) {
       const MirPlace *source =
-          function.body.findPlace(instruction.operands.front().place);
+          facts.body.findPlace(instruction.operands.front().place);
       if (source != nullptr && source->root == MirPlaceRootKind::Symbol) {
         output << "__gti_mir_v_" << *instruction.result << " = "
                << storageSpelling(source->symbol) << ";\n";
@@ -2219,29 +2275,29 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Initialize &&
         instruction.destination) {
-      const MirPlace *slot = function.body.findPlace(*instruction.destination);
+      const MirPlace *slot = facts.body.findPlace(*instruction.destination);
       if (slot != nullptr && slotPlace(*slot)) {
         output << "// GTI MIR reparent into p" << *instruction.destination
                << "\n";
         return;
       }
     }
-    output << "__gti_mir_p_" << *instruction.destination << " = ";
+    output << destinationSpelling(facts, *instruction.destination) << " = ";
     emitOperand(instruction.operands.front(),
                 instruction.kind == MirInstructionKind::Initialize);
     output << ";\n";
     if (instruction.kind == MirInstructionKind::Assign) {
       writeIndent();
-      output << "__gti_mir_v_" << *instruction.result << " = __gti_mir_p_"
-             << *instruction.destination << ";\n";
+      output << "__gti_mir_v_" << *instruction.result << " = "
+             << destinationSpelling(facts, *instruction.destination) << ";\n";
     }
   }
 
   void emitInstruction(const MirInstruction &instruction,
-                       const MirFunctionInstance &function) {
+                       const ScalarBodyFacts &facts) {
     if (instruction.kind != MirInstructionKind::CallInput &&
         instruction.kind != MirInstructionKind::Call) {
-      emitPlainInstruction(instruction, function);
+      emitPlainInstruction(instruction, facts);
       return;
     }
     writeIndent();
@@ -2388,15 +2444,39 @@ cppMirExpectedTypeRepresentation(const SemanticType &type) {
 }
 
 bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
-  if (address.kind != MirBodyKind::Function) {
+  // The vocabulary is shared between function and destructor bodies; the
+  // probe needs only the body, the owning class instance for field rows,
+  // and the receiver mutability for the store direction.
+  const MirBody *bodyPointer = nullptr;
+  std::optional<HirClassInstanceId> owner;
+  ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+  switch (address.kind) {
+  case MirBodyKind::Function: {
+    const MirFunctionInstance *function =
+        program_.findFunctionInstance(address.owner);
+    if (function == nullptr) {
+      return false;
+    }
+    bodyPointer = &function->body;
+    owner = function->owner;
+    receiverMutability = function->receiverMutability;
+    break;
+  }
+  case MirBodyKind::Destructor: {
+    const MirDestructorInstance *destructor =
+        program_.findDestructorInstance(address.owner);
+    if (destructor == nullptr || destructor->owner == 0) {
+      return false;
+    }
+    bodyPointer = &destructor->body;
+    owner = destructor->owner;
+    receiverMutability = ReceiverMutability::Mutable;
+    break;
+  }
+  default:
     return false;
   }
-  const MirFunctionInstance *function =
-      program_.findFunctionInstance(address.owner);
-  if (function == nullptr) {
-    return false;
-  }
-  const MirBody &body = function->body;
+  const MirBody &body = *bodyPointer;
   if (body.blocks.empty() || body.entry == 0 ||
       body.entry > body.blocks.size()) {
     return false;
@@ -2409,15 +2489,14 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
     return found != representations_.types().end() && !found->spelling.empty();
   };
   const auto fieldRow = [&](SymbolId field) {
-    if (!function->owner) {
+    if (!owner) {
       return false;
     }
     const auto found = std::find_if(
         representations_.symbols().begin(), representations_.symbols().end(),
         [&](const CppMirSymbolRepresentation &row) {
           return row.kind == CppMirSymbolRepresentationKind::Field &&
-                 row.owner == *function->owner && row.symbol == field &&
-                 row.ordinal == 0;
+                 row.owner == *owner && row.symbol == field && row.ordinal == 0;
         });
     return found != representations_.symbols().end() &&
            !found->spelling.empty();
@@ -2629,7 +2708,7 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
         // would bind the field const and the emitted C++ would not compile.
         if (destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
-            function->receiverMutability != ReceiverMutability::Mutable) {
+            receiverMutability != ReceiverMutability::Mutable) {
           return false;
         }
         if (destination != nullptr && slotPlace(*destination)) {
@@ -2655,7 +2734,7 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
         const MirPlace *destination = body.findPlace(*instruction.destination);
         if (destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
-            function->receiverMutability != ReceiverMutability::Mutable) {
+            receiverMutability != ReceiverMutability::Mutable) {
           return false;
         }
         continue;
@@ -2725,19 +2804,33 @@ CppMirBodyEmitter::emitBodyText(MirBodyAddress address,
   if (!result.analysis.ready()) {
     return result;
   }
-  if (address.kind != MirBodyKind::Function) {
-    throw std::logic_error(
-        "general MIR body text emission supports function bodies only");
+  switch (address.kind) {
+  case MirBodyKind::Function: {
+    const MirFunctionInstance *function =
+        program_.findFunctionInstance(address.owner);
+    if (function == nullptr) {
+      throw std::logic_error(
+          "general MIR body text emission lost its exact function instance");
+    }
+    result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
+                      .emit(*function, familyLabel);
+    return result;
   }
-  const MirFunctionInstance *function =
-      program_.findFunctionInstance(address.owner);
-  if (function == nullptr) {
-    throw std::logic_error(
-        "general MIR body text emission lost its exact function instance");
+  case MirBodyKind::Destructor: {
+    const MirDestructorInstance *destructor =
+        program_.findDestructorInstance(address.owner);
+    if (destructor == nullptr) {
+      throw std::logic_error(
+          "general MIR body text emission lost its exact destructor instance");
+    }
+    result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
+                      .emit(*destructor, familyLabel);
+    return result;
   }
-  result.text = ScalarBodyTextEmitter(program_, representations_, indentation)
-                    .emit(*function, familyLabel);
-  return result;
+  default:
+    throw std::logic_error("general MIR body text emission supports function "
+                           "and destructor bodies only");
+  }
 }
 
 CppMirBodyEmissionAnalysis

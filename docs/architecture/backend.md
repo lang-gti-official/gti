@@ -1,9 +1,11 @@
 # Backend And Native Handoff
 
-Status: Current transitional C++ backend with `scalar-leaf-v1`,
-`scalar-cfg-v1`, `scalar-direct-call-v1`, `class-default-cleanup-v1`, and
-`owned-lifecycle-call-v1` plus the hosted `scalar-failure-callgraph-v1`
-component emitted from verified MIR.
+Status: Current transitional C++ backend. The general per-body route
+(published under the `scalar-cfg-v1` label) and the remaining
+`owned-lifecycle-call-v1` family plus the hosted
+`scalar-failure-callgraph-v1` component emit from verified MIR; the former
+`scalar-leaf-v1`, `scalar-direct-call-v1`, and `class-default-cleanup-v1`
+families are dissolved into the general route.
 
 `include/gti/backend.h` defines a target-independent `Backend` interface.
 `BackendInput` carries the checked `Program`, `SemanticModel`, typed HIR,
@@ -165,7 +167,12 @@ generic emitter replaces that single whole-program route.
   spelling with constness keyed to the declared receiver mutability, the
   vocabulary probe rejects any store to a receiver field under a read-only
   receiver, and reads of another object's fields and projection chains
-  remain outside the family. The family also admits calls per body: an eligible call names a
+  remain outside the family. A declared destructor with a single lowered
+  instance emits its body from verified MIR through the same route inside
+  its lifecycle-cleanup helper: the destructor receiver is inherently
+  mutable, and mutable scalar globals spell through storage rows for loads
+  and stores alike. A destructor with checked operations, or any body
+  outside the vocabulary, declines to compatibility emission per body. The family also admits calls per body: an eligible call names a
   static proved-failure-free source free function through the exact ordered
   `CallInput`/`Call` stages, the HIR gate consults the MIR failure summary so
   a may-raise or conservatively-true target declines gracefully, and the
@@ -184,17 +191,12 @@ generic emitter replaces that single whole-program route.
   narrower production family: generic MIR effect analysis may validly prove
   concrete `constexpr` or internal bodies false without making them eligible
   for MIR C++ emission.
-- `class-default-cleanup-v1` admits a non-entry, non-generic, zero-parameter
-  source free function with a non-void scalar result and one straight-line root
-  scope. Each local is an exact empty, base-free, field-free, non-polymorphic
-  concrete class created by semantic generated-default `{}` construction with
-  no constructor target. Its public source destructor is restricted to exact
-  scalar-literal assignments to mutable top-level scalar globals. The verified
-  schedule is `Construct`, `Initialize`/`Reparent`, and one full-expression
-  boundary per local; a return-global `Load` and boundary; reverse lexical
-  `Drop` instructions; one normal cleanup boundary; and `Return`. Declared
-  constructors, fields or bases, nested scopes, branches, calls, loans,
-  failure edges, and failure-capable destructors remain compatible.
+- `class-default-cleanup-v1` is fully dissolved: its function route fell to
+  the general per-body route's lifetime-slot vocabulary, and its
+  destructor-definition route fell to general per-body Destructor emission.
+  Owning class locals, generated-default construction, verified `Drop`
+  schedules, and failure-free declared destructor bodies all emit through
+  analysis-driven admission with no family selector.
 - `owned-lifecycle-call-v1` admits one atomic acyclic graph of non-entry,
   non-generic, source-defined free functions over exact scalar values,
   variables, expression statements, blocks, `if`, and `return`, plus exact
