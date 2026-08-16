@@ -1097,6 +1097,8 @@ void testGeneralTextStepMatchesProductionEmission() {
   std::size_t generalBodies = 0;
   std::size_t matchedBodies = 0;
   bool deterministic = true;
+  bool intrinsicBodies = false;
+  bool checkedIntrinsicBodies = false;
   for (const std::filesystem::path &source : sources) {
     std::ifstream input(source);
     std::stringstream buffer;
@@ -1165,6 +1167,17 @@ void testGeneralTextStepMatchesProductionEmission() {
       const lang::CppMirBodyEmissionText emission = emitter.emitBodyText(
           {.kind = lang::MirBodyKind::Function, .owner = instance}, label,
           markerIndent / 2 - 1);
+      if (emission.text.find("::gti_internal::backend::wrapping_add(") !=
+              std::string::npos ||
+          emission.text.find("::gti_internal::backend::saturating_sub(") !=
+              std::string::npos) {
+        intrinsicBodies = true;
+      }
+      if (emission.text.find("checked_add") != std::string::npos ||
+          emission.text.find("checked_sub") != std::string::npos ||
+          emission.text.find("checked_mul") != std::string::npos) {
+        checkedIntrinsicBodies = true;
+      }
       if (emission.emitted() &&
           generated.find(emission.text) != std::string::npos) {
         ++matchedBodies;
@@ -1178,6 +1191,12 @@ void testGeneralTextStepMatchesProductionEmission() {
 
   std::cout << "general text-step agreement: bodies=" << generalBodies
             << " matched=" << matchedBodies << '\n';
+  expect(intrinsicBodies,
+         "the corpus should emit at least one wrapping/saturating intrinsic "
+         "helper call from verified MIR");
+  expect(!checkedIntrinsicBodies,
+         "no checked arithmetic intrinsic may appear inside a general MIR "
+         "body: its Expected result is outside the scalar vocabulary");
   expect(deterministic,
          "the production rows builder should be run-to-run deterministic");
   expect(generalBodies >= 30,

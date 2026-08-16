@@ -183,6 +183,16 @@ enum class CppMirEmissionEncoding {
 [[nodiscard]] std::optional<CppMirTypeRepresentationKind>
 cppMirExpectedTypeRepresentation(const SemanticType &type);
 
+// The single spelling authority for the shipped integer-arithmetic helper
+// family (`gti_internal_backend_helpers_v1`): the fully qualified helper a
+// backend spells for one of the nine wrapping/saturating/checked intrinsic
+// kinds, and an empty view for every other kind. The general text
+// vocabulary admits only the six wrapping/saturating kinds (a checked
+// variant produces an `Expected` result outside the scalar vocabulary);
+// the compatibility emitter also spells the checked template form.
+[[nodiscard]] std::string_view
+cppIntegerArithmeticIntrinsicSpelling(IntrinsicKind intrinsic);
+
 [[nodiscard]] CppMirEmissionEncoding
 classifyCppMirInstructionKind(MirInstructionKind kind);
 [[nodiscard]] CppMirEmissionEncoding

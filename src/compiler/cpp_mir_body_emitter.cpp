@@ -1780,6 +1780,23 @@ namespace {
 // type consultation is replaced by a copied representation row. Constructs
 // outside this vocabulary after a Ready analysis are emission drift and
 // throw, exactly as the transitional emitter throws.
+// The vocabulary spells only the wrapping/saturating kinds: their helpers
+// take and return the operand scalar directly, while a checked variant
+// produces an `Expected` payload the scalar vocabulary cannot represent.
+[[nodiscard]] bool scalarSpellableArithmeticIntrinsic(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::IntegerWrappingAdd:
+  case IntrinsicKind::IntegerWrappingSubtract:
+  case IntrinsicKind::IntegerWrappingMultiply:
+  case IntrinsicKind::IntegerSaturatingAdd:
+  case IntrinsicKind::IntegerSaturatingSubtract:
+  case IntrinsicKind::IntegerSaturatingMultiply:
+    return true;
+  default:
+    return false;
+  }
+}
+
 // The per-body facts the scalar text step spells from. Function and
 // destructor instances project onto the same shape: a destructor has no
 // parameters, its receiver is inherently mutable, and its banner names a
@@ -2307,6 +2324,24 @@ private:
       output << ";\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic != IntrinsicKind::None) {
+      const std::string_view helper =
+          cppIntegerArithmeticIntrinsicSpelling(instruction.intrinsic);
+      if (!scalarSpellableArithmeticIntrinsic(instruction.intrinsic) ||
+          helper.empty() || instruction.receiver || !instruction.result ||
+          instruction.operands.size() != 2) {
+        throw std::logic_error(
+            "verified MIR intrinsic call is outside the spellable "
+            "arithmetic helper family");
+      }
+      output << "__gti_mir_v_" << *instruction.result << " = " << helper << '(';
+      emitOperand(instruction.operands[0]);
+      output << ", ";
+      emitOperand(instruction.operands[1]);
+      output << ");\n";
+      return;
+    }
     if (!instruction.functionTarget || instruction.receiver) {
       throw std::logic_error(
           "verified MIR direct call lost its exact target declaration or "
@@ -2441,6 +2476,32 @@ private:
 std::optional<CppMirTypeRepresentationKind>
 cppMirExpectedTypeRepresentation(const SemanticType &type) {
   return expectedTypeRepresentation(type);
+}
+
+std::string_view
+cppIntegerArithmeticIntrinsicSpelling(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::IntegerWrappingAdd:
+    return "::gti_internal::backend::wrapping_add";
+  case IntrinsicKind::IntegerWrappingSubtract:
+    return "::gti_internal::backend::wrapping_sub";
+  case IntrinsicKind::IntegerWrappingMultiply:
+    return "::gti_internal::backend::wrapping_mul";
+  case IntrinsicKind::IntegerSaturatingAdd:
+    return "::gti_internal::backend::saturating_add";
+  case IntrinsicKind::IntegerSaturatingSubtract:
+    return "::gti_internal::backend::saturating_sub";
+  case IntrinsicKind::IntegerSaturatingMultiply:
+    return "::gti_internal::backend::saturating_mul";
+  case IntrinsicKind::IntegerCheckedAdd:
+    return "::gti_internal::backend::checked_add";
+  case IntrinsicKind::IntegerCheckedSubtract:
+    return "::gti_internal::backend::checked_sub";
+  case IntrinsicKind::IntegerCheckedMultiply:
+    return "::gti_internal::backend::checked_mul";
+  default:
+    return {};
+  }
 }
 
 bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
@@ -2750,7 +2811,22 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
         // A receiver-carrying call is outside the vocabulary: the text step
         // spells only the namespace-scope target form, so emitting one
         // would drop the receiver.
-        if (!instruction.functionTarget || instruction.receiver ||
+        if (instruction.receiver) {
+          return false;
+        }
+        if (instruction.intrinsic != IntrinsicKind::None) {
+          // An intrinsic call names no body: it spells directly as the
+          // shipped arithmetic helper over its two staged scalar operands.
+          if (instruction.functionTarget ||
+              !scalarSpellableArithmeticIntrinsic(instruction.intrinsic) ||
+              !instruction.result || instruction.operands.size() != 2 ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand)) {
+            return false;
+          }
+          continue;
+        }
+        if (!instruction.functionTarget ||
             !bodyRow(*instruction.functionTarget) ||
             !std::all_of(instruction.operands.begin(),
                          instruction.operands.end(), valueOperand)) {

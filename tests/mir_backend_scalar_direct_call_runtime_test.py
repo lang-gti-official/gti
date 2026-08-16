@@ -46,6 +46,7 @@ SELECTED = (
     # compatibility path while the calls emit from verified MIR.
     "compatibility_static_member",
     "compatibility_internal_call",
+    "constexpr_target",
     "compatibility_constexpr_target",
     "compatibility_constexpr_call",
     "compatibility_for_target",
@@ -55,7 +56,6 @@ COMPATIBILITY = (
     "checked_target",
     "compatibility_checked_target",
     "compatibility_checked_call",
-    "constexpr_target",
     "compatibility_internal_target",
     "compatibility_recursive",
 )

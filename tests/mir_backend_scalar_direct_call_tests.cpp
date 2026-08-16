@@ -180,8 +180,11 @@ void expectSelectedDefinitions(std::string_view generated) {
       "direct_loop",
       "direct_cross_namespace",
       // Callers the old whole-graph contract had to reject even though
-      // their own bodies are ordinary: their ineligible callees stay on the
-      // compatibility path while the calls emit from verified MIR.
+      // their own bodies are ordinary: their formerly ineligible callees
+      // either emit per body themselves (a constexpr declaration is now
+      // admissible; GTI constant contexts are frontend-evaluated) or stay
+      // on the compatibility path while the calls emit from verified MIR.
+      "constexpr_target",
       "compatibility_constexpr_target",
       "compatibility_constexpr_call",
       "compatibility_static_member",
@@ -201,7 +204,6 @@ void expectSelectedDefinitions(std::string_view generated) {
       "checked_target",
       "compatibility_checked_target",
       "compatibility_checked_call",
-      "constexpr_target",
       "compatibility_internal_target",
       "compatibility_recursive",
   };

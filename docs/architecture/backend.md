@@ -172,12 +172,20 @@ generic emitter replaces that single whole-program route.
   its lifecycle-cleanup helper: the destructor receiver is inherently
   mutable, and mutable scalar globals spell through storage rows for loads
   and stores alike. A destructor with checked operations, or any body
-  outside the vocabulary, declines to compatibility emission per body. The family also admits calls per body: an eligible call names a
+  outside the vocabulary, declines to compatibility emission per body. A `constexpr` declaration is admissible — GTI constant
+  contexts are frontend-evaluated, and the emitted monomorphized definition
+  was never C++-`constexpr` on either route. The family also admits calls
+  per body: an eligible call names a
   static proved-failure-free source-defined or runtime-binding free
   function through the exact ordered
   `CallInput`/`Call` stages, the HIR gate consults the MIR failure summary so
   a may-raise or conservatively-true target declines gracefully, and the
-  callee's own body authority is decided independently. The closed-graph
+  callee's own body authority is decided independently. An intrinsic call
+  in the six wrapping/saturating integer-arithmetic kinds spells directly
+  as its shipped `::gti_internal::backend` helper over two staged scalar
+  operands (`cppIntegerArithmeticIntrinsicSpelling` is the single spelling
+  authority shared with compatibility emission); the checked kinds produce
+  an `Expected` result outside the scalar vocabulary and decline per body. The closed-graph
   `scalar-direct-call-v1` selector keeps priority over this per-body
   capability for the whole components it owns.
 - `scalar-direct-call-v1` adds exact ordered scalar `CallInput`/`Call` stages

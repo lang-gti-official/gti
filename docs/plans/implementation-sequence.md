@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.173.0
+Checkpoint: 0.174.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,21 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Arithmetic-intrinsic vocabulary and constexpr admission (0.174.0).**
+  The general emitter spells the six wrapping/saturating integer-arithmetic
+  intrinsics as their shipped `::gti_internal::backend` helpers through one
+  spelling authority shared with the compatibility call-site emission
+  (`cppIntegerArithmeticIntrinsicSpelling`); the three checked kinds stay
+  declined per body because their `Expected` result is outside the scalar
+  vocabulary (pinned corpus-wide). The scalar-CFG declaration gate also
+  stops rejecting `constexpr` declarations — GTI constant contexts are
+  frontend-evaluated and the emitted monomorphized definition was never
+  C++-`constexpr` on either route; the coherence seal keeps exact
+  HIR/MIR/semantic constexpr agreement. Together these convert the
+  admission census into production markers: corpus markers 385 -> 529 and
+  general admission 881 -> 1,025 of 2,429 bodies, native sweep and
+  differential oracle green. The `constexpr_target` fixture pins migrate
+  from the compatibility list to the selected list.
 - **NativeInterop and Intrinsic capability rows shipped (0.173.0).** The
   backend boundary now names the two shipped helper surfaces the analysis
   was withholding: `gti_rt_c_symbols_v1` (the runtime's C prototypes,

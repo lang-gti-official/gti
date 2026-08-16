@@ -1883,8 +1883,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     if (resolved != nullptr &&
         integerArithmeticIntrinsic(resolved->intrinsic)) {
-      output << "::gti_internal::backend::"
-             << integerArithmeticIntrinsicName(resolved->intrinsic);
+      output << cppIntegerArithmeticIntrinsicSpelling(resolved->intrinsic);
       const std::optional<IntegerArithmeticIntrinsic> arithmetic =
           integerArithmeticIntrinsic(resolved->intrinsic);
       if (arithmetic &&
@@ -5798,8 +5797,7 @@ private:
         !info->genericParameters.empty() || !info->requirements.empty() ||
         info->parameterPack || info->entryPoint ||
         info->entryKind != ProgramEntryKind::None || info->staticMember ||
-        info->internalLinkage || info->constexprFunction ||
-        info->linkage != LanguageLinkage::Gti ||
+        info->internalLinkage || info->linkage != LanguageLinkage::Gti ||
         !info->externalSymbol.empty() || info->virtualMethod ||
         info->pureVirtual || info->overrideMethod ||
         info->intrinsic != IntrinsicKind::None ||
@@ -5890,7 +5888,7 @@ private:
             (function.operatorName()
                  ? std::optional(function.operatorName()->kind)
                  : std::nullopt) ||
-        selected->constexprFunction ||
+        selected->constexprFunction != info->constexprFunction ||
         selected->entryKind != ProgramEntryKind::None ||
         selected->entryArgumentAppendTarget ||
         selected->returnType != info->returnType ||
@@ -11749,32 +11747,6 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
            intrinsic == IntrinsicKind::StorageRelocate ||
            intrinsic == IntrinsicKind::StorageShiftRight ||
            intrinsic == IntrinsicKind::StorageShiftLeft;
-  }
-
-  [[nodiscard]] static std::string_view
-  integerArithmeticIntrinsicName(IntrinsicKind intrinsic) {
-    switch (intrinsic) {
-    case IntrinsicKind::IntegerWrappingAdd:
-      return "wrapping_add";
-    case IntrinsicKind::IntegerWrappingSubtract:
-      return "wrapping_sub";
-    case IntrinsicKind::IntegerWrappingMultiply:
-      return "wrapping_mul";
-    case IntrinsicKind::IntegerSaturatingAdd:
-      return "saturating_add";
-    case IntrinsicKind::IntegerSaturatingSubtract:
-      return "saturating_sub";
-    case IntrinsicKind::IntegerSaturatingMultiply:
-      return "saturating_mul";
-    case IntrinsicKind::IntegerCheckedAdd:
-      return "checked_add";
-    case IntrinsicKind::IntegerCheckedSubtract:
-      return "checked_sub";
-    case IntrinsicKind::IntegerCheckedMultiply:
-      return "checked_mul";
-    default:
-      return "";
-    }
   }
 
   [[nodiscard]] static std::string_view
