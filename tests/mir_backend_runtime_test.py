@@ -227,6 +227,47 @@ def main() -> int:
             )
             return 1
 
+    chainprint_source = (
+        "int main() {\n"
+        "  std::println(42);\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="gti-mir-chainprint-") as temporary:
+        root = pathlib.Path(temporary)
+        source_path = root / "chain-print.gti"
+        source_path.write_text(chainprint_source, encoding="utf8")
+        executable = root / "chain-print"
+        built = run([str(compiler), str(source_path), "-o", str(executable)])
+        if built.returncode != 0:
+            return fail(built)
+        emitted = run(
+            [str(compiler), str(source_path), "--emit-cpp", "-o",
+             str(root / "chain-print.cpp")]
+        )
+        generated = (root / "chain-print.cpp").read_text(encoding="utf8")
+        # The integer print chain publishes per instance: explicit
+        # specializations backed by verified MIR, with the array-walking
+        # digit printer in the transformed failure form.
+        if (
+            emitted.returncode != 0
+            or generated.count("template <> void") < 3
+            or "print_integral__gti_mir_failure(" not in generated
+            or "mir_checked_array_read_v1(" not in generated
+        ):
+            sys.stderr.write(
+                "integer println should emit per-instance specializations "
+                "from verified MIR\n"
+            )
+            return 1
+        executed = run([str(executable)])
+        if executed.returncode != 0 or executed.stdout != "42\n":
+            sys.stderr.write(
+                "the specialized print chain changed observable behavior: "
+                f"exit={executed.returncode} stdout={executed.stdout!r}\n"
+            )
+            return 1
+
     bounds_source = (
         "uint8_t pick(uint64_t index) {\n"
         "  mut uint8_t[4] values = {};\n"

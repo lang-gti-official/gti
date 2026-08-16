@@ -1616,6 +1616,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       if (!emittingDeferredMember) {
         emitStructuralOperatorAdapter(stmt);
         emitCallableAdapter(stmt);
+        emitGeneralTemplateSpecializations(stmt, false);
       }
     } else {
       output << ";\n";
@@ -4044,6 +4045,7 @@ private:
           emitFunctionSignature(*function, mirBody);
         }
         output << ";\n";
+        emitGeneralTemplateSpecializations(*function, true);
         emitted = true;
       }
     }
@@ -6186,6 +6188,97 @@ private:
     output << emission.text;
   }
 
+  // A generic free function keeps its compatibility C++ template; every
+  // admitted MIR instance additionally publishes per instance. A
+  // success-form instance emits as the explicit specialization holding the
+  // general body text; a failure-form instance emits its transformed body
+  // as a suffix-named overload (parameter types disambiguate instances of
+  // one declaration) and the boundary wrapper as the specialization, so
+  // deduced calls and the transformed convention both resolve unchanged.
+  void emitSpecializationSignature(const FunctionDecl &function,
+                                   const MirFunctionInstance &instance) {
+    output << "template <> ";
+    emitSemanticType(instance.returnType);
+    output << ' ' << emittedFunctionName(function) << '(';
+    emitMirOwnedLifecycleParameters(instance.parameterTypes);
+    output << ')';
+  }
+
+  [[nodiscard]] bool
+  generalSpecializationEligible(const FunctionDecl &function,
+                                const FunctionInfo &info,
+                                const MirFunctionInstance &instance) const {
+    const HirFunctionInstance *hirInstance =
+        hir.findFunctionInstance(instance.id);
+    return hirInstance != nullptr && hirInstance->source == &function &&
+           instance.declaration == info.id &&
+           instance.entryKind == ProgramEntryKind::None &&
+           !instance.staticMember && !instance.owner.has_value() &&
+           !instance.overloadedOperator.has_value() &&
+           hirInstance->body.placeDomain == instance.body.placeDomain;
+  }
+
+  void emitGeneralTemplateSpecializations(const FunctionDecl &function,
+                                          bool declarationsOnly) {
+    if (mir == nullptr || !generalEmissionMap || currentClass != nullptr ||
+        function.genericParameters().empty()) {
+      return;
+    }
+    const FunctionInfo *info = semantics.findFunction(function);
+    if (info == nullptr || info->ownerClass != 0 || info->entryPoint ||
+        info->internalLinkage || !info->externalSymbol.empty() ||
+        info->parameterPack || info->linkage != LanguageLinkage::Gti) {
+      return;
+    }
+    for (const MirFunctionInstance &instance : mir->functionInstances()) {
+      if (instance.declaration != info->id ||
+          !generalSpecializationEligible(function, *info, instance)) {
+        continue;
+      }
+      // Every substituted type must be concretely spellable; a pack or
+      // parameter-typed instance stays on the primary template.
+      if (!std::all_of(instance.parameterTypes.begin(),
+                       instance.parameterTypes.end(),
+                       isMirScalarCfgSignatureType) ||
+          !(instance.returnType == SemanticType::Void ||
+            isMirScalarCfgSignatureType(instance.returnType))) {
+        continue;
+      }
+      if (generalBodyAdmitted(instance.id)) {
+        writeIndent();
+        emitSpecializationSignature(function, instance);
+        if (declarationsOnly) {
+          output << ";\n";
+          continue;
+        }
+        output << ' ';
+        emitGeneralMirBodyText(instance, "scalar-cfg-v1");
+        continue;
+      }
+      if (generalFailureBodyAdmitted(instance.id)) {
+        writeIndent();
+        emitGeneralFailureSignature(function, instance);
+        if (declarationsOnly) {
+          output << ";\n";
+          writeIndent();
+          emitSpecializationSignature(function, instance);
+          output << ";\n";
+          continue;
+        }
+        output << ' ';
+        emitGeneralFailureBodyText(instance);
+        writeIndent();
+        emitSpecializationSignature(function, instance);
+        output << " {\n";
+        ++indentation;
+        emitGeneralFailureWrapperBody(function, instance);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+      }
+    }
+  }
+
   // The boundary wrapper carries the original name and signature so every
   // caller stays unchanged; on failure the record reaches the defined
   // contract through the runtime terminator (ADR 017).
@@ -6195,6 +6288,14 @@ private:
     emitFunctionSignature(function, &instance);
     output << " {\n";
     ++indentation;
+    emitGeneralFailureWrapperBody(function, instance);
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  void emitGeneralFailureWrapperBody(const FunctionDecl &function,
+                                     const MirFunctionInstance &instance) {
     const bool voidBoundary = instance.returnType == SemanticType::Void;
     if (!voidBoundary) {
       writeIndent();
@@ -6232,9 +6333,6 @@ private:
               "descriptor_v1,\n";
     writeIndent();
     output << "  nullptr, nullptr);\n";
-    --indentation;
-    writeIndent();
-    output << "}\n";
   }
 
   // Resolves a destructor declaration to its single lowered instance and

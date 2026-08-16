@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.181.0
+Checkpoint: 0.182.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,25 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Per-instance template specializations from verified MIR (0.182.0).**
+  A generic free-function declaration keeps its compatibility C++
+  template, and every admitted MIR instance with concretely spellable
+  substituted types additionally publishes per instance: a success-form
+  instance as the explicit `template <>` specialization holding the
+  general body text, a failure-form instance as its transformed
+  suffix-named overload (parameter types disambiguate instances of one
+  declaration) with the boundary wrapper as the specialization; both are
+  forward-declared beside the primary template. Pack instances and
+  parameter-typed substitutions stay on the primary template — the first
+  cut leaked unsubstituted pack types into specializations and every
+  variadic example failed native compile fail-loud before any test pin.
+  The integer print chain now runs from verified MIR end to end
+  (`println(42)` emits three specializations, the transformed
+  array-walking digit printer, and byte-identical output — pinned in a
+  new runtime scenario). Corpus markers 942 -> 948: the corpus prints
+  strings far more than integers, so the chain's corpus footprint is
+  honest but small; the machinery converts template-generic instances
+  wholesale as later vocabulary lands.
 - **Fixed arrays, the void failure ABI, and detector constants
   (0.181.0).** The general vocabulary gains fixed-array places
   (`std::array` rows), empty `Aggregate` value initialization, one-Index

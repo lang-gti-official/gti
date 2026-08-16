@@ -242,7 +242,12 @@ generic emitter replaces that single whole-program route.
   body and wrapper are declared side by side in the class and defined
   through the ordinary deferred qualified form; the hosted main keeps
   exactly one termination call of its own, while each wrapper carries its
-  boundary's. Fixed arrays join both forms: array places spell as
+  boundary's. A generic free function keeps its compatibility
+  template while every admitted concrete instance publishes per instance
+  as an explicit specialization (success form) or a transformed overload
+  plus specialization wrapper (failure form), forward-declared beside the
+  primary template; pack and parameter-typed instances stay on the
+  primary. Fixed arrays join both forms: array places spell as
   their `std::array` rows, empty aggregates value-initialize, a
   proven-safe dynamic index subscripts directly, and a site-carrying
   element access spells the shipped `mir_checked_array_read/write_v1`
