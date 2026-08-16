@@ -492,6 +492,7 @@ SemanticModel::isCompilerPrivateType(const SemanticType &type) const {
   switch (type.kind) {
   case SemanticType::UniqueOwner:
   case SemanticType::Storage:
+  case SemanticType::PrefixStorage:
     return true;
   case SemanticType::Class: {
     const ClassTypeInfo *info = findClassType(type.classId);
@@ -2059,6 +2060,7 @@ semanticFloatFormat(const SemanticType &type) {
     }
     return traits;
   case SemanticType::Storage:
+  case SemanticType::PrefixStorage:
     traits.ownership = OwnershipKind::Unique;
     traits.drop = DropKind::Lexical;
     traits.copyable = false;

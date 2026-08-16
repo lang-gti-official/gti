@@ -71,6 +71,8 @@ public:
       return unaryType("std::shared_ptr", type);
     case SemanticType::Storage:
       return unaryType("gti_internal::storage", type);
+    case SemanticType::PrefixStorage:
+      return unaryType("gti_internal::prefix_storage", type);
     case SemanticType::TypeParameter:
       return genericParameter(type.genericParameterId, false);
     case SemanticType::TypePack:

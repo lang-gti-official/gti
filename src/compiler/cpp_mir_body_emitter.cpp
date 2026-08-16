@@ -131,6 +131,7 @@ expectedTypeRepresentation(const SemanticType &type) {
   case SemanticType::SharedPointer:
     return CppMirTypeRepresentationKind::SharedPointer;
   case SemanticType::Storage:
+  case SemanticType::PrefixStorage:
     return CppMirTypeRepresentationKind::Storage;
   case SemanticType::TypeParameter:
   case SemanticType::TypePack:

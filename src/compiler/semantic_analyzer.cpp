@@ -2272,12 +2272,15 @@ public:
              "Compiler-private unique owners can only be local bindings, "
              "function values, or class fields.",
              "GTI-S2018");
-    } else if (declaredType.kind == SemanticType::Storage && globalStorage) {
+    } else if ((declaredType.kind == SemanticType::Storage ||
+                declaredType.kind == SemanticType::PrefixStorage) &&
+               globalStorage) {
       report(stmt.name(),
              "Compiler-private storage can only be used as a local binding or "
              "class field.",
              "GTI-S2019");
-    } else if (declaredType.kind == SemanticType::Storage &&
+    } else if ((declaredType.kind == SemanticType::Storage ||
+                declaredType.kind == SemanticType::PrefixStorage) &&
                functionDepth > 0 && !stmt.initializer()) {
       report(stmt.name(),
              "Compiler-private storage bindings require an allocation "
@@ -7738,6 +7741,7 @@ private:
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
     case SemanticType::Storage:
+    case SemanticType::PrefixStorage:
       return true;
     case SemanticType::Array:
     case SemanticType::Unexpected:
@@ -7940,6 +7944,7 @@ private:
     case SemanticType::Array:
     case SemanticType::UniqueOwner:
     case SemanticType::Storage:
+    case SemanticType::PrefixStorage:
       if (type.arguments.size() == 1) {
         return typeCapabilities(type.arguments.front(), visiting);
       }
@@ -8517,7 +8522,8 @@ private:
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type) {
     return type.kind == SemanticType::UniqueOwner ||
-           type.kind == SemanticType::Storage;
+           type.kind == SemanticType::Storage ||
+           type.kind == SemanticType::PrefixStorage;
   }
 
   [[nodiscard]] IntrinsicKind
@@ -8574,6 +8580,27 @@ private:
     }
     if (name == "index_bounds_check") {
       return IntrinsicKind::StorageBoundsCheck;
+    }
+    if (name == "allocate_prefix_storage") {
+      return IntrinsicKind::AllocatePrefixStorage;
+    }
+    if (name == "prefix_storage_append") {
+      return IntrinsicKind::PrefixStorageAppend;
+    }
+    if (name == "prefix_storage_pop") {
+      return IntrinsicKind::PrefixStoragePop;
+    }
+    if (name == "prefix_storage_read") {
+      return IntrinsicKind::PrefixStorageRead;
+    }
+    if (name == "prefix_storage_read_mut") {
+      return IntrinsicKind::PrefixStorageReadMut;
+    }
+    if (name == "prefix_storage_length") {
+      return IntrinsicKind::PrefixStorageLength;
+    }
+    if (name == "prefix_storage_relocate") {
+      return IntrinsicKind::PrefixStorageRelocate;
     }
     if (name == "integer_wrapping_add") {
       return IntrinsicKind::IntegerWrappingAdd;
@@ -10860,6 +10887,17 @@ private:
       bindIntrinsicCallDeclaration(expr, declaration);
       return;
     }
+    if (intrinsic == IntrinsicKind::AllocatePrefixStorage ||
+        intrinsic == IntrinsicKind::PrefixStorageAppend ||
+        intrinsic == IntrinsicKind::PrefixStoragePop ||
+        intrinsic == IntrinsicKind::PrefixStorageRead ||
+        intrinsic == IntrinsicKind::PrefixStorageReadMut ||
+        intrinsic == IntrinsicKind::PrefixStorageLength ||
+        intrinsic == IntrinsicKind::PrefixStorageRelocate) {
+      analyzePrefixStorageIntrinsicCall(expr, intrinsic);
+      bindIntrinsicCallDeclaration(expr, declaration);
+      return;
+    }
     if (intrinsic != IntrinsicKind::Move) {
       analyzeStorageIntrinsicCall(expr, intrinsic);
       bindIntrinsicCallDeclaration(expr, declaration);
@@ -11381,6 +11419,154 @@ private:
                                 : AccessMode::ReadOnly});
   }
 
+  // The prefix-initialized storage family (P-STORAGE-01): the live
+  // elements always form the prefix [0, length). Construction appends
+  // exactly at the live length, destruction removes exactly the last live
+  // element, relocation transfers the complete prefix, and reads check the
+  // logical prefix.
+  void analyzePrefixStorageIntrinsicCall(const Call &expr,
+                                         IntrinsicKind intrinsic) {
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(expr.arguments().size());
+    for (const ExprPtr &argument : expr.arguments()) {
+      argumentTypes.emplace_back(analyze(argument));
+    }
+    if (intrinsic == IntrinsicKind::AllocatePrefixStorage) {
+      if (expr.typeArguments().size() != 1 || argumentTypes.size() != 1 ||
+          argumentTypes.front() != SemanticType::UInt64) {
+        for (const TypeRef &argument : expr.typeArguments()) {
+          validateType(argument);
+        }
+        report(expr.paren(),
+               "gti_internal::allocate_prefix_storage<T> requires exactly "
+               "one element type and a uint64_t capacity.",
+               "GTI-S2019");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      const TypeRef &elementRef = expr.typeArguments().front();
+      validateType(elementRef);
+      const SemanticType elementType = typeOf(elementRef);
+      currentType = SemanticType::prefixStorageOf(elementType);
+      semanticModel.record(
+          expr, ResolvedCallInfo{.returnType = currentType,
+                                 .parameterTypes = std::move(argumentTypes),
+                                 .typeArguments = {elementType},
+                                 .intrinsic = intrinsic});
+      return;
+    }
+    for (const TypeRef &argument : expr.typeArguments()) {
+      validateType(argument);
+    }
+    if (!expr.typeArguments().empty()) {
+      report(expr.paren(),
+             "Prefix storage operations infer their element type from the "
+             "storage argument and do not take explicit type arguments.",
+             "GTI-S2019");
+    }
+    if (argumentTypes.empty() ||
+        argumentTypes.front().kind != SemanticType::PrefixStorage ||
+        argumentTypes.front().arguments.size() != 1) {
+      report(expr.paren(),
+             "Prefix storage operations require "
+             "gti_internal::prefix_storage<T> as their first argument.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const SemanticType storageType = argumentTypes.front();
+    const SemanticType elementType = storageType.arguments.front();
+    const auto requireUInt64 = [&](std::size_t index) {
+      if (argumentTypes.size() > index &&
+          argumentTypes[index] != SemanticType::UInt64 &&
+          argumentTypes[index] != SemanticType::Unknown) {
+        report(expressionToken(expr.arguments()[index]),
+               "Prefix storage indices are uint64_t values.", "GTI-S2019");
+      }
+    };
+    const auto requireMovableElement = [&](std::string_view name) {
+      if (!satisfiesConstraint(elementType,
+                               constraintBit(GenericConstraintKind::Movable))) {
+        report(expr.paren(),
+               std::string(name) + " requires a movable element type, but '" +
+                   typeSpelling(elementType) +
+                   "' does not guarantee move construction.",
+               "GTI-S2019");
+      }
+    };
+    switch (intrinsic) {
+    case IntrinsicKind::PrefixStorageAppend:
+      // Appends exactly at the live length, constructing in place from the
+      // analyzed arguments; movability is a relocation requirement only.
+      currentType = SemanticType::Void;
+      break;
+    case IntrinsicKind::PrefixStoragePop:
+      if (argumentTypes.size() != 1) {
+        report(expr.paren(),
+               "prefix_storage_pop expects mutable prefix storage only.",
+               "GTI-S2019");
+      }
+      currentType = SemanticType::Void;
+      break;
+    case IntrinsicKind::PrefixStorageRead:
+    case IntrinsicKind::PrefixStorageReadMut:
+      if (argumentTypes.size() != 2) {
+        report(expr.paren(),
+               "Prefix storage reads expect the storage and a uint64_t "
+               "index.",
+               "GTI-S2019");
+      }
+      requireUInt64(1);
+      // Borrows present as place-category expressions of the element
+      // value type; the reference lives in the resolved-call record.
+      currentType = elementType;
+      break;
+    case IntrinsicKind::PrefixStorageLength:
+      if (argumentTypes.size() != 1) {
+        report(expr.paren(), "prefix_storage_length expects the storage only.",
+               "GTI-S2019");
+      }
+      currentType = SemanticType::UInt64;
+      break;
+    case IntrinsicKind::PrefixStorageRelocate:
+      requireMovableElement("prefix_storage_relocate");
+      if (argumentTypes.size() != 2 ||
+          (argumentTypes[1] != SemanticType::Unknown &&
+           argumentTypes[1] != storageType)) {
+        report(expr.paren(),
+               "prefix_storage_relocate requires source and destination "
+               "prefix storage with the same element type.",
+               "GTI-S2019");
+      }
+      currentType = SemanticType::Void;
+      break;
+    default:
+      currentType = SemanticType::Unknown;
+      break;
+    }
+    const bool borrows = intrinsic == IntrinsicKind::PrefixStorageRead ||
+                         intrinsic == IntrinsicKind::PrefixStorageReadMut;
+    semanticModel.record(
+        expr,
+        ResolvedCallInfo{
+            .returnType =
+                borrows ? SemanticType::referenceTo(
+                              elementType,
+                              intrinsic == IntrinsicKind::PrefixStorageReadMut
+                                  ? AccessMode::Mutable
+                                  : AccessMode::ReadOnly)
+                        : currentType,
+            .parameterTypes = std::move(argumentTypes),
+            .typeArguments = {elementType},
+            .intrinsic = intrinsic,
+            .borrowOrigin =
+                borrows ? BorrowOriginKind::Argument : BorrowOriginKind::None,
+            .borrowArgument = 0,
+            .borrowAccess = intrinsic == IntrinsicKind::PrefixStorageReadMut
+                                ? AccessMode::Mutable
+                                : AccessMode::ReadOnly});
+  }
+
   // The identity-bound public logical-size check (P-STORAGE-01): two
   // uint64_t scalars — the index and the logical size — with a void
   // result; the only effect is the defined index_out_of_bounds failure.
@@ -11634,6 +11820,7 @@ private:
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
     case SemanticType::Storage:
+    case SemanticType::PrefixStorage:
     case SemanticType::TypeName:
     case SemanticType::Function:
     case SemanticType::Lambda:
@@ -15485,7 +15672,8 @@ private:
       if (typeTraits(parameter).ownership == OwnershipKind::Unique) {
         copyDescription =
             " would copy a unique owner; use std::move(owner) to ";
-      } else if (parameter.kind == SemanticType::Storage) {
+      } else if (parameter.kind == SemanticType::Storage ||
+                 parameter.kind == SemanticType::PrefixStorage) {
         copyDescription = " would copy compiler-private storage; use "
                           "std::move(owner) to ";
       }
@@ -16904,7 +17092,8 @@ private:
       const SemanticType referencedType = baseTypeOf(type, currentNamespace);
       const bool permittedStorageBorrow =
           allowDefaultLibraryStorageReference &&
-          referencedType.kind == SemanticType::Storage;
+          (referencedType.kind == SemanticType::Storage ||
+           referencedType.kind == SemanticType::PrefixStorage);
       if (isDirectOwnerType(referencedType) && !permittedStorageBorrow) {
         const bool unique = referencedType.kind == SemanticType::UniqueOwner;
         report(
@@ -20216,6 +20405,8 @@ private:
             compilerCapability = CompilerCapabilityTypeKind::UniqueOwner;
           } else if (classDecl->name().lexeme == "storage") {
             compilerCapability = CompilerCapabilityTypeKind::Storage;
+          } else if (classDecl->name().lexeme == "prefix_storage") {
+            compilerCapability = CompilerCapabilityTypeKind::PrefixStorage;
           }
         } else if (trustedCapabilityScope &&
                    classDecl->genericParameters().empty() &&
@@ -23181,6 +23372,7 @@ private:
       finish();
       return;
     case SemanticType::Storage:
+    case SemanticType::PrefixStorage:
       // Compiler-private raw storage cleanup cannot execute a GTI body.
       finish();
       return;
@@ -24443,6 +24635,42 @@ private:
             addFailureOutcome(operation,
                               DefinedFailureCode::InvalidStorageState,
                               DefinedFailureDetail::UninitializedAccess);
+            break;
+          case IntrinsicKind::AllocatePrefixStorage:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
+                              DefinedFailureDetail::PrivateStorage);
+            break;
+          case IntrinsicKind::PrefixStorageAppend:
+            anchor(token);
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidStorageState,
+                              DefinedFailureDetail::RelocationCapacity);
+            addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
+                              DefinedFailureDetail::ElementConstruction);
+            break;
+          case IntrinsicKind::PrefixStoragePop:
+            anchor(token);
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidStorageState,
+                              DefinedFailureDetail::UninitializedAccess);
+            break;
+          case IntrinsicKind::PrefixStorageRead:
+          case IntrinsicKind::PrefixStorageReadMut:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
+                              DefinedFailureDetail::PrivateStorage);
+            break;
+          case IntrinsicKind::PrefixStorageRelocate:
+            anchor(token);
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidStorageState,
+                              DefinedFailureDetail::RelocationCapacity);
+            addFailureOutcome(
+                operation, DefinedFailureCode::InvalidStorageState,
+                DefinedFailureDetail::OccupiedRelocationDestination);
+            break;
+          case IntrinsicKind::PrefixStorageLength:
             break;
           case IntrinsicKind::StorageBoundsCheck:
             // The identity-bound public logical-size check (P-STORAGE-01):
@@ -28556,6 +28784,11 @@ private:
       return type.arguments.size() == 1
                  ? SemanticType::storageOf(typeOf(type.arguments[0], fromScope))
                  : SemanticType::Unknown;
+    }
+    if (compilerCapability == CompilerCapabilityTypeKind::PrefixStorage) {
+      return type.arguments.size() == 1 ? SemanticType::prefixStorageOf(typeOf(
+                                              type.arguments[0], fromScope))
+                                        : SemanticType::Unknown;
     }
     switch (type.name.last().kind) {
     case TokenKind::AUTO:

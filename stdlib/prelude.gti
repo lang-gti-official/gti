@@ -4,6 +4,11 @@ namespace gti_internal {
 // application declarations with the same spelling remain ordinary types.
 class unique_owner<T> {};
 class storage<T> {};
+// Prefix-initialized storage (P-STORAGE-01): the live elements always form
+// the prefix [0, length). Construction appends exactly at the live length,
+// destruction removes exactly the last live element, relocation transfers
+// the complete prefix, and reads check the logical prefix.
+class prefix_storage<T> {};
 class text_view {};
 
 @compiler_constraint("numeric")
@@ -67,6 +72,19 @@ void storage_shift_left<T>(mut gti_internal::storage<T>& storage,
 // when `index >= size`, so container indexing reports the logical bound
 // rather than leaking the private storage invariant.
 void index_bounds_check(uint64_t index, uint64_t size);
+
+gti_internal::prefix_storage<T> allocate_prefix_storage<T>(uint64_t count);
+void prefix_storage_append<T, Args...>(
+    mut gti_internal::prefix_storage<T>& storage, Args... args);
+void prefix_storage_pop<T>(mut gti_internal::prefix_storage<T>& storage);
+T& prefix_storage_read<T>(gti_internal::prefix_storage<T>& storage,
+                          uint64_t index);
+mut T& prefix_storage_read_mut<T>(
+    mut gti_internal::prefix_storage<T>& storage, uint64_t index);
+uint64_t prefix_storage_length<T>(gti_internal::prefix_storage<T>& storage);
+void prefix_storage_relocate<T>(
+    mut gti_internal::prefix_storage<T>& source,
+    mut gti_internal::prefix_storage<T>& destination);
 
 T integer_wrapping_add<T>(T left, T right);
 T integer_wrapping_sub<T>(T left, T right);

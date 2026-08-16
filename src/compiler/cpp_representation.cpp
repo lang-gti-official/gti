@@ -138,6 +138,14 @@ std::string cppSemanticTypeSpelling(const SemanticModel &semantics,
     result += '>';
     return result;
   }
+  case SemanticType::PrefixStorage: {
+    std::string result = "::gti_internal::backend::prefix_storage<";
+    if (!type.arguments.empty()) {
+      result += spell(type.arguments.front());
+    }
+    result += '>';
+    return result;
+  }
   case SemanticType::Storage: {
     std::string result = "::gti_internal::backend::storage<";
     if (!type.arguments.empty()) {

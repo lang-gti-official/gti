@@ -523,6 +523,176 @@ inline void index_bounds_check(std::uint64_t index, std::uint64_t size) {
   }
 }
 
+// Prefix-initialized storage (P-STORAGE-01): the live elements always form
+// the prefix [0, length_). Construction appends exactly at the live length,
+// destruction removes exactly the last live element, relocation transfers
+// the complete prefix, and reads check the logical prefix, so no per-slot
+// initialization bitmap exists.
+template <typename T>
+class prefix_storage {
+public:
+  prefix_storage() = default;
+  explicit prefix_storage(std::uint64_t requested) { allocate(requested); }
+  prefix_storage(const prefix_storage &) = delete;
+  prefix_storage &operator=(const prefix_storage &) = delete;
+  prefix_storage(prefix_storage &&other) noexcept { take(std::move(other)); }
+  prefix_storage &operator=(prefix_storage &&other) noexcept {
+    if (this != &other) {
+      release();
+      take(std::move(other));
+    }
+    return *this;
+  }
+  ~prefix_storage() { release(); }
+
+  [[nodiscard]] std::uint64_t capacity() const noexcept { return capacity_; }
+  [[nodiscard]] std::uint64_t length() const noexcept { return length_; }
+
+  template <typename... Args>
+  void append(Args &&...args) {
+    if (length_ >= capacity_) {
+      storage_error("prefix storage append exceeds its capacity");
+    }
+    try {
+      std::construct_at(slot(length_), std::forward<Args>(args)...);
+    } catch (const std::bad_alloc &) {
+      allocation_error();
+    }
+    ++length_;
+  }
+
+  void pop() {
+    if (length_ == 0) {
+      storage_error("prefix storage pop on an empty prefix");
+    }
+    --length_;
+    std::destroy_at(std::launder(slot(length_)));
+  }
+
+  [[nodiscard]] const T &read(std::uint64_t index) const {
+    return *std::launder(slot(checked_prefix_index(index)));
+  }
+
+  [[nodiscard]] T &read_mut(std::uint64_t index) {
+    return *std::launder(slot(checked_prefix_index(index)));
+  }
+
+  void relocate_to(prefix_storage &destination) {
+    if (destination.length_ != 0) {
+      storage_error("prefix storage relocation destination is occupied");
+    }
+    if (destination.capacity_ < length_) {
+      storage_error("prefix storage relocation exceeds the destination "
+                    "capacity");
+    }
+    for (std::size_t index = 0; index < length_; ++index) {
+      try {
+        std::construct_at(destination.slot(index),
+                          std::move(*std::launder(slot(index))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      ++destination.length_;
+      std::destroy_at(std::launder(slot(index)));
+    }
+    length_ = 0;
+  }
+
+private:
+  void allocate(std::uint64_t requested) {
+    if (requested > (std::numeric_limits<std::size_t>::max)() ||
+        (requested != 0 &&
+         requested > (std::numeric_limits<std::size_t>::max)() / sizeof(T))) {
+      allocation_error();
+    }
+    capacity_ = static_cast<std::size_t>(requested);
+    if (capacity_ == 0) {
+      return;
+    }
+    data_ = ::operator new(sizeof(T) * capacity_, std::align_val_t{alignof(T)},
+                           std::nothrow);
+    if (data_ == nullptr) {
+      capacity_ = 0;
+      allocation_error();
+    }
+  }
+
+  [[nodiscard]] std::size_t checked_prefix_index(std::uint64_t index) const {
+    if (index >= length_) {
+      storage_error("prefix storage index out of the live prefix");
+    }
+    return static_cast<std::size_t>(index);
+  }
+
+  [[nodiscard]] T *slot(std::size_t index) const {
+    return reinterpret_cast<T *>(static_cast<std::byte *>(data_) +
+                                 sizeof(T) * index);
+  }
+
+  void release() noexcept {
+    if (data_ != nullptr) {
+      for (std::size_t index = length_; index > 0; --index) {
+        std::destroy_at(std::launder(slot(index - 1)));
+      }
+      ::operator delete(data_, std::align_val_t{alignof(T)});
+    }
+    data_ = nullptr;
+    capacity_ = 0;
+    length_ = 0;
+  }
+
+  void take(prefix_storage &&other) noexcept {
+    data_ = other.data_;
+    capacity_ = other.capacity_;
+    length_ = other.length_;
+    other.data_ = nullptr;
+    other.capacity_ = 0;
+    other.length_ = 0;
+  }
+
+  void *data_ = nullptr;
+  std::size_t capacity_ = 0;
+  std::size_t length_ = 0;
+};
+
+template <typename T>
+inline prefix_storage<T> allocate_prefix_storage(std::uint64_t capacity) {
+  return prefix_storage<T>(capacity);
+}
+
+template <typename T, typename... Args>
+inline void prefix_storage_append(prefix_storage<T> &value, Args &&...args) {
+  value.append(std::forward<Args>(args)...);
+}
+
+template <typename T>
+inline void prefix_storage_pop(prefix_storage<T> &value) {
+  value.pop();
+}
+
+template <typename T>
+inline const T &prefix_storage_read(const prefix_storage<T> &value,
+                                    std::uint64_t index) {
+  return value.read(index);
+}
+
+template <typename T>
+inline T &prefix_storage_read_mut(prefix_storage<T> &value,
+                                  std::uint64_t index) {
+  return value.read_mut(index);
+}
+
+template <typename T>
+inline std::uint64_t prefix_storage_length(const prefix_storage<T> &value) {
+  return value.length();
+}
+
+template <typename T>
+inline void prefix_storage_relocate(prefix_storage<T> &source,
+                                    prefix_storage<T> &destination) {
+  source.relocate_to(destination);
+}
+
 template <typename T, typename... Args>
 inline std::unique_ptr<T> make_unique(Args &&...args) {
   try {
@@ -2033,6 +2203,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << ')';
       return;
     }
+    if (resolved != nullptr &&
+        resolved->intrinsic == IntrinsicKind::AllocatePrefixStorage) {
+      output << "::gti_internal::backend::allocate_prefix_storage<";
+      if (!expr.typeArguments().empty()) {
+        emitType(expr.typeArguments().front());
+      }
+      output << ">(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
     if (resolved != nullptr && isStorageIntrinsic(resolved->intrinsic)) {
       output << "::gti_internal::backend::"
              << storageIntrinsicName(resolved->intrinsic) << '(';
@@ -3064,6 +3245,7 @@ private:
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
     case SemanticType::Storage:
+    case SemanticType::PrefixStorage:
       return;
     case SemanticType::Class:
       if (type.classId != 0) {
@@ -10128,6 +10310,7 @@ private:
             case SemanticType::UniqueOwner:
             case SemanticType::SharedPointer:
             case SemanticType::Storage:
+            case SemanticType::PrefixStorage:
             case SemanticType::Expected:
             case SemanticType::Unexpected:
               return std::any_of(type.arguments.begin(), type.arguments.end(),
@@ -12110,11 +12293,12 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     const bool rawPointer = binding != nullptr
                                 ? binding->type.kind == SemanticType::RawPointer
                                 : parameter.type.pointer.has_value();
-    const bool moveOnlyOwner = binding != nullptr
-                                   ? isMoveOnlyOwner(binding->traits) ||
-                                         containsTypeParameter(binding->type)
-                                   : isGtiInternalUniqueOwner(parameter.type) ||
-                                         isGtiInternalStorage(parameter.type);
+    const bool moveOnlyOwner =
+        binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
+                                 containsTypeParameter(binding->type)
+                           : isGtiInternalUniqueOwner(parameter.type) ||
+                                 isGtiInternalStorage(parameter.type) ||
+                                 isGtiInternalPrefixStorage(parameter.type);
     const bool readOnlyReference =
         parameter.type.reference.has_value() &&
         parameter.mutability == Mutability::Immutable;
@@ -12396,6 +12580,14 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
       output << '>';
       return;
     }
+    if (isGtiInternalPrefixStorage(type)) {
+      output << "::gti_internal::backend::prefix_storage<";
+      if (!type.arguments.empty()) {
+        emitType(type.arguments.front());
+      }
+      output << '>';
+      return;
+    }
     switch (type.name.last().kind) {
     case TokenKind::AUTO:
       output << "auto";
@@ -12480,6 +12672,11 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
            CompilerCapabilityTypeKind::Storage;
   }
 
+  [[nodiscard]] bool isGtiInternalPrefixStorage(const TypeRef &type) const {
+    return semantics.compilerCapabilityType(type) ==
+           CompilerCapabilityTypeKind::PrefixStorage;
+  }
+
   [[nodiscard]] bool isGtiInternalTextView(const TypeRef &type) const {
     return semantics.compilerCapabilityType(type) ==
            CompilerCapabilityTypeKind::TextView;
@@ -12497,7 +12694,13 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
            intrinsic == IntrinsicKind::StorageRelocate ||
            intrinsic == IntrinsicKind::StorageShiftRight ||
            intrinsic == IntrinsicKind::StorageShiftLeft ||
-           intrinsic == IntrinsicKind::StorageBoundsCheck;
+           intrinsic == IntrinsicKind::StorageBoundsCheck ||
+           intrinsic == IntrinsicKind::PrefixStorageAppend ||
+           intrinsic == IntrinsicKind::PrefixStoragePop ||
+           intrinsic == IntrinsicKind::PrefixStorageRead ||
+           intrinsic == IntrinsicKind::PrefixStorageReadMut ||
+           intrinsic == IntrinsicKind::PrefixStorageLength ||
+           intrinsic == IntrinsicKind::PrefixStorageRelocate;
   }
 
   [[nodiscard]] static std::string_view
@@ -12519,6 +12722,18 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
       return "storage_shift_left";
     case IntrinsicKind::StorageBoundsCheck:
       return "index_bounds_check";
+    case IntrinsicKind::PrefixStorageAppend:
+      return "prefix_storage_append";
+    case IntrinsicKind::PrefixStoragePop:
+      return "prefix_storage_pop";
+    case IntrinsicKind::PrefixStorageRead:
+      return "prefix_storage_read";
+    case IntrinsicKind::PrefixStorageReadMut:
+      return "prefix_storage_read_mut";
+    case IntrinsicKind::PrefixStorageLength:
+      return "prefix_storage_length";
+    case IntrinsicKind::PrefixStorageRelocate:
+      return "prefix_storage_relocate";
     default:
       return "";
     }
@@ -12564,7 +12779,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
         binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
                                  containsTypeParameter(binding->type)
                            : isGtiInternalUniqueOwner(variable.type()) ||
-                                 isGtiInternalStorage(variable.type());
+                                 isGtiInternalStorage(variable.type()) ||
+                                 isGtiInternalPrefixStorage(variable.type());
     const bool readOnlyReference =
         variable.type().reference && !variable.isMutable();
     const bool representationConstexpr =
@@ -12640,7 +12856,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
         binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
                                  containsTypeParameter(binding->type)
                            : isGtiInternalUniqueOwner(variable.type()) ||
-                                 isGtiInternalStorage(variable.type());
+                                 isGtiInternalStorage(variable.type()) ||
+                                 isGtiInternalPrefixStorage(variable.type());
     const bool readOnlyReference =
         variable.type().reference && !variable.isMutable();
     const bool representationConstexpr =
@@ -12753,10 +12970,12 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
           binding != nullptr ? binding->type.kind == SemanticType::RawPointer
                              : declaration.type().pointer.has_value();
       const bool moveOnlyOwner =
-          binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
-                                   containsTypeParameter(binding->type)
-                             : isGtiInternalUniqueOwner(declaration.type()) ||
-                                   isGtiInternalStorage(declaration.type());
+          binding != nullptr
+              ? isMoveOnlyOwner(binding->traits) ||
+                    containsTypeParameter(binding->type)
+              : isGtiInternalUniqueOwner(declaration.type()) ||
+                    isGtiInternalStorage(declaration.type()) ||
+                    isGtiInternalPrefixStorage(declaration.type());
       writeIndent();
       output << "inline ";
       if (!declaration.isMutable() && !moveOnlyOwner && !rawPointer &&

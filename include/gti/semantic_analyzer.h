@@ -267,6 +267,7 @@ struct SemanticType {
     Lambda,
     Expected,
     Unexpected,
+    PrefixStorage,
   };
 
   SemanticType(Kind kind = Unknown) : kind(kind) {}
@@ -425,6 +426,10 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType storageOf(SemanticType element) {
     return SemanticType(Storage, {std::move(element)});
+  }
+
+  [[nodiscard]] static SemanticType prefixStorageOf(SemanticType element) {
+    return SemanticType(PrefixStorage, {std::move(element)});
   }
 
   friend bool operator==(const SemanticType &, const SemanticType &) = default;
@@ -698,6 +703,13 @@ enum class IntrinsicKind {
   IntegerCheckedSubtract,
   IntegerCheckedMultiply,
   StorageBoundsCheck,
+  AllocatePrefixStorage,
+  PrefixStorageAppend,
+  PrefixStoragePop,
+  PrefixStorageRead,
+  PrefixStorageReadMut,
+  PrefixStorageLength,
+  PrefixStorageRelocate,
   Count,
 };
 
@@ -716,6 +728,7 @@ enum class CompilerCapabilityTypeKind {
   UniqueOwner,
   Storage,
   TextView,
+  PrefixStorage,
 };
 
 enum class ProgramEntryKind {

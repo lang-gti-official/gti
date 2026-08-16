@@ -11924,6 +11924,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
     case SemanticType::Storage:
+    case SemanticType::PrefixStorage:
       return true;
     case SemanticType::Array:
     case SemanticType::Unexpected:

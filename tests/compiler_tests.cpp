@@ -1152,7 +1152,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v30\n") &&
+  expect(dump.starts_with("mir-body-v31\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5857,7 +5857,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v30\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v31\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7871,7 +7871,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v30 ") &&
+  expect(mirDump.starts_with("mir-v31 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -8000,6 +8000,124 @@ int main() { return 0; }
                            "field 'app'"),
          "the concurrent profile should reject unsynchronized mutable "
          "global/static accessor storage");
+}
+
+// P-STORAGE-01 slice 2: the prefix-initialized storage capability binds by
+// trusted declaration identity, analyzes its full intrinsic family, and
+// spells the dedicated backend representation.
+void testPrefixStorageCapability() {
+  const lang::FrontendResult valid =
+      analyzeTrustedPreludeFixture("prefix-storage.gti", R"(
+class Prefixed<std::movable T> {
+  mut gti_internal::prefix_storage<T> data;
+  mut uint64_t observed = 0;
+
+public:
+  Prefixed(uint64_t capacity)
+      : data(gti_internal::allocate_prefix_storage<T>(capacity)) {}
+
+  void push(T value) mut {
+    gti_internal::prefix_storage_append(this.data, value);
+  }
+
+  void pop() mut {
+    gti_internal::prefix_storage_pop(this.data);
+  }
+
+  T& at(uint64_t index) {
+    return gti_internal::prefix_storage_read(this.data, index);
+  }
+
+  mut T& at_mut(uint64_t index) mut {
+    return gti_internal::prefix_storage_read_mut(this.data, index);
+  }
+
+  uint64_t length() {
+    return gti_internal::prefix_storage_length(this.data);
+  }
+
+  void take_from(mut Prefixed<T>& source) mut {
+    gti_internal::prefix_storage_relocate(source.data, this.data);
+  }
+};
+
+int main() {
+  mut Prefixed<int> values = Prefixed<int>(uint64_t(4));
+  values.push(7);
+  values.push(9);
+  if (values.length() != uint64_t(2) or values.at(uint64_t(0)) != 7) {
+    return 1;
+  }
+  mut int& slot = values.at_mut(uint64_t(1));
+  slot = 11;
+  values.pop();
+  mut Prefixed<int> moved = Prefixed<int>(uint64_t(4));
+  moved.take_from(values);
+  if (moved.length() != uint64_t(1) or moved.at(uint64_t(0)) != 7) {
+    return 2;
+  }
+  return 0;
+}
+)");
+  expect(valid.canGenerateCode(),
+         "the prefix-storage capability fixture should pass the frontend");
+  if (valid.canGenerateCode()) {
+    const lang::OptimizationResult optimizations =
+        lang::OptimizationPipeline().run(valid.hir,
+                                         lang::OptimizationLevel::O0);
+    const lang::BackendArtifact artifact =
+        lang::CppBackend().generate({.program = valid.program,
+                                     .semantics = valid.semantics,
+                                     .hir = valid.hir,
+                                     .mir = valid.mir,
+                                     .sourceMir = &valid.mir,
+                                     .optimizations = optimizations});
+    expect(artifact.contents.find("::gti_internal::backend::prefix_storage<") !=
+                   std::string::npos &&
+               artifact.contents.find(
+                   "::gti_internal::backend::allocate_prefix_storage<") !=
+                   std::string::npos &&
+               artifact.contents.find(
+                   "::gti_internal::backend::prefix_storage_append(") !=
+                   std::string::npos &&
+               artifact.contents.find(
+                   "::gti_internal::backend::prefix_storage_pop(") !=
+                   std::string::npos &&
+               artifact.contents.find(
+                   "::gti_internal::backend::prefix_storage_read(") !=
+                   std::string::npos &&
+               artifact.contents.find(
+                   "::gti_internal::backend::prefix_storage_relocate(") !=
+                   std::string::npos,
+           "the prefix-storage fixture should spell the dedicated backend "
+           "representation and its intrinsic family");
+  }
+
+  const lang::FrontendResult sparseMisuse =
+      analyzeTrustedPreludeFixture("prefix-storage-sparse-misuse.gti", R"(
+int main() {
+  mut gti_internal::prefix_storage<int> values =
+      gti_internal::allocate_prefix_storage<int>(uint64_t(1));
+  return int(gti_internal::storage_read(values, uint64_t(0)));
+}
+)");
+  expect(!sparseMisuse.canGenerateCode() &&
+             hasDiagnosticCode(sparseMisuse.diagnostics, "GTI-S2019"),
+         "sparse storage operations must reject prefix storage arguments: "
+         "the two capabilities stay distinct");
+
+  const lang::FrontendResult prefixMisuse =
+      analyzeTrustedPreludeFixture("prefix-storage-prefix-misuse.gti", R"(
+int main() {
+  mut gti_internal::storage<int> values =
+      gti_internal::allocate_storage<int>(uint64_t(1));
+  return int(gti_internal::prefix_storage_read(values, uint64_t(0)));
+}
+)");
+  expect(!prefixMisuse.canGenerateCode() &&
+             hasDiagnosticCode(prefixMisuse.diagnostics, "GTI-S2019"),
+         "prefix storage operations must reject sparse storage arguments: "
+         "the two capabilities stay distinct");
 }
 
 void testReceiverTiedReferenceReturns() {
@@ -23988,7 +24106,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v30 ") &&
+             mirDump.starts_with("mir-v31 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -26391,6 +26509,7 @@ int main() {
   testGlobalReferencePlaces();
   testGlobalBorrowReturns();
   testExclusiveReborrowLoanGraph();
+  testPrefixStorageCapability();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();
   testGeneralOwnerDependentReturns();

@@ -185,6 +185,43 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // StorageBoundsCheck: a pure comparison over two staged scalars whose
     // only effect is the defined-failure trap on an out-of-bounds index.
     MirEffectTraits{.mayTrap = true},
+    // AllocatePrefixStorage
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .allocates = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .initializesValue = true},
+    // PrefixStorageAppend
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .initializesValue = true,
+                    .invokesUserCode = true},
+    // PrefixStoragePop
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .dropsValue = true,
+                    .invokesUserCode = true},
+    // PrefixStorageRead
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .startsLoan = true},
+    // PrefixStorageReadMut
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .startsLoan = true},
+    // PrefixStorageLength
+    MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
+    // PrefixStorageRelocate
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .movesValue = true,
+                    .invokesUserCode = true},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -331,6 +368,13 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "integer-checked-subtract",
     "integer-checked-multiply",
     "storage-bounds-check",
+    "allocate-prefix-storage",
+    "prefix-storage-append",
+    "prefix-storage-pop",
+    "prefix-storage-read",
+    "prefix-storage-read-mut",
+    "prefix-storage-length",
+    "prefix-storage-relocate",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
