@@ -89,18 +89,22 @@ public:
   }
 
   char& front() {
+    gti_internal::index_bounds_check(size_t(0), this.count);
     return gti_internal::storage_read(this.data, size_t(0));
   }
 
   mut char& front() mut {
+    gti_internal::index_bounds_check(size_t(0), this.count);
     return gti_internal::storage_read_mut(this.data, size_t(0));
   }
 
   char& back() {
+    gti_internal::index_bounds_check(size_t(0), this.count);
     return gti_internal::storage_read(this.data, this.count - 1);
   }
 
   mut char& back() mut {
+    gti_internal::index_bounds_check(size_t(0), this.count);
     return gti_internal::storage_read_mut(this.data, this.count - 1);
   }
 
@@ -117,34 +121,42 @@ public:
   }
 
   char& at(int index) {
+    gti_internal::index_bounds_check(uint64_t(index), this.count);
     return gti_internal::storage_read(this.data, uint64_t(index));
   }
 
   mut char& at(int index) mut {
+    gti_internal::index_bounds_check(uint64_t(index), this.count);
     return gti_internal::storage_read_mut(this.data, uint64_t(index));
   }
 
   char& at(size_t index) {
+    gti_internal::index_bounds_check(index, this.count);
     return gti_internal::storage_read(this.data, index);
   }
 
   mut char& at(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.count);
     return gti_internal::storage_read_mut(this.data, index);
   }
 
   char& operator[](int index) {
+    gti_internal::index_bounds_check(uint64_t(index), this.count);
     return gti_internal::storage_read(this.data, uint64_t(index));
   }
 
   mut char& operator[](int index) mut {
+    gti_internal::index_bounds_check(uint64_t(index), this.count);
     return gti_internal::storage_read_mut(this.data, uint64_t(index));
   }
 
   char& operator[](size_t index) {
+    gti_internal::index_bounds_check(index, this.count);
     return gti_internal::storage_read(this.data, index);
   }
 
   mut char& operator[](size_t index) mut {
+    gti_internal::index_bounds_check(index, this.count);
     return gti_internal::storage_read_mut(this.data, index);
   }
 

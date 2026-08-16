@@ -182,6 +182,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // IntegerCheckedAdd
     harmless(), // IntegerCheckedSubtract
     harmless(), // IntegerCheckedMultiply
+    // StorageBoundsCheck: a pure comparison over two staged scalars whose
+    // only effect is the defined-failure trap on an out-of-bounds index.
+    MirEffectTraits{.mayTrap = true},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -327,6 +330,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "integer-checked-add",
     "integer-checked-subtract",
     "integer-checked-multiply",
+    "storage-bounds-check",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

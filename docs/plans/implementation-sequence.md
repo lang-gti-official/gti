@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.189.0
+Checkpoint: 0.190.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,22 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **P-STORAGE-01 slice 1: the identity-bound public logical-size check
+  (0.190.0).** A new trusted prelude intrinsic —
+  `gti_internal::index_bounds_check(index, size)`,
+  `IntrinsicKind::StorageBoundsCheck`, a pure two-scalar comparison
+  whose only effect is the defined index_out_of_bounds failure — guards
+  every public `vector` and `string` accessor (`at`, `operator[]`,
+  `front`, `back`) against the logical size before the storage read.
+  The outcome detail is identity-bound: semantics names the enclosing
+  trusted default-library container, so the sites report
+  `index_out_of_bounds` in `vector`/`string`, and an empty container's
+  public indexing reports the logical bound ("container index out of
+  logical bounds") rather than leaking the private storage invariant
+  (`GTI-R0010` uninitialized access) — the cli scenario that pinned the
+  leak migrates to the defined contract. Sparse `storage<T>` remains;
+  the prefix-initialized capability, its evidence battery, and the
+  backend capability row are the remaining P-STORAGE-01 slices.
 - **Initializer bodies join general MIR emission: field and static
   slices (0.189.0).** A concrete class whose verified
   field-initializer body is passive — one straight-line block ending in
@@ -2410,7 +2426,7 @@ Prefix-storage execution tracking:
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `P-MEASURE-01` | in progress | The standard-library-only runner, strict descriptors, correctness digests, controlled output paths, raw samples, compiler/build identity, and first checked-vector GTI/semantic-C++/idiomatic-C++ workload are implemented with threshold-free smoke coverage. Complete the integer, fixed-array, dispatch, compiler, LSP, and project-driver workload breadth before marking the milestone done. |
-| `P-STORAGE-01` | blocked | After the checked-vector fixture delivered through `P-MEASURE-01`, `M-FAIL-01`, and the matching failure-capable `M-BACK-02` slice, first add the identity-bound public logical-size check while sparse storage remains so vector/string indexing reports `GTI-R0007` rather than leaking `GTI-R0010`. Then add a distinct compiler-private prefix-initialized storage capability for vector/string-shaped owners while preserving sparse `storage<T>` for arbitrary partial slots. Prefix construction appends exactly at the live length, destruction removes exactly the last live element, relocation transfers the complete prefix, and reads check the logical prefix. Semantics, HIR, MIR, effects, and every backend bind the capability by private declaration identity. Construction-failure rollback, relocation, move, clear/pop, reverse destruction, C++20/23, fixed-native-optimization O0/O2/O3 differential, dedicated generated-program ASan/UBSan, and benchmark evidence must pass before migrating the public wrappers. No trusted-source unchecked accessor or public-name special case is permitted. |
+| `P-STORAGE-01` | active | Prerequisites delivered: the checked-vector fixture shipped through `P-MEASURE-01`, `M-FAIL-01`'s defined-failure contract is live, and the failure-capable `M-BACK-02` slices landed (0.176.0-0.189.0). Slice 1 shipped in 0.190.0: the identity-bound public logical-size check (`gti_internal::index_bounds_check`, `IntrinsicKind::StorageBoundsCheck`) guards every public vector/string accessor while sparse storage remains, reporting `GTI-R0007` with the enclosing trusted container's detail (`index_out_of_bounds` in `vector`/`string`) rather than leaking `GTI-R0010`. Remaining, in order: add the identity-bound public logical-size check while sparse storage remains so vector/string indexing reports `GTI-R0007` rather than leaking `GTI-R0010`. Then add a distinct compiler-private prefix-initialized storage capability for vector/string-shaped owners while preserving sparse `storage<T>` for arbitrary partial slots. Prefix construction appends exactly at the live length, destruction removes exactly the last live element, relocation transfers the complete prefix, and reads check the logical prefix. Semantics, HIR, MIR, effects, and every backend bind the capability by private declaration identity. Construction-failure rollback, relocation, move, clear/pop, reverse destruction, C++20/23, fixed-native-optimization O0/O2/O3 differential, dedicated generated-program ASan/UBSan, and benchmark evidence must pass before migrating the public wrappers. No trusted-source unchecked accessor or public-name special case is permitted. |
 
 - Existing `--time-trace` and deterministic MIR printing count as completed
   foundations; do not reimplement them under the older performance plan.

@@ -514,6 +514,15 @@ inline void storage_shift_left(storage<T> &value, std::uint64_t first,
   value.shift_left(first, last);
 }
 
+// The identity-bound public logical-size check (P-STORAGE-01): container
+// indexing reports the logical bound instead of leaking the private
+// storage invariant.
+inline void index_bounds_check(std::uint64_t index, std::uint64_t size) {
+  if (index >= size) {
+    storage_error("container index out of logical bounds");
+  }
+}
+
 template <typename T, typename... Args>
 inline std::unique_ptr<T> make_unique(Args &&...args) {
   try {
@@ -12487,7 +12496,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
            intrinsic == IntrinsicKind::StorageDestroy ||
            intrinsic == IntrinsicKind::StorageRelocate ||
            intrinsic == IntrinsicKind::StorageShiftRight ||
-           intrinsic == IntrinsicKind::StorageShiftLeft;
+           intrinsic == IntrinsicKind::StorageShiftLeft ||
+           intrinsic == IntrinsicKind::StorageBoundsCheck;
   }
 
   [[nodiscard]] static std::string_view
@@ -12507,6 +12517,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
       return "storage_shift_right";
     case IntrinsicKind::StorageShiftLeft:
       return "storage_shift_left";
+    case IntrinsicKind::StorageBoundsCheck:
+      return "index_bounds_check";
     default:
       return "";
     }

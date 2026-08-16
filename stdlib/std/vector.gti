@@ -90,34 +90,42 @@ public:
   }
 
   T& front() {
+    gti_internal::index_bounds_check(size_t(0), this.count);
     return gti_internal::storage_read(this.data, size_t(0));
   }
 
   mut T& front() mut {
+    gti_internal::index_bounds_check(size_t(0), this.count);
     return gti_internal::storage_read_mut(this.data, size_t(0));
   }
 
   T& back() {
+    gti_internal::index_bounds_check(size_t(0), this.count);
     return gti_internal::storage_read(this.data, this.count - 1);
   }
 
   mut T& back() mut {
+    gti_internal::index_bounds_check(size_t(0), this.count);
     return gti_internal::storage_read_mut(this.data, this.count - 1);
   }
 
   T& at(size_t index) {
+    gti_internal::index_bounds_check(index, this.count);
     return gti_internal::storage_read(this.data, index);
   }
 
   mut T& at(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.count);
     return gti_internal::storage_read_mut(this.data, index);
   }
 
   T& operator[](size_t index) {
+    gti_internal::index_bounds_check(index, this.count);
     return gti_internal::storage_read(this.data, index);
   }
 
   mut T& operator[](size_t index) mut {
+    gti_internal::index_bounds_check(index, this.count);
     return gti_internal::storage_read_mut(this.data, index);
   }
 

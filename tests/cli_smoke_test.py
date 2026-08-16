@@ -1429,8 +1429,11 @@ def main():
             check=False,
         )
         assert uninitialized_storage_failure.returncode != 0
+        # P-STORAGE-01: public container indexing checks the identity-bound
+        # logical size, so an empty vector's subscript reports the logical
+        # bound rather than leaking the private storage invariant.
         assert (
-            "accessed an uninitialized storage slot"
+            "container index out of logical bounds"
             in uninitialized_storage_failure.stderr
         )
 

@@ -8572,6 +8572,9 @@ private:
     if (name == "storage_shift_left") {
       return IntrinsicKind::StorageShiftLeft;
     }
+    if (name == "index_bounds_check") {
+      return IntrinsicKind::StorageBoundsCheck;
+    }
     if (name == "integer_wrapping_add") {
       return IntrinsicKind::IntegerWrappingAdd;
     }
@@ -10852,6 +10855,11 @@ private:
       bindIntrinsicCallDeclaration(expr, declaration);
       return;
     }
+    if (intrinsic == IntrinsicKind::StorageBoundsCheck) {
+      analyzeStorageBoundsCheckCall(expr);
+      bindIntrinsicCallDeclaration(expr, declaration);
+      return;
+    }
     if (intrinsic != IntrinsicKind::Move) {
       analyzeStorageIntrinsicCall(expr, intrinsic);
       bindIntrinsicCallDeclaration(expr, declaration);
@@ -11371,6 +11379,33 @@ private:
             .borrowAccess = intrinsic == IntrinsicKind::UniqueOwnerBorrowMut
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly});
+  }
+
+  // The identity-bound public logical-size check (P-STORAGE-01): two
+  // uint64_t scalars — the index and the logical size — with a void
+  // result; the only effect is the defined index_out_of_bounds failure.
+  void analyzeStorageBoundsCheckCall(const Call &expr) {
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(expr.arguments().size());
+    for (const ExprPtr &argument : expr.arguments()) {
+      argumentTypes.emplace_back(analyze(argument));
+    }
+    for (const TypeRef &argument : expr.typeArguments()) {
+      validateType(argument);
+    }
+    if (!expr.typeArguments().empty() || argumentTypes.size() != 2 ||
+        argumentTypes[0] != SemanticType::UInt64 ||
+        argumentTypes[1] != SemanticType::UInt64) {
+      report(expr.paren(),
+             "index_bounds_check expects a uint64_t index and a uint64_t "
+             "logical size.",
+             "GTI-S2019");
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = SemanticType::Void,
+                               .parameterTypes = std::move(argumentTypes),
+                               .intrinsic = IntrinsicKind::StorageBoundsCheck});
   }
 
   void analyzeStorageIntrinsicCall(const Call &expr, IntrinsicKind intrinsic) {
@@ -24121,6 +24156,25 @@ private:
                : FailurePropagationKind::DirectCall;
   }
 
+  // The logical-size check is identity-bound: the outcome detail names the
+  // enclosing trusted default-library container, so a vector or string
+  // index failure reports "in vector"/"in string". Any other enclosing
+  // context keeps the private-storage detail.
+  [[nodiscard]] DefinedFailureDetail storageBoundsCheckDetail() const {
+    if (currentClass) {
+      const ClassInfo &owner = classInfo(*currentClass);
+      if (isDefaultLibraryUnit(owner.sourceUnit)) {
+        if (owner.name.lexeme == "vector") {
+          return DefinedFailureDetail::Vector;
+        }
+        if (owner.name.lexeme == "string") {
+          return DefinedFailureDetail::String;
+        }
+      }
+    }
+    return DefinedFailureDetail::PrivateStorage;
+  }
+
   static void addFailureOutcome(DefinedFailureOperation &operation,
                                 DefinedFailureCode code,
                                 DefinedFailureDetail detail) {
@@ -24389,6 +24443,15 @@ private:
             addFailureOutcome(operation,
                               DefinedFailureCode::InvalidStorageState,
                               DefinedFailureDetail::UninitializedAccess);
+            break;
+          case IntrinsicKind::StorageBoundsCheck:
+            // The identity-bound public logical-size check (P-STORAGE-01):
+            // container indexing reports the logical bound as
+            // index_out_of_bounds, named for the enclosing trusted
+            // container rather than the private storage invariant.
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
+                              storageBoundsCheckDetail());
             break;
           case IntrinsicKind::StorageRelocate:
           case IntrinsicKind::StorageShiftRight:

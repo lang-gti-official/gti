@@ -697,6 +697,7 @@ enum class IntrinsicKind {
   IntegerCheckedAdd,
   IntegerCheckedSubtract,
   IntegerCheckedMultiply,
+  StorageBoundsCheck,
   Count,
 };
 

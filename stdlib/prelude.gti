@@ -63,6 +63,10 @@ void storage_shift_right<T>(mut gti_internal::storage<T>& storage,
                             uint64_t first, uint64_t last);
 void storage_shift_left<T>(mut gti_internal::storage<T>& storage,
                            uint64_t first, uint64_t last);
+// The identity-bound public logical-size check: raises index_out_of_bounds
+// when `index >= size`, so container indexing reports the logical bound
+// rather than leaking the private storage invariant.
+void index_bounds_check(uint64_t index, uint64_t size);
 
 T integer_wrapping_add<T>(T left, T right);
 T integer_wrapping_sub<T>(T left, T right);
