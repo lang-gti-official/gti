@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.174.0
+Checkpoint: 0.175.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,21 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **String-view signatures and the C marshalling boundary (0.175.0).** The
+  scalar-CFG signature gate admits `SemanticType::StringView` parameters
+  and returns — a passive value-semantic view spelled `std::string_view`
+  by its representation row — and the general vocabulary marshals view
+  arguments to C-linkage targets through the shipped `to_c_string_view`
+  converter, byte-identical to compatibility call sites; a view result
+  from a C-linkage call stays declined (no reverse converter is
+  modelled). The gap census that chose this slice also recorded the
+  admitted-vs-marked truth: 355 of the previously admitted bodies are
+  extern C-linkage declaration skeletons (phantom admissions with no GTI
+  body), and the failure-record ABI pool now stands at ~480 Ready bodies
+  awaiting its design release. Corpus markers 529 -> 643; program stdout
+  byte-identical across all 57 examples; suite and oracle green. The
+  first widening attempt shipped no marshalling and every example failed
+  native compile — the fail-loud native boundary caught it before any pin.
 - **Arithmetic-intrinsic vocabulary and constexpr admission (0.174.0).**
   The general emitter spells the six wrapping/saturating integer-arithmetic
   intrinsics as their shipped `::gti_internal::backend` helpers through one

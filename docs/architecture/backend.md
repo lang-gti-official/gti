@@ -172,7 +172,14 @@ generic emitter replaces that single whole-program route.
   its lifecycle-cleanup helper: the destructor receiver is inherently
   mutable, and mutable scalar globals spell through storage rows for loads
   and stores alike. A destructor with checked operations, or any body
-  outside the vocabulary, declines to compatibility emission per body. A `constexpr` declaration is admissible — GTI constant
+  outside the vocabulary, declines to compatibility emission per body. The signature boundary also admits the passive
+  string view: a value-semantic C-ABI view whose representation row spells
+  `std::string_view`, copied freely through parameters, returns, loads, and
+  assignments; at a C-linkage call the view argument is marshalled through
+  the shipped `::gti_internal::backend::to_c_string_view` converter exactly
+  as compatibility call sites spell it, and a view result from a C-linkage
+  call stays outside the vocabulary because no reverse converter is
+  modelled. A `constexpr` declaration is admissible — GTI constant
   contexts are frontend-evaluated, and the emitted monomorphized definition
   was never C++-`constexpr` on either route. The family also admits calls
   per body: an eligible call names a

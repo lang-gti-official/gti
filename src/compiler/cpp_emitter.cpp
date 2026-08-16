@@ -5040,6 +5040,16 @@ private:
            type == SemanticType::Char;
   }
 
+  // The signature boundary additionally admits the passive string view: a
+  // value-semantic C-ABI view whose representation row spells
+  // std::string_view, so parameters and returns copy freely and the general
+  // vocabulary already spells its loads, copies, and native-call operands.
+  // Owning class types stay outside the signature boundary.
+  [[nodiscard]] static bool
+  isMirScalarCfgSignatureType(const SemanticType &type) {
+    return isMirScalarCfgType(type) || type.kind == SemanticType::StringView;
+  }
+
   [[nodiscard]] static bool isMirScalarCfgLiteral(const Literal &literal,
                                                   const SemanticType &type) {
     if (type == SemanticType::Bool) {
@@ -5804,9 +5814,9 @@ private:
         info->returnBorrowOrigin != BorrowOriginKind::None ||
         !info->callableParameters.empty() ||
         !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
-                     isMirScalarCfgType) ||
+                     isMirScalarCfgSignatureType) ||
         !(info->returnType == SemanticType::Void ||
-          isMirScalarCfgType(info->returnType))) {
+          isMirScalarCfgSignatureType(info->returnType))) {
       return nullptr;
     }
     const MirFunctionInstance *selected = nullptr;

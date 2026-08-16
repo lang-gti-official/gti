@@ -41,6 +41,10 @@ SELECTED = (
     "read_stdin_byte",
     "read_file_byte",
     "close_file",
+    # String-view signatures joined the boundary in 0.175.0: the C-linkage
+    # call marshals the view through the shipped to_c_string_view converter.
+    "write_stdout",
+    "open_file_read",
     # Callers the old whole-graph contract had to reject even though their
     # own bodies are ordinary: their ineligible callees stay on the
     # compatibility path while the calls emit from verified MIR.

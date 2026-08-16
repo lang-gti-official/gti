@@ -2352,11 +2352,26 @@ private:
     }
     output << bodySpelling(*instruction.functionTarget);
     output << '(';
+    const MirFunctionInstance *target =
+        program.findFunctionInstance(*instruction.functionTarget);
+    const bool cBoundary =
+        target != nullptr && target->linkage == LanguageLinkage::C;
     for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
       if (index != 0) {
         output << ", ";
       }
+      // The C prototype takes ::gti_c_string_view; the shipped converter
+      // marshals the value view exactly as compatibility call sites do.
+      const bool marshalled =
+          cBoundary &&
+          instruction.operands[index].type.kind == SemanticType::StringView;
+      if (marshalled) {
+        output << "::gti_internal::backend::to_c_string_view(";
+      }
       emitOperand(instruction.operands[index]);
+      if (marshalled) {
+        output << ')';
+      }
     }
     output << ");\n";
   }
@@ -2831,6 +2846,17 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
             !std::all_of(instruction.operands.begin(),
                          instruction.operands.end(), valueOperand)) {
           return false;
+        }
+        if (const MirFunctionInstance *target =
+                program_.findFunctionInstance(*instruction.functionTarget);
+            target != nullptr && target->linkage == LanguageLinkage::C) {
+          // The C boundary takes ::gti_c_string_view: a view argument is
+          // marshalled through the shipped converter, but no reverse
+          // converter is modelled, so a view result stays outside the
+          // vocabulary.
+          if (instruction.info.type.kind == SemanticType::StringView) {
+            return false;
+          }
         }
         continue;
       default:

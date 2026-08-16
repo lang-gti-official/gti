@@ -30,6 +30,10 @@ STDLIB_SELECTED = (
     "read_stdin_byte",
     "read_file_byte",
     "close_file",
+    # String-view signatures joined the boundary in 0.175.0: the C-linkage
+    # call marshals the view through the shipped to_c_string_view converter.
+    "write_stdout",
+    "open_file_read",
 )
 COMPATIBILITY = (
     "compatibility_checked",
