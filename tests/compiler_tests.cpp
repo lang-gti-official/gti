@@ -10776,7 +10776,7 @@ int main() {
          "HIR should preserve the semantic loan ending at an unused switch "
          "arm's entry");
 
-  for (const std::string &name :
+  for (const char *const name :
        {"switch_arm_paths", "switch_without_default", "while_break_path",
         "while_break_entry", "do_break_path", "for_break_path",
         "generic_switch"}) {
@@ -10797,7 +10797,7 @@ int main() {
     expect(mir != nullptr && lang::verifyMirBody(mir->body).valid(),
            "every switch/break endpoint function should retain verifier-valid "
            "MIR: " +
-               name);
+               std::string{name});
   }
 
   const auto loanEndsBeforePushBack = [&](const std::string &name) {
@@ -11094,7 +11094,7 @@ int loop_aliases() {
          "MIR should represent shared aliases with one loan, end it before "
          "owner mutation, and satisfy loan-flow verification");
 
-  for (const std::string &name : {"conditional_aliases", "loop_aliases"}) {
+  for (const char *const name : {"conditional_aliases", "loop_aliases"}) {
     const lang::FunctionDecl *function =
         findTopLevelFunction(frontend.program, name);
     const auto hir =
@@ -11111,7 +11111,7 @@ int loop_aliases() {
             : frontend.mir.findFunctionInstance(hir->id);
     expect(mir != nullptr && lang::verifyMirBody(mir->body).valid(),
            "shared aliases should retain verifier-valid path-aware MIR in " +
-               name);
+               std::string{name});
   }
 
   const lang::FrontendResult laterUse = lang::Frontend().analyze(

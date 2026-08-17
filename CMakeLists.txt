@@ -746,7 +746,7 @@ if(BUILD_TESTING)
     # The oracle carries the optimization-level and standard coverage the
     # retired per-family gates provided: MIR bodies must agree with the
     # compatibility path under the optimizer, not only at -O0.
-    foreach(GTI_DIFFERENTIAL_OPT "O0" "O1" "O3")
+    foreach(GTI_DIFFERENTIAL_OPT "O0" "O1" "O2" "O3")
       foreach(GTI_DIFFERENTIAL_STD "c++20" "c++23")
         string(REPLACE "c++" "cxx" GTI_DIFFERENTIAL_STD_NAME
                "${GTI_DIFFERENTIAL_STD}")

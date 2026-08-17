@@ -63,6 +63,7 @@ def main() -> int:
     disagreed: list[tuple[str, str]] = []
     not_comparable: list[tuple[str, str]] = []
     covered_bodies = 0
+    total_bodies = 0
     uncovered_sources = 0
 
     with tempfile.TemporaryDirectory(prefix="gti-mir-differential-") as scratch:
@@ -81,6 +82,7 @@ def main() -> int:
                 continue
 
             mir_bodies = int(fields.get("mir-emitted-bodies", "0"))
+            total_bodies += int(fields.get("mir-total-bodies", "0"))
             if mir_bodies == 0:
                 # Both paths emitted the same representation for every body, so
                 # a behavioral comparison cannot attribute anything to MIR.
@@ -143,7 +145,10 @@ def main() -> int:
     print(f"  behavioral agreement    : {len(agreed)}")
     print(f"  behavioral disagreement : {len(disagreed)}")
     print(f"  not comparable          : {len(not_comparable)}")
-    print(f"  MIR-emitted bodies under comparison: {covered_bodies}")
+    print(
+        "  MIR-emitted bodies under comparison: "
+        f"{covered_bodies} of {total_bodies} total"
+    )
     print(f"  sources with no MIR-emitted body   : {uncovered_sources}")
     for name, detail in not_comparable:
         print(f"    not-comparable {name}: {detail}")

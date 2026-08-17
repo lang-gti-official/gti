@@ -26,6 +26,9 @@
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
 
+#include "../src/compiler/cpp_mir_body_emitter.h"
+#include "../src/compiler/cpp_mir_representation_snapshot.h"
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -138,8 +141,19 @@ int main(int argc, char **argv) {
     ++mirEmittedBodies;
   }
 
+  // The program's complete body inventory, enumerated by the same
+  // analysis the production admission loop runs, so the emitted count is
+  // always reported against the real total rather than a re-derivation.
+  const lang::CppMirBodyEmissionMap rows(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, optimized.mir, lang::CppStandard::Cpp23));
+  const std::size_t mirTotalBodies =
+      lang::CppMirBodyEmitter(optimized.mir, rows)
+          .analyzeProgram()
+          .bodies.size();
+
   std::cout << "status: emitted\n";
   std::cout << "mir-emitted-bodies: " << mirEmittedBodies << '\n';
+  std::cout << "mir-total-bodies: " << mirTotalBodies << '\n';
   std::cout << "identical-text: "
             << (mirContents == compatibilityContents ? "yes" : "no") << '\n';
   return 0;
