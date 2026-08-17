@@ -6681,12 +6681,20 @@ private:
         !info->externalSymbol.empty() || info->virtualMethod ||
         info->pureVirtual || info->overrideMethod ||
         info->intrinsic != IntrinsicKind::None ||
-        info->returnBorrowOrigin != BorrowOriginKind::None ||
         !info->callableParameters.empty() ||
         !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
                      isMirScalarCfgSignatureType) ||
+        // A loan-returning body publishes its pointer through the `T **`
+        // out-parameter (ADR 018 §5); every other return stays scalar or
+        // void under this convention.
         !(info->returnType == SemanticType::Void ||
-          isMirScalarCfgType(info->returnType))) {
+          isMirScalarCfgType(info->returnType) ||
+          (info->returnBorrowOrigin != BorrowOriginKind::None &&
+           info->returnType.kind == SemanticType::Reference))) {
+      return nullptr;
+    }
+    if (info->returnBorrowOrigin != BorrowOriginKind::None &&
+        info->returnType.kind != SemanticType::Reference) {
       return nullptr;
     }
     const MirFunctionInstance *selected = nullptr;
@@ -6754,7 +6762,15 @@ private:
     if (!instance.parameterTypes.empty()) {
       output << ", ";
     }
-    if (instance.returnType != SemanticType::Void) {
+    if (instance.returnType.kind == SemanticType::Reference) {
+      // The loan pointer publishes through a pointer out-parameter; the
+      // wrapper dereferences on the boundary (ADR 018 §5).
+      if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
+        output << "const ";
+      }
+      emitSemanticType(instance.returnType.arguments.front());
+      output << " **__gti_mir_out_result, ";
+    } else if (instance.returnType != SemanticType::Void) {
       emitSemanticType(instance.returnType);
       output << " *__gti_mir_out_result, ";
     }
@@ -7114,7 +7130,16 @@ private:
   void emitGeneralFailureWrapperBody(const FunctionDecl &function,
                                      const MirFunctionInstance &instance) {
     const bool voidBoundary = instance.returnType == SemanticType::Void;
-    if (!voidBoundary) {
+    const bool loanBoundary =
+        instance.returnType.kind == SemanticType::Reference;
+    if (loanBoundary) {
+      writeIndent();
+      if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
+        output << "const ";
+      }
+      emitSemanticType(instance.returnType.arguments.front());
+      output << " *__gti_mir_boundary_result{};\n";
+    } else if (!voidBoundary) {
       writeIndent();
       emitSemanticType(instance.returnType);
       output << " __gti_mir_boundary_result{};\n";
@@ -7135,6 +7160,8 @@ private:
     writeIndent();
     if (voidBoundary) {
       output << "return;\n";
+    } else if (loanBoundary) {
+      output << "return *__gti_mir_boundary_result;\n";
     } else {
       output << "return __gti_mir_boundary_result;\n";
     }

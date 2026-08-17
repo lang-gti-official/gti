@@ -335,7 +335,16 @@ generic emitter replaces that single whole-program route.
   while a fused closure literal spells inline as the deduction call's
   callable argument and a template body passes its own callable parameter
   place by value. Class-callable dispatch and owned callable transport
-  stay outside the vocabulary.
+  stay outside the vocabulary. Loan-returning bodies join the transformed
+  convention under ADR 018 §5: the failure form takes a `T **`
+  out-parameter (const per the loan's access), the Return-with-loan
+  publishes the pointer and returns true, the boundary wrapper
+  dereferences on success, and a caller pairs the callee's out-argument
+  directly with its own produced call-result loan pointer. A call-result
+  loan from a discharged prefix-storage read binds its element address at
+  the producing call itself when no Borrow claims it, and reference-typed
+  values never declare locals — the loan pointer carries the referent
+  everywhere.
 - `scalar-failure-callgraph-v1` admits one unique no-argument `int32_t` hosted
   entry and its exact closed, acyclic graph of source-defined GTI free
   functions with `int32_t` parameters/results. The body domain reuses the

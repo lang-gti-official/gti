@@ -2355,6 +2355,64 @@ dischargedStorageReadCall(const MirInstruction &instruction) {
   return nullptr;
 }
 
+// A call-result loan pairs to its producing call through the shared HIR
+// value; ambiguity declines exactly like the Borrow pairing below.
+[[nodiscard]] const MirLoan *
+producedCallResultLoan(const MirBody &body, const MirInstruction &producer) {
+  if (producer.hirValue == 0) {
+    return nullptr;
+  }
+  const MirLoan *found = nullptr;
+  for (const MirLoan &loan : body.loans) {
+    if (loan.kind == MirLoanKind::CallResult &&
+        loan.producedBy == producer.hirValue) {
+      if (found != nullptr) {
+        return nullptr;
+      }
+      found = &loan;
+    }
+  }
+  return found;
+}
+
+// The transformed reference-returning call that produces a call-result
+// loan (ADR 018 §5): the callee publishes its loan pointer through the
+// caller's `T **` out-argument, which is exactly the caller's loan local.
+[[nodiscard]] const MirInstruction *
+loanProducingReferenceCall(const MirProgram &program, const MirBody &body,
+                           const MirLoan &loan) {
+  if (loan.producedBy == 0) {
+    return nullptr;
+  }
+  const MirInstruction *found = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Call ||
+          instruction.hirValue != loan.producedBy ||
+          !instruction.functionTarget ||
+          instruction.intrinsic != IntrinsicKind::None) {
+        continue;
+      }
+      if (found != nullptr) {
+        return nullptr;
+      }
+      found = &instruction;
+    }
+  }
+  if (found == nullptr) {
+    return nullptr;
+  }
+  const MirFunctionInstance *target =
+      program.findFunctionInstance(*found->functionTarget);
+  if (target == nullptr || !target->mayRaiseDefinedFailure ||
+      target->returnType.kind != SemanticType::Reference ||
+      target->linkage != LanguageLinkage::Gti ||
+      target->definitionKind != MirFunctionInstance::DefinitionKind::Source) {
+    return nullptr;
+  }
+  return found;
+}
+
 // The Borrow that publishes a discharged read's element pairs with its
 // producing call through the shared HIR value; ambiguity declines.
 [[nodiscard]] const MirInstruction *pairedDischargedRead(const MirBody &body,
@@ -2672,6 +2730,11 @@ public:
       if (value.info.type.kind == SemanticType::Lambda) {
         continue;
       }
+      // A reference-typed value never declares; its paired call-result
+      // loan pointer carries the referent.
+      if (value.info.type.kind == SemanticType::Reference) {
+        continue;
+      }
       // A discharged read's element is published through its loan
       // pointer, never copied into a local.
       {
@@ -2753,12 +2816,22 @@ public:
             writeIndent();
             output << "bool __gti_mir_call_success_" << instruction.id
                    << " = false;\n";
-            if (!instruction.result &&
-                transformedCallee(instruction)->returnType !=
-                    SemanticType::Void) {
+            const SemanticType &calleeReturn =
+                transformedCallee(instruction)->returnType;
+            if (calleeReturn.kind == SemanticType::Reference &&
+                producedCallResultLoan(facts.body, instruction) == nullptr) {
               writeIndent();
-              output << typeSpelling(transformedCallee(instruction)->returnType)
-                     << " __gti_mir_discard_" << instruction.id << "{};\n";
+              if (calleeReturn.referenceAccess == AccessMode::ReadOnly) {
+                output << "const ";
+              }
+              output << typeSpelling(calleeReturn.arguments.front())
+                     << " *__gti_mir_discard_" << instruction.id << "{};\n";
+            } else if (!instruction.result &&
+                       calleeReturn != SemanticType::Void &&
+                       calleeReturn.kind != SemanticType::Reference) {
+              writeIndent();
+              output << typeSpelling(calleeReturn) << " __gti_mir_discard_"
+                     << instruction.id << "{};\n";
             }
           }
         }
@@ -3597,8 +3670,29 @@ private:
       return;
     }
     if (dischargedStorageReadCall(instruction)) {
-      // The element is published by the loan-producing Borrow; the call
+      // A call-result loan binds the element address here; otherwise the
+      // element is published by the loan-producing Borrow and the call
       // site itself stages nothing.
+      if (const MirLoan *loan =
+              producedCallResultLoan(facts.body, instruction)) {
+        const MirPlace *storage =
+            storageStagedPlace(facts.body, instruction.operands.front());
+        if (storage == nullptr) {
+          throw std::logic_error(
+              "verified MIR discharged read lost its staged storage place");
+        }
+        output << "__gti_mir_loan_" << loan->id
+               << " = &::gti_internal::backend::"
+               << (instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut
+                       ? "prefix_storage_read_mut"
+                       : "prefix_storage_read")
+               << '(';
+        emitStoragePlaceValue(facts, *storage);
+        output << ", ";
+        emitOperand(instruction.operands.back());
+        output << ");\n";
+        return;
+      }
       output << "// discharged storage read " << instruction.id
              << " publishes through its loan\n";
       return;
@@ -3802,6 +3896,15 @@ private:
       }
       if (transformedCallee(instruction)->returnType == SemanticType::Void) {
         output << "__gti_mir_failure_record);\n";
+      } else if (transformedCallee(instruction)->returnType.kind ==
+                 SemanticType::Reference) {
+        const MirLoan *paired = producedCallResultLoan(facts.body, instruction);
+        if (paired != nullptr) {
+          output << "&__gti_mir_loan_" << paired->id;
+        } else {
+          output << "&__gti_mir_discard_" << instruction.id;
+        }
+        output << ", __gti_mir_failure_record);\n";
       } else {
         if (instruction.result) {
           output << "&__gti_mir_v_" << *instruction.result;
@@ -4050,6 +4153,16 @@ private:
       return;
     case MirTerminatorKind::Return:
       if (terminator.returnLoan && *terminator.returnLoan != 0) {
+        if (failureForm) {
+          // The loan pointer publishes through the `T **` out-parameter
+          // (ADR 018 §5); the wrapper dereferences on the boundary.
+          writeIndent();
+          output << "*__gti_mir_out_result = __gti_mir_loan_"
+                 << *terminator.returnLoan << ";\n";
+          writeIndent();
+          output << "return true;\n";
+          return;
+        }
         writeIndent();
         output << "return *__gti_mir_loan_" << *terminator.returnLoan << ";\n";
         return;
@@ -4467,7 +4580,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           cppMirExpectedTypeRepresentation(function->returnType);
       if (!function->mayRaiseDefinedFailure || !returnKind ||
           (*returnKind != CppMirTypeRepresentationKind::Scalar &&
-           *returnKind != CppMirTypeRepresentationKind::Void)) {
+           *returnKind != CppMirTypeRepresentationKind::Void &&
+           // A loan-returning body publishes through a `T **`
+           // out-parameter (ADR 018 §5); its Return-with-loan rule and
+           // the caller's paired loan own the rest of the proof.
+           *returnKind != CppMirTypeRepresentationKind::Reference)) {
         return false;
       }
     }
@@ -4553,11 +4670,60 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     return nullptr;
   };
   // Loan erasure (ADR 018): every loan needs a resolvable source place
-  // whose type row spells the pointer local; call-result, stored, and
-  // parameter loans wait for their own slices.
+  // whose type row spells the pointer local. A call-result loan binds the
+  // exact element address its producing discharged storage read returns;
+  // stored and parameter loans wait for their own slices.
   for (const MirLoan &loan : body.loans) {
-    if (body.findPlace(loan.source) == nullptr ||
-        (loan.kind != MirLoanKind::Local && loan.kind != MirLoanKind::Return)) {
+    const MirPlace *loanSource = body.findPlace(loan.source);
+    if (loanSource == nullptr) {
+      return false;
+    }
+    if (loan.kind == MirLoanKind::Local || loan.kind == MirLoanKind::Return) {
+      continue;
+    }
+    if (loan.kind != MirLoanKind::CallResult) {
+      return false;
+    }
+    const MirInstruction *discharged =
+        pairedDischargedRead(body, loan.producedBy);
+    const MirInstruction *referenceCall =
+        discharged == nullptr
+            ? loanProducingReferenceCall(program_, body, loan)
+            : nullptr;
+    if (discharged != nullptr) {
+      if (producedCallResultLoan(body, *discharged) == nullptr ||
+          (loanSource->type.kind != SemanticType::Storage &&
+           loanSource->type.kind != SemanticType::PrefixStorage) ||
+          loanSource->type.arguments.empty()) {
+        return false;
+      }
+    } else if (referenceCall != nullptr) {
+      // The pointer local declares from the loan source's own type row
+      // (checked inline: the shared row helpers are defined below).
+      const bool sourceRow = std::any_of(
+          representations_.types().begin(), representations_.types().end(),
+          [&](const CppMirTypeRepresentation &row) {
+            return row.type == loanSource->type && !row.spelling.empty();
+          });
+      if (producedCallResultLoan(body, *referenceCall) == nullptr ||
+          !sourceRow) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+    // The pointer local declares the element type; the producing call's
+    // own branch validates its staged storage place and index.
+    bool borrowed = false;
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        borrowed = borrowed ||
+                   (instruction.kind == MirInstructionKind::Borrow &&
+                    instruction.loan && *instruction.loan == loan.id);
+      }
+    }
+    if (borrowed) {
+      // A Borrow would assign the pointer a second time.
       return false;
     }
   }
@@ -4821,6 +4987,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !(callableTemplateBody &&
             (callableReceiverStage(body, value.id) != nullptr ||
              callableArgumentStage(body, value.id) != nullptr))) {
+        return false;
+      }
+      continue;
+    }
+    if (value.info.type.kind == SemanticType::Reference) {
+      // A reference-typed value never declares a local: a paired
+      // call-result loan carries it, and every consumer reads through
+      // the loan's place instead.
+      const MirValue *referenceValue = body.findValue(value.id);
+      const MirInstruction *definition =
+          referenceValue == nullptr
+              ? nullptr
+              : findInstruction(body, referenceValue->definition);
+      if (definition == nullptr ||
+          producedCallResultLoan(body, *definition) == nullptr ||
+          !body.usesOf(value.id).empty()) {
         return false;
       }
       continue;
@@ -5440,7 +5622,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     MirFunctionInstance::DefinitionKind::Source ||
                 !returnKind ||
                 (*returnKind != CppMirTypeRepresentationKind::Scalar &&
-                 *returnKind != CppMirTypeRepresentationKind::Void) ||
+                 *returnKind != CppMirTypeRepresentationKind::Void &&
+                 // A reference result arrives through the callee's `T **`
+                 // out-parameter, landing directly in this call's paired
+                 // loan pointer (ADR 018 §5).
+                 !(*returnKind == CppMirTypeRepresentationKind::Reference &&
+                   producedCallResultLoan(body, instruction) != nullptr)) ||
                 (*returnKind == CppMirTypeRepresentationKind::Scalar &&
                  !typeRow(target->returnType))) {
               return false;

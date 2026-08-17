@@ -1700,6 +1700,85 @@ int main() {
          "the call sites");
 }
 
+
+// The reference-return failure ABI (ADR 018 §5): a may-raise body whose
+// return is a loan publishes its pointer through a `T **` out-parameter,
+// the Return-with-loan spells the publication, and the whole artifact —
+// transformed member, boundary wrapper, and MIR-emitted caller — carries
+// the convention end to end.
+void testReferenceReturnFailureAbi() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-reference-return.gti", R"(
+class tally {
+  mut int total;
+
+public:
+  tally(int start) : total(start) {}
+
+  mut int& bump(int amount) mut {
+    this.total += amount;
+    return this.total;
+  }
+};
+
+int main() {
+  mut tally counter = tally(3);
+  mut int& first = counter.bump(4);
+  first = 17;
+  return counter.bump(0) - 17;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the reference-return fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirFunctionInstance *bump = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (function.returnType.kind == lang::SemanticType::Reference &&
+        function.mayRaiseDefinedFailure) {
+      bump = &function;
+    }
+  }
+  expect(bump != nullptr,
+         "the fixture should lower the loan-returning may-raise member");
+  if (bump == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = bump->id};
+  expect(emitter.supportsFailureBodyText(address),
+         "the loan-returning body should prove its transformed text");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
+                                   .optimizations = optimizations});
+  const std::string &text = artifact.contents;
+  const auto contains = [&](std::string_view needle) {
+    return text.find(needle) != std::string::npos;
+  };
+  expect(contains("std::int32_t **__gti_mir_out_result"),
+         "the transformed signature should carry the pointer out-parameter");
+  expect(contains("*__gti_mir_out_result = __gti_mir_loan_"),
+         "the Return-with-loan should publish through the out-parameter");
+  expect(contains("std::int32_t *__gti_mir_boundary_result{};") &&
+             contains("return *__gti_mir_boundary_result;"),
+         "the boundary wrapper should dereference the published pointer");
+}
+
 int main() {
   testExhaustiveEnumClassification();
   testReadyBodyAndRepresentationFailures();
@@ -1718,6 +1797,7 @@ int main() {
   testClosureCaptureFreezeDeclines();
   testCallableTemplateBodyVocabulary();
   testDeducedCallableTemplateEmission();
+  testReferenceReturnFailureAbi();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";
