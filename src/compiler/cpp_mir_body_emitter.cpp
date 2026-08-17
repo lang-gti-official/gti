@@ -3477,6 +3477,28 @@ bool CppMirBodyEmitter::supportsFailureBodyText(MirBodyAddress address) const {
   return supportsBodyTextImpl(address, true);
 }
 
+bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {
+  if (address.kind != MirBodyKind::Function) {
+    return false;
+  }
+  const MirFunctionInstance *function =
+      program_.findFunctionInstance(address.owner);
+  if (function == nullptr ||
+      function->definitionKind == MirFunctionInstance::DefinitionKind::Source) {
+    return false;
+  }
+  const MirBody &body = function->body;
+  if (body.blocks.size() != 1 || !body.loans.empty() ||
+      !body.dropObligations.empty() || !body.cleanupBoundaries.empty() ||
+      !body.failureRecords.empty()) {
+    return false;
+  }
+  const MirBlock &block = body.blocks.front();
+  return block.reachable && block.instructions.empty() &&
+         (block.terminator.kind == MirTerminatorKind::Return ||
+          block.terminator.kind == MirTerminatorKind::Unreachable);
+}
+
 bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                              bool failureForm) const {
   // The vocabulary is shared between function and destructor bodies; the

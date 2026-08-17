@@ -1824,7 +1824,40 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     stmt.lowered()->accept(*this);
   }
 
+  // A native or intrinsic declaration has no emitted definition: its C++
+  // surface lives in the shipped runtime headers and helper families. Each
+  // of its MIR instances still carries a body — the verified boundary
+  // shell — and once the shape is proven against the real body, the
+  // absence of a definition IS that body's complete emission, so the
+  // marker lands at the declaration site.
+  void emitBoundaryDeclarationMarkers(const FunctionDecl &stmt) {
+    if (mir == nullptr || !generalEmissionMap || emittingDeferredMember) {
+      return;
+    }
+    const FunctionInfo *info = semantics.findFunction(stmt);
+    if (info == nullptr || info->id == 0 || info->declaration != &stmt) {
+      return;
+    }
+    const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
+    for (const MirFunctionInstance &instance : mir->functionInstances()) {
+      if (instance.declaration != info->id ||
+          instance.definitionKind ==
+              MirFunctionInstance::DefinitionKind::Source) {
+        continue;
+      }
+      if (!emitter.boundaryDeclarationBody(
+              {.kind = MirBodyKind::Function, .owner = instance.id})) {
+        continue;
+      }
+      writeIndent();
+      output << "// GTI verified-MIR body: native-boundary-v1 "
+                "function-instance "
+             << instance.id << "\n";
+    }
+  }
+
   void visitFunctionDecl(const FunctionDecl &stmt) override {
+    emitBoundaryDeclarationMarkers(stmt);
     if (stmt.runtimeBinding() || isIntrinsicFunction(stmt)) {
       return;
     }
@@ -4214,6 +4247,9 @@ private:
       writeIndent();
       emitExternCSignature(*function);
       output << ";\n";
+      // The spelled extern signature is the complete C++ surface of this
+      // declaration's MIR boundary bodies, so their markers land here.
+      emitBoundaryDeclarationMarkers(*function);
     }
     --indentation;
     writeIndent();

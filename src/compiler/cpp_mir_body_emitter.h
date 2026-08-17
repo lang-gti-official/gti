@@ -372,6 +372,16 @@ public:
   // every failure detector carrying exactly one site and origin.
   [[nodiscard]] bool supportsFailureBodyText(MirBodyAddress address) const;
 
+  // True exactly when the addressed function body is the shell of a
+  // non-source definition: a native or intrinsic declaration whose C++
+  // surface is carried entirely by the shipped runtime headers and helper
+  // families, so the body's complete emission is the absence of a
+  // definition. The shape is verified against the real body — one
+  // reachable block, no instructions, no loans, drops, cleanup
+  // boundaries, or failure records, and a Return or Unreachable
+  // terminator.
+  [[nodiscard]] bool boundaryDeclarationBody(MirBodyAddress address) const;
+
   [[nodiscard]] CppMirBodyEmissionText
   emitFailureBodyText(MirBodyAddress address, std::string_view familyLabel,
                       std::size_t indentation) const;

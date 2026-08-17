@@ -86,13 +86,19 @@ def main() -> int:
                     )
                     != 2
                     or generated.count(f"{marker} module-instance") != 1
+                    or generated.count(
+                        "// GTI verified-MIR body: native-boundary-v1 "
+                        "function-instance"
+                    )
+                    != 7
                 ):
                     sys.stderr.write(
                         "generated C++ did not select exactly the twenty-six "
                         "verified scalar MIR markers (twelve fixture bodies "
                         "plus ten prelude bodies, counting both print "
                         "overloads, the prelude's verified-empty initializer "
-                        "bodies, and the empty module body)\n"
+                        "bodies, the empty module body, and the seven "
+                        "native boundary declaration shells)\n"
                     )
                     return 1
                 checked = function_definition(generated, "compatibility_checked")
