@@ -79,12 +79,19 @@ def function_definition(generated: str, source_name: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    # The prelude's verified-empty static-field-initializer marker joins
-    # the named function bodies (the initializer slice).
-    if generated.count(MARKER) != len(SELECTED) + len(STDLIB_SELECTED) + 1:
+    # The verified-empty initializer bodies (the prelude's file_handle
+    # static, the text_view capability pair) and the empty module body
+    # join the named function bodies (the initializer slice).
+    if (
+        generated.count(f"{MARKER} function-instance")
+        != len(SELECTED) + len(STDLIB_SELECTED)
+        or generated.count(f"{MARKER} field-initializers-instance") != 1
+        or generated.count(f"{MARKER} static-field-initializers-instance") != 2
+        or generated.count(f"{MARKER} module-instance") != 1
+    ):
         sys.stderr.write(
             f"{optimization}/{standard} did not select exactly the verified "
-            "scalar CFG MIR bodies plus the initializer marker\n"
+            "scalar CFG MIR bodies plus the initializer and module markers\n"
         )
         return False
     for name in SELECTED + STDLIB_SELECTED:

@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.197.0
+Checkpoint: 0.198.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -375,7 +375,7 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `M-BACK-02` final cutover | **active** | failure-capable `scalar-failure-callgraph-v1` complete | Build general MIR emission for every remaining body and initialization family, validated by the differential oracle, and remove the compatibility execution bridge. | No reachable GTI body or optimization decision executes from AST/HIR; all legacy body and failure helpers are gone; migrated bodies agree with the compatibility emitter or are recorded as not comparable. |
+| 1 | `M-BACK-02` final cutover | **active** — 1503 of 2482 corpus bodies emit from verified MIR (instrumented census, 0.198.0; was 1276 at 0.197.0). 0.198.0 closed the passive-initializer pools: per-instance generic-owner initializer selection (every instance verified, identical field spellings required), capability/opaque-handle verified-empty initializer markers, and empty module bodies. Remaining pools by measured size: 416 native-boundary declaration bodies, 219 not-ready functions (155 checked-failure control flow, 90 capability rows, 82 call-input schedules, overlapping), 94 admission-fixpoint drops, 72 field-initializer + 6 static-field-initializer bodies with staged non-passive schedules, 57 hosted-startup bodies, 5 non-empty module bodies, 42 constructors, 34 gate-rejected functions, 23 selector-signature losses, 8 lambdas, 3 destructors. | failure-capable `scalar-failure-callgraph-v1` complete | Build general MIR emission for every remaining body and initialization family, validated by the differential oracle, and remove the compatibility execution bridge. | No reachable GTI body or optimization decision executes from AST/HIR; all legacy body and failure helpers are gone; migrated bodies agree with the compatibility emitter or are recorded as not comparable. |
 | 2 | `P-MEASURE-01` | **in progress** (parallel only) | none | Complete benchmark breadth without delaying or editing backend-authority surfaces. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
 | 3 | `A-CACHE-01` | **ready** (parallel only) | `C-MIG-02` done | Define snapshot-safe parsed-unit cache ownership without delaying or editing backend-authority surfaces. | Cache identity and invalidation are explicit, with no AST pointer crossing incompatible snapshots. |
 

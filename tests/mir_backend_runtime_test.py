@@ -77,13 +77,22 @@ def main() -> int:
                 if emission.returncode != 0:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
-                if generated.count(marker) != 23:
+                if (
+                    generated.count(f"{marker} function-instance") != 22
+                    or generated.count(f"{marker} field-initializers-instance")
+                    != 1
+                    or generated.count(
+                        f"{marker} static-field-initializers-instance"
+                    )
+                    != 2
+                    or generated.count(f"{marker} module-instance") != 1
+                ):
                     sys.stderr.write(
-                        "generated C++ did not select exactly the twenty-three "
+                        "generated C++ did not select exactly the twenty-six "
                         "verified scalar MIR markers (twelve fixture bodies "
                         "plus ten prelude bodies, counting both print "
-                        "overloads, plus the prelude's verified-empty "
-                        "static-initializer marker)\n"
+                        "overloads, the prelude's verified-empty initializer "
+                        "bodies, and the empty module body)\n"
                     )
                     return 1
                 checked = function_definition(generated, "compatibility_checked")

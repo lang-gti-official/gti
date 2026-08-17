@@ -1457,6 +1457,21 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     emitDeferredStaticFieldDefinitions();
     emitDeferredMemberDefinitions();
+    // The module body owns program-scope dynamic initialization. When its
+    // verified schedule is passive and stages nothing, the program text
+    // above is already the complete emission of that (empty) body, so the
+    // body's marker lands here; a module body that stages work stays with
+    // the compatibility route fail-closed.
+    if (mir != nullptr && generalEmissionMap) {
+      const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
+      const CppMirInitializerScheduleText module = emitter.initializerSchedule(
+          {.kind = MirBodyKind::Module, .owner = 0});
+      if (module.supported && module.fields.empty()) {
+        writeIndent();
+        output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                  "module-instance 0\n";
+      }
+    }
     --indentation;
     output << "} // namespace __gti_program\n";
     emitProgramEntryAdapter();
@@ -1484,10 +1499,32 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     const ClassTypeInfo *classInfo = semantics.findClassType(stmt);
     if (classInfo != nullptr &&
-        classInfo->compilerCapability != CompilerCapabilityTypeKind::None) {
-      return;
-    }
-    if (classInfo != nullptr && classInfo->cOpaqueHandle) {
+        (classInfo->compilerCapability != CompilerCapabilityTypeKind::None ||
+         classInfo->cOpaqueHandle)) {
+      // The class's C++ representation is compiler-provided (capability
+      // runtime text or an opaque native handle), so there is no in-class
+      // initializer text to spell. Its per-instance MIR initializer bodies
+      // still exist; each one whose verified schedule is empty is thereby
+      // completely emitted — the representation carries no GTI-authored
+      // initialization — and owns its marker here. A non-empty schedule
+      // stays with the compatibility route fail-closed.
+      if (const std::optional<GeneralClassInitializerSelection> initializers =
+              selectedMirGeneralClassInitializers(stmt)) {
+        for (const HirClassInstanceId instance : initializers->instances) {
+          if (initializers->fieldsSupported && initializers->fields.empty()) {
+            writeIndent();
+            output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                      "field-initializers-instance "
+                   << instance << "\n";
+          }
+          if (initializers->staticsVerifiedEmpty) {
+            writeIndent();
+            output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                      "static-field-initializers-instance "
+                   << instance << "\n";
+          }
+        }
+      }
       return;
     }
     const ClassLifecycleInfo *enclosingLifecycle = currentClassLifecycle;
@@ -1544,17 +1581,20 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       // The initializer bodies' markers follow the definition they own:
       // the in-class field initializer spellings above came from the
       // verified schedule, and the static body is verified empty.
-      if (currentClassGeneralInitializers->fieldsSupported) {
-        writeIndent();
-        output << "// GTI verified-MIR body: scalar-cfg-v1 "
-                  "field-initializers-instance "
-               << currentClassGeneralInitializers->instance << "\n";
-      }
-      if (currentClassGeneralInitializers->staticsVerifiedEmpty) {
-        writeIndent();
-        output << "// GTI verified-MIR body: scalar-cfg-v1 "
-                  "static-field-initializers-instance "
-               << currentClassGeneralInitializers->instance << "\n";
+      for (const HirClassInstanceId instance :
+           currentClassGeneralInitializers->instances) {
+        if (currentClassGeneralInitializers->fieldsSupported) {
+          writeIndent();
+          output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                    "field-initializers-instance "
+                 << instance << "\n";
+        }
+        if (currentClassGeneralInitializers->staticsVerifiedEmpty) {
+          writeIndent();
+          output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                    "static-field-initializers-instance "
+                 << instance << "\n";
+        }
       }
     }
     if (!stmt.genericParameters().empty()) {
@@ -7463,7 +7503,10 @@ private:
   // field initializer spellings keyed by the field's storage symbol, plus
   // the verified-empty static-initializer fact.
   struct GeneralClassInitializerSelection {
-    HirClassInstanceId instance = 0;
+    // Every MIR instance of the declaration, in program order. Each carries
+    // its own FieldInitializers and StaticFieldInitializers body, so each
+    // verified instance owns one emitted-body marker per supported kind.
+    std::vector<HirClassInstanceId> instances;
     bool fieldsSupported = false;
     bool staticsVerifiedEmpty = false;
     std::unordered_map<SymbolId, std::string> fields;
@@ -7478,7 +7521,6 @@ private:
   [[nodiscard]] std::optional<GeneralClassInitializerSelection>
   selectedMirGeneralClassInitializers(const ClassDecl &declaration) const {
     if (mir == nullptr || !generalEmissionMap ||
-        !declaration.genericParameters().empty() ||
         declaration.kind() == ClassKind::Union) {
       return std::nullopt;
     }
@@ -7486,34 +7528,57 @@ private:
     if (info == nullptr || info->id == 0 || info->cAbiRecord) {
       return std::nullopt;
     }
-    const MirClassInstance *selected = nullptr;
+    // The class definition is spelled once, so its in-class initializer
+    // text is simultaneously the projection of every instance's verified
+    // FieldInitializers body. The program is whole-program compiled: every
+    // C++ instantiation of an emitted template corresponds to one MIR class
+    // instance, so requiring every instance's schedule to agree on the
+    // exact per-field spelling makes the shared text each body's own
+    // emission. Any disagreement — a dependent initializer whose staged
+    // literal differs by instantiation — declines fail-closed.
+    std::vector<const MirClassInstance *> selected;
     for (const MirClassInstance &candidate : mir->classInstances()) {
-      if (candidate.declaration != info->id) {
-        continue;
+      if (candidate.declaration == info->id) {
+        selected.push_back(&candidate);
       }
-      if (selected != nullptr) {
-        return std::nullopt;
-      }
-      selected = &candidate;
     }
-    if (selected == nullptr || !selected->type.arguments.empty() ||
-        !selected->type.valueArguments.empty()) {
+    if (selected.empty()) {
       return std::nullopt;
     }
     const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
     GeneralClassInitializerSelection result;
-    result.instance = selected->id;
-    const CppMirInitializerScheduleText fields = emitter.initializerSchedule(
-        {.kind = MirBodyKind::FieldInitializers, .owner = selected->id});
-    if (fields.supported) {
-      result.fieldsSupported = true;
-      for (const CppMirFieldInitializerSpelling &field : fields.fields) {
-        result.fields.emplace(field.field, field.spelling);
+    result.fieldsSupported = true;
+    result.staticsVerifiedEmpty = true;
+    bool firstInstance = true;
+    for (const MirClassInstance *instance : selected) {
+      result.instances.push_back(instance->id);
+      const CppMirInitializerScheduleText fields = emitter.initializerSchedule(
+          {.kind = MirBodyKind::FieldInitializers, .owner = instance->id});
+      if (fields.supported) {
+        std::unordered_map<SymbolId, std::string> instanceFields;
+        for (const CppMirFieldInitializerSpelling &field : fields.fields) {
+          instanceFields.emplace(field.field, field.spelling);
+        }
+        if (firstInstance) {
+          result.fields = std::move(instanceFields);
+        } else if (instanceFields != result.fields) {
+          result.fieldsSupported = false;
+        }
+      } else {
+        result.fieldsSupported = false;
       }
+      const CppMirInitializerScheduleText statics =
+          emitter.initializerSchedule(
+              {.kind = MirBodyKind::StaticFieldInitializers,
+               .owner = instance->id});
+      if (!statics.supported || !statics.fields.empty()) {
+        result.staticsVerifiedEmpty = false;
+      }
+      firstInstance = false;
     }
-    const CppMirInitializerScheduleText statics = emitter.initializerSchedule(
-        {.kind = MirBodyKind::StaticFieldInitializers, .owner = selected->id});
-    result.staticsVerifiedEmpty = statics.supported && statics.fields.empty();
+    if (!result.fieldsSupported) {
+      result.fields.clear();
+    }
     if (!result.fieldsSupported && !result.staticsVerifiedEmpty) {
       return std::nullopt;
     }

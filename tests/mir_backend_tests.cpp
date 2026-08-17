@@ -196,9 +196,14 @@ void testSelectedFamilyAndCompatibilityFallback() {
   const lang::BackendArtifact o0Artifact =
       emit(frontend, o0.mir, o0Compatibility);
   constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1";
-  expect(count(o0Artifact.contents, marker) == 10,
+  expect(count(o0Artifact.contents,
+               "// GTI verified-MIR body: scalar-cfg-v1 function-instance") ==
+             10,
          "exactly the ten scalar bodies of this fixture should use general "
          "MIR body emission");
+  expect(count(o0Artifact.contents,
+               "// GTI verified-MIR body: scalar-cfg-v1 module-instance") == 1,
+         "the fixture's empty module body should emit from verified MIR");
   expect(o0Artifact.contents.find("__gti_mir_arg_0") != std::string::npos &&
              o0Artifact.contents.find("__gti_mir_v_") != std::string::npos,
          "the selected definitions should name MIR parameters and SSA values");
@@ -269,7 +274,9 @@ void testSelectedFamilyAndCompatibilityFallback() {
         emit(frontend, o1.mir, o1Compatibility);
     const lang::BackendArtifact o1WithO0Compatibility =
         emit(frontend, o1.mir, o0Compatibility);
-    expect(count(o1Artifact.contents, marker) == 10,
+    expect(count(o1Artifact.contents,
+                 "// GTI verified-MIR body: scalar-cfg-v1 "
+                 "function-instance") == 10,
            "the same bodies should remain selected after MIR optimization");
     const std::string_view o0Constant =
         functionDefinition(o0Artifact.contents, "mir_constant");
@@ -284,7 +291,9 @@ void testSelectedFamilyAndCompatibilityFallback() {
                 std::string_view::npos,
         "the marked constant body should execute the verified O1 "
         "Identity-to-Literal MIR rewrite");
-    expect(count(o1WithO0Compatibility.contents, marker) == 10 &&
+    expect(count(o1WithO0Compatibility.contents,
+                 "// GTI verified-MIR body: scalar-cfg-v1 "
+                 "function-instance") == 10 &&
                functionDefinition(o1WithO0Compatibility.contents,
                                   "mir_constant") == o1Constant,
            "verified optimized MIR should control the selected body even "
