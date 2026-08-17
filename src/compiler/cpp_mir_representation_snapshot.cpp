@@ -1853,6 +1853,21 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
                         : scope;
       }
       spelling += "::";
+    } else if (!info->namespaceScope.empty()) {
+      // A C-linkage or runtime-binding declaration keeps its exact
+      // external symbol, but extern "C" affects linkage, not C++ name
+      // lookup: when the emitted declaration lives inside a namespace,
+      // the call-target spelling must name that namespace.
+      spelling = "::__gti_program";
+      for (std::size_t index = 0; index < info->namespaceScope.size();
+           ++index) {
+        const std::string &scope = info->namespaceScope[index];
+        spelling += "::";
+        spelling += index == 0 && scope == "std"
+                        ? std::string(cppEmittedStandardNamespace)
+                        : scope;
+      }
+      spelling += "::";
     }
     spelling += cppFunctionSpelling(semantics, *info->declaration);
     builder.rows.bodies.push_back(

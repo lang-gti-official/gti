@@ -1603,7 +1603,10 @@ def main():
                 str(optimization_o0),
             ]
         )
-        assert "1 < 2" in optimization_o0.read_text(encoding="utf-8")
+        # The entry emits from verified MIR: O0 keeps the staged
+        # comparison unfolded, exactly as the compatibility text kept the
+        # source-shaped "1 < 2".
+        assert " < __gti_mir_v_" in optimization_o0.read_text(encoding="utf-8")
 
         optimization_o1 = root / "optimization-o1.cpp"
         run(
@@ -1616,9 +1619,12 @@ def main():
                 str(optimization_o1),
             ]
         )
-        assert "const bool folded = true" in optimization_o1.read_text(
-            encoding="utf-8"
-        )
+        # O1 folds the whole chain in verified MIR: the comparison is
+        # gone and only folded literals remain.
+        optimization_o1_text = optimization_o1.read_text(encoding="utf-8")
+        assert " < __gti_mir_v_" not in optimization_o1_text
+        assert "provenance=branch-fold" not in optimization_o1_text  # emitted C++, not MIR
+        assert "= true;" in optimization_o1_text
 
         optimization_o3 = root / "optimization-o3.cpp"
         run(
@@ -1631,9 +1637,9 @@ def main():
                 str(optimization_o3),
             ]
         )
-        assert "const bool folded = true" in optimization_o3.read_text(
-            encoding="utf-8"
-        )
+        optimization_o3_text = optimization_o3.read_text(encoding="utf-8")
+        assert " < __gti_mir_v_" not in optimization_o3_text
+        assert "= true;" in optimization_o3_text
 
         # --emit-mir writes the deterministic verified-MIR serialization for
         # the same program, refuses to combine with other emission modes, and
