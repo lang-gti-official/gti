@@ -227,16 +227,16 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .writesUnknownMemory = true,
                     .invokesRuntime = true,
                     .mayTrap = true,
-                    .initializesValue = true,
                     .movesValue = true,
+                    .initializesValue = true,
                     .invokesUserCode = true},
     // PrefixStorageErase
     MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .invokesRuntime = true,
                     .mayTrap = true,
-                    .dropsValue = true,
                     .movesValue = true,
+                    .dropsValue = true,
                     .invokesUserCode = true},
 });
 

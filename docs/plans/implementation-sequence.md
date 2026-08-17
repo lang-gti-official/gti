@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.196.0
+Checkpoint: 0.197.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,21 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Storage locals, allocation, and the narrowed cleanup gate
+  (0.197.0).** Storage-typed locals join the lifetime-slot
+  representation (the slot classification widens beyond class owners),
+  with slot values reaching storage staging, moves, and
+  construct-by-move through the slot's checked accessor; allocation
+  spells through mir_prefix_allocate_v1 publishing into its
+  storage-typed result value; a storage value assigns into its owner
+  field by move with the copy echo suppressed; and the blanket
+  failure-cleanup gate narrows to its one real hazard — a cleanup
+  destructor that may itself raise stays behind the unrepresented
+  double-failure envelope, while bodies whose cleanup cannot raise are
+  admitted and governed by the vocabulary probe, the MIR verifier
+  owning drop-schedule correctness. The do-while fixture body converts
+  under the narrowed gate, its compat loop-text pin inverted to the
+  verified-MIR marker.
 - **ADR 019: the generic-owner transformed-member boundary
   (0.196.0).** A failure-capable member of a generic owner emits per
   concrete instance as an explicit member specialization pair: the

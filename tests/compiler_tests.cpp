@@ -12980,9 +12980,13 @@ int main() { return run() - 4; }
                                    .mir = frontend.mir,
                                    .sourceMir = &frontend.mir,
                                    .optimizations = optimizations});
-  expect(generated.contents.find("do {") != std::string::npos &&
-             generated.contents.find("while (value < 5);") != std::string::npos,
-         "the C++ backend should preserve the body-first loop representation");
+  // The cleanup-gate narrowing admitted this body to general verified-MIR
+  // emission (its scope owner's cleanup cannot raise); the body-first MIR
+  // structure is pinned above, and the backend now emits the verified
+  // schedule instead of the compatibility do-while text.
+  expect(generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
+             std::string::npos,
+         "the C++ backend should emit the do-while body from verified MIR");
 
   const lang::FrontendResult invalidCondition = lang::Frontend().analyze(
       "invalid-do-while.gti", "void run() { do {} while (1); }\n");

@@ -16,6 +16,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# First-party code builds warning-clean under -Werror on both clang and
+# GCC so the macOS/Linux toolchain divergence class (e.g. C++20 designator
+# order, which clang only warns about) breaks locally instead of in CI.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  add_compile_options(-Wall -Wextra -Werror)
+endif()
+
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -723,16 +730,27 @@ if(BUILD_TESTING)
     )
     file(GLOB GTI_DIFFERENTIAL_SOURCES
          "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.gti")
-    add_test(
-      NAME mir_differential_oracle
-      COMMAND "${Python3_EXECUTABLE}"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_differential_test.py"
-              "$<TARGET_FILE:gti_mir_differential_helper>"
-              "${CMAKE_CXX_COMPILER}"
-              "${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
-              "$<TARGET_FILE:gti_runtime>"
-              ${GTI_DIFFERENTIAL_SOURCES}
-    )
+    # The oracle carries the optimization-level and standard coverage the
+    # retired per-family gates provided: MIR bodies must agree with the
+    # compatibility path under the optimizer, not only at -O0.
+    foreach(GTI_DIFFERENTIAL_OPT "O0" "O1" "O3")
+      foreach(GTI_DIFFERENTIAL_STD "c++20" "c++23")
+        string(REPLACE "c++" "cxx" GTI_DIFFERENTIAL_STD_NAME
+               "${GTI_DIFFERENTIAL_STD}")
+        add_test(
+          NAME "mir_differential_oracle_${GTI_DIFFERENTIAL_OPT}_${GTI_DIFFERENTIAL_STD_NAME}"
+          COMMAND "${Python3_EXECUTABLE}"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_differential_test.py"
+                  "$<TARGET_FILE:gti_mir_differential_helper>"
+                  "${CMAKE_CXX_COMPILER}"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
+                  "$<TARGET_FILE:gti_runtime>"
+                  "--std=${GTI_DIFFERENTIAL_STD}"
+                  "--optimize=${GTI_DIFFERENTIAL_OPT}"
+                  ${GTI_DIFFERENTIAL_SOURCES}
+        )
+      endforeach()
+    endforeach()
     add_test(
       NAME mir_backend_first_family_runtime
       COMMAND "${Python3_EXECUTABLE}"

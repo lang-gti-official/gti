@@ -39,7 +39,7 @@ assertions.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_differential_oracle` | observable-behavior agreement between the MIR-preferring `CppBackend` path and the no-MIR public direct-emitter path over the example corpus, reporting per-source agreement, disagreement, and not-comparable sources |
+| `mir_differential_oracle_<opt>_<std>` | observable-behavior agreement between the MIR-preferring `CppBackend` path and the no-MIR public direct-emitter path over the example corpus at every native configuration the retired family gates covered — `O0`/`O1`/`O3` under C++20 and C++23 — reporting per-source agreement, disagreement, and not-comparable sources |
 | `cpp_mir_body_emitter` | generic MIR body-emission gate classification, and a sweep of the shipped example corpus asserting that every example still reaches verified MIR, that no frontend-produced body is structurally incoherent, that no invalid-shape emission issue is raised, and that emitter readiness does not regress below its floor |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
@@ -402,8 +402,12 @@ ownership or entry-signature inference.
 
 ## MIR Emission Differential Oracle
 
-`mir_differential_oracle` compiles each corpus source down both C++
-representation paths and compares observable program behavior. Both paths are
+The `mir_differential_oracle_<opt>_<std>` matrix compiles each corpus
+source down both C++ representation paths and compares observable program
+behavior. Each of the six registered configurations — `-O0`, `-O1`, and
+`-O3` under `-std=c++20` and `-std=c++23` — runs the full corpus, so MIR
+bodies must agree with the compatibility path under the optimizer and both
+supported standards, not only in the debug configuration. Both paths are
 existing public APIs, so the oracle adds no production surface: the
 MIR-preferring path is `CppBackend::generate`, and the compatibility path is
 the `CppEmitter` constructor that takes no `MirProgram`, which
@@ -459,6 +463,22 @@ The oracle therefore reports what it compared rather than a pass rate, and
 fails when it would otherwise compare nothing. Readiness figures from
 `cpp_mir_body_emitter` measure MIR preconditions and must not be reported as
 oracle coverage.
+
+## Platform Signal
+
+Local verification runs on the macOS/AppleClang host. GitHub CI
+(`ubuntu-24.04`) is the accepted first Linux/GCC/libstdc++ signal; there is
+no local Linux gate in the pre-push loop. Two mitigations keep that gap
+narrow. First, all first-party targets compile with `-Wall -Wextra
+-Werror`, which turns the compiler-divergence class that previously
+surfaced only on GCC — for example C++20 designated-initializer
+declaration order, which AppleClang merely warns about — into local build
+failures. Second, behavior known to diverge by standard library (path
+canonicalization, container assertions) must carry tests that mirror the
+production code path rather than reimplementing it, so both libraries
+exercise the same contract. A change that touches those areas should be
+watched through CI after push; an asynchronous CI failure there is a Linux
+finding, not a release blocker discovered late.
 
 ## Optional Local Language Audit
 

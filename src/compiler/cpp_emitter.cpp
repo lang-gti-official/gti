@@ -10758,6 +10758,16 @@ mir_checked_array_write_v1(std::array<Stored, Length> &array,
 // family does; the defined allocation outcomes stay structurally
 // supported and become dynamically reachable when allocation joins the
 // defined contract.
+template <typename T>
+inline mir_failure_status_v1
+mir_prefix_allocate_v1(std::uint64_t count,
+                       ::gti_internal::backend::prefix_storage<T> *result) {
+  // Interior exhaustion keeps the sealed legacy path (the checked-array
+  // precedent); every reachable defined outcome is success.
+  *result = ::gti_internal::backend::prefix_storage<T>(count);
+  return mir_failure_success_v1;
+}
+
 template <typename T, typename... Args>
 inline mir_failure_status_v1
 mir_prefix_append_v1(::gti_internal::backend::prefix_storage<T> &storage,

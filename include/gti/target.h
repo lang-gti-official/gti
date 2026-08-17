@@ -135,7 +135,7 @@ struct TargetInfo {
   std::string os;
   std::string vendor;
   std::string arch;
-  TargetDataLayout dataLayout;
+  TargetDataLayout dataLayout{};
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
 
   [[nodiscard]] std::string_view value(TargetProperty property) const;

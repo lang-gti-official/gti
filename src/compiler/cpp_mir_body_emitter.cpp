@@ -1072,22 +1072,34 @@ private:
     for (const MirPlace &place : body.places) {
       scanPlace(body, place);
     }
-    bool ownsFailureCleanup = false;
+    bool ownsRaisingFailureCleanup = false;
     for (const MirDropObligation &obligation : body.dropObligations) {
       requireType(obligation.dropType.type);
       if (obligation.dropType.destructor) {
         requireBody({.kind = MirBodyKind::Destructor,
                      .owner = *obligation.dropType.destructor});
+        // A cleanup destructor that may itself raise puts the body inside
+        // the unrepresented double-failure envelope.
+        const MirDestructorInstance *destructor =
+            program.findDestructorInstance(*obligation.dropType.destructor);
+        if (obligation.dropType.requiresActiveCleanup &&
+            (destructor == nullptr || destructor->mayRaiseDefinedFailure)) {
+          ownsRaisingFailureCleanup = true;
+        }
       }
       if (obligation.dropType.requiresActiveCleanup) {
-        ownsFailureCleanup = true;
         requireCapability(CppMirEmissionCapabilityKind::LifetimeStorage);
       }
     }
-    if (!body.failureRecords.empty() && ownsFailureCleanup) {
+    // Failure-capable bodies whose cleanup cannot itself raise are
+    // admitted: the MIR verifier owns drop-schedule correctness, the slot
+    // vocabulary spells the drains, and unspellable shapes decline at the
+    // probe. A cleanup destructor that may raise keeps the body behind the
+    // double-failure envelope until that representation lands.
+    if (!body.failureRecords.empty() && ownsRaisingFailureCleanup) {
       add(CppMirBodyEmissionIssueKind::MissingFailureCleanupMir, 0, 0,
-          "a general failure-capable body with live cleanup owners lacks a "
-          "sealed whole-component cleanup and containment proof");
+          "a general failure-capable body owns cleanup whose destructor may "
+          "itself raise; the double-failure envelope is unrepresented");
     }
     for (const MirValue &value : body.values) {
       requireType(value.info.type);
@@ -1858,6 +1870,7 @@ namespace {
 // shipped mir_prefix_*_v1 checked helpers.
 [[nodiscard]] bool prefixStorageIntrinsic(IntrinsicKind intrinsic) {
   switch (intrinsic) {
+  case IntrinsicKind::AllocatePrefixStorage:
   case IntrinsicKind::PrefixStorageAppend:
   case IntrinsicKind::PrefixStoragePop:
   case IntrinsicKind::PrefixStorageInsert:
@@ -1872,6 +1885,8 @@ namespace {
 [[nodiscard]] std::string_view
 prefixStorageHelperSpelling(IntrinsicKind intrinsic) {
   switch (intrinsic) {
+  case IntrinsicKind::AllocatePrefixStorage:
+    return "::gti_internal::backend::mir_prefix_allocate_v1";
   case IntrinsicKind::PrefixStorageAppend:
     return "::gti_internal::backend::mir_prefix_append_v1";
   case IntrinsicKind::PrefixStoragePop:
@@ -2278,7 +2293,10 @@ private:
 
   [[nodiscard]] bool slotPlace(const MirPlace &place) const {
     return place.root == MirPlaceRootKind::Binding &&
-           place.type.kind == SemanticType::Class && place.projections.empty();
+           (place.type.kind == SemanticType::Class ||
+            place.type.kind == SemanticType::Storage ||
+            place.type.kind == SemanticType::PrefixStorage) &&
+           place.projections.empty();
   }
 
   [[nodiscard]] const std::string &lifetimeSlotSpelling() {
@@ -2692,6 +2710,17 @@ private:
         instruction.destination) {
       const MirPlace *slot = facts.body.findPlace(*instruction.destination);
       if (slot != nullptr && slotPlace(*slot)) {
+        if (instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Value &&
+            (instruction.operands.front().type.kind == SemanticType::Storage ||
+             instruction.operands.front().type.kind ==
+                 SemanticType::PrefixStorage)) {
+          // A storage value constructs its lifetime slot by move.
+          output << "__gti_mir_p_" << *instruction.destination
+                 << ".construct(std::move(__gti_mir_v_"
+                 << instruction.operands.front().value << "));\n";
+          return;
+        }
         output << "// GTI MIR reparent into p" << *instruction.destination
                << "\n";
         return;
@@ -2726,11 +2755,20 @@ private:
         return;
       }
     }
+    const bool storageOperand =
+        instruction.operands.front().type.kind == SemanticType::Storage ||
+        instruction.operands.front().type.kind == SemanticType::PrefixStorage;
     output << destinationSpelling(facts, *instruction.destination) << " = ";
+    if (storageOperand) {
+      output << "std::move(";
+    }
     emitOperand(instruction.operands.front(),
                 instruction.kind == MirInstructionKind::Initialize);
+    if (storageOperand) {
+      output << ')';
+    }
     output << ";\n";
-    if (instruction.kind == MirInstructionKind::Assign) {
+    if (instruction.kind == MirInstructionKind::Assign && !storageOperand) {
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result << " = "
              << destinationSpelling(facts, *instruction.destination) << ";\n";
@@ -2760,7 +2798,7 @@ private:
       // staged element value.
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result << " = std::move(";
-      emitPlaceExpression(
+      emitStoragePlaceValue(
           facts, *facts.body.findPlace(instruction.operands.front().place));
       output << ");\n";
       return;
@@ -2786,6 +2824,14 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         prefixStorageIntrinsic(instruction.intrinsic)) {
+      if (instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
+        output << "__gti_mir_failure_status_" << instruction.id << " = "
+               << prefixStorageHelperSpelling(instruction.intrinsic) << '<'
+               << typeSpelling(instruction.info.type.arguments.front()) << ">(";
+        emitOperand(instruction.operands.front());
+        output << ", &__gti_mir_v_" << *instruction.result << ");\n";
+        return;
+      }
       const MirPlace *storage =
           storageStagedPlace(facts.body, instruction.operands.front());
       if (storage == nullptr || instruction.localFailureSites.empty()) {
@@ -2794,13 +2840,13 @@ private:
       }
       output << "__gti_mir_failure_status_" << instruction.id << " = "
              << prefixStorageHelperSpelling(instruction.intrinsic) << '(';
-      emitPlaceExpression(facts, *storage);
+      emitStoragePlaceValue(facts, *storage);
       for (std::size_t index = 1; index < instruction.operands.size();
            ++index) {
         output << ", ";
         if (const MirPlace *second =
                 storageStagedPlace(facts.body, instruction.operands[index])) {
-          emitPlaceExpression(facts, *second);
+          emitStoragePlaceValue(facts, *second);
           continue;
         }
         emitOperand(instruction.operands[index]);
@@ -3145,6 +3191,16 @@ private:
   // Spells an lvalue expression for a place the loan machinery touches:
   // ordinary bindings, storage globals, receiver fields, receiver field
   // elements, sibling-array elements, and loan carriers (ADR 018).
+  // Spells the VALUE held at a place: a lifetime slot exposes it through
+  // its checked accessor, every other place is its own lvalue.
+  void emitStoragePlaceValue(const ScalarBodyFacts &facts,
+                             const MirPlace &place) {
+    emitPlaceExpression(facts, place);
+    if (slotPlace(place)) {
+      output << ".get()";
+    }
+  }
+
   void emitPlaceExpression(const ScalarBodyFacts &facts,
                            const MirPlace &place) {
     if (place.root == MirPlaceRootKind::Loan) {
@@ -3557,7 +3613,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   };
   const auto slotPlace = [](const MirPlace &place) {
     return place.root == MirPlaceRootKind::Binding &&
-           place.type.kind == SemanticType::Class && place.projections.empty();
+           (place.type.kind == SemanticType::Class ||
+            place.type.kind == SemanticType::Storage ||
+            place.type.kind == SemanticType::PrefixStorage) &&
+           place.projections.empty();
   };
   const auto lifetimeSlotRow = [&]() {
     return std::any_of(
@@ -4021,11 +4080,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // declines. The modeling receiver is a raw borrow of a
           // spellable place and never spells.
           if (!failureForm || instruction.functionTarget ||
-              instruction.result || instruction.operands.empty() ||
               instruction.localFailureSites.empty() ||
               instruction.definedFailure.localOrigins.empty() ||
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr) {
+            return false;
+          }
+          if (instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
+            // Allocation publishes into its storage-typed result value;
+            // interior exhaustion keeps the sealed legacy path.
+            if (!instruction.result || instruction.receiver ||
+                instruction.operands.size() != 1 ||
+                !valueOperand(instruction.operands.front()) ||
+                !typeRow(instruction.info.type) ||
+                instruction.info.type.arguments.size() != 1 ||
+                !typeRow(instruction.info.type.arguments.front())) {
+              return false;
+            }
+            continue;
+          }
+          if (instruction.result || instruction.operands.empty()) {
             return false;
           }
           if (instruction.receiver &&

@@ -50,6 +50,7 @@ def main() -> int:
     parser.add_argument("runtime_library")
     parser.add_argument("sources", nargs="+")
     parser.add_argument("--std", default="c++23")
+    parser.add_argument("--optimize", default="O0")
     arguments = parser.parse_args()
 
     helper = pathlib.Path(arguments.helper).resolve()
@@ -98,7 +99,7 @@ def main() -> int:
                 compile_process = run([
                     arguments.cxx,
                     f"-std={arguments.std}",
-                    "-O0",
+                    f"-{arguments.optimize}",
                     "-I", str(runtime_include),
                     str(generated),
                     str(runtime_library),
