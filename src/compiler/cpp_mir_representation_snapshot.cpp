@@ -1496,6 +1496,13 @@ struct RowsBuilder {
     if (type == SemanticType::Unknown) {
       return;
     }
+    // A C++ closure type is unnameable: any row for a Lambda-kind type
+    // would carry a forged spelling. The closure-chain and template
+    // vocabularies own these types row-free (a template emission injects
+    // its own overlay row spelling the template parameter name).
+    if (type.kind == SemanticType::Lambda) {
+      return;
+    }
     const std::optional<CppMirTypeRepresentationKind> kind =
         cppMirExpectedTypeRepresentation(type);
     if (kind && std::none_of(rows.types.begin(), rows.types.end(),

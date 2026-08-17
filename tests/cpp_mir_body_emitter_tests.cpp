@@ -1543,6 +1543,99 @@ int main() {
          "the fused-chain vocabulary");
 }
 
+
+// The deduced-callable template vocabulary (task: CallableDispatch): a
+// Function body with callable parameters keeps the compatibility plain
+// shape — its callable parameter place declares only under a template
+// emission's overlay type row spelling the template parameter name, the
+// invocation stages that place directly with no intermediate copy, and
+// its invoke edge is a plain goto because every reachable failure
+// convention is terminally contained. Without the overlay row the body
+// stays outside the vocabulary, so production emission is unchanged
+// until the declaration-level selector lands.
+void testCallableTemplateBodyVocabulary() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-callable-template.gti", R"(
+void invoke<Operation>(Operation operation) {
+  operation(42);
+}
+
+int main() {
+  auto report = [](int value) -> void {
+    if (value == 42) {
+      return;
+    }
+  };
+  invoke(report);
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the callable-template fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirFunctionInstance *invoke = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (!function.callableParameters.empty()) {
+      invoke = &function;
+    }
+  }
+  expect(invoke != nullptr && !invoke->parameterTypes.empty(),
+         "the fixture should lower the callable-parameter instance");
+  if (invoke == nullptr || invoke->parameterTypes.empty()) {
+    return;
+  }
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = invoke->id};
+  lang::CppMirBodyEmissionMapRows production =
+      lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
+                                           lang::CppStandard::Cpp23);
+  {
+    lang::CppMirBodyEmissionMapRows copy = production;
+    const lang::CppMirBodyEmissionMap withoutOverlay{std::move(copy)};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, withoutOverlay);
+    expect(!emitter.supportsBodyText(address) &&
+               !emitter.supportsFailureBodyText(address),
+           "without the overlay row the callable-template body must stay "
+           "outside the vocabulary");
+  }
+  const std::optional<lang::CppMirTypeRepresentationKind> callableKind =
+      lang::cppMirExpectedTypeRepresentation(invoke->parameterTypes.front());
+  expect(callableKind.has_value(),
+         "the callable type should classify for representation");
+  if (!callableKind) {
+    return;
+  }
+  production.types.push_back({.type = invoke->parameterTypes.front(),
+                              .kind = *callableKind,
+                              .spelling = "Operation"});
+  const lang::CppMirBodyEmissionMap map(std::move(production));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsBodyText(address),
+         "under the overlay row the callable-template body should prove "
+         "its plain-shape text");
+  if (!emitter.supportsBodyText(address)) {
+    return;
+  }
+  const lang::CppMirBodyEmissionText text =
+      emitter.emitBodyText(address, "callable-template-test-v0", 1);
+  const auto contains = [&](std::string_view needle) {
+    return text.text.find(needle) != std::string::npos;
+  };
+  expect(contains("Operation __gti_mir_p_1 = __gti_mir_arg_0;"),
+         "the callable parameter local should declare with the template "
+         "parameter spelling");
+  expect(contains("__gti_mir_p_1(__gti_mir_v_"),
+         "the invocation should stage the callable parameter place "
+         "directly");
+  expect(contains("std::abort();"),
+         "the unreachable propagate block should spell abort");
+  expect(!contains("__gti_mir_failure_record"),
+         "the plain shape must not adopt the transformed record ABI");
+}
+
 int main() {
   testExhaustiveEnumClassification();
   testReadyBodyAndRepresentationFailures();
@@ -1559,6 +1652,7 @@ int main() {
   testDischargedStorageReadAnalysis();
   testInlineClosureChainEmission();
   testClosureCaptureFreezeDeclines();
+  testCallableTemplateBodyVocabulary();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

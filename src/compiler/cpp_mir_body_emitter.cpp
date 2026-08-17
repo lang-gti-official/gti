@@ -216,6 +216,39 @@ hasExecutableProgramInitialization(const MirProgram &program) {
          instruction.receiver->type.kind == SemanticType::Lambda;
 }
 
+// A callable-parameter invocation stages its receiver place through one
+// Load (or Move) whose result feeds exactly the invocation: the call
+// spells the place expression (or its std::move) directly, matching the
+// compatibility `operation(args)` form with no intermediate copy. Only a
+// deduced-callable template emission carries a type row for the place's
+// concrete callable type, so this shape stays dormant under production
+// rows.
+[[nodiscard]] const MirInstruction *
+callableReceiverStage(const MirBody &body, MirValueId id) {
+  const MirValue *value = body.findValue(id);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (definition == nullptr ||
+      (definition->kind != MirInstructionKind::Load &&
+       definition->kind != MirInstructionKind::Move) ||
+      definition->operands.size() != 1 ||
+      definition->operands.front().place == 0 ||
+      body.usesOf(id).size() != 1) {
+    return nullptr;
+  }
+  const MirPlace *place = body.findPlace(definition->operands.front().place);
+  // Only an initially-available place (a parameter) stages: a local
+  // carrier written by an Initialize belongs to the fused closure chain
+  // and never declares, so spelling it here would name a nonexistent
+  // local.
+  if (place == nullptr || place->type.kind != SemanticType::Lambda ||
+      place->root != MirPlaceRootKind::Binding ||
+      !place->projections.empty() || !place->initiallyAvailable) {
+    return nullptr;
+  }
+  return definition;
+}
+
 [[nodiscard]] const MirInstruction *
 closureChainDefinition(const MirBody &body, MirValueId id) {
   const MirValue *value = body.findValue(id);
@@ -867,6 +900,12 @@ private:
           instruction, "executable MIR references an unknown semantic type");
       return;
     }
+    // A C++ closure type is unnameable, so Lambda-kind types are row-free
+    // by design: the fused closure chain and the deduced-callable
+    // template vocabularies own every spelling that touches one.
+    if (type.kind == SemanticType::Lambda) {
+      return;
+    }
     const CppMirTypeRepresentation *row = findType(type);
     if (row == nullptr) {
       add(CppMirBodyEmissionIssueKind::MissingTypeRepresentation, block,
@@ -1344,7 +1383,6 @@ private:
         return;
       }
       requireCapability(CppMirEmissionCapabilityKind::Closure);
-      requireType(lambda->type);
       requireType(lambda->returnType);
       for (const SemanticType &type : lambda->parameterTypes) {
         requireType(type);
@@ -2542,9 +2580,11 @@ public:
                << ";\n";
         continue;
       }
-      // A lambda-typed local never declares: its C++ closure type is
-      // unnameable and every consumer spells the fused literal inline.
-      if (place.type.kind == SemanticType::Lambda) {
+      // A lambda-typed local declares only under a template emission's
+      // overlay row (spelling its template parameter name); otherwise its
+      // C++ closure type is unnameable and every consumer spells the
+      // fused literal inline.
+      if (place.type.kind == SemanticType::Lambda && !typeRowExists(place.type)) {
         continue;
       }
       writeIndent();
@@ -2806,6 +2846,12 @@ private:
           "general MIR body emission lost an exact capture name row");
     }
     return found->spelling;
+  }
+
+  [[nodiscard]] bool typeRowExists(const SemanticType &type) const {
+    return std::any_of(
+        representations.types().begin(), representations.types().end(),
+        [&](const CppMirTypeRepresentation &row) { return row.type == type; });
   }
 
   [[nodiscard]] const std::string &typeSpelling(const SemanticType &type) {
@@ -3457,6 +3503,19 @@ private:
         return;
       }
     }
+    if (instruction.kind == MirInstructionKind::Move && instruction.result &&
+        instruction.operands.size() == 1) {
+      if (const MirPlace *source =
+              facts.body.findPlace(instruction.operands.front().place);
+          source != nullptr && source->type.kind == SemanticType::Lambda) {
+        // The moved callable stages its place; the invocation spells
+        // std::move over the place expression directly.
+        writeIndent();
+        output << "// move " << *instruction.result
+               << " stages a callable place\n";
+        return;
+      }
+    }
     if (instruction.kind == MirInstructionKind::Move) {
       // By-value element staging: the moved place feeds exactly the
       // staged element value.
@@ -3500,7 +3559,25 @@ private:
       if (instruction.result) {
         output << "__gti_mir_v_" << *instruction.result << " = ";
       }
-      emitClosureLiteral(facts, instruction.receiver->value);
+      if (const MirInstruction *stage =
+              callableReceiverStage(facts.body, instruction.receiver->value)) {
+        const MirPlace *place =
+            facts.body.findPlace(stage->operands.front().place);
+        if (place == nullptr) {
+          throw std::logic_error(
+              "verified MIR invocation lost its staged callable place");
+        }
+        const bool moves = stage->kind == MirInstructionKind::Move;
+        if (moves) {
+          output << "std::move(";
+        }
+        emitStoragePlaceValue(facts, *place);
+        if (moves) {
+          output << ')';
+        }
+      } else {
+        emitClosureLiteral(facts, instruction.receiver->value);
+      }
       output << '(';
       for (std::size_t index = 0; index < instruction.operands.size();
            ++index) {
@@ -4287,6 +4364,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   std::optional<HirClassInstanceId> owner;
   ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
   const std::vector<HirBindingId> *parameterBindings = nullptr;
+  // A deduced-callable template body (plain shape, Function kind, callable
+  // parameters): its concrete callable types are spellable only under a
+  // template emission's overlay rows, and every failure convention it can
+  // reach is terminally contained, exactly like the compatibility path.
+  bool callableTemplateBody = false;
   switch (address.kind) {
   case MirBodyKind::Function: {
     const MirFunctionInstance *function =
@@ -4309,6 +4391,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     owner = function->owner;
     receiverMutability = function->receiverMutability;
     parameterBindings = &function->parameterBindings;
+    callableTemplateBody =
+        !failureForm && !function->callableParameters.empty();
     break;
   }
   case MirBodyKind::Destructor: {
@@ -4619,9 +4703,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
         place.type.kind == SemanticType::Lambda) {
-      // A lambda-typed local never declares (its C++ closure type is
-      // unnameable); the fused chain owns every reference or the body
+      // Under a template emission's overlay row the callable local spells
+      // its template parameter name and declares ordinarily; without a
+      // row the C++ closure type is unnameable, so the local never
+      // declares and the fused chain owns every reference or the body
       // declines at the Closure rule or the value rows below.
+      if (callableTemplateBody && !typeRow(place.type)) {
+        return false;
+      }
       continue;
     }
     if (!place.projections.empty() || !typeRow(place.type)) {
@@ -4641,9 +4730,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     if (value.info.type.kind == SemanticType::Lambda) {
-      // A lambda-typed value never declares; it must descend from a fused
-      // Closure whose own rule validates every consumer.
-      if (closureChainDefinition(body, value.id) == nullptr) {
+      // A lambda-typed value never declares; it descends from a fused
+      // Closure whose own rule validates every consumer, or it stages a
+      // callable parameter place for exactly one invocation receiver.
+      if (closureChainDefinition(body, value.id) == nullptr &&
+          !(callableTemplateBody &&
+            callableReceiverStage(body, value.id) != nullptr)) {
         return false;
       }
       continue;
@@ -5143,16 +5235,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         }
         if (callableValueInvocation(instruction)) {
-          // Invoking a callable value spells the fused closure literal
-          // followed by its plain argument list; the literal's checked
-          // interior contains failure terminally, so the paired invoke
-          // edge never branches. No CallInput staging exists here.
+          // Invoking a callable value spells the fused closure literal —
+          // or, in a template body, the staged callable parameter place —
+          // followed by its plain argument list; both interiors contain
+          // failure terminally, so the paired invoke edge never branches.
+          // No CallInput staging exists here.
+          const bool fusedLiteral =
+              closureChainDefinition(body, instruction.receiver->value) !=
+              nullptr;
+          const bool stagedPlace =
+              callableTemplateBody &&
+              callableReceiverStage(body, instruction.receiver->value) !=
+                  nullptr;
           if (!pendingStaged.empty() ||
               !capabilityRow(CppMirEmissionCapabilityKind::Closure) ||
               !capabilityRow(
                   CppMirEmissionCapabilityKind::CallableDispatch) ||
-              closureChainDefinition(body, instruction.receiver->value) ==
-                  nullptr ||
+              (!fusedLiteral && !stagedPlace) ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand) ||
               (instruction.result && !typeRow(instruction.info.type))) {
@@ -5214,11 +5313,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!failureForm && instruction.functionTarget) {
           // The success form spells plain calls; a failure-capable GTI
           // callee needs the transformed convention and stays with the
-          // failure form fail-closed.
+          // failure form fail-closed. Inside a deduced-callable template
+          // body every reachable callee convention is terminally
+          // contained (the compatibility wrapper or another template), so
+          // the plain call is exact there.
           const MirFunctionInstance *target =
               program_.findFunctionInstance(*instruction.functionTarget);
           if (target == nullptr ||
-              (target->mayRaiseDefinedFailure &&
+              (!callableTemplateBody && target->mayRaiseDefinedFailure &&
                target->linkage == LanguageLinkage::Gti &&
                target->definitionKind ==
                    MirFunctionInstance::DefinitionKind::Source)) {
@@ -5371,8 +5473,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if (!failureForm) {
-        // Plain shape: only a Lambda's terminal checked compute produces
-        // an invoke, and its helper never returns on failure.
+        // Plain shape: a Lambda's terminal checked compute, or a template
+        // body's terminally-contained plain call, produce invokes whose
+        // helpers never return on failure.
+        if (callableTemplateBody &&
+            producer->kind == MirInstructionKind::Call) {
+          continue;
+        }
         if (address.kind != MirBodyKind::Lambda ||
             producer->kind != MirInstructionKind::Compute ||
             cppMirTerminalCheckedHelperSpelling(producer->operation)
@@ -5414,10 +5521,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (block.terminator.failureRecord == 0) {
         return false;
       }
-      if (!failureForm && address.kind != MirBodyKind::Lambda) {
-        // Only an inline literal's plain shape admits this terminator:
-        // every failure source there is contained terminally inside its
-        // helper, so the propagate block is unreachable and spells abort.
+      if (!failureForm && address.kind != MirBodyKind::Lambda &&
+          !callableTemplateBody) {
+        // Only a plain shape whose failure sources are all terminally
+        // contained admits this terminator: the propagate block is
+        // unreachable and spells abort.
         return false;
       }
       continue;
