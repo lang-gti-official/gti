@@ -1854,8 +1854,10 @@ private:
     }
 
     HirBody body;
+    std::vector<HirBindingId> parameterBindings;
+    parameterBindings.reserve(lambda.parameters().size());
     for (const Parameter &parameter : lambda.parameters()) {
-      (void)lowerBinding(parameter, model, body);
+      parameterBindings.push_back(lowerBinding(parameter, model, body));
     }
     body.roots = lowerStatements(lambda.body(), model, classArguments,
                                  classValueArguments, body);
@@ -1874,6 +1876,7 @@ private:
         .type = model.typeOf(lambda),
         .returnType = info->returnType,
         .parameterTypes = info->parameterTypes,
+        .parameterBindings = std::move(parameterBindings),
         .captures = info->captures,
         .captureRequiresActiveCleanup = std::move(captureRequiresActiveCleanup),
         .traits = info->traits,

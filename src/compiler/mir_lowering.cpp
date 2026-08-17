@@ -5736,7 +5736,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
                               .declaration = instance.declaration,
                               .type = instance.type,
                               .returnType = instance.returnType,
-                              .parameterTypes = instance.parameterTypes};
+                              .parameterTypes = instance.parameterTypes,
+                              .parameterBindings = instance.parameterBindings};
     lowered.captureTypes.reserve(instance.captures.size());
     lowered.captureModes.reserve(instance.captures.size());
     lowered.captureSymbols.reserve(instance.captures.size());

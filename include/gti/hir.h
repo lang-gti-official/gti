@@ -291,6 +291,7 @@ struct HirLambda {
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<HirBindingId> parameterBindings;
   std::vector<LambdaCaptureInfo> captures;
   std::vector<bool> captureRequiresActiveCleanup;
   SemanticTypeTraits traits{};

@@ -247,7 +247,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v33 valid=" << program.valid() << '\n';
+    output << "mir-v34 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -514,6 +514,12 @@ public:
         separator(index);
         type(instance.parameterTypes[index]);
       }
+      output << "] parameter-bindings=[";
+      for (std::size_t index = 0; index < instance.parameterBindings.size();
+           ++index) {
+        separator(index);
+        output << 'b' << instance.parameterBindings[index];
+      }
       output << "] captures=[";
       for (std::size_t index = 0; index < instance.captureTypes.size();
            ++index) {
@@ -545,7 +551,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v33\n";
+    output << "mir-body-v34\n";
     body(value, 0);
     return output.str();
   }

@@ -107,11 +107,11 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v33`/`mir-body-v33`
+The deterministic serialization is currently `mir-v34`/`mir-body-v34`
 (v31 added the prefix-initialized storage type kind and its intrinsic
 family alongside the logical-size bounds check; v32 added the
 `ComputeFold` literal provenance; v33 added the `BranchFold` terminator
-provenance).
+provenance; v34 added lambda parameter bindings).
 
 Every optimizer rewrite carries replayable proof in the rewritten node
 itself, so a backend consumes optimized MIR without recovering

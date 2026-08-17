@@ -805,6 +805,7 @@ struct MirLambdaInstance {
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<HirBindingId> parameterBindings;
   std::vector<SemanticType> captureTypes;
   std::vector<LambdaCaptureMode> captureModes;
   std::vector<SymbolId> captureSymbols;
