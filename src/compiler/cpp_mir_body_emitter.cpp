@@ -317,6 +317,19 @@ constructorRollbackCovered(const MirConstructorInstance &constructor,
       [](const HirBaseInstance &base) { return !base.interface; });
 }
 
+// A constructor body with no failure records and no Invoke terminators
+// has no within-body failure path at all: every failure source inside it
+// terminates at its own site, so partial-construction rollback is
+// vacuously complete. The shared lowering predicate stays untouched —
+// this exemption is a backend emission fact, not a lowering decision.
+[[nodiscard]] bool constructorBodyFailureEdgeFree(const MirBody &body) {
+  return body.failureRecords.empty() &&
+         std::none_of(
+             body.blocks.begin(), body.blocks.end(), [](const MirBlock &block) {
+               return block.terminator.kind == MirTerminatorKind::Invoke;
+             });
+}
+
 [[nodiscard]] std::string_view
 constructorRollbackGap(const MirConstructorInstance &constructor,
                        const MirClassInstance *owner) {
@@ -325,6 +338,9 @@ constructorRollbackGap(const MirConstructorInstance &constructor,
   }
   if (classHasStateBearingBase(*owner)) {
     return "owner carries a state-bearing base subobject";
+  }
+  if (constructorBodyFailureEdgeFree(constructor.body)) {
+    return {};
   }
   if (!mirBodyRoutesFailureEdges(constructor.body)) {
     return "constructor body does not route its failure edges";
@@ -354,8 +370,13 @@ constructorRollbackGap(const MirConstructorInstance &constructor,
 
 bool constructorRollbackCovered(const MirConstructorInstance &constructor,
                                 const MirClassInstance *owner) {
-  if (owner == nullptr || classHasStateBearingBase(*owner) ||
-      !mirBodyRoutesFailureEdges(constructor.body)) {
+  if (owner == nullptr || classHasStateBearingBase(*owner)) {
+    return false;
+  }
+  if (constructorBodyFailureEdgeFree(constructor.body)) {
+    return true;
+  }
+  if (!mirBodyRoutesFailureEdges(constructor.body)) {
     return false;
   }
   for (const MirClassFieldInfo &field : owner->declaredFields) {
