@@ -227,7 +227,9 @@ borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
   const MirInstruction *input = definitionFor(body, operand);
   return input != nullptr && input->kind == MirInstructionKind::CallInput &&
                  input->operands.size() == 1 &&
-                 input->operands.front().kind == MirOperandKind::BorrowRead &&
+                 (input->operands.front().kind == MirOperandKind::BorrowRead ||
+                  input->operands.front().kind ==
+                      MirOperandKind::BorrowWrite) &&
                  input->operands.front().place != 0
              ? input
              : nullptr;
@@ -239,7 +241,8 @@ borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
   return definition != nullptr &&
          definition->kind == MirInstructionKind::CallInput &&
          definition->operands.size() == 1 &&
-         definition->operands.front().kind == MirOperandKind::BorrowRead &&
+         (definition->operands.front().kind == MirOperandKind::BorrowRead ||
+          definition->operands.front().kind == MirOperandKind::BorrowWrite) &&
          definition->operands.front().place != 0;
 }
 
@@ -2665,7 +2668,8 @@ private:
     }
     writeIndent();
     if (instruction.kind == MirInstructionKind::CallInput) {
-      if (instruction.operands.front().kind == MirOperandKind::BorrowRead) {
+      if (instruction.operands.front().kind == MirOperandKind::BorrowRead ||
+          instruction.operands.front().kind == MirOperandKind::BorrowWrite) {
         // The staged borrow never materializes; the call spells the place.
         output << "// call input " << *instruction.result
                << " stages a borrowed place\n";
@@ -3847,9 +3851,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           return false;
         }
         const MirOperand &staged = instruction.operands.front();
-        if (staged.kind == MirOperandKind::BorrowRead) {
-          // A read-borrow call input stages a place the call spells
-          // directly; write-staged receivers wait for measured demand.
+        if (staged.kind == MirOperandKind::BorrowRead ||
+            staged.kind == MirOperandKind::BorrowWrite) {
+          // A borrowed call input stages a place the call spells directly;
+          // the write form carries the mutable receiver.
           if (staged.place == 0 || body.findPlace(staged.place) == nullptr) {
             return false;
           }
@@ -3886,10 +3891,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.functionTarget
                   ? program_.findFunctionInstance(*instruction.functionTarget)
                   : nullptr;
+          // The staged borrow's access must match the member's receiver
+          // mutability exactly: a write-staged receiver reaches a mutable
+          // member, a read-staged one a read-only member.
+          const ReceiverMutability stagedMutability =
+              staged->operands.front().kind == MirOperandKind::BorrowWrite
+                  ? ReceiverMutability::Mutable
+                  : ReceiverMutability::ReadOnly;
           if (target == nullptr || !target->owner || target->staticMember ||
               target->virtualMethod || target->pureVirtual ||
               target->overrideMethod ||
-              target->receiverMutability != ReceiverMutability::ReadOnly ||
+              target->receiverMutability != stagedMutability ||
               target->linkage != LanguageLinkage::Gti ||
               target->definitionKind !=
                   MirFunctionInstance::DefinitionKind::Source) {

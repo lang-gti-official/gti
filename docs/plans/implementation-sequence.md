@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.193.0
+Checkpoint: 0.194.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,14 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **Write-staged receiver calls (0.194.0).** The receiver-carrying
+  call convention gains the mutable form: a receiver staged as a write
+  borrow reaches exactly a mutable member, a read borrow exactly a
+  read-only member, with the same staged-place spelling and qualified
+  member name in emission. This is the storage vocabulary's
+  prerequisite — every container mutation begins with a write-staged
+  receiver call — and the Chooser fixture pins the convention
+  behaviorally through a mutable forwarding member.
 - **P-STORAGE-01 wrapper migration: vector and string on prefix
   storage (0.193.0).** Both containers' internals moved wholly onto the
   prefix capability — fields, the iterators' storage borrows (the

@@ -500,6 +500,7 @@ public:
   void store(int next) mut { this.stored = next; }
   bool same_as(Chooser& other) { return this.stored == other.stored; }
   bool twins_with(Chooser& other) { return this.same_as(other); }
+  void bump(int next) mut { this.store(next); }
 };
 
 int main() {
@@ -518,6 +519,10 @@ int main() {
   }
   if (!chooser.twins_with(twin)) {
     return 4;
+  }
+  chooser.bump(11);
+  if (chooser.reads_this() != 11) {
+    return 5;
   }
   return 0;
 }
@@ -597,9 +602,16 @@ int main() {
                  std::string::npos,
          "the concrete class's passive initializer bodies should publish "
          "their verified schedule and verified-empty markers");
-  expect(count(artifact.contents, marker) == 9,
-         "exactly the six eligible member bodies, the constructor, and the "
-         "two initializer bodies should carry the family marker");
+  const std::string_view bumpBody = memberDefinition(artifact.contents, "bump");
+  expect(
+      bumpBody.find(marker) != std::string_view::npos &&
+          bumpBody.find("stages a borrowed place") != std::string_view::npos &&
+          bumpBody.find("(*this).::__gti_program::") != std::string_view::npos,
+      "a mutable-receiver call should stage its write borrow and spell "
+      "the qualified member name exactly like the read form");
+  expect(count(artifact.contents, marker) == 10,
+         "exactly the seven eligible member bodies, the constructor, and "
+         "the two initializer bodies should carry the family marker");
 }
 
 // A member access whose object is a local binding rather than `this` reads
