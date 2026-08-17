@@ -1908,6 +1908,24 @@ dischargedStorageReadCall(const MirInstruction &instruction) {
          instruction.definedFailure.propagation == FailurePropagationKind::None;
 }
 
+// An Unexpected value never materializes: std::unexpected has no default
+// construction, so the SSA declare-then-assign pattern cannot hold it. Its
+// single consumer (the Return that converts it into the expected-typed
+// result) spells the construction inline instead.
+[[nodiscard]] const MirInstruction *unexpectedDefinition(const MirBody &body,
+                                                         MirValueId value) {
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == MirInstructionKind::Compute &&
+          instruction.operation == MirOperation::Unexpected &&
+          instruction.result && *instruction.result == value) {
+        return &instruction;
+      }
+    }
+  }
+  return nullptr;
+}
+
 // The Borrow that publishes a discharged read's element pairs with its
 // producing call through the shared HIR value; ambiguity declines.
 [[nodiscard]] const MirInstruction *pairedDischargedRead(const MirBody &body,
@@ -2190,6 +2208,11 @@ public:
       // A storage-staged load never materializes either: the storage
       // intrinsic call spells the storage place lvalue directly.
       if (isStorageStagedResult(facts.body, value)) {
+        continue;
+      }
+      // An Unexpected result spells inline at its consuming Return and
+      // never declares: std::unexpected has no default construction.
+      if (unexpectedDefinition(facts.body, value.id) != nullptr) {
         continue;
       }
       // A discharged read's element is published through its loan
@@ -2603,12 +2626,11 @@ private:
       return;
     }
     if (instruction.operation == MirOperation::Unexpected) {
-      // The construction call is copied from the Expected capability row,
-      // which the snapshot builder resolved for the emitted standard.
-      output << expectedConstructionSpelling() << '(';
-      emitOperand(instruction.operands.front());
-      output << ");\n";
-      return;
+      // Spelled inline by the consuming Return; nothing stages here. The
+      // leading result assignment this writer already emitted is repaired
+      // by the caller, which skips Unexpected before writing it.
+      throw std::logic_error(
+          "verified MIR Unexpected must spell at its consuming Return");
     }
     if (instruction.operation == MirOperation::Positive ||
         instruction.operation == MirOperation::BitwiseNot) {
@@ -2707,6 +2729,14 @@ private:
           output << ", ";
         }
         output << "&__gti_mir_v_" << *instruction.result << ");\n";
+        return;
+      }
+      if (instruction.operation == MirOperation::Unexpected) {
+        // The consuming Return spells the construction inline; nothing
+        // stages here and the result value is never declared.
+        writeIndent();
+        output << "// unexpected value " << *instruction.result
+               << " spells at its consuming return\n";
         return;
       }
       emitCompute(instruction);
@@ -3314,7 +3344,20 @@ private:
       output << "return";
       if (terminator.value) {
         output << ' ';
-        emitOperand(*terminator.value);
+        const MirInstruction *unexpectedValue =
+            terminator.value->kind == MirOperandKind::Value
+                ? unexpectedDefinition(facts.body, terminator.value->value)
+                : nullptr;
+        if (unexpectedValue != nullptr) {
+          // The unexpected wrapper converts into the expected-typed
+          // result here; the construction call is copied from the
+          // Expected capability row for the emitted standard.
+          output << expectedConstructionSpelling() << '(';
+          emitOperand(unexpectedValue->operands.front());
+          output << ')';
+        } else {
+          emitOperand(*terminator.value);
+        }
       }
       output << ";\n";
       return;
@@ -4107,10 +4150,36 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !instruction.localFailureSites.empty() ||
-              !typeRow(instruction.info.type) ||
               expectedRow == representations_.capabilities().end() ||
               expectedRow->spelling.empty()) {
             return false;
+          }
+          // The wrapper value never materializes (std::unexpected has no
+          // default construction): its only consumer must be the Return
+          // that converts it into the expected-typed result, where the
+          // construction spells inline.
+          {
+            const std::vector<MirValueUse> &uses =
+                body.usesOf(*instruction.result);
+            bool returnConsumed = false;
+            if (uses.size() == 1 &&
+                uses.front().kind == MirValueUseKind::Terminator) {
+              const MirBlock *userBlock = nullptr;
+              for (const MirBlock &candidate : body.blocks) {
+                if (candidate.id == uses.front().block) {
+                  userBlock = &candidate;
+                }
+              }
+              returnConsumed =
+                  userBlock != nullptr &&
+                  userBlock->terminator.kind == MirTerminatorKind::Return &&
+                  userBlock->terminator.value &&
+                  userBlock->terminator.value->kind == MirOperandKind::Value &&
+                  userBlock->terminator.value->value == *instruction.result;
+            }
+            if (!returnConsumed) {
+              return false;
+            }
           }
           continue;
         }
