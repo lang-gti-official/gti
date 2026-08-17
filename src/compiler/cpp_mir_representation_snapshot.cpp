@@ -1708,6 +1708,16 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Intrinsic,
        .spelling = "gti_internal_backend_helpers_v1"});
+  // Expected names the artifact's shipped expected representation. The
+  // row's spelling is the exact error-construction call the compatibility
+  // path emits for the selected standard — std::unexpected under C++23,
+  // the vendored expected-lite constructor under C++20 — so Unexpected
+  // text is copied from this row and can never drift by standard.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::Expected,
+       .spelling = standard == CppStandard::Cpp23
+                       ? "std::unexpected"
+                       : "::nonstd::make_unexpected"});
 
   // Executable per-instance field-initializer bodies carry their own name
   // row like every other executable body; the spelling is the owner scope

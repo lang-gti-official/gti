@@ -2554,6 +2554,21 @@ private:
         "verified MIR scalar-CFG operand is not a proven value");
   }
 
+  [[nodiscard]] std::string_view expectedConstructionSpelling() const {
+    const auto found = std::find_if(
+        representations.capabilities().begin(),
+        representations.capabilities().end(),
+        [](const CppMirEmissionCapabilityRepresentation &row) {
+          return row.kind == CppMirEmissionCapabilityKind::Expected;
+        });
+    if (found == representations.capabilities().end() ||
+        found->spelling.empty()) {
+      throw std::logic_error(
+          "verified MIR Unexpected lost its Expected capability row");
+    }
+    return found->spelling;
+  }
+
   void emitCompute(const MirInstruction &instruction) {
     output << "__gti_mir_v_" << *instruction.result << " = ";
     if (instruction.operation == MirOperation::Literal) {
@@ -2580,6 +2595,19 @@ private:
       output << '!';
       emitOperand(instruction.operands.front());
       output << ";\n";
+      return;
+    }
+    if (instruction.operation == MirOperation::ExpectedHasValue) {
+      emitOperand(instruction.operands.front());
+      output << ".has_value();\n";
+      return;
+    }
+    if (instruction.operation == MirOperation::Unexpected) {
+      // The construction call is copied from the Expected capability row,
+      // which the snapshot builder resolved for the emitted standard.
+      output << expectedConstructionSpelling() << '(';
+      emitOperand(instruction.operands.front());
+      output << ");\n";
       return;
     }
     if (instruction.operation == MirOperation::Positive ||
@@ -4060,6 +4088,32 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
           continue;
+        case MirOperation::ExpectedHasValue:
+          if (instruction.operands.size() != 1 ||
+              !valueOperand(instruction.operands.front()) ||
+              !instruction.localFailureSites.empty()) {
+            return false;
+          }
+          continue;
+        case MirOperation::Unexpected: {
+          // Spells through the Expected capability row's construction
+          // call; the result is the expected-typed value itself.
+          const auto expectedRow = std::find_if(
+              representations_.capabilities().begin(),
+              representations_.capabilities().end(),
+              [](const CppMirEmissionCapabilityRepresentation &row) {
+                return row.kind == CppMirEmissionCapabilityKind::Expected;
+              });
+          if (instruction.operands.size() != 1 ||
+              !valueOperand(instruction.operands.front()) ||
+              !instruction.localFailureSites.empty() ||
+              !typeRow(instruction.info.type) ||
+              expectedRow == representations_.capabilities().end() ||
+              expectedRow->spelling.empty()) {
+            return false;
+          }
+          continue;
+        }
         case MirOperation::Positive:
         case MirOperation::BitwiseNot:
           if (instruction.operands.size() != 1 ||
