@@ -1,8 +1,18 @@
 #include "gti/semantic_analyzer.h"
 
+#include "semantic_spelling.h"
+
 #include <cassert>
 
 namespace lang {
+
+// Diagnostic text spelling lives in its own translation unit
+// (semantic_spelling.cpp); the analyzer consumes it unqualified.
+using semantic_spelling::callableSpelling;
+using semantic_spelling::classKindSpelling;
+using semantic_spelling::pathSpelling;
+using semantic_spelling::qualifiedName;
+using semantic_spelling::typeRefSpelling;
 
 class SemanticVisitor::Impl final : public ExprVisitor, public StmtVisitor {
 public:
@@ -14405,47 +14415,6 @@ private:
     return result;
   }
 
-  [[nodiscard]] static std::string callableSpelling(const ExprPtr &callee) {
-    if (const auto *variable = dynamic_cast<const Variable *>(callee.get())) {
-      return variable->name().lexeme;
-    }
-    if (const auto *qualified =
-            dynamic_cast<const QualifiedName *>(callee.get())) {
-      return pathSpelling(qualified->name());
-    }
-    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
-      return member->name().lexeme;
-    }
-    return "function";
-  }
-
-  [[nodiscard]] static std::string typeRefSpelling(const TypeRef &type) {
-    std::string result = type.pointeeConst ? "const " : "";
-    result += pathSpelling(type.name);
-    if (!type.arguments.empty()) {
-      result += '<';
-      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-        if (index != 0) {
-          result += ", ";
-        }
-        result += typeRefSpelling(type.arguments[index]);
-      }
-      result += '>';
-    }
-    if (type.pointer) {
-      result += '*';
-    }
-    for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
-      result += '[' +
-                (extent ? arrayExtentSpelling(*extent) : std::string("?")) +
-                ']';
-    }
-    if (type.reference) {
-      result += type.reference->lexeme;
-    }
-    return result;
-  }
-
   [[nodiscard]] static std::string
   functionSignatureSpelling(const FunctionCandidate &function) {
     if (function.declaration == nullptr) {
@@ -17569,39 +17538,6 @@ private:
     return false;
   }
 
-  static std::string qualifiedName(const std::vector<std::string> &scope,
-                                   std::size_t segmentCount,
-                                   std::string_view name) {
-    std::string result;
-    for (std::size_t index = 0; index < segmentCount; ++index) {
-      if (!result.empty()) {
-        result += "::";
-      }
-      result += scope[index];
-    }
-    if (!result.empty()) {
-      result += "::";
-    }
-    result += name;
-    return result;
-  }
-
-  static std::string qualifiedName(const std::vector<std::string> &scope,
-                                   std::string_view name) {
-    return qualifiedName(scope, scope.size(), name);
-  }
-
-  static std::string pathSpelling(const NamePath &path) {
-    std::string result;
-    for (const Token &segment : path.segments) {
-      if (!result.empty()) {
-        result += "::";
-      }
-      result += segment.lexeme;
-    }
-    return result;
-  }
-
   std::vector<GenericParameterInfo>
   makeGenericParameters(const std::vector<GenericParameter> &parameters,
                         const Token &declarationName,
@@ -20484,20 +20420,6 @@ private:
         scope.pop_back();
       }
     }
-  }
-
-  [[nodiscard]] static std::string_view classKindSpelling(ClassKind kind) {
-    switch (kind) {
-    case ClassKind::Class:
-      return "class";
-    case ClassKind::Struct:
-      return "struct";
-    case ClassKind::Interface:
-      return "interface";
-    case ClassKind::Union:
-      return "union";
-    }
-    return "type";
   }
 
   void resolveClassInheritance() {
@@ -27432,7 +27354,7 @@ private:
   }
 
   [[nodiscard]] std::string typeSpelling(const SemanticType &type) const {
-    return SemanticTypePrinter(semanticModel).print(type);
+    return semantic_spelling::typeSpelling(semanticModel, type);
   }
 
   [[nodiscard]] bool tracksValueState(const Symbol &symbol) const {

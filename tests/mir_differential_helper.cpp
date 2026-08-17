@@ -39,7 +39,7 @@ namespace {
 
 int usage() {
   std::cerr << "usage: gti_mir_differential_helper <source.gti> <out-dir> "
-               "[<prelude-root>]\n";
+               "[<prelude-root>] [<c++20|c++23>]\n";
   return 2;
 }
 
@@ -52,11 +52,23 @@ bool writeFile(const std::filesystem::path &path, const std::string &contents) {
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc < 3 || argc > 4) {
+  if (argc < 3 || argc > 5) {
     return usage();
   }
   const std::filesystem::path source = argv[1];
   const std::filesystem::path outputDirectory = argv[2];
+  // Both representation paths must emit for the standard the external
+  // driver will compile with: the polyfill selection (e.g. `expected`)
+  // is part of the emitted text.
+  lang::CppStandard standard = lang::CppStandard::Cpp23;
+  if (argc == 5) {
+    const std::string_view requested = argv[4];
+    if (requested == "c++20") {
+      standard = lang::CppStandard::Cpp20;
+    } else if (requested != "c++23") {
+      return usage();
+    }
+  }
 
   std::ifstream input(source);
   if (!input) {
@@ -67,7 +79,7 @@ int main(int argc, char **argv) {
   buffer << input.rdbuf();
 
   lang::FrontendResult frontend = [&] {
-    if (argc == 4) {
+    if (argc >= 4) {
       const std::filesystem::path root = argv[3];
       return lang::Frontend().analyze(source.filename().string(), buffer.str(),
                                       {root / "prelude.gti"}, {}, {root});
@@ -100,7 +112,7 @@ int main(int argc, char **argv) {
 
   std::string mirContents;
   try {
-    const lang::BackendArtifact artifact = lang::CppBackend().generate(
+    const lang::BackendArtifact artifact = lang::CppBackend(standard).generate(
         {.program = frontend.program,
          .semantics = frontend.semantics,
          .hir = frontend.hir,
@@ -115,9 +127,8 @@ int main(int argc, char **argv) {
   }
 
   const std::string compatibilityContents =
-      lang::CppEmitter(frontend.semantics, frontend.hir,
-                       lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       &compatibilityOptimizations)
+      lang::CppEmitter(frontend.semantics, frontend.hir, standard,
+                       lang::TargetInfo::host(), &compatibilityOptimizations)
           .emit(frontend.program);
 
   std::error_code directoryError;
@@ -145,7 +156,7 @@ int main(int argc, char **argv) {
   // analysis the production admission loop runs, so the emitted count is
   // always reported against the real total rather than a re-derivation.
   const lang::CppMirBodyEmissionMap rows(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, optimized.mir, lang::CppStandard::Cpp23));
+      frontend.semantics, optimized.mir, standard));
   const std::size_t mirTotalBodies =
       lang::CppMirBodyEmitter(optimized.mir, rows)
           .analyzeProgram()

@@ -74,7 +74,15 @@ def main() -> int:
             work = root / f"case{index}"
             work.mkdir(parents=True, exist_ok=True)
 
-            emit = run([str(helper), str(source), str(work), str(stdlib_root)])
+            emit = run(
+                [
+                    str(helper),
+                    str(source),
+                    str(work),
+                    str(stdlib_root),
+                    arguments.std,
+                ]
+            )
             fields = parse_helper_output(emit.stdout)
             status = fields.get("status", "helper-failed")
             if emit.returncode != 0 or status != "emitted":
@@ -103,6 +111,10 @@ def main() -> int:
                     f"-std={arguments.std}",
                     f"-{arguments.optimize}",
                     "-I", str(runtime_include),
+                    # The driver's native step supplies the vendored
+                    # expected-compatibility header under C++20; the
+                    # oracle mirrors that toolchain contract.
+                    "-I", str(repository / "vendor" / "expected_lite" / "include"),
                     str(generated),
                     str(runtime_library),
                     "-o", str(executable),
