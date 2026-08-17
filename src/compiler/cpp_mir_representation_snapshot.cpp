@@ -1658,6 +1658,15 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
                      "::~" + info->declaration->name().lexeme});
   }
 
+  // A verified no-argument hosted-startup body's emitted name is the
+  // program entry adapter itself.
+  if (cppMirHostedStartupNoArgumentsSchedule(mir) && mir.hostedStartupPlan()) {
+    builder.rows.bodies.push_back(
+        {.address = {.kind = MirBodyKind::HostedStartup,
+                     .owner = mir.hostedStartupPlan()->entry},
+         .spelling = "::main"});
+  }
+
   // The executable module body carries its own name row like every other
   // executable body; it is never a call target.
   if (!mir.programInitializationPlan().steps.empty()) {

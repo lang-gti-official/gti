@@ -1060,9 +1060,11 @@ private:
     }
     case MirBodyKind::HostedStartup:
       requireCapability(CppMirEmissionCapabilityKind::HostedEntry);
-      add(CppMirBodyEmissionIssueKind::MissingFailureCleanupMir, 0, 0,
-          "compiler-generated hosted startup lacks the Stage-E terminal "
-          "failure-containment path");
+      if (!cppMirHostedStartupNoArgumentsSchedule(program)) {
+        add(CppMirBodyEmissionIssueKind::MissingFailureCleanupMir, 0, 0,
+            "compiler-generated hosted startup lacks the Stage-E terminal "
+            "failure-containment path");
+      }
       if (std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
                       [](const MirDropObligation &obligation) {
                         return obligation.dropType.requiresActiveCleanup;
@@ -1576,14 +1578,16 @@ private:
       requireCapability(CppMirEmissionCapabilityKind::DefinedFailure, block.id,
                         instruction.id);
       if (result.body.kind == MirBodyKind::HostedStartup) {
-        add(CppMirBodyEmissionIssueKind::MissingFailureCleanupMir, block.id,
-            instruction.id,
-            instruction.definedFailure.propagation ==
-                    FailurePropagationKind::BodyCall
-                ? "compiler-generated body-call propagation lacks the "
-                  "Stage-E hosted cleanup and terminal containment path"
-                : "compiler-generated hosted failure propagation lacks the "
-                  "Stage-E cleanup and terminal containment path");
+        if (!cppMirHostedStartupNoArgumentsSchedule(program)) {
+          add(CppMirBodyEmissionIssueKind::MissingFailureCleanupMir, block.id,
+              instruction.id,
+              instruction.definedFailure.propagation ==
+                      FailurePropagationKind::BodyCall
+                  ? "compiler-generated body-call propagation lacks the "
+                    "Stage-E hosted cleanup and terminal containment path"
+                  : "compiler-generated hosted failure propagation lacks the "
+                    "Stage-E cleanup and terminal containment path");
+        }
       } else if (!instructionHasInvoke(block, instruction)) {
         // A proven-safe element access records its site without a failure
         // edge: flow analysis discharged the bounds check, so no Invoke,
@@ -3711,6 +3715,22 @@ bool CppMirBodyEmitter::supportsBodyText(MirBodyAddress address) const {
 
 bool CppMirBodyEmitter::supportsFailureBodyText(MirBodyAddress address) const {
   return supportsBodyTextImpl(address, true);
+}
+
+bool cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program) {
+  const std::optional<MirHostedStartupPlan> &plan = program.hostedStartupPlan();
+  if (!plan || plan->kind != ProgramEntryKind::NoArguments ||
+      plan->entry == 0 ||
+      plan->exitPolicy != MirHostedStartupExitPolicy::ImmediateExit70 ||
+      plan->operations.size() != 4) {
+    return false;
+  }
+  return plan->operations[0].kind == MirHostedStartupOperationKind::CallEntry &&
+         plan->operations[1].kind ==
+             MirHostedStartupOperationKind::RouteOperationFailure &&
+         plan->operations[2].kind ==
+             MirHostedStartupOperationKind::ContainFailure &&
+         plan->operations[3].kind == MirHostedStartupOperationKind::ReturnEntry;
 }
 
 bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {

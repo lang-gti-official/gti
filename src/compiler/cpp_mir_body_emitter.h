@@ -333,6 +333,11 @@ struct CppMirInitializerScheduleText {
 // rows. Text emission runs only after this analysis is Ready; current known
 // gaps are therefore explicit rather than delegated to the compatibility
 // emitter.
+// Single authority for the no-argument hosted-startup adapter schedule,
+// shared by the emission analysis and the adapter emission.
+[[nodiscard]] bool
+cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program);
+
 class CppMirBodyEmitter {
 public:
   CppMirBodyEmitter(const MirProgram &program,
@@ -381,6 +386,15 @@ public:
   // boundaries, or failure records, and a Return or Unreachable
   // terminator.
   [[nodiscard]] bool boundaryDeclarationBody(MirBodyAddress address) const;
+
+  // True exactly when the program's hosted-startup plan is the
+  // no-argument adapter schedule the backend emits: one CallEntry with
+  // propagated failure, RouteOperationFailure, ContainFailure, and
+  // ReturnEntry under the immediate-exit-70 policy. The emitted program
+  // entry adapter is then that body's complete authorized emission.
+  [[nodiscard]] bool hostedStartupNoArgumentsSchedule() const {
+    return cppMirHostedStartupNoArgumentsSchedule(program_);
+  }
 
   [[nodiscard]] CppMirBodyEmissionText
   emitFailureBodyText(MirBodyAddress address, std::string_view familyLabel,

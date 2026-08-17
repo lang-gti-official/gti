@@ -12788,7 +12788,22 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     }
   }
 
+  void emitHostedStartupMarker() {
+    if (mir == nullptr || !generalEmissionMap ||
+        !cppMirHostedStartupNoArgumentsSchedule(*mir) ||
+        !mir->hostedStartupPlan()) {
+      return;
+    }
+    // The adapter below is the verified no-argument hosted-startup
+    // schedule's complete emission: call-entry with propagated failure,
+    // operation-failure routing, terminal containment, and return.
+    output << "// GTI verified-MIR body: hosted-entry-v1 "
+              "hosted-startup-instance "
+           << mir->hostedStartupPlan()->entry << "\n";
+  }
+
   void emitProgramEntryAdapter() {
+    emitHostedStartupMarker();
     if (generalFailureEntry != nullptr && ownedArgumentsEntry != nullptr) {
       // The general failure-form entry publishes through the transformed
       // ABI; main owns the terminal containment exactly like the hosted
