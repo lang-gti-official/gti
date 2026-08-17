@@ -74,6 +74,28 @@ returns the capture target. Semantic tokens and formatting consume those same
 frontend records and written syntax rather than inferring capture mode from
 punctuation in the protocol layer.
 
+References, document highlights, and rename consume the same exact symbol
+identity as definition: the occurrence under the cursor resolves to a
+`SymbolId`, and `SemanticDatabase` occurrence records for that identity —
+never equal spelling — produce the result ranges with their read/write roles.
+Rename fails closed in the compiler query: only function-local identities
+(locals, parameters, generic type/value parameters, lambda captures) are
+renamable, because every reference to them provably lies inside the current
+snapshot; copy-snapshot lambda captures rename together with their source
+binding through recorded capture links; the new name must lex as a single
+non-reserved identifier; a conservative visibility check rejects any new name
+already spelled in the touched source units; and every edited range is
+verified against the snapshot source before edits are produced. The protocol
+layer only serializes the resulting spans.
+
+Document symbols walk the recovered AST for the requested source unit —
+namespaces, types, members, enums and enumerators, functions, globals,
+aliases, and concepts — using the parser-recorded statement extents for
+enclosing ranges and exact name tokens for selection ranges.
+Compile-time-conditional declarations contribute the target-selected branch.
+Each node's detail reuses the hover signature query, so the outline and hover
+always present identical compiler-owned renderings.
+
 The checked integer functions are ordinary `<std/numeric>` declarations.
 Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer
@@ -174,9 +196,13 @@ required; it is tracked in
 `src/lsp/main.cpp` owns JSON-RPC IDs, capabilities, URIs, UTF-8 byte to LSP
 position conversion, request/result serialization, diagnostic publication,
 workspace edits, cancellation, and semantic-token wire encoding. It advertises
-full document sync, formatting, semantic tokens, hover, completion, and
-definition. It advertises quick-fix code actions when the client supports code
-action literals.
+full document sync, formatting, semantic tokens, hover, completion,
+definition, references, document highlights, document symbols, and rename
+with prepare support. It advertises quick-fix code actions when the client
+supports code action literals. Document symbols are hierarchical when the
+client negotiates `hierarchicalDocumentSymbolSupport` and flatten to
+`SymbolInformation` with container names otherwise; rename responses use
+versioned document changes when the client supports them.
 
 The protocol translation unit uses `llvm::json` as private parsing and encoding
 machinery. Incoming payloads are parsed into RAII value objects and invalid
@@ -217,8 +243,12 @@ meaning from punctuation.
   reported by a full compile, not by the current LSP snapshot. Moving concrete
   instance checking into an editor-safe compiler query is future work; the LSP
   must not reproduce it independently.
-- Definition is implemented from exact resolved symbols. References, rename,
-  signature help, and a project symbol index are not implemented.
+- Definition, references, document highlights, and rename are implemented
+  from exact resolved symbols. Rename is deliberately limited to
+  function-local names: identities visible outside the entry document's
+  source graph may have references in unopened dependants the snapshot cannot
+  see, so the compiler query rejects them instead of producing an incomplete
+  edit. Signature help and a project symbol index are not implemented.
 - `SymbolId` is snapshot-local. There is no durable cross-analysis identity.
 - Document/scheduling state is not yet extracted from the protocol class.
 - `Frontend`/`LanguageQueries` can consume the same explicit

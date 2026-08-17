@@ -885,6 +885,12 @@ struct LambdaInfo {
   SemanticTypeTraits traits{};
 };
 
+struct LambdaCaptureLink {
+  SymbolId source = 0;
+  SymbolId binding = 0;
+  LambdaCaptureMode mode = LambdaCaptureMode::Copy;
+};
+
 struct ClassFieldTypeInfo {
   const VariableDecl *declaration = nullptr;
   SemanticType type = SemanticType::Unknown;
@@ -1675,6 +1681,12 @@ public:
   [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const;
 
   [[nodiscard]] const LambdaInfo *findLambda(LambdaId id) const;
+
+  // Every recorded lambda-capture pairing of enclosing source binding and
+  // capture target, including base-model records. Copy-snapshot captures
+  // couple the two names syntactically, so tooling that rewrites one symbol
+  // must consult these links instead of matching spellings.
+  [[nodiscard]] std::vector<LambdaCaptureLink> lambdaCaptureLinks() const;
 
   [[nodiscard]] const ClassTypeInfo *
   findClassType(const ClassDecl &declaration) const;

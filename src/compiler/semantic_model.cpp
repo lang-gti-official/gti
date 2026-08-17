@@ -740,6 +740,23 @@ SemanticModel::findLambda(const Lambda &declaration) const {
   return base == nullptr ? nullptr : base->findLambda(id);
 }
 
+[[nodiscard]] std::vector<LambdaCaptureLink>
+SemanticModel::lambdaCaptureLinks() const {
+  std::vector<LambdaCaptureLink> links =
+      base == nullptr ? std::vector<LambdaCaptureLink>{}
+                      : base->lambdaCaptureLinks();
+  for (const auto &[_, lambda] : lambdas) {
+    for (const LambdaCaptureInfo &capture : lambda.captures) {
+      if (capture.sourceSymbol != 0 && capture.bindingSymbol != 0) {
+        links.push_back({.source = capture.sourceSymbol,
+                         .binding = capture.bindingSymbol,
+                         .mode = capture.mode});
+      }
+    }
+  }
+  return links;
+}
+
 [[nodiscard]] const ClassTypeInfo *
 SemanticModel::findClassType(const ClassDecl &declaration) const {
   const auto found = classTypes.find(&declaration);

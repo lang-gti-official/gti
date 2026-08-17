@@ -2567,7 +2567,7 @@ artifact policy stay in `gti_driver`, never `gti_compiler` or the LSP.
 | ID | State | Scope and dependency |
 | --- | --- | --- |
 | `T-LSP-01` | ready | Retain documentation comments/declaration extents once and expose them through compiler symbols, hover, completion, and generated API docs. |
-| `T-LSP-02` | ready | In query-sized sub-slices, add signature help, current-snapshot references, and safe rename through `LanguageQueries`; fail closed on incomplete identity. |
+| `T-LSP-02` | references/highlights/document symbols/rename complete; signature help ready | Current-snapshot references, document highlights, hierarchical document symbols over parser-recorded extents, and fail-closed function-local rename are implemented through `LanguageQueries` with protocol tests. The remaining sub-slice is signature help from the selected overload and argument position. |
 | `T-LSP-03` | measured defer | Extract document/snapshot service boundaries when a concrete feature makes the current server class costly to evolve. |
 | `T-LSP-04` | blocked | After `B-PROJECT-05`, consume driver-owned `ProjectFacts` without fetching/building and with dirty buffers authoritative. |
 | `T-LSP-05` | measured defer | A durable project index only after unopened-file references/rename proves a client. |

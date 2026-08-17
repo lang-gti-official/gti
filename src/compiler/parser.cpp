@@ -82,7 +82,17 @@ private:
     missingTokenError = false;
   }
 
+  // Both statement funnels stamp the parser-recorded full extent onto the
+  // returned node so tooling can consume enclosing declaration ranges
+  // without re-deriving structure from punctuation.
   StmtPtr declaration() {
+    const Token start = peek();
+    StmtPtr result = declarationWithoutExtent();
+    stampExtent(result, start);
+    return result;
+  }
+
+  StmtPtr declarationWithoutExtent() {
     if (match({TokenKind::HASH_IF})) {
       return conditionalCompilation(ItemContext::Declaration);
     }
@@ -1044,8 +1054,30 @@ private:
   }
 
   StmtPtr item(ItemContext context) {
+    const Token start = peek();
+    StmtPtr result = itemWithoutExtent(context);
+    stampExtent(result, start);
+    return result;
+  }
+
+  void stampExtent(const StmtPtr &statement, const Token &start) const {
+    if (statement == nullptr || current == 0) {
+      return;
+    }
+    const Token &last = previous();
+    const std::size_t end = last.position + last.lexeme.size();
+    if (end <= start.position) {
+      return;
+    }
+    statement->setExtent(SourceSpan{.source = start.source,
+                                    .start = start.position,
+                                    .end = end,
+                                    .line = start.line});
+  }
+
+  StmtPtr itemWithoutExtent(ItemContext context) {
     if (context == ItemContext::Declaration) {
-      return declaration();
+      return declarationWithoutExtent();
     }
     if (match({TokenKind::HASH_IF})) {
       return conditionalCompilation(context);

@@ -1,5 +1,7 @@
 #include "gti/language_queries.h"
 
+#include "gti/lexer.h"
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -645,6 +647,104 @@ public:
     };
   }
 
+  [[nodiscard]] std::optional<ReferencesInfo>
+  references(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+             std::size_t byteOffset, bool includeDeclaration) const {
+    const SemanticDatabase &database = snapshot.semantics.database();
+    const SemanticOccurrence *occurrence =
+        database.findOccurrence(sourceUnit, byteOffset);
+    if (occurrence == nullptr || occurrence->symbol == 0) {
+      return std::nullopt;
+    }
+    if (!snapshot.semantics.canPresent(sourceUnit, *occurrence,
+                                       snapshot.sourceGraph)) {
+      return std::nullopt;
+    }
+    const SymbolRecord *symbol = database.findSymbol(occurrence->symbol);
+    if (symbol == nullptr || !snapshot.semantics.canPresent(
+                                 sourceUnit, *symbol, snapshot.sourceGraph)) {
+      return std::nullopt;
+    }
+
+    ReferencesInfo result{.symbol = symbol->id};
+    result.sites = collectSites(snapshot, sourceUnit, {symbol->id});
+    if (!includeDeclaration) {
+      std::erase_if(result.sites, [&](const ReferenceSite &site) {
+        return (hasRole(site.roles, OccurrenceRole::Declaration) ||
+                hasRole(site.roles, OccurrenceRole::Definition)) &&
+               !hasRole(site.roles, OccurrenceRole::Reference);
+      });
+    }
+    if (result.sites.empty()) {
+      return std::nullopt;
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::optional<RenamePreparation>
+  prepareRename(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+                std::size_t byteOffset) const {
+    const RenameCore core = renameCore(snapshot, sourceUnit, byteOffset);
+    if (core.symbol == nullptr || !core.failure.empty()) {
+      return std::nullopt;
+    }
+    return RenamePreparation{.symbol = core.symbol->id,
+                             .origin = core.origin,
+                             .placeholder = core.symbol->name};
+  }
+
+  [[nodiscard]] RenameOutcome rename(const FrontendResult &snapshot,
+                                     SourceUnitId sourceUnit,
+                                     std::size_t byteOffset,
+                                     std::string_view newName) const {
+    RenameOutcome outcome;
+    const RenameCore core = renameCore(snapshot, sourceUnit, byteOffset);
+    if (core.symbol == nullptr) {
+      outcome.failure = "No renamable symbol at this position.";
+      return outcome;
+    }
+    if (!core.failure.empty()) {
+      outcome.failure = core.failure;
+      return outcome;
+    }
+    if (std::string validation = validateNewName(newName);
+        !validation.empty()) {
+      outcome.failure = std::move(validation);
+      return outcome;
+    }
+    if (newName != core.symbol->name &&
+        conflictsWithVisibleName(snapshot, core, newName)) {
+      outcome.failure = "Renaming to '" + std::string(newName) +
+                        "' could change meaning: that name is already used "
+                        "in a source unit this rename touches.";
+      return outcome;
+    }
+
+    RenameEdits edits{.symbol = core.symbol->id};
+    edits.spans.reserve(core.sites.size());
+    for (const ReferenceSite &site : core.sites) {
+      edits.spans.push_back(site.span);
+    }
+    outcome.edits = std::move(edits);
+    return outcome;
+  }
+
+  [[nodiscard]] std::vector<DocumentSymbolInfo>
+  documentSymbols(const FrontendResult &snapshot,
+                  SourceUnitId sourceUnit) const {
+    std::vector<DocumentSymbolInfo> result;
+    const SourceUnit *unit = snapshot.sourceGraph.findUnit(sourceUnit);
+    if (unit == nullptr) {
+      return result;
+    }
+    const SemanticAnalysisSeal &seal = snapshot.semantics.analysisSeal();
+    const TargetInfo target =
+        seal.programSnapshot == 0 ? TargetInfo::host() : seal.target;
+    appendOutline(snapshot, sourceUnit, unit->path.string(), target,
+                  snapshot.program.declarations(), false, result);
+    return result;
+  }
+
   [[nodiscard]] CompletionResult complete(const CompletionInput &input) const {
     CompletionResult result;
     if (input.entryPath.empty() || input.byteOffset > input.source.size()) {
@@ -904,6 +1004,384 @@ private:
            left.end == right.end;
   }
 
+  // Deduplicated, ordered occurrence sites for a set of snapshot symbols.
+  // Sites the requesting unit may not present are dropped, so results fail
+  // closed for compiler-private records.
+  [[nodiscard]] static std::vector<ReferenceSite>
+  collectSites(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+               const std::vector<SymbolId> &symbols) {
+    const SemanticDatabase &database = snapshot.semantics.database();
+    std::vector<ReferenceSite> sites;
+    for (const SymbolId symbol : symbols) {
+      for (const SemanticOccurrence *occurrence :
+           database.occurrencesForSymbol(symbol)) {
+        if (!snapshot.semantics.canPresent(sourceUnit, *occurrence,
+                                           snapshot.sourceGraph)) {
+          continue;
+        }
+        sites.push_back(
+            {.span = occurrence->span, .roles = occurrence->roles});
+      }
+    }
+    std::sort(sites.begin(), sites.end(),
+              [](const ReferenceSite &left, const ReferenceSite &right) {
+                if (left.span.source != right.span.source) {
+                  return left.span.source < right.span.source;
+                }
+                if (left.span.start != right.span.start) {
+                  return left.span.start < right.span.start;
+                }
+                return left.span.end < right.span.end;
+              });
+    std::vector<ReferenceSite> merged;
+    merged.reserve(sites.size());
+    for (ReferenceSite &site : sites) {
+      if (!merged.empty() && sameSpan(merged.back().span, site.span)) {
+        merged.back().roles |= site.roles;
+        continue;
+      }
+      merged.push_back(std::move(site));
+    }
+    return merged;
+  }
+
+  struct RenameCore {
+    const SymbolRecord *symbol = nullptr;
+    std::vector<SymbolId> closure;
+    std::vector<ReferenceSite> sites;
+    SourceSpan origin;
+    std::string failure;
+  };
+
+  [[nodiscard]] static bool renamableKind(SymbolKind kind) {
+    switch (kind) {
+    case SymbolKind::LocalVariable:
+    case SymbolKind::Parameter:
+    case SymbolKind::TypeParameter:
+    case SymbolKind::ValueParameter:
+    case SymbolKind::LambdaCapture:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  // Resolves the symbol under the cursor and proves rename coverage. Only
+  // function-local identities are accepted: every reference to them lies in
+  // the current snapshot, so the editor cannot silently miss call sites in
+  // unopened dependants. Copy-snapshot lambda captures couple the capture
+  // target with its source binding, so the closure renames both together.
+  [[nodiscard]] static RenameCore renameCore(const FrontendResult &snapshot,
+                                             SourceUnitId sourceUnit,
+                                             std::size_t byteOffset) {
+    RenameCore core;
+    const SemanticDatabase &database = snapshot.semantics.database();
+    const SemanticOccurrence *occurrence =
+        database.findOccurrence(sourceUnit, byteOffset);
+    if (occurrence == nullptr || occurrence->symbol == 0 ||
+        !snapshot.semantics.canPresent(sourceUnit, *occurrence,
+                                       snapshot.sourceGraph)) {
+      return core;
+    }
+    const SymbolRecord *symbol = database.findSymbol(occurrence->symbol);
+    if (symbol == nullptr || !snapshot.semantics.canPresent(
+                                 sourceUnit, *symbol, snapshot.sourceGraph)) {
+      return core;
+    }
+    core.symbol = symbol;
+    core.origin = occurrence->span;
+    if (symbol->name.empty() || symbol->generated || symbol->compilerPrivate) {
+      core.failure = "Compiler-generated names cannot be renamed.";
+      return core;
+    }
+    if (symbol->defaultLibrary) {
+      core.failure = "Standard library declarations cannot be renamed.";
+      return core;
+    }
+    if (!renamableKind(symbol->kind)) {
+      core.failure =
+          "Rename is currently limited to function-local names; '" +
+          symbol->name +
+          "' may be referenced by source the current analysis cannot see.";
+      return core;
+    }
+
+    std::vector<SymbolId> closure{symbol->id};
+    const std::vector<LambdaCaptureLink> links =
+        snapshot.semantics.lambdaCaptureLinks();
+    const auto contains = [&closure](SymbolId id) {
+      return std::find(closure.begin(), closure.end(), id) != closure.end();
+    };
+    bool grew = true;
+    while (grew) {
+      grew = false;
+      for (const LambdaCaptureLink &link : links) {
+        if (link.mode != LambdaCaptureMode::Copy) {
+          continue;
+        }
+        if (contains(link.source) && !contains(link.binding)) {
+          closure.push_back(link.binding);
+          grew = true;
+        }
+        if (contains(link.binding) && !contains(link.source)) {
+          closure.push_back(link.source);
+          grew = true;
+        }
+      }
+    }
+    for (const SymbolId member : closure) {
+      const SymbolRecord *record = database.findSymbol(member);
+      if (record == nullptr || record->generated || record->compilerPrivate ||
+          record->defaultLibrary || !renamableKind(record->kind) ||
+          record->name != symbol->name) {
+        core.failure = "Rename coverage for '" + symbol->name +
+                       "' is incomplete in this snapshot.";
+        return core;
+      }
+    }
+
+    core.closure = std::move(closure);
+    core.sites = collectSites(snapshot, sourceUnit, core.closure);
+    if (core.sites.empty()) {
+      core.failure = "Rename coverage for '" + symbol->name +
+                     "' is incomplete in this snapshot.";
+      return core;
+    }
+    // Every edited range must spell exactly the current name; anything else
+    // means the occurrence model and the source disagree, so fail closed
+    // instead of producing a corrupting edit.
+    for (const ReferenceSite &site : core.sites) {
+      const std::string *text = snapshot.sources.find(site.span.source);
+      if (text == nullptr || site.span.end > text->size() ||
+          site.span.end - site.span.start != symbol->name.size() ||
+          text->compare(site.span.start, symbol->name.size(), symbol->name) !=
+              0) {
+        core.failure = "Rename coverage for '" + symbol->name +
+                       "' is incomplete in this snapshot.";
+        return core;
+      }
+    }
+    return core;
+  }
+
+  [[nodiscard]] static std::string validateNewName(std::string_view newName) {
+    if (isCppReservedIdentifier(newName)) {
+      return "'" + std::string(newName) +
+             "' is a reserved C++ core keyword and cannot name a GTI "
+             "declaration.";
+    }
+    Lexer lexer;
+    std::vector<Token> tokens =
+        lexer.scan(std::string(newName), "<rename>");
+    const bool singleIdentifier =
+        !lexer.hadError() && tokens.size() == 2 &&
+        tokens.front().kind == TokenKind::IDENTIFIER &&
+        tokens.front().lexeme == newName &&
+        tokens.back().kind == TokenKind::END_OF_FILE;
+    if (!singleIdentifier) {
+      return "'" + std::string(newName) + "' is not a valid GTI identifier.";
+    }
+    return {};
+  }
+
+  // Conservative shadowing guard: reject a new name that is already visible
+  // anywhere in the source units this rename touches. This over-rejects
+  // unrelated scopes but can never silently rebind a reference.
+  [[nodiscard]] static bool
+  conflictsWithVisibleName(const FrontendResult &snapshot,
+                           const RenameCore &core, std::string_view newName) {
+    const SemanticDatabase &database = snapshot.semantics.database();
+    const auto inClosure = [&core](SymbolId id) {
+      return std::find(core.closure.begin(), core.closure.end(), id) !=
+             core.closure.end();
+    };
+    std::unordered_set<SourceUnitId> units;
+    for (const ReferenceSite &site : core.sites) {
+      const SourceUnitId unit =
+          snapshot.sourceGraph.sourceUnitForPath(site.span.source);
+      if (unit == 0 || !units.insert(unit).second) {
+        continue;
+      }
+      for (const SemanticOccurrence &occurrence : database.occurrences(unit)) {
+        if (occurrence.name == newName && !inClosure(occurrence.symbol)) {
+          return true;
+        }
+      }
+    }
+    for (const SymbolRecord &record : database.symbols()) {
+      if (record.name == newName && units.contains(record.sourceUnit) &&
+          !inClosure(record.id)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Builds the outline for one source unit from the recovered AST and the
+  // parser-recorded extents. Only declaration structure is read here; the
+  // rendered detail reuses the hover signature path so both features present
+  // the same compiler-owned facts.
+  void appendOutline(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+                     const std::string &unitPath, const TargetInfo &target,
+                     const StmtList &statements, bool insideClass,
+                     std::vector<DocumentSymbolInfo> &result) const {
+    for (const StmtPtr &statement : statements) {
+      if (statement == nullptr) {
+        continue;
+      }
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (conditional->directive().source != unitPath) {
+          continue;
+        }
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          appendOutline(snapshot, sourceUnit, unitPath, target, *branch,
+                        insideClass, result);
+        }
+        continue;
+      }
+      if (const auto *foreign =
+              dynamic_cast<const ExternCDecl *>(statement.get())) {
+        if (foreign->keyword().source != unitPath) {
+          continue;
+        }
+        appendOutline(snapshot, sourceUnit, unitPath, target,
+                      foreign->declarations(), insideClass, result);
+        continue;
+      }
+      std::optional<DocumentSymbolInfo> info =
+          outlineNode(snapshot, sourceUnit, unitPath, target, *statement,
+                      insideClass);
+      if (info) {
+        result.push_back(std::move(*info));
+      }
+    }
+  }
+
+  [[nodiscard]] std::optional<DocumentSymbolInfo>
+  outlineNode(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+              const std::string &unitPath, const TargetInfo &target,
+              const Stmt &statement, bool insideClass) const {
+    const auto makeInfo = [&](const Token &name, DocumentSymbolKind kind,
+                              std::string displayName =
+                                  {}) -> std::optional<DocumentSymbolInfo> {
+      if (name.generated || name.lexeme.empty() || name.source != unitPath) {
+        return std::nullopt;
+      }
+      DocumentSymbolInfo info;
+      info.name = displayName.empty() ? name.lexeme : std::move(displayName);
+      info.kind = kind;
+      info.selectionRange = tokenSpan(name);
+      info.range = info.selectionRange;
+      if (const std::optional<SourceSpan> &extent = statement.extent();
+          extent && extent->source == info.selectionRange.source &&
+          extent->start <= info.selectionRange.start &&
+          info.selectionRange.end <= extent->end) {
+        info.range = *extent;
+      }
+      if (const std::optional<HoverInfo> rendered =
+              hover(snapshot, sourceUnit, info.selectionRange.start)) {
+        info.detail = rendered->signature;
+      }
+      return info;
+    };
+
+    if (const auto *namespaceDecl =
+            dynamic_cast<const NamespaceDecl *>(&statement)) {
+      std::optional<DocumentSymbolInfo> info =
+          makeInfo(namespaceDecl->name(), DocumentSymbolKind::Namespace);
+      if (info) {
+        appendOutline(snapshot, sourceUnit, unitPath, target,
+                      namespaceDecl->declarations(), false, info->children);
+      }
+      return info;
+    }
+    if (const auto *alias =
+            dynamic_cast<const NamespaceAliasDecl *>(&statement)) {
+      return makeInfo(alias->name(), DocumentSymbolKind::Namespace);
+    }
+    if (const auto *classDecl = dynamic_cast<const ClassDecl *>(&statement)) {
+      DocumentSymbolKind kind = DocumentSymbolKind::Class;
+      switch (classDecl->kind()) {
+      case ClassKind::Class:
+        kind = DocumentSymbolKind::Class;
+        break;
+      case ClassKind::Struct:
+        kind = DocumentSymbolKind::Struct;
+        break;
+      case ClassKind::Interface:
+        kind = DocumentSymbolKind::Interface;
+        break;
+      case ClassKind::Union:
+        kind = DocumentSymbolKind::Union;
+        break;
+      }
+      std::optional<DocumentSymbolInfo> info =
+          makeInfo(classDecl->name(), kind);
+      if (info) {
+        appendOutline(snapshot, sourceUnit, unitPath, target,
+                      classDecl->members(), true, info->children);
+      }
+      return info;
+    }
+    if (const auto *enumDecl = dynamic_cast<const EnumDecl *>(&statement)) {
+      std::optional<DocumentSymbolInfo> info =
+          makeInfo(enumDecl->name(), DocumentSymbolKind::Enum);
+      if (info) {
+        for (const EnumeratorDecl &enumerator : enumDecl->enumerators()) {
+          if (enumerator.name.generated || enumerator.name.lexeme.empty() ||
+              enumerator.name.source != unitPath) {
+            continue;
+          }
+          DocumentSymbolInfo child;
+          child.name = enumerator.name.lexeme;
+          child.kind = DocumentSymbolKind::Enumerator;
+          child.selectionRange = tokenSpan(enumerator.name);
+          child.range = child.selectionRange;
+          if (const std::optional<HoverInfo> rendered =
+                  hover(snapshot, sourceUnit, child.selectionRange.start)) {
+            child.detail = rendered->signature;
+          }
+          info->children.push_back(std::move(child));
+        }
+      }
+      return info;
+    }
+    if (const auto *function = dynamic_cast<const FunctionDecl *>(&statement)) {
+      if (function->operatorName()) {
+        return makeInfo(
+            function->name(), DocumentSymbolKind::Operator,
+            std::string(
+                operatorSourceSpelling(function->operatorName()->kind)));
+      }
+      return makeInfo(function->name(), insideClass
+                                            ? DocumentSymbolKind::Method
+                                            : DocumentSymbolKind::Function);
+    }
+    if (const auto *constructor =
+            dynamic_cast<const ConstructorDecl *>(&statement)) {
+      return makeInfo(constructor->name(), DocumentSymbolKind::Constructor);
+    }
+    if (const auto *destructor =
+            dynamic_cast<const DestructorDecl *>(&statement)) {
+      return makeInfo(destructor->name(), DocumentSymbolKind::Destructor,
+                      "~" + destructor->name().lexeme);
+    }
+    if (const auto *variable = dynamic_cast<const VariableDecl *>(&statement)) {
+      return makeInfo(variable->name(), insideClass
+                                            ? DocumentSymbolKind::Field
+                                            : DocumentSymbolKind::Variable);
+    }
+    if (const auto *alias = dynamic_cast<const TypeAliasDecl *>(&statement)) {
+      return makeInfo(alias->name(), DocumentSymbolKind::TypeAlias);
+    }
+    if (const auto *conceptDecl =
+            dynamic_cast<const ConceptDecl *>(&statement)) {
+      return makeInfo(conceptDecl->name(), DocumentSymbolKind::Concept);
+    }
+    return std::nullopt;
+  }
+
   [[nodiscard]] static const ConceptDecl *
   findConceptDeclaration(const StmtList &statements,
                          const SourceSpan &declarationSpan) {
@@ -1133,6 +1611,35 @@ LanguageQueries::definition(const FrontendResult &snapshot,
                             SourceUnitId sourceUnit,
                             std::size_t byteOffset) const {
   return LanguageQueriesImpl().definition(snapshot, sourceUnit, byteOffset);
+}
+
+std::optional<ReferencesInfo>
+LanguageQueries::references(const FrontendResult &snapshot,
+                            SourceUnitId sourceUnit, std::size_t byteOffset,
+                            bool includeDeclaration) const {
+  return LanguageQueriesImpl().references(snapshot, sourceUnit, byteOffset,
+                                          includeDeclaration);
+}
+
+std::optional<RenamePreparation>
+LanguageQueries::prepareRename(const FrontendResult &snapshot,
+                               SourceUnitId sourceUnit,
+                               std::size_t byteOffset) const {
+  return LanguageQueriesImpl().prepareRename(snapshot, sourceUnit, byteOffset);
+}
+
+RenameOutcome LanguageQueries::rename(const FrontendResult &snapshot,
+                                      SourceUnitId sourceUnit,
+                                      std::size_t byteOffset,
+                                      std::string_view newName) const {
+  return LanguageQueriesImpl().rename(snapshot, sourceUnit, byteOffset,
+                                      newName);
+}
+
+std::vector<DocumentSymbolInfo>
+LanguageQueries::documentSymbols(const FrontendResult &snapshot,
+                                 SourceUnitId sourceUnit) const {
+  return LanguageQueriesImpl().documentSymbols(snapshot, sourceUnit);
 }
 
 CompletionResult LanguageQueries::complete(const CompletionInput &input) const {

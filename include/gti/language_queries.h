@@ -72,6 +72,68 @@ struct DefinitionInfo {
   SourceSpan target;
 };
 
+struct ReferenceSite {
+  SourceSpan span;
+  OccurrenceRole roles = OccurrenceRole::None;
+};
+
+struct ReferencesInfo {
+  SymbolId symbol = 0;
+  // Exact-name occurrence ranges across every source unit of the snapshot,
+  // deduplicated and ordered by source then offset.
+  std::vector<ReferenceSite> sites;
+};
+
+struct RenamePreparation {
+  SymbolId symbol = 0;
+  SourceSpan origin;
+  std::string placeholder;
+};
+
+struct RenameEdits {
+  SymbolId symbol = 0;
+  // Exact name ranges whose text is replaced by the new name.
+  std::vector<SourceSpan> spans;
+};
+
+// Rename fails closed: `edits` is set only when the compiler can prove every
+// reference to the symbol lies inside the current snapshot and the new name
+// cannot collide with a visible spelling. `failure` carries the user-facing
+// reason otherwise.
+struct RenameOutcome {
+  std::optional<RenameEdits> edits;
+  std::string failure;
+};
+
+enum class DocumentSymbolKind {
+  Namespace,
+  Class,
+  Struct,
+  Interface,
+  Union,
+  Enum,
+  Enumerator,
+  Function,
+  Method,
+  Constructor,
+  Destructor,
+  Operator,
+  Field,
+  Variable,
+  TypeAlias,
+  Concept,
+};
+
+struct DocumentSymbolInfo {
+  std::string name;
+  std::string detail;
+  DocumentSymbolKind kind = DocumentSymbolKind::Variable;
+  // Full parser-recorded declaration extent and the exact name range.
+  SourceSpan range;
+  SourceSpan selectionRange;
+  std::vector<DocumentSymbolInfo> children;
+};
+
 enum class CompletionCandidateKind {
   Namespace,
   TypeAlias,
@@ -120,6 +182,19 @@ public:
   [[nodiscard]] std::optional<DefinitionInfo>
   definition(const FrontendResult &snapshot, SourceUnitId sourceUnit,
              std::size_t byteOffset) const;
+  [[nodiscard]] std::optional<ReferencesInfo>
+  references(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+             std::size_t byteOffset, bool includeDeclaration) const;
+  [[nodiscard]] std::optional<RenamePreparation>
+  prepareRename(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+                std::size_t byteOffset) const;
+  [[nodiscard]] RenameOutcome rename(const FrontendResult &snapshot,
+                                     SourceUnitId sourceUnit,
+                                     std::size_t byteOffset,
+                                     std::string_view newName) const;
+  [[nodiscard]] std::vector<DocumentSymbolInfo>
+  documentSymbols(const FrontendResult &snapshot,
+                  SourceUnitId sourceUnit) const;
   [[nodiscard]] CompletionResult complete(const CompletionInput &input) const;
 };
 

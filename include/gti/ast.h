@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/diagnostic.h"
 #include "gti/target.h"
 #include "gti/token.h"
 
@@ -409,6 +410,18 @@ public:
   virtual ~Stmt() = default;
 
   virtual void accept(StmtVisitor &visitor) const = 0;
+
+  // Parser-recorded full extent, from the statement's first token through its
+  // last consumed token. Exact name spans stay separate in the semantic
+  // database; tooling that needs enclosing ranges reads this instead of
+  // re-deriving structure from punctuation.
+  [[nodiscard]] const std::optional<SourceSpan> &extent() const {
+    return extent_;
+  }
+  void setExtent(SourceSpan extent) { extent_ = std::move(extent); }
+
+private:
+  std::optional<SourceSpan> extent_;
 };
 
 using StmtPtr = std::unique_ptr<Stmt>;
