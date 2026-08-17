@@ -2299,7 +2299,7 @@ int main() {
     }
     return count;
   };
-  for (const std::string &name :
+  for (const char *const name :
        {"grouped_string", "grouped_dynamic", "grouped_expression"}) {
     const lang::HirFunctionInstance *hir = findHirFunction(frontend, name);
     const lang::MirFunctionInstance *before =

@@ -22,6 +22,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   add_compile_options(-Wall -Wextra -Werror)
 endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  # GCC extends -Wmissing-field-initializers to designated initializers
+  # whose omitted members are value-initialized — a C++20 idiom this
+  # codebase uses deliberately (effect tables, request structs). Clang
+  # does not warn there and still catches positional omissions. GCC's
+  # -Wmaybe-uninitialized is also excluded: under optimization it fires
+  # inside libstdc++'s own <variant> machinery (a long-standing GCC
+  # false-positive family); the definite -Wuninitialized analysis stays
+  # active. Both suppressions are GNU-only and everything else stays
+  # -Werror.
+  add_compile_options(-Wno-missing-field-initializers
+                      -Wno-maybe-uninitialized)
+endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

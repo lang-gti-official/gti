@@ -274,9 +274,8 @@ void testSelectedFamilyAndCompatibilityFallback() {
         emit(frontend, o1.mir, o1Compatibility);
     const lang::BackendArtifact o1WithO0Compatibility =
         emit(frontend, o1.mir, o0Compatibility);
-    expect(count(o1Artifact.contents,
-                 "// GTI verified-MIR body: scalar-cfg-v1 "
-                 "function-instance") == 10,
+    expect(count(o1Artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                      "function-instance") == 10,
            "the same bodies should remain selected after MIR optimization");
     const std::string_view o0Constant =
         functionDefinition(o0Artifact.contents, "mir_constant");

@@ -611,24 +611,20 @@ int main() {
           bumpBody.find("(*this).::__gti_program::") != std::string_view::npos,
       "a mutable-receiver call should stage its write borrow and spell "
       "the qualified member name exactly like the read form");
-  expect(count(artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-v1 function-instance") ==
-                 7 &&
-             count(artifact.contents,
-                   "// GTI verified-MIR body: scalar-cfg-v1 "
-                   "constructor-instance") == 1 &&
-             count(artifact.contents,
-                   "// GTI verified-MIR body: scalar-cfg-v1 "
-                   "field-initializers-instance") == 1 &&
-             count(artifact.contents,
-                   "// GTI verified-MIR body: scalar-cfg-v1 "
-                   "static-field-initializers-instance") == 1 &&
-             count(artifact.contents,
-                   "// GTI verified-MIR body: scalar-cfg-v1 "
-                   "module-instance") == 1,
-         "exactly the seven eligible member bodies, the constructor, the "
-         "two initializer bodies, and the empty module body should carry "
-         "the family marker");
+  expect(
+      count(artifact.contents,
+            "// GTI verified-MIR body: scalar-cfg-v1 function-instance") == 7 &&
+          count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                   "constructor-instance") == 1 &&
+          count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                   "field-initializers-instance") == 1 &&
+          count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                   "static-field-initializers-instance") == 1 &&
+          count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                   "module-instance") == 1,
+      "exactly the seven eligible member bodies, the constructor, the "
+      "two initializer bodies, and the empty module body should carry "
+      "the family marker");
 }
 
 // A member access whose object is a local binding rather than `this` reads
@@ -788,14 +784,12 @@ int main() {
   // The generic owner's per-instance initializer bodies are verified
   // passive (no field carries an initializer stage and the static body is
   // empty), so each emits from MIR alongside the member specialization.
-  expect(count(artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-v1 "
-               "field-initializers-instance") == 1,
+  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                  "field-initializers-instance") == 1,
          "the generic owner's field-initializer body should emit from "
          "verified MIR");
-  expect(count(artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-v1 "
-               "static-field-initializers-instance") == 1,
+  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                  "static-field-initializers-instance") == 1,
          "the generic owner's static-initializer body should emit from "
          "verified MIR");
 }

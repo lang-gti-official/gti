@@ -7603,10 +7603,9 @@ private:
       } else {
         result.fieldsSupported = false;
       }
-      const CppMirInitializerScheduleText statics =
-          emitter.initializerSchedule(
-              {.kind = MirBodyKind::StaticFieldInitializers,
-               .owner = instance->id});
+      const CppMirInitializerScheduleText statics = emitter.initializerSchedule(
+          {.kind = MirBodyKind::StaticFieldInitializers,
+           .owner = instance->id});
       if (!statics.supported || !statics.fields.empty()) {
         result.staticsVerifiedEmpty = false;
       }
