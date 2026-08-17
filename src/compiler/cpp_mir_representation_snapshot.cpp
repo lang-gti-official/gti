@@ -1658,6 +1658,35 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
                      "::~" + info->declaration->name().lexeme});
   }
 
+  // Capture name rows: each lambda instance's captures spell exactly the
+  // source capture names the compatibility literal prints, matched from
+  // the semantic capture list by binding symbol.
+  for (const MirLambdaInstance &lambda : mir.lambdaInstances()) {
+    const LambdaInfo *info = semantics.findLambda(lambda.declaration);
+    if (info == nullptr) {
+      continue;
+    }
+    for (std::size_t index = 0; index < lambda.captureSymbols.size(); ++index) {
+      const SymbolId symbol = lambda.captureSymbols[index];
+      if (symbol == 0 || index >= lambda.captureTypes.size()) {
+        continue;
+      }
+      for (const LambdaCaptureInfo &capture : info->captures) {
+        if (capture.bindingSymbol == symbol &&
+            !capture.capture.lexeme.empty()) {
+          builder.rows.symbols.push_back(
+              {.kind = CppMirSymbolRepresentationKind::Capture,
+               .owner = lambda.id,
+               .symbol = symbol,
+               .ordinal = index + 1,
+               .type = lambda.captureTypes[index],
+               .spelling = capture.capture.lexeme});
+          break;
+        }
+      }
+    }
+  }
+
   // A verified no-argument hosted-startup body's emitted name is the
   // program entry adapter itself.
   if (cppMirHostedStartupNoArgumentsSchedule(mir) && mir.hostedStartupPlan()) {
