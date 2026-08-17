@@ -2359,6 +2359,25 @@ checkedConversionIntrinsicCall(const MirInstruction &instruction) {
          instruction.localFailureSites.size() == 1;
 }
 
+// A class-valued failure Return publishes its constructor call inline
+// through the `T *` out-parameter: the construct's value result has
+// exactly the Return as its consumer and never declares a local.
+[[nodiscard]] const MirInstruction *
+returnConstructDefinition(const MirBody &body, MirValueId value) {
+  const MirValue *record = body.findValue(value);
+  const MirInstruction *definition =
+      record == nullptr ? nullptr : findInstruction(body, record->definition);
+  if (definition == nullptr ||
+      definition->kind != MirInstructionKind::Construct ||
+      !definition->result || definition->receiver ||
+      definition->constructorKind != ConstructorKind::Ordinary ||
+      body.usesOf(value).size() != 1 ||
+      body.usesOf(value).front().kind != MirValueUseKind::Terminator) {
+    return nullptr;
+  }
+  return definition;
+}
+
 // An Unexpected value never materializes: std::unexpected has no default
 // construction, so the SSA declare-then-assign pattern cannot hold it. Its
 // single consumer (the Return that converts it into the expected-typed
@@ -3673,6 +3692,15 @@ private:
       output << ");\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Construct &&
+        instruction.result &&
+        returnConstructDefinition(facts.body, *instruction.result) ==
+            &instruction) {
+      writeIndent();
+      output << "// construct " << *instruction.result
+             << " publishes at its consuming return\n";
+      return;
+    }
     if (instruction.kind != MirInstructionKind::CallInput &&
         instruction.kind != MirInstructionKind::Call) {
       emitPlainInstruction(instruction, facts);
@@ -4215,9 +4243,29 @@ private:
         writeIndent();
         output << "// GTI MIR return publication\n";
         if (terminator.value) {
+          const MirInstruction *construct =
+              terminator.value->kind == MirOperandKind::Value
+                  ? returnConstructDefinition(facts.body,
+                                              terminator.value->value)
+                  : nullptr;
           writeIndent();
           output << "*__gti_mir_out_result = ";
-          emitOperand(*terminator.value);
+          if (construct != nullptr) {
+            // The class value publishes its constructor call inline; the
+            // move-assignment into the out-parameter matches the
+            // compatibility return's observable behavior exactly.
+            output << typeSpelling(construct->info.type) << '(';
+            for (std::size_t index = 0; index < construct->operands.size();
+                 ++index) {
+              if (index != 0) {
+                output << ", ";
+              }
+              emitOperand(construct->operands[index]);
+            }
+            output << ')';
+          } else {
+            emitOperand(*terminator.value);
+          }
           output << ";\n";
         }
         writeIndent();
@@ -4632,6 +4680,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            // An expected-typed result publishes by value through the
            // ordinary out-parameter; the scalar-payload demand keeps the
            // boundary default-constructible on every shipped standard.
+           // A class-valued result publishes its constructor inline at
+           // the Return; the row demand is inline because the shared row
+           // helpers are defined below.
+           !(*returnKind == CppMirTypeRepresentationKind::Class &&
+             std::any_of(representations_.types().begin(),
+                         representations_.types().end(),
+                         [&](const CppMirTypeRepresentation &row) {
+                           return row.type == function->returnType &&
+                                  !row.spelling.empty();
+                         })) &&
            !(*returnKind == CppMirTypeRepresentationKind::Expected &&
              function->returnType.arguments.size() == 2 &&
              cppMirExpectedTypeRepresentation(
@@ -5111,6 +5169,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // The slot vocabulary spells argument-less generated-default
         // construction only; a declared constructor's arguments would be
         // silently dropped by `.construct()`.
+        if (failureForm && instruction.result &&
+            returnConstructDefinition(body, *instruction.result) ==
+                &instruction) {
+          // The class-valued publication construct: every operand is a
+          // staged value and the constructor's own row spells the call.
+          if (!typeRow(instruction.info.type) ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand) ||
+              !instruction.localFailureSites.empty()) {
+            return false;
+          }
+          continue;
+        }
         const MirPlaceId destination = constructSlot(instruction);
         const MirPlace *slot =
             destination == 0 ? nullptr : body.findPlace(destination);
@@ -5926,6 +5997,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if (block.terminator.value && !valueOperand(*block.terminator.value)) {
+        return false;
+      }
+      if (failureForm && block.terminator.value &&
+          block.terminator.value->type.kind == SemanticType::Class &&
+          returnConstructDefinition(body, block.terminator.value->value) ==
+              nullptr) {
+        // A class value publishes only through its paired inline
+        // construct; anything else has no local to spell.
         return false;
       }
       continue;
