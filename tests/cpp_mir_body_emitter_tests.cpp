@@ -1348,6 +1348,76 @@ void testOwnedLifecycleConstructionBodiesReady() {
          "legitimately keep their containment flags");
 }
 
+// A prefix-storage read whose bounds proof the enclosing trusted container
+// discharged (the logical-size check precedes it) records its site with no
+// failure edge. The analysis accepts that shape instead of reporting
+// missing checked-failure control flow; every OTHER checked operation
+// still demands its exact Invoke successor.
+void testDischargedStorageReadAnalysis() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-discharged-read.gti", R"(
+#include <std/vector>
+
+int main() {
+  mut std::vector<int> values = std::vector<int>();
+  values.push_back(7);
+  return values.front();
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the discharged-read fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  std::size_t dischargedReadBodies = 0;
+  std::size_t checkedFlowIssues = 0;
+  for (const lang::MirFunctionInstance &instance :
+       frontend.mir.functionInstances()) {
+    bool hasDischargedRead = false;
+    for (const lang::MirBlock &block : instance.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            (instruction.intrinsic != lang::IntrinsicKind::PrefixStorageRead &&
+             instruction.intrinsic !=
+                 lang::IntrinsicKind::PrefixStorageReadMut) ||
+            instruction.definedFailure.localOrigins.empty()) {
+          continue;
+        }
+        bool invoked = false;
+        for (const lang::MirBlock &owner : instance.body.blocks) {
+          if (owner.terminator.kind == lang::MirTerminatorKind::Invoke &&
+              owner.terminator.invokeInstruction == instruction.id &&
+              owner.id == block.id) {
+            invoked = true;
+          }
+        }
+        if (!invoked) {
+          hasDischargedRead = true;
+        }
+      }
+    }
+    if (!hasDischargedRead) {
+      continue;
+    }
+    ++dischargedReadBodies;
+    const lang::CppMirBodyEmissionAnalysis analysis = emitter.analyze(
+        {.kind = lang::MirBodyKind::Function, .owner = instance.id});
+    if (hasIssue(analysis, lang::CppMirBodyEmissionIssueKind::
+                               MissingCheckedFailureControlFlow)) {
+      ++checkedFlowIssues;
+    }
+  }
+  expect(dischargedReadBodies > 0,
+         "the vector fixture should reach at least one trusted body whose "
+         "storage read is flow-discharged");
+  expect(checkedFlowIssues == 0,
+         "a flow-discharged storage read must not be reported as missing "
+         "checked-failure control flow");
+}
+
 } // namespace
 
 int main() {
@@ -1363,6 +1433,7 @@ int main() {
   testGeneralTextStepMatchesProductionEmission();
   testCleanupFixtureFunctionBodiesAreReady();
   testOwnedLifecycleConstructionBodiesReady();
+  testDischargedStorageReadAnalysis();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

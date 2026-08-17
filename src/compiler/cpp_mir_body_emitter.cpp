@@ -1588,8 +1588,21 @@ private:
                    instruction.destination) {
           elementPlace = body.findPlace(*instruction.destination);
         }
-        if (elementPlace == nullptr ||
-            !arrayElementAccess(body, *elementPlace)) {
+        // A prefix-storage read whose site carries no failure edge is the
+        // same discharged shape: the enclosing trusted container proved
+        // the index against its logical size (the preceding
+        // index_bounds_check Invoke), so the read records its site while
+        // the sealed runtime guard remains defense in depth.
+        const bool dischargedStorageRead =
+            instruction.kind == MirInstructionKind::Call &&
+            (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
+             instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
+            !instruction.definedFailure.localOrigins.empty() &&
+            instruction.definedFailure.propagation ==
+                FailurePropagationKind::None;
+        if (!dischargedStorageRead &&
+            (elementPlace == nullptr ||
+             !arrayElementAccess(body, *elementPlace))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
               block.id, instruction.id,
               "checked operation has no exact Invoke/record/cleanup "
@@ -1882,6 +1895,38 @@ namespace {
   }
 }
 
+// A prefix-storage read whose bounds proof the enclosing trusted
+// container discharged (the preceding logical-size check): the site is
+// recorded with no failure edge, the sealed runtime guard stays as
+// defense in depth, and the element address feeds the loan directly.
+[[nodiscard]] bool
+dischargedStorageReadCall(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
+          instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
+         !instruction.definedFailure.localOrigins.empty() &&
+         instruction.definedFailure.propagation == FailurePropagationKind::None;
+}
+
+// The Borrow that publishes a discharged read's element pairs with its
+// producing call through the shared HIR value; ambiguity declines.
+[[nodiscard]] const MirInstruction *pairedDischargedRead(const MirBody &body,
+                                                         HirValueId produced) {
+  const MirInstruction *found = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (dischargedStorageReadCall(instruction) &&
+          instruction.hirValue == produced) {
+        if (found != nullptr) {
+          return nullptr;
+        }
+        found = &instruction;
+      }
+    }
+  }
+  return found;
+}
+
 [[nodiscard]] std::string_view
 prefixStorageHelperSpelling(IntrinsicKind intrinsic) {
   switch (intrinsic) {
@@ -2147,6 +2192,22 @@ public:
       if (isStorageStagedResult(facts.body, value)) {
         continue;
       }
+      // A discharged read's element is published through its loan
+      // pointer, never copied into a local.
+      {
+        bool dischargedReadResult = false;
+        for (const MirBlock &block : facts.body.blocks) {
+          for (const MirInstruction &instruction : block.instructions) {
+            if (dischargedStorageReadCall(instruction) && instruction.result &&
+                *instruction.result == value.id) {
+              dischargedReadResult = true;
+            }
+          }
+        }
+        if (dischargedReadResult) {
+          continue;
+        }
+      }
       writeIndent();
       output << typeSpelling(value.info.type) << " __gti_mir_v_" << value.id
              << "{};\n";
@@ -2159,6 +2220,19 @@ public:
       writeIndent();
       if (loan.access == AccessMode::ReadOnly) {
         output << "const ";
+      }
+      // A loan published by a discharged storage read points at the
+      // element, not the storage that sources it.
+      if ((source->type.kind == SemanticType::Storage ||
+           source->type.kind == SemanticType::PrefixStorage) &&
+          pairedDischargedRead(facts.body, loan.producedBy) != nullptr) {
+        if (source->type.arguments.empty()) {
+          throw std::logic_error(
+              "verified MIR storage loan lost its element type");
+        }
+        output << typeSpelling(source->type.arguments.front())
+               << " *__gti_mir_loan_" << loan.id << "{};\n";
+        continue;
       }
       output << typeSpelling(source->type) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
@@ -2622,6 +2696,37 @@ private:
       if (source == nullptr) {
         throw std::logic_error("verified MIR borrow lost its loan source");
       }
+      // A loan produced by a discharged storage read publishes the element
+      // address through the trusted reference helper: the bounds proof was
+      // discharged by the enclosing container's logical-size check, so the
+      // sealed runtime guard is defense in depth, exactly as on the
+      // compatibility path.
+      if (source->type.kind == SemanticType::Storage ||
+          source->type.kind == SemanticType::PrefixStorage) {
+        const MirInstruction *read =
+            pairedDischargedRead(facts.body, loan->producedBy);
+        if (read == nullptr || read->operands.size() != 2) {
+          throw std::logic_error(
+              "verified MIR storage loan lost its discharged read");
+        }
+        const MirPlace *storage =
+            storageStagedPlace(facts.body, read->operands.front());
+        if (storage == nullptr) {
+          throw std::logic_error(
+              "verified MIR discharged read lost its staged storage place");
+        }
+        output << "__gti_mir_loan_" << loan->id
+               << " = &::gti_internal::backend::"
+               << (read->intrinsic == IntrinsicKind::PrefixStorageReadMut
+                       ? "prefix_storage_read_mut"
+                       : "prefix_storage_read")
+               << '(';
+        emitStoragePlaceValue(facts, *storage);
+        output << ", ";
+        emitOperand(read->operands.back());
+        output << ");\n";
+        return;
+      }
       output << "__gti_mir_loan_" << loan->id << " = &";
       emitPlaceExpression(facts, *source);
       output << ";\n";
@@ -2820,6 +2925,13 @@ private:
       output << "__gti_mir_v_" << *instruction.result << " = ";
       emitOperand(instruction.operands.front());
       output << ";\n";
+      return;
+    }
+    if (dischargedStorageReadCall(instruction)) {
+      // The element is published by the loan-producing Borrow; the call
+      // site itself stages nothing.
+      output << "// discharged storage read " << instruction.id
+             << " publishes through its loan\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -3872,6 +3984,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (source == nullptr || !typeRow(source->type)) {
           return false;
         }
+        if (source->type.kind == SemanticType::Storage ||
+            source->type.kind == SemanticType::PrefixStorage) {
+          // A storage-sourced loan publishes a discharged read's element;
+          // the pairing, the staged storage place, and the element type
+          // row must all resolve or the body declines.
+          const MirInstruction *read =
+              pairedDischargedRead(body, loan->producedBy);
+          if (read == nullptr || read->operands.size() != 2 ||
+              storageStagedPlace(body, read->operands.front()) == nullptr ||
+              source->type.arguments.empty() ||
+              !typeRow(source->type.arguments.front())) {
+            return false;
+          }
+        }
         continue;
       }
       case MirInstructionKind::EndBorrow:
@@ -4095,6 +4221,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       case MirInstructionKind::Call: {
+        if (dischargedStorageReadCall(instruction)) {
+          // The element publishes through the loan-producing Borrow: the
+          // call needs its staged storage place, a value index, and a
+          // result no other instruction consumes.
+          if (instruction.functionTarget || instruction.operands.size() != 2 ||
+              storageStagedPlace(body, instruction.operands.front()) ==
+                  nullptr ||
+              !valueOperand(instruction.operands.back()) ||
+              !instruction.result || !typeRow(instruction.info.type)) {
+            return false;
+          }
+          if (instruction.receiver &&
+              ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
+                instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
+               instruction.receiver->place == 0 ||
+               body.findPlace(instruction.receiver->place) == nullptr)) {
+            return false;
+          }
+          continue;
+        }
         if (prefixStorageIntrinsic(instruction.intrinsic)) {
           // The storage failure form spells the shipped mir_prefix_*_v1
           // checked helper over the staged storage place lvalue; every
