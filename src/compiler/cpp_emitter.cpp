@@ -67,6 +67,7 @@ public:
     currentClass = nullptr;
     currentClassAccess = AccessModifier::Public;
     ownedArgumentsEntry = nullptr;
+    generalFailureEntry = nullptr;
     payloadSwitchCounter = 0;
     classDepth = 0;
     emittingScheduledType = false;
@@ -1940,6 +1941,10 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         return;
       }
       if (mirGeneralFailure != nullptr) {
+        if (info != nullptr && info->entryKind != ProgramEntryKind::None) {
+          ownedArgumentsEntry = &stmt;
+          generalFailureEntry = mirGeneralFailure;
+        }
         output << ' ';
         emitGeneralFailureBodyText(*mirGeneralFailure);
         emitGeneralFailureWrapper(stmt, *mirGeneralFailure);
@@ -11114,13 +11119,32 @@ inline mir_failure_status_v1 mir_checked_negate_v1(Value value,
                                                    Target *result) noexcept {
   static_assert(std::is_integral_v<Target> && std::is_signed_v<Target> &&
                 std::is_integral_v<Value>);
-  const Target promoted = static_cast<Target>(value);
-  if (promoted == (std::numeric_limits<Target>::min)()) {
-    return {GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
-            GTI_FAILURE_DETAIL_NEGATION_V1};
+  if constexpr (std::is_signed_v<Value> && sizeof(Value) > sizeof(Target)) {
+    // A wider signed operand negates in its own domain and then
+    // range-checks the conversion: -(int64 2147483648) is int32 min and
+    // must succeed, while any value outside the target's negated range
+    // reports.
+    if (value == (std::numeric_limits<Value>::min)()) {
+      return {GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
+              GTI_FAILURE_DETAIL_NEGATION_V1};
+    }
+    const Value negated = static_cast<Value>(-value);
+    if (negated < static_cast<Value>((std::numeric_limits<Target>::min)()) ||
+        negated > static_cast<Value>((std::numeric_limits<Target>::max)())) {
+      return {GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
+              GTI_FAILURE_DETAIL_NEGATION_V1};
+    }
+    *result = static_cast<Target>(negated);
+    return mir_failure_success_v1;
+  } else {
+    const Target promoted = static_cast<Target>(value);
+    if (promoted == (std::numeric_limits<Target>::min)()) {
+      return {GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
+              GTI_FAILURE_DETAIL_NEGATION_V1};
+    }
+    *result = static_cast<Target>(-promoted);
+    return mir_failure_success_v1;
   }
-  *result = static_cast<Target>(-promoted);
-  return mir_failure_success_v1;
 }
 
 template <typename Target, typename Count>
@@ -12764,6 +12788,58 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitProgramEntryAdapter() {
+    if (generalFailureEntry != nullptr && ownedArgumentsEntry != nullptr) {
+      // The general failure-form entry publishes through the transformed
+      // ABI; main owns the terminal containment exactly like the hosted
+      // adapter, so a propagated record reports and exits 70 through the
+      // same runtime contract.
+      output << "\nint main() {\n";
+      ++indentation;
+      writeIndent();
+      output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+      writeIndent();
+      output << "std::int32_t __gti_result{};\n";
+      writeIndent();
+      output << "try {\n";
+      ++indentation;
+      writeIndent();
+      output << "if (::__gti_program::"
+             << emittedFunctionName(*ownedArgumentsEntry)
+             << "__gti_mir_failure(\n";
+      ++indentation;
+      writeIndent();
+      output << "&__gti_result, &__gti_failure_record)) {\n";
+      ++indentation;
+      writeIndent();
+      output << "return __gti_result;\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      --indentation;
+      --indentation;
+      writeIndent();
+      output << "} catch (...) {\n";
+      ++indentation;
+      writeIndent();
+      output << "std::_Exit(GTI_FAILURE_EXIT_STATUS);\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      writeIndent();
+      output << "::gti_rt_failure_terminate_v1(\n";
+      ++indentation;
+      writeIndent();
+      output << "&__gti_failure_record,\n";
+      writeIndent();
+      output << "&::gti_internal::backend::"
+                "__gti_failure_artifact_descriptor_v1,\n";
+      writeIndent();
+      output << "nullptr, nullptr);\n";
+      --indentation;
+      --indentation;
+      output << "}\n";
+      return;
+    }
     if (mirScalarFailureEntry != 0) {
       const HirFunctionInstance *source =
           hir.findFunctionInstance(mirScalarFailureEntry);
@@ -14241,6 +14317,7 @@ namespace gti_internal::backend {
   const ClassDecl *currentClass = nullptr;
   AccessModifier currentClassAccess = AccessModifier::Public;
   const FunctionDecl *ownedArgumentsEntry = nullptr;
+  const MirFunctionInstance *generalFailureEntry = nullptr;
   std::size_t indentation = 0;
   std::size_t classDepth = 0;
   // Copied representation rows for the generic MIR body emitter, built and

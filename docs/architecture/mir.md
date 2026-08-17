@@ -109,7 +109,31 @@ transform cannot introduce concurrent behavior after semantic checks.
 
 The deterministic serialization is currently `mir-v33`/`mir-body-v33`
 (v31 added the prefix-initialized storage type kind and its intrinsic
-family alongside the logical-size bounds check).
+family alongside the logical-size bounds check; v32 added the
+`ComputeFold` literal provenance; v33 added the `BranchFold` terminator
+provenance).
+
+Every optimizer rewrite carries replayable proof in the rewritten node
+itself, so a backend consumes optimized MIR without recovering
+transformation authority from HIR. A literal produced by an identity
+fold retains its dominating source value (`IdentityFold`); a literal
+produced by folding a comparison or logical operation retains the folded
+operation and its exact operand values (`ComputeFold`), and the verifier
+re-evaluates the fold through the single `evaluateMirComputeFold`
+authority — the same function the optimizer used — over the dominating
+operands' literals. A `Branch` rewritten to a `Goto` retains its
+condition value (`BranchFold`); the verifier re-reads the dominating
+literal condition, and the optimization-coherence replay re-selects the
+taken target from the exact source branch and recomputes block
+reachability, which the body verifier keeps truthful at all times. The
+optimizer applies every fold under shadow agreement with the
+compatibility optimizer's replacement for the same HIR value, and the
+fold pass iterates queue-and-apply rounds to a bounded fixpoint so
+comparison, identity, and branch folds cascade inside one verified
+transform report. Branch folds are currently scoped to function bodies
+without loans, drop obligations, cleanup boundaries, failure records, or
+frozen program-initialization steps; widening into those schedules is
+recorded work, not an implied capability.
 Version 20 introduced function-definition provenance and the first MIR-owned
 defined-failure effect summary. Each concrete function records
 `DefinitionKind::Source`, `RuntimeBinding`, or `Declaration` and a
