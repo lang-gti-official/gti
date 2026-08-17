@@ -20,20 +20,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # GCC so the macOS/Linux toolchain divergence class (e.g. C++20 designator
 # order, which clang only warns about) breaks locally instead of in CI.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  add_compile_options(-Wall -Wextra -Werror)
+  # Both compilers extend -Wmissing-field-initializers to designated
+  # initializers whose omitted members are value-initialized — a C++20 idiom
+  # this codebase uses deliberately (effect tables, request structs). Neither
+  # loses coverage of positional omissions. Everything else stays -Werror.
+  add_compile_options(-Wall -Wextra -Werror -Wno-missing-field-initializers)
 endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  # GCC extends -Wmissing-field-initializers to designated initializers
-  # whose omitted members are value-initialized — a C++20 idiom this
-  # codebase uses deliberately (effect tables, request structs). Clang
-  # does not warn there and still catches positional omissions. GCC's
-  # -Wmaybe-uninitialized is also excluded: under optimization it fires
-  # inside libstdc++'s own <variant> machinery (a long-standing GCC
-  # false-positive family); the definite -Wuninitialized analysis stays
-  # active. Both suppressions are GNU-only and everything else stays
-  # -Werror.
-  add_compile_options(-Wno-missing-field-initializers
-                      -Wno-maybe-uninitialized)
+  # GNU-only: under optimization -Wmaybe-uninitialized fires inside
+  # libstdc++'s own <variant> machinery, a long-standing GCC false-positive
+  # family. The definite -Wuninitialized analysis stays active. Clang has no
+  # such flag and rejects it.
+  add_compile_options(-Wno-maybe-uninitialized)
 endif()
 
 include(GNUInstallDirs)
