@@ -72,6 +72,9 @@ public:
                        MirValueId expectedCondition, bool taken);
 
   [[nodiscard]] std::size_t pendingPatchCount() const { return patches.size(); }
+  [[nodiscard]] std::size_t pendingBranchFoldCount() const {
+    return branchFolds.size();
+  }
 
   [[nodiscard]] MirEditResult apply();
 
