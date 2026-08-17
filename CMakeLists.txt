@@ -227,6 +227,7 @@ add_library(
   "src/compiler/parser.cpp"
   "src/compiler/semantic_analyzer.cpp"
   "src/compiler/semantic_model.cpp"
+  "src/compiler/semantic_diagnostics.cpp"
   "src/compiler/semantic_spelling.cpp"
   "src/compiler/semantic_type_printer.cpp"
   "src/compiler/source_graph.cpp"
