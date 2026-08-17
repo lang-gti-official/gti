@@ -1840,6 +1840,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           emitFunctionSignature(stmt, mirGeneralFailure);
           output << ";\n";
         }
+        if (currentClass != nullptr &&
+            !currentClass->genericParameters().empty() && info != nullptr &&
+            anyMemberFailureSpecialization(stmt)) {
+          // ADR 019: the primary template declares the transformed
+          // sibling; the emitted concrete specializations define it.
+          emitPrimaryTransformedMemberDeclaration(stmt, *info);
+        }
         deferredMemberDefinitions.push_back(
             {.kind = DeferredMemberKind::Function,
              .owner = currentClass,
@@ -6331,15 +6338,27 @@ private:
                 continue;
               }
               // A member callee is reachable only through its emitted
-              // transformed member, so admission must mirror the selector's
-              // actual decision — a body-text-admissible member of a
-              // generic owner never emits a transformed form.
+              // transformed member, so admission must mirror the emission
+              // decision: the declaration-keyed selector for concrete
+              // owners, the per-instance specialization eligibility for
+              // generic owners (ADR 019).
               if (target->owner) {
                 const HirFunctionInstance *targetHir =
                     hir.findFunctionInstance(target->id);
-                if (targetHir == nullptr || targetHir->source == nullptr ||
-                    selectedMirGeneralFailureFunction(*targetHir->source) !=
-                        target) {
+                bool available = false;
+                if (targetHir != nullptr && targetHir->source != nullptr) {
+                  if (selectedMirGeneralFailureFunction(*targetHir->source) ==
+                      target) {
+                    available = true;
+                  } else if (const FunctionInfo *targetInfo =
+                                 semantics.findFunction(*targetHir->source);
+                             targetInfo != nullptr &&
+                             memberFailureSpecializationEligible(
+                                 *targetHir->source, *targetInfo, *target)) {
+                    available = true;
+                  }
+                }
+                if (!available) {
                   calleesAvailable = false;
                 }
               }
@@ -6545,6 +6564,90 @@ private:
   // as the explicit specialization of that member: the deferred template
   // definition stays for unadmitted instantiations, and each admitted
   // body's text comes from verified MIR.
+  // ADR 019: a failure-capable member of a generic owner emits per
+  // concrete instance as an explicit member specialization pair — the
+  // transformed sibling declared on the primary template, the wrapper as
+  // the specialization of the original member.
+  [[nodiscard]] bool memberFailureSpecializationEligible(
+      const FunctionDecl &function, const FunctionInfo &info,
+      const MirFunctionInstance &instance) const {
+    if (instance.declaration != info.id || !instance.owner ||
+        instance.staticMember || instance.entryKind != ProgramEntryKind::None ||
+        instance.overloadedOperator !=
+            (function.operatorName()
+                 ? std::optional(function.operatorName()->kind)
+                 : std::nullopt) ||
+        !generalFailureBodyAdmitted(instance.id)) {
+      return false;
+    }
+    const HirFunctionInstance *hirInstance =
+        hir.findFunctionInstance(instance.id);
+    const MirClassInstance *ownerInstance =
+        mir->findClassInstance(*instance.owner);
+    if (hirInstance == nullptr || hirInstance->source != &function ||
+        ownerInstance == nullptr || !typeIsConcrete(ownerInstance->type) ||
+        ownerInstance->type.arguments.empty() ||
+        hirInstance->body.placeDomain != instance.body.placeDomain) {
+      return false;
+    }
+    if (!std::all_of(
+            instance.parameterTypes.begin(), instance.parameterTypes.end(),
+            [](const SemanticType &type) {
+              return typeIsConcrete(type) && isMirScalarCfgSignatureType(type);
+            }) ||
+        !(instance.returnType == SemanticType::Void ||
+          (typeIsConcrete(instance.returnType) &&
+           isMirScalarCfgType(instance.returnType)))) {
+      return false;
+    }
+    const std::string ownerSpelling =
+        cppSemanticTypeSpelling(semantics, standard, ownerInstance->type);
+    return ownerSpelling.find('<') != std::string::npos;
+  }
+
+  [[nodiscard]] bool
+  anyMemberFailureSpecialization(const FunctionDecl &function) const {
+    if (mir == nullptr || !generalEmissionMap) {
+      return false;
+    }
+    const FunctionInfo *info = semantics.findFunction(function);
+    if (info == nullptr || info->ownerClass == 0 || info->staticMember ||
+        info->parameterPack || info->internalLinkage ||
+        !info->externalSymbol.empty() ||
+        info->linkage != LanguageLinkage::Gti) {
+      return false;
+    }
+    return std::any_of(
+        mir->functionInstances().begin(), mir->functionInstances().end(),
+        [&](const MirFunctionInstance &instance) {
+          return memberFailureSpecializationEligible(function, *info, instance);
+        });
+  }
+
+  // The transformed sibling's declaration on the primary class template:
+  // the generic member signature under the derived name with the
+  // transformed ABI (out-parameter for non-void returns, then the
+  // failure-record pointer). Definition-free on the primary — only the
+  // emitted concrete specializations are ever referenced.
+  void emitPrimaryTransformedMemberDeclaration(const FunctionDecl &function,
+                                               const FunctionInfo &info) {
+    writeIndent();
+    output << "bool " << emittedFunctionName(function) << "__gti_mir_failure(";
+    emitParameters(function.parameters());
+    if (!function.parameters().empty()) {
+      output << ", ";
+    }
+    if (info.returnType != SemanticType::Void) {
+      emitType(function.returnType());
+      output << " *__gti_mir_out_result, ";
+    }
+    output << "::gti_failure_record_v1 *__gti_mir_failure_record)";
+    if (function.receiverMutability() == ReceiverMutability::ReadOnly) {
+      output << " const";
+    }
+    output << ";\n";
+  }
+
   void emitGeneralMemberSpecializations(const FunctionDecl &function,
                                         bool declarationsOnly = false) {
     if (mir == nullptr || !generalEmissionMap) {
@@ -6610,6 +6713,63 @@ private:
       }
       output << ' ';
       emitGeneralMirBodyText(instance, "scalar-cfg-v1");
+    }
+    for (const MirFunctionInstance &instance : mir->functionInstances()) {
+      if (!memberFailureSpecializationEligible(function, *info, instance)) {
+        continue;
+      }
+      const MirClassInstance *ownerInstance =
+          mir->findClassInstance(*instance.owner);
+      const std::string ownerSpelling =
+          cppSemanticTypeSpelling(semantics, standard, ownerInstance->type);
+      const std::string owner = ownerSpelling.rfind("::", 0) == 0
+                                    ? ownerSpelling.substr(2)
+                                    : ownerSpelling;
+      const auto transformedSignature = [&] {
+        output << "template <> bool " << owner
+               << "::" << emittedFunctionName(function) << "__gti_mir_failure(";
+        emitMirOwnedLifecycleParameters(instance.parameterTypes);
+        if (!instance.parameterTypes.empty()) {
+          output << ", ";
+        }
+        if (instance.returnType != SemanticType::Void) {
+          emitSemanticType(instance.returnType);
+          output << " *__gti_mir_out_result, ";
+        }
+        output << "::gti_failure_record_v1 *__gti_mir_failure_record)";
+        if (instance.receiverMutability == ReceiverMutability::ReadOnly) {
+          output << " const";
+        }
+      };
+      const auto wrapperSignature = [&] {
+        output << "template <> ";
+        emitSemanticType(instance.returnType);
+        output << ' ' << owner << "::" << emittedFunctionName(function) << '(';
+        emitMirOwnedLifecycleParameters(instance.parameterTypes);
+        output << ')';
+        if (instance.receiverMutability == ReceiverMutability::ReadOnly) {
+          output << " const";
+        }
+      };
+      writeIndent();
+      transformedSignature();
+      if (declarationsOnly) {
+        output << ";\n";
+        writeIndent();
+        wrapperSignature();
+        output << ";\n";
+        continue;
+      }
+      output << ' ';
+      emitGeneralFailureBodyText(instance);
+      writeIndent();
+      wrapperSignature();
+      output << " {\n";
+      ++indentation;
+      emitGeneralFailureWrapperBody(function, instance);
+      --indentation;
+      writeIndent();
+      output << "}\n";
     }
   }
 

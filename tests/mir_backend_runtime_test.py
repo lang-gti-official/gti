@@ -305,6 +305,48 @@ def main() -> int:
             )
             return 1
 
+    generic_member_source = (
+        "#include <std/vector>\n"
+        "int main() {\n"
+        "  mut std::vector<int32_t> values = std::vector<int32_t>();\n"
+        "  values.push_back(7);\n"
+        "  values.erase(std::size_t(0));\n"
+        "  if (!values.empty()) {\n"
+        "    return 1;\n"
+        "  }\n"
+        "  values.push_back(9);\n"
+        "  values.erase(std::size_t(4));\n"
+        "  return 3;\n"
+        "}\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="gti-mir-generic-") as temporary:
+        root = pathlib.Path(temporary)
+        source_path = root / "generic-member.gti"
+        source_path.write_text(generic_member_source, encoding="utf8")
+        executable = root / "generic-member"
+        built = run([str(compiler), str(source_path), "-o", str(executable)])
+        if built.returncode != 0:
+            return fail(built)
+        executed = run([str(executable)])
+        # ADR 019: the generic vector owner's erase emits as an explicit
+        # transformed member specialization, so its storage detector
+        # reports the defined contract — the record cites the stdlib
+        # site, not a legacy storage abort.
+        if (
+            executed.returncode != 70
+            or "GTI-R0007" not in executed.stderr
+            or "index_out_of_bounds" not in executed.stderr
+            or "private_storage" not in executed.stderr
+            or "vector" not in executed.stderr
+            or executed.stdout != ""
+        ):
+            sys.stderr.write(
+                "generic-owner transformed member did not report the "
+                f"defined storage contract: exit={executed.returncode} "
+                f"stderr={executed.stderr}\n"
+            )
+            return 1
+
     chainprint_source = (
         "int main() {\n"
         "  std::println(42);\n"

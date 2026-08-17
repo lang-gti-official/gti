@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.195.0
+Checkpoint: 0.196.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,24 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **ADR 019: the generic-owner transformed-member boundary
+  (0.196.0).** A failure-capable member of a generic owner emits per
+  concrete instance as an explicit member specialization pair: the
+  primary class template declares the transformed sibling
+  (definition-free — the fixpoint guarantees only emitted
+  specializations are referenced), each eligible instance defines
+  `template <> Owner<Args>::name__gti_mir_failure(...)` with the
+  general failure body, and the boundary wrapper is the explicit
+  specialization of the original member routing failure through the
+  runtime terminator — the free-generic pattern (0.182.0) carried onto
+  members without friend machinery, receiver respelling, or whole-class
+  specializations. The admission fixpoint recognizes generic-owner
+  member callees through the same per-instance eligibility. Proven
+  end to end behaviorally: the generic vector owner's out-of-bounds
+  erase now reports the defined contract (exit 70,
+  `index_out_of_bounds in private_storage`, the stdlib site) instead
+  of the legacy storage abort, pinned in the runtime suite. Corpus
+  markers 1271 -> 1276 with byte-identical defined-program behavior.
 - **P-STORAGE-01 slice 4 begins: the storage failure form emits
   (0.195.0).** The general emitter spells prefix-storage operations
   through the shipped mir_prefix_*_v1 checked helpers: a value loaded

@@ -261,7 +261,12 @@ generic emitter replaces that single whole-program route.
   both the success and the transformed defined-failure conventions; a
   staged borrow must feed exactly its own block's call, and a place
   reaching the member only through an implicit owner dereference
-  declines. Constructor bodies emit in the success form as
+  declines. A failure-capable member of a generic owner emits per
+  concrete instance as an explicit member specialization pair under
+  ADR 019: the primary template declares the transformed sibling, the
+  instance defines it with the general failure body, and the wrapper
+  is the explicit specialization of the original member.
+  Constructor bodies emit in the success form as
   mutable-receiver schedules spelled inside the constructor body with
   no member-initializer list; selection requires a concrete, base-free,
   non-generic owner whose in-class field initializers are
