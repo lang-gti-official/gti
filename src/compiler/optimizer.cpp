@@ -272,16 +272,8 @@ namespace {
          std::holds_alternative<bool>(literal);
 }
 
-[[nodiscard]] std::optional<Literal>
-identityLiteral(const MirBody &body, const MirInstruction &identity) {
-  if (identity.kind != MirInstructionKind::Compute ||
-      identity.operation != MirOperation::Identity ||
-      identity.operands.size() != 1 ||
-      identity.operands.front().kind != MirOperandKind::Value) {
-    return std::nullopt;
-  }
-
-  MirValueId value = identity.operands.front().value;
+[[nodiscard]] std::optional<Literal> chasedLiteral(const MirBody &body,
+                                                   MirValueId value) {
   std::unordered_set<MirValueId> visited;
   while (value != 0 && visited.size() <= body.values.size() &&
          visited.insert(value).second) {
@@ -302,6 +294,65 @@ identityLiteral(const MirBody &body, const MirInstruction &identity) {
     value = definition->operands.front().value;
   }
   return std::nullopt;
+}
+
+[[nodiscard]] std::optional<Literal>
+identityLiteral(const MirBody &body, const MirInstruction &identity) {
+  if (identity.kind != MirInstructionKind::Compute ||
+      identity.operation != MirOperation::Identity ||
+      identity.operands.size() != 1 ||
+      identity.operands.front().kind != MirOperandKind::Value) {
+    return std::nullopt;
+  }
+  return chasedLiteral(body, identity.operands.front().value);
+}
+
+[[nodiscard]] bool computeFoldableOperation(MirOperation operation) {
+  switch (operation) {
+  case MirOperation::Equal:
+  case MirOperation::NotEqual:
+  case MirOperation::Less:
+  case MirOperation::LessEqual:
+  case MirOperation::Greater:
+  case MirOperation::GreaterEqual:
+  case MirOperation::LogicalNot:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// A comparison or logical-not whose operands all chase to literals folds
+// through the single MIR evaluation authority; the caller still demands
+// shadow agreement with the compatibility optimizer before queueing.
+[[nodiscard]] std::optional<Literal>
+computeFoldLiteral(const MirBody &body, const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Compute ||
+      !computeFoldableOperation(instruction.operation) ||
+      instruction.operands.empty() || instruction.operands.size() > 2 ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.definedFailure.empty()) {
+    return std::nullopt;
+  }
+  std::vector<MirComputeFoldOperand> operands;
+  operands.reserve(instruction.operands.size());
+  for (const MirOperand &operand : instruction.operands) {
+    if (operand.kind != MirOperandKind::Value || operand.value == 0) {
+      return std::nullopt;
+    }
+    const MirInstruction *definition = definingInstruction(body, operand.value);
+    const MirValue *value = body.findValue(operand.value);
+    if (definition == nullptr || value == nullptr ||
+        definition->kind != MirInstructionKind::Compute ||
+        definition->operation != MirOperation::Literal ||
+        !definition->literal || !foldableScalarLiteral(*definition->literal)) {
+      return std::nullopt;
+    }
+    operands.push_back(
+        {.literal = *definition->literal, .type = value->info.type});
+  }
+  return evaluateMirComputeFold(instruction.operation, operands,
+                                instruction.info.type);
 }
 
 struct LiteralIdentityFoldResult {
@@ -328,13 +379,16 @@ foldLiteralIdentities(MirProgram &program,
         }
         const std::optional<Literal> literal =
             identityLiteral(*body, instruction);
-        if (!literal) {
+        const std::optional<Literal> computeFold =
+            literal ? std::nullopt : computeFoldLiteral(*body, instruction);
+        if (!literal && !computeFold) {
           continue;
         }
+        const Literal &folded = literal ? *literal : *computeFold;
 
         ++result.report.shadowComparisons;
         const ConstantEvaluation evaluated = evaluateConstantLiteral(
-            *literal, constantIntegerDomain(instruction.info.type));
+            folded, constantIntegerDomain(instruction.info.type));
         const ConstantValue *expected =
             compatibility.replacement(instruction.hirValue);
         if (!evaluated.value || expected == nullptr ||
@@ -343,9 +397,15 @@ foldLiteralIdentities(MirProgram &program,
           continue;
         }
 
-        editor.queueLiteralReplacement(
-            {.body = bodyAddress, .block = block.id, .index = index},
-            instruction.id, MirOperation::Identity, *literal);
+        if (literal) {
+          editor.queueLiteralReplacement(
+              {.body = bodyAddress, .block = block.id, .index = index},
+              instruction.id, MirOperation::Identity, folded);
+        } else {
+          editor.queueComputeFoldReplacement(
+              {.body = bodyAddress, .block = block.id, .index = index},
+              instruction.id, instruction.operation, folded);
+        }
       }
     }
   }

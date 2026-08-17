@@ -61,6 +61,16 @@ void MirProgramEditor::queueLiteralReplacement(
                      .literal = std::move(literal)});
 }
 
+void MirProgramEditor::queueComputeFoldReplacement(
+    MirInstructionAddress address, MirInstructionId expectedInstruction,
+    MirOperation expectedOperation, Literal literal) {
+  patches.push_back({.address = address,
+                     .expectedInstruction = expectedInstruction,
+                     .expectedOperation = expectedOperation,
+                     .literal = std::move(literal),
+                     .computeFold = true});
+}
+
 MirEditResult MirProgramEditor::apply() {
   MirEditResult result;
   std::vector<LiteralReplacement> queued = std::move(patches);
@@ -108,10 +118,25 @@ MirEditResult MirProgramEditor::apply() {
                "MIR replacement target is not the expected computation");
       continue;
     }
-    if (patch.expectedOperation != MirOperation::Identity ||
-        instruction.operands.size() != 1 ||
-        instruction.operands.front().kind != MirOperandKind::Value ||
-        instruction.operands.front().value == 0) {
+    if (patch.computeFold) {
+      const bool valueOperands =
+          !instruction.operands.empty() && instruction.operands.size() <= 2 &&
+          std::all_of(instruction.operands.begin(), instruction.operands.end(),
+                      [](const MirOperand &operand) {
+                        return operand.kind == MirOperandKind::Value &&
+                               operand.value != 0;
+                      });
+      if (patch.expectedOperation == MirOperation::Identity ||
+          patch.expectedOperation == MirOperation::Literal || !valueOperands) {
+        addError(result, patch.address, patch.expectedInstruction,
+                 "MIR compute-fold replacement is missing its exact value "
+                 "operands");
+        continue;
+      }
+    } else if (patch.expectedOperation != MirOperation::Identity ||
+               instruction.operands.size() != 1 ||
+               instruction.operands.front().kind != MirOperandKind::Value ||
+               instruction.operands.front().value == 0) {
       addError(result, patch.address, patch.expectedInstruction,
                "MIR literal replacement is missing its exact identity "
                "source");
@@ -138,14 +163,23 @@ MirEditResult MirProgramEditor::apply() {
     MirBody *target = findMirBody(candidate, patch.address.body);
     MirInstruction &instruction = target->blocks[patch.address.block - 1]
                                       .instructions[patch.address.index];
-    const MirValueId sourceValue = instruction.operands.front().value;
     MirInstruction replacement = instruction;
+    if (patch.computeFold) {
+      MirLiteralProvenance provenance{.kind =
+                                          MirLiteralProvenanceKind::ComputeFold,
+                                      .sourceOperation = instruction.operation};
+      for (const MirOperand &operand : instruction.operands) {
+        provenance.sourceValues.push_back(operand.value);
+      }
+      replacement.literalProvenance = std::move(provenance);
+    } else {
+      replacement.literalProvenance = MirLiteralProvenance{
+          .kind = MirLiteralProvenanceKind::IdentityFold,
+          .sourceValue = instruction.operands.front().value};
+    }
     replacement.operation = MirOperation::Literal;
     replacement.operands.clear();
     replacement.literal = patch.literal;
-    replacement.literalProvenance =
-        MirLiteralProvenance{.kind = MirLiteralProvenanceKind::IdentityFold,
-                             .sourceValue = sourceValue};
     instruction = std::move(replacement);
     if (std::find(touched.begin(), touched.end(), patch.address.body) ==
         touched.end()) {

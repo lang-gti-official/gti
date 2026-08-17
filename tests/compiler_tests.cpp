@@ -1152,7 +1152,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v31\n") &&
+  expect(dump.starts_with("mir-body-v32\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5857,7 +5857,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v31\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v32\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7871,7 +7871,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v31 ") &&
+  expect(mirDump.starts_with("mir-v32 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -24109,7 +24109,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v31 ") &&
+             mirDump.starts_with("mir-v32 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

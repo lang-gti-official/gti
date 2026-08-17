@@ -56,6 +56,14 @@ public:
                                MirInstructionId expectedInstruction,
                                MirOperation expectedOperation, Literal literal);
 
+  // Queues the replacement of one exact compute instruction with its folded
+  // literal; the fold's operation and value operands are retained as the
+  // ComputeFold provenance the verifier replays.
+  void queueComputeFoldReplacement(MirInstructionAddress address,
+                                   MirInstructionId expectedInstruction,
+                                   MirOperation expectedOperation,
+                                   Literal literal);
+
   [[nodiscard]] std::size_t pendingPatchCount() const { return patches.size(); }
 
   [[nodiscard]] MirEditResult apply();
@@ -66,6 +74,7 @@ private:
     MirInstructionId expectedInstruction = 0;
     MirOperation expectedOperation = MirOperation::None;
     Literal literal;
+    bool computeFold = false;
   };
 
   MirProgram &program;

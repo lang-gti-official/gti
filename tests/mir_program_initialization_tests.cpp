@@ -273,7 +273,7 @@ void testExactLoweringAndPrinting(const lang::FrontendResult &frontend) {
              frontend.failureMetadataValid && frontend.mirValid &&
              verification.valid() && exactSteps && sawImplicit && sawConstant &&
              sawDynamic && sawStatic && exactTags && checkedFailure &&
-             substitution && dump.starts_with("mir-v31 valid=") &&
+             substitution && dump.starts_with("mir-v32 valid=") &&
              dump.find("program-initialization units=1") != std::string::npos &&
              dump.find("data-kind=implicit-zero") != std::string::npos &&
              dump.find("program-initialization-step=") != std::string::npos,

@@ -3941,6 +3941,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const MirValue *source = provenance.sourceValue == 0
                                    ? nullptr
                                    : body.findValue(provenance.sourceValue);
+      const bool computeFoldShape =
+          provenance.kind == MirLiteralProvenanceKind::ComputeFold &&
+          provenance.sourceValue == 0 && !provenance.sourceValues.empty() &&
+          provenance.sourceValues.size() <= 2 &&
+          std::all_of(provenance.sourceValues.begin(),
+                      provenance.sourceValues.end(),
+                      [&](MirValueId sourceValue) {
+                        return sourceValue != 0 &&
+                               sourceValue != *instruction.result &&
+                               body.findValue(sourceValue) != nullptr;
+                      });
       return instruction.operands.empty() && instruction.literal &&
              literalMatchesType(*instruction.literal, resultType) &&
              ((provenance.kind == MirLiteralProvenanceKind::Source &&
@@ -3948,7 +3959,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               (provenance.kind == MirLiteralProvenanceKind::IdentityFold &&
                provenance.sourceValue != 0 &&
                provenance.sourceValue != *instruction.result &&
-               source != nullptr && source->info.type == resultType));
+               source != nullptr && source->info.type == resultType) ||
+              computeFoldShape);
     }
     case MirOperation::EnumConstant:
       return instruction.operands.empty() && instruction.enumOwner &&
@@ -5747,6 +5759,32 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     const auto definition = instructionsById.find(value->definition);
     return definition == instructionsById.end() ? nullptr : definition->second;
   };
+  const auto exactComputeFoldRewrite = [&](const MirInstruction &instruction) {
+    const MirLiteralProvenance &provenance = instruction.literalProvenance;
+    if (!instruction.literal || !instruction.result ||
+        provenance.sourceValue != 0 || provenance.sourceValues.empty() ||
+        provenance.sourceValues.size() > 2) {
+      return false;
+    }
+    std::vector<MirComputeFoldOperand> operands;
+    operands.reserve(provenance.sourceValues.size());
+    for (const MirValueId sourceValue : provenance.sourceValues) {
+      const MirValue *value = body.findValue(sourceValue);
+      const MirInstruction *source = definingInstruction(sourceValue);
+      if (value == nullptr || source == nullptr ||
+          sourceValue == *instruction.result ||
+          !strictlyPrecedes(*source, instruction) ||
+          source->kind != MirInstructionKind::Compute ||
+          source->operation != MirOperation::Literal || !source->literal) {
+        return false;
+      }
+      operands.push_back(
+          {.literal = *source->literal, .type = value->info.type});
+    }
+    const std::optional<Literal> folded = evaluateMirComputeFold(
+        provenance.sourceOperation, operands, instruction.info.type);
+    return folded && *folded == *instruction.literal;
+  };
   const auto exactLiteralRewrite = [&](const MirInstruction &instruction) {
     if (!instruction.literal || !instruction.result ||
         instruction.literalProvenance.kind !=
@@ -5884,6 +5922,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return failure(body, owner,
                        "literal rewrite does not retain an exact dominating "
                        "MIR identity-fold proof",
+                       block.id, instruction.id);
+      }
+      if (instruction.literalProvenance.kind ==
+              MirLiteralProvenanceKind::ComputeFold &&
+          !exactComputeFoldRewrite(instruction)) {
+        return failure(body, owner,
+                       "literal rewrite does not retain an exact dominating "
+                       "MIR compute-fold proof",
                        block.id, instruction.id);
       }
     }
@@ -13084,6 +13130,57 @@ verifyMirOptimizationCoherence(const MirProgram &source,
                  sourceBlock.id, sourceInstruction.id);
           return result;
         }
+        if (optimizedInstruction.literalProvenance.kind ==
+            MirLiteralProvenanceKind::ComputeFold) {
+          // A compute fold replaces the exact source computation whose
+          // operation and value operands the provenance retains; the
+          // folded literal must replay through the single evaluation
+          // authority over the source operands' literals.
+          const MirLiteralProvenance &provenance =
+              optimizedInstruction.literalProvenance;
+          bool operandsMatch = sourceInstruction.operands.size() ==
+                                   provenance.sourceValues.size() &&
+                               !provenance.sourceValues.empty();
+          for (std::size_t operandIndex = 0;
+               operandsMatch &&
+               operandIndex < sourceInstruction.operands.size();
+               ++operandIndex) {
+            const MirOperand &operand =
+                sourceInstruction.operands[operandIndex];
+            operandsMatch =
+                operand.kind == MirOperandKind::Value &&
+                operand.value == provenance.sourceValues[operandIndex];
+          }
+          if (sourceInstruction.id != optimizedInstruction.id ||
+              sourceInstruction.kind != MirInstructionKind::Compute ||
+              sourceInstruction.operation != provenance.sourceOperation ||
+              !operandsMatch || sourceInstruction.literal ||
+              sourceInstruction.literalProvenance.kind !=
+                  MirLiteralProvenanceKind::None ||
+              optimizedInstruction.kind != MirInstructionKind::Compute ||
+              optimizedInstruction.operation != MirOperation::Literal ||
+              !optimizedInstruction.literal) {
+            reject(address,
+                   "optimized MIR compute fold does not match an exact "
+                   "source computation",
+                   sourceBlock.id, optimizedInstruction.id);
+            return result;
+          }
+          MirInstruction expected = sourceInstruction;
+          expected.operation = MirOperation::Literal;
+          expected.operands.clear();
+          expected.literal = optimizedInstruction.literal;
+          expected.literalProvenance = provenance;
+          if (optimizedInstruction != expected) {
+            reject(address,
+                   "optimized MIR compute fold changed fields outside its "
+                   "exact rewrite allowlist",
+                   sourceBlock.id, optimizedInstruction.id);
+            return result;
+          }
+          candidateBlock.instructions[instructionIndex] = std::move(expected);
+          continue;
+        }
         if (optimizedInstruction.literalProvenance.kind !=
             MirLiteralProvenanceKind::IdentityFold) {
           continue;
@@ -13141,6 +13238,65 @@ verifyMirOptimizationCoherence(const MirProgram &source,
                "provenance");
   }
   return result;
+}
+
+std::optional<Literal>
+evaluateMirComputeFold(MirOperation operation,
+                       const std::vector<MirComputeFoldOperand> &operands,
+                       const SemanticType &resultType) {
+  const auto comparisonToken = [&]() -> std::optional<TokenKind> {
+    switch (operation) {
+    case MirOperation::Equal:
+      return TokenKind::EQUAL_EQUAL;
+    case MirOperation::NotEqual:
+      return TokenKind::BANG_EQUAL;
+    case MirOperation::Less:
+      return TokenKind::LESS;
+    case MirOperation::LessEqual:
+      return TokenKind::LESS_EQUAL;
+    case MirOperation::Greater:
+      return TokenKind::GREATER;
+    case MirOperation::GreaterEqual:
+      return TokenKind::GREATER_EQUAL;
+    default:
+      return std::nullopt;
+    }
+  }();
+  if (resultType.kind != SemanticType::Bool) {
+    return std::nullopt;
+  }
+  std::vector<ConstantValue> values;
+  values.reserve(operands.size());
+  for (const MirComputeFoldOperand &operand : operands) {
+    const ConstantEvaluation evaluated = evaluateConstantLiteral(
+        operand.literal, constantIntegerDomain(operand.type));
+    if (!evaluated.value) {
+      return std::nullopt;
+    }
+    values.push_back(*evaluated.value);
+  }
+  ConstantEvaluation result;
+  if (operation == MirOperation::LogicalNot) {
+    if (values.size() != 1) {
+      return std::nullopt;
+    }
+    result = evaluateConstantUnary(TokenKind::BANG, values.front());
+  } else if (comparisonToken) {
+    if (values.size() != 2) {
+      return std::nullopt;
+    }
+    result = evaluateConstantComparison(*comparisonToken, values[0], values[1]);
+  } else {
+    return std::nullopt;
+  }
+  if (!result.value) {
+    return std::nullopt;
+  }
+  const bool *folded = std::get_if<bool>(&*result.value);
+  if (folded == nullptr) {
+    return std::nullopt;
+  }
+  return Literal{*folded};
 }
 
 } // namespace lang
