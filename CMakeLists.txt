@@ -19,21 +19,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # First-party code builds warning-clean under -Werror on both clang and
 # GCC so the macOS/Linux toolchain divergence class (e.g. C++20 designator
 # order, which clang only warns about) breaks locally instead of in CI.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  # Both compilers extend -Wmissing-field-initializers to designated
-  # initializers whose omitted members are value-initialized — a C++20 idiom
-  # this codebase uses deliberately (effect tables, request structs). Neither
-  # loses coverage of positional omissions. Everything else stays -Werror.
-  add_compile_options(-Wall -Wextra -Werror -Wno-missing-field-initializers)
-endif()
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  # GNU-only: under optimization -Wmaybe-uninitialized fires inside
-  # libstdc++'s own <variant> machinery, a long-standing GCC false-positive
-  # family. The definite -Wuninitialized analysis stays active. Clang has no
-  # such flag and rejects it.
-  add_compile_options(-Wno-maybe-uninitialized)
-endif()
-
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -194,6 +179,31 @@ if(GTI_BUNDLE_LLVM)
   if(NOT GTI_BUNDLED_LLVM_SUPPORT_SYSTEM_LIBRARIES)
     set(GTI_BUNDLED_LLVM_SUPPORT_SYSTEM_LIBRARIES "")
   endif()
+endif()
+
+# First-party code builds warning-clean under -Werror on both clang and GCC so
+# the macOS/Linux toolchain divergence class (e.g. C++20 designator order,
+# which clang only warns about) breaks locally instead of in CI.
+#
+# The position of this block is load-bearing. `add_compile_options` applies to
+# every target defined after it in this directory and below, which includes the
+# LLVM subproject that GTI_BUNDLE_LLVM adds through FetchContent. Vendored LLVM
+# is not warning-clean under these flags and GTI cannot fix it, so the options
+# are set here — after the LLVM block, before the first GTI target. Any new
+# first-party target must be defined below this point to be covered.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  # Both compilers extend -Wmissing-field-initializers to designated
+  # initializers whose omitted members are value-initialized — a C++20 idiom
+  # this codebase uses deliberately (effect tables, request structs). Neither
+  # loses coverage of positional omissions. Everything else stays -Werror.
+  add_compile_options(-Wall -Wextra -Werror -Wno-missing-field-initializers)
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  # GNU-only: under optimization -Wmaybe-uninitialized fires inside libstdc++'s
+  # own <variant> machinery, a long-standing GCC false-positive family. The
+  # definite -Wuninitialized analysis stays active. Clang has no such flag and
+  # rejects it.
+  add_compile_options(-Wno-maybe-uninitialized)
 endif()
 
 add_library(
