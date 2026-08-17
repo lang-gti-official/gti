@@ -10591,6 +10591,105 @@ mir_checked_array_write_v1(std::array<Stored, Length> &array,
   return mir_failure_success_v1;
 }
 
+// The defined-failure prefix-storage family: each helper expresses every
+// checkable condition of its sealed operation as a failure status the
+// verified-MIR failure form branches on. Interior element-construction
+// allocation keeps the sealed legacy path, exactly as the checked-array
+// family does; the defined allocation outcomes stay structurally
+// supported and become dynamically reachable when allocation joins the
+// defined contract.
+template <typename T, typename... Args>
+inline mir_failure_status_v1
+mir_prefix_append_v1(::gti_internal::backend::prefix_storage<T> &storage,
+                     Args &&...args) {
+  if (storage.length() >= storage.capacity()) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
+  }
+  storage.append(std::forward<Args>(args)...);
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1
+mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage) {
+  if (storage.length() == 0) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
+  }
+  storage.pop();
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1
+mir_prefix_read_v1(const ::gti_internal::backend::prefix_storage<T> &storage,
+                   std::uint64_t index, const T **result) {
+  if (index >= storage.length()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  *result = &storage.read(index);
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1
+mir_prefix_read_mut_v1(::gti_internal::backend::prefix_storage<T> &storage,
+                       std::uint64_t index, T **result) {
+  if (index >= storage.length()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  *result = &storage.read_mut(index);
+  return mir_failure_success_v1;
+}
+
+template <typename T, typename... Args>
+inline mir_failure_status_v1
+mir_prefix_insert_v1(::gti_internal::backend::prefix_storage<T> &storage,
+                     std::uint64_t index, Args &&...args) {
+  if (index > storage.length()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  if (storage.length() >= storage.capacity()) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
+  }
+  storage.insert_at(index, std::forward<Args>(args)...);
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1
+mir_prefix_erase_v1(::gti_internal::backend::prefix_storage<T> &storage,
+                    std::uint64_t index) {
+  if (index >= storage.length()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  storage.erase_at(index);
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1
+mir_prefix_relocate_v1(::gti_internal::backend::prefix_storage<T> &source,
+                       ::gti_internal::backend::prefix_storage<T>
+                           &destination) {
+  if (destination.length() != 0) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_OCCUPIED_RELOCATION_DESTINATION_V1};
+  }
+  if (destination.capacity() < source.length()) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
+  }
+  source.relocate_to(destination);
+  return mir_failure_success_v1;
+}
+
 template <typename Target, typename Left, typename Right>
 inline mir_failure_status_v1 mir_checked_add_v1(Left left, Right right,
                                                 Target *result) noexcept {
