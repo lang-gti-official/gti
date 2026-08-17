@@ -661,6 +661,18 @@ if(BUILD_TESTING)
   add_test(NAME layout_query_native_boundary
            COMMAND gti_layout_query_native_smoke)
 
+  add_executable("gti_prefix_storage_evidence"
+                 "tests/prefix_storage_native_evidence.cpp")
+  target_link_libraries("gti_prefix_storage_evidence" PRIVATE gti_cpp_backend)
+  add_test(NAME prefix_storage_native_evidence
+           COMMAND gti_prefix_storage_evidence "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(
+    prefix_storage_native_evidence
+    PROPERTIES TIMEOUT 600
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+
   if(Python3_Interpreter_FOUND)
     add_test(
       NAME runtime_failure_subprocess
