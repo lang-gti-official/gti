@@ -222,6 +222,22 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .movesValue = true,
                     .invokesUserCode = true},
+    // PrefixStorageInsert
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .initializesValue = true,
+                    .movesValue = true,
+                    .invokesUserCode = true},
+    // PrefixStorageErase
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .dropsValue = true,
+                    .movesValue = true,
+                    .invokesUserCode = true},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -375,6 +391,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "prefix-storage-read-mut",
     "prefix-storage-length",
     "prefix-storage-relocate",
+    "prefix-storage-insert",
+    "prefix-storage-erase",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

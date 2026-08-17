@@ -168,6 +168,39 @@ int main() {
 }
 )";
 
+constexpr std::string_view editingSource = R"(
+int main() {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, 1);
+  gti_internal::prefix_storage_append(values, 2);
+  gti_internal::prefix_storage_append(values, 4);
+  gti_internal::prefix_storage_insert(values, uint64_t(2), 3);
+  if (gti_internal::prefix_storage_length(values) != uint64_t(4)) {
+    return 1;
+  }
+  if (gti_internal::prefix_storage_read(values, uint64_t(0)) != 1 or
+      gti_internal::prefix_storage_read(values, uint64_t(1)) != 2 or
+      gti_internal::prefix_storage_read(values, uint64_t(2)) != 3 or
+      gti_internal::prefix_storage_read(values, uint64_t(3)) != 4) {
+    return 2;
+  }
+  gti_internal::prefix_storage_erase(values, uint64_t(0));
+  if (gti_internal::prefix_storage_length(values) != uint64_t(3)) {
+    return 3;
+  }
+  if (gti_internal::prefix_storage_read(values, uint64_t(0)) != 2 or
+      gti_internal::prefix_storage_read(values, uint64_t(2)) != 4) {
+    return 4;
+  }
+  gti_internal::prefix_storage_insert(values, uint64_t(3), 9);
+  if (gti_internal::prefix_storage_read(values, uint64_t(3)) != 9) {
+    return 5;
+  }
+  return 0;
+}
+)";
+
 struct GuardScenario {
   std::string_view name;
   std::string_view source;
@@ -220,6 +253,39 @@ int main() {
 }
 )",
      "prefix storage relocation destination is occupied"},
+    {"insert-outside",
+     R"(
+int main() {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
+  gti_internal::prefix_storage_append(values, 1);
+  gti_internal::prefix_storage_insert(values, uint64_t(2), 9);
+  return 0;
+}
+)",
+     "prefix storage insert outside the live prefix"},
+    {"insert-capacity",
+     R"(
+int main() {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(1));
+  gti_internal::prefix_storage_append(values, 1);
+  gti_internal::prefix_storage_insert(values, uint64_t(0), 9);
+  return 0;
+}
+)",
+     "prefix storage insert exceeds its capacity"},
+    {"erase-outside",
+     R"(
+int main() {
+  mut gti_internal::prefix_storage<int32_t> values =
+      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(2));
+  gti_internal::prefix_storage_append(values, 1);
+  gti_internal::prefix_storage_erase(values, uint64_t(1));
+  return 0;
+}
+)",
+     "prefix storage erase outside the live prefix"},
     {"relocate-capacity",
      R"(
 int main() {
@@ -299,6 +365,28 @@ int main(int argc, char **argv) {
                sanitized.stderrText.find("ERROR") == std::string::npos &&
                sanitized.stderrText.find("runtime error") == std::string::npos,
            "the behavior fixture must run clean under ASan/UBSan");
+  }
+
+  // The sealed insert/erase primitives preserve the prefix invariant
+  // atomically across the same native matrix.
+  const std::filesystem::path editing = emitArtifact("editing", editingSource);
+  if (!editing.empty()) {
+    for (const std::string standard : {"c++20", "c++23"}) {
+      for (const std::string optimization : {"-O0", "-O3"}) {
+        const std::string label =
+            "editing-" + standard.substr(3) + optimization;
+        const RunResult run = buildAndRun(compiler, editing, directory, label,
+                                          standard, optimization, "");
+        expect(run.built && run.exitStatus == 0,
+               "the editing fixture must pass at " + standard + " " +
+                   optimization);
+      }
+    }
+    const RunResult sanitized = buildAndRun(
+        compiler, editing, directory, "editing-sanitized", "c++23", "-O1",
+        "-fsanitize=address,undefined -fno-sanitize-recover=all");
+    expect(sanitized.built && sanitized.exitStatus == 0,
+           "the editing fixture must run clean under ASan/UBSan");
   }
 
   // Every runtime guard trips exactly its own diagnostic.

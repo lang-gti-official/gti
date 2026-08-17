@@ -15,15 +15,15 @@ public:
 };
 
 class storage_iterator<T> {
-  gti_internal::storage<T>& data;
+  gti_internal::prefix_storage<T>& data;
   mut size_t current_position;
 
 public:
-  storage_iterator(gti_internal::storage<T>& source, size_t position)
+  storage_iterator(gti_internal::prefix_storage<T>& source, size_t position)
       : data(source), current_position(position) {}
 
   T& operator*() {
-    return gti_internal::storage_read(this.data, this.current_position);
+    return gti_internal::prefix_storage_read(this.data, this.current_position);
   }
 
   void operator++() mut {
@@ -37,7 +37,7 @@ public:
 }
 
 class string {
-  mut gti_internal::storage<char> data;
+  mut gti_internal::prefix_storage<char> data;
   mut size_t count = 0;
   mut size_t reserved = 0;
 
@@ -46,7 +46,7 @@ class string {
       return false;
     }
     for (mut size_t index = 0; index < this.count; index++) {
-      if (gti_internal::storage_read(this.data, index) != other[index]) {
+      if (gti_internal::prefix_storage_read(this.data, index) != other[index]) {
         return false;
       }
     }
@@ -58,7 +58,7 @@ class string {
       return false;
     }
     for (mut size_t index = 0; index < this.count; index++) {
-      if (gti_internal::storage_read(this.data, index) != other[index]) {
+      if (gti_internal::prefix_storage_read(this.data, index) != other[index]) {
         return false;
       }
     }
@@ -66,13 +66,13 @@ class string {
   }
 
 public:
-  string() : data(gti_internal::allocate_storage<char>(uint64_t(0))) {}
+  string() : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {}
 
   string(string_view value)
-      : data(gti_internal::allocate_storage<char>(value.size())),
+      : data(gti_internal::allocate_prefix_storage<char>(value.size())),
         reserved(value.size()) {
     for (mut size_t index = 0; index < value.size(); index++) {
-      gti_internal::storage_construct(this.data, index, value[index]);
+      gti_internal::prefix_storage_append(this.data, value[index]);
       this.count++;
     }
   }
@@ -90,22 +90,22 @@ public:
 
   char& front() {
     gti_internal::index_bounds_check(size_t(0), this.count);
-    return gti_internal::storage_read(this.data, size_t(0));
+    return gti_internal::prefix_storage_read(this.data, size_t(0));
   }
 
   mut char& front() mut {
     gti_internal::index_bounds_check(size_t(0), this.count);
-    return gti_internal::storage_read_mut(this.data, size_t(0));
+    return gti_internal::prefix_storage_read_mut(this.data, size_t(0));
   }
 
   char& back() {
     gti_internal::index_bounds_check(size_t(0), this.count);
-    return gti_internal::storage_read(this.data, this.count - 1);
+    return gti_internal::prefix_storage_read(this.data, this.count - 1);
   }
 
   mut char& back() mut {
     gti_internal::index_bounds_check(size_t(0), this.count);
-    return gti_internal::storage_read_mut(this.data, this.count - 1);
+    return gti_internal::prefix_storage_read_mut(this.data, this.count - 1);
   }
 
   size_t capacity() {
@@ -122,63 +122,63 @@ public:
 
   char& at(int index) {
     gti_internal::index_bounds_check(uint64_t(index), this.count);
-    return gti_internal::storage_read(this.data, uint64_t(index));
+    return gti_internal::prefix_storage_read(this.data, uint64_t(index));
   }
 
   mut char& at(int index) mut {
     gti_internal::index_bounds_check(uint64_t(index), this.count);
-    return gti_internal::storage_read_mut(this.data, uint64_t(index));
+    return gti_internal::prefix_storage_read_mut(this.data, uint64_t(index));
   }
 
   char& at(size_t index) {
     gti_internal::index_bounds_check(index, this.count);
-    return gti_internal::storage_read(this.data, index);
+    return gti_internal::prefix_storage_read(this.data, index);
   }
 
   mut char& at(size_t index) mut {
     gti_internal::index_bounds_check(index, this.count);
-    return gti_internal::storage_read_mut(this.data, index);
+    return gti_internal::prefix_storage_read_mut(this.data, index);
   }
 
   char& operator[](int index) {
     gti_internal::index_bounds_check(uint64_t(index), this.count);
-    return gti_internal::storage_read(this.data, uint64_t(index));
+    return gti_internal::prefix_storage_read(this.data, uint64_t(index));
   }
 
   mut char& operator[](int index) mut {
     gti_internal::index_bounds_check(uint64_t(index), this.count);
-    return gti_internal::storage_read_mut(this.data, uint64_t(index));
+    return gti_internal::prefix_storage_read_mut(this.data, uint64_t(index));
   }
 
   char& operator[](size_t index) {
     gti_internal::index_bounds_check(index, this.count);
-    return gti_internal::storage_read(this.data, index);
+    return gti_internal::prefix_storage_read(this.data, index);
   }
 
   mut char& operator[](size_t index) mut {
     gti_internal::index_bounds_check(index, this.count);
-    return gti_internal::storage_read_mut(this.data, index);
+    return gti_internal::prefix_storage_read_mut(this.data, index);
   }
 
   void reserve(size_t requested) mut {
     if (requested <= this.capacity()) {
       return;
     }
-    mut gti_internal::storage<char> replacement =
-        gti_internal::allocate_storage<char>(requested);
-    gti_internal::storage_relocate(this.data, replacement, this.count);
+    mut gti_internal::prefix_storage<char> replacement =
+        gti_internal::allocate_prefix_storage<char>(requested);
+    gti_internal::prefix_storage_relocate(this.data, replacement);
     this.data = std::move(replacement);
     this.reserved = requested;
   }
 
   void resize(size_t requested) mut {
     while (this.count > requested) {
+      gti_internal::prefix_storage_pop(this.data);
       this.count--;
-      gti_internal::storage_destroy(this.data, this.count);
     }
     this.reserve(requested);
     while (this.count < requested) {
-      gti_internal::storage_construct(this.data, this.count, '\0');
+      gti_internal::prefix_storage_append(this.data, '\0');
       this.count++;
     }
   }
@@ -187,9 +187,9 @@ public:
     if (this.reserved == this.count) {
       return;
     }
-    mut gti_internal::storage<char> replacement =
-        gti_internal::allocate_storage<char>(this.count);
-    gti_internal::storage_relocate(this.data, replacement, this.count);
+    mut gti_internal::prefix_storage<char> replacement =
+        gti_internal::allocate_prefix_storage<char>(this.count);
+    gti_internal::prefix_storage_relocate(this.data, replacement);
     this.data = std::move(replacement);
     this.reserved = this.count;
   }
@@ -202,7 +202,7 @@ public:
       }
       this.reserve(grown);
     }
-    gti_internal::storage_construct(this.data, this.count, value);
+    gti_internal::prefix_storage_append(this.data, value);
     this.count++;
   }
 
@@ -210,22 +210,22 @@ public:
     if (this.count == 0) {
       return;
     }
+    gti_internal::prefix_storage_pop(this.data);
     this.count--;
-    gti_internal::storage_destroy(this.data, this.count);
   }
 
   void append(string_view value) mut {
     this.reserve(this.count + value.size());
     for (mut size_t index = 0; index < value.size(); index++) {
-      gti_internal::storage_construct(this.data, this.count, value[index]);
+      gti_internal::prefix_storage_append(this.data, value[index]);
       this.count++;
     }
   }
 
   void clear() mut {
     while (this.count > 0) {
+      gti_internal::prefix_storage_pop(this.data);
       this.count--;
-      gti_internal::storage_destroy(this.data, this.count);
     }
   }
 
@@ -233,7 +233,7 @@ public:
     mut string result = string();
     result.reserve(this.count);
     for (mut size_t index = 0; index < this.count; index++) {
-      result.push_back(gti_internal::storage_read(this.data, index));
+      result.push_back(gti_internal::prefix_storage_read(this.data, index));
     }
     return std::move(result);
   }

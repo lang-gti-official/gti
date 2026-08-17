@@ -577,6 +577,51 @@ public:
     return *std::launder(slot(checked_prefix_index(index)));
   }
 
+  template <typename... Args>
+  void insert_at(std::uint64_t index, Args &&...args) {
+    if (index > length_) {
+      storage_error("prefix storage insert outside the live prefix");
+    }
+    if (length_ >= capacity_) {
+      storage_error("prefix storage insert exceeds its capacity");
+    }
+    for (std::size_t position = length_;
+         position > static_cast<std::size_t>(index); --position) {
+      try {
+        std::construct_at(slot(position),
+                          std::move(*std::launder(slot(position - 1))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      std::destroy_at(std::launder(slot(position - 1)));
+    }
+    try {
+      std::construct_at(slot(static_cast<std::size_t>(index)),
+                        std::forward<Args>(args)...);
+    } catch (const std::bad_alloc &) {
+      allocation_error();
+    }
+    ++length_;
+  }
+
+  void erase_at(std::uint64_t index) {
+    if (index >= length_) {
+      storage_error("prefix storage erase outside the live prefix");
+    }
+    std::destroy_at(std::launder(slot(static_cast<std::size_t>(index))));
+    for (std::size_t position = static_cast<std::size_t>(index) + 1;
+         position < length_; ++position) {
+      try {
+        std::construct_at(slot(position - 1),
+                          std::move(*std::launder(slot(position))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      std::destroy_at(std::launder(slot(position)));
+    }
+    --length_;
+  }
+
   void relocate_to(prefix_storage &destination) {
     if (destination.length_ != 0) {
       storage_error("prefix storage relocation destination is occupied");
@@ -691,6 +736,18 @@ template <typename T>
 inline void prefix_storage_relocate(prefix_storage<T> &source,
                                     prefix_storage<T> &destination) {
   source.relocate_to(destination);
+}
+
+template <typename T, typename... Args>
+inline void prefix_storage_insert(prefix_storage<T> &value,
+                                  std::uint64_t index, Args &&...args) {
+  value.insert_at(index, std::forward<Args>(args)...);
+}
+
+template <typename T>
+inline void prefix_storage_erase(prefix_storage<T> &value,
+                                 std::uint64_t index) {
+  value.erase_at(index);
 }
 
 template <typename T, typename... Args>
@@ -12700,7 +12757,9 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
            intrinsic == IntrinsicKind::PrefixStorageRead ||
            intrinsic == IntrinsicKind::PrefixStorageReadMut ||
            intrinsic == IntrinsicKind::PrefixStorageLength ||
-           intrinsic == IntrinsicKind::PrefixStorageRelocate;
+           intrinsic == IntrinsicKind::PrefixStorageRelocate ||
+           intrinsic == IntrinsicKind::PrefixStorageInsert ||
+           intrinsic == IntrinsicKind::PrefixStorageErase;
   }
 
   [[nodiscard]] static std::string_view
@@ -12734,6 +12793,10 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
       return "prefix_storage_length";
     case IntrinsicKind::PrefixStorageRelocate:
       return "prefix_storage_relocate";
+    case IntrinsicKind::PrefixStorageInsert:
+      return "prefix_storage_insert";
+    case IntrinsicKind::PrefixStorageErase:
+      return "prefix_storage_erase";
     default:
       return "";
     }

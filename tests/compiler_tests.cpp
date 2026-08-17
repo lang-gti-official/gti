@@ -12314,10 +12314,10 @@ int main() {
               });
         });
   };
-  expect(hasHirIntrinsic(lang::IntrinsicKind::StorageShiftRight) &&
-             hasHirIntrinsic(lang::IntrinsicKind::StorageShiftLeft) &&
-             hasMirIntrinsic(lang::IntrinsicKind::StorageShiftRight) &&
-             hasMirIntrinsic(lang::IntrinsicKind::StorageShiftLeft),
+  expect(hasHirIntrinsic(lang::IntrinsicKind::PrefixStorageInsert) &&
+             hasHirIntrinsic(lang::IntrinsicKind::PrefixStorageErase) &&
+             hasMirIntrinsic(lang::IntrinsicKind::PrefixStorageInsert) &&
+             hasMirIntrinsic(lang::IntrinsicKind::PrefixStorageErase),
          "HIR and MIR should retain both exact storage-shift operations used "
          "by source-defined vector insertion and erasure");
 
@@ -14122,18 +14122,17 @@ int main() {
 
   const std::string generated =
       lang::CppEmitter(valid.semantics, valid.hir).emit(valid.program);
-  expect(generated.find("class string") != std::string::npos &&
-             generated.find(
-                 "::gti_internal::backend::storage<std::uint8_t> data") !=
-                 std::string::npos &&
-             generated.find("string(const string &) = delete;") !=
-                 std::string::npos &&
-             generated.find("string(string &&) = default;") !=
-                 std::string::npos &&
-             generated.find("::gti_internal::backend::storage_read_mut") !=
-                 std::string::npos,
-         "std::string lowering should retain nominal move-only lifecycle and "
-         "checked mutable storage access");
+  expect(
+      generated.find("class string") != std::string::npos &&
+          generated.find("::gti_internal::backend::prefix_storage<"
+                         "std::uint8_t> data") != std::string::npos &&
+          generated.find("string(const string &) = delete;") !=
+              std::string::npos &&
+          generated.find("string(string &&) = default;") != std::string::npos &&
+          generated.find("::gti_internal::backend::prefix_storage_read_mut") !=
+              std::string::npos,
+      "std::string lowering should retain nominal move-only lifecycle and "
+      "checked mutable storage access");
 
   const lang::FrontendResult invalidCopy = lang::Frontend().analyze(
       entry, R"(

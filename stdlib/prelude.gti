@@ -85,6 +85,14 @@ uint64_t prefix_storage_length<T>(gti_internal::prefix_storage<T>& storage);
 void prefix_storage_relocate<T>(
     mut gti_internal::prefix_storage<T>& source,
     mut gti_internal::prefix_storage<T>& destination);
+// Insert and erase preserve the prefix invariant atomically: the element
+// shift and the construction or destruction happen inside one sealed
+// operation, so no partially initialized slot is ever observable.
+void prefix_storage_insert<T, Args...>(
+    mut gti_internal::prefix_storage<T>& storage, uint64_t index,
+    Args... args);
+void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage,
+                             uint64_t index);
 
 T integer_wrapping_add<T>(T left, T right);
 T integer_wrapping_sub<T>(T left, T right);

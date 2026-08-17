@@ -8602,6 +8602,12 @@ private:
     if (name == "prefix_storage_relocate") {
       return IntrinsicKind::PrefixStorageRelocate;
     }
+    if (name == "prefix_storage_insert") {
+      return IntrinsicKind::PrefixStorageInsert;
+    }
+    if (name == "prefix_storage_erase") {
+      return IntrinsicKind::PrefixStorageErase;
+    }
     if (name == "integer_wrapping_add") {
       return IntrinsicKind::IntegerWrappingAdd;
     }
@@ -10893,7 +10899,9 @@ private:
         intrinsic == IntrinsicKind::PrefixStorageRead ||
         intrinsic == IntrinsicKind::PrefixStorageReadMut ||
         intrinsic == IntrinsicKind::PrefixStorageLength ||
-        intrinsic == IntrinsicKind::PrefixStorageRelocate) {
+        intrinsic == IntrinsicKind::PrefixStorageRelocate ||
+        intrinsic == IntrinsicKind::PrefixStorageInsert ||
+        intrinsic == IntrinsicKind::PrefixStorageErase) {
       analyzePrefixStorageIntrinsicCall(expr, intrinsic);
       bindIntrinsicCallDeclaration(expr, declaration);
       return;
@@ -11497,7 +11505,32 @@ private:
     switch (intrinsic) {
     case IntrinsicKind::PrefixStorageAppend:
       // Appends exactly at the live length, constructing in place from the
-      // analyzed arguments; movability is a relocation requirement only.
+      // analyzed arguments; movability is a shift requirement only.
+      currentType = SemanticType::Void;
+      break;
+    case IntrinsicKind::PrefixStorageInsert:
+      // Inserts inside the live prefix: the element shift and the
+      // construction happen inside one sealed operation, so the prefix
+      // invariant holds before and after with no observable gap.
+      requireMovableElement("prefix_storage_insert");
+      if (argumentTypes.size() < 2) {
+        report(expr.paren(),
+               "prefix_storage_insert expects mutable prefix storage, a "
+               "uint64_t index, and the element constructor arguments.",
+               "GTI-S2019");
+      }
+      requireUInt64(1);
+      currentType = SemanticType::Void;
+      break;
+    case IntrinsicKind::PrefixStorageErase:
+      requireMovableElement("prefix_storage_erase");
+      if (argumentTypes.size() != 2) {
+        report(expr.paren(),
+               "prefix_storage_erase expects mutable prefix storage and a "
+               "uint64_t index.",
+               "GTI-S2019");
+      }
+      requireUInt64(1);
       currentType = SemanticType::Void;
       break;
     case IntrinsicKind::PrefixStoragePop:
@@ -24670,6 +24703,21 @@ private:
                 operation, DefinedFailureCode::InvalidStorageState,
                 DefinedFailureDetail::OccupiedRelocationDestination);
             break;
+          case IntrinsicKind::PrefixStorageInsert:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
+                              DefinedFailureDetail::PrivateStorage);
+            addFailureOutcome(operation,
+                              DefinedFailureCode::InvalidStorageState,
+                              DefinedFailureDetail::RelocationCapacity);
+            addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
+                              DefinedFailureDetail::ElementConstruction);
+            break;
+          case IntrinsicKind::PrefixStorageErase:
+            anchor(token);
+            addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
+                              DefinedFailureDetail::PrivateStorage);
+            break;
           case IntrinsicKind::PrefixStorageLength:
             break;
           case IntrinsicKind::StorageBoundsCheck:
@@ -25079,8 +25127,10 @@ private:
     return isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
            owner.storedReference->type.kind == SemanticType::Reference &&
            !owner.storedReference->type.arguments.empty() &&
-           owner.storedReference->type.arguments.front().kind ==
-               SemanticType::Storage;
+           (owner.storedReference->type.arguments.front().kind ==
+                SemanticType::Storage ||
+            owner.storedReference->type.arguments.front().kind ==
+                SemanticType::PrefixStorage);
   }
 
   [[nodiscard]] bool isDefaultLibraryStorageBorrowParameter(

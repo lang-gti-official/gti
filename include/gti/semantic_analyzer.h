@@ -710,6 +710,8 @@ enum class IntrinsicKind {
   PrefixStorageReadMut,
   PrefixStorageLength,
   PrefixStorageRelocate,
+  PrefixStorageInsert,
+  PrefixStorageErase,
   Count,
 };
 

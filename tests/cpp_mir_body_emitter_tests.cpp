@@ -103,6 +103,7 @@ representationKind(const lang::SemanticType &type) {
   case lang::SemanticType::SharedPointer:
     return lang::CppMirTypeRepresentationKind::SharedPointer;
   case lang::SemanticType::Storage:
+  case lang::SemanticType::PrefixStorage:
     return lang::CppMirTypeRepresentationKind::Storage;
   case lang::SemanticType::Expected:
     return lang::CppMirTypeRepresentationKind::Expected;

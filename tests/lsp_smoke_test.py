@@ -1928,9 +1928,9 @@ def test_compiler_private_tooling_boundary(executable, root):
                 stdlib_uri,
                 stdlib_source,
             )
-            assert "gti_internal::storage_read" in trusted_hover["contents"][
-                "value"
-            ]
+            assert "gti_internal::prefix_storage_read" in trusted_hover[
+                "contents"
+            ]["value"]
             trusted_definition = semantic_request(
                 12,
                 "textDocument/definition",
