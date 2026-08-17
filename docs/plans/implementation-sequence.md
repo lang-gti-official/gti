@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.194.0
+Checkpoint: 0.195.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -1091,6 +1091,23 @@ analysis, HIR, MIR, and the backend.
   rather than implementation-defined C++. The remaining HIR-shaped
   admission lives in the three atomic families (scalar-failure-callgraph,
   class-default-cleanup, owned-lifecycle).
+- **P-STORAGE-01 slice 4 begins: the storage failure form emits
+  (0.195.0).** The general emitter spells prefix-storage operations
+  through the shipped mir_prefix_*_v1 checked helpers: a value loaded
+  from a storage-typed place is a staging class that never
+  materializes (the call spells the field or binding lvalue directly,
+  relocation staging a second place), Move instructions stage by-value
+  elements, the modeling receiver on storage calls is validated and
+  never spelled, and each operation publishes into the standard
+  per-detector failure status whose returned outcome the existing
+  status-sourced record write already carries — multi-outcome sites
+  need no new record form. The first storage bodies leave the
+  compatibility route: the concrete string owner's storage mutations
+  emit from verified MIR across the corpus with byte-identical
+  behavior; the generic vector owner's members remain
+  compatibility-bound by the transformed-member boundary, and the
+  reserve-class bodies wait on allocation, storage locals, and the
+  cleanup drain vocabulary.
 - **Write-staged receiver calls (0.194.0).** The receiver-carrying
   call convention gains the mutable form: a receiver staged as a write
   borrow reaches exactly a mutable member, a read borrow exactly a

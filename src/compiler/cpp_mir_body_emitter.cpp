@@ -4014,6 +4014,44 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       case MirInstructionKind::Call: {
+        if (prefixStorageIntrinsic(instruction.intrinsic)) {
+          // The storage failure form spells the shipped mir_prefix_*_v1
+          // checked helper over the staged storage place lvalue; every
+          // operation carries checkable sites, so the success form
+          // declines. The modeling receiver is a raw borrow of a
+          // spellable place and never spells.
+          if (!failureForm || instruction.functionTarget ||
+              instruction.result || instruction.operands.empty() ||
+              instruction.localFailureSites.empty() ||
+              instruction.definedFailure.localOrigins.empty() ||
+              program_.failureMetadata().findSite(
+                  instruction.localFailureSites.front()) == nullptr) {
+            return false;
+          }
+          if (instruction.receiver &&
+              ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
+                instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
+               instruction.receiver->place == 0 ||
+               body.findPlace(instruction.receiver->place) == nullptr)) {
+            return false;
+          }
+          if (storageStagedPlace(body, instruction.operands.front()) ==
+              nullptr) {
+            return false;
+          }
+          for (std::size_t index = 1; index < instruction.operands.size();
+               ++index) {
+            if (storageStagedPlace(body, instruction.operands[index]) !=
+                nullptr) {
+              // Relocation's destination stages a second storage place.
+              continue;
+            }
+            if (!valueOperand(instruction.operands[index])) {
+              return false;
+            }
+          }
+          continue;
+        }
         // A receiver-carrying call spells its staged borrowed place and the
         // qualified member name — the explicit qualification states the
         // static dispatch MIR proved. Admission requires a read-only,
@@ -4093,44 +4131,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               return false;
             }
           }
-        }
-        if (prefixStorageIntrinsic(instruction.intrinsic)) {
-          // The storage failure form spells the shipped mir_prefix_*_v1
-          // checked helper over the staged storage place lvalue; every
-          // operation carries checkable sites, so the success form
-          // declines. The modeling receiver is a raw borrow of a
-          // spellable place and never spells.
-          if (!failureForm || instruction.functionTarget ||
-              instruction.result || instruction.operands.empty() ||
-              instruction.localFailureSites.empty() ||
-              instruction.definedFailure.localOrigins.empty() ||
-              program_.failureMetadata().findSite(
-                  instruction.localFailureSites.front()) == nullptr) {
-            return false;
-          }
-          if (instruction.receiver &&
-              ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
-                instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
-               instruction.receiver->place == 0 ||
-               body.findPlace(instruction.receiver->place) == nullptr)) {
-            return false;
-          }
-          if (storageStagedPlace(body, instruction.operands.front()) ==
-              nullptr) {
-            return false;
-          }
-          for (std::size_t index = 1; index < instruction.operands.size();
-               ++index) {
-            if (storageStagedPlace(body, instruction.operands[index]) !=
-                nullptr) {
-              // Relocation's destination stages a second storage place.
-              continue;
-            }
-            if (!valueOperand(instruction.operands[index])) {
-              return false;
-            }
-          }
-          continue;
         }
         if (instruction.intrinsic != IntrinsicKind::None) {
           // A numeric-conversion intrinsic spells as the shipped
