@@ -1600,7 +1600,19 @@ private:
             !instruction.definedFailure.localOrigins.empty() &&
             instruction.definedFailure.propagation ==
                 FailurePropagationKind::None;
-        if (!dischargedStorageRead &&
+        // A direct call whose callee may raise carries the propagation
+        // dimension with no local origin and no failure edge: the callee
+        // writes the caller's forwarded record and the caller returns
+        // false transparently. MIR itself asserts the caller owns no
+        // cleanup here, so there is no Invoke/record/cleanup successor
+        // to demand.
+        const bool transparentCallPropagation =
+            instruction.kind == MirInstructionKind::Call &&
+            instruction.intrinsic == IntrinsicKind::None &&
+            instruction.definedFailure.propagation ==
+                FailurePropagationKind::DirectCall &&
+            instruction.definedFailure.localOrigins.empty();
+        if (!dischargedStorageRead && !transparentCallPropagation &&
             (elementPlace == nullptr ||
              !arrayElementAccess(body, *elementPlace))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
@@ -3133,14 +3145,36 @@ private:
       }
       if (transformedCallee(instruction)->returnType == SemanticType::Void) {
         output << "__gti_mir_failure_record);\n";
-        return;
-      }
-      if (instruction.result) {
-        output << "&__gti_mir_v_" << *instruction.result;
       } else {
-        output << "&__gti_mir_discard_" << instruction.id;
+        if (instruction.result) {
+          output << "&__gti_mir_v_" << *instruction.result;
+        } else {
+          output << "&__gti_mir_discard_" << instruction.id;
+        }
+        output << ", __gti_mir_failure_record);\n";
       }
-      output << ", __gti_mir_failure_record);\n";
+      // Without a paired Invoke the propagation is transparent: the
+      // callee already wrote the forwarded record, so the caller simply
+      // publishes failure.
+      bool invokePaired = false;
+      for (const MirBlock &block : facts.body.blocks) {
+        for (const MirInstruction &candidate : block.instructions) {
+          if (candidate.id == instruction.id) {
+            invokePaired = instructionHasInvoke(block, instruction);
+          }
+        }
+      }
+      if (!invokePaired) {
+        writeIndent();
+        output << "if (!__gti_mir_call_success_" << instruction.id << ") {"
+               << '\n';
+        ++indentation;
+        writeIndent();
+        output << "return false;\n";
+        --indentation;
+        writeIndent();
+        output << '}' << '\n';
+      }
       return;
     }
     if (instruction.result) {
@@ -4467,6 +4501,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
           consumedStaged.push_back(*staged->result);
+        }
+        if (!failureForm && instruction.functionTarget) {
+          // The success form spells plain calls; a failure-capable GTI
+          // callee needs the transformed convention and stays with the
+          // failure form fail-closed.
+          const MirFunctionInstance *target =
+              program_.findFunctionInstance(*instruction.functionTarget);
+          if (target == nullptr ||
+              (target->mayRaiseDefinedFailure &&
+               target->linkage == LanguageLinkage::Gti &&
+               target->definitionKind ==
+                   MirFunctionInstance::DefinitionKind::Source)) {
+            return false;
+          }
         }
         if (failureForm) {
           const MirFunctionInstance *target =
