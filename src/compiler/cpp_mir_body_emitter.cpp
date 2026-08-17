@@ -256,7 +256,15 @@ borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
         call.hostedStartupOperation != 0) {
       return true;
     }
-    return !call.receiver && call.operands.empty();
+    // A compiler-generated accessor call carries its receiver as a
+    // place-carrying staged borrow, which never materializes and needs no
+    // CallInput stage by construction (the receiver-carrying convention).
+    const bool stagedReceiver =
+        call.receiver &&
+        (call.receiver->kind == MirOperandKind::BorrowRead ||
+         call.receiver->kind == MirOperandKind::BorrowWrite) &&
+        call.receiver->place != 0;
+    return (!call.receiver || stagedReceiver) && call.operands.empty();
   }
   if (call.receiver && !hasExactCallInput(body, *call.receiver, call.callSite,
                                           MirCallInputRole::Receiver, 0)) {
