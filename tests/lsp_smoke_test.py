@@ -4292,6 +4292,581 @@ def test_pack_fold_tooling(executable, root):
         session.close()
 
 
+def open_document(session, uri, source, expect_clean=True, version=1):
+    session.send(
+        {
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "gti",
+                    "version": version,
+                    "text": source,
+                }
+            },
+        }
+    )
+    publication = session.receive_until(
+        lambda message: message.get("method") == "textDocument/publishDiagnostics"
+        and message["params"]["uri"] == uri
+        and message["params"].get("version") == version
+    )
+    if expect_clean:
+        assert publication["params"]["diagnostics"] == [], publication
+    return publication
+
+
+def test_references_and_highlights(executable, root):
+    dependency_source = (
+        "namespace math {\n"
+        "uint64_t twice(uint64_t value) { return value + value; }\n"
+        "}\n"
+    )
+    dependency_path = root / "references-library.gti"
+    dependency_path.write_text(dependency_source, encoding="utf-8")
+    source = (
+        '#include "references-library.gti"\n'
+        "int main() {\n"
+        "  mut uint64_t total = uint64_t(0);\n"
+        "  total = math::twice(total);\n"
+        "  uint64_t copy = total;\n"
+        "  return int(copy);\n"
+        "}\n"
+    )
+    path = root / "references-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        capabilities = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]["capabilities"]
+        assert capabilities["referencesProvider"] is True
+        assert capabilities["documentHighlightProvider"] is True
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+
+        declaration = source.index("total = uint64_t(0)")
+        write = source.index("total = math")
+        call_argument = source.index("total)")
+        read = source.index("total;\n")
+
+        def references(request_id, offset, include_declaration):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/references",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                        "context": {"includeDeclaration": include_declaration},
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        local_references = references(2, write + 1, True)
+        assert [entry["range"]["start"] for entry in local_references] == [
+            lsp_position(source, declaration),
+            lsp_position(source, write),
+            lsp_position(source, call_argument),
+            lsp_position(source, read),
+        ], local_references
+        assert all(entry["uri"] == uri for entry in local_references)
+
+        # The declaration site is excluded when the client does not ask
+        # for it.
+        assert [
+            entry["range"]["start"]
+            for entry in references(3, declaration + 1, False)
+        ] == [
+            lsp_position(source, write),
+            lsp_position(source, call_argument),
+            lsp_position(source, read),
+        ]
+
+        call = source.index("twice(total)")
+        function_references = references(4, call + 1, True)
+        dependency_declaration = dependency_source.index("twice")
+        assert function_references == [
+            {
+                "uri": dependency_path.resolve().as_uri(),
+                "range": {
+                    "start": lsp_position(
+                        dependency_source, dependency_declaration
+                    ),
+                    "end": lsp_position(
+                        dependency_source, dependency_declaration + len("twice")
+                    ),
+                },
+            },
+            {
+                "uri": uri,
+                "range": {
+                    "start": lsp_position(source, call),
+                    "end": lsp_position(source, call + len("twice")),
+                },
+            },
+        ], function_references
+        # Cross-file declarations stay out of the result when excluded; the
+        # remaining site is the call in this document.
+        assert [entry["uri"] for entry in references(5, call + 1, False)] == [
+            uri
+        ]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/documentHighlight",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, read + 1),
+                },
+            }
+        )
+        highlights = session.receive_until(
+            lambda message: message.get("id") == 6
+        )["result"]
+        assert [
+            (entry["range"]["start"], entry["kind"]) for entry in highlights
+        ] == [
+            (lsp_position(source, declaration), 2),
+            (lsp_position(source, write), 3),
+            (lsp_position(source, call_argument), 2),
+            (lsp_position(source, read), 2),
+        ], highlights
+
+        # Highlights for the dependency function stay inside this document.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "textDocument/documentHighlight",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, call + 1),
+                },
+            }
+        )
+        function_highlights = session.receive_until(
+            lambda message: message.get("id") == 7
+        )["result"]
+        assert [entry["range"]["start"] for entry in function_highlights] == [
+            lsp_position(source, call)
+        ]
+
+        # No symbol under the cursor produces a null result, not a guess.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "textDocument/references",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, source.index("{\n")),
+                    "context": {"includeDeclaration": True},
+                },
+            }
+        )
+        assert (
+            session.receive_until(lambda message: message.get("id") == 8)[
+                "result"
+            ]
+            is None
+        )
+
+        # An unsaved dependency overlay shifts the declaration; the queued
+        # references request answers from the reanalyzed snapshot.
+        dependency_uri = dependency_path.resolve().as_uri()
+        overlay_source = "// shifted\n" + dependency_source
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": dependency_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": overlay_source,
+                    }
+                },
+            }
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "textDocument/references",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, call + 1),
+                    "context": {"includeDeclaration": True},
+                },
+            }
+        )
+        overlay_references = session.receive_until(
+            lambda message: message.get("id") == 9
+        )["result"]
+        overlay_declaration = overlay_source.index("twice")
+        assert overlay_references[0] == {
+            "uri": dependency_uri,
+            "range": {
+                "start": lsp_position(overlay_source, overlay_declaration),
+                "end": lsp_position(
+                    overlay_source, overlay_declaration + len("twice")
+                ),
+            },
+        }, overlay_references
+    finally:
+        session.close()
+
+
+def test_document_symbols(executable, root):
+    source = (
+        "namespace engine {\n"
+        "class Sprite {\n"
+        "  /* αβ */ int frames = 0;\n"
+        "public:\n"
+        "  Sprite(int frames) : frames(frames) {}\n"
+        "  int count() { return this.frames; }\n"
+        "};\n"
+        "}\n"
+        "enum class Mode : uint8_t { Idle, Busy, };\n"
+        "using Ticks = uint64_t;\n"
+        "uint64_t elapsed = uint64_t(0);\n"
+        "int main() { return 0; }\n"
+    )
+    path = root / "document-symbols.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "documentSymbol": {
+                                "hierarchicalDocumentSymbolSupport": True
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        capabilities = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]["capabilities"]
+        assert capabilities["documentSymbolProvider"] is True
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+
+        def document_symbols(request_id):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/documentSymbol",
+                    "params": {"textDocument": {"uri": uri}},
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        # Request immediately after didOpen: the request queues until the
+        # document's first analysis publishes a snapshot.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        outline = document_symbols(2)
+        assert [(symbol["name"], symbol["kind"]) for symbol in outline] == [
+            ("engine", 3),
+            ("Mode", 10),
+            ("Ticks", 5),
+            ("elapsed", 13),
+            ("main", 12),
+        ], outline
+
+        namespace = outline[0]
+        namespace_start = source.index("namespace engine")
+        assert namespace["range"]["start"] == lsp_position(
+            source, namespace_start
+        )
+        assert namespace["range"]["end"] == lsp_position(
+            source, source.index("}\nenum class") + 1
+        )
+        sprite = namespace["children"][0]
+        assert (sprite["name"], sprite["kind"]) == ("Sprite", 5)
+        sprite_start = source.index("class Sprite")
+        sprite_end = source.index("};\n}\n") + len("};")
+        assert sprite["range"] == {
+            "start": lsp_position(source, sprite_start),
+            "end": lsp_position(source, sprite_end),
+        }
+        name_offset = source.index("Sprite", sprite_start)
+        assert sprite["selectionRange"] == {
+            "start": lsp_position(source, name_offset),
+            "end": lsp_position(source, name_offset + len("Sprite")),
+        }
+        assert [
+            (child["name"], child["kind"]) for child in sprite["children"]
+        ] == [("frames", 8), ("Sprite", 9), ("count", 6)], sprite["children"]
+        # The member on the comment line converts to UTF-16 columns.
+        frames = sprite["children"][0]
+        frames_offset = source.index("frames = 0")
+        assert frames["selectionRange"]["start"] == lsp_position(
+            source, frames_offset
+        )
+        assert frames["detail"] == "int32_t frames"
+
+        mode = outline[1]
+        assert [
+            (child["name"], child["kind"]) for child in mode["children"]
+        ] == [("Idle", 22), ("Busy", 22)]
+        assert outline[4]["detail"].startswith("int"), outline[4]
+
+        # Broken source still outlines the declarations the parser recovered.
+        truncated = source + "class Later {\n"
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": truncated}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and message["params"]["diagnostics"]
+        )
+        recovered = document_symbols(3)
+        assert [symbol["name"] for symbol in recovered][:5] == [
+            "engine",
+            "Mode",
+            "Ticks",
+            "elapsed",
+            "main",
+        ], recovered
+    finally:
+        session.close()
+
+
+def test_flat_document_symbols(executable, root):
+    source = (
+        "class Widget { public: int size() { return 1; } };\n"
+        "int main() { return 0; }\n"
+    )
+    path = root / "flat-document-symbols.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        flat = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert [
+            (
+                symbol["name"],
+                symbol["kind"],
+                symbol.get("containerName"),
+                symbol["location"]["uri"],
+            )
+            for symbol in flat
+        ] == [
+            ("Widget", 5, None, uri),
+            ("size", 6, "Widget", uri),
+            ("main", 12, None, uri),
+        ], flat
+    finally:
+        session.close()
+
+
+def test_rename_tooling(executable, root):
+    source = (
+        "int helper(int value) { return value; }\n"
+        "int main() {\n"
+        "  mut int count = 0;\n"
+        "  count = helper(count);\n"
+        "  int limit = 3;\n"
+        "  auto snapshot = [count]() -> int { return count; };\n"
+        "  return snapshot() - count + limit;\n"
+        "}\n"
+    )
+    path = root / "rename-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {"workspaceEdit": {"documentChanges": True}}
+                    }
+                },
+            }
+        )
+        capabilities = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]["capabilities"]
+        assert capabilities["renameProvider"] == {"prepareProvider": True}
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+
+        declaration = source.index("count = 0")
+
+        def prepare(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/prepareRename",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        def rename(request_id, offset, new_name):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/rename",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                        "newName": new_name,
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )
+
+        preparation = prepare(2, declaration + 1)
+        assert preparation == {
+            "range": {
+                "start": lsp_position(source, declaration),
+                "end": lsp_position(source, declaration + len("count")),
+            },
+            "placeholder": "count",
+        }, preparation
+
+        # Renaming a function fails closed: references may exist outside the
+        # snapshot. prepareRename reports the same position as non-renamable.
+        helper_declaration = source.index("helper")
+        assert prepare(3, helper_declaration + 1) is None
+        failure = rename(4, helper_declaration + 1, "renamed")
+        assert "function-local" in failure["error"]["message"], failure
+
+        # Invalid, keyword, reserved, and colliding names are rejected.
+        for request_id, bad_name, fragment in (
+            (5, "not an identifier", "not a valid GTI identifier"),
+            (6, "class", "not a valid GTI identifier"),
+            (7, "mutable", "reserved C++ core keyword"),
+            (8, "limit", "already used"),
+            (9, "helper", "already used"),
+        ):
+            failure = rename(request_id, declaration + 1, bad_name)
+            assert fragment in failure["error"]["message"], failure
+
+        # A captured local renames together with its copy-snapshot capture.
+        renamed = rename(10, declaration + 1, "total")
+        changes = renamed["result"]["documentChanges"]
+        assert len(changes) == 1, renamed
+        assert changes[0]["textDocument"] == {"uri": uri, "version": 1}
+        edited = source
+        offsets = []
+        for edit in changes[0]["edits"]:
+            assert edit["newText"] == "total"
+            start = edit["range"]["start"]
+            line_offset = 0
+            for _ in range(start["line"]):
+                line_offset = source.index("\n", line_offset) + 1
+            # The rename source is ASCII, so UTF-16 columns equal byte offsets.
+            offsets.append(line_offset + start["character"])
+        expected_offsets = [
+            declaration,
+            source.index("count = helper"),
+            source.index("count)"),
+            source.index("count]"),
+            source.index("count; }"),
+            source.index("count + limit"),
+        ]
+        assert offsets == expected_offsets, (offsets, expected_offsets)
+        for offset in sorted(offsets, reverse=True):
+            edited = edited[:offset] + "total" + edited[offset + len("count") :]
+        assert "count" not in edited
+        assert "[total]() -> int { return total; }" in edited
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -4336,6 +4911,10 @@ def main():
     test_owned_move_capture_tooling(sys.argv[1], root)
     test_pack_fold_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
+    test_references_and_highlights(sys.argv[1], root)
+    test_document_symbols(sys.argv[1], root)
+    test_flat_document_symbols(sys.argv[1], root)
+    test_rename_tooling(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
         'int dependency_value = "bad";\n'

@@ -406,6 +406,12 @@ bool supportsPreferredCodeActions(const JsonValue *params) {
                     false);
 }
 
+bool supportsHierarchicalDocumentSymbols(const JsonValue *params) {
+  const JsonValue *documentSymbol = member(
+      member(member(params, "capabilities"), "textDocument"), "documentSymbol");
+  return boolMember(documentSymbol, "hierarchicalDocumentSymbolSupport", false);
+}
+
 bool contextAllowsQuickFix(const JsonValue *context) {
   const JsonValue *only = member(context, "only");
   const JsonArray *kinds = only != nullptr ? only->getAsArray() : nullptr;
@@ -1201,6 +1207,87 @@ JsonValue completionListJson(const lang::CompletionResult &completion,
                     {"items", std::move(items)}};
 }
 
+// LSP SymbolKind numbers for compiler-classified document symbols.
+int lspSymbolKind(lang::DocumentSymbolKind kind) {
+  switch (kind) {
+  case lang::DocumentSymbolKind::Namespace:
+    return 3;
+  case lang::DocumentSymbolKind::Class:
+    return 5;
+  case lang::DocumentSymbolKind::Struct:
+  case lang::DocumentSymbolKind::Union:
+    return 23;
+  case lang::DocumentSymbolKind::Interface:
+  case lang::DocumentSymbolKind::Concept:
+    return 11;
+  case lang::DocumentSymbolKind::Enum:
+    return 10;
+  case lang::DocumentSymbolKind::Enumerator:
+    return 22;
+  case lang::DocumentSymbolKind::Function:
+    return 12;
+  case lang::DocumentSymbolKind::Method:
+  case lang::DocumentSymbolKind::Destructor:
+    return 6;
+  case lang::DocumentSymbolKind::Constructor:
+    return 9;
+  case lang::DocumentSymbolKind::Operator:
+    return 25;
+  case lang::DocumentSymbolKind::Field:
+    return 8;
+  case lang::DocumentSymbolKind::Variable:
+    return 13;
+  case lang::DocumentSymbolKind::TypeAlias:
+    return 5;
+  }
+  return 13;
+}
+
+JsonArray documentSymbolArray(const std::vector<lang::DocumentSymbolInfo> &symbols,
+                              const std::string &source) {
+  JsonArray result;
+  for (const lang::DocumentSymbolInfo &symbol : symbols) {
+    JsonObject json{
+        {"name", symbol.name},
+        {"kind", lspSymbolKind(symbol.kind)},
+        {"range", rangeJson(source, symbol.range.start,
+                            symbol.range.end - symbol.range.start)},
+        {"selectionRange",
+         rangeJson(source, symbol.selectionRange.start,
+                   symbol.selectionRange.end - symbol.selectionRange.start)}};
+    if (!symbol.detail.empty()) {
+      json["detail"] = symbol.detail;
+    }
+    if (!symbol.children.empty()) {
+      json["children"] = documentSymbolArray(symbol.children, source);
+    }
+    result.push_back(std::move(json));
+  }
+  return result;
+}
+
+void flattenDocumentSymbols(const std::vector<lang::DocumentSymbolInfo> &symbols,
+                            const std::string &container,
+                            const std::string &clientUri,
+                            const std::string &source, JsonArray &result) {
+  for (const lang::DocumentSymbolInfo &symbol : symbols) {
+    JsonObject json{
+        {"name", symbol.name},
+        {"kind", lspSymbolKind(symbol.kind)},
+        {"location",
+         JsonObject{{"uri", clientUri},
+                    {"range", rangeJson(source, symbol.range.start,
+                                        symbol.range.end -
+                                            symbol.range.start)}}}};
+    if (!container.empty()) {
+      json["containerName"] = container;
+    }
+    result.push_back(std::move(json));
+    flattenDocumentSymbols(symbol.children, symbol.name, clientUri, source,
+                           result);
+  }
+}
+
 struct AnalysisRequest {
   std::string uri;
   std::string source;
@@ -1222,7 +1309,16 @@ struct CompletionRequest {
   bool snippetSupport = false;
 };
 
-enum class SemanticRequestKind { Tokens, Hover, Definition };
+enum class SemanticRequestKind {
+  Tokens,
+  Hover,
+  Definition,
+  References,
+  Highlights,
+  DocumentSymbols,
+  PrepareRename,
+  Rename,
+};
 
 struct PendingSemanticRequest {
   JsonValue id{nullptr};
@@ -1337,6 +1433,16 @@ private:
       hover(id, params);
     } else if (method == "textDocument/definition") {
       definition(id, params);
+    } else if (method == "textDocument/references") {
+      semanticFeature(id, params, SemanticRequestKind::References);
+    } else if (method == "textDocument/documentHighlight") {
+      semanticFeature(id, params, SemanticRequestKind::Highlights);
+    } else if (method == "textDocument/documentSymbol") {
+      semanticFeature(id, params, SemanticRequestKind::DocumentSymbols);
+    } else if (method == "textDocument/prepareRename") {
+      semanticFeature(id, params, SemanticRequestKind::PrepareRename);
+    } else if (method == "textDocument/rename") {
+      semanticFeature(id, params, SemanticRequestKind::Rename);
     } else if (method == "textDocument/completion") {
       completion(id, params);
     } else if (method == "textDocument/codeAction") {
@@ -1360,6 +1466,7 @@ private:
     diagnosticData = supportsDiagnosticData(params);
     codeActionLiterals = supportsCodeActionLiterals(params);
     preferredCodeActions = supportsPreferredCodeActions(params);
+    hierarchicalDocumentSymbols = supportsHierarchicalDocumentSymbols(params);
     JsonObject sync{{"openClose", true}, {"change", 1}, {"save", true}};
 
     JsonArray tokenTypes;
@@ -1386,7 +1493,11 @@ private:
         {"semanticTokensProvider", std::move(semanticTokens)},
         {"documentFormattingProvider", true},
         {"hoverProvider", true},
-        {"definitionProvider", true}};
+        {"definitionProvider", true},
+        {"referencesProvider", true},
+        {"documentHighlightProvider", true},
+        {"documentSymbolProvider", true},
+        {"renameProvider", JsonObject{{"prepareProvider", true}}}};
     if (codeActionLiterals) {
       capabilities["codeActionProvider"] =
           JsonObject{{"codeActionKinds", JsonArray{"quickfix"}},
@@ -1689,6 +1800,48 @@ private:
                                     info->range.end - info->range.start)}}));
   }
 
+  // Shared snapshot acquisition for semantic requests: answer from the
+  // current-generation snapshot, or queue the request until analysis
+  // publishes one for the document's current generation.
+  struct SnapshotAccess {
+    std::string source;
+    AnalysisSnapshot snapshot;
+    bool current = false;
+    bool queued = false;
+  };
+
+  SnapshotAccess acquireSnapshotOrQueue(const JsonValue *id,
+                                        const JsonValue *params,
+                                        const std::string &uri,
+                                        SemanticRequestKind kind) {
+    SnapshotAccess access;
+    const std::lock_guard lock(stateMutex);
+    const auto document = documents.find(uri);
+    const auto generation = analysisGenerations.find(uri);
+    const auto snapshot = analysisSnapshots.find(uri);
+    if (document != documents.end() &&
+        generation != analysisGenerations.end() &&
+        snapshot != analysisSnapshots.end() &&
+        snapshot->second.generation == generation->second &&
+        snapshot->second.frontend != nullptr) {
+      access.source = document->second;
+      access.snapshot = snapshot->second;
+      access.current = true;
+    } else if (id != nullptr && document != documents.end() &&
+               generation != analysisGenerations.end()) {
+      pendingSemanticRequests.push_back(
+          {.id = *id,
+           .params =
+               params != nullptr ? JsonValue(*params) : JsonValue(nullptr),
+           .idKey = requestIdKey(id),
+           .uri = uri,
+           .generation = generation->second,
+           .kind = kind});
+      access.queued = true;
+    }
+    return access;
+  }
+
   void hover(const JsonValue *id, const JsonValue *params) {
     const std::string uri =
         documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
@@ -1698,44 +1851,16 @@ private:
       sendJson(response(id, nullptr));
       return;
     }
-    std::string source;
-    AnalysisSnapshot snapshot;
-    bool hasCurrentSnapshot = false;
-    bool queued = false;
-    {
-      const std::lock_guard lock(stateMutex);
-      const auto document = documents.find(uri);
-      const auto currentGeneration = analysisGenerations.find(uri);
-      const auto currentSnapshot = analysisSnapshots.find(uri);
-      if (document != documents.end() &&
-          currentGeneration != analysisGenerations.end() &&
-          currentSnapshot != analysisSnapshots.end() &&
-          currentSnapshot->second.generation == currentGeneration->second &&
-          currentSnapshot->second.frontend != nullptr) {
-        source = document->second;
-        snapshot = currentSnapshot->second;
-        hasCurrentSnapshot = true;
-      } else if (id != nullptr && document != documents.end() &&
-                 currentGeneration != analysisGenerations.end()) {
-        pendingSemanticRequests.push_back(
-            {.id = *id,
-             .params =
-                 params != nullptr ? JsonValue(*params) : JsonValue(nullptr),
-             .idKey = requestIdKey(id),
-             .uri = uri,
-             .generation = currentGeneration->second,
-             .kind = SemanticRequestKind::Hover});
-        queued = true;
-      }
-    }
-    if (!hasCurrentSnapshot) {
-      if (!queued) {
+    const SnapshotAccess access =
+        acquireSnapshotOrQueue(id, params, uri, SemanticRequestKind::Hover);
+    if (!access.current) {
+      if (!access.queued) {
         sendJson(response(id, nullptr));
       }
       return;
     }
 
-    respondHover(id, *position, std::move(source), snapshot);
+    respondHover(id, *position, access.source, access.snapshot);
   }
 
   void respondDefinition(const JsonValue *id, std::string_view uri,
@@ -1789,44 +1914,281 @@ private:
       return;
     }
 
-    std::string source;
-    AnalysisSnapshot snapshot;
-    bool hasCurrentSnapshot = false;
-    bool queued = false;
-    {
-      const std::lock_guard lock(stateMutex);
-      const auto document = documents.find(uri);
-      const auto generation = analysisGenerations.find(uri);
-      const auto current = analysisSnapshots.find(uri);
-      if (document != documents.end() &&
-          generation != analysisGenerations.end() &&
-          current != analysisSnapshots.end() &&
-          current->second.generation == generation->second &&
-          current->second.frontend != nullptr) {
-        source = document->second;
-        snapshot = current->second;
-        hasCurrentSnapshot = true;
-      } else if (id != nullptr && document != documents.end() &&
-                 generation != analysisGenerations.end()) {
-        pendingSemanticRequests.push_back(
-            {.id = *id,
-             .params =
-                 params != nullptr ? JsonValue(*params) : JsonValue(nullptr),
-             .idKey = requestIdKey(id),
-             .uri = uri,
-             .generation = generation->second,
-             .kind = SemanticRequestKind::Definition});
-        queued = true;
-      }
-    }
-    if (!hasCurrentSnapshot) {
-      if (!queued) {
+    const SnapshotAccess access = acquireSnapshotOrQueue(
+        id, params, uri, SemanticRequestKind::Definition);
+    if (!access.current) {
+      if (!access.queued) {
         sendJson(response(id, nullptr));
       }
       return;
     }
 
-    respondDefinition(id, uri, *position, std::move(source), snapshot);
+    respondDefinition(id, uri, *position, access.source, access.snapshot);
+  }
+
+  void semanticFeature(const JsonValue *id, const JsonValue *params,
+                       SemanticRequestKind kind) {
+    const std::string uri =
+        documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
+    const SnapshotAccess access = acquireSnapshotOrQueue(id, params, uri, kind);
+    if (!access.current) {
+      if (!access.queued) {
+        sendJson(response(id, nullptr));
+      }
+      return;
+    }
+    respondSemanticFeature(kind, id, params, uri, access.source,
+                           access.snapshot);
+  }
+
+  void respondSemanticFeature(SemanticRequestKind kind, const JsonValue *id,
+                              const JsonValue *params, const std::string &uri,
+                              const std::string &source,
+                              const AnalysisSnapshot &snapshot) {
+    if (kind == SemanticRequestKind::DocumentSymbols) {
+      respondDocumentSymbols(id, uri, source, snapshot);
+      return;
+    }
+    const std::optional<Position> position =
+        positionMember(member(params, "position"));
+    if (!position) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    switch (kind) {
+    case SemanticRequestKind::References:
+      respondReferences(
+          id, uri, *position, source, snapshot,
+          boolMember(member(params, "context"), "includeDeclaration", false));
+      break;
+    case SemanticRequestKind::Highlights:
+      respondHighlights(id, *position, source, snapshot);
+      break;
+    case SemanticRequestKind::PrepareRename:
+      respondPrepareRename(id, *position, source, snapshot);
+      break;
+    case SemanticRequestKind::Rename:
+      respondRename(id, uri, *position, source, snapshot,
+                    stringMember(params, "newName"));
+      break;
+    default:
+      sendJson(response(id, nullptr));
+      break;
+    }
+  }
+
+  // Converts a compiler span into an LSP location, preferring the client's
+  // own spelling of the URI for open documents.
+  std::optional<JsonValue> locationJson(const lang::SourceSpan &span,
+                                        const AnalysisSnapshot &snapshot,
+                                        std::string_view rootUri,
+                                        const std::string &rootSource) {
+    const std::string targetSource = sourceForSpan(
+        span, snapshot.frontend->sources, snapshot.rootPath, rootSource);
+    if (targetSource.empty()) {
+      return std::nullopt;
+    }
+    std::string targetUri = uriForSource(span.source, snapshot.rootPath,
+                                         rootUri);
+    {
+      const std::lock_guard lock(stateMutex);
+      if (const auto preferred = clientUris.find(targetUri);
+          preferred != clientUris.end()) {
+        targetUri = preferred->second;
+      }
+    }
+    return JsonValue(JsonObject{
+        {"uri", targetUri},
+        {"range", rangeJson(targetSource, span.start, span.end - span.start)}});
+  }
+
+  void respondReferences(const JsonValue *id, std::string_view uri,
+                         Position position, const std::string &source,
+                         const AnalysisSnapshot &snapshot,
+                         bool includeDeclaration) {
+    const std::optional<std::size_t> byteOffset =
+        SourcePositionIndex(source).byteOffset(position);
+    if (!byteOffset) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const std::optional<lang::ReferencesInfo> info =
+        lang::LanguageQueries().references(*snapshot.frontend, sourceUnit,
+                                           *byteOffset, includeDeclaration);
+    if (!info) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    JsonArray locations;
+    for (const lang::ReferenceSite &site : info->sites) {
+      if (std::optional<JsonValue> location =
+              locationJson(site.span, snapshot, uri, source)) {
+        locations.push_back(std::move(*location));
+      }
+    }
+    sendJson(response(id, JsonValue(std::move(locations))));
+  }
+
+  void respondHighlights(const JsonValue *id, Position position,
+                         const std::string &source,
+                         const AnalysisSnapshot &snapshot) {
+    const std::optional<std::size_t> byteOffset =
+        SourcePositionIndex(source).byteOffset(position);
+    if (!byteOffset) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const std::optional<lang::ReferencesInfo> info =
+        lang::LanguageQueries().references(*snapshot.frontend, sourceUnit,
+                                           *byteOffset, true);
+    if (!info) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    JsonArray highlights;
+    for (const lang::ReferenceSite &site : info->sites) {
+      if (!site.span.source.empty() && site.span.source != snapshot.rootPath) {
+        continue;
+      }
+      highlights.push_back(JsonObject{
+          {"range",
+           rangeJson(source, site.span.start, site.span.end - site.span.start)},
+          {"kind",
+           lang::hasRole(site.roles, lang::OccurrenceRole::Write) ? 3 : 2}});
+    }
+    sendJson(response(id, JsonValue(std::move(highlights))));
+  }
+
+  void respondPrepareRename(const JsonValue *id, Position position,
+                            const std::string &source,
+                            const AnalysisSnapshot &snapshot) {
+    const std::optional<std::size_t> byteOffset =
+        SourcePositionIndex(source).byteOffset(position);
+    if (!byteOffset) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const std::optional<lang::RenamePreparation> preparation =
+        lang::LanguageQueries().prepareRename(*snapshot.frontend, sourceUnit,
+                                              *byteOffset);
+    if (!preparation) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    sendJson(response(
+        id, JsonObject{{"range", rangeJson(source, preparation->origin.start,
+                                           preparation->origin.end -
+                                               preparation->origin.start)},
+                       {"placeholder", preparation->placeholder}}));
+  }
+
+  void respondRename(const JsonValue *id, std::string_view uri,
+                     Position position, const std::string &source,
+                     const AnalysisSnapshot &snapshot,
+                     const std::string &newName) {
+    const std::optional<std::size_t> byteOffset =
+        SourcePositionIndex(source).byteOffset(position);
+    if (!byteOffset) {
+      sendJson(errorResponse(id, -32602, "Invalid position"));
+      return;
+    }
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const lang::RenameOutcome outcome = lang::LanguageQueries().rename(
+        *snapshot.frontend, sourceUnit, *byteOffset, newName);
+    if (!outcome.edits) {
+      sendJson(errorResponse(id, -32803,
+                             outcome.failure.empty() ? "Rename failed."
+                                                     : outcome.failure));
+      return;
+    }
+
+    struct FileEdits {
+      std::string clientUri;
+      std::optional<std::int64_t> version;
+      JsonArray edits;
+    };
+    std::vector<std::string> order;
+    std::unordered_map<std::string, FileEdits> byUri;
+    for (const lang::SourceSpan &span : outcome.edits->spans) {
+      const std::string targetSource = sourceForSpan(
+          span, snapshot.frontend->sources, snapshot.rootPath, source);
+      if (targetSource.empty()) {
+        sendJson(errorResponse(id, -32803,
+                               "Rename coverage is incomplete in this "
+                               "snapshot."));
+        return;
+      }
+      const std::string targetKey =
+          uriForSource(span.source, snapshot.rootPath, uri);
+      auto entry = byUri.find(targetKey);
+      if (entry == byUri.end()) {
+        entry = byUri.emplace(targetKey, FileEdits{}).first;
+        order.push_back(targetKey);
+      }
+      entry->second.edits.push_back(JsonObject{
+          {"range", rangeJson(targetSource, span.start, span.end - span.start)},
+          {"newText", newName}});
+    }
+    {
+      const std::lock_guard lock(stateMutex);
+      for (const std::string &key : order) {
+        FileEdits &entry = byUri.at(key);
+        entry.clientUri = clientUriForKeyLocked(key);
+        if (const auto version = documentVersions.find(key);
+            version != documentVersions.end()) {
+          entry.version = version->second;
+        }
+      }
+    }
+
+    if (workspaceDocumentChanges) {
+      JsonArray documentChanges;
+      for (const std::string &key : order) {
+        FileEdits &entry = byUri.at(key);
+        JsonObject textDocument{{"uri", entry.clientUri}};
+        textDocument["version"] =
+            entry.version ? JsonValue(*entry.version) : JsonValue(nullptr);
+        documentChanges.push_back(
+            JsonObject{{"textDocument", std::move(textDocument)},
+                       {"edits", std::move(entry.edits)}});
+      }
+      sendJson(response(
+          id, JsonObject{{"documentChanges", std::move(documentChanges)}}));
+      return;
+    }
+    JsonObject changes;
+    for (const std::string &key : order) {
+      changes[byUri.at(key).clientUri] = std::move(byUri.at(key).edits);
+    }
+    sendJson(response(id, JsonObject{{"changes", std::move(changes)}}));
+  }
+
+  void respondDocumentSymbols(const JsonValue *id, const std::string &uri,
+                              const std::string &source,
+                              const AnalysisSnapshot &snapshot) {
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const std::vector<lang::DocumentSymbolInfo> symbols =
+        lang::LanguageQueries().documentSymbols(*snapshot.frontend, sourceUnit);
+    if (hierarchicalDocumentSymbols) {
+      sendJson(response(id, JsonValue(documentSymbolArray(symbols, source))));
+      return;
+    }
+    std::string clientUri;
+    {
+      const std::lock_guard lock(stateMutex);
+      clientUri = clientUriForKeyLocked(uri);
+    }
+    JsonArray flat;
+    flattenDocumentSymbols(symbols, {}, clientUri, source, flat);
+    sendJson(response(id, JsonValue(std::move(flat))));
   }
 
   void completion(const JsonValue *id, const JsonValue *params) {
@@ -2190,13 +2552,22 @@ private:
         sendJson(errorResponse(request.id, -32801, "Content modified"));
       } else if (request.kind == SemanticRequestKind::Tokens) {
         semanticTokens(&request.id, &request.params);
-      } else if (!position) {
-        sendJson(response(request.id, nullptr));
       } else if (request.kind == SemanticRequestKind::Hover) {
-        respondHover(&request.id, *position, std::move(source), snapshot);
+        if (!position) {
+          sendJson(response(request.id, nullptr));
+        } else {
+          respondHover(&request.id, *position, source, snapshot);
+        }
+      } else if (request.kind == SemanticRequestKind::Definition) {
+        if (!position) {
+          sendJson(response(request.id, nullptr));
+        } else {
+          respondDefinition(&request.id, request.uri, *position, source,
+                            snapshot);
+        }
       } else {
-        respondDefinition(&request.id, request.uri, *position,
-                          std::move(source), snapshot);
+        respondSemanticFeature(request.kind, &request.id, &request.params,
+                               request.uri, source, snapshot);
       }
     }
   }
@@ -2711,6 +3082,7 @@ private:
   bool diagnosticData = false;
   bool codeActionLiterals = false;
   bool preferredCodeActions = false;
+  bool hierarchicalDocumentSymbols = false;
   std::atomic<std::uint64_t> nextServerRequestId{1};
   std::thread analysisWorker;
   std::thread completionWorker;

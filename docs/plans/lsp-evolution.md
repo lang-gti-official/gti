@@ -8,9 +8,10 @@ Operational prerequisites and the current tooling queue are maintained in
 client-gated status of project indexing and process-isolated analysis.
 
 GTI already retains immutable compiler snapshots, compiler-owned symbol
-occurrences, semantic tokens, hover, completion, definition, diagnostics, and
-diagnostic quick fixes. The next work should extend that shared model instead of
-building feature-specific semantic systems.
+occurrences, semantic tokens, hover, completion, definition, references,
+document highlights, document symbols, fail-closed function-local rename,
+diagnostics, and diagnostic quick fixes. The next work should extend that
+shared model instead of building feature-specific semantic systems.
 
 ## Near-Term Priorities
 
@@ -40,19 +41,27 @@ their Markdown once, and attach it to compiler symbols. Hover, completion,
 signature help, and generated API documentation should consume the same value
 for standard and third-party source.
 
-Add full declaration/expression extents only where a concrete feature needs
-them. Keep exact name ranges distinct from full extents.
+Statement-level declaration extents are implemented: the parser stamps every
+statement funnel result with its first-through-last-token span, and document
+symbols consume them. Exact name ranges stay distinct from full extents.
+Expression-level extents remain future work gated on a concrete feature.
 
 ### 2. Complete compiler-owned semantic queries
 
-Extend `LanguageQueries` and `SemanticDatabase` rather than adding LSP tables:
+Current-snapshot references by `SymbolId` and occurrence role, document
+highlights over the same query, and fail-closed rename (function-local
+identities, lambda-capture closure, reserved-name and visibility-collision
+validation, source-verified edits) are implemented in `LanguageQueries`.
+
+Still extend `LanguageQueries` and `SemanticDatabase` rather than adding LSP
+tables:
 
 - expose concrete generic-instance diagnostics through an editor-safe compiler
   query without requiring the protocol layer to run or reproduce HIR lowering;
 - preferred declaration/definition and overload-set queries;
-- current-snapshot references by `SymbolId` and occurrence role;
-- rename validation and exact edits for complete-enough scopes;
 - signature help from the selected overload and argument position;
+- rename beyond function-local scope once reverse-dependency coverage exists
+  (a project index or workspace-wide analysis), keeping the fail-closed rule;
 - source-unit/default-library/internal visibility as semantic properties.
 
 References and rename must fail closed when identity or coverage is incomplete.
