@@ -1708,6 +1708,14 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Intrinsic,
        .spelling = "gti_internal_backend_helpers_v1"});
+  // HostedEntry names the shipped program-entry adapter: every hosted
+  // artifact carries the generated main() that marshals arguments,
+  // forwards the entry call, and routes defined failure through the
+  // terminal containment contract. The entry function's own body is
+  // ordinary; this row is what its analysis demand resolves against.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::HostedEntry,
+       .spelling = "gti_hosted_entry_adapter_v1"});
   // Expected names the artifact's shipped expected representation. The
   // row's spelling is the exact error-construction call the compatibility
   // path emits for the selected standard — std::unexpected under C++23,

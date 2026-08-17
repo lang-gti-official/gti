@@ -1950,6 +1950,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         return;
       }
       if (mirBody != nullptr) {
+        // The shipped program-entry adapter forwards to the emitted entry
+        // body regardless of which route produced it.
+        if (info != nullptr && info->entryKind != ProgramEntryKind::None) {
+          ownedArgumentsEntry = &stmt;
+        }
         output << ' ';
         if (mirCfg != nullptr) {
           emitMirScalarCfgBody(*mirCfg);
