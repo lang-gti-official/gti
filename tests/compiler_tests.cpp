@@ -323,28 +323,42 @@ int main() {
           *std::get_if<bool>(foldedLogical),
       "constant folding should consume typed HIR and key results by value ID");
 
+  // The backend consumes the verified optimized MIR exactly as the
+  // production pipeline supplies it; the fold evidence is the MIR
+  // authority's spelling.
+  const lang::OptimizedProgram optimizedProgram =
+      lang::OptimizationPipeline().run(
+          lang::OptimizationRequest{.hir = frontend.hir,
+                                    .mir = frontend.mir,
+                                    .level = lang::OptimizationLevel::O1,
+                                    .compatibility = &optimized});
+  expect(optimizedProgram.valid(),
+         "the owned MIR pipeline should optimize the fixture");
   std::unique_ptr<lang::Backend> backend = std::make_unique<lang::CppBackend>();
   const lang::BackendArtifact artifact =
       backend->generate({.program = frontend.program,
                          .semantics = frontend.semantics,
                          .hir = frontend.hir,
-                         .mir = frontend.mir,
+                         .mir = optimizedProgram.mir,
                          .sourceMir = &frontend.mir,
                          .optimizations = optimized});
   expect(backend->name() == "cpp" &&
              artifact.kind == lang::BackendArtifactKind::Source &&
              artifact.extension == ".cpp",
          "the C++ emitter should be available through the backend contract");
-  expect(artifact.contents.find("const bool folded = true") !=
-             std::string::npos,
+  const std::size_t mainBodyStart = artifact.contents.find("function-instance");
+  const std::string_view mainOnward =
+      mainBodyStart == std::string::npos
+          ? std::string_view()
+          : std::string_view(artifact.contents).substr(mainBodyStart);
+  expect(mainOnward.find("= true;") != std::string_view::npos &&
+             mainOnward.find(" < __gti_mir_v_") == std::string_view::npos,
          "the C++ backend should consume optimization results");
-  expect(artifact.contents.find(
-             "const std::int32_t arithmetic = static_cast<std::int32_t>(3)") !=
-             std::string::npos,
+  expect(mainOnward.find("= static_cast<std::int32_t>(3);") !=
+             std::string_view::npos,
          "proven in-range integer arithmetic should fold to a typed constant");
-  expect(artifact.contents.find("if (arithmetic == 3)") != std::string::npos &&
-             artifact.contents.find("if ((arithmetic == 3))") ==
-                 std::string::npos,
+  expect(!mainOnward.empty() &&
+             mainOnward.find("if ((") == std::string_view::npos,
          "contextual binary conditions should not gain warning-producing "
          "parentheses in C++");
 

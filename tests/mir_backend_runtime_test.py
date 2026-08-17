@@ -108,13 +108,14 @@ def main() -> int:
                     or generated.count(
                         "// GTI verified-MIR body: scalar-cfg-failure-v1"
                     )
-                    != 4
+                    != 5
                 ):
                     sys.stderr.write(
-                        "the four failure-form bodies should emit their "
+                        "the five failure-form bodies should emit their "
                         "transformed bodies plus boundary wrappers (ADR 017: "
                         "compatibility_checked, checked_leaf, checked_caller, "
-                        "and the prelude's file_handle release member)\n"
+                        "the prelude's file_handle release member, and the "
+                        "fixture's entry main)\n"
                     )
                     return 1
                 if (

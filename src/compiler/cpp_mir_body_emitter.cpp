@@ -2818,9 +2818,20 @@ private:
     if (failureForm && instruction.kind == MirInstructionKind::Drop &&
         instruction.lifecycle.size() == 1 &&
         instruction.lifecycle.front().failureCleanup) {
-      output << "// GTI MIR failure cleanup drop-obligation "
-             << instruction.lifecycle.front().source << " place "
-             << *instruction.destination << "\n";
+      // Failure cleanup destroys the engaged slot exactly like the
+      // success path: the propagate edge must never leak an engaged
+      // lifetime slot past the early false return.
+      const MirPlace *slot =
+          instruction.destination
+              ? facts.body.findPlace(*instruction.destination)
+              : nullptr;
+      if (slot == nullptr || !slotPlace(*slot)) {
+        throw std::logic_error(
+            "verified MIR failure cleanup lost its lifetime slot");
+      }
+      output << "__gti_mir_p_" << *instruction.destination << ".destroy();"
+             << " // failure cleanup drop-obligation "
+             << instruction.lifecycle.front().source << '\n';
       return;
     }
     if (instruction.kind == MirInstructionKind::Construct) {
@@ -4122,6 +4133,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (failureForm && instruction.lifecycle.size() == 1 &&
             instruction.lifecycle.front().failureCleanup &&
             instruction.destination) {
+          // The failure-cleanup text destroys the slot, so the probe
+          // demands the same slot place the success path demands.
+          const MirPlace *cleanupSlot =
+              body.findPlace(*instruction.destination);
+          if (cleanupSlot == nullptr || !slotPlace(*cleanupSlot)) {
+            return false;
+          }
           continue;
         }
         const MirPlace *slot = instruction.destination

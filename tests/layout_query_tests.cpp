@@ -513,25 +513,23 @@ void testHirMirAndBackend() {
                                    .mir = result.mir,
                                    .sourceMir = &result.mir,
                                    .optimizations = optimizations});
-  const auto emittedInitializer = [&](std::string_view name,
-                                      std::uint64_t expected) {
-    const std::size_t binding =
-        artifact.contents.find(std::string(name) + " =");
-    const std::size_t equal = artifact.contents.find('=', binding);
-    const std::size_t semicolon = artifact.contents.find(';', equal);
-    if (binding == std::string::npos || equal == std::string::npos ||
-        semicolon == std::string::npos) {
-      return false;
-    }
-    const std::string_view initializer(artifact.contents.data() + equal,
-                                       semicolon - equal);
-    return initializer.find("sizeof") == std::string_view::npos &&
-           initializer.find("alignof") == std::string_view::npos &&
-           initializer.find(std::to_string(expected)) != std::string_view::npos;
+  // The body emits from verified MIR: layout results stage as the
+  // frontend-computed literals, and the emitted body region carries no
+  // native layout query at all (the sealed helpers above it may).
+  const std::size_t layoutBodyStart =
+      artifact.contents.find("function-instance");
+  const std::string_view layoutBody =
+      layoutBodyStart == std::string::npos
+          ? std::string_view()
+          : std::string_view(artifact.contents).substr(layoutBodyStart);
+  const auto stagedLiteral = [&](std::uint64_t expected) {
+    return layoutBody.find(">(" + std::to_string(expected) + ")") !=
+           std::string_view::npos;
   };
-  expect(emittedInitializer("bool_size", 1) &&
-             emittedInitializer("matrix_size", 24) &&
-             emittedInitializer("pointer_alignment", 8),
+  expect(!layoutBody.empty() && stagedLiteral(1) && stagedLiteral(24) &&
+             stagedLiteral(8) &&
+             layoutBody.find("sizeof") == std::string_view::npos &&
+             layoutBody.find("alignof") == std::string_view::npos,
          "the backend should emit frontend-computed numeric constants, not "
          "native C++ layout queries for source expressions");
 

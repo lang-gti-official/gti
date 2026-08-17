@@ -218,7 +218,7 @@ int main() {
   return 0;
 }
 )",
-     "prefix storage append exceeds its capacity"},
+     "invalid_storage_state in relocation_capacity"},
     {"pop-empty",
      R"(
 int main() {
@@ -228,7 +228,7 @@ int main() {
   return 0;
 }
 )",
-     "prefix storage pop on an empty prefix"},
+     "invalid_storage_state in uninitialized_access"},
     {"read-prefix",
      R"(
 int main() {
@@ -252,7 +252,7 @@ int main() {
   return 0;
 }
 )",
-     "prefix storage relocation destination is occupied"},
+     "invalid_storage_state in occupied_relocation_destination"},
     {"insert-outside",
      R"(
 int main() {
@@ -263,7 +263,7 @@ int main() {
   return 0;
 }
 )",
-     "prefix storage insert outside the live prefix"},
+     "index_out_of_bounds in private_storage"},
     {"insert-capacity",
      R"(
 int main() {
@@ -274,7 +274,7 @@ int main() {
   return 0;
 }
 )",
-     "prefix storage insert exceeds its capacity"},
+     "invalid_storage_state in relocation_capacity"},
     {"erase-outside",
      R"(
 int main() {
@@ -285,7 +285,7 @@ int main() {
   return 0;
 }
 )",
-     "prefix storage erase outside the live prefix"},
+     "index_out_of_bounds in private_storage"},
     {"relocate-capacity",
      R"(
 int main() {
@@ -299,7 +299,7 @@ int main() {
   return 0;
 }
 )",
-     "prefix storage relocation exceeds the destination"},
+     "invalid_storage_state in relocation_capacity"},
 };
 
 } // namespace
@@ -389,7 +389,12 @@ int main(int argc, char **argv) {
            "the editing fixture must run clean under ASan/UBSan");
   }
 
-  // Every runtime guard trips exactly its own diagnostic.
+  // Every misuse scenario trips exactly the surface that reaches it
+  // first: MIR-emitted mains route storage misuse through the defined
+  // failure contract (GTI-R0007/GTI-R0010 records, exit 70), while a
+  // scenario still reaching the sealed runtime guard pins that guard's
+  // exact diagnostic — the guards remain defense in depth behind the
+  // defined checks.
   for (const GuardScenario &guard : guards) {
     const std::filesystem::path artifact =
         emitArtifact(std::string(guard.name), guard.source);

@@ -6523,9 +6523,10 @@ private:
     if (function.hasCLinkage() || function.requiresClause() ||
         !function.genericParameters().empty() || info->id == 0 ||
         !info->genericParameters.empty() || !info->requirements.empty() ||
-        info->parameterPack || info->entryPoint ||
-        info->entryKind != ProgramEntryKind::None || info->staticMember ||
-        info->internalLinkage || info->linkage != LanguageLinkage::Gti ||
+        info->parameterPack ||
+        info->entryKind == ProgramEntryKind::OwnedArguments ||
+        info->staticMember || info->internalLinkage ||
+        info->linkage != LanguageLinkage::Gti ||
         !info->externalSymbol.empty() || info->virtualMethod ||
         info->pureVirtual || info->overrideMethod ||
         info->intrinsic != IntrinsicKind::None ||

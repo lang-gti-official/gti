@@ -211,7 +211,7 @@ void testSelectedFamilyAndCompatibilityFallback() {
   // (ADR 017): its transformed body emits from verified MIR and the
   // same-signature wrapper routes failure into the structured contract.
   expect(count(o0Artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-failure-v1") == 3 &&
+               "// GTI verified-MIR body: scalar-cfg-failure-v1") == 4 &&
              functionDefinition(o0Artifact.contents, "compatibility_checked")
                      .find("gti_rt_failure_terminate_v1") != std::string::npos,
          "the checked arithmetic sibling should emit its transformed "
