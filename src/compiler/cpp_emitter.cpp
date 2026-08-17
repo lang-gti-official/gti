@@ -6689,6 +6689,9 @@ private:
         // void under this convention.
         !(info->returnType == SemanticType::Void ||
           isMirScalarCfgType(info->returnType) ||
+          // Expected results publish by value through the ordinary
+          // out-parameter under the transformed convention.
+          info->returnType.kind == SemanticType::Expected ||
           (info->returnBorrowOrigin != BorrowOriginKind::None &&
            info->returnType.kind == SemanticType::Reference))) {
       return nullptr;

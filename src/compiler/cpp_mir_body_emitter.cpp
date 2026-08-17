@@ -4628,7 +4628,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            // A loan-returning body publishes through a `T **`
            // out-parameter (ADR 018 §5); its Return-with-loan rule and
            // the caller's paired loan own the rest of the proof.
-           *returnKind != CppMirTypeRepresentationKind::Reference)) {
+           *returnKind != CppMirTypeRepresentationKind::Reference &&
+           // An expected-typed result publishes by value through the
+           // ordinary out-parameter; the scalar-payload demand keeps the
+           // boundary default-constructible on every shipped standard.
+           !(*returnKind == CppMirTypeRepresentationKind::Expected &&
+             function->returnType.arguments.size() == 2 &&
+             cppMirExpectedTypeRepresentation(
+                 function->returnType.arguments.front()) &&
+             (*cppMirExpectedTypeRepresentation(
+                  function->returnType.arguments.front()) ==
+                  CppMirTypeRepresentationKind::Scalar ||
+              *cppMirExpectedTypeRepresentation(
+                  function->returnType.arguments.front()) ==
+                  CppMirTypeRepresentationKind::Void)))) {
         return false;
       }
     }
@@ -5667,12 +5680,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !returnKind ||
                 (*returnKind != CppMirTypeRepresentationKind::Scalar &&
                  *returnKind != CppMirTypeRepresentationKind::Void &&
+                 *returnKind != CppMirTypeRepresentationKind::Expected &&
                  // A reference result arrives through the callee's `T **`
                  // out-parameter, landing directly in this call's paired
                  // loan pointer (ADR 018 §5).
                  !(*returnKind == CppMirTypeRepresentationKind::Reference &&
                    producedCallResultLoan(body, instruction) != nullptr)) ||
-                (*returnKind == CppMirTypeRepresentationKind::Scalar &&
+                ((*returnKind == CppMirTypeRepresentationKind::Scalar ||
+                  *returnKind == CppMirTypeRepresentationKind::Expected) &&
                  !typeRow(target->returnType))) {
               return false;
             }
