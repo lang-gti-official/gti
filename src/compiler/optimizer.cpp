@@ -1,6 +1,7 @@
 #include "gti/optimizer.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <unordered_set>
 #include <utility>
@@ -366,6 +367,13 @@ foldLiteralIdentities(MirProgram &program,
   LiteralIdentityFoldResult result{
       .report = {.name = "fold-literal-identities"}};
   MirProgramEditor editor(program);
+  const auto bodyKeyOf = [](MirBodyAddress address) {
+    return std::pair<std::size_t, HirClassInstanceId>(
+        static_cast<std::size_t>(address.kind), address.owner);
+  };
+  std::map<std::pair<std::size_t, HirClassInstanceId>,
+           std::unordered_map<MirValueId, bool>>
+      foldedBooleans;
   for (const MirBodyAddress bodyAddress : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, bodyAddress);
     if (body == nullptr) {
@@ -406,7 +414,68 @@ foldLiteralIdentities(MirProgram &program,
               {.body = bodyAddress, .block = block.id, .index = index},
               instruction.id, instruction.operation, folded);
         }
+        if (instruction.result) {
+          if (const bool *boolean = std::get_if<bool>(&folded)) {
+            foldedBooleans[bodyKeyOf(bodyAddress)][*instruction.result] =
+                *boolean;
+          }
+        }
       }
+    }
+  }
+  // A branch whose condition is a literal bool — from lowering or from a
+  // fold queued in this same batch — rewrites to a Goto to its taken
+  // target. The editor re-reads the literal at application, and the
+  // verifier's BranchFold replay owns the standing proof.
+  for (const MirBodyAddress bodyAddress : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, bodyAddress);
+    if (body == nullptr) {
+      continue;
+    }
+    // The fold changes reachability, so this slice stays inside bodies
+    // whose semantics carry no path-sensitive schedules: no loans, drop
+    // obligations, cleanup boundaries, failure records, or frozen
+    // program-initialization steps. Wider bodies wait for the fold to
+    // learn those schedules rather than silently invalidating them.
+    const bool pathSensitiveSchedules =
+        !body->loans.empty() || !body->dropObligations.empty() ||
+        !body->cleanupBoundaries.empty() || !body->failureRecords.empty() ||
+        std::any_of(body->blocks.begin(), body->blocks.end(),
+                    [](const MirBlock &block) {
+                      return block.programInitializationStep != 0;
+                    });
+    if (pathSensitiveSchedules || bodyAddress.kind != MirBodyKind::Function) {
+      continue;
+    }
+    const auto folded = foldedBooleans.find(bodyKeyOf(bodyAddress));
+    for (const MirBlock &block : body->blocks) {
+      if (block.terminator.kind != MirTerminatorKind::Branch ||
+          !block.terminator.value ||
+          block.terminator.value->kind != MirOperandKind::Value) {
+        continue;
+      }
+      const MirValueId condition = block.terminator.value->value;
+      std::optional<bool> taken;
+      if (const MirInstruction *definition =
+              definingInstruction(*body, condition);
+          definition != nullptr &&
+          definition->kind == MirInstructionKind::Compute &&
+          definition->operation == MirOperation::Literal &&
+          definition->literal) {
+        if (const bool *boolean = std::get_if<bool>(&*definition->literal)) {
+          taken = *boolean;
+        }
+      }
+      if (!taken && folded != foldedBooleans.end()) {
+        const auto queued = folded->second.find(condition);
+        if (queued != folded->second.end()) {
+          taken = queued->second;
+        }
+      }
+      if (!taken) {
+        continue;
+      }
+      editor.queueBranchFold(bodyAddress, block.id, condition, *taken);
     }
   }
 

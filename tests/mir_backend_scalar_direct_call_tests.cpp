@@ -320,10 +320,10 @@ void testFamilyAndSummary(const std::filesystem::path &fixture) {
          "assignment arguments should become ordered CallInputs before the "
          "direct Call");
   const std::string dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v32 ") &&
+  expect(dump.starts_with("mir-v33 ") &&
              dump.find("definition=source may-raise-defined-failure=0") !=
                  std::string::npos,
-         "mir-v32 should serialize declaration kind and failure effects");
+         "mir-v33 should serialize declaration kind and failure effects");
 
   const lang::OptimizationPipeline pipeline;
   for (const lang::OptimizationLevel level :
@@ -376,7 +376,7 @@ int main() { return 0; }
                  .print(frontend.mir)
                  .find("definition=runtime may-raise-defined-failure=1") !=
              std::string::npos,
-         "mir-v32 should serialize the runtime declaration category");
+         "mir-v33 should serialize the runtime declaration category");
 }
 
 void testMutations(const std::filesystem::path &fixture) {

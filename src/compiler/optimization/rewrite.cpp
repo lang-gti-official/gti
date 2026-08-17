@@ -71,11 +71,22 @@ void MirProgramEditor::queueComputeFoldReplacement(
                      .computeFold = true});
 }
 
+void MirProgramEditor::queueBranchFold(MirBodyAddress body, MirBlockId block,
+                                       MirValueId expectedCondition,
+                                       bool taken) {
+  branchFolds.push_back({.body = body,
+                         .block = block,
+                         .expectedCondition = expectedCondition,
+                         .taken = taken});
+}
+
 MirEditResult MirProgramEditor::apply() {
   MirEditResult result;
   std::vector<LiteralReplacement> queued = std::move(patches);
   patches.clear();
-  if (queued.empty()) {
+  std::vector<BranchFold> queuedBranchFolds = std::move(branchFolds);
+  branchFolds.clear();
+  if (queued.empty() && queuedBranchFolds.empty()) {
     return result;
   }
 
@@ -157,6 +168,25 @@ MirEditResult MirProgramEditor::apply() {
     return result;
   }
 
+  for (const BranchFold &fold : queuedBranchFolds) {
+    const MirBody *target = findMirBody(program, fold.body);
+    const MirBlock *block =
+        target == nullptr ? nullptr : target->findBlock(fold.block);
+    if (block == nullptr ||
+        block->terminator.kind != MirTerminatorKind::Branch ||
+        !block->terminator.value ||
+        block->terminator.value->kind != MirOperandKind::Value ||
+        block->terminator.value->value != fold.expectedCondition ||
+        (fold.taken ? block->terminator.target
+                    : block->terminator.elseTarget) == 0) {
+      addError(result, {.body = fold.body, .block = fold.block}, 0,
+               "MIR branch fold target is not the expected literal branch");
+    }
+  }
+  if (!result.verification.valid()) {
+    return result;
+  }
+
   MirProgram candidate = program;
   std::vector<MirBodyAddress> touched;
   for (const LiteralReplacement &patch : queued) {
@@ -187,12 +217,57 @@ MirEditResult MirProgramEditor::apply() {
     }
   }
 
+  for (const BranchFold &fold : queuedBranchFolds) {
+    MirBody *target = findMirBody(candidate, fold.body);
+    MirBlock *block = nullptr;
+    for (MirBlock &candidateBlock : target->blocks) {
+      if (candidateBlock.id == fold.block) {
+        block = &candidateBlock;
+      }
+    }
+    MirTerminator &terminator = block->terminator;
+    // The folded condition must be a literal bool in the candidate (the
+    // literal patches above may be what folded it) agreeing with the
+    // taken direction.
+    const bool *condition = nullptr;
+    for (const MirBlock &candidateBlock : target->blocks) {
+      for (const MirInstruction &instruction : candidateBlock.instructions) {
+        if (instruction.result &&
+            *instruction.result == fold.expectedCondition &&
+            instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::Literal &&
+            instruction.literal) {
+          condition = std::get_if<bool>(&*instruction.literal);
+        }
+      }
+    }
+    if (condition == nullptr || *condition != fold.taken) {
+      addError(result, {.body = fold.body, .block = fold.block}, 0,
+               "MIR branch fold condition is not the agreed literal");
+      continue;
+    }
+    terminator.kind = MirTerminatorKind::Goto;
+    terminator.target = fold.taken ? terminator.target : terminator.elseTarget;
+    terminator.elseTarget = 0;
+    terminator.value.reset();
+    terminator.provenance =
+        MirTerminatorProvenance{.kind = MirTerminatorProvenanceKind::BranchFold,
+                                .foldSourceValue = fold.expectedCondition};
+    if (std::find(touched.begin(), touched.end(), fold.body) == touched.end()) {
+      touched.push_back(fold.body);
+    }
+  }
+  if (!result.verification.valid()) {
+    return result;
+  }
+
   for (MirBodyAddress address : touched) {
     MirBody *target = findMirBody(candidate, address);
     if (target == nullptr || !rebuildMirValueUses(*target)) {
       addError(result, {.body = address}, 0,
                "MIR replacement produced invalid value uses");
     }
+    rebuildMirReachability(*target);
   }
   if (!result.verification.valid()) {
     return result;
@@ -205,10 +280,15 @@ MirEditResult MirProgramEditor::apply() {
 
   program = std::move(candidate);
   result.changed = true;
-  result.appliedPatches = queued.size();
+  result.appliedPatches = queued.size() + queuedBranchFolds.size();
   result.valueUsesRebuilt = true;
   result.invalidation.instructionFacts = true;
   result.invalidation.valueUses = true;
+  if (!queuedBranchFolds.empty()) {
+    result.invalidation.controlFlow = true;
+    result.invalidation.reachability = true;
+    result.invalidation.dominance = true;
+  }
   return result;
 }
 

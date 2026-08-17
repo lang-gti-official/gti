@@ -3402,7 +3402,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v32\n") &&
+  expect(dump.starts_with("mir-body-v33\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -6494,6 +6494,74 @@ int main() { if (lt()) { return 0; } return 1; }
          "a forged compute-fold literal must fail the dominating replay");
 }
 
+// A branch whose condition folds to a literal bool rewrites to a Goto
+// carrying BranchFold provenance; reachability recomputes truthfully, O0
+// stays byte-identical, and a forged fold target fails verification.
+void testBranchLiteralFold() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-branch-fold.gti", R"(
+int pick() { if (1 < 2) { return 3; } return 4; }
+int main() { if (pick() == 3) { return 0; } return 1; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the branch-fold fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const std::string original = lang::MirPrinter().print(frontend.mir);
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizationResult compatibility = pipeline.run(
+      frontend.hir, lang::OptimizationLevel::O1, lang::TargetInfo::host());
+  const lang::OptimizedProgram o0 = pipeline.run(
+      lang::OptimizationRequest{.hir = frontend.hir,
+                                .mir = frontend.mir,
+                                .level = lang::OptimizationLevel::O0,
+                                .compatibility = &compatibility});
+  expect(o0.valid() && lang::MirPrinter().print(o0.mir) == original,
+         "O0 should keep the literal branch byte-for-byte");
+  const lang::OptimizedProgram o1 = pipeline.run(
+      lang::OptimizationRequest{.hir = frontend.hir,
+                                .mir = frontend.mir,
+                                .level = lang::OptimizationLevel::O1,
+                                .compatibility = &compatibility});
+  expect(o1.valid() && lang::verifyMirProgram(o1.mir).valid() &&
+             lang::verifyMirOptimizationCoherence(o1.sourceMir, o1.mir).valid(),
+         "the folded branch should verify with coherent retained source");
+  const std::string optimized = lang::MirPrinter().print(o1.mir);
+  expect(optimized.find("provenance=branch-fold:v") != std::string::npos &&
+             optimized.find("reachable=0") != std::string::npos,
+         "the literal branch should rewrite to a Goto with BranchFold "
+         "provenance and truthfully unreachable dead blocks");
+
+  lang::MirProgram forged = o1.mir;
+  auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forged.functionInstances());
+  bool redirected = false;
+  for (lang::MirFunctionInstance &candidate : forgedFunctions) {
+    for (lang::MirBlock &block :
+         const_cast<std::vector<lang::MirBlock> &>(candidate.body.blocks)) {
+      if (block.terminator.provenance.kind ==
+              lang::MirTerminatorProvenanceKind::BranchFold &&
+          !redirected) {
+        for (const lang::MirBlock &other : candidate.body.blocks) {
+          if (other.id != block.terminator.target && other.id != block.id) {
+            block.terminator.target = other.id;
+            redirected = true;
+            break;
+          }
+        }
+      }
+    }
+    if (redirected) {
+      lang::rebuildMirReachability(const_cast<lang::MirBody &>(candidate.body));
+    }
+  }
+  expect(
+      redirected &&
+          !lang::verifyMirOptimizationCoherence(o1.sourceMir, forged).valid(),
+      "a forged branch-fold target must fail the coherence replay");
+}
+
 void testCrossAnalysisDeterminism() {
   // Two independent analyses allocate at different addresses; identical
   // printed MIR proves no observable output depends on iteration order of
@@ -6536,6 +6604,7 @@ int main() {
 int main() {
   lang::installCrashHandlers("gti_optimizer_tests");
   testComparisonComputeFold();
+  testBranchLiteralFold();
   testCrossAnalysisDeterminism();
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();

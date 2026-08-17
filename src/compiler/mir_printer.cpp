@@ -247,7 +247,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v32 valid=" << program.valid() << '\n';
+    output << "mir-v33 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -545,7 +545,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v32\n";
+    output << "mir-body-v33\n";
     body(value, 0);
     return output.str();
   }
@@ -1234,7 +1234,19 @@ private:
       }
       output << "->bb" << target.target << '}';
     }
-    output << "]\n";
+    output << "] provenance=";
+    switch (value.provenance.kind) {
+    case MirTerminatorProvenanceKind::None:
+      output << '-';
+      break;
+    case MirTerminatorProvenanceKind::BranchFold:
+      output << "branch-fold:v" << value.provenance.foldSourceValue;
+      break;
+    case MirTerminatorProvenanceKind::Count:
+      output << "invalid:v" << value.provenance.foldSourceValue;
+      break;
+    }
+    output << '\n';
   }
 
   void block(const MirBlock &value) {

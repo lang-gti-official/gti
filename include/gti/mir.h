@@ -447,6 +447,25 @@ struct MirSwitchTarget {
                          const MirSwitchTarget &) = default;
 };
 
+enum class MirTerminatorProvenanceKind {
+  None,
+  BranchFold,
+  Count,
+};
+
+// A rewritten terminator retains replayable proof exactly like a rewritten
+// literal. A branch fold keeps the folded branch's condition value: the
+// verifier re-reads that value's dominating literal and re-selects the
+// taken target, so a Goto produced by the optimizer can never disagree
+// with the branch it replaced.
+struct MirTerminatorProvenance {
+  MirTerminatorProvenanceKind kind = MirTerminatorProvenanceKind::None;
+  MirValueId foldSourceValue = 0;
+
+  friend bool operator==(const MirTerminatorProvenance &,
+                         const MirTerminatorProvenance &) = default;
+};
+
 struct MirTerminator {
   MirTerminatorKind kind = MirTerminatorKind::None;
   MirHostedStartupOperationId hostedStartupOperation = 0;
@@ -460,6 +479,7 @@ struct MirTerminator {
   MirBlockId elseTarget = 0;
   std::vector<MirSwitchTarget> switchTargets;
   std::vector<MirLifecycleEvent> successLifecycle;
+  MirTerminatorProvenance provenance;
 
   friend bool operator==(const MirTerminator &,
                          const MirTerminator &) = default;

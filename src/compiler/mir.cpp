@@ -5659,6 +5659,48 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      body.blocks[index].id);
     }
   }
+  for (const MirBlock &block : body.blocks) {
+    const MirTerminatorProvenance &provenance = block.terminator.provenance;
+    if (provenance.kind == MirTerminatorProvenanceKind::None) {
+      if (provenance.foldSourceValue != 0) {
+        return failure(body, owner,
+                       "terminator without rewrite provenance carries a fold "
+                       "source",
+                       block.id);
+      }
+      continue;
+    }
+    if (provenance.kind != MirTerminatorProvenanceKind::BranchFold ||
+        block.terminator.kind != MirTerminatorKind::Goto ||
+        block.terminator.target == 0 || provenance.foldSourceValue == 0) {
+      return failure(body, owner,
+                     "terminator rewrite provenance is outside the "
+                     "branch-fold contract",
+                     block.id);
+    }
+    const MirValue *condition = body.findValue(provenance.foldSourceValue);
+    bool literalCondition = false;
+    if (condition != nullptr) {
+      for (const MirBlock &candidate : body.blocks) {
+        for (const MirInstruction &instruction : candidate.instructions) {
+          if (instruction.result &&
+              *instruction.result == provenance.foldSourceValue &&
+              instruction.kind == MirInstructionKind::Compute &&
+              instruction.operation == MirOperation::Literal &&
+              instruction.literal &&
+              std::holds_alternative<bool>(*instruction.literal)) {
+            literalCondition = true;
+          }
+        }
+      }
+    }
+    if (!literalCondition) {
+      return failure(body, owner,
+                     "branch fold does not retain its dominating literal "
+                     "condition",
+                     block.id);
+    }
+  }
 
   std::size_t indexedUseCount = 0;
   for (const std::vector<MirValueUse> &uses : body.valueUses) {
@@ -13109,6 +13151,57 @@ verifyMirOptimizationCoherence(const MirProgram &source,
       const MirBlock &sourceBlock = sourceBody->blocks[blockIndex];
       const MirBlock &optimizedBlock = optimizedBody->blocks[blockIndex];
       MirBlock &candidateBlock = candidateBody->blocks[blockIndex];
+      if (optimizedBlock.terminator.provenance.kind ==
+          MirTerminatorProvenanceKind::BranchFold) {
+        const MirTerminatorProvenance &provenance =
+            optimizedBlock.terminator.provenance;
+        const bool sourceBranch =
+            sourceBlock.terminator.kind == MirTerminatorKind::Branch &&
+            sourceBlock.terminator.value &&
+            sourceBlock.terminator.value->kind == MirOperandKind::Value &&
+            sourceBlock.terminator.value->value == provenance.foldSourceValue;
+        const bool *condition = nullptr;
+        for (const MirBlock &candidate : optimizedBody->blocks) {
+          for (const MirInstruction &instruction : candidate.instructions) {
+            if (instruction.result &&
+                *instruction.result == provenance.foldSourceValue &&
+                instruction.kind == MirInstructionKind::Compute &&
+                instruction.operation == MirOperation::Literal &&
+                instruction.literal) {
+              condition = std::get_if<bool>(&*instruction.literal);
+            }
+          }
+        }
+        const MirBlockId takenTarget =
+            condition == nullptr
+                ? 0
+                : (*condition ? sourceBlock.terminator.target
+                              : sourceBlock.terminator.elseTarget);
+        MirTerminator expected = sourceBlock.terminator;
+        expected.kind = MirTerminatorKind::Goto;
+        expected.value.reset();
+        expected.target = takenTarget;
+        expected.elseTarget = 0;
+        expected.provenance = provenance;
+        if (!sourceBranch || condition == nullptr || takenTarget == 0 ||
+            optimizedBlock.terminator != expected) {
+          reject(address,
+                 "optimized MIR branch fold does not replay from its "
+                 "retained condition",
+                 sourceBlock.id);
+          return result;
+        }
+        candidateBlock.terminator = expected;
+      } else if (sourceBlock.terminator.provenance.kind !=
+                     MirTerminatorProvenanceKind::None ||
+                 optimizedBlock.terminator.provenance.kind !=
+                     MirTerminatorProvenanceKind::None) {
+        reject(address,
+               "terminator rewrite provenance appears outside an authorized "
+               "branch fold",
+               sourceBlock.id);
+        return result;
+      }
       if (sourceBlock.id != optimizedBlock.id ||
           sourceBlock.instructions.size() !=
               optimizedBlock.instructions.size()) {
@@ -13226,6 +13319,9 @@ verifyMirOptimizationCoherence(const MirProgram &source,
              "authorized MIR rewrites could not rebuild exact value uses");
       return result;
     }
+    // An authorized branch fold changes successors, so the candidate's
+    // reachability recomputes deterministically before the exact compare.
+    rebuildMirReachability(*candidateBody);
   }
 
   const MirVerificationResult candidateVerification =
