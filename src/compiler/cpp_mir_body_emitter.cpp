@@ -317,6 +317,41 @@ constructorRollbackCovered(const MirConstructorInstance &constructor,
       [](const HirBaseInstance &base) { return !base.interface; });
 }
 
+[[nodiscard]] std::string_view
+constructorRollbackGap(const MirConstructorInstance &constructor,
+                       const MirClassInstance *owner) {
+  if (owner == nullptr) {
+    return "constructor lost its owner instance";
+  }
+  if (classHasStateBearingBase(*owner)) {
+    return "owner carries a state-bearing base subobject";
+  }
+  if (!mirBodyRoutesFailureEdges(constructor.body)) {
+    return "constructor body does not route its failure edges";
+  }
+  for (const MirClassFieldInfo &field : owner->declaredFields) {
+    if (field.dropKind == DropKind::Trivial) {
+      continue;
+    }
+    const bool armed = std::any_of(
+        constructor.body.dropObligations.begin(),
+        constructor.body.dropObligations.end(),
+        [&](const MirDropObligation &obligation) {
+          if (obligation.kind != MirDropObligationKind::ConstructionRollback) {
+            return false;
+          }
+          const MirPlace *place = constructor.body.findPlace(obligation.place);
+          return place != nullptr && place->projections.size() == 1 &&
+                 place->projections.front().field == field.symbol;
+        });
+    if (!armed) {
+      return "a non-trivial field carries no construction-rollback "
+             "obligation";
+    }
+  }
+  return {};
+}
+
 bool constructorRollbackCovered(const MirConstructorInstance &constructor,
                                 const MirClassInstance *owner) {
   if (owner == nullptr || classHasStateBearingBase(*owner) ||
@@ -1007,8 +1042,8 @@ private:
                                  classHasStateBearingBase(*owner))))) {
         add(CppMirBodyEmissionIssueKind::MissingPartialConstructionRollbackMir,
             0, 0,
-            "constructor lacks general initialized-subobject rollback and "
-            "failure cleanup authority");
+            "constructor lacks rollback authority: " +
+                std::string(constructorRollbackGap(*constructor, owner)));
       }
       return;
     }
@@ -1625,11 +1660,20 @@ private:
         // cleanup here, so there is no Invoke/record/cleanup successor
         // to demand.
         const bool transparentCallPropagation =
-            instruction.kind == MirInstructionKind::Call &&
-            instruction.intrinsic == IntrinsicKind::None &&
-            instruction.definedFailure.propagation ==
-                FailurePropagationKind::DirectCall &&
-            instruction.definedFailure.localOrigins.empty();
+            (instruction.kind == MirInstructionKind::Call &&
+             instruction.intrinsic == IntrinsicKind::None &&
+             instruction.definedFailure.propagation ==
+                 FailurePropagationKind::DirectCall &&
+             instruction.definedFailure.localOrigins.empty()) ||
+            // A propagating construction has no failure edge because the
+            // constructor's failure terminates at its own site on every
+            // shipped path — the untransformed constructor and the
+            // compatibility one behave identically — so the caller owns
+            // nothing here until the constructor failure ABI exists.
+            (instruction.kind == MirInstructionKind::Construct &&
+             instruction.definedFailure.propagation ==
+                 FailurePropagationKind::Constructor &&
+             instruction.definedFailure.localOrigins.empty());
         if (!dischargedStorageRead && !transparentCallPropagation &&
             (elementPlace == nullptr ||
              !arrayElementAccess(body, *elementPlace))) {
@@ -3163,7 +3207,7 @@ private:
       // success bool.
       output << "__gti_mir_call_success_" << instruction.id << " = ";
       if (receiverPlace != nullptr) {
-        emitPlaceExpression(facts, *receiverPlace);
+        emitStoragePlaceValue(facts, *receiverPlace);
         output << '.';
       }
       output << bodySpelling(*instruction.functionTarget)
@@ -3210,7 +3254,7 @@ private:
       output << "__gti_mir_v_" << *instruction.result << " = ";
     }
     if (receiverPlace != nullptr) {
-      emitPlaceExpression(facts, *receiverPlace);
+      emitStoragePlaceValue(facts, *receiverPlace);
       output << '.';
     }
     output << bodySpelling(*instruction.functionTarget);
