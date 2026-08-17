@@ -1886,6 +1886,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         mirFailure == nullptr && mirBody == nullptr
             ? selectedMirGeneralFailureFunction(stmt)
             : nullptr;
+    const std::string callableTemplate =
+        mirFailure == nullptr && mirBody == nullptr &&
+                mirGeneralFailure == nullptr
+            ? selectedMirCallableTemplateText(stmt)
+            : std::string();
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     if (mirFailure != nullptr) {
@@ -1893,7 +1898,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     } else if (mirGeneralFailure != nullptr) {
       emitGeneralFailureSignature(stmt, *mirGeneralFailure);
     } else {
-      emitFunctionSignature(stmt, mirBody);
+      // The deduced-callable template keeps the compat template header
+      // and return type but names its parameters for the MIR body text.
+      emitFunctionSignature(stmt, mirBody, !callableTemplate.empty());
     }
     const FunctionInfo *info = semantics.findFunction(stmt);
     const bool interfaceContract =
@@ -1966,6 +1973,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         } else {
           emitMirOwnedLifecycleBody(*mirOwned);
         }
+        if (!emittingDeferredMember) {
+          emitStructuralOperatorAdapter(stmt);
+          emitCallableAdapter(stmt);
+        }
+        return;
+      }
+      if (!callableTemplate.empty()) {
+        // The deduced-callable template body: one verified text covering
+        // every monomorphized instance, spelled under the declaration's
+        // own template header and signature.
+        output << ' ' << callableTemplate;
         if (!emittingDeferredMember) {
           emitStructuralOperatorAdapter(stmt);
           emitCallableAdapter(stmt);
@@ -6225,6 +6243,135 @@ private:
     }
   }
 
+  [[nodiscard]] std::string
+  selectedMirCallableTemplateText(const FunctionDecl &function) const {
+    // A deduced-callable template body emits once per declaration: every
+    // monomorphized instance must prove the same plain-shape text under
+    // an overlay row spelling its concrete callable types as the
+    // declaration's template parameter names — C++ closure types are
+    // unnameable, so per-instance emission is impossible here. The
+    // per-instance banner lines are the only permitted divergence; the
+    // assembled body carries one banner per covered instance.
+    if (mir == nullptr || !generalEmissionMap || !function.body() ||
+        currentClass != nullptr || function.genericParameters().empty() ||
+        function.hasCLinkage() || function.requiresClause()) {
+      return std::string();
+    }
+    const FunctionInfo *info = semantics.findFunction(function);
+    if (info == nullptr || info->id == 0 || info->callableParameters.empty() ||
+        info->ownerClass != 0 || info->staticMember || info->internalLinkage ||
+        info->linkage != LanguageLinkage::Gti ||
+        !info->externalSymbol.empty() || info->virtualMethod ||
+        info->pureVirtual || info->overrideMethod || info->parameterPack ||
+        info->intrinsic != IntrinsicKind::None ||
+        info->returnBorrowOrigin != BorrowOriginKind::None ||
+        !info->requirements.empty()) {
+      return std::string();
+    }
+    std::vector<const MirFunctionInstance *> instances;
+    for (const MirFunctionInstance &candidate : mir->functionInstances()) {
+      if (candidate.declaration == info->id) {
+        instances.push_back(&candidate);
+      }
+    }
+    if (instances.empty()) {
+      return std::string();
+    }
+    constexpr std::string_view familyLabel = "deduced-callable-v1";
+    std::vector<std::string> banners;
+    std::string canonical;
+    for (const MirFunctionInstance *instance : instances) {
+      if (instance->parameterTypes.size() != info->parameterTypes.size()) {
+        return std::string();
+      }
+      CppMirBodyEmissionMapRows rows{
+          .types = generalEmissionMap->types(),
+          .bodies = generalEmissionMap->bodies(),
+          .symbols = generalEmissionMap->symbols(),
+          .enums = generalEmissionMap->enums(),
+          .capabilities = generalEmissionMap->capabilities()};
+      for (std::size_t index = 0; index < info->parameterTypes.size();
+           ++index) {
+        const SemanticType &declared = info->parameterTypes[index];
+        if (declared.kind != SemanticType::TypeParameter) {
+          continue;
+        }
+        const GenericParameterInfo *parameter =
+            semantics.findGenericParameter(declared.genericParameterId);
+        const SemanticType &concrete = instance->parameterTypes[index];
+        const std::optional<CppMirTypeRepresentationKind> concreteKind =
+            cppMirExpectedTypeRepresentation(concrete);
+        if (parameter == nullptr || concrete.kind != SemanticType::Lambda ||
+            !concreteKind) {
+          return std::string();
+        }
+        const auto existing = std::find_if(
+            rows.types.begin(), rows.types.end(),
+            [&](const CppMirTypeRepresentation &row) {
+              return row.type == concrete;
+            });
+        if (existing != rows.types.end()) {
+          if (existing->spelling != parameter->name.lexeme) {
+            // One concrete callable bound to two differently named
+            // template parameters cannot spell one coherent body.
+            return std::string();
+          }
+          continue;
+        }
+        rows.types.push_back({.type = concrete,
+                              .kind = *concreteKind,
+                              .spelling = parameter->name.lexeme});
+      }
+      const CppMirBodyEmissionMap overlay{std::move(rows)};
+      const CppMirBodyEmitter emitter(*mir, overlay);
+      const MirBodyAddress address{.kind = MirBodyKind::Function,
+                                   .owner = instance->id};
+      if (!emitter.analyze(address).ready() ||
+          !emitter.supportsBodyText(address)) {
+        return std::string();
+      }
+      const CppMirBodyEmissionText emission =
+          emitter.emitBodyText(address, familyLabel, indentation);
+      if (!emission.emitted()) {
+        return std::string();
+      }
+      // Detach the instance banner (line 2 of the emitted body); the
+      // remainder must be byte-identical across every instance.
+      const std::string marker =
+          std::string("// GTI verified-MIR body: ") + std::string(familyLabel) +
+          " function-instance " + std::to_string(instance->id) + "\n";
+      const std::size_t at = emission.text.find(marker);
+      if (at == std::string::npos) {
+        return std::string();
+      }
+      std::size_t lineStart = at;
+      while (lineStart > 0 && emission.text[lineStart - 1] != '\n') {
+        --lineStart;
+      }
+      banners.push_back(
+          emission.text.substr(lineStart, at - lineStart + marker.size()));
+      std::string body = emission.text;
+      body.erase(lineStart, at - lineStart + marker.size());
+      if (canonical.empty()) {
+        canonical = body;
+      } else if (body != canonical) {
+        return std::string();
+      }
+    }
+    // Reinsert every banner where the single banner sat: directly after
+    // the opening brace line.
+    const std::size_t brace = canonical.find("{\n");
+    if (brace == std::string::npos) {
+      return std::string();
+    }
+    std::string assembled = canonical.substr(0, brace + 2);
+    for (const std::string &banner : banners) {
+      assembled += banner;
+    }
+    assembled += canonical.substr(brace + 2);
+    return assembled;
+  }
+
   [[nodiscard]] const MirFunctionInstance *
   selectedMirScalarCfg(const FunctionDecl &function) const {
     if (mir == nullptr || !function.body()) {
@@ -6417,7 +6564,11 @@ private:
               if (target == nullptr || !target->mayRaiseDefinedFailure ||
                   target->linkage != LanguageLinkage::Gti ||
                   target->definitionKind !=
-                      MirFunctionInstance::DefinitionKind::Source) {
+                      MirFunctionInstance::DefinitionKind::Source ||
+                  // A deduced-callable template callee keeps the plain
+                  // terminally-contained convention on both routes, so it
+                  // never gates its caller's transformed admission.
+                  !target->callableParameters.empty()) {
                 continue;
               }
               if (!generalFailureAdmitted->contains(target->id)) {
@@ -12449,7 +12600,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitFunctionSignature(const FunctionDecl &function,
-                             const MirFunctionInstance *mirBody = nullptr) {
+                             const MirFunctionInstance *mirBody = nullptr,
+                             bool mirArgumentNames = false) {
     const FunctionInfo *info = semantics.findFunction(function);
     const bool isMain =
         (info != nullptr ? info->entryPoint
@@ -12485,6 +12637,18 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     output << emittedFunctionName(function) << '(';
     if (mirBody != nullptr) {
       emitMirScalarLeafParameters(*mirBody);
+    } else if (mirArgumentNames) {
+      // The deduced-callable template body references its parameters by
+      // MIR argument position; the declared types (including the template
+      // parameter names) stay the source spellings.
+      for (std::size_t index = 0; index < function.parameters().size();
+           ++index) {
+        if (index > 0) {
+          output << ", ";
+        }
+        emitParameter(function.parameters().at(index),
+                      "__gti_mir_arg_" + std::to_string(index));
+      }
     } else {
       emitParameters(function.parameters());
     }

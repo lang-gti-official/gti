@@ -319,9 +319,23 @@ generic emitter replaces that single whole-program route.
   the representation `cpp_inline_lambda_v1`, the `CallableDispatch` row
   names the deduction-based callable surface `cpp_deduced_callable_v1`,
   and each lambda instance carries a never-called body row so a `Closure`
-  site can prove its exact target; owned or lambda-typed captures,
-  template callable dispatch, and every unfused callable shape decline
-  fail-closed to compatibility emission.
+  site can prove its exact target; owned or lambda-typed captures and
+  every unfused callable shape decline fail-closed to compatibility
+  emission. Deduced-callable templates emit once per declaration: every
+  monomorphized instance proves the same plain-shape text under an
+  overlay type row spelling its concrete callable type as the
+  declaration's template parameter name (Lambda-kind types are otherwise
+  row-free by design), the per-instance banner lines are the only
+  permitted divergence, and the emitted definition keeps the compat
+  template header and return type with MIR argument naming while carrying
+  one banner per covered instance. A deduced-callable callee keeps the
+  plain terminally-contained convention on every route — it is never
+  transformed, the failure form calls it plainly under an unconditional
+  invoke edge, and it never gates its caller's transformed admission —
+  while a fused closure literal spells inline as the deduction call's
+  callable argument and a template body passes its own callable parameter
+  place by value. Class-callable dispatch and owned callable transport
+  stay outside the vocabulary.
 - `scalar-failure-callgraph-v1` admits one unique no-argument `int32_t` hosted
   entry and its exact closed, acyclic graph of source-defined GTI free
   functions with `int32_t` parameters/results. The body domain reuses the

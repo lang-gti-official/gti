@@ -1636,6 +1636,70 @@ int main() {
          "the plain shape must not adopt the transformed record ABI");
 }
 
+
+// The declaration-level template route end to end: every monomorphized
+// instance of a deduced-callable template proves byte-identical text
+// under its own overlay row, and the production artifact carries exactly
+// one template definition holding one banner per covered instance, with
+// callers passing fused literals by deduction.
+void testDeducedCallableTemplateEmission() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-deduced-template.gti", R"(
+void apply<Operation>(Operation operation) {
+  operation(1);
+}
+
+int main() {
+  auto first = [](int value) -> void {
+    if (value == 1) {
+      return;
+    }
+  };
+  auto second = [](int value) -> void {
+    if (value == 2) {
+      return;
+    }
+  };
+  apply(first);
+  apply(second);
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the deduced-template fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
+                                   .optimizations = optimizations});
+  const std::string &text = artifact.contents;
+  const auto count = [&](std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  expect(count("(Operation __gti_mir_arg_0) {") == 1,
+         "exactly one template definition should carry the MIR body");
+  expect(count("deduced-callable-v1 function-instance") == 2,
+         "the single template body should carry one banner per covered "
+         "instance");
+  expect(count("// GTI verified-MIR body: scalar-cfg-failure-v1 "
+               "lambda-instance") == 2,
+         "both fused literals should embed their verified lambda bodies at "
+         "the call sites");
+}
+
 int main() {
   testExhaustiveEnumClassification();
   testReadyBodyAndRepresentationFailures();
@@ -1653,6 +1717,7 @@ int main() {
   testInlineClosureChainEmission();
   testClosureCaptureFreezeDeclines();
   testCallableTemplateBodyVocabulary();
+  testDeducedCallableTemplateEmission();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

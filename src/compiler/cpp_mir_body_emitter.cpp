@@ -249,6 +249,48 @@ callableReceiverStage(const MirBody &body, MirValueId id) {
   return definition;
 }
 
+[[nodiscard]] bool deducedCallableCallee(const MirProgram &program,
+                                         const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      !instruction.functionTarget ||
+      instruction.intrinsic != IntrinsicKind::None) {
+    return false;
+  }
+  const MirFunctionInstance *target =
+      program.findFunctionInstance(*instruction.functionTarget);
+  return target != nullptr && !target->callableParameters.empty() &&
+         target->linkage == LanguageLinkage::Gti &&
+         target->definitionKind == MirFunctionInstance::DefinitionKind::Source;
+}
+
+[[nodiscard]] const MirInstruction *
+callableArgumentStage(const MirBody &body, MirValueId id) {
+  const MirValue *value = body.findValue(id);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (definition == nullptr ||
+      definition->kind != MirInstructionKind::Load ||
+      definition->operands.size() != 1 ||
+      definition->operands.front().place == 0 ||
+      body.usesOf(id).size() != 1 ||
+      body.usesOf(id).front().kind != MirValueUseKind::InstructionOperand) {
+    return nullptr;
+  }
+  const MirInstruction *user =
+      findInstruction(body, body.usesOf(id).front().instruction);
+  if (user == nullptr || user->kind != MirInstructionKind::Call ||
+      !user->functionTarget || user->intrinsic != IntrinsicKind::None) {
+    return nullptr;
+  }
+  const MirPlace *place = body.findPlace(definition->operands.front().place);
+  if (place == nullptr || place->type.kind != SemanticType::Lambda ||
+      place->root != MirPlaceRootKind::Binding ||
+      !place->projections.empty() || !place->initiallyAvailable) {
+    return nullptr;
+  }
+  return definition;
+}
+
 [[nodiscard]] const MirInstruction *
 closureChainDefinition(const MirBody &body, MirValueId id) {
   const MirValue *value = body.findValue(id);
@@ -416,6 +458,15 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
         if (user == nullptr || !callableValueInvocation(*user)) {
           return false;
         }
+        ++invocations;
+        directOnly = directOnly && current == *closure.result &&
+                     use.block == result->definitionBlock;
+        continue;
+      }
+      if (use.kind == MirValueUseKind::InstructionOperand &&
+          user != nullptr && deducedCallableCallee(program, *user)) {
+        // The literal spells inline as the template call's deduced
+        // callable argument, exactly like the compatibility call.
         ++invocations;
         directOnly = directOnly && current == *closure.result &&
                      use.block == result->definitionBlock;
@@ -3694,6 +3745,27 @@ private:
     }
     const auto emitCallArgument = [&](const MirOperand &operand,
                                       bool marshalled) {
+      if (operand.kind == MirOperandKind::Value &&
+          operand.type.kind == SemanticType::Lambda &&
+          closureChainDefinition(facts.body, operand.value) != nullptr) {
+        emitClosureLiteral(facts, operand.value);
+        return;
+      }
+      if (operand.kind == MirOperandKind::Value) {
+        if (const MirInstruction *stage =
+                callableArgumentStage(facts.body, operand.value)) {
+          // The staged callable argument passes the parameter place by
+          // value, exactly like the compatibility call.
+          const MirPlace *place =
+              facts.body.findPlace(stage->operands.front().place);
+          if (place == nullptr) {
+            throw std::logic_error(
+                "verified MIR call lost its staged callable argument place");
+          }
+          emitStoragePlaceValue(facts, *place);
+          return;
+        }
+      }
       if (const MirInstruction *staged =
               borrowStagedCallInput(facts.body, operand)) {
         const MirPlace *place =
@@ -3829,9 +3901,12 @@ private:
     case MirTerminatorKind::Invoke: {
       const MirInstruction *producer =
           findInstruction(facts.body, terminator.invokeInstruction);
-      if (producer != nullptr && callableValueInvocation(*producer)) {
-        // The fused literal contains its failure terminally; the edge is
-        // a plain goto and the else block never runs.
+      if (producer != nullptr &&
+          (callableValueInvocation(*producer) ||
+           deducedCallableCallee(program, *producer))) {
+        // The fused literal or template callee contains its failure
+        // terminally; the edge is a plain goto and the else block never
+        // runs.
         writeIndent();
         output << "__gti_mir_bb = " << terminator.target << ";\n";
         writeIndent();
@@ -3839,13 +3914,17 @@ private:
         return;
       }
       if (!failureForm) {
-        if (producer != nullptr &&
-            producer->kind == MirInstructionKind::Compute &&
-            !cppMirTerminalCheckedHelperSpelling(producer->operation)
-                 .empty() &&
-            !producer->localFailureSites.empty()) {
-          // Plain-shape checked arithmetic: the terminal helper never
-          // returns on failure, so the edge is a plain goto.
+        // Plain shape: checked arithmetic spells its terminal helper, and
+        // a template body's may-raise call reaches a terminally-contained
+        // convention; neither ever returns on failure, so the edge is a
+        // plain goto. The probe admits exactly these producers.
+        if ((producer != nullptr &&
+             producer->kind == MirInstructionKind::Compute &&
+             !cppMirTerminalCheckedHelperSpelling(producer->operation)
+                  .empty() &&
+             !producer->localFailureSites.empty()) ||
+            (producer != nullptr &&
+             producer->kind == MirInstructionKind::Call)) {
           writeIndent();
           output << "__gti_mir_bb = " << terminator.target << ";\n";
           writeIndent();
@@ -4144,7 +4223,12 @@ private:
     }
     const MirFunctionInstance *target =
         program.findFunctionInstance(*instruction.functionTarget);
+    // A deduced-callable template callee keeps the compatibility plain
+    // convention — its failure contains terminally inside the innermost
+    // literal or helper — so it is never reached through the transformed
+    // record ABI.
     return target != nullptr && target->mayRaiseDefinedFailure &&
+                   target->callableParameters.empty() &&
                    target->linkage == LanguageLinkage::Gti &&
                    target->definitionKind ==
                        MirFunctionInstance::DefinitionKind::Source
@@ -4735,7 +4819,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // callable parameter place for exactly one invocation receiver.
       if (closureChainDefinition(body, value.id) == nullptr &&
           !(callableTemplateBody &&
-            callableReceiverStage(body, value.id) != nullptr)) {
+            (callableReceiverStage(body, value.id) != nullptr ||
+             callableArgumentStage(body, value.id) != nullptr))) {
         return false;
       }
       continue;
@@ -5320,7 +5405,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const MirFunctionInstance *target =
               program_.findFunctionInstance(*instruction.functionTarget);
           if (target == nullptr ||
-              (!callableTemplateBody && target->mayRaiseDefinedFailure &&
+              (!callableTemplateBody &&
+               !deducedCallableCallee(program_, instruction) &&
+               target->mayRaiseDefinedFailure &&
                target->linkage == LanguageLinkage::Gti &&
                target->definitionKind ==
                    MirFunctionInstance::DefinitionKind::Source)) {
@@ -5335,7 +5422,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.functionTarget && target == nullptr) {
             return false;
           }
-          if (target != nullptr && target->mayRaiseDefinedFailure) {
+          if (target != nullptr && target->mayRaiseDefinedFailure &&
+              deducedCallableCallee(program_, instruction)) {
+            // The template callee contains its failure terminally and is
+            // called plainly; the paired invoke edge never branches.
+          } else if (target != nullptr && target->mayRaiseDefinedFailure) {
             // A failure-capable callee is reached through the transformed
             // convention: the call publishes into a scalar result (or a
             // typed discard) and forwards the caller's record pointer.
