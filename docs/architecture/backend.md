@@ -296,6 +296,32 @@ generic emitter replaces that single whole-program route.
   record pointer forwarded unchanged, the paired `Invoke` branching on the
   bool — and admission is a greatest fixpoint over the transformed set, so
   a body whose may-raise callee cannot transform declines with it.
+  Closures join both forms as fused inline literals: a C++ closure type
+  is unnameable, so no lambda-typed place or value ever declares a local.
+  A `Closure` compute either feeds an invocation receiver directly or
+  initializes a dedicated single-write lambda local whose loads feed
+  further initializations or invocation receivers, and each consuming
+  invocation spells the complete literal — capture names copied from the
+  lambda's `Capture` rows over the enclosing body's place expressions,
+  positional parameters, and the recursively emitted verified lambda body
+  carrying its own banner marker. Fusing a literal to a later invocation
+  is sound because captured places are frozen: their only writes are
+  entry-block `Initialize`s preceding the `Closure`, nothing loans or
+  drops them, and the entry block is never re-entered; move captures
+  additionally collapse to exactly one direct same-block invocation.
+  Lambda bodies admit only in the plain success shape — the literal's C++
+  signature is fixed by its invocation sites and compatibility parity —
+  so checked arithmetic inside a literal keeps the compatibility terminal
+  helper spelling (`::gti_internal::backend::add` and family), which
+  contains the defined failure itself; the lambda's MIR failure edges and
+  the invocation's `Invoke` else-edge are therefore unreachable in text
+  and spell as aborts and plain gotos. The `Closure` capability row names
+  the representation `cpp_inline_lambda_v1`, the `CallableDispatch` row
+  names the deduction-based callable surface `cpp_deduced_callable_v1`,
+  and each lambda instance carries a never-called body row so a `Closure`
+  site can prove its exact target; owned or lambda-typed captures,
+  template callable dispatch, and every unfused callable shape decline
+  fail-closed to compatibility emission.
 - `scalar-failure-callgraph-v1` admits one unique no-argument `int32_t` hosted
   entry and its exact closed, acyclic graph of source-defined GTI free
   functions with `int32_t` parameters/results. The body domain reuses the

@@ -200,6 +200,247 @@ hasExecutableProgramInitialization(const MirProgram &program) {
   return nullptr;
 }
 
+// Inline closure chains: a C++ closure type is unnameable, so no
+// lambda-typed place or value ever declares a local. A Closure compute
+// either feeds an invocation receiver directly or initializes a dedicated
+// lambda-typed local whose loads feed further initializations or
+// invocation receivers, and every consumer spells the full literal inline
+// at its own use. Resolution walks the chain backwards; validation walks
+// it forwards and freezes the captured places so a literal spelled at a
+// later invocation still captures exactly the values the Closure saw.
+[[nodiscard]] bool callableValueInvocation(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         instruction.intrinsic == IntrinsicKind::None &&
+         !instruction.functionTarget && instruction.receiver &&
+         instruction.receiver->kind == MirOperandKind::Value &&
+         instruction.receiver->type.kind == SemanticType::Lambda;
+}
+
+[[nodiscard]] const MirInstruction *
+closureChainDefinition(const MirBody &body, MirValueId id) {
+  const MirValue *value = body.findValue(id);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (definition == nullptr) {
+    return nullptr;
+  }
+  if (definition->kind == MirInstructionKind::Compute &&
+      definition->operation == MirOperation::Closure) {
+    return definition;
+  }
+  if (definition->kind != MirInstructionKind::Load ||
+      definition->operands.size() != 1) {
+    return nullptr;
+  }
+  const MirPlaceId carrier = definition->operands.front().place;
+  const MirPlace *place = body.findPlace(carrier);
+  if (place == nullptr || place->type.kind != SemanticType::Lambda) {
+    return nullptr;
+  }
+  const MirInstruction *initialize = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &candidate : block.instructions) {
+      if (candidate.kind == MirInstructionKind::Initialize &&
+          candidate.destination && *candidate.destination == carrier) {
+        if (initialize != nullptr) {
+          return nullptr;
+        }
+        initialize = &candidate;
+      }
+    }
+  }
+  if (initialize == nullptr || initialize->operands.size() != 1 ||
+      initialize->operands.front().kind != MirOperandKind::Value) {
+    return nullptr;
+  }
+  return closureChainDefinition(body, initialize->operands.front().value);
+}
+
+// Plain-shape checked arithmetic: the compatibility path's terminal helper
+// family checks and contains the defined failure itself and never returns
+// on failure. Inline lambda literals keep exactly that spelling, so their
+// MIR failure edges are unreachable in emitted text.
+[[nodiscard]] std::string_view
+cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
+  switch (operation) {
+  case MirOperation::Add:
+    return "::gti_internal::backend::add";
+  case MirOperation::Subtract:
+    return "::gti_internal::backend::subtract";
+  case MirOperation::Multiply:
+    return "::gti_internal::backend::multiply";
+  case MirOperation::Divide:
+    return "::gti_internal::backend::divide";
+  case MirOperation::Remainder:
+    return "::gti_internal::backend::modulo";
+  case MirOperation::Negate:
+    return "::gti_internal::backend::negate";
+  default:
+    return {};
+  }
+}
+
+// Forward half of one Closure's fused chain. Captured places must stay
+// frozen after the Closure: their only writes are entry-block Initializes
+// that precede it, nothing loans or drops them, and the entry block is
+// never re-entered, so a literal spelled at any later invocation captures
+// the same values the Closure saw. Move captures collapse to exactly one
+// direct same-block invocation because a duplicated or delayed literal
+// would move a captured place twice or after an interleaved failure edge.
+[[nodiscard]] bool closureChainAdmits(const MirProgram &program,
+                                      const MirBody &body,
+                                      const MirInstruction &closure) {
+  const MirLambdaInstance *lambda =
+      closure.lambdaTarget ? program.findLambda(*closure.lambdaTarget)
+                           : nullptr;
+  const MirValue *result =
+      closure.result ? body.findValue(*closure.result) : nullptr;
+  if (lambda == nullptr || result == nullptr ||
+      closure.operands.size() != lambda->captureSymbols.size() ||
+      closure.operands.size() != lambda->captureModes.size() ||
+      closure.operands.size() != lambda->captureTypes.size()) {
+    return false;
+  }
+  bool movesCapture = false;
+  for (std::size_t index = 0; index < closure.operands.size(); ++index) {
+    const MirOperand &operand = closure.operands[index];
+    const LambdaCaptureMode mode = lambda->captureModes[index];
+    const bool modeMatches = (mode == LambdaCaptureMode::Copy &&
+                              operand.kind == MirOperandKind::Copy) ||
+                             (mode == LambdaCaptureMode::Move &&
+                              operand.kind == MirOperandKind::Move);
+    movesCapture = movesCapture || mode == LambdaCaptureMode::Move;
+    const MirPlace *captured =
+        operand.place == 0 ? nullptr : body.findPlace(operand.place);
+    // A captured lambda or owned object would itself need the unnameable
+    // or slot-managed local this chain exists to avoid; both decline.
+    if (!modeMatches || captured == nullptr ||
+        captured->root != MirPlaceRootKind::Binding ||
+        !captured->projections.empty() ||
+        captured->type.kind == SemanticType::Lambda ||
+        captured->type.kind == SemanticType::Class ||
+        captured->type.kind == SemanticType::Storage ||
+        captured->type.kind == SemanticType::PrefixStorage) {
+      return false;
+    }
+    for (const MirLoan &loan : body.loans) {
+      if (loan.source == captured->id) {
+        return false;
+      }
+    }
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &writer : block.instructions) {
+        if (!writer.destination || *writer.destination != captured->id) {
+          continue;
+        }
+        if (writer.kind != MirInstructionKind::Initialize ||
+            block.id != body.entry ||
+            result->definitionBlock != body.entry) {
+          return false;
+        }
+        bool writerPrecedes = false;
+        for (const MirInstruction &ordered : block.instructions) {
+          if (ordered.id == writer.id) {
+            writerPrecedes = true;
+            break;
+          }
+          if (ordered.id == closure.id) {
+            break;
+          }
+        }
+        if (!writerPrecedes) {
+          return false;
+        }
+      }
+    }
+  }
+  if (!closure.operands.empty()) {
+    for (const MirBlock &block : body.blocks) {
+      const MirTerminator &terminator = block.terminator;
+      if (terminator.target == body.entry ||
+          terminator.elseTarget == body.entry) {
+        return false;
+      }
+      for (const MirSwitchTarget &target : terminator.switchTargets) {
+        if (target.target == body.entry) {
+          return false;
+        }
+      }
+    }
+  }
+  // Forward walk: every transitive consumer is an Initialize into a fresh
+  // single-write lambda local or the receiver of an invocation.
+  std::size_t invocations = 0;
+  bool directOnly = true;
+  std::vector<MirPlaceId> visitedCarriers;
+  std::vector<MirValueId> pending{*closure.result};
+  while (!pending.empty()) {
+    const MirValueId current = pending.back();
+    pending.pop_back();
+    for (const MirValueUse &use : body.usesOf(current)) {
+      const MirInstruction *user = findInstruction(body, use.instruction);
+      if (use.kind == MirValueUseKind::InstructionReceiver) {
+        if (user == nullptr || !callableValueInvocation(*user)) {
+          return false;
+        }
+        ++invocations;
+        directOnly = directOnly && current == *closure.result &&
+                     use.block == result->definitionBlock;
+        continue;
+      }
+      if (use.kind != MirValueUseKind::InstructionOperand ||
+          user == nullptr || user->kind != MirInstructionKind::Initialize ||
+          !user->destination) {
+        return false;
+      }
+      directOnly = false;
+      const MirPlaceId carrier = *user->destination;
+      const MirPlace *place = body.findPlace(carrier);
+      if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
+          !place->projections.empty() ||
+          place->type.kind != SemanticType::Lambda ||
+          std::find(visitedCarriers.begin(), visitedCarriers.end(),
+                    carrier) != visitedCarriers.end()) {
+        return false;
+      }
+      visitedCarriers.push_back(carrier);
+      for (const MirLoan &loan : body.loans) {
+        if (loan.source == carrier) {
+          return false;
+        }
+      }
+      // The carrier's whole life is this one Initialize plus loads whose
+      // results rejoin the chain.
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &reference : block.instructions) {
+          if (reference.destination && *reference.destination == carrier &&
+              reference.id != user->id) {
+            return false;
+          }
+          bool readsCarrier = reference.receiver &&
+                              reference.receiver->place == carrier;
+          for (const MirOperand &operand : reference.operands) {
+            readsCarrier = readsCarrier || operand.place == carrier;
+          }
+          if (!readsCarrier || reference.id == user->id) {
+            continue;
+          }
+          if (reference.kind != MirInstructionKind::Load ||
+              !reference.result) {
+            return false;
+          }
+          pending.push_back(*reference.result);
+        }
+      }
+    }
+  }
+  if (movesCapture && (invocations != 1 || !directOnly)) {
+    return false;
+  }
+  return true;
+}
+
+
 [[nodiscard]] const MirInstruction *definitionFor(const MirBody &body,
                                                   const MirOperand &operand) {
   if (operand.kind != MirOperandKind::Value || operand.value == 0) {
@@ -1720,6 +1961,10 @@ private:
     if ((instruction.kind == MirInstructionKind::Call ||
          instruction.kind == MirInstructionKind::Construct) &&
         instruction.intrinsic == IntrinsicKind::None &&
+        // A callable-value invocation has no CallInput schedule: its
+        // receiver is the fused closure literal and its arguments pass as
+        // plain staged values, exactly like the compatibility call.
+        !callableValueInvocation(instruction) &&
         !hasCompleteCallInputSchedule(body, instruction)) {
       add(CppMirBodyEmissionIssueKind::MissingCallInputScheduleMir, block.id,
           instruction.id,
@@ -2196,8 +2441,24 @@ public:
         familyLabel);
   }
 
+  [[nodiscard]] std::string emit(const MirLambdaInstance &lambda,
+                                 std::string_view familyLabel) {
+    // A lambda body spells only nested inside its closure literal: the
+    // receiver is the immutable closure object and capture places spell
+    // through their Capture rows rather than storage rows.
+    return emit(
+        ScalarBodyFacts{.body = lambda.body,
+                        .id = lambda.id,
+                        .instanceLabel = "lambda-instance",
+                        .owner = std::optional<HirClassInstanceId>(),
+                        .parameterBindings = lambda.parameterBindings,
+                        .receiverMutability = ReceiverMutability::ReadOnly},
+        familyLabel);
+  }
+
   [[nodiscard]] std::string emit(const ScalarBodyFacts &facts,
                                  std::string_view familyLabel) {
+    currentFamilyLabel = familyLabel;
     output.str("");
     output << "{\n";
     ++indentation;
@@ -2281,6 +2542,11 @@ public:
                << ";\n";
         continue;
       }
+      // A lambda-typed local never declares: its C++ closure type is
+      // unnameable and every consumer spells the fused literal inline.
+      if (place.type.kind == SemanticType::Lambda) {
+        continue;
+      }
       writeIndent();
       output << typeSpelling(place.type) << " __gti_mir_p_" << place.id;
       if (const std::optional<std::size_t> parameter =
@@ -2308,6 +2574,11 @@ public:
       // An Unexpected result spells inline at its consuming Return and
       // never declares: std::unexpected has no default construction.
       if (unexpectedDefinition(facts.body, value.id) != nullptr) {
+        continue;
+      }
+      // A lambda-typed value never declares either; the fused closure
+      // chain spells the literal at each consuming invocation.
+      if (value.info.type.kind == SemanticType::Lambda) {
         continue;
       }
       // A discharged read's element is published through its loan
@@ -2520,6 +2791,23 @@ private:
     return found->spelling;
   }
 
+  [[nodiscard]] const std::string &
+  captureSpelling(std::size_t lambdaOwner, SymbolId symbol,
+                  std::size_t ordinal) {
+    const auto found = std::find_if(
+        representations.symbols().begin(), representations.symbols().end(),
+        [&](const CppMirSymbolRepresentation &row) {
+          return row.kind == CppMirSymbolRepresentationKind::Capture &&
+                 row.owner == lambdaOwner && row.symbol == symbol &&
+                 row.ordinal == ordinal;
+        });
+    if (found == representations.symbols().end() || found->spelling.empty()) {
+      throw std::logic_error(
+          "general MIR body emission lost an exact capture name row");
+    }
+    return found->spelling;
+  }
+
   [[nodiscard]] const std::string &typeSpelling(const SemanticType &type) {
     const auto found = std::find_if(
         representations.types().begin(), representations.types().end(),
@@ -2687,6 +2975,58 @@ private:
     return found->spelling;
   }
 
+  // Spells the full inline literal for the fused chain that produced
+  // `receiver`: captures from the lambda's Capture rows over the enclosing
+  // body's place expressions, positional parameters, and the recursively
+  // emitted verified lambda body carrying its own banner marker.
+  void emitClosureLiteral(const ScalarBodyFacts &facts, MirValueId receiver) {
+    const MirInstruction *closure =
+        closureChainDefinition(facts.body, receiver);
+    const MirLambdaInstance *lambda =
+        closure != nullptr && closure->lambdaTarget
+            ? program.findLambda(*closure->lambdaTarget)
+            : nullptr;
+    if (lambda == nullptr) {
+      throw std::logic_error(
+          "verified MIR invocation lost its fused closure chain");
+    }
+    output << '[';
+    for (std::size_t index = 0; index < closure->operands.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      const MirPlace *captured =
+          facts.body.findPlace(closure->operands[index].place);
+      if (captured == nullptr) {
+        throw std::logic_error("verified MIR closure lost a captured place");
+      }
+      output << captureSpelling(lambda->id, lambda->captureSymbols[index],
+                                index + 1)
+             << " = ";
+      const bool moves =
+          lambda->captureModes[index] == LambdaCaptureMode::Move;
+      if (moves) {
+        output << "std::move(";
+      }
+      emitStoragePlaceValue(facts, *captured);
+      if (moves) {
+        output << ')';
+      }
+    }
+    output << "](";
+    for (std::size_t index = 0; index < lambda->parameterTypes.size();
+         ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << typeSpelling(lambda->parameterTypes[index])
+             << " __gti_mir_arg_" << index;
+    }
+    output << ") -> " << typeSpelling(lambda->returnType) << ' '
+           << ScalarBodyTextEmitter(program, representations, indentation)
+                  .emit(*lambda, currentFamilyLabel);
+  }
+
   void emitCompute(const MirInstruction &instruction) {
     output << "__gti_mir_v_" << *instruction.result << " = ";
     if (instruction.operation == MirOperation::Literal) {
@@ -2834,6 +3174,25 @@ private:
                << " spells at its consuming return\n";
         return;
       }
+      if (!failureForm && !instruction.localFailureSites.empty() &&
+          !cppMirTerminalCheckedHelperSpelling(instruction.operation)
+               .empty()) {
+        // Plain literal shape: the compatibility terminal helper both
+        // checks and contains, so the result assignment is unconditional
+        // and the paired invoke edge is a plain goto.
+        output << "__gti_mir_v_" << *instruction.result << " = "
+               << cppMirTerminalCheckedHelperSpelling(instruction.operation)
+               << '(';
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          if (index != 0) {
+            output << ", ";
+          }
+          emitOperand(instruction.operands[index]);
+        }
+        output << ");\n";
+        return;
+      }
       emitCompute(instruction);
       return;
     }
@@ -2936,8 +3295,9 @@ private:
       const MirPlace *source =
           facts.body.findPlace(instruction.operands.front().place);
       if (source != nullptr && source->root == MirPlaceRootKind::Symbol) {
-        output << "__gti_mir_v_" << *instruction.result << " = "
-               << storageSpelling(source->symbol) << ";\n";
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+        emitPlaceExpression(facts, *source);
+        output << ";\n";
         return;
       }
       if (source != nullptr &&
@@ -3046,6 +3406,41 @@ private:
 
   void emitInstruction(const MirInstruction &instruction,
                        const ScalarBodyFacts &facts) {
+    // The fused closure chain never materializes: the Closure compute,
+    // the Initialize into a lambda-typed local, and the loads that rejoin
+    // the chain all spell as comments, and each consuming invocation
+    // spells the full literal inline.
+    if (instruction.kind == MirInstructionKind::Compute &&
+        instruction.operation == MirOperation::Closure) {
+      writeIndent();
+      output << "// closure value "
+             << (instruction.result ? *instruction.result : 0)
+             << " spells at its consuming invocation\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Initialize &&
+        instruction.destination) {
+      if (const MirPlace *destination =
+              facts.body.findPlace(*instruction.destination);
+          destination != nullptr &&
+          destination->type.kind == SemanticType::Lambda) {
+        writeIndent();
+        output << "// closure local " << destination->id
+               << " joins the fused chain\n";
+        return;
+      }
+    }
+    if (instruction.kind == MirInstructionKind::Load && instruction.result &&
+        instruction.operands.size() == 1) {
+      if (const MirPlace *source =
+              facts.body.findPlace(instruction.operands.front().place);
+          source != nullptr && source->type.kind == SemanticType::Lambda) {
+        writeIndent();
+        output << "// load " << *instruction.result
+               << " rejoins the fused closure chain\n";
+        return;
+      }
+    }
     if (instruction.kind == MirInstructionKind::Load &&
         instruction.operands.size() == 1 &&
         instruction.operands.front().place != 0) {
@@ -3096,6 +3491,25 @@ private:
       // site itself stages nothing.
       output << "// discharged storage read " << instruction.id
              << " publishes through its loan\n";
+      return;
+    }
+    if (callableValueInvocation(instruction)) {
+      // The invocation spells the fused closure literal followed by its
+      // plain argument list; the literal contains failure terminally, so
+      // no status local or record write stages here.
+      if (instruction.result) {
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+      }
+      emitClosureLiteral(facts, instruction.receiver->value);
+      output << '(';
+      for (std::size_t index = 0; index < instruction.operands.size();
+           ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        emitOperand(instruction.operands[index]);
+      }
+      output << ");\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -3337,9 +3751,33 @@ private:
     switch (terminator.kind) {
     case MirTerminatorKind::Invoke: {
       const MirInstruction *producer =
-          failureForm
-              ? findInstruction(facts.body, terminator.invokeInstruction)
-              : nullptr;
+          findInstruction(facts.body, terminator.invokeInstruction);
+      if (producer != nullptr && callableValueInvocation(*producer)) {
+        // The fused literal contains its failure terminally; the edge is
+        // a plain goto and the else block never runs.
+        writeIndent();
+        output << "__gti_mir_bb = " << terminator.target << ";\n";
+        writeIndent();
+        output << "continue;\n";
+        return;
+      }
+      if (!failureForm) {
+        if (producer != nullptr &&
+            producer->kind == MirInstructionKind::Compute &&
+            !cppMirTerminalCheckedHelperSpelling(producer->operation)
+                 .empty() &&
+            !producer->localFailureSites.empty()) {
+          // Plain-shape checked arithmetic: the terminal helper never
+          // returns on failure, so the edge is a plain goto.
+          writeIndent();
+          output << "__gti_mir_bb = " << terminator.target << ";\n";
+          writeIndent();
+          output << "continue;\n";
+          return;
+        }
+        throw std::logic_error(
+            "verified MIR invoke is outside the failure vocabulary");
+      }
       if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
           transformedCallee(*producer) != nullptr) {
         writeIndent();
@@ -3389,7 +3827,12 @@ private:
     }
     case MirTerminatorKind::PropagateFailure:
       if (!failureForm) {
-        break;
+        // Only an inline literal's plain shape admits this terminator:
+        // every failure source is contained terminally inside its helper,
+        // so the block is unreachable.
+        writeIndent();
+        output << "std::abort();\n";
+        return;
       }
       writeIndent();
       output << "// GTI MIR propagate failure-record "
@@ -3527,7 +3970,12 @@ private:
       return;
     }
     if (place.root == MirPlaceRootKind::Symbol) {
-      output << storageSpelling(place.symbol);
+      if (place.capture != 0 &&
+          facts.instanceLabel == std::string_view("lambda-instance")) {
+        output << captureSpelling(facts.id, place.symbol, place.capture);
+      } else {
+        output << storageSpelling(place.symbol);
+      }
       return;
     }
     if (place.root == MirPlaceRootKind::This) {
@@ -3677,6 +4125,7 @@ private:
   const CppMirBodyEmissionMap &representations;
   std::size_t indentation;
   bool failureForm = false;
+  std::string_view currentFamilyLabel;
   std::ostringstream output;
 };
 
@@ -3903,6 +4352,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     parameterBindings = &constructor->parameterBindings;
     break;
   }
+  case MirBodyKind::Lambda: {
+    // The plain literal shape is fixed by its invocation sites and by
+    // compatibility parity, so a lambda body admits only in the success
+    // form; its checked arithmetic contains terminally instead.
+    if (failureForm) {
+      return false;
+    }
+    const MirLambdaInstance *lambda = program_.findLambda(address.owner);
+    if (lambda == nullptr) {
+      return false;
+    }
+    bodyPointer = &lambda->body;
+    receiverMutability = ReceiverMutability::ReadOnly;
+    parameterBindings = &lambda->parameterBindings;
+    break;
+  }
   default:
     return false;
   }
@@ -3985,6 +4450,34 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                  !row.spelling.empty();
         });
   };
+  const auto captureRow = [&](std::size_t lambdaOwner, SymbolId symbol,
+                              std::size_t ordinal) {
+    return std::any_of(
+        representations_.symbols().begin(), representations_.symbols().end(),
+        [&](const CppMirSymbolRepresentation &row) {
+          return row.kind == CppMirSymbolRepresentationKind::Capture &&
+                 row.owner == lambdaOwner && row.symbol == symbol &&
+                 row.ordinal == ordinal && !row.spelling.empty();
+        });
+  };
+  const auto capabilityRow = [&](CppMirEmissionCapabilityKind kind) {
+    return std::any_of(
+        representations_.capabilities().begin(),
+        representations_.capabilities().end(),
+        [&](const CppMirEmissionCapabilityRepresentation &row) {
+          return row.kind == kind && !row.spelling.empty();
+        });
+  };
+  const auto lambdaBodyRow = [&](HirLambdaId target) {
+    const MirBodyAddress nested{.kind = MirBodyKind::Lambda, .owner = target};
+    const auto found = std::find_if(
+        representations_.bodies().begin(), representations_.bodies().end(),
+        [&](const CppMirBodyNameRepresentation &row) {
+          return row.address == nested;
+        });
+    return found != representations_.bodies().end() &&
+           !found->spelling.empty();
+  };
   const auto constructSlot = [&](const MirInstruction &construct) {
     if (!construct.result) {
       return MirPlaceId{0};
@@ -4049,8 +4542,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     if (place.root == MirPlaceRootKind::Symbol) {
-      if (place.capture != 0 || !place.projections.empty() ||
-          !storageRow(place.symbol)) {
+      if (place.capture != 0) {
+        // A capture place spells its Capture row name inside the literal.
+        if (address.kind != MirBodyKind::Lambda ||
+            !place.projections.empty() ||
+            !captureRow(address.owner, place.symbol, place.capture)) {
+          return false;
+        }
+        continue;
+      }
+      if (!place.projections.empty() || !storageRow(place.symbol)) {
         return false;
       }
       continue;
@@ -4116,6 +4617,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
+        place.type.kind == SemanticType::Lambda) {
+      // A lambda-typed local never declares (its C++ closure type is
+      // unnameable); the fused chain owns every reference or the body
+      // declines at the Closure rule or the value rows below.
+      continue;
+    }
     if (!place.projections.empty() || !typeRow(place.type)) {
       return false;
     }
@@ -4130,6 +4638,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     if (isStorageStagedResult(body, value)) {
+      continue;
+    }
+    if (value.info.type.kind == SemanticType::Lambda) {
+      // A lambda-typed value never declares; it must descend from a fused
+      // Closure whose own rule validates every consumer.
+      if (closureChainDefinition(body, value.id) == nullptr) {
+        return false;
+      }
       continue;
     }
     if (!typeRow(value.info.type)) {
@@ -4245,6 +4761,32 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!instruction.result) {
           return false;
         }
+        if (!failureForm && address.kind == MirBodyKind::Lambda &&
+            !cppMirTerminalCheckedHelperSpelling(instruction.operation)
+                 .empty() &&
+            !instruction.localFailureSites.empty()) {
+          // Plain-shape checked arithmetic spells the compatibility
+          // terminal helper: it contains the failure itself and never
+          // returns on it, so the paired invoke edge cannot branch. The
+          // operand types must equal the result type so the helper's
+          // deduced result assigns without conversion.
+          if (instruction.localFailureSites.size() != 1 ||
+              instruction.definedFailure.localOrigins.size() != 1 ||
+              program_.failureMetadata().findSite(
+                  instruction.localFailureSites.front()) == nullptr ||
+              instruction.operands.empty() || instruction.operands.size() > 2 ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand) ||
+              !typeRow(instruction.info.type) ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(),
+                           [&](const MirOperand &operand) {
+                             return operand.type == instruction.info.type;
+                           })) {
+            return false;
+          }
+          continue;
+        }
         if (failureForm &&
             !cppMirCheckedOperationHelperSpelling(instruction.operation)
                  .empty() &&
@@ -4331,6 +4873,38 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (!returnConsumed) {
               return false;
             }
+          }
+          continue;
+        }
+        case MirOperation::Closure: {
+          const MirLambdaInstance *lambda =
+              instruction.lambdaTarget
+                  ? program_.findLambda(*instruction.lambdaTarget)
+                  : nullptr;
+          if (lambda == nullptr ||
+              !capabilityRow(CppMirEmissionCapabilityKind::Closure) ||
+              !lambdaBodyRow(lambda->id) ||
+              !closureChainAdmits(program_, body, instruction) ||
+              !typeRow(lambda->returnType)) {
+            return false;
+          }
+          bool rows = true;
+          for (const SemanticType &type : lambda->parameterTypes) {
+            rows = rows && typeRow(type);
+          }
+          for (std::size_t index = 0; index < lambda->captureSymbols.size();
+               ++index) {
+            rows = rows && captureRow(lambda->id,
+                                      lambda->captureSymbols[index],
+                                      index + 1);
+          }
+          // The literal embeds the lambda body itself, so the nested body
+          // must prove its own plain-shape text.
+          if (!rows ||
+              !supportsBodyTextImpl(
+                  {.kind = MirBodyKind::Lambda, .owner = lambda->id},
+                  false)) {
+            return false;
           }
           continue;
         }
@@ -4568,6 +5142,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         }
+        if (callableValueInvocation(instruction)) {
+          // Invoking a callable value spells the fused closure literal
+          // followed by its plain argument list; the literal's checked
+          // interior contains failure terminally, so the paired invoke
+          // edge never branches. No CallInput staging exists here.
+          if (!pendingStaged.empty() ||
+              !capabilityRow(CppMirEmissionCapabilityKind::Closure) ||
+              !capabilityRow(
+                  CppMirEmissionCapabilityKind::CallableDispatch) ||
+              closureChainDefinition(body, instruction.receiver->value) ==
+                  nullptr ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand) ||
+              (instruction.result && !typeRow(instruction.info.type))) {
+            return false;
+          }
+          continue;
+        }
         // A receiver-carrying call spells its staged borrowed place and the
         // qualified member name — the explicit qualification states the
         // static dispatch MIR proved. Admission requires a read-only,
@@ -4757,8 +5349,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     switch (block.terminator.kind) {
     case MirTerminatorKind::Invoke: {
-      if (!failureForm || block.terminator.target == 0 ||
-          block.terminator.elseTarget == 0) {
+      if (block.terminator.target == 0 || block.terminator.elseTarget == 0) {
         return false;
       }
       // The invoke's producer must be this block's checked detector (the
@@ -4773,6 +5364,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       if (producer == nullptr) {
         return false;
+      }
+      if (callableValueInvocation(*producer)) {
+        // The fused literal contains its failure terminally; the edge is
+        // a plain goto and the else block never runs.
+        continue;
+      }
+      if (!failureForm) {
+        // Plain shape: only a Lambda's terminal checked compute produces
+        // an invoke, and its helper never returns on failure.
+        if (address.kind != MirBodyKind::Lambda ||
+            producer->kind != MirInstructionKind::Compute ||
+            cppMirTerminalCheckedHelperSpelling(producer->operation)
+                .empty() ||
+            producer->localFailureSites.size() != 1) {
+          return false;
+        }
+        continue;
       }
       if (producer->kind == MirInstructionKind::Call) {
         if (prefixStorageIntrinsic(producer->intrinsic) &&
@@ -4803,7 +5411,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     case MirTerminatorKind::PropagateFailure:
-      if (!failureForm || block.terminator.failureRecord == 0) {
+      if (block.terminator.failureRecord == 0) {
+        return false;
+      }
+      if (!failureForm && address.kind != MirBodyKind::Lambda) {
+        // Only an inline literal's plain shape admits this terminator:
+        // every failure source there is contained terminally inside its
+        // helper, so the propagate block is unreachable and spells abort.
         return false;
       }
       continue;

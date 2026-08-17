@@ -1764,6 +1764,24 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
        .spelling = standard == CppStandard::Cpp23
                        ? "std::unexpected"
                        : "::nonstd::make_unexpected"});
+  // Closure names the inline C++ lambda literal representation: a Closure
+  // compute spells `[name = <place>, ...](<params>) -> <ret> { <verified
+  // body> }` with capture names copied from the lambda's Capture rows,
+  // exactly like the compatibility path's inline lambda emission. C++
+  // closure types are unnameable, so the chain fuses into its consuming
+  // invocations and nothing here is ever a spelled type or call target.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::Closure,
+       .spelling = "cpp_inline_lambda_v1"});
+  // CallableDispatch names the deduction-based callable representation:
+  // a callable value invokes as `<literal>(<args>)` and a callable-typed
+  // argument passes by template-argument deduction, never through a
+  // spelled closure type name. The text vocabulary still declines every
+  // callable shape it cannot fuse, so the row moves analysis honesty,
+  // not emission.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::CallableDispatch,
+       .spelling = "cpp_deduced_callable_v1"});
 
   // Executable per-instance field-initializer bodies carry their own name
   // row like every other executable body; the spelling is the owner scope
@@ -1787,6 +1805,12 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
              "::__gti_field_initializers"});
   }
   for (const MirLambdaInstance &lambda : mir.lambdaInstances()) {
+    // A lambda body is never a call target: it spells only nested inside
+    // its closure literal. The row exists so a Closure site can prove the
+    // exact body target is representable before fusing it.
+    builder.rows.bodies.push_back(
+        {.address = {.kind = MirBodyKind::Lambda, .owner = lambda.id},
+         .spelling = "__gti_inline_lambda_" + std::to_string(lambda.id)});
     builder.addType(lambda.type);
     builder.addType(lambda.returnType);
     for (const SemanticType &type : lambda.parameterTypes) {

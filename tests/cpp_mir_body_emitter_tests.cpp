@@ -1420,6 +1420,129 @@ int main() {
 
 } // namespace
 
+
+// The inline closure chain: lambda-typed places and values never declare
+// (C++ closure types are unnameable), so the Closure compute fuses into
+// its consuming invocations, which spell the full literal with capture
+// names from the Capture rows and the recursively emitted verified body.
+// Checked arithmetic inside the literal keeps the compatibility terminal
+// helper spelling, so the lambda's failure edges are unreachable in text.
+void testInlineClosureChainEmission() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-closure-chain.gti", R"(
+int main() {
+  int offset = 3;
+  auto add_offset = [offset](int value) -> int {
+    return offset + value;
+  };
+  auto copied = add_offset;
+  int doubled = [](int value) -> int {
+    return value * 2;
+  }(4);
+  return copied(doubled) - 11;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the closure-chain fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto entry =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &function) {
+                     return function.entryKind != lang::ProgramEntryKind::None;
+                   });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the closure-chain fixture should retain its entry instance");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready(),
+         "the closure-chain entry should be analysis-Ready under production "
+         "rows");
+  expect(emitter.supportsFailureBodyText(address),
+         "the closure-chain entry should prove its failure-form text");
+  for (const lang::MirLambdaInstance &lambda :
+       frontend.mir.lambdaInstances()) {
+    expect(emitter.supportsBodyText({.kind = lang::MirBodyKind::Lambda,
+                                     .owner = lambda.id}),
+           "each lambda body should prove its plain-shape nested text");
+  }
+  const lang::CppMirBodyEmissionText text =
+      emitter.emitFailureBodyText(address, "closure-test-v0", 1);
+  const auto contains = [&](std::string_view needle) {
+    return text.text.find(needle) != std::string::npos;
+  };
+  expect(contains("// GTI verified-MIR body: closure-test-v0 "
+                  "lambda-instance 1") &&
+             contains("// GTI verified-MIR body: closure-test-v0 "
+                      "lambda-instance 2"),
+         "both lambda bodies should emit nested banners inside the entry");
+  expect(contains("[offset = __gti_mir_p_"),
+         "the capture should spell its Capture row name over the enclosing "
+         "place expression");
+  expect(contains("::gti_internal::backend::add(") &&
+             contains("::gti_internal::backend::multiply("),
+         "checked arithmetic inside the literals should keep the "
+         "compatibility terminal helper spelling");
+  expect(!contains("mir_checked_multiply_v1") &&
+             !contains("mir_checked_add_v1"),
+         "the literal interiors must not adopt the transformed checked "
+         "helpers");
+  expect(contains("rejoins the fused closure chain") &&
+             contains("joins the fused chain") &&
+             contains("spells at its consuming invocation"),
+         "the fused chain instructions should spell as comments only");
+}
+
+// Fusing the literal to a later invocation is sound only while every
+// captured place stays frozen after the Closure; a capture rewritten
+// between creation and invocation must decline fail-closed.
+void testClosureCaptureFreezeDeclines() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-closure-freeze.gti", R"(
+int main() {
+  mut int x = 1;
+  auto f = [x](int value) -> int {
+    return x + value;
+  };
+  x = 2;
+  return f(0) - 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the capture-freeze fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto entry =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &function) {
+                     return function.entryKind != lang::ProgramEntryKind::None;
+                   });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the capture-freeze fixture should retain its entry instance");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(!emitter.supportsBodyText(address) &&
+             !emitter.supportsFailureBodyText(address),
+         "a capture rewritten after the Closure must keep the body outside "
+         "the fused-chain vocabulary");
+}
+
 int main() {
   testExhaustiveEnumClassification();
   testReadyBodyAndRepresentationFailures();
@@ -1434,6 +1557,8 @@ int main() {
   testCleanupFixtureFunctionBodiesAreReady();
   testOwnedLifecycleConstructionBodiesReady();
   testDischargedStorageReadAnalysis();
+  testInlineClosureChainEmission();
+  testClosureCaptureFreezeDeclines();
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";
