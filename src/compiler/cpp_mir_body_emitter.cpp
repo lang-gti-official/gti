@@ -2337,6 +2337,28 @@ dischargedStorageReadCall(const MirInstruction &instruction) {
          instruction.definedFailure.propagation == FailurePropagationKind::None;
 }
 
+// The identity-bound public logical-size check (P-STORAGE-01 slice 1)
+// contains its failure terminally inside the compatibility helper, so its
+// invoke edge never branches on either form.
+[[nodiscard]] bool storageBoundsCheckCall(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         instruction.intrinsic == IntrinsicKind::StorageBoundsCheck &&
+         !instruction.functionTarget;
+}
+
+// A site-carrying numeric conversion arriving as an intrinsic call is a
+// checked detector exactly like the Convert compute: the status helper
+// writes the converted value and the paired invoke branches on it.
+[[nodiscard]] bool
+checkedConversionIntrinsicCall(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call &&
+         (instruction.intrinsic == IntrinsicKind::NumericAliasConversion ||
+          instruction.intrinsic ==
+              IntrinsicKind::NumericTypeParameterConversion) &&
+         !instruction.functionTarget &&
+         instruction.localFailureSites.size() == 1;
+}
+
 // An Unexpected value never materializes: std::unexpected has no default
 // construction, so the SSA declare-then-assign pattern cannot hold it. Its
 // single consumer (the Return that converts it into the expected-typed
@@ -2803,8 +2825,9 @@ public:
                    << " = ::gti_internal::backend::mir_failure_success_v1;\n";
           }
           if (instruction.kind == MirInstructionKind::Call &&
-              prefixStorageIntrinsic(instruction.intrinsic) &&
-              !instruction.localFailureSites.empty()) {
+              (checkedConversionIntrinsicCall(instruction) ||
+               (prefixStorageIntrinsic(instruction.intrinsic) &&
+                !instruction.localFailureSites.empty()))) {
             writeIndent();
             output << "::gti_internal::backend::mir_failure_status_v1 "
                       "__gti_mir_failure_status_"
@@ -3784,6 +3807,25 @@ private:
       output << ");\n";
       return;
     }
+    if (storageBoundsCheckCall(instruction)) {
+      // The terminal logical-size check keeps the exact compatibility
+      // helper: it reports the container's defined GTI-R0007 contract and
+      // never returns on failure.
+      output << "::gti_internal::backend::index_bounds_check(";
+      emitOperand(instruction.operands[0]);
+      output << ", ";
+      emitOperand(instruction.operands[1]);
+      output << ");\n";
+      return;
+    }
+    if (failureForm && checkedConversionIntrinsicCall(instruction)) {
+      output << "__gti_mir_failure_status_" << instruction.id
+             << " = ::gti_internal::backend::mir_checked_convert_v1<"
+             << typeSpelling(instruction.info.type) << ">(";
+      emitOperand(instruction.operands.front());
+      output << ", &__gti_mir_v_" << *instruction.result << ");\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic ==
              IntrinsicKind::NumericTypeParameterConversion ||
@@ -4006,7 +4048,8 @@ private:
           findInstruction(facts.body, terminator.invokeInstruction);
       if (producer != nullptr &&
           (callableValueInvocation(*producer) ||
-           deducedCallableCallee(program, *producer))) {
+           deducedCallableCallee(program, *producer) ||
+           storageBoundsCheckCall(*producer))) {
         // The fused literal or template callee contains its failure
         // terminally; the edge is a plain goto and the else block never
         // runs.
@@ -4054,8 +4097,9 @@ private:
           producer->localFailureSites.size() == 1;
       const bool storageDetector =
           producer != nullptr && producer->kind == MirInstructionKind::Call &&
-          prefixStorageIntrinsic(producer->intrinsic) &&
-          !producer->localFailureSites.empty();
+          ((prefixStorageIntrinsic(producer->intrinsic) &&
+            !producer->localFailureSites.empty()) ||
+           checkedConversionIntrinsicCall(*producer));
       if (producer == nullptr ||
           (!elementDetector && !storageDetector &&
            (producer->kind != MirInstructionKind::Compute ||
@@ -5666,6 +5710,32 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               typeRow(instruction.info.type.arguments[1])) {
             continue;
           }
+          if (storageBoundsCheckCall(instruction)) {
+            // The terminal logical-size check spells the compatibility
+            // helper over its two staged operands; the record and edge
+            // machinery never runs because the helper contains.
+            if (instruction.result || instruction.operands.size() != 2 ||
+                !std::all_of(instruction.operands.begin(),
+                             instruction.operands.end(), valueOperand)) {
+              return false;
+            }
+            continue;
+          }
+          if (checkedConversionIntrinsicCall(instruction)) {
+            // The checked-conversion detector belongs to the failure
+            // form: one site, one origin, a status helper writing the
+            // converted result.
+            if (!failureForm || !instruction.result ||
+                instruction.definedFailure.localOrigins.size() != 1 ||
+                program_.failureMetadata().findSite(
+                    instruction.localFailureSites.front()) == nullptr ||
+                instruction.operands.size() != 1 ||
+                !valueOperand(instruction.operands.front()) ||
+                !typeRow(instruction.info.type)) {
+              return false;
+            }
+            continue;
+          }
           // An arithmetic intrinsic call names no body: it spells directly
           // as the shipped helper over its two staged scalar operands.
           if (instruction.functionTarget ||
@@ -5745,9 +5815,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (producer == nullptr) {
         return false;
       }
-      if (callableValueInvocation(*producer)) {
-        // The fused literal contains its failure terminally; the edge is
-        // a plain goto and the else block never runs.
+      if (callableValueInvocation(*producer) ||
+          storageBoundsCheckCall(*producer)) {
+        // The fused literal or terminal logical-size check contains its
+        // failure; the edge is a plain goto and the else block never
+        // runs.
         continue;
       }
       if (!failureForm) {
@@ -5772,6 +5844,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !producer->localFailureSites.empty()) {
           // The storage detector's own status local carries the fired
           // outcome; the edge branches on it like any checked detector.
+          continue;
+        }
+        if (checkedConversionIntrinsicCall(*producer)) {
           continue;
         }
         const MirFunctionInstance *target =
