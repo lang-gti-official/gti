@@ -5761,10 +5761,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         const bool consumingCall =
             instruction.kind == MirInstructionKind::Call &&
             instruction.intrinsic == IntrinsicKind::None;
+        // A Move between the staging and its consuming call is inert
+        // argument staging: it neither raises nor observes, so the
+        // staged callable's deferred spelling stays exact.
         if (!consumingCall &&
             (instruction.kind != MirInstructionKind::CallInput &&
              instruction.kind != MirInstructionKind::Load &&
              instruction.kind != MirInstructionKind::Compute &&
+             instruction.kind != MirInstructionKind::Move &&
              instruction.kind != MirInstructionKind::Call)) {
           return false;
         }
