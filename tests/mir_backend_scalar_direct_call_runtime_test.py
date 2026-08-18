@@ -105,7 +105,9 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
     # module body join the named function bodies.
     if (
         generated.count(f"{MARKER} function-instance") != len(SELECTED)
-        or generated.count(f"{MARKER} field-initializers-instance") != 2
+        # file_handle's computed negate(1) default joined the verified
+        # initializer schedule as a terminally-contained expression.
+        or generated.count(f"{MARKER} field-initializers-instance") != 3
         or generated.count(f"{MARKER} static-field-initializers-instance") != 3
         or generated.count(f"{MARKER} module-instance") != 1
     ):

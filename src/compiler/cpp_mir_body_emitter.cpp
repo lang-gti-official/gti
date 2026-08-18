@@ -6497,60 +6497,157 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
   default:
     return result;
   }
-  // The passive schedule is one straight-line block ending in Exit whose
-  // only work is literal materialization, per-field Initialize stages, and
-  // lifecycle boundaries. Checked detectors, storage reads, and every other
-  // shape stay with the compatibility route.
-  if (body->blocks.size() != 1 || body->entry != 1 ||
-      body->blocks.front().terminator.kind != MirTerminatorKind::Exit ||
-      !body->loans.empty() || !body->dropObligations.empty() ||
-      !body->cleanupBoundaries.empty() || !body->failureRecords.empty()) {
+  // The schedule is the straight-line chain of blocks from the entry:
+  // literal materialization, terminally-contained checked computes (the
+  // compatibility helper family that reports and never returns on
+  // failure, so each Invoke edge is sequential and its else block is
+  // unreachable), per-field Initialize stages, and lifecycle boundaries.
+  // Storage reads and every other shape stay with the compatibility
+  // route.
+  if (body->blocks.empty() || body->entry != 1 || !body->loans.empty() ||
+      !body->dropObligations.empty() || !body->cleanupBoundaries.empty()) {
     return result;
   }
-  ScalarBodyTextEmitter writer(program_, representations_, 0);
-  std::unordered_map<MirValueId, const MirInstruction *> literals;
-  for (const MirInstruction &instruction : body->blocks.front().instructions) {
-    switch (instruction.kind) {
-    case MirInstructionKind::Lifecycle:
-      continue;
-    case MirInstructionKind::Compute:
-      if (instruction.operation != MirOperation::Literal ||
-          !instruction.result || !instruction.literal ||
-          !instruction.operands.empty() ||
-          !instruction.localFailureSites.empty() ||
-          !ScalarBodyTextEmitter::spellableLiteral(*instruction.literal,
-                                                   instruction.info.type)) {
+  std::vector<const MirInstruction *> schedule;
+  {
+    const MirBlock *block = &body->blocks.front();
+    std::size_t visited = 0;
+    for (;;) {
+      if (++visited > body->blocks.size()) {
         return result;
       }
-      literals.emplace(*instruction.result, &instruction);
+      for (const MirInstruction &instruction : block->instructions) {
+        schedule.push_back(&instruction);
+      }
+      if (block->terminator.kind == MirTerminatorKind::Exit) {
+        break;
+      }
+      if (block->terminator.kind != MirTerminatorKind::Invoke) {
+        return result;
+      }
+      // The invoke's producer must be this block's terminally-contained
+      // checked compute; its else target must be an empty propagate
+      // block, which the helper's own containment makes unreachable.
+      const MirInstruction *producer = nullptr;
+      for (const MirInstruction &instruction : block->instructions) {
+        if (instruction.id == block->terminator.invokeInstruction) {
+          producer = &instruction;
+        }
+      }
+      const MirBlock *elseBlock = nullptr;
+      const MirBlock *next = nullptr;
+      for (const MirBlock &candidate : body->blocks) {
+        if (candidate.id == block->terminator.elseTarget) {
+          elseBlock = &candidate;
+        }
+        if (candidate.id == block->terminator.target) {
+          next = &candidate;
+        }
+      }
+      if (producer == nullptr ||
+          producer->kind != MirInstructionKind::Compute ||
+          cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
+          producer->localFailureSites.size() != 1 || next == nullptr ||
+          elseBlock == nullptr || !elseBlock->instructions.empty() ||
+          elseBlock->terminator.kind != MirTerminatorKind::PropagateFailure) {
+        return result;
+      }
+      block = next;
+    }
+  }
+  ScalarBodyTextEmitter writer(program_, representations_, 0);
+  std::unordered_map<MirValueId, std::string> spellings;
+  const auto integralKind = [](const SemanticType &type) {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Char:
+      return true;
+    default:
+      return false;
+    }
+  };
+  for (const MirInstruction *instruction : schedule) {
+    switch (instruction->kind) {
+    case MirInstructionKind::Lifecycle:
       continue;
+    case MirInstructionKind::Compute: {
+      if (!instruction->result) {
+        return result;
+      }
+      if (instruction->operation == MirOperation::Literal) {
+        if (!instruction->literal || !instruction->operands.empty() ||
+            !instruction->localFailureSites.empty() ||
+            !ScalarBodyTextEmitter::spellableLiteral(*instruction->literal,
+                                                     instruction->info.type)) {
+          return result;
+        }
+        spellings.emplace(*instruction->result,
+                          writer.literalSpelling(*instruction->literal,
+                                                 instruction->info.type));
+        continue;
+      }
+      // A terminally-contained checked compute spells the compatibility
+      // helper over its already-spelled operands, exactly as the
+      // compatibility in-class initializer does.
+      const std::string_view helper =
+          cppMirTerminalCheckedHelperSpelling(instruction->operation);
+      if (helper.empty() || instruction->localFailureSites.size() != 1 ||
+          instruction->operands.empty() || instruction->operands.size() > 2 ||
+          !integralKind(instruction->info.type)) {
+        return result;
+      }
+      std::string spelled(helper);
+      spelled += '(';
+      for (std::size_t index = 0; index < instruction->operands.size();
+           ++index) {
+        const MirOperand &operand = instruction->operands[index];
+        const auto found = operand.kind == MirOperandKind::Value
+                               ? spellings.find(operand.value)
+                               : spellings.end();
+        if (found == spellings.end() || !integralKind(operand.type)) {
+          return result;
+        }
+        if (index != 0) {
+          spelled += ", ";
+        }
+        spelled += found->second;
+      }
+      spelled += ')';
+      spellings.emplace(*instruction->result, std::move(spelled));
+      continue;
+    }
     case MirInstructionKind::Initialize: {
       const MirPlace *destination =
-          instruction.destination ? body->findPlace(*instruction.destination)
-                                  : nullptr;
+          instruction->destination ? body->findPlace(*instruction->destination)
+                                   : nullptr;
       if (destination == nullptr ||
           destination->root != MirPlaceRootKind::Binding ||
           !destination->projections.empty() || destination->symbol == 0 ||
-          !instruction.localFailureSites.empty() ||
-          instruction.operands.size() > 1) {
+          !instruction->localFailureSites.empty() ||
+          instruction->operands.size() > 1) {
         return result;
       }
-      if (instruction.operands.empty()) {
+      if (instruction->operands.empty()) {
         // The bare default: the field carries no in-class initializer text.
         result.fields.push_back({.field = destination->symbol});
         continue;
       }
-      const MirOperand &operand = instruction.operands.front();
-      const auto literal = operand.kind == MirOperandKind::Value
-                               ? literals.find(operand.value)
-                               : literals.end();
-      if (literal == literals.end()) {
+      const MirOperand &operand = instruction->operands.front();
+      const auto spelled = operand.kind == MirOperandKind::Value
+                               ? spellings.find(operand.value)
+                               : spellings.end();
+      if (spelled == spellings.end()) {
         return result;
       }
       result.fields.push_back(
-          {.field = destination->symbol,
-           .spelling = writer.literalSpelling(*literal->second->literal,
-                                              literal->second->info.type)});
+          {.field = destination->symbol, .spelling = spelled->second});
       continue;
     }
     default:

@@ -79,8 +79,11 @@ def main() -> int:
                 generated = emitted.read_text(encoding="utf8")
                 if (
                     generated.count(f"{marker} function-instance") != 22
+                    # file_handle's computed negate(1) default joined the
+                    # verified initializer schedule as a terminally-contained
+                    # expression.
                     or generated.count(f"{marker} field-initializers-instance")
-                    != 1
+                    != 2
                     or generated.count(
                         f"{marker} static-field-initializers-instance"
                     )
