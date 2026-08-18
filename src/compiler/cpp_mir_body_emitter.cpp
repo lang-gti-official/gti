@@ -4191,8 +4191,13 @@ private:
         emitStoragePlaceValue(facts, *receiverPlace);
         output << '.';
       }
-      output << bodySpelling(*instruction.functionTarget)
-             << "__gti_mir_failure(";
+      const std::string sibling = cppMirFailureSiblingSpelling(
+          bodySpelling(*instruction.functionTarget));
+      if (sibling.empty()) {
+        throw std::logic_error(
+            "verified MIR failure call lost its transformed sibling name");
+      }
+      output << sibling << '(';
       for (const MirOperand &operand : instruction.operands) {
         emitCallArgument(operand, false);
         output << ", ";
@@ -5030,6 +5035,36 @@ bool cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program) {
   return true;
 }
 
+std::string cppMirFailureSiblingSpelling(std::string_view memberSpelling) {
+  constexpr std::string_view keyword = "operator";
+  const std::size_t at = memberSpelling.find(keyword);
+  const std::size_t after =
+      at == std::string_view::npos ? 0 : at + keyword.size();
+  const bool bridge =
+      at != std::string_view::npos &&
+      (after >= memberSpelling.size() ||
+       (!std::isalnum(static_cast<unsigned char>(memberSpelling[after])) &&
+        memberSpelling[after] != '_'));
+  if (!bridge) {
+    return std::string(memberSpelling) + "__gti_mir_failure";
+  }
+  const std::string_view symbol = memberSpelling.substr(after);
+  static constexpr std::pair<std::string_view, std::string_view> tokens[] = {
+      {"==", "eq"},     {"!=", "ne"},    {"<=", "le"},   {">=", "ge"},
+      {"<<", "shl"},    {">>", "shr"},   {"<", "lt"},    {">", "gt"},
+      {"+", "plus"},    {"-", "minus"},  {"*", "star"},  {"/", "slash"},
+      {"%", "percent"}, {"[]", "index"}, {"()", "call"}, {"!", "not"},
+      {"~", "tilde"},   {"&", "amp"},    {"|", "pipe"},  {"^", "caret"},
+  };
+  for (const auto &[spelling, token] : tokens) {
+    if (symbol == spelling) {
+      return std::string(memberSpelling.substr(0, at)) + "__gti_mir_op_" +
+             std::string(token) + "__gti_mir_failure";
+    }
+  }
+  return {};
+}
+
 bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {
   if (address.kind != MirBodyKind::Function) {
     return false;
@@ -5080,10 +5115,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       return false;
     }
     if (failureForm) {
-      // The transformed sibling appends a suffix to the emitted member
-      // name. A mangled operator name carries it fine, but a structural
-      // operator bridge spells a real C++ `operator` name, which cannot
-      // carry a suffix, so those bodies keep the compatibility route.
+      // The transformed sibling's name comes from the shared naming
+      // authority: plain and mangled member names carry the suffix
+      // directly, a structural operator bridge derives its mangled token
+      // sibling, and an operator outside the token map keeps the
+      // compatibility route.
       if (function->overloadedOperator) {
         const MirBodyAddress self{.kind = MirBodyKind::Function,
                                   .owner = address.owner};
@@ -5092,17 +5128,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             [&](const CppMirBodyNameRepresentation &candidate) {
               return candidate.address == self;
             });
-        bool bridgeSpelling = row == representations_.bodies().end();
-        if (!bridgeSpelling) {
-          const std::size_t at = row->spelling.find("operator");
-          const std::size_t after = at + std::string_view("operator").size();
-          bridgeSpelling = at != std::string::npos &&
-                           (after >= row->spelling.size() ||
-                            (!std::isalnum(static_cast<unsigned char>(
-                                 row->spelling[after])) &&
-                             row->spelling[after] != '_'));
-        }
-        if (bridgeSpelling) {
+        if (row == representations_.bodies().end() ||
+            cppMirFailureSiblingSpelling(row->spelling).empty()) {
           return false;
         }
       }

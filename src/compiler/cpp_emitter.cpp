@@ -6808,7 +6808,8 @@ private:
       emitCurrentClassSpecialization();
       output << "::";
     }
-    output << emittedFunctionName(function) << "__gti_mir_failure(";
+    output << cppMirFailureSiblingSpelling(emittedFunctionName(function))
+           << '(';
     emitMirOwnedLifecycleParameters(instance.parameterTypes);
     if (!instance.parameterTypes.empty()) {
       output << ", ";
@@ -6938,7 +6939,9 @@ private:
   void emitPrimaryTransformedMemberDeclaration(const FunctionDecl &function,
                                                const FunctionInfo &info) {
     writeIndent();
-    output << "bool " << emittedFunctionName(function) << "__gti_mir_failure(";
+    output << "bool "
+           << cppMirFailureSiblingSpelling(emittedFunctionName(function))
+           << '(';
     emitParameters(function.parameters());
     if (!function.parameters().empty()) {
       output << ", ";
@@ -7032,8 +7035,9 @@ private:
                                     ? ownerSpelling.substr(2)
                                     : ownerSpelling;
       const auto transformedSignature = [&] {
-        output << "template <> bool " << owner
-               << "::" << emittedFunctionName(function) << "__gti_mir_failure(";
+        output << "template <> bool " << owner << "::"
+               << cppMirFailureSiblingSpelling(emittedFunctionName(function))
+               << '(';
         emitMirOwnedLifecycleParameters(instance.parameterTypes);
         if (!instance.parameterTypes.empty()) {
           output << ", ";
@@ -7252,7 +7256,9 @@ private:
     writeIndent();
     output << "::gti_failure_record_v1 __gti_mir_boundary_record{};\n";
     writeIndent();
-    output << "if (" << emittedFunctionName(function) << "__gti_mir_failure(";
+    output << "if ("
+           << cppMirFailureSiblingSpelling(emittedFunctionName(function))
+           << '(';
     for (std::size_t index = 0; index < instance.parameterTypes.size();
          ++index) {
       output << "__gti_mir_arg_" << index << ", ";
@@ -13204,8 +13210,9 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
       ++indentation;
       writeIndent();
       output << "if (::__gti_program::"
-             << emittedFunctionName(*ownedArgumentsEntry)
-             << "__gti_mir_failure(\n";
+             << cppMirFailureSiblingSpelling(
+                    emittedFunctionName(*ownedArgumentsEntry))
+             << "(\n";
       ++indentation;
       writeIndent();
       output << "&__gti_result, &__gti_failure_record)) {\n";

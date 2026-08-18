@@ -351,6 +351,16 @@ cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program);
 [[nodiscard]] bool
 cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program);
 
+// Single naming authority for the transformed failure sibling (ADR 017),
+// shared by the compatibility signature/wrapper emission and the verified
+// caller spelling. A plain member name carries the __gti_mir_failure
+// suffix directly. A structural operator bridge spells a real C++
+// operator name, which cannot carry a suffix, so its sibling derives a
+// mangled token name; an operator outside the token map returns empty and
+// the body keeps the compatibility route.
+[[nodiscard]] std::string
+cppMirFailureSiblingSpelling(std::string_view memberSpelling);
+
 // The reference-field initializer schedule (ADR 018): each
 // stores-reference constructor initializer pairs bijectively with one
 // Stored loan on the same field whose source is the dereference carrier of
