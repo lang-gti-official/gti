@@ -5435,9 +5435,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   // the probed body, so decline censuses do not need rebuilt
   // instrumentation. The ordinals shift only when this function gains or
   // loses a decline point.
-  gtiProbeTraceKind = static_cast<int>(address.kind);
-  gtiProbeTraceOwner = static_cast<unsigned long>(address.owner);
-  gtiProbeTraceForm = failureForm ? 1 : 0;
+  // Nested probes (containment checks) run inside this one; the scope
+  // guard restores the outer body's identity so every decline print
+  // attributes to the body actually declining.
+  const struct ProbeTraceScope {
+    int kind;
+    unsigned long owner;
+    int form;
+    ProbeTraceScope(int nextKind, unsigned long nextOwner, int nextForm)
+        : kind(gtiProbeTraceKind), owner(gtiProbeTraceOwner),
+          form(gtiProbeTraceForm) {
+      gtiProbeTraceKind = nextKind;
+      gtiProbeTraceOwner = nextOwner;
+      gtiProbeTraceForm = nextForm;
+    }
+    ~ProbeTraceScope() {
+      gtiProbeTraceKind = kind;
+      gtiProbeTraceOwner = owner;
+      gtiProbeTraceForm = form;
+    }
+  } gtiProbeTraceScope{static_cast<int>(address.kind),
+                       static_cast<unsigned long>(address.owner),
+                       failureForm ? 1 : 0};
   // The vocabulary is shared between function and destructor bodies; the
   // probe needs only the body, the owning class instance for field rows,
   // and the receiver mutability for the store direction. The failure form
@@ -7723,11 +7742,31 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         continue;
       }
+      if (producer->kind == MirInstructionKind::Construct &&
+          producer->localFailureSites.empty() &&
+          producer->definedFailure.propagation ==
+              FailurePropagationKind::Constructor) {
+        // A propagating construction terminates at its own site on every
+        // shipped path — the constructor failure ABI does not exist yet —
+        // so the invoke's else edge is unreachable and the edge is a
+        // plain goto, exactly like the analysis's transparent exemption.
+        continue;
+      }
       if (producer->kind == MirInstructionKind::Call) {
         if (prefixStorageIntrinsic(producer->intrinsic) &&
             !producer->localFailureSites.empty()) {
           // The storage detector's own status local carries the fired
           // outcome; the edge branches on it like any checked detector.
+          continue;
+        }
+        if (prefixStorageIntrinsic(producer->intrinsic) &&
+            producer->localFailureSites.empty() &&
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::None) {
+          // A discharged storage read carries no site: flow analysis
+          // proved the bound, so the invoke's else edge is unreachable
+          // and the edge is a plain goto, exactly like the analysis's
+          // discharged-read exemption.
           continue;
         }
         if (checkedConversionIntrinsicCall(*producer)) {
