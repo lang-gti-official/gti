@@ -68,6 +68,102 @@ viewElementAccess(const MirBody &body, const MirPlace &place) {
   return std::nullopt;
 }
 
+struct ClassSubscriptAccess {
+  MirPlaceId base = 0;
+  HirClassInstanceId owner = 0;
+  MirValueId index = 0;
+  std::optional<std::uint64_t> constantIndex;
+  SemanticType indexType = SemanticType::Unknown;
+};
+
+// A class-subscription place: an Index projection over a sibling
+// class-typed local. The compatibility path spells it as the class's
+// subscript member call, so the access carries the member-resolution
+// facts: the base place, its class instance, and the index identity.
+[[nodiscard]] std::optional<ClassSubscriptAccess>
+classSubscriptAccess(const MirProgram &program, const MirBody &body,
+                     const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || place.binding == 0 ||
+      place.projections.size() != 1 ||
+      place.projections[0].kind != MirProjectionKind::Index) {
+    return std::nullopt;
+  }
+  for (const MirPlace &candidate : body.places) {
+    if (candidate.id == place.id ||
+        candidate.root != MirPlaceRootKind::Binding ||
+        candidate.binding != place.binding || !candidate.projections.empty() ||
+        candidate.type.kind != SemanticType::Class) {
+      continue;
+    }
+    for (const MirClassInstance &instance : program.classInstances()) {
+      if (instance.type != candidate.type) {
+        continue;
+      }
+      const MirValue *index = body.findValue(place.projections[0].index);
+      if (index == nullptr) {
+        return std::nullopt;
+      }
+      return ClassSubscriptAccess{
+          candidate.id, instance.id, place.projections[0].index,
+          place.projections[0].constantIndex, index->info.type};
+    }
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+// Resolves the unique subscript member for one access direction and
+// proves it: a source-defined GTI member of the base class instance with
+// the exact receiver mutability and index parameter type, carrying a
+// body-name row for its spelling, whose own emitted body contains
+// failure terminally — cycles fail closed exactly like the plain-callee
+// convention.
+[[nodiscard]] const MirFunctionInstance *containedSubscriptMember(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    HirClassInstanceId owner, ReceiverMutability mutability,
+    const SemanticType &indexType) {
+  const MirFunctionInstance *found = nullptr;
+  for (const MirFunctionInstance &candidate : program.functionInstances()) {
+    if (!candidate.overloadedOperator ||
+        *candidate.overloadedOperator != OverloadedOperator::Subscript ||
+        !candidate.owner || *candidate.owner != owner ||
+        candidate.receiverMutability != mutability ||
+        candidate.parameterTypes.size() != 1 ||
+        candidate.parameterTypes.front() != indexType ||
+        candidate.linkage != LanguageLinkage::Gti ||
+        candidate.definitionKind !=
+            MirFunctionInstance::DefinitionKind::Source) {
+      continue;
+    }
+    if (found != nullptr) {
+      return nullptr;
+    }
+    found = &candidate;
+  }
+  if (found == nullptr) {
+    return nullptr;
+  }
+  const MirBodyAddress address{.kind = MirBodyKind::Function,
+                               .owner = found->id};
+  const auto row = std::find_if(
+      representations.bodies().begin(), representations.bodies().end(),
+      [&](const CppMirBodyNameRepresentation &candidate) {
+        return candidate.address == address;
+      });
+  if (row == representations.bodies().end() || row->spelling.empty()) {
+    return nullptr;
+  }
+  thread_local std::vector<HirFunctionInstanceId> probing;
+  if (std::find(probing.begin(), probing.end(), found->id) != probing.end()) {
+    return nullptr;
+  }
+  probing.push_back(found->id);
+  const bool contained =
+      CppMirBodyEmitter(program, representations).supportsBodyText(address);
+  probing.pop_back();
+  return contained ? found : nullptr;
+}
+
 template <typename Enum>
 [[nodiscard]] constexpr std::size_t ordinal(Enum value) {
   return static_cast<std::size_t>(value);
@@ -3858,6 +3954,25 @@ private:
         return;
       }
       if (source != nullptr) {
+        if (const std::optional<ClassSubscriptAccess> access =
+                classSubscriptAccess(program, facts.body, *source)) {
+          const MirFunctionInstance *member = containedSubscriptMember(
+              program, representations, access->owner,
+              ReceiverMutability::ReadOnly, access->indexType);
+          if (member == nullptr) {
+            throw std::logic_error(
+                "verified MIR subscript read lost its contained member");
+          }
+          // The compatibility subscription: a read-only receiver wrapper
+          // around the base, the member's emitted name, and the index.
+          output << "__gti_mir_v_" << *instruction.result
+                 << " = (::gti_internal::backend::read_only_receiver(";
+          emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
+          output << "))." << bodySpelling(member->id) << '(';
+          emitSubscriptIndex(*access);
+          output << ");\n";
+          return;
+        }
         if (const std::optional<ArrayElementAccess> access =
                 viewElementAccess(facts.body, *source)) {
           // The terminal helper reports the defined bound contract and
@@ -3913,6 +4028,30 @@ private:
     }
     if (const MirPlace *destinationPlace =
             facts.body.findPlace(*instruction.destination)) {
+      if (const std::optional<ClassSubscriptAccess> access =
+              classSubscriptAccess(program, facts.body, *destinationPlace)) {
+        const MirFunctionInstance *member = containedSubscriptMember(
+            program, representations, access->owner,
+            ReceiverMutability::Mutable, access->indexType);
+        if (member == nullptr) {
+          throw std::logic_error(
+              "verified MIR subscript store lost its contained member");
+        }
+        output << '(';
+        emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
+        output << ")." << bodySpelling(member->id) << '(';
+        emitSubscriptIndex(*access);
+        output << ") = ";
+        emitOperand(instruction.operands.front());
+        output << ";\n";
+        if (instruction.kind == MirInstructionKind::Assign) {
+          writeIndent();
+          output << "__gti_mir_v_" << *instruction.result << " = ";
+          emitOperand(instruction.operands.front());
+          output << ";\n";
+        }
+        return;
+      }
       if (const std::optional<ArrayElementAccess> access =
               arrayElementAccess(facts.body, *destinationPlace)) {
         if (failureForm && !instruction.localFailureSites.empty()) {
@@ -4790,6 +4929,14 @@ private:
       return;
     }
     output << "static_cast<std::size_t>(__gti_mir_v_" << access.index << ")";
+  }
+
+  void emitSubscriptIndex(const ClassSubscriptAccess &access) {
+    if (access.index != 0) {
+      output << "__gti_mir_v_" << access.index;
+      return;
+    }
+    output << *access.constantIndex;
   }
 
   void emitElementIndexValue(const ArrayElementAccess &access) {
@@ -5879,6 +6026,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (classSubscriptAccess(program_, body, place)) {
+      // Reads and stores spell the class's subscript member; each
+      // direction proves its contained member at its instruction rule.
+      if (!typeRow(place.type)) {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 121,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
+      continue;
+    }
     if (place.root == MirPlaceRootKind::Loan) {
       const MirLoan *loan = loanById(place.loan);
       if (loan == nullptr || !typeRow(place.type) ||
@@ -6619,6 +6779,29 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
         }
+        if (const MirPlace *source =
+                body.findPlace(instruction.operands.front().place);
+            source != nullptr) {
+          if (const std::optional<ClassSubscriptAccess> subscript =
+                  classSubscriptAccess(program_, body, *source)) {
+            // The subscript member call contains failure terminally in
+            // its own emitted body, so the plain call is exact on both
+            // text forms and any paired invoke edge is a plain goto.
+            if (containedSubscriptMember(program_, representations_,
+                                         subscript->owner,
+                                         ReceiverMutability::ReadOnly,
+                                         subscript->indexType) == nullptr ||
+                !typeRow(instruction.info.type)) {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 122,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+            continue;
+          }
+        }
         if (!instruction.localFailureSites.empty()) {
           // A bounds-checked element load is a failure detector: exactly
           // one site and origin, spelled through the checked-read helper.
@@ -6668,6 +6851,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            gtiProbeTraceForm);
             }
             return false;
+          }
+        }
+        if (destination != nullptr &&
+            classSubscriptAccess(program_, body, *destination)) {
+          // An initializing subscript store uses the same mutable member
+          // call as an assignment.
+          if (const std::optional<ClassSubscriptAccess> subscript =
+                  classSubscriptAccess(program_, body, *destination);
+              containedSubscriptMember(program_, representations_,
+                                       subscript->owner,
+                                       ReceiverMutability::Mutable,
+                                       subscript->indexType) == nullptr ||
+              !valueOperand(instruction.operands.front())) {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 123,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          } else {
+            continue;
           }
         }
         if (destination != nullptr && slotPlace(*destination)) {
@@ -6722,6 +6926,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            gtiProbeTraceForm);
             }
             return false;
+          }
+        }
+        if (destination != nullptr) {
+          if (const std::optional<ClassSubscriptAccess> subscript =
+                  classSubscriptAccess(program_, body, *destination)) {
+            // The mutable subscript member call contains failure
+            // terminally in its own emitted body; the plain call is
+            // exact on both text forms.
+            if (containedSubscriptMember(program_, representations_,
+                                         subscript->owner,
+                                         ReceiverMutability::Mutable,
+                                         subscript->indexType) == nullptr) {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 124,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+            continue;
           }
         }
         if (!instruction.localFailureSites.empty()) {
