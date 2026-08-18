@@ -365,6 +365,54 @@ terminallyContainedPlainCallee(const MirProgram &program,
   return closureChainDefinition(body, initialize->operands.front().value);
 }
 
+// A Drop of a unique-owner place whose value an earlier Move in the
+// same block unconditionally consumed: the C++ local is moved-from, its
+// representation's scope-end destruction is a no-op by construction
+// (a null owner deletes nothing), so the Drop spells as a comment.
+[[nodiscard]] bool movedOutOwnerDrop(const MirBody &body,
+                                     const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Drop ||
+      !instruction.destination) {
+    return false;
+  }
+  const MirPlace *destination = body.findPlace(*instruction.destination);
+  if (destination == nullptr ||
+      destination->type.kind != SemanticType::UniqueOwner ||
+      destination->root != MirPlaceRootKind::Binding ||
+      !destination->projections.empty()) {
+    return false;
+  }
+  for (const MirLifecycleEvent &event : instruction.lifecycle) {
+    if (event.conditional) {
+      return false;
+    }
+  }
+  const MirBlock *block = nullptr;
+  for (const MirBlock &candidate : body.blocks) {
+    for (const MirInstruction &member : candidate.instructions) {
+      if (member.id == instruction.id) {
+        block = &candidate;
+      }
+    }
+  }
+  if (block == nullptr) {
+    return false;
+  }
+  bool moved = false;
+  for (const MirInstruction &candidate : block->instructions) {
+    if (candidate.id == instruction.id) {
+      break;
+    }
+    if (candidate.kind == MirInstructionKind::Move &&
+        candidate.operands.size() == 1 &&
+        candidate.operands.front().kind == MirOperandKind::Move &&
+        candidate.operands.front().place == destination->id) {
+      moved = true;
+    }
+  }
+  return moved;
+}
+
 // A Drop is trivial when every drop obligation governing it — the ones
 // its lifecycle events name and the ones anchored on its destination
 // place — carries neither a destructor nor active cleanup: C++ scope-end
@@ -2834,7 +2882,12 @@ public:
       output << typeSpelling(place.type) << " __gti_mir_p_" << place.id;
       if (const std::optional<std::size_t> parameter =
               parameterIndex(place, facts)) {
-        output << " = __gti_mir_arg_" << *parameter;
+        // A move-only owner parameter cannot copy-initialize its local.
+        if (place.type.kind == SemanticType::UniqueOwner) {
+          output << " = std::move(__gti_mir_arg_" << *parameter << ')';
+        } else {
+          output << " = __gti_mir_arg_" << *parameter;
+        }
       } else {
         output << "{}";
       }
@@ -3592,6 +3645,15 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Drop &&
+        movedOutOwnerDrop(facts.body, instruction)) {
+      // The owner's value moved out; the moved-from local's scope-end
+      // destruction is a no-op by representation.
+      writeIndent();
+      output << "// GTI MIR moved-out owner drop of place "
+             << *instruction.destination << "\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Drop &&
         trivialMirDrop(facts.body, instruction)) {
       // Scope-end destruction of the declared local is exactly the
       // verified semantics for a trivial obligation.
@@ -3735,20 +3797,24 @@ private:
         return;
       }
     }
-    const bool storageOperand =
+    // Storage values and unique-owner values are move-only in the C++
+    // representation; the store is their consuming use, so it spells as a
+    // move.
+    const bool movedOperand =
         instruction.operands.front().type.kind == SemanticType::Storage ||
-        instruction.operands.front().type.kind == SemanticType::PrefixStorage;
+        instruction.operands.front().type.kind == SemanticType::PrefixStorage ||
+        instruction.operands.front().type.kind == SemanticType::UniqueOwner;
     output << destinationSpelling(facts, *instruction.destination) << " = ";
-    if (storageOperand) {
+    if (movedOperand) {
       output << "std::move(";
     }
     emitOperand(instruction.operands.front(),
                 instruction.kind == MirInstructionKind::Initialize);
-    if (storageOperand) {
+    if (movedOperand) {
       output << ')';
     }
     output << ";\n";
-    if (instruction.kind == MirInstructionKind::Assign && !storageOperand) {
+    if (instruction.kind == MirInstructionKind::Assign && !movedOperand) {
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result << " = "
              << destinationSpelling(facts, *instruction.destination) << ";\n";
@@ -5308,6 +5374,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (!lifetimeSlotRow() || !typeRow(place.type)) {
         return false;
       }
+      // A slot-allocated parameter place has no argument-construction
+      // staging in the body prelude, so its body keeps the compatibility
+      // route.
+      if (parameterBindings != nullptr &&
+          std::find(parameterBindings->begin(), parameterBindings->end(),
+                    place.binding) != parameterBindings->end()) {
+        return false;
+      }
       continue;
     }
     if (place.root == MirPlaceRootKind::Symbol) {
@@ -5548,7 +5622,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         continue;
       case MirInstructionKind::Drop: {
-        if (trivialMirDrop(body, instruction)) {
+        if (trivialMirDrop(body, instruction) ||
+            movedOutOwnerDrop(body, instruction)) {
           continue;
         }
         if (failureForm && instruction.lifecycle.size() == 1 &&

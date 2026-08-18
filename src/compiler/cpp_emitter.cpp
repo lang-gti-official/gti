@@ -7968,10 +7968,32 @@ private:
       const MirConstructorInstance *selected) const {
     if (selected == nullptr ||
         selected->definitionKind != MirDefinitionKind::Source ||
-        !selected->body.failureRecords.empty() ||
-        !selected->body.dropObligations.empty() ||
-        !selected->body.cleanupBoundaries.empty()) {
+        !selected->body.failureRecords.empty()) {
       return false;
+    }
+    // Drop obligations and cleanup boundaries are admissible only when the
+    // body has a single unconditional success path: every boundary is
+    // Normal-kind and every lifecycle event is unconditional non-failure
+    // cleanup. The body-text authority still proves each Drop
+    // instruction's representation individually, so this gate owns only
+    // the path shape.
+    if (std::any_of(selected->body.cleanupBoundaries.begin(),
+                    selected->body.cleanupBoundaries.end(),
+                    [](const MirCleanupBoundary &boundary) {
+                      return boundary.kind != MirCleanupBoundaryKind::Normal;
+                    })) {
+      return false;
+    }
+    for (const MirBlock &block : selected->body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (std::any_of(instruction.lifecycle.begin(),
+                        instruction.lifecycle.end(),
+                        [](const MirLifecycleEvent &event) {
+                          return event.conditional || event.failureCleanup;
+                        })) {
+          return false;
+        }
+      }
     }
     const std::optional<std::vector<CppMirStoredReferenceBinding>>
         storedBindings = cppMirStoredReferenceBindings(*selected);
