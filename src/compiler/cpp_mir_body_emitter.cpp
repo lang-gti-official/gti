@@ -2812,6 +2812,24 @@ public:
                << " *__gti_mir_loan_" << loan.id << "{};\n";
         continue;
       }
+      // A loan published by a transformed reference-returning callee
+      // points at the callee's return element, not the receiver that
+      // sources it (ADR 018 §5).
+      if (loan.kind == MirLoanKind::CallResult) {
+        const MirInstruction *call =
+            loanProducingReferenceCall(program, facts.body, loan);
+        const MirFunctionInstance *target =
+            call != nullptr && call->functionTarget
+                ? program.findFunctionInstance(*call->functionTarget)
+                : nullptr;
+        if (target == nullptr || target->returnType.arguments.empty()) {
+          throw std::logic_error(
+              "verified MIR call-result loan lost its element type");
+        }
+        output << typeSpelling(target->returnType.arguments.front())
+               << " *__gti_mir_loan_" << loan.id << "{};\n";
+        continue;
+      }
       output << typeSpelling(source->type) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
     }
@@ -3902,12 +3920,17 @@ private:
     // static dispatch MIR proved.
     const MirPlace *receiverPlace = nullptr;
     if (instruction.receiver) {
+      // Staged through a CallInput, or borrowed directly on the receiver
+      // operand (a self-member call); both name the spellable place.
       const MirInstruction *staged =
           borrowStagedCallInput(facts.body, *instruction.receiver);
-      receiverPlace =
-          staged == nullptr
-              ? nullptr
-              : facts.body.findPlace(staged->operands.front().place);
+      const MirOperand &receiverBorrow =
+          staged != nullptr ? staged->operands.front() : *instruction.receiver;
+      receiverPlace = (receiverBorrow.kind == MirOperandKind::BorrowRead ||
+                       receiverBorrow.kind == MirOperandKind::BorrowWrite) &&
+                              receiverBorrow.place != 0
+                          ? facts.body.findPlace(receiverBorrow.place)
+                          : nullptr;
       if (receiverPlace == nullptr) {
         throw std::logic_error(
             "verified MIR receiver call lost its staged borrowed place");
@@ -4671,6 +4694,32 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       return false;
     }
     if (failureForm) {
+      // The transformed sibling appends a suffix to the emitted member
+      // name. A mangled operator name carries it fine, but a structural
+      // operator bridge spells a real C++ `operator` name, which cannot
+      // carry a suffix, so those bodies keep the compatibility route.
+      if (function->overloadedOperator) {
+        const MirBodyAddress self{.kind = MirBodyKind::Function,
+                                  .owner = address.owner};
+        const auto row = std::find_if(
+            representations_.bodies().begin(), representations_.bodies().end(),
+            [&](const CppMirBodyNameRepresentation &candidate) {
+              return candidate.address == self;
+            });
+        bool bridgeSpelling = row == representations_.bodies().end();
+        if (!bridgeSpelling) {
+          const std::size_t at = row->spelling.find("operator");
+          const std::size_t after = at + std::string_view("operator").size();
+          bridgeSpelling = at != std::string::npos &&
+                           (after >= row->spelling.size() ||
+                            (!std::isalnum(static_cast<unsigned char>(
+                                 row->spelling[after])) &&
+                             row->spelling[after] != '_'));
+        }
+        if (bridgeSpelling) {
+          return false;
+        }
+      }
       // The transformed ABI publishes through a scalar out-parameter; a
       // body that cannot raise keeps its plain form instead.
       const std::optional<CppMirTypeRepresentationKind> returnKind =
@@ -4817,15 +4866,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         return false;
       }
     } else if (referenceCall != nullptr) {
-      // The pointer local declares from the loan source's own type row
-      // (checked inline: the shared row helpers are defined below).
-      const bool sourceRow = std::any_of(
-          representations_.types().begin(), representations_.types().end(),
-          [&](const CppMirTypeRepresentation &row) {
-            return row.type == loanSource->type && !row.spelling.empty();
-          });
+      // The pointer local declares from the callee's return element row;
+      // the receiver staging still spells the source place separately.
+      const MirFunctionInstance *referenceTarget =
+          referenceCall->functionTarget
+              ? program_.findFunctionInstance(*referenceCall->functionTarget)
+              : nullptr;
+      const bool elementRow =
+          referenceTarget != nullptr &&
+          !referenceTarget->returnType.arguments.empty() &&
+          std::any_of(
+              representations_.types().begin(), representations_.types().end(),
+              [&](const CppMirTypeRepresentation &row) {
+                return row.type ==
+                           referenceTarget->returnType.arguments.front() &&
+                       !row.spelling.empty();
+              });
       if (producedCallResultLoan(body, *referenceCall) == nullptr ||
-          !sourceRow) {
+          !elementRow) {
         return false;
       }
     } else {
@@ -5676,12 +5734,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.dispatch != CallDispatch::Static) {
             return false;
           }
+          // The receiver borrow arrives staged through a CallInput or
+          // directly on the receiver operand (a self-member call borrows
+          // its own receiver with no staging step); both name a spellable
+          // place whose access mode must match the member's receiver
+          // mutability exactly.
           const MirInstruction *staged =
               borrowStagedCallInput(body, *instruction.receiver);
+          const MirOperand &receiverBorrow = staged != nullptr
+                                                 ? staged->operands.front()
+                                                 : *instruction.receiver;
           const MirPlace *receiverPlace =
-              staged == nullptr
-                  ? nullptr
-                  : body.findPlace(staged->operands.front().place);
+              (receiverBorrow.kind == MirOperandKind::BorrowRead ||
+               receiverBorrow.kind == MirOperandKind::BorrowWrite) &&
+                      receiverBorrow.place != 0
+                  ? body.findPlace(receiverBorrow.place)
+                  : nullptr;
           if (receiverPlace == nullptr) {
             return false;
           }
@@ -5689,11 +5757,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.functionTarget
                   ? program_.findFunctionInstance(*instruction.functionTarget)
                   : nullptr;
-          // The staged borrow's access must match the member's receiver
-          // mutability exactly: a write-staged receiver reaches a mutable
-          // member, a read-staged one a read-only member.
           const ReceiverMutability stagedMutability =
-              staged->operands.front().kind == MirOperandKind::BorrowWrite
+              receiverBorrow.kind == MirOperandKind::BorrowWrite
                   ? ReceiverMutability::Mutable
                   : ReceiverMutability::ReadOnly;
           if (target == nullptr || !target->owner || target->staticMember ||
@@ -5714,7 +5779,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               receiverPlace->type != ownerInstance->type) {
             return false;
           }
-          consumedStaged.push_back(*staged->result);
+          if (staged != nullptr) {
+            consumedStaged.push_back(*staged->result);
+          }
         }
         if (!failureForm && instruction.functionTarget) {
           // The success form spells plain calls; a failure-capable GTI
