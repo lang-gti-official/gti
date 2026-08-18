@@ -96,6 +96,47 @@ Runtime reports must not add compilation time. Compilation reports must not be
 presented as runtime results. Profiling runs are diagnostic and should not be
 mixed into statistically timed samples.
 
+## First Recorded Measurement
+
+The harness had never been run and recorded, so the language's central
+performance claim was unevidenced. One measurement, taken at 0.226.0 on
+`arm64-apple-darwin` with Apple `c++`, `-O2 -std=c++23`, 2 warmups and 7 runs
+of `vector-checked-loop`:
+
+| Variant | Median (ms) | MAD (ms) |
+| --- | ---: | ---: |
+| `gti` | 125.71 | 3.85 |
+| `cpp-semantic` | 57.22 | 0.94 |
+| `cpp-idiomatic` | 8.32 | 0.04 |
+
+Derived:
+
+- **GTI is 2.20x `cpp-semantic`** — the honest comparison, against C++ doing
+  the same checked work by hand.
+- **GTI is 15.11x `cpp-idiomatic`**, which is not a like-for-like comparison:
+  the idiomatic variant omits GTI's bounds and overflow guarantees, as
+  `benchmarks/README.md` already states.
+- **`cpp-semantic` is 6.88x `cpp-idiomatic`.** Most of the distance between
+  GTI and unchecked C++ is the cost of checking itself, not GTI's
+  implementation of it. Any language making these guarantees pays this;
+  the 2.20x is the part that belongs to GTI.
+
+That decomposition is what makes the number actionable. The 6.88x is the
+budget `optimization.md`'s `-O2` range proofs and check elimination are meant
+to reclaim, and reclaiming it needs MIR-level range and alias facts that no
+C++ compiler can derive from the emitted checks. The 2.20x is the current
+implementation overhead, measured before any of that exists.
+
+The run reported `inconclusive` for one reason: `cpp-idiomatic`'s 8.32 ms
+median falls below the workload's declared `minimum_sample_seconds` of 0.01,
+so that variant's timing is unreliable at this work size. The `gti` and
+`cpp-semantic` medians are well above it, so the 2.20x ratio — the one the
+language is judged on — is sound. Raising `work_units` would make all three
+conclusive.
+
+Re-measure and update this section when check elimination lands, and when the
+MIR cutover completes. A single point is a baseline, not a trend.
+
 ## Benchmark Comparison Model
 
 ### Variants
