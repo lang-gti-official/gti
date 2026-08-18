@@ -3786,6 +3786,20 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {
+      const MirPlace *storage =
+          storageStagedPlace(facts.body, instruction.operands.front());
+      if (storage == nullptr) {
+        throw std::logic_error(
+            "verified MIR length read lost its staged storage place");
+      }
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::prefix_storage_length(";
+      emitStoragePlaceValue(facts, *storage);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         prefixStorageIntrinsic(instruction.intrinsic)) {
       if (instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
         output << "__gti_mir_failure_status_" << instruction.id << " = "
@@ -5572,6 +5586,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
                instruction.receiver->place == 0 ||
                body.findPlace(instruction.receiver->place) == nullptr)) {
+            return false;
+          }
+          continue;
+        }
+        if (instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {
+          // The logical-length read carries no failure and spells the
+          // shipped helper over the staged storage place on both forms.
+          if (instruction.functionTarget || !instruction.result ||
+              !instruction.localFailureSites.empty() ||
+              instruction.operands.size() != 1 ||
+              storageStagedPlace(body, instruction.operands.front()) ==
+                  nullptr ||
+              !typeRow(instruction.info.type)) {
             return false;
           }
           continue;
