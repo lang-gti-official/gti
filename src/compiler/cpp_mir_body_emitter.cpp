@@ -2765,6 +2765,114 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
   return definition;
 }
 
+// A class-valued failure Return may publish a moved local instead: the
+// Move sits in the Return's own block with nothing between them touching
+// the source place, the value's uses are exactly the Return plus at most
+// one Value-rooted place that only a Drop touches, and no instruction or
+// terminator anywhere else references the source place after the Move.
+// The out-parameter's move-assignment then consumes the source directly
+// at the point the Move proved it live.
+[[nodiscard]] const MirInstruction *returnMoveDefinition(const MirBody &body,
+                                                         MirValueId value) {
+  const MirValue *record = body.findValue(value);
+  const MirInstruction *definition =
+      record == nullptr ? nullptr : findInstruction(body, record->definition);
+  if (record == nullptr || record->info.type.kind != SemanticType::Class ||
+      definition == nullptr || definition->kind != MirInstructionKind::Move ||
+      !definition->result || definition->operands.size() != 1 ||
+      definition->operands.front().kind != MirOperandKind::Move ||
+      definition->operands.front().place == 0) {
+    return nullptr;
+  }
+  const MirPlaceId source = definition->operands.front().place;
+  // Same-block adjacency only: the Return's block contains the Move and
+  // nothing after it references the source place. The cross-block form
+  // (Move before an Invoke whose success target returns the value)
+  // proved unsound as a simple allowance — the slot-state flow needs a
+  // real proof before that widening returns.
+  const MirBlock *home = nullptr;
+  for (const MirBlock &candidate : body.blocks) {
+    for (const MirInstruction &member : candidate.instructions) {
+      if (member.id == definition->id) {
+        home = &candidate;
+      }
+    }
+  }
+  if (home == nullptr || home->terminator.kind != MirTerminatorKind::Return ||
+      !home->terminator.value ||
+      home->terminator.value->kind != MirOperandKind::Value ||
+      home->terminator.value->value != value) {
+    return nullptr;
+  }
+  bool afterMove = false;
+  for (const MirInstruction &member : home->instructions) {
+    if (member.id == definition->id) {
+      afterMove = true;
+      continue;
+    }
+    if (!afterMove) {
+      continue;
+    }
+    if (member.destination && *member.destination == source) {
+      return nullptr;
+    }
+    if (member.receiver && member.receiver->place == source) {
+      return nullptr;
+    }
+    for (const MirOperand &operand : member.operands) {
+      if (operand.place == source) {
+        return nullptr;
+      }
+    }
+  }
+  const MirPlace *rooted = nullptr;
+  bool terminatorUse = false;
+  for (const MirValueUse &use : body.usesOf(value)) {
+    if (use.kind == MirValueUseKind::Terminator) {
+      if (terminatorUse) {
+        return nullptr;
+      }
+      terminatorUse = true;
+      continue;
+    }
+    if (use.kind == MirValueUseKind::PlaceRoot && rooted == nullptr) {
+      rooted = body.findPlace(use.place);
+      if (rooted == nullptr) {
+        return nullptr;
+      }
+      continue;
+    }
+    return nullptr;
+  }
+  if (!terminatorUse) {
+    return nullptr;
+  }
+  if (rooted != nullptr) {
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        const bool dropsIt = instruction.kind == MirInstructionKind::Drop &&
+                             instruction.destination &&
+                             *instruction.destination == rooted->id;
+        if (dropsIt) {
+          continue;
+        }
+        if (instruction.destination && *instruction.destination == rooted->id) {
+          return nullptr;
+        }
+        if (instruction.receiver && instruction.receiver->place == rooted->id) {
+          return nullptr;
+        }
+        for (const MirOperand &operand : instruction.operands) {
+          if (operand.place == rooted->id) {
+            return nullptr;
+          }
+        }
+      }
+    }
+  }
+  return definition;
+}
+
 // An Unexpected value never materializes: std::unexpected has no default
 // construction, so the SSA declare-then-assign pattern cannot hold it. Its
 // single consumer (the Return that converts it into the expected-typed
@@ -3926,6 +4034,20 @@ private:
              << *instruction.destination << "\n";
       return;
     }
+    if (failureForm && instruction.kind == MirInstructionKind::Drop &&
+        instruction.destination) {
+      if (const MirPlace *place =
+              facts.body.findPlace(*instruction.destination);
+          place != nullptr && place->root == MirPlaceRootKind::Value &&
+          returnMoveDefinition(facts.body, place->value) != nullptr) {
+        // The out-parameter's move-assignment consumed this value; the
+        // moved-from residual needs no destruction step.
+        writeIndent();
+        output << "// GTI MIR publication-consumed drop of place "
+               << *instruction.destination << "\n";
+        return;
+      }
+    }
     if (instruction.kind == MirInstructionKind::Drop &&
         storeConsumedStorageValueDrop(facts.body, instruction)) {
       // The consuming store moved this value into its destination; the
@@ -4222,6 +4344,14 @@ private:
                << " stages a callable place\n";
         return;
       }
+    }
+    if (failureForm && instruction.kind == MirInstructionKind::Move &&
+        instruction.result &&
+        returnMoveDefinition(facts.body, *instruction.result) == &instruction) {
+      writeIndent();
+      output << "// move " << *instruction.result
+             << " publishes at its consuming return\n";
+      return;
     }
     if (instruction.kind == MirInstructionKind::Move) {
       // By-value element staging: the moved place feeds exactly the
@@ -4674,6 +4804,26 @@ private:
         throw std::logic_error(
             "verified MIR invoke is outside the failure vocabulary");
       }
+      // The vacuous-else producers the probe admits: a discharged
+      // storage read (flow proved the bound) and a propagating
+      // construction (constructor failure terminates at its own site);
+      // their edges are plain gotos.
+      if (producer != nullptr &&
+          ((producer->kind == MirInstructionKind::Call &&
+            prefixStorageIntrinsic(producer->intrinsic) &&
+            producer->localFailureSites.empty() &&
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::None) ||
+           (producer->kind == MirInstructionKind::Construct &&
+            producer->localFailureSites.empty() &&
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::Constructor))) {
+        writeIndent();
+        output << "__gti_mir_bb = " << terminator.target << ";\n";
+        writeIndent();
+        output << "continue;\n";
+        return;
+      }
       if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
           transformedCallee(*producer) != nullptr) {
         writeIndent();
@@ -4816,6 +4966,11 @@ private:
                   : nullptr;
           writeIndent();
           output << "*__gti_mir_out_result = ";
+          const MirInstruction *moved =
+              construct == nullptr &&
+                      terminator.value->kind == MirOperandKind::Value
+                  ? returnMoveDefinition(facts.body, terminator.value->value)
+                  : nullptr;
           if (construct != nullptr) {
             // The class value publishes its constructor call inline; the
             // move-assignment into the out-parameter matches the
@@ -4828,6 +4983,13 @@ private:
               }
               emitOperand(construct->operands[index]);
             }
+            output << ')';
+          } else if (moved != nullptr) {
+            // The moved local publishes directly at the point the Move
+            // proved it live (same block, nothing between).
+            output << "std::move(";
+            emitStoragePlaceValue(
+                facts, *facts.body.findPlace(moved->operands.front().place));
             output << ')';
           } else {
             emitOperand(*terminator.value);
@@ -6315,12 +6477,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.intrinsic == IntrinsicKind::None;
         // A Move between the staging and its consuming call is inert
         // argument staging: it neither raises nor observes, so the
-        // staged callable's deferred spelling stays exact.
+        // staged callable's deferred spelling stays exact. Lifecycle and
+        // EndBorrow spell as comments and touch no state, so they are
+        // equally inert inside the window.
         if (!consumingCall &&
             (instruction.kind != MirInstructionKind::CallInput &&
              instruction.kind != MirInstructionKind::Load &&
              instruction.kind != MirInstructionKind::Compute &&
              instruction.kind != MirInstructionKind::Move &&
+             instruction.kind != MirInstructionKind::Lifecycle &&
+             instruction.kind != MirInstructionKind::EndBorrow &&
              instruction.kind != MirInstructionKind::Call)) {
           {
             if (::getenv("GTI_PROBE_TRACE") != nullptr) {
@@ -6455,6 +6621,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             movedOutOwnerDrop(body, instruction) ||
             storeConsumedStorageValueDrop(body, instruction)) {
           continue;
+        }
+        if (failureForm && instruction.destination) {
+          if (const MirPlace *dropped =
+                  body.findPlace(*instruction.destination);
+              dropped != nullptr && dropped->root == MirPlaceRootKind::Value &&
+              returnMoveDefinition(body, dropped->value) != nullptr) {
+            continue;
+          }
         }
         if (failureForm && instruction.lifecycle.size() == 1 &&
             instruction.lifecycle.front().failureCleanup &&
@@ -7902,6 +8076,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (failureForm && block.terminator.value &&
           block.terminator.value->type.kind == SemanticType::Class &&
           returnConstructDefinition(body, block.terminator.value->value) ==
+              nullptr &&
+          returnMoveDefinition(body, block.terminator.value->value) ==
               nullptr) {
         // A class value publishes only through its paired inline
         // construct; anything else has no local to spell.
