@@ -7178,10 +7178,17 @@ private:
         continue;
       }
       // Every substituted type must be concretely spellable; a pack or
-      // parameter-typed instance stays on the primary template.
+      // parameter-typed instance stays on the primary template. A
+      // concrete class-typed parameter — a deduction-called declaration's
+      // stateful callable — is nameable, and the admitted body's analysis
+      // already demanded its type rows.
+      const auto specializationParameter = [](const SemanticType &type) {
+        return isMirScalarCfgSignatureType(type) ||
+               type.kind == SemanticType::Class;
+      };
       if (!std::all_of(instance.parameterTypes.begin(),
                        instance.parameterTypes.end(),
-                       isMirScalarCfgSignatureType) ||
+                       specializationParameter) ||
           !(instance.returnType == SemanticType::Void ||
             isMirScalarCfgSignatureType(instance.returnType))) {
         continue;

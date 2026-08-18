@@ -2884,6 +2884,15 @@ public:
         writeIndent();
         output << lifetimeSlotSpelling() << '<' << typeSpelling(place.type)
                << "> __gti_mir_p_" << place.id << ";\n";
+        // A slot-allocated parameter engages its slot from the argument;
+        // MIR models the parameter as initialized at entry.
+        if (const std::optional<std::size_t> parameter =
+                parameterIndex(place, facts)) {
+          writeIndent();
+          output << "__gti_mir_p_" << place.id
+                 << ".construct(std::move(__gti_mir_arg_" << *parameter
+                 << "));\n";
+        }
         continue;
       }
       // A storage-rooted place reads or writes its named global directly.
@@ -5580,12 +5589,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (!lifetimeSlotRow() || !typeRow(place.type)) {
         return false;
       }
-      // A slot-allocated parameter place has no argument-construction
-      // staging in the body prelude, so its body keeps the compatibility
-      // route.
+      // A function body's slot-allocated parameter constructs its slot
+      // from the argument in the prelude. Constructor and lambda bodies
+      // keep the compatibility route: their moved-in class values still
+      // flow through undeclarable class-typed value locals.
       if (parameterBindings != nullptr &&
           std::find(parameterBindings->begin(), parameterBindings->end(),
-                    place.binding) != parameterBindings->end()) {
+                    place.binding) != parameterBindings->end() &&
+          address.kind != MirBodyKind::Function) {
         return false;
       }
       continue;
