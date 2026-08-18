@@ -328,6 +328,62 @@ hasExecutableProgramInitialization(const MirProgram &program) {
   return closureChainDefinition(body, initialize->operands.front().value);
 }
 
+// A Drop is trivial when every drop obligation governing it — the ones
+// its lifecycle events name and the ones anchored on its destination
+// place — carries neither a destructor nor active cleanup: C++ scope-end
+// destruction of the declared local (or nothing, for a fused closure) is
+// exactly the verified semantics, so the Drop spells as a comment. An
+// unresolvable obligation fails closed.
+[[nodiscard]] bool trivialMirDrop(const MirBody &body,
+                                  const MirInstruction &instruction) {
+  const MirPlace *destination = instruction.destination
+                                    ? body.findPlace(*instruction.destination)
+                                    : nullptr;
+  if (destination == nullptr) {
+    return false;
+  }
+  // A slot-shaped place stays on the lifetime-slot protocol regardless of
+  // obligation triviality: the slot's engage/destroy pairing is the
+  // verified escape check, and skipping its destroy would trip it.
+  if (destination->root == MirPlaceRootKind::Binding &&
+      destination->projections.empty() &&
+      (destination->type.kind == SemanticType::Class ||
+       destination->type.kind == SemanticType::Storage ||
+       destination->type.kind == SemanticType::PrefixStorage)) {
+    return false;
+  }
+  const auto trivialObligation = [&](MirDropObligationId id) {
+    if (id == 0) {
+      return true;
+    }
+    for (const MirDropObligation &obligation : body.dropObligations) {
+      if (obligation.id == id) {
+        return !obligation.dropType.destructor &&
+               !obligation.dropType.requiresActiveCleanup;
+      }
+    }
+    return false;
+  };
+  bool governed = false;
+  for (const MirLifecycleEvent &event : instruction.lifecycle) {
+    governed = governed || event.source != 0 || event.target != 0;
+    if (!trivialObligation(event.source) || !trivialObligation(event.target)) {
+      return false;
+    }
+  }
+  for (const MirDropObligation &obligation : body.dropObligations) {
+    if (obligation.place != *instruction.destination) {
+      continue;
+    }
+    governed = true;
+    if (obligation.dropType.destructor ||
+        obligation.dropType.requiresActiveCleanup) {
+      return false;
+    }
+  }
+  return governed;
+}
+
 // Plain-shape checked arithmetic: the compatibility path's terminal helper
 // family checks and contains the defined failure itself and never returns
 // on failure. Inline lambda literals keep exactly that spelling, so their
@@ -3482,6 +3538,15 @@ private:
              << (instruction.loan ? *instruction.loan : 0) << "\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Drop &&
+        trivialMirDrop(facts.body, instruction)) {
+      // Scope-end destruction of the declared local is exactly the
+      // verified semantics for a trivial obligation.
+      writeIndent();
+      output << "// GTI MIR trivial drop of place " << *instruction.destination
+             << "\n";
+      return;
+    }
     if (failureForm && instruction.kind == MirInstructionKind::Drop &&
         instruction.lifecycle.size() == 1 &&
         instruction.lifecycle.front().failureCleanup) {
@@ -5390,6 +5455,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         continue;
       case MirInstructionKind::Drop: {
+        if (trivialMirDrop(body, instruction)) {
+          continue;
+        }
         if (failureForm && instruction.lifecycle.size() == 1 &&
             instruction.lifecycle.front().failureCleanup &&
             instruction.destination) {
