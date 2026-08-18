@@ -249,7 +249,7 @@ infrastructure project.
 
 | Outcome lane | First dependency path | Acceptance signal |
 | --- | --- | --- |
-| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02/03` -> opaque-handle sub-slice of `S-FFI-02`; independently `M-LIFE/M-FAIL/M-BACK` -> `S-CALL-01` | Layout-stable records, exact symbols, and nominal pointer-only handles share one generated C/C++ adapter header. A wrapper can now hide C structs or C++ classes behind ordinary GTI RAII; callbacks retain their executable-lifetime prerequisites. |
+| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02/03` -> opaque-handle sub-slice of `S-FFI-02` -> `S-FFI-02` families F1/F2/F3; independently `M-LIFE/M-FAIL/M-BACK` -> `S-CALL-01` | Layout-stable records, exact symbols, and nominal pointer-only handles share one generated C/C++ adapter header. A wrapper can now hide C structs or C++ classes behind ordinary GTI RAII; callbacks retain their executable-lifetime prerequisites. The named acceptance client is GLFW 3.4: the header binds with no GTI-caused omission and an example opens a window and polls input. |
 | Arena or pool allocator | `M-LIFE-01` + failure/layout facts -> `S-ALLOC-01/02` -> one `S-ALLOC-03` client | Application GTI owns allocation policy and one container/value family proves initialization, failure, and cleanup. |
 | Multithreaded work queue | `M-LIFE/M-EXEC/M-FAIL` -> `C-MIR/RUNTIME/CALL` -> `C-ATOM/THREAD/SYNC` -> `C-CONFORM` | Owned tasks, SC atomics, mutex-guard access, join, and worker failure work through public GTI. |
 | Renderer/game update loop | mutable ranges/views + completed vector/string + exact domain operators + time/files/allocation | A frame/update workload mutates collections and domain values without raw-pointer escape hatches. |
@@ -1773,9 +1773,11 @@ do not expose C++ object layout as GTI semantics.
 ### S-FFI-02: Additional C ABI Families
 
 - **State/role:** in progress; the independent pointer-only opaque-handle
-  family is complete in 0.119.0. Select a demonstrated C-library API before
-  adding one out-parameter or ownership-transfer family; callbacks remain
-  owned by `S-CALL-01` rather than blocking handle identity.
+  family is complete in 0.119.0. The demonstrated C-library API this row's
+  remaining families are selected against is **GLFW 3.4**: a real, widely used
+  C library whose surface is broad enough to exercise records, strings,
+  out-parameters, and callbacks, and small enough to bind completely.
+  Callbacks remain owned by `S-CALL-01` rather than blocking handle identity.
 - **Implemented sub-slice:** `[[c_opaque]] struct Name;` creates one nominal,
   incomplete, nongeneric, baseless handle usable only behind a one-level raw
   pointer. `[[c_abi]]` records and `extern "C"` signatures admit those pointers;
@@ -1784,17 +1786,54 @@ do not expose C++ object layout as GTI semantics.
   private representation, while GTI infers no layout, ownership, nullability,
   transfer, or cleanup. `GTI-S2065`, formatter, Tree-sitter, LSP, compiler
   library tests, and the mixed C/C++ native oracle cover the boundary.
-- **Remaining scope:** Add pointer-to-pointer out parameters, arrays, and
-  ownership-transfer annotations one family at a time. Each family must state
+- **Layering contract:** The `extern "C"` surface is a faithful mirror of the
+  C declaration and makes no safety claim; safety is a wrapper written in
+  ordinary GTI over that surface, per ADR 004. A family is admitted when the C
+  declaration can be spelled exactly and its obligations stated, not when the
+  declaration is provably safe. Restricting what may be *declared* pushes the
+  problem outside the language, where GTI can say nothing about it at all.
+- **Remaining families, ordered against the GLFW binding.** A binding attempt
+  at 0.199.0 bound 3 of 5 records and roughly 90 of ~110 functions; the
+  measured blockers below are what the remainder needs. Each family must state
   initialization, retention, aliasing, nullability, cleanup, and unsafe
   obligations. A selected ownership family must build on the opaque identity
   rather than retroactively making raw handle pointers owners.
+  - **F1 — fixed-array `[[c_abi]]` fields.** Admit `T[N]` fields of otherwise
+    admissible element types. ADR 013 already anticipates this: it excluded
+    them only until their backend representation is defined directly rather
+    than inherited from `std::array`. C array layout is unambiguous, so no
+    layout proof is lost, and element access keeps GTI's existing bounds
+    checking. Unblocks `GLFWgamepadstate`, and the same shape recurs in
+    `sockaddr` and SDL event records. Cheapest family; do it first.
+  - **F2 — the C-string boundary.** `char` stays excluded from `[[c_abi]]`
+    records for the implementation-defined-signedness reason already recorded
+    in `R-NATIVE-RECORDS`. The gap is that a C API's `const char*` means
+    *pointer to NUL-terminated bytes*, and spelling it `const uint8_t*` loses
+    that meaning and forces hand conversion at every call site. Define one
+    boundary type carrying the NUL-terminated contract, converting from GTI
+    strings without a manual copy at the call site and reading back as a
+    bounded view. Roughly 30 GLFW entry points take or return one; this is the
+    pervasive ergonomic cost, not a niche case.
+  - **F3 — out-parameter and returned pointer-plus-count.** C's "returns an
+    array, writes the length through an out parameter" idiom. Admit it as one
+    bounded boundary form rather than admitting `T**` generally, which would
+    import pointer nesting and aliasing that `R-RAW-POINTERS` excludes as a
+    durable rule. Unblocks `glfwGetError`, `glfwGetMonitors`, and
+    `glfwGetRequiredInstanceExtensions`.
+  - Callbacks are **not** in this row. `S-CALL-01` owns them and gates the
+    remaining ~20 GLFW entry points.
 - **Later breadth:** C varargs, unions, bit-fields, and packed records remain
   separate proposals. `printf` alone is not sufficient justification for
   importing C's least checkable call surface.
 - **Exit gate for each remaining family:** the selected family passes a real C oracle across supported
   targets, has explicit initialization/retention/cleanup diagnostics, and adds
   no backend-derived type or ownership authority.
+- **Row exit gate:** with F1 through F3 and `S-CALL-01` complete, the GLFW 3.4
+  header binds with no declaration commented out except the Vulkan entry
+  points, which depend on Vulkan types rather than on any GTI gap. An example
+  program opens a window, polls input, and exits cleanly under the sanitized
+  build. Record the binding under `examples/` so the surface is regression
+  covered rather than reconstructed by hand each time.
 
 ### S-ALLOC-01: Allocator, Provenance, And Initialization Proposal
 
