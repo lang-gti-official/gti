@@ -4455,6 +4455,14 @@ private:
       }
       if (place.projections.size() == 2 &&
           place.projections[0].kind == MirProjectionKind::Field &&
+          place.projections[1].kind == MirProjectionKind::Dereference) {
+        // A reference member dereferences implicitly; the bound reference
+        // local already names the referent.
+        output << "__gti_mir_p_" << place.id;
+        return;
+      }
+      if (place.projections.size() == 2 &&
+          place.projections[0].kind == MirProjectionKind::Field &&
           place.projections[1].kind == MirProjectionKind::Index) {
         output << "(*this)." << fieldSpelling(facts, place.projections[0].field)
                << '[';
@@ -5202,7 +5210,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (place.projections.empty()) {
         continue;
       }
-      if (place.projections.size() != 1 ||
+      // One projected field, or a reference field followed by its
+      // dereference: C++ reference members dereference implicitly, so
+      // both bind through the same member spelling.
+      const bool referenceFieldChain =
+          place.projections.size() == 2 &&
+          place.projections[0].kind == MirProjectionKind::Field &&
+          place.projections[1].kind == MirProjectionKind::Dereference;
+      if ((place.projections.size() != 1 && !referenceFieldChain) ||
           place.projections.front().kind != MirProjectionKind::Field ||
           !fieldRow(place.projections.front().field)) {
         return false;
