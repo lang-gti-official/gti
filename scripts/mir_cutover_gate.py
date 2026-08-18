@@ -17,9 +17,11 @@ Two ways to arm it, because they suit different clients:
                                          # session
 
 The sentinel file is the practical option for the desktop app, which is not
-launched from a shell and so has nowhere to carry an environment variable. It
-arms every session in this checkout while it exists, so delete it when the
-cutover run is over.
+launched from a shell and so has nowhere to carry an environment variable. The
+first session to finish a turn while it exists claims it, recorded as a
+`session:` line in the file, and only that session is held afterwards — other
+work in the same checkout is let through. Delete and recreate the file to hand
+the claim to a different session; delete it to disarm entirely.
 
 Fails open. If the count cannot be established — no build, no compiler, a
 compiler that will not run — the hook allows the stop and says why. A gate that
@@ -74,30 +76,70 @@ def count_emitted(gti: Path, examples: list[Path], root: Path) -> int | None:
     return total
 
 
-def main() -> int:
-    # Stop hooks receive JSON on stdin. Nothing here needs it, but it must be
-    # drained so the writer does not see a closed pipe.
+def read_session_id() -> str | None:
+    """The Stop hook payload carries the session this turn belongs to."""
     try:
-        sys.stdin.read()
-    except OSError:
-        pass
+        payload = json.loads(sys.stdin.read() or "{}")
+    except (OSError, ValueError):
+        return None
+    session = payload.get("session_id")
+    return session if isinstance(session, str) and session else None
+
+
+def parse_sentinel(text: str) -> tuple[int | None, str | None]:
+    """Read `target` and `session` lines from the sentinel, both optional."""
+    target: int | None = None
+    session: str | None = None
+    for line in text.splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if entry.isdigit():
+            target = int(entry)
+        elif entry.startswith("session:"):
+            claimed = entry.removeprefix("session:").strip()
+            session = claimed or None
+    return target, session
+
+
+def main() -> int:
+    session_id = read_session_id()
 
     root = Path(
         os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parent.parent
     )
 
     sentinel = root / ".claude" / SENTINEL
-    if not os.environ.get("GTI_MIR_GOAL") and not sentinel.is_file():
+    armed_by_env = bool(os.environ.get("GTI_MIR_GOAL"))
+    if not armed_by_env and not sentinel.is_file():
         return allow()
 
-    # A target in the sentinel file wins, so the desktop app can ratchet
-    # without an environment variable. An unparseable file falls back rather
-    # than failing the gate.
     target = int(os.environ.get("GTI_MIR_TARGET", DEFAULT_TARGET))
+    claimed: str | None = None
     if sentinel.is_file():
-        written = sentinel.read_text(encoding="utf-8", errors="replace").strip()
-        if written.isdigit():
-            target = int(written)
+        written, claimed = parse_sentinel(
+            sentinel.read_text(encoding="utf-8", errors="replace")
+        )
+        if written is not None:
+            target = written
+
+    # The sentinel is a file, so without this it would hold every session in
+    # the checkout — including ones doing unrelated work. The first session to
+    # finish a turn while armed claims it; every other session is then let
+    # through. Delete and recreate the file to hand the claim to a different
+    # session. The environment variable is already session-scoped and skips
+    # this entirely.
+    if not armed_by_env and session_id:
+        if claimed is None:
+            body = f"session: {session_id}\n"
+            if target != DEFAULT_TARGET:
+                body = f"{target}\n{body}"
+            try:
+                sentinel.write_text(body, encoding="utf-8")
+            except OSError:
+                pass
+        elif claimed != session_id:
+            return allow()
 
     gti = root / "build" / "gti"
     if not gti.is_file() or not os.access(gti, os.X_OK):
