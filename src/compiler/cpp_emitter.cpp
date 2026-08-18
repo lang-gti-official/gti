@@ -6284,12 +6284,12 @@ private:
       if (instance->parameterTypes.size() != info->parameterTypes.size()) {
         return std::string();
       }
-      CppMirBodyEmissionMapRows rows{
-          .types = generalEmissionMap->types(),
-          .bodies = generalEmissionMap->bodies(),
-          .symbols = generalEmissionMap->symbols(),
-          .enums = generalEmissionMap->enums(),
-          .capabilities = generalEmissionMap->capabilities()};
+      CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
+                                     .bodies = generalEmissionMap->bodies(),
+                                     .symbols = generalEmissionMap->symbols(),
+                                     .enums = generalEmissionMap->enums(),
+                                     .capabilities =
+                                         generalEmissionMap->capabilities()};
       for (std::size_t index = 0; index < info->parameterTypes.size();
            ++index) {
         const SemanticType &declared = info->parameterTypes[index];
@@ -6305,11 +6305,11 @@ private:
             !concreteKind) {
           return std::string();
         }
-        const auto existing = std::find_if(
-            rows.types.begin(), rows.types.end(),
-            [&](const CppMirTypeRepresentation &row) {
-              return row.type == concrete;
-            });
+        const auto existing =
+            std::find_if(rows.types.begin(), rows.types.end(),
+                         [&](const CppMirTypeRepresentation &row) {
+                           return row.type == concrete;
+                         });
         if (existing != rows.types.end()) {
           if (existing->spelling != parameter->name.lexeme) {
             // One concrete callable bound to two differently named

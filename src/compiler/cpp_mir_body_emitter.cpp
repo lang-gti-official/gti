@@ -223,8 +223,8 @@ hasExecutableProgramInitialization(const MirProgram &program) {
 // deduced-callable template emission carries a type row for the place's
 // concrete callable type, so this shape stays dormant under production
 // rows.
-[[nodiscard]] const MirInstruction *
-callableReceiverStage(const MirBody &body, MirValueId id) {
+[[nodiscard]] const MirInstruction *callableReceiverStage(const MirBody &body,
+                                                          MirValueId id) {
   const MirValue *value = body.findValue(id);
   const MirInstruction *definition =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -232,8 +232,7 @@ callableReceiverStage(const MirBody &body, MirValueId id) {
       (definition->kind != MirInstructionKind::Load &&
        definition->kind != MirInstructionKind::Move) ||
       definition->operands.size() != 1 ||
-      definition->operands.front().place == 0 ||
-      body.usesOf(id).size() != 1) {
+      definition->operands.front().place == 0 || body.usesOf(id).size() != 1) {
     return nullptr;
   }
   const MirPlace *place = body.findPlace(definition->operands.front().place);
@@ -242,8 +241,8 @@ callableReceiverStage(const MirBody &body, MirValueId id) {
   // and never declares, so spelling it here would name a nonexistent
   // local.
   if (place == nullptr || place->type.kind != SemanticType::Lambda ||
-      place->root != MirPlaceRootKind::Binding ||
-      !place->projections.empty() || !place->initiallyAvailable) {
+      place->root != MirPlaceRootKind::Binding || !place->projections.empty() ||
+      !place->initiallyAvailable) {
     return nullptr;
   }
   return definition;
@@ -263,16 +262,14 @@ callableReceiverStage(const MirBody &body, MirValueId id) {
          target->definitionKind == MirFunctionInstance::DefinitionKind::Source;
 }
 
-[[nodiscard]] const MirInstruction *
-callableArgumentStage(const MirBody &body, MirValueId id) {
+[[nodiscard]] const MirInstruction *callableArgumentStage(const MirBody &body,
+                                                          MirValueId id) {
   const MirValue *value = body.findValue(id);
   const MirInstruction *definition =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
-  if (definition == nullptr ||
-      definition->kind != MirInstructionKind::Load ||
+  if (definition == nullptr || definition->kind != MirInstructionKind::Load ||
       definition->operands.size() != 1 ||
-      definition->operands.front().place == 0 ||
-      body.usesOf(id).size() != 1 ||
+      definition->operands.front().place == 0 || body.usesOf(id).size() != 1 ||
       body.usesOf(id).front().kind != MirValueUseKind::InstructionOperand) {
     return nullptr;
   }
@@ -284,15 +281,15 @@ callableArgumentStage(const MirBody &body, MirValueId id) {
   }
   const MirPlace *place = body.findPlace(definition->operands.front().place);
   if (place == nullptr || place->type.kind != SemanticType::Lambda ||
-      place->root != MirPlaceRootKind::Binding ||
-      !place->projections.empty() || !place->initiallyAvailable) {
+      place->root != MirPlaceRootKind::Binding || !place->projections.empty() ||
+      !place->initiallyAvailable) {
     return nullptr;
   }
   return definition;
 }
 
-[[nodiscard]] const MirInstruction *
-closureChainDefinition(const MirBody &body, MirValueId id) {
+[[nodiscard]] const MirInstruction *closureChainDefinition(const MirBody &body,
+                                                           MirValueId id) {
   const MirValue *value = body.findValue(id);
   const MirInstruction *definition =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
@@ -409,8 +406,7 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
           continue;
         }
         if (writer.kind != MirInstructionKind::Initialize ||
-            block.id != body.entry ||
-            result->definitionBlock != body.entry) {
+            block.id != body.entry || result->definitionBlock != body.entry) {
           return false;
         }
         bool writerPrecedes = false;
@@ -463,8 +459,8 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
                      use.block == result->definitionBlock;
         continue;
       }
-      if (use.kind == MirValueUseKind::InstructionOperand &&
-          user != nullptr && deducedCallableCallee(program, *user)) {
+      if (use.kind == MirValueUseKind::InstructionOperand && user != nullptr &&
+          deducedCallableCallee(program, *user)) {
         // The literal spells inline as the template call's deduced
         // callable argument, exactly like the compatibility call.
         ++invocations;
@@ -472,9 +468,8 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
                      use.block == result->definitionBlock;
         continue;
       }
-      if (use.kind != MirValueUseKind::InstructionOperand ||
-          user == nullptr || user->kind != MirInstructionKind::Initialize ||
-          !user->destination) {
+      if (use.kind != MirValueUseKind::InstructionOperand || user == nullptr ||
+          user->kind != MirInstructionKind::Initialize || !user->destination) {
         return false;
       }
       directOnly = false;
@@ -483,8 +478,8 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
       if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
           !place->projections.empty() ||
           place->type.kind != SemanticType::Lambda ||
-          std::find(visitedCarriers.begin(), visitedCarriers.end(),
-                    carrier) != visitedCarriers.end()) {
+          std::find(visitedCarriers.begin(), visitedCarriers.end(), carrier) !=
+              visitedCarriers.end()) {
         return false;
       }
       visitedCarriers.push_back(carrier);
@@ -501,16 +496,15 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
               reference.id != user->id) {
             return false;
           }
-          bool readsCarrier = reference.receiver &&
-                              reference.receiver->place == carrier;
+          bool readsCarrier =
+              reference.receiver && reference.receiver->place == carrier;
           for (const MirOperand &operand : reference.operands) {
             readsCarrier = readsCarrier || operand.place == carrier;
           }
           if (!readsCarrier || reference.id == user->id) {
             continue;
           }
-          if (reference.kind != MirInstructionKind::Load ||
-              !reference.result) {
+          if (reference.kind != MirInstructionKind::Load || !reference.result) {
             return false;
           }
           pending.push_back(*reference.result);
@@ -523,7 +517,6 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
   }
   return true;
 }
-
 
 [[nodiscard]] const MirInstruction *definitionFor(const MirBody &body,
                                                   const MirOperand &operand) {
@@ -2734,7 +2727,8 @@ public:
       // overlay row (spelling its template parameter name); otherwise its
       // C++ closure type is unnameable and every consumer spells the
       // fused literal inline.
-      if (place.type.kind == SemanticType::Lambda && !typeRowExists(place.type)) {
+      if (place.type.kind == SemanticType::Lambda &&
+          !typeRowExists(place.type)) {
         continue;
       }
       writeIndent();
@@ -2997,9 +2991,9 @@ private:
     return found->spelling;
   }
 
-  [[nodiscard]] const std::string &
-  captureSpelling(std::size_t lambdaOwner, SymbolId symbol,
-                  std::size_t ordinal) {
+  [[nodiscard]] const std::string &captureSpelling(std::size_t lambdaOwner,
+                                                   SymbolId symbol,
+                                                   std::size_t ordinal) {
     const auto found = std::find_if(
         representations.symbols().begin(), representations.symbols().end(),
         [&](const CppMirSymbolRepresentation &row) {
@@ -3215,8 +3209,7 @@ private:
       output << captureSpelling(lambda->id, lambda->captureSymbols[index],
                                 index + 1)
              << " = ";
-      const bool moves =
-          lambda->captureModes[index] == LambdaCaptureMode::Move;
+      const bool moves = lambda->captureModes[index] == LambdaCaptureMode::Move;
       if (moves) {
         output << "std::move(";
       }
@@ -3231,8 +3224,8 @@ private:
       if (index != 0) {
         output << ", ";
       }
-      output << typeSpelling(lambda->parameterTypes[index])
-             << " __gti_mir_arg_" << index;
+      output << typeSpelling(lambda->parameterTypes[index]) << " __gti_mir_arg_"
+             << index;
     }
     output << ") -> " << typeSpelling(lambda->returnType) << ' '
            << ScalarBodyTextEmitter(program, representations, indentation)
@@ -3387,8 +3380,7 @@ private:
         return;
       }
       if (!failureForm && !instruction.localFailureSites.empty() &&
-          !cppMirTerminalCheckedHelperSpelling(instruction.operation)
-               .empty()) {
+          !cppMirTerminalCheckedHelperSpelling(instruction.operation).empty()) {
         // Plain literal shape: the compatibility terminal helper both
         // checks and contains, so the result assignment is unconditional
         // and the paired invoke edge is a plain goto.
@@ -4088,10 +4080,9 @@ private:
     case MirTerminatorKind::Invoke: {
       const MirInstruction *producer =
           findInstruction(facts.body, terminator.invokeInstruction);
-      if (producer != nullptr &&
-          (callableValueInvocation(*producer) ||
-           deducedCallableCallee(program, *producer) ||
-           storageBoundsCheckCall(*producer))) {
+      if (producer != nullptr && (callableValueInvocation(*producer) ||
+                                  deducedCallableCallee(program, *producer) ||
+                                  storageBoundsCheckCall(*producer))) {
         // The fused literal or template callee contains its failure
         // terminally; the edge is a plain goto and the else block never
         // runs.
@@ -4816,9 +4807,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirInstruction *discharged =
         pairedDischargedRead(body, loan.producedBy);
     const MirInstruction *referenceCall =
-        discharged == nullptr
-            ? loanProducingReferenceCall(program_, body, loan)
-            : nullptr;
+        discharged == nullptr ? loanProducingReferenceCall(program_, body, loan)
+                              : nullptr;
     if (discharged != nullptr) {
       if (producedCallResultLoan(body, *discharged) == nullptr ||
           (loanSource->type.kind != SemanticType::Storage &&
@@ -4846,9 +4836,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     bool borrowed = false;
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
-        borrowed = borrowed ||
-                   (instruction.kind == MirInstructionKind::Borrow &&
-                    instruction.loan && *instruction.loan == loan.id);
+        borrowed =
+            borrowed || (instruction.kind == MirInstructionKind::Borrow &&
+                         instruction.loan && *instruction.loan == loan.id);
       }
     }
     if (borrowed) {
@@ -4924,12 +4914,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         });
   };
   const auto capabilityRow = [&](CppMirEmissionCapabilityKind kind) {
-    return std::any_of(
-        representations_.capabilities().begin(),
-        representations_.capabilities().end(),
-        [&](const CppMirEmissionCapabilityRepresentation &row) {
-          return row.kind == kind && !row.spelling.empty();
-        });
+    return std::any_of(representations_.capabilities().begin(),
+                       representations_.capabilities().end(),
+                       [&](const CppMirEmissionCapabilityRepresentation &row) {
+                         return row.kind == kind && !row.spelling.empty();
+                       });
   };
   const auto lambdaBodyRow = [&](HirLambdaId target) {
     const MirBodyAddress nested{.kind = MirBodyKind::Lambda, .owner = target};
@@ -4938,8 +4927,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         [&](const CppMirBodyNameRepresentation &row) {
           return row.address == nested;
         });
-    return found != representations_.bodies().end() &&
-           !found->spelling.empty();
+    return found != representations_.bodies().end() && !found->spelling.empty();
   };
   const auto constructSlot = [&](const MirInstruction &construct) {
     if (!construct.result) {
@@ -5007,8 +4995,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (place.root == MirPlaceRootKind::Symbol) {
       if (place.capture != 0) {
         // A capture place spells its Capture row name inside the literal.
-        if (address.kind != MirBodyKind::Lambda ||
-            !place.projections.empty() ||
+        if (address.kind != MirBodyKind::Lambda || !place.projections.empty() ||
             !captureRow(address.owner, place.symbol, place.capture)) {
           return false;
         }
@@ -5395,16 +5382,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           for (std::size_t index = 0; index < lambda->captureSymbols.size();
                ++index) {
-            rows = rows && captureRow(lambda->id,
-                                      lambda->captureSymbols[index],
+            rows = rows && captureRow(lambda->id, lambda->captureSymbols[index],
                                       index + 1);
           }
           // The literal embeds the lambda body itself, so the nested body
           // must prove its own plain-shape text.
           if (!rows ||
               !supportsBodyTextImpl(
-                  {.kind = MirBodyKind::Lambda, .owner = lambda->id},
-                  false)) {
+                  {.kind = MirBodyKind::Lambda, .owner = lambda->id}, false)) {
             return false;
           }
           continue;
@@ -5671,8 +5656,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   nullptr;
           if (!pendingStaged.empty() ||
               !capabilityRow(CppMirEmissionCapabilityKind::Closure) ||
-              !capabilityRow(
-                  CppMirEmissionCapabilityKind::CallableDispatch) ||
+              !capabilityRow(CppMirEmissionCapabilityKind::CallableDispatch) ||
               (!fusedLiteral && !stagedPlace) ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand) ||
@@ -5945,8 +5929,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         if (address.kind != MirBodyKind::Lambda ||
             producer->kind != MirInstructionKind::Compute ||
-            cppMirTerminalCheckedHelperSpelling(producer->operation)
-                .empty() ||
+            cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
             producer->localFailureSites.size() != 1) {
           return false;
         }

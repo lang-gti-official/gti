@@ -1243,8 +1243,9 @@ int lspSymbolKind(lang::DocumentSymbolKind kind) {
   return 13;
 }
 
-JsonArray documentSymbolArray(const std::vector<lang::DocumentSymbolInfo> &symbols,
-                              const std::string &source) {
+JsonArray
+documentSymbolArray(const std::vector<lang::DocumentSymbolInfo> &symbols,
+                    const std::string &source) {
   JsonArray result;
   for (const lang::DocumentSymbolInfo &symbol : symbols) {
     JsonObject json{
@@ -1266,19 +1267,18 @@ JsonArray documentSymbolArray(const std::vector<lang::DocumentSymbolInfo> &symbo
   return result;
 }
 
-void flattenDocumentSymbols(const std::vector<lang::DocumentSymbolInfo> &symbols,
-                            const std::string &container,
-                            const std::string &clientUri,
-                            const std::string &source, JsonArray &result) {
+void flattenDocumentSymbols(
+    const std::vector<lang::DocumentSymbolInfo> &symbols,
+    const std::string &container, const std::string &clientUri,
+    const std::string &source, JsonArray &result) {
   for (const lang::DocumentSymbolInfo &symbol : symbols) {
     JsonObject json{
         {"name", symbol.name},
         {"kind", lspSymbolKind(symbol.kind)},
-        {"location",
-         JsonObject{{"uri", clientUri},
-                    {"range", rangeJson(source, symbol.range.start,
-                                        symbol.range.end -
-                                            symbol.range.start)}}}};
+        {"location", JsonObject{{"uri", clientUri},
+                                {"range", rangeJson(source, symbol.range.start,
+                                                    symbol.range.end -
+                                                        symbol.range.start)}}}};
     if (!container.empty()) {
       json["containerName"] = container;
     }
@@ -1835,14 +1835,14 @@ private:
       access.current = true;
     } else if (id != nullptr && document != documents.end() &&
                generation != analysisGenerations.end()) {
-      pendingSemanticRequests.push_back(
-          {.id = *id,
-           .params =
-               params != nullptr ? JsonValue(*params) : JsonValue(nullptr),
-           .idKey = requestIdKey(id),
-           .uri = uri,
-           .generation = generation->second,
-           .kind = kind});
+      pendingSemanticRequests.push_back({.id = *id,
+                                         .params = params != nullptr
+                                                       ? JsonValue(*params)
+                                                       : JsonValue(nullptr),
+                                         .idKey = requestIdKey(id),
+                                         .uri = uri,
+                                         .generation = generation->second,
+                                         .kind = kind});
       access.queued = true;
     }
     return access;
@@ -2030,8 +2030,8 @@ private:
     if (targetSource.empty()) {
       return std::nullopt;
     }
-    std::string targetUri = uriForSource(span.source, snapshot.rootPath,
-                                         rootUri);
+    std::string targetUri =
+        uriForSource(span.source, snapshot.rootPath, rootUri);
     {
       const std::lock_guard lock(stateMutex);
       if (const auto preferred = clientUris.find(targetUri);

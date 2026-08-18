@@ -1275,14 +1275,13 @@ void testRepresentationSpellingAuthorities() {
 
 } // namespace
 
-
 // The closure port's row contract: the builder names the inline-lambda and
 // deduced-callable capabilities, one never-called body row per lambda
 // instance, and one Capture name row per capture, so Closure sites can
 // prove every spelling they fuse before any text emits.
 void testClosureAndCallableRows() {
-  const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "snapshot-closure-rows.gti", R"(
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("snapshot-closure-rows.gti", R"(
 int main() {
   int offset = 3;
   auto add_offset = [offset](int value) -> int {
@@ -1315,20 +1314,17 @@ int main() {
          "capabilities");
   expect(!frontend.mir.lambdaInstances().empty(),
          "the fixture should lower one lambda instance");
-  for (const lang::MirLambdaInstance &lambda :
-       frontend.mir.lambdaInstances()) {
+  for (const lang::MirLambdaInstance &lambda : frontend.mir.lambdaInstances()) {
     const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Lambda,
                                        .owner = lambda.id};
-    expect(std::any_of(
-               rows.bodies.begin(), rows.bodies.end(),
-               [&](const lang::CppMirBodyNameRepresentation &row) {
-                 return row.address == address &&
-                        row.spelling ==
-                            "__gti_inline_lambda_" + std::to_string(lambda.id);
-               }),
+    expect(std::any_of(rows.bodies.begin(), rows.bodies.end(),
+                       [&](const lang::CppMirBodyNameRepresentation &row) {
+                         return row.address == address &&
+                                row.spelling == "__gti_inline_lambda_" +
+                                                    std::to_string(lambda.id);
+                       }),
            "each lambda instance should carry its never-called body row");
-    for (std::size_t index = 0; index < lambda.captureSymbols.size();
-         ++index) {
+    for (std::size_t index = 0; index < lambda.captureSymbols.size(); ++index) {
       const lang::SymbolId symbol = lambda.captureSymbols[index];
       expect(std::any_of(
                  rows.symbols.begin(), rows.symbols.end(),

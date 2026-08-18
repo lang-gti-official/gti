@@ -61,7 +61,7 @@ SignaturePrinter::function(const FunctionInfo &info,
   return result;
 }
 
-[[nodiscard]] 
+[[nodiscard]]
 std::vector<std::string> SignaturePrinter::parameterLabels(
     const std::vector<SemanticType> &parameterTypes,
     const std::vector<Parameter> *parameters, bool preservePackSyntax) const {
@@ -758,7 +758,6 @@ public:
     return outcome;
   }
 
-
   [[nodiscard]] std::optional<SignatureHelpInfo>
   signatureHelp(const FrontendResult &snapshot, SourceUnitId sourceUnit,
                 std::size_t byteOffset) const {
@@ -1132,8 +1131,7 @@ private:
                                            snapshot.sourceGraph)) {
           continue;
         }
-        sites.push_back(
-            {.span = occurrence->span, .roles = occurrence->roles});
+        sites.push_back({.span = occurrence->span, .roles = occurrence->roles});
       }
     }
     std::sort(sites.begin(), sites.end(),
@@ -1284,8 +1282,7 @@ private:
              "declaration.";
     }
     Lexer lexer;
-    std::vector<Token> tokens =
-        lexer.scan(std::string(newName), "<rename>");
+    std::vector<Token> tokens = lexer.scan(std::string(newName), "<rename>");
     const bool singleIdentifier =
         !lexer.hadError() && tokens.size() == 2 &&
         tokens.front().kind == TokenKind::IDENTIFIER &&
@@ -1362,9 +1359,8 @@ private:
                       foreign->declarations(), insideClass, result);
         continue;
       }
-      std::optional<DocumentSymbolInfo> info =
-          outlineNode(snapshot, sourceUnit, unitPath, target, *statement,
-                      insideClass);
+      std::optional<DocumentSymbolInfo> info = outlineNode(
+          snapshot, sourceUnit, unitPath, target, *statement, insideClass);
       if (info) {
         result.push_back(std::move(*info));
       }
@@ -1375,9 +1371,9 @@ private:
   outlineNode(const FrontendResult &snapshot, SourceUnitId sourceUnit,
               const std::string &unitPath, const TargetInfo &target,
               const Stmt &statement, bool insideClass) const {
-    const auto makeInfo = [&](const Token &name, DocumentSymbolKind kind,
-                              std::string displayName =
-                                  {}) -> std::optional<DocumentSymbolInfo> {
+    const auto makeInfo =
+        [&](const Token &name, DocumentSymbolKind kind,
+            std::string displayName = {}) -> std::optional<DocumentSymbolInfo> {
       if (name.generated || name.lexeme.empty() || name.source != unitPath) {
         return std::nullopt;
       }
@@ -1462,10 +1458,9 @@ private:
     }
     if (const auto *function = dynamic_cast<const FunctionDecl *>(&statement)) {
       if (function->operatorName()) {
-        return makeInfo(
-            function->name(), DocumentSymbolKind::Operator,
-            std::string(
-                operatorSourceSpelling(function->operatorName()->kind)));
+        return makeInfo(function->name(), DocumentSymbolKind::Operator,
+                        std::string(operatorSourceSpelling(
+                            function->operatorName()->kind)));
       }
       return makeInfo(function->name(), insideClass
                                             ? DocumentSymbolKind::Method
@@ -1761,7 +1756,6 @@ LanguageQueries::signatureHelp(const FrontendResult &snapshot,
                                std::size_t byteOffset) const {
   return LanguageQueriesImpl().signatureHelp(snapshot, sourceUnit, byteOffset);
 }
-
 
 CompletionResult LanguageQueries::complete(const CompletionInput &input) const {
   return LanguageQueriesImpl().complete(input);

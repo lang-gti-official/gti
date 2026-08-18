@@ -1420,7 +1420,6 @@ int main() {
 
 } // namespace
 
-
 // The inline closure chain: lambda-typed places and values never declare
 // (C++ closure types are unnameable), so the Closure compute fuses into
 // its consuming invocations, which spell the full literal with capture
@@ -1428,8 +1427,7 @@ int main() {
 // Checked arithmetic inside the literal keeps the compatibility terminal
 // helper spelling, so the lambda's failure edges are unreachable in text.
 void testInlineClosureChainEmission() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-closure-chain.gti", R"(
+  const lang::FrontendResult frontend = analyze("cpp-mir-closure-chain.gti", R"(
 int main() {
   int offset = 3;
   auto add_offset = [offset](int value) -> int {
@@ -1468,10 +1466,9 @@ int main() {
          "rows");
   expect(emitter.supportsFailureBodyText(address),
          "the closure-chain entry should prove its failure-form text");
-  for (const lang::MirLambdaInstance &lambda :
-       frontend.mir.lambdaInstances()) {
-    expect(emitter.supportsBodyText({.kind = lang::MirBodyKind::Lambda,
-                                     .owner = lambda.id}),
+  for (const lang::MirLambdaInstance &lambda : frontend.mir.lambdaInstances()) {
+    expect(emitter.supportsBodyText(
+               {.kind = lang::MirBodyKind::Lambda, .owner = lambda.id}),
            "each lambda body should prove its plain-shape nested text");
   }
   const lang::CppMirBodyEmissionText text =
@@ -1542,7 +1539,6 @@ int main() {
          "a capture rewritten after the Closure must keep the body outside "
          "the fused-chain vocabulary");
 }
-
 
 // The deduced-callable template vocabulary (task: CallableDispatch): a
 // Function body with callable parameters keeps the compatibility plain
@@ -1636,7 +1632,6 @@ int main() {
          "the plain shape must not adopt the transformed record ABI");
 }
 
-
 // The declaration-level template route end to end: every monomorphized
 // instance of a deduced-callable template proves byte-identical text
 // under its own overlay row, and the production artifact carries exactly
@@ -1699,7 +1694,6 @@ int main() {
          "both fused literals should embed their verified lambda bodies at "
          "the call sites");
 }
-
 
 // The reference-return failure ABI (ADR 018 §5): a may-raise body whose
 // return is a loan publishes its pointer through a `T **` out-parameter,

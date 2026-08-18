@@ -53,7 +53,6 @@ int membershipRank(ProjectPackageMembership membership) {
   return 0;
 }
 
-
 bool pathIsWithin(const std::filesystem::path &root,
                   const std::filesystem::path &candidate) {
   auto rootPart = root.begin();

@@ -742,9 +742,9 @@ SemanticModel::findLambda(const Lambda &declaration) const {
 
 [[nodiscard]] std::vector<LambdaCaptureLink>
 SemanticModel::lambdaCaptureLinks() const {
-  std::vector<LambdaCaptureLink> links =
-      base == nullptr ? std::vector<LambdaCaptureLink>{}
-                      : base->lambdaCaptureLinks();
+  std::vector<LambdaCaptureLink> links = base == nullptr
+                                             ? std::vector<LambdaCaptureLink>{}
+                                             : base->lambdaCaptureLinks();
   for (const auto &[_, lambda] : lambdas) {
     for (const LambdaCaptureInfo &capture : lambda.captures) {
       if (capture.sourceSymbol != 0 && capture.bindingSymbol != 0) {
