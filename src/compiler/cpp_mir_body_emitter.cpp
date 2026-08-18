@@ -263,6 +263,42 @@ hasExecutableProgramInitialization(const MirProgram &program) {
          target->definitionKind == MirFunctionInstance::DefinitionKind::Source;
 }
 
+// A may-raise free callee whose own body proves the plain success shape:
+// its failure is terminally contained inside its own emitted text, so a
+// caller in either form calls the plain name and the paired invoke edge
+// is a plain goto — the deduced-callable convention generalized to
+// concrete free functions. Cycles fail closed: a body currently being
+// probed higher in this chain cannot vouch for itself.
+[[nodiscard]] bool
+terminallyContainedPlainCallee(const MirProgram &program,
+                               const CppMirBodyEmissionMap &representations,
+                               const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      !instruction.functionTarget ||
+      instruction.intrinsic != IntrinsicKind::None) {
+    return false;
+  }
+  const MirFunctionInstance *target =
+      program.findFunctionInstance(*instruction.functionTarget);
+  if (target == nullptr || target->owner || !target->mayRaiseDefinedFailure ||
+      target->linkage != LanguageLinkage::Gti ||
+      target->definitionKind != MirFunctionInstance::DefinitionKind::Source ||
+      !target->callableParameters.empty() ||
+      target->entryKind != ProgramEntryKind::None) {
+    return false;
+  }
+  thread_local std::vector<HirFunctionInstanceId> probing;
+  if (std::find(probing.begin(), probing.end(), target->id) != probing.end()) {
+    return false;
+  }
+  probing.push_back(target->id);
+  const bool contained = CppMirBodyEmitter(program, representations)
+                             .supportsBodyText({.kind = MirBodyKind::Function,
+                                                .owner = target->id});
+  probing.pop_back();
+  return contained;
+}
+
 [[nodiscard]] const MirInstruction *callableArgumentStage(const MirBody &body,
                                                           MirValueId id) {
   const MirValue *value = body.findValue(id);
@@ -4198,6 +4234,8 @@ private:
           findInstruction(facts.body, terminator.invokeInstruction);
       if (producer != nullptr && (callableValueInvocation(*producer) ||
                                   deducedCallableCallee(program, *producer) ||
+                                  terminallyContainedPlainCallee(
+                                      program, representations, *producer) ||
                                   storageBoundsCheckCall(*producer))) {
         // The fused literal or template callee contains its failure
         // terminally; the edge is a plain goto and the else block never
@@ -4565,7 +4603,9 @@ private:
                    target->callableParameters.empty() &&
                    target->linkage == LanguageLinkage::Gti &&
                    target->definitionKind ==
-                       MirFunctionInstance::DefinitionKind::Source
+                       MirFunctionInstance::DefinitionKind::Source &&
+                   !terminallyContainedPlainCallee(program, representations,
+                                                   instruction)
                ? target
                : nullptr;
   }
@@ -6046,6 +6086,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (target == nullptr ||
               (!callableTemplateBody &&
                !deducedCallableCallee(program_, instruction) &&
+               !terminallyContainedPlainCallee(program_, representations_,
+                                               instruction) &&
                target->mayRaiseDefinedFailure &&
                target->linkage == LanguageLinkage::Gti &&
                target->definitionKind ==
@@ -6065,6 +6107,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               deducedCallableCallee(program_, instruction)) {
             // The template callee contains its failure terminally and is
             // called plainly; the paired invoke edge never branches.
+          } else if (target != nullptr && target->mayRaiseDefinedFailure &&
+                     terminallyContainedPlainCallee(program_, representations_,
+                                                    instruction)) {
+            // The callee's own plain body contains its failure terminally,
+            // so this call spells the plain name and its invoke edge is a
+            // plain goto; only the result row is demanded.
+            if (instruction.result && !typeRow(instruction.info.type)) {
+              return false;
+            }
           } else if (target != nullptr && target->mayRaiseDefinedFailure) {
             // A failure-capable callee is reached through the transformed
             // convention: the call publishes into a scalar result (or a
@@ -6231,10 +6282,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         return false;
       }
       if (callableValueInvocation(*producer) ||
+          terminallyContainedPlainCallee(program_, representations_,
+                                         *producer) ||
           storageBoundsCheckCall(*producer)) {
-        // The fused literal or terminal logical-size check contains its
-        // failure; the edge is a plain goto and the else block never
-        // runs.
+        // The fused literal, terminally-contained plain callee, or
+        // terminal logical-size check contains its failure; the edge is a
+        // plain goto and the else block never runs.
         continue;
       }
       if (!failureForm) {

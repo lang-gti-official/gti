@@ -6577,6 +6577,13 @@ private:
                 continue;
               }
               if (!generalFailureAdmitted->contains(target->id)) {
+                // A free callee admitted in the success form contains its
+                // failure terminally inside its own emitted body, so the
+                // caller's plain call needs no transformed sibling.
+                if (!target->owner &&
+                    generalCfgAdmitted->contains(target->id)) {
+                  continue;
+                }
                 calleesAvailable = false;
                 continue;
               }

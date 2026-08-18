@@ -108,14 +108,17 @@ def main() -> int:
                     or generated.count(
                         "// GTI verified-MIR body: scalar-cfg-failure-v1"
                     )
-                    != 5
+                    != 6
                 ):
                     sys.stderr.write(
-                        "the five failure-form bodies should emit their "
+                        "the six failure-form bodies should emit their "
                         "transformed bodies plus boundary wrappers (ADR 017: "
                         "compatibility_checked, checked_leaf, checked_caller, "
-                        "the prelude's file_handle release member, and the "
-                        "fixture's entry main)\n"
+                        "the prelude's file_handle release member, the "
+                        "fixture's entry main, and the prelude's char "
+                        "println overload recovered once its may-raise "
+                        "callee proved terminally contained in the plain "
+                        "form)\n"
                     )
                     return 1
                 if (
