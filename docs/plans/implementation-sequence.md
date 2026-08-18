@@ -1798,13 +1798,35 @@ do not expose C++ object layout as GTI semantics.
   initialization, retention, aliasing, nullability, cleanup, and unsafe
   obligations. A selected ownership family must build on the opaque identity
   rather than retroactively making raw handle pointers owners.
+  Diagnostic codes below are allocated from the first free `GTI-S20xx` range;
+  `GTI-S2068` is the highest currently in use.
+
   - **F1 — fixed-array `[[c_abi]]` fields.** Admit `T[N]` fields of otherwise
     admissible element types. ADR 013 already anticipates this: it excluded
     them only until their backend representation is defined directly rather
     than inherited from `std::array`. C array layout is unambiguous, so no
     layout proof is lost, and element access keeps GTI's existing bounds
-    checking. Unblocks `GLFWgamepadstate`, and the same shape recurs in
-    `sockaddr` and SDL event records. Cheapest family; do it first.
+    checking. Cheapest family; do it first.
+    - *Diagnostics.* `GTI-S2064` stops naming fixed arrays. Two replace it:
+      `GTI-S2069` a fixed-array `[[c_abi]]` field has a zero or negative
+      extent; `GTI-S2070` its element type is itself outside the C ABI field
+      set. Both name the field and its written type, as `GTI-S2064` does.
+    - *Obligations.* Initialization: the array is inline record storage and
+      follows the record, adding no per-field step. Retention: none; the
+      elements are stored, not referenced. Aliasing: element access aliases
+      only within the enclosing record, introducing no relation the record did
+      not already have. Nullability: not applicable; an array field is not a
+      pointer. Cleanup: none, because the admitted element types are exactly
+      the passive ones already required. Unsafe: none; element access is
+      ordinary bounds-checked GTI indexing, so an out-of-range read is a
+      defined `GTI-R0007` failure rather than C's silent overread. F1 is the
+      cheapest family precisely because every obligation is already discharged
+      by the surrounding record.
+    - *Acceptance.* `GLFWgamepadstate` (`uint8_t buttons[15]`,
+      `float axes[6]`), which unblocks `glfwGetGamepadState`. Its measured C
+      layout is size 40, alignment 4, `buttons` at 0, `axes` at 16; that
+      target is already pinned in `tests/native_record_c_oracle_test.py` as a
+      pending case asserting the current rejection.
   - **F2 — the C-string boundary.** `char` stays excluded from `[[c_abi]]`
     records for the implementation-defined-signedness reason already recorded
     in `R-NATIVE-RECORDS`. The gap is that a C API's `const char*` means
@@ -1812,16 +1834,58 @@ do not expose C++ object layout as GTI semantics.
     that meaning and forces hand conversion at every call site. Define one
     boundary type carrying the NUL-terminated contract, converting from GTI
     strings without a manual copy at the call site and reading back as a
-    bounded view. Roughly 30 GLFW entry points take or return one; this is the
-    pervasive ergonomic cost, not a niche case.
+    bounded view.
+    - *Diagnostics.* `GTI-S2071` a `c_string` is constructed from a source
+      with no proven NUL terminator; `GTI-S2072` a `c_string` borrow outlives
+      the storage it views. The second reuses the existing loan machinery and
+      its wording should match the current borrow diagnostics rather than
+      introduce a second vocabulary for the same rule.
+    - *Obligations.* Initialization: only from a string literal, which has
+      static storage, or explicitly from an owner; never from a bare pointer
+      outside `unsafe`. Retention: it is a borrow, and its loan is tracked
+      against the owner, so the dangling `c_str()` that C++ permits silently
+      becomes `GTI-S2072`. Aliasing: read-only, with no mutation through the
+      view. Nullability: a `c_string` received from C may be null and reading
+      one is a defined failure, not undefined behaviour; a GTI-produced one
+      never is. Cleanup: none, as it is non-owning. Unsafe: required to build
+      one from a raw pointer, not required to obtain one from a GTI string.
+      This family is where GTI is materially safer than C++, not merely more
+      convenient.
+    - *Acceptance.* `glfwGetVersionString`, `glfwGetMonitorName`,
+      `glfwGetWindowTitle`, `glfwSetWindowTitle`, `glfwCreateWindow`,
+      `glfwWindowHintString`, `glfwGetKeyName`, `glfwGetJoystickName`,
+      `glfwGetJoystickGUID`, `glfwUpdateGamepadMappings`, `glfwGetGamepadName`,
+      `glfwSetClipboardString`, `glfwGetClipboardString`, and
+      `glfwExtensionSupported`.
   - **F3 — out-parameter and returned pointer-plus-count.** C's "returns an
     array, writes the length through an out parameter" idiom. Admit it as one
     bounded boundary form rather than admitting `T**` generally, which would
     import pointer nesting and aliasing that `R-RAW-POINTERS` excludes as a
-    durable rule. Unblocks `glfwGetError`, `glfwGetMonitors`, and
-    `glfwGetRequiredInstanceExtensions`.
+    durable rule.
+    - *Diagnostics.* `GTI-S2073` `[[c_array]]` names something that is not an
+      integer out-parameter of the same declaration; `GTI-S2074` a two-level
+      pointer appears outside an annotated `[[c_array]]` boundary, which keeps
+      the general `R-RAW-POINTERS` rejection intact and explains the one
+      exception.
+    - *Obligations.* Initialization: the callee writes both the pointer and
+      the count, so GTI must treat the pair as uninitialized until the call
+      returns and must not read either beforehand. Retention: the returned
+      array is owned by the C library and its lifetime is that library's
+      contract; GTI infers nothing and each binding states it per function.
+      Aliasing: elements may alias anything, and GTI makes no claim.
+      Nullability: the array pointer may be null when the count is zero, and
+      the wrapper must handle that rather than index it. Cleanup: none by GTI;
+      an API that requires freeing the result belongs to a separate
+      ownership-transfer family, not this one. Unsafe: every element access
+      requires `unsafe`, and the intended shape is one `unsafe` block in the
+      wrapper that converts the pair into an ordinary GTI view.
+    - *Acceptance.* `glfwGetError`, `glfwGetMonitors`, and
+      `glfwGetRequiredInstanceExtensions`.
   - Callbacks are **not** in this row. `S-CALL-01` owns them and gates the
     remaining ~20 GLFW entry points.
+  - The surface these families are built against is written out in
+    [`c-interop-target-surface.md`](c-interop-target-surface.md): the raw
+    mirror, the safe wrapper, and the acceptance program.
 - **Later breadth:** C varargs, unions, bit-fields, and packed records remain
   separate proposals. `printf` alone is not sufficient justification for
   importing C's least checkable call surface.

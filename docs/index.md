@@ -111,6 +111,9 @@ description of the implementation.
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
 - [LSP evolution](plans/lsp-evolution.md)
+- [C interop target surface](plans/c-interop-target-surface.md) — the
+  GLFW-shaped surface `S-FFI-02` F1/F2/F3 and `S-CALL-01` are built
+  against; a design artifact, not implemented behavior
 - [Performance tooling](plans/performance-tooling.md)
 - [Language restriction ledger](plans/language-alignment.md) — current
   restrictions classified by reason, readiness role, owner, and evidence
