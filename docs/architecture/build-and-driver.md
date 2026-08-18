@@ -230,9 +230,25 @@ includes cannot cross an owning package boundary to bypass the manifest edge.
 Direct mode receives no package graph and therefore rejects package angle
 includes without consulting nearby manifests.
 
-This slice composes GTI source only. A dependency package with package-level
-native inputs is rejected because silently dropping or reordering its native
-contract would be unsound. Native dependency composition remains future work.
+Dependency packages compose their package-scope native inputs into every
+dependent build as isolated per-package groups. Structured contained inputs
+compose — include directories, C and C++ sources, the C standard, library
+directories, link files, libraries, frameworks, and platform fragments
+selected against the resolved target. Argument vectors do not compose except
+for validated `-D<name>[=<value>]` and `-U<name>` macro definitions from the
+compile-argument fields; any other compiler argument and any linker or raw
+argument on a dependency is rejected with `GTI-B1606` anchored at that
+dependency's declaration, because an opaque argv from a transitive package is
+an untrusted injection surface. Each group's include directories and macros
+scope to that group's own declared sources only: they are never applied to the
+root package's native sources, another package's sources, or the generated
+whole-program translation unit. Group library directories and link operands
+append after the root package's own, in deterministic
+dependents-before-dependencies order (reverse postorder over the dependency
+graph). Target-scope native tables on a dependency do not compose; they apply
+only when that package is built directly. Plans that carry dependency native
+groups bypass the whole-program cache with an explicit reason until dependency
+discovery covers group sources.
 
 ### Locked Git Dependencies
 
@@ -457,6 +473,10 @@ Git dependencies support pinned full revisions only; registry ranges, branch
 or tag selectors, replacement/override authority, native dependency
 composition, arbitrary native build scripts, and a package registry are not
 implemented.
+Git/registry dependencies, lockfiles, `fetch`, arbitrary native build
+scripts, and a package registry are not implemented. Dependency native groups
+bypass the whole-program cache until dependency discovery covers group
+sources.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP must consume reusable resolved project facts rather than parse manifest

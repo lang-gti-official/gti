@@ -505,16 +505,22 @@ the selected profile or CLI `cpp-standard`.
 `c-compile-args`, `compile-args`, `link-args`, and `raw-args` are trusted exact
 argv elements. GTI does not shell-split, interpolate, execute, or interpret
 embedded paths in these fields, so their paths are not package-containment
-checked; only the root package may declare them. Use `c-sources`,
+checked; that trust extends only to the package being built directly, never to
+its dependencies. Use `c-sources`,
 `cpp-sources`, `include-dirs`, `library-dirs`, and `link-files` when GTI should
 validate package-relative inputs. Reserved standard, optimization,
 target/data-layout, sysroot, output, language-mode, response-file, and
 non-executable-mode options are rejected. Raw compiler-driver/cc1 escapes and
 unjoined forwarded-linker escapes are rejected because the following payload
 cannot be classified independently. `raw-args` are placed after the
-build-owned output arguments. Local path dependencies are source-only: a
-dependency package that declares native inputs is rejected until native
-dependency composition and trust policy are defined.
+build-owned output arguments. A dependency package's package-scope native
+inputs compose into dependent builds as isolated per-package groups:
+structured contained inputs compose, only validated `-D<name>[=<value>]` and
+`-U<name>` macro definitions compose from its compile-argument vectors, and
+any other compiler argument or any linker or raw argument on a dependency is
+rejected with `GTI-B1606`. Each group's include directories and macros apply
+only to that package's own declared native sources, and its link operands
+append after the dependent's in dependents-before-dependencies order.
 
 For every selected C source, `gti build` invokes the resolved C compiler with
 the C standard, target profile optimization, GTI's runtime include directory,
@@ -543,7 +549,7 @@ search paths or link operands remain cacheable.
 `ExecutableBuildRequest` as direct mode. `gti check` validates the selected
 native configuration, including selected C and C++ source path existence, but
 remains frontend-only and does not discover or invoke a native compiler. The
-`gti metadata` schema version 7 reports every target kind, declared execution
+`gti metadata` schema version 8 reports every target kind, declared execution
 profile, effective native vector, C standard, C source, and C++ source for each
 target/profile plan without creating the build tree.
 Arguments after `gti run --` remain the executed program's arguments.

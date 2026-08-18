@@ -148,7 +148,33 @@ void writeNativeInputs(std::ostream &stream,
   writeJsonStrings(stream, inputs.linkerArguments);
   stream << ", \"rawArguments\": ";
   writeJsonStrings(stream, inputs.trailingArguments);
-  stream << '}';
+  stream << ", \"dependencyNative\": [";
+  for (std::size_t index = 0; index < inputs.dependencyGroups.size(); ++index) {
+    const driver::NativeDependencyGroup &group = inputs.dependencyGroups[index];
+    if (index != 0) {
+      stream << ", ";
+    }
+    stream << "{\"package\": ";
+    writeJsonString(stream, group.packageIdentity);
+    stream << ", \"includeDirectories\": ";
+    writeJsonPaths(stream, group.includeDirectories);
+    stream << ", \"cSources\": ";
+    writeJsonPaths(stream, group.cSources);
+    stream << ", \"cStandard\": ";
+    writeJsonString(stream, driver::cStandardName(group.cStandard));
+    stream << ", \"cMacroDefinitions\": ";
+    writeJsonStrings(stream, group.cMacroDefinitions);
+    stream << ", \"cppSources\": ";
+    writeJsonPaths(stream, group.cppSources);
+    stream << ", \"cppMacroDefinitions\": ";
+    writeJsonStrings(stream, group.cppMacroDefinitions);
+    stream << ", \"libraryDirectories\": ";
+    writeJsonPaths(stream, group.libraryDirectories);
+    stream << ", \"linkOperands\": ";
+    writeOrderedLinkOperands(stream, group.linkOperands);
+    stream << '}';
+  }
+  stream << "]}";
 }
 
 const driver::ProjectBuildPlan *

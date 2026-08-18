@@ -6,8 +6,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -271,6 +273,154 @@ std::optional<NativeInputs> resolveNativeInputs(
     inputs.cStandard = selectedTarget.native.inputs.cStandard;
   }
   return inputs;
+}
+
+// The only opaque-argument form a dependency may contribute to its own
+// sources: one exact `-D<name>[=<value>]` or `-U<name>` argv element. A
+// macro definition cannot introduce undeclared inputs, change compilation
+// modes, or alter driver-owned policy, and values stay one exact argument.
+bool composableMacroDefinition(std::string_view argument) {
+  if (argument.size() < 3 ||
+      (!argument.starts_with("-D") && !argument.starts_with("-U"))) {
+    return false;
+  }
+  const std::string_view name = argument.substr(2);
+  const std::size_t nameEnd = argument.starts_with("-U")
+                                  ? name.size()
+                                  : std::min(name.find('='), name.size());
+  if (nameEnd == 0) {
+    return false;
+  }
+  for (std::size_t index = 0; index < nameEnd; ++index) {
+    const char character = name[index];
+    const bool wordCharacter = (character >= 'A' && character <= 'Z') ||
+                               (character >= 'a' && character <= 'z') ||
+                               (character >= '0' && character <= '9') ||
+                               character == '_';
+    if (!wordCharacter ||
+        (index == 0 && character >= '0' && character <= '9')) {
+      return false;
+    }
+  }
+  if (argument.starts_with("-U") && name.find('=') != std::string_view::npos) {
+    return false;
+  }
+  return std::none_of(name.begin(), name.end(), [](const char character) {
+    return static_cast<unsigned char>(character) < 0x20U;
+  });
+}
+
+// Composes the selected package's transitive dependency closure into
+// per-package native groups, dependents before dependencies. The trust
+// boundary the manifest design reserved: structured, package-contained
+// inputs and name-resolved libraries compose; opaque argument vectors do
+// not, except the exact macro-definition subset above, and linker/raw
+// argument vectors never compose.
+std::optional<std::vector<NativeDependencyGroup>> composeDependencyNativeGroups(
+    const ProjectWorkspace &workspace, const ResolvedProjectPackage &selected,
+    const TargetInfo &target, std::vector<Diagnostic> &diagnostics) {
+  std::vector<const ResolvedProjectPackage *> postorder;
+  std::set<std::string> visited{selected.identity()};
+  const std::function<void(const ResolvedProjectPackage &)> visit =
+      [&](const ResolvedProjectPackage &package) {
+        for (const ResolvedProjectDependency &dependency :
+             package.dependencies) {
+          if (!visited.insert(dependency.targetIdentity).second) {
+            continue;
+          }
+          const ResolvedProjectPackage *targetPackage =
+              workspace.findPackage(dependency.targetIdentity);
+          if (targetPackage == nullptr) {
+            continue;
+          }
+          visit(*targetPackage);
+          postorder.push_back(targetPackage);
+        }
+      };
+  visit(selected);
+
+  std::vector<NativeDependencyGroup> groups;
+  bool valid = true;
+  const auto reject = [&](const SourceSpan &span, std::string message,
+                          std::string hint) {
+    Diagnostic diagnostic =
+        projectDiagnostic("GTI-B1606", span, std::move(message));
+    diagnostic.hints.push_back(std::move(hint));
+    diagnostics.push_back(std::move(diagnostic));
+    valid = false;
+  };
+  // Reverse postorder is a topological dependents-before-dependencies order
+  // over dependent -> dependency edges.
+  for (auto package = postorder.rbegin(); package != postorder.rend();
+       ++package) {
+    const ProjectNativeSettings &settings =
+        (*package)->manifest.package().native;
+    NativeInputs scratch;
+    appendSearchPathsAndLinkOperands(scratch, settings, target);
+    appendArguments(scratch, settings, target);
+    const bool declaresAnything =
+        !scratch.includeDirectories.empty() || !scratch.cSources.empty() ||
+        !scratch.cppSources.empty() || !scratch.libraryDirectories.empty() ||
+        !scratch.orderedLinkOperands.empty() ||
+        !scratch.compilerArguments.empty() ||
+        !scratch.cCompilerArguments.empty() ||
+        !scratch.linkerArguments.empty() || !scratch.trailingArguments.empty();
+    if (!declaresAnything) {
+      continue;
+    }
+    const std::string identity = (*package)->identity();
+    if (!validateNativeSettings(settings, target, diagnostics)) {
+      valid = false;
+      continue;
+    }
+    if (!scratch.linkerArguments.empty() ||
+        !scratch.trailingArguments.empty()) {
+      reject(settings.declaration,
+             "Dependency package '" + identity +
+                 "' declares native linker or raw argument vectors, which "
+                 "cannot be composed across package boundaries.",
+             "Linker and raw arguments are global to the final link; declare "
+             "them in the selected application package instead.");
+      continue;
+    }
+    bool argumentsComposable = true;
+    const auto requireMacros = [&](const std::vector<std::string> &arguments,
+                                   std::string_view field) {
+      for (const std::string &argument : arguments) {
+        if (!composableMacroDefinition(argument)) {
+          reject(settings.declaration,
+                 "Dependency package '" + identity + "' declares " +
+                     std::string(field) + " argument '" + argument +
+                     "', which cannot be composed across package boundaries.",
+                 "Only exact -D<name>[=<value>] and -U<name> macro "
+                 "definitions compose from a dependency; other compiler "
+                 "arguments belong to the selected application package.");
+          argumentsComposable = false;
+        }
+      }
+    };
+    requireMacros(scratch.cCompilerArguments, "a C compiler");
+    requireMacros(scratch.compilerArguments, "a compiler");
+    if (!argumentsComposable) {
+      continue;
+    }
+
+    NativeDependencyGroup group{
+        .packageIdentity = identity,
+        .includeDirectories = std::move(scratch.includeDirectories),
+        .cMacroDefinitions = std::move(scratch.cCompilerArguments),
+        .cppMacroDefinitions = std::move(scratch.compilerArguments),
+        .cSources = std::move(scratch.cSources),
+        .cStandard = settings.inputs.cStandard.value_or(CStandard::C17),
+        .cppSources = std::move(scratch.cppSources),
+        .libraryDirectories = std::move(scratch.libraryDirectories),
+        .linkOperands = std::move(scratch.orderedLinkOperands)};
+    groups.push_back(std::move(group));
+  }
+  if (!valid) {
+    return std::nullopt;
+  }
+  return groups;
 }
 
 const ProjectProfile *selectProfile(const ProjectManifest &manifest,
@@ -690,6 +840,16 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
   std::optional<NativeInputs> nativeInputs =
       resolveNativeInputs(manifest, *selectedTarget, *selectedProfile,
                           request.target(), result.diagnostics);
+  if (nativeInputs) {
+    std::optional<std::vector<NativeDependencyGroup>> composed =
+        composeDependencyNativeGroups(workspace, workspace.selectedPackage(),
+                                      request.target(), result.diagnostics);
+    if (composed) {
+      nativeInputs->dependencyGroups = std::move(*composed);
+    } else {
+      nativeInputs.reset();
+    }
+  }
   if (!nativeInputs) {
     result.status = ProjectResolutionStatus::ManifestFailure;
     return result;
@@ -789,6 +949,14 @@ resolveProjectTests(const ProjectBuildRequest &request) {
     return result;
   }
 
+  std::optional<std::vector<NativeDependencyGroup>> composed =
+      composeDependencyNativeGroups(workspace, workspace.selectedPackage(),
+                                    request.target(), result.diagnostics);
+  if (!composed) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
+
   result.plans.reserve(selectedTargets.size());
   for (const ProjectTarget *selectedTarget : selectedTargets) {
     std::optional<NativeInputs> nativeInputs =
@@ -799,6 +967,7 @@ resolveProjectTests(const ProjectBuildRequest &request) {
       result.plans.clear();
       return result;
     }
+    nativeInputs->dependencyGroups = *composed;
     result.plans.push_back(makeBuildPlan(
         workspace, manifest, *selectedTarget, *selectedProfile,
         request.target(), std::move(*nativeInputs), request.overrides()));
@@ -916,6 +1085,13 @@ resolveProjectMetadata(const std::filesystem::path &startDirectory,
   std::vector<ProjectBuildPlan> plans;
   ProjectWorkspace &workspace = *resolvedWorkspace.workspace;
   const ProjectManifest &manifest = workspace.selectedPackage().manifest;
+  std::optional<std::vector<NativeDependencyGroup>> composed =
+      composeDependencyNativeGroups(workspace, workspace.selectedPackage(),
+                                    target, result.diagnostics);
+  if (!composed) {
+    result.status = ProjectMetadataStatus::ManifestFailure;
+    return result;
+  }
   plans.reserve(manifest.targets().size() * manifest.profiles().size());
   for (const ProjectTarget &projectTarget : manifest.targets()) {
     for (const ProjectProfile &profile : manifest.profiles()) {
@@ -925,6 +1101,7 @@ resolveProjectMetadata(const std::filesystem::path &startDirectory,
         result.status = ProjectMetadataStatus::ManifestFailure;
         return result;
       }
+      nativeInputs->dependencyGroups = *composed;
       plans.push_back(makeBuildPlan(workspace, manifest, projectTarget, profile,
                                     target, std::move(*nativeInputs)));
     }

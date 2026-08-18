@@ -1308,7 +1308,15 @@ effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
       nativeCppIncludeDirectories(toolchain, standard, additional);
   append(inputs.compilerArguments, additional.compilerArguments);
   append(inputs.libraryDirectories, additional.libraryDirectories);
-  if (additional.orderedLinkOperands.empty()) {
+  const bool groupLinkContribution = std::any_of(
+      additional.dependencyGroups.begin(), additional.dependencyGroups.end(),
+      [](const NativeDependencyGroup &group) {
+        return !group.linkOperands.empty() || !group.libraryDirectories.empty();
+      });
+  for (const NativeDependencyGroup &group : additional.dependencyGroups) {
+    append(inputs.libraryDirectories, group.libraryDirectories);
+  }
+  if (additional.orderedLinkOperands.empty() && !groupLinkContribution) {
     append(inputs.libraryFiles, nativeObjects);
     inputs.libraryFiles.push_back(toolchain.runtimeLibrary);
     append(inputs.libraryFiles, additional.libraryFiles);
@@ -1322,6 +1330,12 @@ effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
     inputs.orderedLinkOperands.push_back(
         {NativeLinkOperandKind::File, toolchain.runtimeLibrary.string()});
     append(inputs.orderedLinkOperands, additional.orderedLinkOperands);
+    // Dependency link contributions follow the application's own, in the
+    // composed dependents-before-dependencies order, so a dependent's
+    // libraries may resolve symbols from the packages it depends on.
+    for (const NativeDependencyGroup &group : additional.dependencyGroups) {
+      append(inputs.orderedLinkOperands, group.linkOperands);
+    }
   }
   append(inputs.linkerArguments, additional.linkerArguments);
   append(inputs.trailingArguments, additional.trailingArguments);
@@ -1620,9 +1634,9 @@ const std::optional<BuildCachePolicy> &ExecutableBuildRequest::cache() const {
 ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  const std::vector<NativeDependencyGroup> &dependencyGroups =
+      request.nativeInputs().dependencyGroups;
   std::vector<std::filesystem::path> nativeObjects;
-  nativeObjects.reserve(request.nativeInputs().cSources.size() +
-                        request.nativeInputs().cppSources.size());
   for (std::size_t index = 0; index < request.nativeInputs().cSources.size();
        ++index) {
     nativeObjects.push_back(
@@ -1636,7 +1650,31 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
         request.generatedSource(), request.nativeInputs().cppSources[index],
         cppObjectOffset + index));
   }
-  if (!request.nativeInputs().cSources.empty() &&
+  // Dependency-group objects follow the application's own objects with one
+  // continuous index, so object names stay unique and deterministic across
+  // packages that reuse source stems.
+  struct GroupObjectRange {
+    std::size_t cBegin = 0;
+    std::size_t cppBegin = 0;
+  };
+  std::vector<GroupObjectRange> groupObjectRanges;
+  groupObjectRanges.reserve(dependencyGroups.size());
+  bool groupCSources = false;
+  for (const NativeDependencyGroup &group : dependencyGroups) {
+    GroupObjectRange range{.cBegin = nativeObjects.size(), .cppBegin = 0};
+    for (const std::filesystem::path &source : group.cSources) {
+      nativeObjects.push_back(nativeObjectPath(request.generatedSource(),
+                                               source, nativeObjects.size()));
+      groupCSources = true;
+    }
+    range.cppBegin = nativeObjects.size();
+    for (const std::filesystem::path &source : group.cppSources) {
+      nativeObjects.push_back(nativeObjectPath(request.generatedSource(),
+                                               source, nativeObjects.size()));
+    }
+    groupObjectRanges.push_back(range);
+  }
+  if ((!request.nativeInputs().cSources.empty() || groupCSources) &&
       (!request.cCompiler() || request.cCompiler()->empty())) {
     result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
     result.driverDiagnostic =
@@ -1724,6 +1762,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
             nativeCacheBypassDetail(request.nativeInputs())) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = bypassDetail;
+    } else if (!request.nativeInputs().dependencyGroups.empty()) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail =
+          "dependency native inputs require compiler dependency discovery";
     } else if (hasDependencyInjectingNativeEnvironment()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail =
@@ -1870,47 +1912,103 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   }
 
   const NativeToolchain nativeToolchain;
+  const auto compileNativeCSource =
+      [&](const std::filesystem::path &source,
+          const std::filesystem::path &object, CStandard cStandard,
+          const std::vector<std::filesystem::path> &includeDirectories,
+          const std::vector<std::string> &arguments) {
+        const std::filesystem::path stagedObject = stagedArtifactPath(object);
+        TemporaryArtifact stagedNativeObject(stagedObject, true);
+        const NativeCCompileRequest cRequest(
+            *request.cCompiler(), source, stagedObject, cStandard,
+            request.compilation().optimization(), includeDirectories,
+            arguments);
+        NativeCCompilationResult cCompilation{
+            .source = source,
+            .object = object,
+            .command = nativeToolchain.command(cRequest),
+            .process = nativeToolchain.invoke(
+                cRequest, {.captureSuccessfulOutput =
+                               request.captureSuccessfulNativeOutput()}),
+        };
+        if (!cCompilation.process.succeeded()) {
+          result.cCompilations.push_back(std::move(cCompilation));
+          generatedArtifact.keep();
+          result.generatedSourceRetained = true;
+          result.status = ExecutableBuildStatus::NativeCCompilerFailure;
+          return false;
+        }
+        cCompilation.artifactPublishResult =
+            publishArtifact(stagedObject, object);
+        const bool published = cCompilation.artifactPublishResult->succeeded();
+        if (!published) {
+          result.driverDiagnostic =
+              "gti: failed to publish native object '" + object.string() +
+              "': " + cCompilation.artifactPublishResult->error.message();
+        }
+        result.cCompilations.push_back(std::move(cCompilation));
+        if (!published) {
+          generatedArtifact.keep();
+          result.generatedSourceRetained = true;
+          result.status = ExecutableBuildStatus::NativeObjectPublicationFailure;
+          return false;
+        }
+        return true;
+      };
+  const auto compileNativeCppSource =
+      [&](const std::filesystem::path &source,
+          const std::filesystem::path &object,
+          const std::vector<std::filesystem::path> &includeDirectories,
+          const std::vector<std::string> &arguments) {
+        const std::filesystem::path stagedObject = stagedArtifactPath(object);
+        TemporaryArtifact stagedNativeObject(stagedObject, true);
+        const NativeCppCompileRequest cppRequest(
+            request.nativeCompiler(), source, stagedObject,
+            request.compilation().cppStandard(),
+            request.compilation().optimization(), includeDirectories,
+            arguments);
+        NativeCppCompilationResult cppCompilation{
+            .source = source,
+            .object = object,
+            .command = nativeToolchain.command(cppRequest),
+            .process = nativeToolchain.invoke(
+                cppRequest, {.captureSuccessfulOutput =
+                                 request.captureSuccessfulNativeOutput()}),
+        };
+        if (!cppCompilation.process.succeeded()) {
+          result.cppCompilations.push_back(std::move(cppCompilation));
+          generatedArtifact.keep();
+          result.generatedSourceRetained = true;
+          result.status = ExecutableBuildStatus::NativeCppCompilerFailure;
+          return false;
+        }
+        cppCompilation.artifactPublishResult =
+            publishArtifact(stagedObject, object);
+        const bool published =
+            cppCompilation.artifactPublishResult->succeeded();
+        if (!published) {
+          result.driverDiagnostic =
+              "gti: failed to publish native object '" + object.string() +
+              "': " + cppCompilation.artifactPublishResult->error.message();
+        }
+        result.cppCompilations.push_back(std::move(cppCompilation));
+        if (!published) {
+          generatedArtifact.keep();
+          result.generatedSourceRetained = true;
+          result.status = ExecutableBuildStatus::NativeObjectPublicationFailure;
+          return false;
+        }
+        return true;
+      };
+
   std::vector<std::filesystem::path> cIncludeDirectories{
       request.toolchain().runtimeInclude};
   append(cIncludeDirectories, request.nativeInputs().includeDirectories);
   for (std::size_t index = 0; index < cppObjectOffset; ++index) {
-    const std::filesystem::path stagedObject =
-        stagedArtifactPath(nativeObjects[index]);
-    TemporaryArtifact stagedNativeObject(stagedObject, true);
-    const NativeCCompileRequest cRequest(
-        *request.cCompiler(), request.nativeInputs().cSources[index],
-        stagedObject, request.nativeInputs().cStandard.value_or(CStandard::C17),
-        request.compilation().optimization(), cIncludeDirectories,
-        request.nativeInputs().cCompilerArguments);
-    NativeCCompilationResult cCompilation{
-        .source = request.nativeInputs().cSources[index],
-        .object = nativeObjects[index],
-        .command = nativeToolchain.command(cRequest),
-        .process = nativeToolchain.invoke(
-            cRequest, {.captureSuccessfulOutput =
-                           request.captureSuccessfulNativeOutput()}),
-    };
-    if (!cCompilation.process.succeeded()) {
-      result.cCompilations.push_back(std::move(cCompilation));
-      generatedArtifact.keep();
-      result.generatedSourceRetained = true;
-      result.status = ExecutableBuildStatus::NativeCCompilerFailure;
-      return result;
-    }
-    cCompilation.artifactPublishResult =
-        publishArtifact(stagedObject, nativeObjects[index]);
-    const bool published = cCompilation.artifactPublishResult->succeeded();
-    if (!published) {
-      result.driverDiagnostic =
-          "gti: failed to publish native object '" +
-          nativeObjects[index].string() +
-          "': " + cCompilation.artifactPublishResult->error.message();
-    }
-    result.cCompilations.push_back(std::move(cCompilation));
-    if (!published) {
-      generatedArtifact.keep();
-      result.generatedSourceRetained = true;
-      result.status = ExecutableBuildStatus::NativeObjectPublicationFailure;
+    if (!compileNativeCSource(
+            request.nativeInputs().cSources[index], nativeObjects[index],
+            request.nativeInputs().cStandard.value_or(CStandard::C17),
+            cIncludeDirectories, request.nativeInputs().cCompilerArguments)) {
       return result;
     }
   }
@@ -1921,44 +2019,45 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
                                   request.nativeInputs());
   for (std::size_t index = 0; index < request.nativeInputs().cppSources.size();
        ++index) {
-    const std::filesystem::path &nativeObject =
-        nativeObjects[cppObjectOffset + index];
-    const std::filesystem::path stagedObject = stagedArtifactPath(nativeObject);
-    TemporaryArtifact stagedNativeObject(stagedObject, true);
-    const NativeCppCompileRequest cppRequest(
-        request.nativeCompiler(), request.nativeInputs().cppSources[index],
-        stagedObject, request.compilation().cppStandard(),
-        request.compilation().optimization(), cppIncludeDirectories,
-        request.nativeInputs().compilerArguments);
-    NativeCppCompilationResult cppCompilation{
-        .source = request.nativeInputs().cppSources[index],
-        .object = nativeObject,
-        .command = nativeToolchain.command(cppRequest),
-        .process = nativeToolchain.invoke(
-            cppRequest, {.captureSuccessfulOutput =
-                             request.captureSuccessfulNativeOutput()}),
-    };
-    if (!cppCompilation.process.succeeded()) {
-      result.cppCompilations.push_back(std::move(cppCompilation));
-      generatedArtifact.keep();
-      result.generatedSourceRetained = true;
-      result.status = ExecutableBuildStatus::NativeCppCompilerFailure;
+    if (!compileNativeCppSource(request.nativeInputs().cppSources[index],
+                                nativeObjects[cppObjectOffset + index],
+                                cppIncludeDirectories,
+                                request.nativeInputs().compilerArguments)) {
       return result;
     }
-    cppCompilation.artifactPublishResult =
-        publishArtifact(stagedObject, nativeObject);
-    const bool published = cppCompilation.artifactPublishResult->succeeded();
-    if (!published) {
-      result.driverDiagnostic =
-          "gti: failed to publish native object '" + nativeObject.string() +
-          "': " + cppCompilation.artifactPublishResult->error.message();
+  }
+
+  // Dependency-group sources compile with only their own include
+  // directories and validated macro definitions; nothing leaks between
+  // packages or into the generated translation unit.
+  for (std::size_t groupIndex = 0; groupIndex < dependencyGroups.size();
+       ++groupIndex) {
+    const NativeDependencyGroup &group = dependencyGroups[groupIndex];
+    const GroupObjectRange &range = groupObjectRanges[groupIndex];
+    std::vector<std::filesystem::path> groupCIncludes{
+        request.toolchain().runtimeInclude};
+    append(groupCIncludes, group.includeDirectories);
+    for (std::size_t index = 0; index < group.cSources.size(); ++index) {
+      if (!compileNativeCSource(
+              group.cSources[index], nativeObjects[range.cBegin + index],
+              group.cStandard, groupCIncludes, group.cMacroDefinitions)) {
+        return result;
+      }
     }
-    result.cppCompilations.push_back(std::move(cppCompilation));
-    if (!published) {
-      generatedArtifact.keep();
-      result.generatedSourceRetained = true;
-      result.status = ExecutableBuildStatus::NativeObjectPublicationFailure;
-      return result;
+    std::vector<std::filesystem::path> groupCppIncludes{
+        request.toolchain().runtimeInclude};
+    if (request.compilation().cppStandard() == CppStandard::Cpp20 &&
+        request.toolchain().vendorInclude !=
+            request.toolchain().runtimeInclude) {
+      groupCppIncludes.push_back(request.toolchain().vendorInclude);
+    }
+    append(groupCppIncludes, group.includeDirectories);
+    for (std::size_t index = 0; index < group.cppSources.size(); ++index) {
+      if (!compileNativeCppSource(
+              group.cppSources[index], nativeObjects[range.cppBegin + index],
+              groupCppIncludes, group.cppMacroDefinitions)) {
+        return result;
+      }
     }
   }
 

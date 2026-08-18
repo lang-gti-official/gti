@@ -58,6 +58,29 @@ struct NativeLinkOperand {
   bool operator==(const NativeLinkOperand &) const = default;
 };
 
+// One dependency package's composable native contribution, target-selected
+// and validated by project resolution. Include directories and macro
+// definitions are scoped to this group's own declared sources only — they
+// never leak into the application's sources or the generated translation
+// unit. Link operands and library directories join the final link after the
+// application's own contribution, in dependents-before-dependencies order.
+struct NativeDependencyGroup {
+  // The contributing package's `name@version`, for diagnostics and metadata.
+  std::string packageIdentity;
+  std::vector<std::filesystem::path> includeDirectories;
+  // The only argument form a dependency may contribute: exact `-D`/`-U`
+  // macro spellings validated by composition, keeping the manifest's C
+  // versus C++ argument scoping. Opaque argument vectors do not compose
+  // across package boundaries.
+  std::vector<std::string> cMacroDefinitions;
+  std::vector<std::string> cppMacroDefinitions;
+  std::vector<std::filesystem::path> cSources;
+  CStandard cStandard = CStandard::C17;
+  std::vector<std::filesystem::path> cppSources;
+  std::vector<std::filesystem::path> libraryDirectories;
+  std::vector<NativeLinkOperand> linkOperands;
+};
+
 struct NativeInputs {
   std::vector<std::filesystem::path> includeDirectories;
   std::vector<std::string> compilerArguments;
@@ -74,6 +97,10 @@ struct NativeInputs {
   std::vector<NativeLinkOperand> orderedLinkOperands;
   std::vector<std::string> linkerArguments;
   std::vector<std::string> trailingArguments;
+  // Composed native contributions of the selected package's transitive
+  // dependency closure, in dependents-before-dependencies order. Only
+  // project resolution populates this; direct mode has no package graph.
+  std::vector<NativeDependencyGroup> dependencyGroups;
 };
 
 // Native escape hatches may add ordinary compiler/linker policy, but they may

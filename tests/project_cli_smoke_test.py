@@ -455,6 +455,7 @@ def main():
             "orderedLinkOperands": [],
             "linkArguments": [],
             "rawArguments": [],
+            "dependencyNative": [],
         }
         assert not (check_project / "build").exists()
 
@@ -1908,6 +1909,247 @@ def main():
             [gti, "check", "--all"], expected=64, cwd=multi_project
         )
         assert "--all is not supported by gti check" in all_on_check.stderr
+
+
+        # --- Native dependency composition ---
+        wrapper = root / "native-wrapper"
+        (wrapper / "src").mkdir(parents=True)
+        (wrapper / "native/include").mkdir(parents=True)
+
+        def write_wrapper_native(native_lines):
+            (wrapper / "gti.toml").write_text(
+                "manifest-version = 1\n\n"
+                "[package]\n"
+                'name = "wrapper"\n'
+                'version = "0.1.0"\n\n'
+                "[package.native]\n" + native_lines,
+                encoding="utf-8",
+            )
+
+        write_wrapper_native(
+            'include-dirs = ["native/include"]\n'
+            'c-sources = ["native/impl.c"]\n'
+            'c-compile-args = ["-DWRAP_BIAS=7"]\n'
+        )
+        (wrapper / "native/include/wrap.h").write_text(
+            "int wrap_add(int left, int right);\n", encoding="utf-8"
+        )
+        (wrapper / "native/impl.c").write_text(
+            '#include "wrap.h"\n'
+            "int wrap_add(int left, int right) {\n"
+            "  return left + right + WRAP_BIAS;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (wrapper / "src/wrap.gti").write_text(
+            'extern "C" {\n'
+            "int wrap_add(int left, int right);\n"
+            "}\n\n"
+            "namespace wrap {\n"
+            "int add(int left, int right) { return wrap_add(left, right); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        composed_app = root / "composed-app"
+        (composed_app / "src").mkdir(parents=True)
+        (composed_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "composed-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            'wrap = { path = "../native-wrapper" }\n\n'
+            "[targets.composed-app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (composed_app / "src/main.gti").write_text(
+            "#include <wrap/wrap>\n\n"
+            "int main() {\n"
+            "  return wrap::add(2, 3) == 12 ? 0 : 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        # A dependency's contained native contract composes: its C source
+        # compiles with only its own include directories and validated
+        # macros, and the program observes the dependency's behavior.
+        composed_build = run(
+            [gti, "build", "--verbose"], cwd=composed_app
+        )
+        assert (
+            "dependency native inputs require compiler dependency discovery"
+            in composed_build.stderr
+        )
+        wrapper_compile = next(
+            line
+            for line in composed_build.stderr.splitlines()
+            if line.startswith("+ ") and "impl.c" in line
+        )
+        assert "-DWRAP_BIAS=7" in wrapper_compile
+        assert str(wrapper / "native/include") in wrapper_compile
+        run([gti, "run"], cwd=composed_app)
+
+        # Composition is scoped: the application's own native sources do not
+        # see dependency include directories.
+        (composed_app / "native").mkdir()
+        (composed_app / "native/leak.c").write_text(
+            '#include "wrap.h"\n'
+            "int leak_probe(void) { return wrap_add(1, 1); }\n",
+            encoding="utf-8",
+        )
+        leak_manifest = (composed_app / "gti.toml").read_text(
+            encoding="utf-8"
+        ).replace(
+            "[dependencies]",
+            '[package.native]\nc-sources = ["native/leak.c"]\n\n[dependencies]',
+        )
+        (composed_app / "gti.toml").write_text(leak_manifest, encoding="utf-8")
+        leak_build = run([gti, "build"], expected=1, cwd=composed_app)
+        assert "wrap.h" in leak_build.stderr
+        assert "native C compiler failed" in leak_build.stderr
+        (composed_app / "gti.toml").write_text(
+            leak_manifest.replace(
+                '[package.native]\nc-sources = ["native/leak.c"]\n\n', ""
+            ),
+            encoding="utf-8",
+        )
+
+        # Metadata publishes the composed groups without building.
+        composed_metadata = json.loads(
+            run([gti, "metadata"], cwd=composed_app).stdout
+        )
+        composed_native = composed_metadata["targets"][0]["outputs"][0][
+            "native"
+        ]
+        assert composed_metadata["schemaVersion"] == 8
+        assert [
+            (group["package"], group["cMacroDefinitions"])
+            for group in composed_native["dependencyNative"]
+        ] == [("wrapper@0.1.0", ["-DWRAP_BIAS=7"])]
+
+        # Opaque argument vectors never compose from a dependency.
+        write_wrapper_native(
+            'c-sources = ["native/impl.c"]\n'
+            'c-compile-args = ["-DWRAP_BIAS=7"]\n'
+            'link-args = ["-Wl,-S"]\n'
+        )
+        rejected_link_args = run(
+            [gti, "build"], expected=65, cwd=composed_app
+        )
+        assert "error[GTI-B1606]" in rejected_link_args.stderr
+        assert "linker or raw argument" in rejected_link_args.stderr
+        write_wrapper_native(
+            'c-sources = ["native/impl.c"]\n'
+            'c-compile-args = ["-DWRAP_BIAS=7", "-fcommon"]\n'
+        )
+        rejected_flag = run([gti, "build"], expected=65, cwd=composed_app)
+        assert "error[GTI-B1606]" in rejected_flag.stderr
+        assert "'-fcommon'" in rejected_flag.stderr
+        assert "-D<name>[=<value>]" in rejected_flag.stderr
+        write_wrapper_native(
+            'include-dirs = ["native/include"]\n'
+            'c-sources = ["native/impl.c"]\n'
+            'c-compile-args = ["-DWRAP_BIAS=7"]\n'
+        )
+        run([gti, "run"], cwd=composed_app)
+
+        # Transitive composition links dependents before dependencies.
+        base_package = root / "native-base"
+        (base_package / "src").mkdir(parents=True)
+        (base_package / "native").mkdir()
+        (base_package / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "basedep"\n'
+            'version = "0.1.0"\n\n'
+            "[package.native]\n"
+            'c-sources = ["native/base.c"]\n',
+            encoding="utf-8",
+        )
+        (base_package / "native/base.c").write_text(
+            "int base_value(void) { return 40; }\n", encoding="utf-8"
+        )
+        (base_package / "src/decl.gti").write_text("\n", encoding="utf-8")
+
+        middle_package = root / "native-middle"
+        (middle_package / "src").mkdir(parents=True)
+        (middle_package / "native").mkdir()
+        (middle_package / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "middledep"\n'
+            'version = "0.1.0"\n\n'
+            "[package.native]\n"
+            'c-sources = ["native/middle.c"]\n\n'
+            "[dependencies]\n"
+            'basedep = { path = "../native-base" }\n',
+            encoding="utf-8",
+        )
+        (middle_package / "native/middle.c").write_text(
+            "int base_value(void);\n"
+            "int middle_value(void) { return base_value() + 2; }\n",
+            encoding="utf-8",
+        )
+        (middle_package / "src/mid.gti").write_text(
+            'extern "C" {\n'
+            "int middle_value();\n"
+            "}\n\n"
+            "namespace middle {\n"
+            "int value() { return middle_value(); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        chained_native_app = root / "chained-native-app"
+        (chained_native_app / "src").mkdir(parents=True)
+        (chained_native_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "chained-native-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            'middledep = { path = "../native-middle" }\n\n'
+            "[targets.chained-native-app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (chained_native_app / "src/main.gti").write_text(
+            "#include <middledep/mid>\n\n"
+            "int main() {\n"
+            "  return middle::value() == 42 ? 0 : 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        run([gti, "run"], cwd=chained_native_app)
+        chained_metadata = json.loads(
+            run([gti, "metadata"], cwd=chained_native_app).stdout
+        )
+        assert [
+            group["package"]
+            for group in chained_metadata["targets"][0]["outputs"][0][
+                "native"
+            ]["dependencyNative"]
+        ] == ["middledep@0.1.0", "basedep@0.1.0"]
+
+        # A failing dependency native compile reports the owning source and
+        # stops before linking.
+        (base_package / "native/base.c").write_text(
+            "int base_value(void) { return missing; }\n", encoding="utf-8"
+        )
+        broken_dependency = run(
+            [gti, "build"], expected=1, cwd=chained_native_app
+        )
+        assert "native C compiler failed" in broken_dependency.stderr
+        assert "base.c" in broken_dependency.stderr
+        (base_package / "native/base.c").write_text(
+            "int base_value(void) { return 40; }\n", encoding="utf-8"
+        )
+        run([gti, "run"], cwd=chained_native_app)
+
 
 
 if __name__ == "__main__":

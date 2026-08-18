@@ -1228,7 +1228,13 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
                      const ProjectOptions &options,
                      const lang::driver::ToolchainLayout &toolchain) {
   std::optional<std::string> cCompiler;
-  if (!plan.nativeInputs().cSources.empty()) {
+  const bool dependencyCSources =
+      std::any_of(plan.nativeInputs().dependencyGroups.begin(),
+                  plan.nativeInputs().dependencyGroups.end(),
+                  [](const lang::driver::NativeDependencyGroup &group) {
+                    return !group.cSources.empty();
+                  });
+  if (!plan.nativeInputs().cSources.empty() || dependencyCSources) {
     cCompiler = lang::driver::discoverCCompiler(options.cc);
   }
   std::optional<lang::driver::BuildCachePolicy> cache;

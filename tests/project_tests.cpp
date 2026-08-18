@@ -1728,6 +1728,130 @@ void testGitDependencyManifestValidation() {
          "and no resolved package root");
 }
 
+void testNativeDependencyComposition() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path appRoot = temporary.root() / "app";
+  const std::filesystem::path wrapperRoot = temporary.root() / "wrapper";
+  const std::filesystem::path baseRoot = temporary.root() / "base";
+
+  writeFile(appRoot / "src/main.gti", "int main() { return 0; }\n");
+  writeFile(wrapperRoot / "src/wrap.gti", "\n");
+  writeFile(wrapperRoot / "native/include/wrap.h", "\n");
+  writeFile(wrapperRoot / "native/impl.c", "int impl(void) { return 0; }\n");
+  writeFile(baseRoot / "src/decl.gti", "\n");
+  writeFile(baseRoot / "native/base.c", "int base(void) { return 0; }\n");
+  writeFile(baseRoot / "gti.toml", "manifest-version = 1\n\n[package]\n"
+                                   "name = \"base\"\nversion = \"0.1.0\"\n\n"
+                                   "[package.native]\n"
+                                   "c-sources = [\"native/base.c\"]\n");
+
+  const auto writeWrapper = [&](std::string_view nativeLines) {
+    writeFile(wrapperRoot / "gti.toml",
+              "manifest-version = 1\n\n[package]\nname = \"wrapper\"\n"
+              "version = \"0.1.0\"\n\n[package.native]\n" +
+                  std::string(nativeLines) +
+                  "\n[dependencies]\nbase = { path = \"../base\" }\n");
+  };
+  const auto writeApp = [&] {
+    writeFile(appRoot / "gti.toml",
+              "manifest-version = 1\n\n[package]\nname = \"app\"\n"
+              "version = \"0.1.0\"\n\n[dependencies]\n"
+              "wrap = { path = \"../wrapper\" }\n\n[targets.app]\n"
+              "kind = \"executable\"\nroot = \"src/main.gti\"\n");
+  };
+  writeApp();
+  const auto resolve = [&] {
+    return lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+        appRoot, std::nullopt, "dev",
+        lang::TargetInfo{.os = "macos", .vendor = "apple", .arch = "arm64"}));
+  };
+
+  writeWrapper("include-dirs = [\"native/include\"]\n"
+               "c-sources = [\"native/impl.c\"]\n"
+               "c-standard = \"c23\"\n"
+               "c-compile-args = [\"-DWRAP_BIAS=7\", \"-UNDEBUG\"]\n"
+               "libraries = [\"m\"]\n\n"
+               "[[package.native.platforms]]\n"
+               "os = \"linux\"\n"
+               "raw-args = [\"--unselected-platform\"]\n");
+  const lang::driver::ProjectResolutionResult composed = resolve();
+  expect(composed.succeeded(), "structured dependency native inputs compose");
+  if (composed.succeeded()) {
+    const lang::driver::NativeInputs &inputs = composed.plan->nativeInputs();
+    expect(inputs.dependencyGroups.size() == 2 &&
+               inputs.dependencyGroups[0].packageIdentity == "wrapper@0.1.0" &&
+               inputs.dependencyGroups[1].packageIdentity == "base@0.1.0",
+           "composition orders dependents before their dependencies");
+    const lang::driver::NativeDependencyGroup &wrapper =
+        inputs.dependencyGroups[0];
+    expect(wrapper.includeDirectories.size() == 1 &&
+               wrapper.cSources.size() == 1 &&
+               wrapper.cStandard == lang::driver::CStandard::C23 &&
+               wrapper.cMacroDefinitions ==
+                   std::vector<std::string>({"-DWRAP_BIAS=7", "-UNDEBUG"}) &&
+               wrapper.linkOperands.size() == 1 &&
+               wrapper.linkOperands[0].kind ==
+                   lang::driver::NativeLinkOperandKind::Library &&
+               wrapper.linkOperands[0].value == "m",
+           "a composed group carries the dependency's selected structured "
+           "inputs and validated macros");
+    expect(inputs.includeDirectories.empty() && inputs.cSources.empty() &&
+               inputs.orderedLinkOperands.empty(),
+           "dependency native inputs stay scoped to their group and never "
+           "merge into the application's own inputs");
+    const lang::driver::NativeDependencyGroup &base =
+        inputs.dependencyGroups[1];
+    expect(base.cSources.size() == 1 &&
+               base.cStandard == lang::driver::CStandard::C17,
+           "a transitive dependency composes its own group with the default "
+           "C standard");
+  }
+
+  const auto rejects = [&](std::string_view nativeLines,
+                           std::string_view needle, std::string_view why) {
+    writeWrapper(nativeLines);
+    const lang::driver::ProjectResolutionResult result = resolve();
+    const bool matched =
+        !result.succeeded() &&
+        std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                    [&](const lang::Diagnostic &diagnostic) {
+                      return diagnostic.code == "GTI-B1606" &&
+                             diagnostic.message.find(needle) !=
+                                 std::string::npos;
+                    });
+    expect(matched, std::string(why));
+  };
+  rejects("c-sources = [\"native/impl.c\"]\nlink-args = [\"-Wl,-S\"]\n",
+          "linker or raw argument", "dependency link arguments never compose");
+  rejects("c-sources = [\"native/impl.c\"]\nraw-args = [\"-fanything\"]\n",
+          "linker or raw argument", "dependency raw arguments never compose");
+  rejects("c-sources = [\"native/impl.c\"]\n"
+          "c-compile-args = [\"-include\", \"evil.h\"]\n",
+          "'-include'", "a non-macro dependency compiler argument is refused");
+  rejects("cpp-sources = []\ncompile-args = [\"-fno-builtin\"]\n",
+          "'-fno-builtin'",
+          "non-macro compiler arguments from a dependency are refused");
+  rejects("c-sources = [\"native/impl.c\"]\n"
+          "c-compile-args = [\"-D1BAD=2\"]\n",
+          "'-D1BAD=2'", "an invalid macro name is refused");
+
+  // A dependency's target-scoped native table is not part of package-level
+  // composition; only [package.native] contributes.
+  writeFile(wrapperRoot / "gti.toml",
+            "manifest-version = 1\n\n[package]\nname = \"wrapper\"\n"
+            "version = \"0.1.0\"\n\n[targets.tool]\n"
+            "kind = \"executable\"\nroot = \"src/wrap.gti\"\n\n"
+            "[targets.tool.native]\nc-sources = [\"native/impl.c\"]\n\n"
+            "[dependencies]\nbase = { path = \"../base\" }\n");
+  const lang::driver::ProjectResolutionResult targetScoped = resolve();
+  expect(targetScoped.succeeded() &&
+             targetScoped.plan->nativeInputs().dependencyGroups.size() == 1 &&
+             targetScoped.plan->nativeInputs()
+                     .dependencyGroups[0]
+                     .packageIdentity == "base@0.1.0",
+         "a dependency's target-scoped native table does not compose");
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -1740,6 +1864,7 @@ int main() {
   testWorkspaceAndPathDependencies();
   testDependencyLockModel();
   testGitDependencyManifestValidation();
+  testNativeDependencyComposition();
   testProjectScaffolding();
   testFormatConfigScaffolding();
 

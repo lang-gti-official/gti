@@ -53,25 +53,6 @@ int membershipRank(ProjectPackageMembership membership) {
   return 0;
 }
 
-bool hasNativeInputs(const NativeInputs &inputs) {
-  return !inputs.includeDirectories.empty() || !inputs.cSources.empty() ||
-         !inputs.cppSources.empty() || !inputs.libraryDirectories.empty() ||
-         !inputs.libraryFiles.empty() || !inputs.libraries.empty() ||
-         !inputs.frameworks.empty() || !inputs.compilerArguments.empty() ||
-         !inputs.cCompilerArguments.empty() ||
-         !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty() ||
-         inputs.cStandard.has_value();
-}
-
-bool hasNativeInputs(const ProjectNativeSettings &settings) {
-  if (hasNativeInputs(settings.inputs)) {
-    return true;
-  }
-  return std::any_of(settings.platforms.begin(), settings.platforms.end(),
-                     [](const ProjectNativePlatform &platform) {
-                       return hasNativeInputs(platform.inputs);
-                     });
-}
 
 bool pathIsWithin(const std::filesystem::path &root,
                   const std::filesystem::path &candidate) {
@@ -515,17 +496,6 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
             "Dependency package '" + target.package().name +
                 "' has no existing source root at '" +
                 target.package().sourceRoot.string() + "'."));
-      }
-      if (hasNativeInputs(target.package().native)) {
-        Diagnostic diagnostic = workspaceDiagnostic(
-            "GTI-B1606", dependency.pathDeclaration,
-            "Dependency '" + dependency.alias +
-                "' declares package-level native inputs, which are not yet "
-                "composed across package boundaries.");
-        diagnostic.hints.push_back(
-            "Keep this dependency source-only for now, or move the native "
-            "inputs to the selected application package.");
-        result.diagnostics.push_back(std::move(diagnostic));
       }
       packages[packageIndex].dependencies.push_back(
           {.alias = dependency.alias,

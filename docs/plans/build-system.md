@@ -5,7 +5,7 @@
 > [`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md).
 
 Status: implementation in progress; Milestones 0 through 6 are complete for
-source-only local packages
+local packages, including native dependency composition
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). At the current
@@ -138,6 +138,27 @@ checksums and locked package identity before source loading. `--offline` and
 missing checkout. Branch/tag selectors and registry ranges remain rejected.
 Package-level native inputs on a dependency are rejected until native
 dependency composition is defined.
+is selected; declared native sources, include directories, and
+content-complete exact link files join cache identity through native
+dependency discovery, while opaque native argument vectors, native search
+directories, name-resolved libraries/frameworks, and other link operands
+still bypass it. Git/registry dependency declarations and fetch
+options are not implemented and are rejected. A `gti.lock` file is not yet
+consumed or authoritative; its presence has no effect. Package-level native
+inputs on a dependency compose into every dependent build as isolated
+per-package groups: structured contained inputs (include directories, C and C++
+sources, the C standard, library directories, link files, libraries,
+frameworks, and selected platform fragments) compose, and from the argument
+vectors only validated `-D<name>[=<value>]` and `-U<name>` macro definitions
+compose. Any other compiler argument and any linker or raw argument on a
+dependency is rejected with `GTI-B1606` at that dependency's declaration. A
+group's include directories and macros apply only to that package's own
+declared native sources — never to the root package's sources, another
+package's sources, or the generated whole-program translation unit — and link
+operands append in deterministic dependents-before-dependencies order.
+Dependency target-scope native tables do not compose; they apply only when
+that package builds directly. Plans carrying dependency native groups bypass
+the whole-program cache until dependency discovery covers group sources.
 
 ## Decision Summary
 
@@ -439,9 +460,12 @@ fixed operand category order is link files, libraries, then frameworks. C, C++,
 linker, and raw argument vectors resolve package to profile to target so
 specific flags appear later. The C standard resolves target to profile to
 package with `c17` as its default; C++ sources use the selected profile or CLI
-C++ standard. All four argument fields are trusted exact argv escape hatches:
-GTI does not shell-split or containment-check embedded paths, and future
-transitive packages must not inject them without a separate trust policy.
+C++ standard. All four argument fields are trusted exact argv escape hatches
+for the package being built directly: GTI does not shell-split or
+containment-check embedded paths. Dependency packages get no such trust — when
+a package is consumed as a dependency, only validated `-D`/`-U` macro
+definitions compose from its compile-argument vectors, and its linker and raw
+argument vectors are rejected outright.
 Response files and options that override output, phase, a language standard,
 optimization, target, sysroot, or data layout remain rejected.
 
@@ -886,7 +910,8 @@ manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable/test targets with their kinds, and each
 target/profile output and generated-C++ path. Metadata schema version 8 reports
 every declared execution profile plus every effective native category, C
-source, C++ source, C standard, C argument, and ordered link operand, and the
+source, C++ source, C standard, C argument, and ordered link operand, the
+composed per-dependency native groups (`dependencyNative`), and the
 resolved workspace/package/dependency graph. It is
 deterministic, works for multi-target manifests without selecting one target,
 performs no compilation, and creates no output directories.
@@ -901,7 +926,8 @@ package identity.
 
 ### Stage 2: path dependencies
 
-Status: complete for source-only local packages.
+Status: complete for local packages, including package-scope native input
+composition under the documented trust policy.
 
 Add declared local dependencies and package-root resolution. Define package
 include spelling, direct visibility, duplicate package names, cycles, and
@@ -1183,7 +1209,8 @@ Acceptance criteria:
 
 ### Milestone 6: path package dependencies
 
-Status: complete for source-only local packages.
+Status: complete for source-only local packages; the native dependency
+composition addition below extends this to package-scope native inputs.
 
 - **Complete:** define dependency package identity and package include syntax.
 - **Complete:** extend `SourceLoader` with declared package roots without weakening direct
@@ -1202,6 +1229,36 @@ Acceptance criteria:
 - **Passed at the compiler-library boundary:** direct compilation requests can
   receive explicit package-root mappings when needed without a
   manifest.
+
+### Post-Milestone 6 addition: native dependency composition
+
+Status: complete for declared package-scope inputs.
+
+- **Complete:** define the dependency native trust policy: structured
+  contained inputs compose; only validated `-D<name>[=<value>]`/`-U<name>`
+  macro definitions compose from compile-argument vectors; linker and raw
+  argument vectors on a dependency are rejected with `GTI-B1606`.
+- **Complete:** compose per-package `NativeDependencyGroup` values over the
+  dependency closure in deterministic dependents-before-dependencies order
+  (reverse postorder), with platform fragments selected against the resolved
+  target before composition.
+- **Complete:** compile each group's C and C++ sources with only that group's
+  include directories and macros plus the runtime include; nothing leaks into
+  the root package's native sources, other groups, or the generated
+  whole-program translation unit.
+- **Complete:** metadata reports the composed groups per plan as the
+  schema-version-8 `dependencyNative` array.
+
+Acceptance criteria:
+
+- **Passed:** a dependency's include directories are invisible to root-package
+  native sources (observed as a real native compile failure);
+- **Passed:** composed macro definitions and link operands change dependency
+  object code and final links end-to-end, including transitive chains;
+- **Passed:** unselected platform fragments compose nothing and reject
+  nothing;
+- **Passed:** plans with dependency native groups bypass the whole-program
+  cache with an explicit reason rather than risking a stale hit.
 
 ### Milestone 7: Git resolution and lockfile
 
@@ -1313,10 +1370,10 @@ need them.
    `<package>/build/gti`. Both paths refuse symbolic-link boundaries.
 6. Metadata JSON schema version 8 is a read-only enumeration of every current
    target/profile plan, including target kinds, declared execution profiles,
-   resolved native C and C++ sources, C policy, other native inputs, and
-   ordered link operands. It also publishes the selected workspace and sorted
-   source-package graph. Platform selection and precedence use the resolved
-   target.
+   resolved native C and C++ sources, C policy, other native inputs, ordered
+   link operands, and composed per-dependency native groups. It also publishes
+   the selected workspace and sorted source-package graph. Platform selection
+   and precedence use the resolved target.
 
 ## Recommended First Pull Requests
 
