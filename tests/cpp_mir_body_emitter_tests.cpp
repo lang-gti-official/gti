@@ -1773,6 +1773,93 @@ int main() {
          "the boundary wrapper should dereference the published pointer");
 }
 
+// The stores-reference constructor schedule (ADR 018): each reference
+// field pairs bijectively with one Stored loan whose source is the
+// dereference carrier of a reference parameter; the emitted C++ binds the
+// field in the member initializer list, the Borrow spells as a comment,
+// and no loan pointer materializes. A nonzero constructor borrow origin
+// is that schedule's caller-side lifetime fact.
+void testStoredReferenceConstructorSchedule() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-stored-reference.gti", R"(
+class holder {
+  int& target;
+
+public:
+  holder(int& value) : target(value) {}
+
+  int read() { return this.target; }
+};
+
+int main() {
+  mut int cell = 42;
+  holder bound = holder(cell);
+  return bound.read() - 42;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the stored-reference fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *constructor = nullptr;
+  for (const lang::MirConstructorInstance &candidate :
+       frontend.mir.constructorInstances()) {
+    if (!candidate.body.loans.empty()) {
+      constructor = &candidate;
+    }
+  }
+  expect(constructor != nullptr,
+         "the fixture should lower the loan-carrying constructor");
+  if (constructor == nullptr) {
+    return;
+  }
+  const std::optional<std::vector<lang::CppMirStoredReferenceBinding>>
+      bindings = lang::cppMirStoredReferenceBindings(*constructor);
+  expect(bindings.has_value() && bindings->size() == 1 &&
+             (*bindings)[0].parameter == 0,
+         "the schedule should pair the reference field with the reference "
+         "parameter");
+  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = constructor->id};
+  expect(emitter.analyze(address).ready() && emitter.supportsBodyText(address),
+         "the stored-reference constructor should be ready and in the text "
+         "vocabulary");
+  if (!emitter.supportsBodyText(address)) {
+    return;
+  }
+  const lang::CppMirBodyEmissionText text =
+      emitter.emitBodyText(address, "stored-reference-test-v0", 1);
+  expect(text.text.find("binds its reference field in the initializer "
+                        "list") != std::string::npos &&
+             text.text.find("__gti_mir_loan_") == std::string::npos,
+         "the Borrow should spell as a comment with no loan pointer local");
+
+  // The full backend chain binds the field in the emitted member
+  // initializer list of the selected constructor definition.
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find(" : target(__gti_mir_arg_0) ") !=
+             std::string::npos,
+         "the emitted constructor should bind the reference field in its "
+         "member initializer list");
+  expect(artifact.contents.find("constructor-instance " +
+                                std::to_string(constructor->id)) !=
+             std::string::npos,
+         "the selected constructor should carry its verified-MIR banner");
+}
+
 int main() {
   testExhaustiveEnumClassification();
   testReadyBodyAndRepresentationFailures();
@@ -1790,6 +1877,7 @@ int main() {
   testInlineClosureChainEmission();
   testClosureCaptureFreezeDeclines();
   testCallableTemplateBodyVocabulary();
+  testStoredReferenceConstructorSchedule();
   testDeducedCallableTemplateEmission();
   testReferenceReturnFailureAbi();
 

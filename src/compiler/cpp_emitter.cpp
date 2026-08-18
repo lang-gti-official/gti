@@ -1681,8 +1681,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       return;
     }
     if (mirGeneral != nullptr) {
-      // The verified schedule spells inside the body; the selector proved
-      // no initializer list is required for this owner's shape.
+      // Reference fields bind in the initializer list; the rest of the
+      // verified schedule spells inside the body.
+      emitGeneralMirConstructorInitializerList(*mirGeneral);
       output << ' ';
       emitGeneralMirConstructorBodyText(*mirGeneral);
       return;
@@ -7873,11 +7874,25 @@ private:
         mir->findConstructorInstance(hirConstructor->id);
     if (selected == nullptr ||
         selected->definitionKind != MirDefinitionKind::Source ||
-        selected->borrowOrigin != BorrowOriginKind::None ||
         !selected->body.failureRecords.empty() ||
-        !selected->body.loans.empty() ||
         !selected->body.dropObligations.empty() ||
         !selected->body.cleanupBoundaries.empty()) {
+      return nullptr;
+    }
+    // Loans are admissible only as the stores-reference initializer
+    // schedule: every loan is Stored and bijects with a reference field,
+    // bound in the emitted member initializer list. A nonzero constructor
+    // borrow origin is that schedule's caller-side lifetime fact and is
+    // admissible only alongside it.
+    const std::optional<std::vector<CppMirStoredReferenceBinding>>
+        storedBindings = cppMirStoredReferenceBindings(*selected);
+    if (!storedBindings ||
+        (selected->borrowOrigin != BorrowOriginKind::None &&
+         storedBindings->empty()) ||
+        std::any_of(selected->body.loans.begin(), selected->body.loans.end(),
+                    [](const MirLoan &loan) {
+                      return loan.kind != MirLoanKind::Stored;
+                    })) {
       return nullptr;
     }
     // The owner's in-class field initializers still run under the body
@@ -12460,6 +12475,32 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
     emitGeneralMirBodyText(function, "scalar-cfg-v1");
   }
 
+  // The member initializer list for a general MIR constructor: reference
+  // fields bind straight to their paired reference parameters (ADR 018);
+  // everything else initializes inside the verified body schedule.
+  void emitGeneralMirConstructorInitializerList(
+      const MirConstructorInstance &constructor) {
+    const std::optional<std::vector<CppMirStoredReferenceBinding>> bindings =
+        cppMirStoredReferenceBindings(constructor);
+    if (!bindings || bindings->empty()) {
+      return;
+    }
+    output << " : ";
+    for (std::size_t index = 0; index < bindings->size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      const SymbolRecord *record =
+          semantics.database().findSymbol((*bindings)[index].field);
+      if (record == nullptr || record->name.empty()) {
+        throw std::logic_error(
+            "verified MIR reference-field initializer lost its field name");
+      }
+      output << record->name << "(__gti_mir_arg_"
+             << (*bindings)[index].parameter << ')';
+    }
+  }
+
   void
   emitGeneralMirConstructorBodyText(const MirConstructorInstance &constructor) {
     if (mir == nullptr || !generalEmissionMap) {
@@ -13795,8 +13836,9 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
             }
             output << ')';
             if (mirGeneralConstructor != nullptr) {
-              // The verified schedule spells inside the body; the selector
-              // proved no initializer list is required for this owner.
+              // Reference fields bind in the initializer list; the rest of
+              // the verified schedule spells inside the body.
+              emitGeneralMirConstructorInitializerList(*mirGeneralConstructor);
               output << ' ';
               emitGeneralMirConstructorBodyText(*mirGeneralConstructor);
               break;

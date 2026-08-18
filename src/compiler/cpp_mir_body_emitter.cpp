@@ -2791,6 +2791,11 @@ public:
              << "{};\n";
     }
     for (const MirLoan &loan : facts.body.loans) {
+      // A Stored loan binds its reference field in the member initializer
+      // list; no pointer local exists in the body.
+      if (loan.kind == MirLoanKind::Stored) {
+        continue;
+      }
       const MirPlace *source = facts.body.findPlace(loan.source);
       if (source == nullptr) {
         throw std::logic_error("verified MIR loan lost its source place");
@@ -3424,6 +3429,12 @@ private:
         if (instruction.loan && candidate.id == *instruction.loan) {
           loan = &candidate;
         }
+      }
+      if (loan != nullptr && loan->kind == MirLoanKind::Stored) {
+        writeIndent();
+        output << "// GTI MIR stored loan " << loan->id
+               << " binds its reference field in the initializer list\n";
+        return;
       }
       const MirPlace *source =
           loan == nullptr ? nullptr : facts.body.findPlace(loan->source);
@@ -4631,6 +4642,73 @@ bool CppMirBodyEmitter::supportsFailureBodyText(MirBodyAddress address) const {
   return supportsBodyTextImpl(address, true);
 }
 
+std::optional<std::vector<CppMirStoredReferenceBinding>>
+cppMirStoredReferenceBindings(const MirConstructorInstance &constructor) {
+  std::vector<CppMirStoredReferenceBinding> bindings;
+  std::vector<bool> loanUsed(constructor.body.loans.size(), false);
+  for (std::size_t index = 0; index < constructor.initializers.size();
+       ++index) {
+    const MirConstructorInitializer &initializer =
+        constructor.initializers[index];
+    if (!initializer.storesReference) {
+      continue;
+    }
+    if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+        initializer.field == 0) {
+      return std::nullopt;
+    }
+    const MirLoan *stored = nullptr;
+    std::size_t storedIndex = 0;
+    for (std::size_t loanIndex = 0; loanIndex < constructor.body.loans.size();
+         ++loanIndex) {
+      const MirLoan &loan = constructor.body.loans[loanIndex];
+      if (loan.kind != MirLoanKind::Stored ||
+          loan.storedField != initializer.field) {
+        continue;
+      }
+      if (stored != nullptr) {
+        return std::nullopt;
+      }
+      stored = &loan;
+      storedIndex = loanIndex;
+    }
+    if (stored == nullptr || loanUsed[storedIndex]) {
+      return std::nullopt;
+    }
+    loanUsed[storedIndex] = true;
+    // The loan source must be the dereference carrier of one reference
+    // parameter: the initializer list then binds the field straight to the
+    // C++ reference parameter.
+    const MirPlace *source = constructor.body.findPlace(stored->source);
+    if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
+        source->projections.size() != 1 ||
+        source->projections.front().kind != MirProjectionKind::Dereference) {
+      return std::nullopt;
+    }
+    const auto parameter =
+        std::find(constructor.parameterBindings.begin(),
+                  constructor.parameterBindings.end(), source->binding);
+    if (parameter == constructor.parameterBindings.end()) {
+      return std::nullopt;
+    }
+    bindings.push_back(
+        {.initializer = index,
+         .field = initializer.field,
+         .parameter = static_cast<std::size_t>(
+             parameter - constructor.parameterBindings.begin())});
+  }
+  // Every Stored loan must be claimed by exactly one initializer; a stray
+  // stored loan would silently drop its binding.
+  for (std::size_t loanIndex = 0; loanIndex < constructor.body.loans.size();
+       ++loanIndex) {
+    if (constructor.body.loans[loanIndex].kind == MirLoanKind::Stored &&
+        !loanUsed[loanIndex]) {
+      return std::nullopt;
+    }
+  }
+  return bindings;
+}
+
 bool cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program) {
   const std::optional<MirHostedStartupPlan> &plan = program.hostedStartupPlan();
   if (!plan || plan->kind != ProgramEntryKind::NoArguments ||
@@ -4686,6 +4764,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   // template emission's overlay rows, and every failure convention it can
   // reach is terminally contained, exactly like the compatibility path.
   bool callableTemplateBody = false;
+  // Set when the Constructor case proved the stored-reference pairing, so
+  // the generic loan rule can admit the paired Stored loans.
+  bool storedReferenceBindings = false;
   switch (address.kind) {
   case MirBodyKind::Function: {
     const MirFunctionInstance *function =
@@ -4789,16 +4870,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirConstructorInstance *constructor =
         program_.findConstructorInstance(address.owner);
     if (constructor == nullptr || constructor->owner == 0 ||
-        constructor->borrowOrigin != BorrowOriginKind::None ||
         !constructor->body.failureRecords.empty() ||
         !std::all_of(constructor->initializers.begin(),
                      constructor->initializers.end(),
                      [](const MirConstructorInitializer &initializer) {
                        return initializer.kind ==
-                                  ConstructorInitializerTargetKind::Field &&
-                              !initializer.storesReference;
+                              ConstructorInitializerTargetKind::Field;
                      })) {
       return false;
+    }
+    // Stores-reference initializers bind their fields in the C++ member
+    // initializer list from the paired Stored loans; the single pairing
+    // authority declines anything outside that exact shape. A nonzero
+    // constructor borrow origin is the caller-side lifetime fact of
+    // exactly that schedule, so it is admissible only alongside it.
+    {
+      const std::optional<std::vector<CppMirStoredReferenceBinding>> bindings =
+          cppMirStoredReferenceBindings(*constructor);
+      if (!bindings || (constructor->borrowOrigin != BorrowOriginKind::None &&
+                        bindings->empty())) {
+        return false;
+      }
+      storedReferenceBindings = !bindings->empty();
     }
     bodyPointer = &constructor->body;
     owner = constructor->owner;
@@ -4848,6 +4941,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       return false;
     }
     if (loan.kind == MirLoanKind::Local || loan.kind == MirLoanKind::Return) {
+      continue;
+    }
+    if (loan.kind == MirLoanKind::Stored) {
+      // Admitted only when the Constructor case proved the bijective
+      // stores-reference pairing; the binding spells in the member
+      // initializer list and no pointer local exists.
+      if (!storedReferenceBindings) {
+        return false;
+      }
       continue;
     }
     if (loan.kind != MirLoanKind::CallResult) {
@@ -5256,6 +5358,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.loan ? loanById(*instruction.loan) : nullptr;
         if (loan == nullptr || !instruction.localFailureSites.empty()) {
           return false;
+        }
+        if (loan->kind == MirLoanKind::Stored) {
+          // The reference field binds in the member initializer list;
+          // the Borrow spells as a comment only.
+          continue;
         }
         const MirPlace *source = body.findPlace(loan->source);
         if (source == nullptr || !typeRow(source->type)) {

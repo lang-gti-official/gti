@@ -338,6 +338,20 @@ struct CppMirInitializerScheduleText {
 [[nodiscard]] bool
 cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program);
 
+// The reference-field initializer schedule (ADR 018): each
+// stores-reference constructor initializer pairs bijectively with one
+// Stored loan on the same field whose source is the dereference carrier of
+// one reference parameter. The C++ member-initializer list binds the field
+// to that parameter and no loan pointer ever materializes; any other
+// Stored-loan shape returns nullopt and the body declines fail-closed.
+struct CppMirStoredReferenceBinding {
+  std::size_t initializer = 0;
+  SymbolId field = 0;
+  std::size_t parameter = 0;
+};
+[[nodiscard]] std::optional<std::vector<CppMirStoredReferenceBinding>>
+cppMirStoredReferenceBindings(const MirConstructorInstance &constructor);
+
 class CppMirBodyEmitter {
 public:
   CppMirBodyEmitter(const MirProgram &program,
