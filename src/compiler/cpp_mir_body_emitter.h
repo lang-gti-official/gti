@@ -190,6 +190,11 @@ cppMirExpectedTypeRepresentation(const SemanticType &type);
 [[nodiscard]] std::string
 cppMirStringViewLiteralSpelling(std::string_view value);
 
+// Single authority for the byte-exact floating literal both backends
+// emit: std::bit_cast over the literal's stored bits, so text can never
+// drift from the frontend's binary value.
+[[nodiscard]] std::string cppMirBinaryFloatLiteralSpelling(BinaryFloat value);
+
 // The single spelling authority for the shipped checked-operation helper
 // family (`mir_failure_status_v1`): the fully qualified `mir_checked_*_v1`
 // helper a backend spells for a checked MIR operation, and an empty view

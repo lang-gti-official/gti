@@ -1,6 +1,9 @@
 #include "cpp_mir_body_emitter.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include <algorithm>
+#include <iomanip>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -2658,6 +2661,12 @@ public:
     if (std::holds_alternative<std::string>(literal)) {
       return type.kind == SemanticType::StringView;
     }
+    if (const auto *value = std::get_if<BinaryFloat>(&literal)) {
+      return validBinaryFloat(*value) &&
+             (value->format == BinaryFloatFormat::Binary64
+                  ? type == SemanticType::Double
+                  : type == SemanticType::Float);
+    }
     return false;
   }
 
@@ -3225,6 +3234,16 @@ private:
             "verified MIR string literal is not a string view");
       }
       output << cppMirStringViewLiteralSpelling(*text);
+      return;
+    }
+    if (const auto *value = std::get_if<BinaryFloat>(&literal)) {
+      const bool binary64 = value->format == BinaryFloatFormat::Binary64;
+      if ((binary64 && type != SemanticType::Double) ||
+          (!binary64 && type != SemanticType::Float)) {
+        throw std::logic_error(
+            "verified MIR floating literal disagrees with its typed value");
+      }
+      output << cppMirBinaryFloatLiteralSpelling(*value);
       return;
     }
     throw std::logic_error(
@@ -4614,6 +4633,20 @@ cppMirExpectedTypeRepresentation(const SemanticType &type) {
   return expectedTypeRepresentation(type);
 }
 
+std::string cppMirBinaryFloatLiteralSpelling(BinaryFloat value) {
+  if (!validBinaryFloat(value)) {
+    throw std::logic_error(
+        "floating literal contains bits outside its declared format");
+  }
+  std::ostringstream text;
+  const bool binary64 = value.format == BinaryFloatFormat::Binary64;
+  text << (binary64 ? "std::bit_cast<double>(std::uint64_t{0x"
+                    : "std::bit_cast<float>(std::uint32_t{0x")
+       << std::hex << std::setw(binary64 ? 16 : 8) << std::setfill('0')
+       << value.bits << (binary64 ? "ULL})" : "U})");
+  return text.str();
+}
+
 std::string cppMirStringViewLiteralSpelling(std::string_view value) {
   std::string result = "std::string_view{\"";
   for (const char character : value) {
@@ -4845,7 +4878,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirFunctionInstance *function =
         program_.findFunctionInstance(address.owner);
     if (function == nullptr) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=0 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     if (failureForm) {
       // The transformed sibling appends a suffix to the emitted member
@@ -4871,7 +4911,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                              row->spelling[after] != '_'));
         }
         if (bridgeSpelling) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=1 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
       }
       // The transformed ABI publishes through a scalar out-parameter; a
@@ -4908,7 +4955,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               *cppMirExpectedTypeRepresentation(
                   function->returnType.arguments.front()) ==
                   CppMirTypeRepresentationKind::Void)))) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=2 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
     }
     bodyPointer = &function->body;
@@ -4921,12 +4975,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   }
   case MirBodyKind::Destructor: {
     if (failureForm) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=3 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     const MirDestructorInstance *destructor =
         program_.findDestructorInstance(address.owner);
     if (destructor == nullptr || destructor->owner == 0) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=4 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     bodyPointer = &destructor->body;
     owner = destructor->owner;
@@ -4938,7 +5006,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     // constructor body; failure-capable construction stays with the
     // rollback machinery until its own slice.
     if (failureForm) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=5 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     const MirConstructorInstance *constructor =
         program_.findConstructorInstance(address.owner);
@@ -4950,7 +5025,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                        return initializer.kind ==
                               ConstructorInitializerTargetKind::Field;
                      })) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=6 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     // Stores-reference initializers bind their fields in the C++ member
     // initializer list from the paired Stored loans; the single pairing
@@ -4962,7 +5044,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           cppMirStoredReferenceBindings(*constructor);
       if (!bindings || (constructor->borrowOrigin != BorrowOriginKind::None &&
                         bindings->empty())) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=7 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       storedReferenceBindings = !bindings->empty();
     }
@@ -4977,24 +5066,51 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     // compatibility parity, so a lambda body admits only in the success
     // form; its checked arithmetic contains terminally instead.
     if (failureForm) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=8 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     const MirLambdaInstance *lambda = program_.findLambda(address.owner);
     if (lambda == nullptr) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=9 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     bodyPointer = &lambda->body;
     receiverMutability = ReceiverMutability::ReadOnly;
     parameterBindings = &lambda->parameterBindings;
     break;
   }
-  default:
+  default: {
+    if (::getenv("GTI_PROBE_TRACE") != nullptr)
+      std::fprintf(stderr, "PD id=10 kind=%d owner=%llu ff=%d\n",
+                   static_cast<int>(address.kind),
+                   static_cast<unsigned long long>(address.owner),
+                   failureForm ? 1 : 0);
     return false;
+  }
   }
   const MirBody &body = *bodyPointer;
   if (body.blocks.empty() || body.entry == 0 ||
       body.entry > body.blocks.size()) {
-    return false;
+    {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr)
+        std::fprintf(stderr, "PD id=11 kind=%d owner=%llu ff=%d\n",
+                     static_cast<int>(address.kind),
+                     static_cast<unsigned long long>(address.owner),
+                     failureForm ? 1 : 0);
+      return false;
+    }
   }
   const auto loanById = [&](MirLoanId id) -> const MirLoan * {
     for (const MirLoan &loan : body.loans) {
@@ -5011,7 +5127,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   for (const MirLoan &loan : body.loans) {
     const MirPlace *loanSource = body.findPlace(loan.source);
     if (loanSource == nullptr) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=12 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     if (loan.kind == MirLoanKind::Local || loan.kind == MirLoanKind::Return) {
       continue;
@@ -5021,12 +5144,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // stores-reference pairing; the binding spells in the member
       // initializer list and no pointer local exists.
       if (!storedReferenceBindings) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=13 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
     if (loan.kind != MirLoanKind::CallResult) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=14 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     const MirInstruction *discharged =
         pairedDischargedRead(body, loan.producedBy);
@@ -5038,7 +5175,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (loanSource->type.kind != SemanticType::Storage &&
            loanSource->type.kind != SemanticType::PrefixStorage) ||
           loanSource->type.arguments.empty()) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=15 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
     } else if (referenceCall != nullptr) {
       // The pointer local declares from the callee's return element row;
@@ -5059,10 +5203,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               });
       if (producedCallResultLoan(body, *referenceCall) == nullptr ||
           !elementRow) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=16 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
     } else {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=17 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     // The pointer local declares the element type; the producing call's
     // own branch validates its staged storage place and index.
@@ -5076,7 +5234,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (borrowed) {
       // A Borrow would assign the pointer a second time.
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=18 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
   }
 
@@ -5088,7 +5253,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   };
   const auto fieldRow = [&](SymbolId field) {
     if (!owner) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=19 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     const auto found = std::find_if(
         representations_.symbols().begin(), representations_.symbols().end(),
@@ -5193,13 +5365,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   const auto literalSupported = [&](const std::optional<Literal> &literal,
                                     const SemanticType &type) {
     if (!literal) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=20 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     if (std::holds_alternative<std::uint64_t>(*literal)) {
       return typeRow(type);
     }
     if (std::holds_alternative<std::string>(*literal)) {
       return type.kind == SemanticType::StringView && typeRow(type);
+    }
+    if (const auto *value = std::get_if<BinaryFloat>(&*literal)) {
+      return validBinaryFloat(*value) &&
+             (value->format == BinaryFloatFormat::Binary64
+                  ? type == SemanticType::Double
+                  : type == SemanticType::Float) &&
+             typeRow(type);
     }
     return std::holds_alternative<CharacterLiteral>(*literal) ||
            std::holds_alternative<bool>(*literal);
@@ -5220,7 +5406,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if ((place.projections.size() != 1 && !referenceFieldChain) ||
           place.projections.front().kind != MirProjectionKind::Field ||
           !fieldRow(place.projections.front().field)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=21 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       // A storage-typed receiver field is only the staging carrier for
       // storage-intrinsic calls; it needs a field row but no value row.
@@ -5228,7 +5421,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (slotPlace(place)) {
       if (!lifetimeSlotRow() || !typeRow(place.type)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=22 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
@@ -5237,12 +5437,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // A capture place spells its Capture row name inside the literal.
         if (address.kind != MirBodyKind::Lambda || !place.projections.empty() ||
             !captureRow(address.owner, place.symbol, place.capture)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=23 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       }
       if (!place.projections.empty() || !storageRow(place.symbol)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=24 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
@@ -5250,7 +5464,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             arrayElementAccess(body, place)) {
       const MirPlace *array = body.findPlace(access->array);
       if (array == nullptr || !typeRow(array->type) || !typeRow(place.type)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=25 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
@@ -5262,7 +5483,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          return projection.kind == MirProjectionKind::Field &&
                                 fieldRow(projection.field);
                        })) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=26 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
@@ -5270,7 +5498,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         place.projections[0].kind == MirProjectionKind::Field &&
         place.projections[1].kind == MirProjectionKind::Index) {
       if (!fieldRow(place.projections[0].field) || !typeRow(place.type)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=27 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
@@ -5281,7 +5516,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (parameterBindings == nullptr || !typeRow(place.type) ||
           std::find(parameterBindings->begin(), parameterBindings->end(),
                     place.binding) == parameterBindings->end()) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=28 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
@@ -5303,7 +5545,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          return projection.kind == MirProjectionKind::Field &&
                                 fieldRow(projection.field);
                        })) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=29 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
@@ -5315,12 +5564,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // declares and the fused chain owns every reference or the body
       // declines at the Closure rule or the value rows below.
       if (callableTemplateBody && !typeRow(place.type)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=30 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
     if (!place.projections.empty() || !typeRow(place.type)) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=31 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
   }
   for (const MirValue &value : body.values) {
@@ -5343,7 +5606,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !(callableTemplateBody &&
             (callableReceiverStage(body, value.id) != nullptr ||
              callableArgumentStage(body, value.id) != nullptr))) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=32 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
@@ -5359,12 +5629,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (definition == nullptr ||
           producedCallResultLoan(body, *definition) == nullptr ||
           !body.usesOf(value.id).empty()) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=33 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
     if (!typeRow(value.info.type)) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=34 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
   }
 
@@ -5397,10 +5681,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              instruction.kind != MirInstructionKind::Load &&
              instruction.kind != MirInstructionKind::Compute &&
              instruction.kind != MirInstructionKind::Call)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=35 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         if (!consumingCall && referencesPendingStaged(instruction)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=36 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
       }
       switch (instruction.kind) {
@@ -5419,7 +5717,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand) ||
               !instruction.localFailureSites.empty()) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=37 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
@@ -5429,7 +5734,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (slot == nullptr || !slotPlace(*slot) || instruction.receiver ||
             !instruction.operands.empty() ||
             instruction.constructorKind != ConstructorKind::Ordinary) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=38 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       }
@@ -5437,7 +5749,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         const MirLoan *loan =
             instruction.loan ? loanById(*instruction.loan) : nullptr;
         if (loan == nullptr || !instruction.localFailureSites.empty()) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=39 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         if (loan->kind == MirLoanKind::Stored) {
           // The reference field binds in the member initializer list;
@@ -5446,7 +5765,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         const MirPlace *source = body.findPlace(loan->source);
         if (source == nullptr || !typeRow(source->type)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=40 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         if (source->type.kind == SemanticType::Storage ||
             source->type.kind == SemanticType::PrefixStorage) {
@@ -5459,14 +5785,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               storageStagedPlace(body, read->operands.front()) == nullptr ||
               source->type.arguments.empty() ||
               !typeRow(source->type.arguments.front())) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=41 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
         }
         continue;
       }
       case MirInstructionKind::EndBorrow:
         if (!instruction.loan || loanById(*instruction.loan) == nullptr) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=42 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       case MirInstructionKind::Drop: {
@@ -5481,7 +5821,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const MirPlace *cleanupSlot =
               body.findPlace(*instruction.destination);
           if (cleanupSlot == nullptr || !slotPlace(*cleanupSlot)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=43 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
@@ -5489,13 +5836,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                    ? body.findPlace(*instruction.destination)
                                    : nullptr;
         if (slot == nullptr || !slotPlace(*slot)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=44 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       }
       case MirInstructionKind::Compute: {
         if (!instruction.result) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=45 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         if (!failureForm && address.kind == MirBodyKind::Lambda &&
             !cppMirTerminalCheckedHelperSpelling(instruction.operation)
@@ -5519,7 +5880,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            [&](const MirOperand &operand) {
                              return operand.type == instruction.info.type;
                            })) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=46 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
@@ -5530,11 +5898,34 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // A checked detector spells as its status helper and its failure
           // edge writes one exact record: one site, one origin, both known
           // to the program's failure metadata.
-          const auto detectorOperand = [&](const MirOperand &operand) {
-            return valueOperand(operand) ||
-                   (operand.kind == MirOperandKind::Constant &&
-                    operand.literal.has_value() && typeRow(operand.type));
+          // The mir_checked_* helper family is integral-only (its range
+          // checks static_assert on integral operands); a floating source
+          // or result waits for a floating checked family.
+          const auto integralKind = [](const SemanticType &type) {
+            switch (type.kind) {
+            case SemanticType::Int8:
+            case SemanticType::Int16:
+            case SemanticType::Int32:
+            case SemanticType::Int64:
+            case SemanticType::UInt8:
+            case SemanticType::UInt16:
+            case SemanticType::UInt32:
+            case SemanticType::UInt64:
+            case SemanticType::Char:
+              return true;
+            default:
+              return false;
+            }
           };
+          const auto detectorOperand = [&](const MirOperand &operand) {
+            return integralKind(operand.type) &&
+                   (valueOperand(operand) ||
+                    (operand.kind == MirOperandKind::Constant &&
+                     operand.literal.has_value() && typeRow(operand.type)));
+          };
+          if (!integralKind(instruction.info.type)) {
+            return false;
+          }
           if (instruction.localFailureSites.size() != 1 ||
               instruction.definedFailure.localOrigins.size() != 1 ||
               program_.failureMetadata().findSite(
@@ -5543,28 +5934,56 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), detectorOperand) ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=47 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
         switch (instruction.operation) {
         case MirOperation::Literal:
           if (!literalSupported(instruction.literal, instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=48 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         case MirOperation::Identity:
         case MirOperation::LogicalNot:
           if (instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front())) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=49 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         case MirOperation::ExpectedHasValue:
           if (instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !instruction.localFailureSites.empty()) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=50 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         case MirOperation::Unexpected: {
@@ -5581,7 +6000,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.localFailureSites.empty() ||
               expectedRow == representations_.capabilities().end() ||
               expectedRow->spelling.empty()) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=51 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           // The wrapper value never materializes (std::unexpected has no
           // default construction): its only consumer must be the Return
@@ -5607,7 +6033,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   userBlock->terminator.value->value == *instruction.result;
             }
             if (!returnConsumed) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                  std::fprintf(stderr, "PD id=52 kind=%d owner=%llu ff=%d\n",
+                               static_cast<int>(address.kind),
+                               static_cast<unsigned long long>(address.owner),
+                               failureForm ? 1 : 0);
+                return false;
+              }
             }
           }
           continue;
@@ -5622,7 +6055,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !lambdaBodyRow(lambda->id) ||
               !closureChainAdmits(program_, body, instruction) ||
               !typeRow(lambda->returnType)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=53 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           bool rows = true;
           for (const SemanticType &type : lambda->parameterTypes) {
@@ -5638,7 +6078,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (!rows ||
               !supportsBodyTextImpl(
                   {.kind = MirBodyKind::Lambda, .owner = lambda->id}, false)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=54 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
@@ -5647,7 +6094,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=55 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         case MirOperation::Aggregate:
@@ -5656,7 +6110,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (!instruction.operands.empty() ||
               !instruction.localFailureSites.empty() ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=56 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         case MirOperation::Convert:
@@ -5667,7 +6128,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=57 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         case MirOperation::BitwiseAnd:
@@ -5677,7 +6145,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !valueOperand(instruction.operands[0]) ||
               !valueOperand(instruction.operands[1]) ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=58 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         case MirOperation::Equal:
@@ -5689,17 +6164,37 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.operands.size() != 2 ||
               !valueOperand(instruction.operands[0]) ||
               !valueOperand(instruction.operands[1])) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=59 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
-        default:
+        default: {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=60 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
           return false;
+        }
         }
       }
       case MirInstructionKind::Load: {
         if (!instruction.result || instruction.operands.size() != 1 ||
             instruction.operands.front().place == 0) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=61 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         if (!instruction.localFailureSites.empty()) {
           // A bounds-checked element load is a failure detector: exactly
@@ -5713,14 +6208,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=62 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
         }
         continue;
       }
       case MirInstructionKind::Initialize: {
         if (!instruction.destination || instruction.operands.size() != 1) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=63 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         const MirPlace *destination = body.findPlace(*instruction.destination);
         // A store into a receiver field is only expressible through the
@@ -5729,19 +6238,40 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
             receiverMutability != ReceiverMutability::Mutable) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=64 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         if (destination != nullptr && slotPlace(*destination)) {
           // The reparenting Initialize is the slot construct's paired
           // destination and emits as a comment only.
           if (!valueOperand(instruction.operands.front())) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=65 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
         if (!valueOperand(instruction.operands.front()) &&
             !syntheticBool(instruction.operands.front())) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=66 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       }
@@ -5749,13 +6279,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!instruction.destination || !instruction.result ||
             instruction.operands.size() != 1 ||
             !valueOperand(instruction.operands.front())) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=67 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         const MirPlace *destination = body.findPlace(*instruction.destination);
         if (destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
             receiverMutability != ReceiverMutability::Mutable) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=68 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         if (!instruction.localFailureSites.empty()) {
           // A bounds-checked element store is a failure detector spelled
@@ -5766,7 +6310,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.definedFailure.localOrigins.size() != 1 ||
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=69 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
         }
         continue;
@@ -5778,13 +6329,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.operands.front().place == 0 ||
             body.findPlace(instruction.operands.front().place) == nullptr ||
             !instruction.localFailureSites.empty()) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=70 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       case MirInstructionKind::CallInput: {
         if (!instruction.result || instruction.receiver ||
             instruction.operands.size() != 1) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=71 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         const MirOperand &staged = instruction.operands.front();
         if (staged.kind == MirOperandKind::BorrowRead ||
@@ -5792,13 +6357,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // A borrowed call input stages a place the call spells directly;
           // the write form carries the mutable receiver.
           if (staged.place == 0 || body.findPlace(staged.place) == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=72 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           pendingStaged.push_back(*instruction.result);
           continue;
         }
         if (!valueOperand(staged)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=73 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       }
@@ -5812,14 +6391,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   nullptr ||
               !valueOperand(instruction.operands.back()) ||
               !instruction.result || !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=74 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           if (instruction.receiver &&
               ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
                 instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
                instruction.receiver->place == 0 ||
                body.findPlace(instruction.receiver->place) == nullptr)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=75 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
@@ -5832,7 +6425,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               storageStagedPlace(body, instruction.operands.front()) ==
                   nullptr ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=76 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
@@ -5847,7 +6447,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.definedFailure.localOrigins.empty() ||
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=77 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           if (instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
             // Allocation publishes into its storage-typed result value;
@@ -5858,23 +6465,51 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !typeRow(instruction.info.type) ||
                 instruction.info.type.arguments.size() != 1 ||
                 !typeRow(instruction.info.type.arguments.front())) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                  std::fprintf(stderr, "PD id=78 kind=%d owner=%llu ff=%d\n",
+                               static_cast<int>(address.kind),
+                               static_cast<unsigned long long>(address.owner),
+                               failureForm ? 1 : 0);
+                return false;
+              }
             }
             continue;
           }
           if (instruction.result || instruction.operands.empty()) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=79 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           if (instruction.receiver &&
               ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
                 instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
                instruction.receiver->place == 0 ||
                body.findPlace(instruction.receiver->place) == nullptr)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=80 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           if (storageStagedPlace(body, instruction.operands.front()) ==
               nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=81 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           for (std::size_t index = 1; index < instruction.operands.size();
                ++index) {
@@ -5884,7 +6519,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               continue;
             }
             if (!valueOperand(instruction.operands[index])) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                  std::fprintf(stderr, "PD id=82 kind=%d owner=%llu ff=%d\n",
+                               static_cast<int>(address.kind),
+                               static_cast<unsigned long long>(address.owner),
+                               failureForm ? 1 : 0);
+                return false;
+              }
             }
           }
           continue;
@@ -5909,7 +6551,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand) ||
               (instruction.result && !typeRow(instruction.info.type))) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=83 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
@@ -5922,7 +6571,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (instruction.receiver) {
           if (instruction.intrinsic != IntrinsicKind::None ||
               instruction.dispatch != CallDispatch::Static) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=84 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           // The receiver borrow arrives staged through a CallInput or
           // directly on the receiver operand (a self-member call borrows
@@ -5941,7 +6597,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   ? body.findPlace(receiverBorrow.place)
                   : nullptr;
           if (receiverPlace == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=85 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           const MirFunctionInstance *target =
               instruction.functionTarget
@@ -5958,7 +6621,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               target->linkage != LanguageLinkage::Gti ||
               target->definitionKind !=
                   MirFunctionInstance::DefinitionKind::Source) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=86 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           // The staged place must BE the member's owner object: a place
           // that merely reaches it through an implicit owner dereference
@@ -5967,7 +6637,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               program_.findClassInstance(*target->owner);
           if (ownerInstance == nullptr ||
               receiverPlace->type != ownerInstance->type) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=87 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           if (staged != nullptr) {
             consumedStaged.push_back(*staged->result);
@@ -5989,7 +6666,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                target->linkage == LanguageLinkage::Gti &&
                target->definitionKind ==
                    MirFunctionInstance::DefinitionKind::Source)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=88 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
         }
         if (failureForm) {
@@ -5998,7 +6682,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   ? program_.findFunctionInstance(*instruction.functionTarget)
                   : nullptr;
           if (instruction.functionTarget && target == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=89 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           if (target != nullptr && target->mayRaiseDefinedFailure &&
               deducedCallableCallee(program_, instruction)) {
@@ -6028,7 +6719,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 ((*returnKind == CppMirTypeRepresentationKind::Scalar ||
                   *returnKind == CppMirTypeRepresentationKind::Expected) &&
                  !typeRow(target->returnType))) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                  std::fprintf(stderr, "PD id=90 kind=%d owner=%llu ff=%d\n",
+                               static_cast<int>(address.kind),
+                               static_cast<unsigned long long>(address.owner),
+                               failureForm ? 1 : 0);
+                return false;
+              }
             }
           }
         }
@@ -6071,7 +6769,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (instruction.result || instruction.operands.size() != 2 ||
                 !std::all_of(instruction.operands.begin(),
                              instruction.operands.end(), valueOperand)) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                  std::fprintf(stderr, "PD id=91 kind=%d owner=%llu ff=%d\n",
+                               static_cast<int>(address.kind),
+                               static_cast<unsigned long long>(address.owner),
+                               failureForm ? 1 : 0);
+                return false;
+              }
             }
             continue;
           }
@@ -6086,7 +6791,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 instruction.operands.size() != 1 ||
                 !valueOperand(instruction.operands.front()) ||
                 !typeRow(instruction.info.type)) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                  std::fprintf(stderr, "PD id=92 kind=%d owner=%llu ff=%d\n",
+                               static_cast<int>(address.kind),
+                               static_cast<unsigned long long>(address.owner),
+                               failureForm ? 1 : 0);
+                return false;
+              }
             }
             continue;
           }
@@ -6097,13 +6809,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.result || instruction.operands.size() != 2 ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=93 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
           continue;
         }
         if (!instruction.functionTarget ||
             !bodyRow(*instruction.functionTarget)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=94 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         for (const MirOperand &operand : instruction.operands) {
           if (const MirInstruction *staged =
@@ -6114,7 +6840,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             continue;
           }
           if (!valueOperand(operand)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=95 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
         }
         if (const MirFunctionInstance *target =
@@ -6125,7 +6858,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // converter is modelled, so a view result stays outside the
           // vocabulary.
           if (instruction.info.type.kind == SemanticType::StringView) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr)
+                std::fprintf(stderr, "PD id=96 kind=%d owner=%llu ff=%d\n",
+                             static_cast<int>(address.kind),
+                             static_cast<unsigned long long>(address.owner),
+                             failureForm ? 1 : 0);
+              return false;
+            }
           }
         }
         // Every staged borrow in flight must feed exactly this call: a
@@ -6138,23 +6878,50 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                             pendingStaged.end(),
                                             id) != pendingStaged.end();
                          })) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=97 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         pendingStaged.clear();
         continue;
       }
-      default:
+      default: {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=98 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
         return false;
+      }
       }
     }
     if (!pendingStaged.empty()) {
       // A staged borrow must be consumed by a call in its own block.
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr)
+          std::fprintf(stderr, "PD id=99 kind=%d owner=%llu ff=%d\n",
+                       static_cast<int>(address.kind),
+                       static_cast<unsigned long long>(address.owner),
+                       failureForm ? 1 : 0);
+        return false;
+      }
     }
     switch (block.terminator.kind) {
     case MirTerminatorKind::Invoke: {
       if (block.terminator.target == 0 || block.terminator.elseTarget == 0) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=100 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       // The invoke's producer must be this block's checked detector (the
       // status local and record write are spellable) or its transformed
@@ -6167,7 +6934,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
       }
       if (producer == nullptr) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=101 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       if (callableValueInvocation(*producer) ||
           storageBoundsCheckCall(*producer)) {
@@ -6188,7 +6962,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             producer->kind != MirInstructionKind::Compute ||
             cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
             producer->localFailureSites.size() != 1) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=102 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       }
@@ -6207,7 +6988,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 ? program_.findFunctionInstance(*producer->functionTarget)
                 : nullptr;
         if (target == nullptr || !target->mayRaiseDefinedFailure) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=103 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       }
@@ -6219,20 +7007,41 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (producer->kind != MirInstructionKind::Compute ||
           cppMirCheckedOperationHelperSpelling(producer->operation).empty() ||
           producer->localFailureSites.size() != 1) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=104 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
     case MirTerminatorKind::PropagateFailure:
       if (block.terminator.failureRecord == 0) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=105 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       if (!failureForm && address.kind != MirBodyKind::Lambda &&
           !callableTemplateBody) {
         // Only a plain shape whose failure sources are all terminally
         // contained admits this terminator: the propagate block is
         // unreachable and spells abort.
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=106 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     case MirTerminatorKind::Goto:
@@ -6240,31 +7049,66 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     case MirTerminatorKind::Branch:
       if (!block.terminator.value || !valueOperand(*block.terminator.value)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=107 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     case MirTerminatorKind::Switch: {
       if (!block.terminator.value || !valueOperand(*block.terminator.value)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=108 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       bool targets = true;
       for (const MirSwitchTarget &target : block.terminator.switchTargets) {
         targets = targets && target.value && typeRow(target.value->type);
       }
       if (!targets) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=109 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
     }
     case MirTerminatorKind::Return:
       if (block.terminator.returnLoan && *block.terminator.returnLoan != 0) {
         if (loanById(*block.terminator.returnLoan) == nullptr) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr)
+              std::fprintf(stderr, "PD id=110 kind=%d owner=%llu ff=%d\n",
+                           static_cast<int>(address.kind),
+                           static_cast<unsigned long long>(address.owner),
+                           failureForm ? 1 : 0);
+            return false;
+          }
         }
         continue;
       }
       if (block.terminator.value && !valueOperand(*block.terminator.value)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=111 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       if (failureForm && block.terminator.value &&
           block.terminator.value->type.kind == SemanticType::Class &&
@@ -6272,11 +7116,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               nullptr) {
         // A class value publishes only through its paired inline
         // construct; anything else has no local to spell.
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr)
+            std::fprintf(stderr, "PD id=112 kind=%d owner=%llu ff=%d\n",
+                         static_cast<int>(address.kind),
+                         static_cast<unsigned long long>(address.owner),
+                         failureForm ? 1 : 0);
+          return false;
+        }
       }
       continue;
-    default:
+    default: {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr)
+        std::fprintf(stderr, "PD id=113 kind=%d owner=%llu ff=%d\n",
+                     static_cast<int>(address.kind),
+                     static_cast<unsigned long long>(address.owner),
+                     failureForm ? 1 : 0);
       return false;
+    }
     }
   }
   return true;

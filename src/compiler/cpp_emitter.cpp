@@ -14289,19 +14289,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitFloat(BinaryFloat value) {
-    if (!validBinaryFloat(value)) {
-      throw std::logic_error(
-          "floating literal contains bits outside its declared format");
-    }
-    std::ostringstream bits;
-    const bool binary64 = value.format == BinaryFloatFormat::Binary64;
-    bits << "0x" << std::hex << std::setw(binary64 ? 16 : 8)
-         << std::setfill('0') << value.bits << (binary64 ? "ULL" : "U");
-    if (binary64) {
-      output << "std::bit_cast<double>(std::uint64_t{" << bits.str() << "})";
-      return;
-    }
-    output << "std::bit_cast<float>(std::uint32_t{" << bits.str() << "})";
+    // Shared byte-exact authority with the verified-MIR text step.
+    output << cppMirBinaryFloatLiteralSpelling(value);
   }
 
   [[nodiscard]] static std::string_view operatorSpelling(const Token &oper) {
