@@ -1584,14 +1584,21 @@ private:
       }
       return;
     }
-    case MirBodyKind::HostedStartup:
+    case MirBodyKind::HostedStartup: {
       requireCapability(CppMirEmissionCapabilityKind::HostedEntry);
-      if (!cppMirHostedStartupNoArgumentsSchedule(program)) {
+      const bool ownedArgumentsSchedule =
+          cppMirHostedStartupOwnedArgumentsSchedule(program);
+      if (!cppMirHostedStartupNoArgumentsSchedule(program) &&
+          !ownedArgumentsSchedule) {
         add(CppMirBodyEmissionIssueKind::MissingFailureCleanupMir, 0, 0,
             "compiler-generated hosted startup lacks the Stage-E terminal "
             "failure-containment path");
       }
-      if (std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+      // The verified owned-arguments schedule carries its own
+      // drop/end failure-cleanup envelope, so its owned marshaling
+      // obligations are covered by the plan itself.
+      if (!ownedArgumentsSchedule &&
+          std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
                       [](const MirDropObligation &obligation) {
                         return obligation.dropType.requiresActiveCleanup;
                       })) {
@@ -1601,6 +1608,7 @@ private:
             "rollback and transfer envelope");
       }
       return;
+    }
     }
   }
 
@@ -2104,7 +2112,8 @@ private:
       requireCapability(CppMirEmissionCapabilityKind::DefinedFailure, block.id,
                         instruction.id);
       if (result.body.kind == MirBodyKind::HostedStartup) {
-        if (!cppMirHostedStartupNoArgumentsSchedule(program)) {
+        if (!cppMirHostedStartupNoArgumentsSchedule(program) &&
+            !cppMirHostedStartupOwnedArgumentsSchedule(program)) {
           add(CppMirBodyEmissionIssueKind::MissingFailureCleanupMir, block.id,
               instruction.id,
               instruction.definedFailure.propagation ==
@@ -4933,6 +4942,92 @@ bool cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program) {
          plan->operations[2].kind ==
              MirHostedStartupOperationKind::ContainFailure &&
          plan->operations[3].kind == MirHostedStartupOperationKind::ReturnEntry;
+}
+
+bool cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program) {
+  const std::optional<MirHostedStartupPlan> &plan = program.hostedStartupPlan();
+  if (!plan || plan->kind != ProgramEntryKind::OwnedArguments ||
+      plan->entry == 0 || plan->appendFunction == 0 ||
+      plan->vectorConstructor == 0 || plan->stringConstructor == 0 ||
+      plan->exitPolicy != MirHostedStartupExitPolicy::ImmediateExit70) {
+    return false;
+  }
+  using Kind = MirHostedStartupOperationKind;
+  using Behavior = MirHostedStartupFailureBehavior;
+  struct ExpectedOperation {
+    Kind kind;
+    Behavior behavior;
+    bool terminator;
+    bool record;
+    bool drop;
+  };
+  // The exact marshaling schedule the emitted argc/argv main performs:
+  // detect-validated count and conversion, propagating vector
+  // construction, then the per-argument loop — view read, string
+  // construction and append under the drop/end failure-cleanup envelope —
+  // and the entry call, each failure routed and terminally contained.
+  static constexpr ExpectedOperation expected[] = {
+      {Kind::ValidateArgumentCount, Behavior::Detect, false, false, false},
+      {Kind::RouteOperationFailure, Behavior::None, true, true, false},
+      {Kind::ContainFailure, Behavior::None, true, false, false},
+      {Kind::ConvertArgumentCount, Behavior::Detect, false, false, false},
+      {Kind::RouteOperationFailure, Behavior::None, true, true, false},
+      {Kind::ContainFailure, Behavior::None, true, false, false},
+      {Kind::ConstructArgumentVector, Behavior::Propagate, false, false, true},
+      {Kind::RouteOperationFailure, Behavior::None, true, true, false},
+      {Kind::ContainFailure, Behavior::None, true, false, false},
+      {Kind::InitializeArgumentIndex, Behavior::None, false, false, false},
+      {Kind::EnterArgumentLoop, Behavior::None, true, false, false},
+      {Kind::LoadArgumentIndex, Behavior::None, false, false, false},
+      {Kind::TestArgumentIndex, Behavior::None, false, false, false},
+      {Kind::BranchArgumentLoop, Behavior::None, true, false, false},
+      {Kind::ReadArgumentView, Behavior::None, false, false, false},
+      {Kind::PrepareStringConstructorArgument, Behavior::None, false, false,
+       false},
+      {Kind::ConstructArgumentString, Behavior::Propagate, false, false, true},
+      {Kind::RouteOperationFailure, Behavior::None, true, true, false},
+      {Kind::DropFailureCleanup, Behavior::None, false, false, false},
+      {Kind::EndFailureCleanup, Behavior::None, false, false, false},
+      {Kind::ContainFailure, Behavior::None, true, false, false},
+      {Kind::PrepareAppendReceiver, Behavior::None, false, false, false},
+      {Kind::PrepareAppendArgumentMove, Behavior::None, false, false, true},
+      {Kind::CallAppend, Behavior::Propagate, false, false, false},
+      {Kind::RouteOperationFailure, Behavior::None, true, true, false},
+      {Kind::DropFailureCleanup, Behavior::None, false, false, false},
+      {Kind::EndFailureCleanup, Behavior::None, false, false, false},
+      {Kind::ContainFailure, Behavior::None, true, false, false},
+      {Kind::AdvanceArgumentIndex, Behavior::None, false, false, false},
+      {Kind::ContinueArgumentLoop, Behavior::None, true, false, false},
+      {Kind::PrepareEntryCount, Behavior::None, false, false, false},
+      {Kind::PrepareEntryArgumentsMove, Behavior::None, false, false, true},
+      {Kind::CallEntry, Behavior::Propagate, false, false, false},
+      {Kind::RouteOperationFailure, Behavior::None, true, true, false},
+      {Kind::ContainFailure, Behavior::None, true, false, false},
+      {Kind::ReturnEntry, Behavior::None, true, false, false},
+  };
+  if (plan->operations.size() != std::size(expected)) {
+    return false;
+  }
+  std::vector<MirFailureRecordId> routedRecords;
+  for (std::size_t index = 0; index < plan->operations.size(); ++index) {
+    const MirHostedStartupOperation &operation = plan->operations[index];
+    const ExpectedOperation &shape = expected[index];
+    if (operation.kind != shape.kind ||
+        operation.failureBehavior != shape.behavior ||
+        operation.terminator != shape.terminator ||
+        (operation.failureRecord != 0) != shape.record ||
+        (operation.dropObligation != 0) != shape.drop) {
+      return false;
+    }
+    if (shape.record) {
+      if (std::find(routedRecords.begin(), routedRecords.end(),
+                    operation.failureRecord) != routedRecords.end()) {
+        return false;
+      }
+      routedRecords.push_back(operation.failureRecord);
+    }
+  }
+  return true;
 }
 
 bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {

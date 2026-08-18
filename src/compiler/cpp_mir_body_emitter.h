@@ -343,6 +343,14 @@ struct CppMirInitializerScheduleText {
 [[nodiscard]] bool
 cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program);
 
+// Single authority for the owned-arguments hosted-startup marshaling
+// schedule: count validation and conversion, argument-vector construction,
+// the per-argument view/string/append loop with its failure-cleanup
+// envelope, and the entry call, each under immediate-exit-70 containment.
+// The emitted argc/argv main is then that body's complete emission.
+[[nodiscard]] bool
+cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program);
+
 // The reference-field initializer schedule (ADR 018): each
 // stores-reference constructor initializer pairs bijectively with one
 // Stored loan on the same field whose source is the dereference carrier of

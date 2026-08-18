@@ -13169,14 +13169,18 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitHostedStartupMarker() {
-    if (mir == nullptr || !generalEmissionMap ||
-        !cppMirHostedStartupNoArgumentsSchedule(*mir) ||
-        !mir->hostedStartupPlan()) {
+    if (mir == nullptr || !generalEmissionMap || !mir->hostedStartupPlan() ||
+        (!cppMirHostedStartupNoArgumentsSchedule(*mir) &&
+         !cppMirHostedStartupOwnedArgumentsSchedule(*mir))) {
       return;
     }
-    // The adapter below is the verified no-argument hosted-startup
-    // schedule's complete emission: call-entry with propagated failure,
-    // operation-failure routing, terminal containment, and return.
+    // The adapter below is the verified hosted-startup schedule's complete
+    // emission: for the no-argument form, call-entry with propagated
+    // failure, operation-failure routing, terminal containment, and
+    // return; for the owned-arguments form, the count
+    // validation/conversion, vector construction, per-argument
+    // view/string/append loop with its failure-cleanup envelope, and the
+    // entry call the schedule authority verified.
     output << "// GTI verified-MIR body: hosted-entry-v1 "
               "hosted-startup-instance "
            << mir->hostedStartupPlan()->entry << "\n";

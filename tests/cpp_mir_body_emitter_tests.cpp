@@ -541,30 +541,15 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
           owned.mir, lang::CppMirBodyEmissionMap(completeRows(owned.mir)))
           .analyze({.kind = lang::MirBodyKind::HostedStartup,
                     .owner = ownedEntry->id});
-  expect(
-      ownedStartup.readiness ==
-              lang::CppMirBodyEmissionReadiness::MissingMirAuthority &&
-          hasIssue(
-              ownedStartup,
-              lang::CppMirBodyEmissionIssueKind::MissingFailureCleanupMir) &&
-          hasIssue(ownedStartup, lang::CppMirBodyEmissionIssueKind::
-                                     MissingPartialConstructionRollbackMir) &&
-          !hasIssue(
-              ownedStartup,
-              lang::CppMirBodyEmissionIssueKind::MissingCallInputScheduleMir) &&
-          !hasIssue(
-              ownedStartup,
-              lang::CppMirBodyEmissionIssueKind::MissingOrderedCompoundMir) &&
-          std::all_of(ownedStartup.issues.begin(), ownedStartup.issues.end(),
-                      [](const lang::CppMirBodyEmissionIssue &issue) {
-                        return issue.kind == lang::CppMirBodyEmissionIssueKind::
-                                                 MissingFailureCleanupMir ||
-                               issue.kind ==
-                                   lang::CppMirBodyEmissionIssueKind::
-                                       MissingPartialConstructionRollbackMir;
-                      }),
-      "the exact generated owned startup schedule should expose only its "
-      "Stage-E cleanup and partial-rollback debts");
+  expect(ownedStartup.ready() &&
+             !hasIssue(
+                 ownedStartup,
+                 lang::CppMirBodyEmissionIssueKind::MissingFailureCleanupMir) &&
+             !hasIssue(ownedStartup, lang::CppMirBodyEmissionIssueKind::
+                                         MissingPartialConstructionRollbackMir),
+         "the exact generated owned startup schedule is accepted: the verified "
+         "marshaling plan carries its own failure-cleanup envelope and the "
+         "emitted argc/argv main is its complete emission");
 }
 
 void testVerifiedProgramInitializationPlanClassification() {
