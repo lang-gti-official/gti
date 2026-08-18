@@ -158,8 +158,13 @@ classSubscriptAccess(const MirProgram &program, const MirBody &body,
     return nullptr;
   }
   probing.push_back(found->id);
-  const bool contained =
-      CppMirBodyEmitter(program, representations).supportsBodyText(address);
+  // The success form contains terminally inside its own text; the failure
+  // form's boundary wrapper keeps the original member name and signature
+  // and terminates on a propagated record, so the plain call is exact
+  // against either emitted form.
+  const CppMirBodyEmitter emitter(program, representations);
+  const bool contained = emitter.supportsBodyText(address) ||
+                         emitter.supportsFailureBodyText(address);
   probing.pop_back();
   return contained ? found : nullptr;
 }
@@ -414,6 +419,48 @@ terminallyContainedPlainCallee(const MirProgram &program,
     return false;
   }
   probing.push_back(target->id);
+  // Only the success shape contains terminally inside its own text; a
+  // failure-admitted callee keeps the transformed propagation convention
+  // and never claims the plain call.
+  const bool contained = CppMirBodyEmitter(program, representations)
+                             .supportsBodyText({.kind = MirBodyKind::Function,
+                                                .owner = target->id});
+  probing.pop_back();
+  return contained;
+}
+
+// The member analogue of the terminally contained plain callee: a
+// may-raise member whose own emitted body proves either form contains
+// failure away from the caller — the success shape terminally inside its
+// text, or the transformed sibling behind the boundary wrapper that
+// keeps the original member name and terminates on a propagated record.
+// Either way the caller's plain member call never observes failure, so
+// its paired invoke edge is a plain goto. Cycles fail closed.
+[[nodiscard]] bool
+terminallyContainedMemberCallee(const MirProgram &program,
+                                const CppMirBodyEmissionMap &representations,
+                                const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      !instruction.functionTarget ||
+      instruction.intrinsic != IntrinsicKind::None) {
+    return false;
+  }
+  const MirFunctionInstance *target =
+      program.findFunctionInstance(*instruction.functionTarget);
+  if (target == nullptr || !target->owner || !target->mayRaiseDefinedFailure ||
+      target->linkage != LanguageLinkage::Gti ||
+      target->definitionKind != MirFunctionInstance::DefinitionKind::Source ||
+      !target->callableParameters.empty() ||
+      target->entryKind != ProgramEntryKind::None) {
+    return false;
+  }
+  thread_local std::vector<HirFunctionInstanceId> probing;
+  if (std::find(probing.begin(), probing.end(), target->id) != probing.end()) {
+    return false;
+  }
+  probing.push_back(target->id);
+  // Success-shape containment only: a failure-admitted member keeps the
+  // transformed propagation convention.
   const bool contained = CppMirBodyEmitter(program, representations)
                              .supportsBodyText({.kind = MirBodyKind::Function,
                                                 .owner = target->id});
@@ -3715,9 +3762,16 @@ private:
     if (castResult) {
       output << "static_cast<" << typeSpelling(instruction.info.type) << ">(";
     }
-    emitOperand(instruction.operands[0]);
+    const auto emitBinaryOperand = [&](const MirOperand &operand) {
+      if (operand.kind == MirOperandKind::Constant && operand.literal) {
+        emitLiteral(*operand.literal, operand.type);
+        return;
+      }
+      emitOperand(operand);
+    };
+    emitBinaryOperand(instruction.operands[0]);
     output << ' ' << spelling << ' ';
-    emitOperand(instruction.operands[1]);
+    emitBinaryOperand(instruction.operands[1]);
     if (castResult) {
       output << ')';
     }
@@ -6743,10 +6797,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         case MirOperation::Less:
         case MirOperation::LessEqual:
         case MirOperation::Greater:
-        case MirOperation::GreaterEqual:
+        case MirOperation::GreaterEqual: {
+          // A literal comparison operand spells inline, exactly like the
+          // checked detectors' constant operands.
+          const auto comparisonOperand = [&](const MirOperand &operand) {
+            return valueOperand(operand) ||
+                   (operand.kind == MirOperandKind::Constant &&
+                    operand.literal.has_value() && typeRow(operand.type));
+          };
           if (instruction.operands.size() != 2 ||
-              !valueOperand(instruction.operands[0]) ||
-              !valueOperand(instruction.operands[1])) {
+              !comparisonOperand(instruction.operands[0]) ||
+              !comparisonOperand(instruction.operands[1])) {
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
                 std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 64,
@@ -6757,6 +6818,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
           }
           continue;
+        }
         default: {
           if (::getenv("GTI_PROBE_TRACE") != nullptr) {
             std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 65,
@@ -7328,6 +7390,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                !deducedCallableCallee(program_, instruction) &&
                !terminallyContainedPlainCallee(program_, representations_,
                                                instruction) &&
+               !terminallyContainedMemberCallee(program_, representations_,
+                                                instruction) &&
                target->mayRaiseDefinedFailure &&
                target->linkage == LanguageLinkage::Gti &&
                target->definitionKind ==
@@ -7628,6 +7692,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (callableValueInvocation(*producer) ||
           terminallyContainedPlainCallee(program_, representations_,
                                          *producer) ||
+          terminallyContainedMemberCallee(program_, representations_,
+                                          *producer) ||
           storageBoundsCheckCall(*producer)) {
         // The fused literal, terminally-contained plain callee, or
         // terminal logical-size check contains its failure; the edge is a
