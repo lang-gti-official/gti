@@ -413,6 +413,81 @@ terminallyContainedPlainCallee(const MirProgram &program,
   return moved;
 }
 
+// A storage growth step moves the replacement value out of its staging
+// local and stores it into the receiver field; the store is the value's
+// single consuming use and spells as a C++ move-assignment, so the Drop
+// of the moved-from value afterwards is a no-op by representation and
+// spells as a comment. The proof demands the exact shape: the dropped
+// place is a projection-free Value-rooted storage place, every lifecycle
+// event on the Drop is unconditional non-failure cleanup, the value is
+// read exactly once in the whole body — by an Initialize or Assign that
+// precedes the Drop in its own block — and no other place roots at it.
+[[nodiscard]] bool
+storeConsumedStorageValueDrop(const MirBody &body,
+                              const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Drop ||
+      !instruction.destination) {
+    return false;
+  }
+  const MirPlace *destination = body.findPlace(*instruction.destination);
+  if (destination == nullptr ||
+      (destination->type.kind != SemanticType::Storage &&
+       destination->type.kind != SemanticType::PrefixStorage) ||
+      destination->root != MirPlaceRootKind::Value ||
+      !destination->projections.empty()) {
+    return false;
+  }
+  for (const MirLifecycleEvent &event : instruction.lifecycle) {
+    if (event.conditional || event.failureCleanup) {
+      return false;
+    }
+  }
+  for (const MirPlace &place : body.places) {
+    if (place.id != destination->id && place.root == MirPlaceRootKind::Value &&
+        place.value == destination->value) {
+      return false;
+    }
+  }
+  const MirInstruction *consumer = nullptr;
+  std::size_t reads = 0;
+  for (const MirBlock &candidate : body.blocks) {
+    for (const MirInstruction &member : candidate.instructions) {
+      for (const MirOperand &operand : member.operands) {
+        if (operand.kind == MirOperandKind::Value &&
+            operand.value == destination->value) {
+          ++reads;
+          consumer = &member;
+        }
+      }
+    }
+    if (candidate.terminator.value &&
+        candidate.terminator.value->kind == MirOperandKind::Value &&
+        candidate.terminator.value->value == destination->value) {
+      return false;
+    }
+  }
+  if (reads != 1 || consumer == nullptr ||
+      (consumer->kind != MirInstructionKind::Initialize &&
+       consumer->kind != MirInstructionKind::Assign) ||
+      !consumer->destination) {
+    return false;
+  }
+  // The consuming store precedes the Drop inside the Drop's own block.
+  bool sawConsumer = false;
+  for (const MirBlock &candidate : body.blocks) {
+    for (const MirInstruction &member : candidate.instructions) {
+      if (member.id == consumer->id) {
+        sawConsumer = true;
+      }
+      if (member.id == instruction.id) {
+        return sawConsumer;
+      }
+    }
+    sawConsumer = false;
+  }
+  return false;
+}
+
 // A Drop is trivial when every drop obligation governing it — the ones
 // its lifecycle events name and the ones anchored on its destination
 // place — carries neither a destructor nor active cleanup: C++ scope-end
@@ -3663,6 +3738,15 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Drop &&
+        storeConsumedStorageValueDrop(facts.body, instruction)) {
+      // The consuming store moved this value into its destination; the
+      // moved-from local's scope-end destruction is a no-op.
+      writeIndent();
+      output << "// GTI MIR store-consumed storage value drop of place "
+             << *instruction.destination << "\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Drop &&
         trivialMirDrop(facts.body, instruction)) {
       // Scope-end destruction of the declared local is exactly the
       // verified semantics for a trivial obligation.
@@ -5745,7 +5829,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       case MirInstructionKind::Drop: {
         if (trivialMirDrop(body, instruction) ||
-            movedOutOwnerDrop(body, instruction)) {
+            movedOutOwnerDrop(body, instruction) ||
+            storeConsumedStorageValueDrop(body, instruction)) {
           continue;
         }
         if (failureForm && instruction.lifecycle.size() == 1 &&
@@ -6150,12 +6235,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
             // Allocation publishes into its storage-typed result value;
             // interior exhaustion keeps the sealed legacy path.
-            if (!instruction.result || instruction.receiver ||
-                instruction.operands.size() != 1 ||
+            if (!instruction.result || instruction.operands.size() != 1 ||
                 !valueOperand(instruction.operands.front()) ||
                 !typeRow(instruction.info.type) ||
                 instruction.info.type.arguments.size() != 1 ||
                 !typeRow(instruction.info.type.arguments.front())) {
+              return false;
+            }
+            // A growth-path allocation borrows the container it will
+            // replace as its modeling receiver; the receiver is a raw
+            // borrow of a spellable place and never spells, exactly like
+            // the other storage intrinsics below.
+            if (instruction.receiver &&
+                ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
+                  instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
+                 instruction.receiver->place == 0 ||
+                 body.findPlace(instruction.receiver->place) == nullptr)) {
               return false;
             }
             continue;
