@@ -61,7 +61,36 @@ SignaturePrinter::function(const FunctionInfo &info,
   return result;
 }
 
-[[nodiscard]] std::string
+[[nodiscard]] 
+std::vector<std::string> SignaturePrinter::parameterLabels(
+    const std::vector<SemanticType> &parameterTypes,
+    const std::vector<Parameter> *parameters, bool preservePackSyntax) const {
+  std::vector<std::string> labels;
+  labels.reserve(parameterTypes.size());
+  for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
+    const Parameter *parameter =
+        parameters != nullptr && index < parameters->size()
+            ? &(*parameters)[index]
+            : nullptr;
+    std::string label;
+    if (parameter != nullptr && parameter->mutability == Mutability::Mutable &&
+        !(parameterTypes[index].kind == SemanticType::Reference &&
+          parameterTypes[index].referenceAccess == AccessMode::Mutable)) {
+      label += "mut ";
+    }
+    label += types.print(parameterTypes[index]);
+    if (preservePackSyntax && parameter != nullptr && parameter->pack) {
+      label += "...";
+    }
+    if (parameter != nullptr && !parameter->name.lexeme.empty()) {
+      label += " " + parameter->name.lexeme;
+    }
+    labels.push_back(std::move(label));
+  }
+  return labels;
+}
+
+std::string
 SignaturePrinter::conceptSignature(const SymbolRecord &symbol,
                                    const ConceptDecl *declaration) const {
   std::string result = "concept " + symbol.qualifiedName;
@@ -727,6 +756,90 @@ public:
     }
     outcome.edits = std::move(edits);
     return outcome;
+  }
+
+
+  [[nodiscard]] std::optional<SignatureHelpInfo>
+  signatureHelp(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+                std::size_t byteOffset) const {
+    // The innermost call whose parser-recorded argument list contains the
+    // offset wins: among containing geometries, the one whose '(' is
+    // closest to the offset.
+    const SemanticOccurrence *selected = nullptr;
+    for (const SemanticOccurrence &occurrence :
+         snapshot.semantics.database().occurrences(sourceUnit)) {
+      if (!occurrence.callGeometry) {
+        continue;
+      }
+      const SemanticCallGeometry &geometry = *occurrence.callGeometry;
+      if (byteOffset <= geometry.leftDelimiter ||
+          byteOffset > geometry.rightDelimiter) {
+        continue;
+      }
+      if (!snapshot.semantics.canPresent(sourceUnit, occurrence,
+                                         snapshot.sourceGraph)) {
+        continue;
+      }
+      if (selected == nullptr ||
+          selected->callGeometry->leftDelimiter < geometry.leftDelimiter) {
+        selected = &occurrence;
+      }
+    }
+    if (selected == nullptr) {
+      return std::nullopt;
+    }
+
+    const SemanticModel &semantics = snapshot.semantics;
+    const SignaturePrinter signatures(semantics);
+    SignatureHelpInfo result;
+    if (selected->kind == SemanticOccurrenceKind::SelectedCall &&
+        selected->selectedCall) {
+      const ResolvedCallInfo &resolved = *selected->selectedCall;
+      const FunctionInfo *function = semantics.findFunction(resolved.function);
+      if (function == nullptr) {
+        return std::nullopt;
+      }
+      result.label = signatures.function(*function, &resolved);
+      result.parameterLabels =
+          signatures.parameterLabels(resolved.parameterTypes,
+                                     function->declaration == nullptr
+                                         ? nullptr
+                                         : &function->declaration->parameters(),
+                                     false);
+    } else if (selected->kind == SemanticOccurrenceKind::SelectedConstruction &&
+               selected->selectedConstruction) {
+      const ResolvedConstructionInfo &resolved =
+          *selected->selectedConstruction;
+      const ClassTypeInfo *owner =
+          resolved.constructedType.kind == SemanticType::Class
+              ? semantics.findClassType(resolved.constructedType.classId)
+              : nullptr;
+      if (owner == nullptr) {
+        return std::nullopt;
+      }
+      result.label = signatures.constructor(*owner, resolved);
+      result.parameterLabels = signatures.parameterLabels(
+          resolved.parameterTypes,
+          resolved.declaration == nullptr ? nullptr
+                                          : &resolved.declaration->parameters(),
+          false);
+    } else {
+      return std::nullopt;
+    }
+
+    const SemanticCallGeometry &geometry = *selected->callGeometry;
+    std::size_t active = 0;
+    for (const std::size_t separator : geometry.argumentSeparators) {
+      if (separator < byteOffset) {
+        ++active;
+      }
+    }
+    if (!result.parameterLabels.empty() &&
+        active >= result.parameterLabels.size()) {
+      active = result.parameterLabels.size() - 1;
+    }
+    result.activeParameter = active;
+    return result;
   }
 
   [[nodiscard]] std::vector<DocumentSymbolInfo>
@@ -1641,6 +1754,14 @@ LanguageQueries::documentSymbols(const FrontendResult &snapshot,
                                  SourceUnitId sourceUnit) const {
   return LanguageQueriesImpl().documentSymbols(snapshot, sourceUnit);
 }
+
+std::optional<SignatureHelpInfo>
+LanguageQueries::signatureHelp(const FrontendResult &snapshot,
+                               SourceUnitId sourceUnit,
+                               std::size_t byteOffset) const {
+  return LanguageQueriesImpl().signatureHelp(snapshot, sourceUnit, byteOffset);
+}
+
 
 CompletionResult LanguageQueries::complete(const CompletionInput &input) const {
   return LanguageQueriesImpl().complete(input);

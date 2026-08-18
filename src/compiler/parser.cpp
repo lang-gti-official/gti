@@ -1791,6 +1791,8 @@ private:
   }
 
   ExprPtr finishCall(ExprPtr callee, std::vector<TypeRef> typeArguments) {
+    Token leftParen = previous();
+    std::vector<Token> argumentCommas;
     ExprList arguments;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
@@ -1814,13 +1816,19 @@ private:
           break;
         }
         arguments.emplace_back(std::move(argument));
+        if (check(TokenKind::COMMA)) {
+          argumentCommas.push_back(peek());
+        }
       } while (match({TokenKind::COMMA}));
     }
 
     Token paren =
         consume(TokenKind::RIGHT_PAREN, "Expect ')' after arguments.");
-    return std::make_unique<Call>(std::move(callee), std::move(typeArguments),
-                                  paren, std::move(arguments));
+    auto call =
+        std::make_unique<Call>(std::move(callee), std::move(typeArguments),
+                               paren, std::move(arguments));
+    call->setArgumentGeometry(std::move(leftParen), std::move(argumentCommas));
+    return call;
   }
 
   std::vector<TypeRef> typeArgumentList() {

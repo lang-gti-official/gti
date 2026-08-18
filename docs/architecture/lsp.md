@@ -96,6 +96,15 @@ Compile-time-conditional declarations contribute the target-selected branch.
 Each node's detail reuses the hover signature query, so the outline and hover
 always present identical compiler-owned renderings.
 
+Signature help reads the semantic database's call occurrences: the analyzer
+records each selected call's and construction's byte-exact argument-list
+geometry — the `(` and `)` offsets and every argument-separating `,` — from
+parser tokens, and the query picks the innermost geometry containing the
+offset, prints the compiler-selected signature with per-parameter labels,
+and derives the active parameter from the recorded separators. Synthesized
+calls carry no geometry and offer no help; a call whose occurrence cannot
+be presented in loaded source is skipped fail-closed.
+
 The checked integer functions are ordinary `<std/numeric>` declarations.
 Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer

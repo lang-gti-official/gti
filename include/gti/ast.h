@@ -568,11 +568,27 @@ public:
   [[nodiscard]] const Token &paren() const { return paren_; }
   [[nodiscard]] const ExprList &arguments() const { return arguments_; }
 
+  // Argument-list geometry recorded by the parser for editor tooling: the
+  // opening parenthesis and each argument-separating comma, alongside the
+  // closing paren(). Synthesized calls leave the geometry unset.
+  [[nodiscard]] const std::optional<Token> &leftParen() const {
+    return leftParen_;
+  }
+  [[nodiscard]] const std::vector<Token> &argumentCommas() const {
+    return argumentCommas_;
+  }
+  void setArgumentGeometry(Token leftParen, std::vector<Token> commas) {
+    leftParen_ = std::move(leftParen);
+    argumentCommas_ = std::move(commas);
+  }
+
 private:
   ExprPtr callee_;
   std::vector<TypeRef> typeArguments_;
   Token paren_;
   ExprList arguments_;
+  std::optional<Token> leftParen_;
+  std::vector<Token> argumentCommas_;
 };
 
 class Conversion final : public Expr {

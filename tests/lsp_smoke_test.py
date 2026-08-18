@@ -5768,3 +5768,117 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_signature_help_tooling(executable, root):
+    source = (
+        "class Box {\n"
+        "public:\n"
+        "  Box(int width, int height) {}\n"
+        "};\n"
+        "int inner(int value) { return value; }\n"
+        "int combine(int left, int right) { return left + right; }\n"
+        "int main() {\n"
+        '  std::print("\U0001F642"); int total = combine(1, inner(2));\n'
+        "  Box box = Box(3, 4);\n"
+        "  return total;\n"
+        "}\n"
+    )
+    path = root / "signature-help.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        initialized = session.receive_until(lambda message: message.get("id") == 1)
+        capabilities = initialized["result"]["capabilities"]
+        assert capabilities["signatureHelpProvider"]["triggerCharacters"] == [
+            "(",
+            ",",
+        ]
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        def help_at(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/signatureHelp",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        # The compiler-selected overload with the active argument derived
+        # from recorded separators; the emoji forces UTF-16 conversion.
+        call = source.index("combine(1")
+        first_argument = help_at(2, call + len("combine("))
+        assert first_argument == {
+            "signatures": [
+                {
+                    "label": "int32_t combine(int32_t left, int32_t right)",
+                    "parameters": [
+                        {"label": "int32_t left"},
+                        {"label": "int32_t right"},
+                    ],
+                }
+            ],
+            "activeSignature": 0,
+            "activeParameter": 0,
+        }
+        second_argument = help_at(3, source.index("inner(2)") - 1)
+        assert second_argument["activeParameter"] == 1
+
+        # The innermost call wins for a nested argument position.
+        nested = help_at(4, source.index("inner(2)") + len("inner("))
+        assert nested["signatures"][0]["label"] == "int32_t inner(int32_t value)"
+        assert nested["activeParameter"] == 0
+
+        # Constructor calls use the compiler-selected constructor.
+        construction = help_at(5, source.index("Box(3") + len("Box("))
+        assert construction["signatures"][0]["label"] == (
+            "Box(int32_t width, int32_t height)"
+        )
+        assert (
+            help_at(6, source.index("Box(3") + len("Box(3, "))["activeParameter"]
+            == 1
+        )
+
+        # Outside any argument list there is no signature to offer.
+        assert help_at(7, source.index("int main")) is None
+    finally:
+        session.close()

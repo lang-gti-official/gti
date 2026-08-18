@@ -1318,6 +1318,7 @@ enum class SemanticRequestKind {
   DocumentSymbols,
   PrepareRename,
   Rename,
+  SignatureHelp,
 };
 
 struct PendingSemanticRequest {
@@ -1443,6 +1444,8 @@ private:
       semanticFeature(id, params, SemanticRequestKind::PrepareRename);
     } else if (method == "textDocument/rename") {
       semanticFeature(id, params, SemanticRequestKind::Rename);
+    } else if (method == "textDocument/signatureHelp") {
+      semanticFeature(id, params, SemanticRequestKind::SignatureHelp);
     } else if (method == "textDocument/completion") {
       completion(id, params);
     } else if (method == "textDocument/codeAction") {
@@ -1497,6 +1500,9 @@ private:
         {"referencesProvider", true},
         {"documentHighlightProvider", true},
         {"documentSymbolProvider", true},
+        {"signatureHelpProvider",
+         JsonObject{{"triggerCharacters", JsonArray{"(", ","}},
+                    {"retriggerCharacters", JsonArray{","}}}},
         {"renameProvider", JsonObject{{"prepareProvider", true}}}};
     if (codeActionLiterals) {
       capabilities["codeActionProvider"] =
@@ -1971,10 +1977,46 @@ private:
       respondRename(id, uri, *position, source, snapshot,
                     stringMember(params, "newName"));
       break;
+    case SemanticRequestKind::SignatureHelp:
+      respondSignatureHelp(id, *position, source, snapshot);
+      break;
     default:
       sendJson(response(id, nullptr));
       break;
     }
+  }
+
+  void respondSignatureHelp(const JsonValue *id, Position position,
+                            const std::string &source,
+                            const AnalysisSnapshot &snapshot) {
+    const std::optional<std::size_t> byteOffset =
+        SourcePositionIndex(source).byteOffset(position);
+    if (!byteOffset) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const std::optional<lang::SignatureHelpInfo> info =
+        lang::LanguageQueries().signatureHelp(*snapshot.frontend, sourceUnit,
+                                              *byteOffset);
+    if (!info) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    JsonArray parameters;
+    parameters.reserve(info->parameterLabels.size());
+    for (const std::string &label : info->parameterLabels) {
+      parameters.push_back(JsonObject{{"label", label}});
+    }
+    JsonArray signatures;
+    signatures.push_back(JsonObject{{"label", info->label},
+                                    {"parameters", std::move(parameters)}});
+    sendJson(response(
+        id, JsonObject{{"signatures", std::move(signatures)},
+                       {"activeSignature", 0},
+                       {"activeParameter",
+                        static_cast<std::int64_t>(info->activeParameter)}}));
   }
 
   // Converts a compiler span into an LSP location, preferring the client's

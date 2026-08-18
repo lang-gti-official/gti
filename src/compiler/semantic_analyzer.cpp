@@ -15008,6 +15008,25 @@ private:
     }
   }
 
+  // Editor signature help reads the parser-recorded '(' ',' ')' offsets from
+  // the occurrence instead of re-parsing call punctuation. Synthesized calls
+  // have no source geometry.
+  [[nodiscard]] static std::optional<SemanticCallGeometry>
+  callArgumentGeometry(const Call &call) {
+    if (!call.leftParen() || call.leftParen()->generated ||
+        call.paren().generated) {
+      return std::nullopt;
+    }
+    SemanticCallGeometry geometry{.leftDelimiter = call.leftParen()->position,
+                                  .rightDelimiter = call.paren().position,
+                                  .argumentSeparators = {}};
+    geometry.argumentSeparators.reserve(call.argumentCommas().size());
+    for (const Token &comma : call.argumentCommas()) {
+      geometry.argumentSeparators.push_back(comma.position);
+    }
+    return geometry;
+  }
+
   void recordSelectedCallOccurrence(const Call &call,
                                     ResolvedCallInfo resolved) {
     const Token token = callableToken(call.callee());
@@ -15027,7 +15046,8 @@ private:
          .type = resolved.returnType,
          .traits = typeTraits(resolved.returnType),
          .function = resolved.declaration,
-         .selectedCall = std::move(resolved)});
+         .selectedCall = std::move(resolved),
+         .callGeometry = callArgumentGeometry(call)});
   }
 
   void bindIntrinsicCallDeclaration(const Call &call,
@@ -16049,7 +16069,8 @@ private:
              .type = constructedType,
              .traits = typeTraits(constructedType),
              .constructor = resolved->declaration,
-             .selectedConstruction = *resolved});
+             .selectedConstruction = *resolved,
+             .callGeometry = callArgumentGeometry(*call)});
       }
     }
     currentType = constructedType;

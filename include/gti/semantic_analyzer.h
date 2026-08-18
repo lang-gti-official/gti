@@ -1367,6 +1367,16 @@ struct SymbolRecord {
   bool compilerPrivate = false;
 };
 
+// Byte-exact source geometry of one call's argument list, recorded by the
+// semantic analyzer from parser tokens so editor signature help never has to
+// re-parse punctuation: the delimiters are the '(' and ')' offsets and each
+// separator is one argument-separating ',' offset.
+struct SemanticCallGeometry {
+  std::size_t leftDelimiter = 0;
+  std::size_t rightDelimiter = 0;
+  std::vector<std::size_t> argumentSeparators;
+};
+
 struct SemanticOccurrence {
   SourceUnitId sourceUnit = 0;
   SourceSpan span;
@@ -1387,6 +1397,7 @@ struct SemanticOccurrence {
   const DestructorDecl *destructor = nullptr;
   std::optional<ResolvedCallInfo> selectedCall;
   std::optional<ResolvedConstructionInfo> selectedConstruction;
+  std::optional<SemanticCallGeometry> callGeometry;
   bool staticMember = false;
 };
 

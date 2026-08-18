@@ -33,6 +33,10 @@ public:
   [[nodiscard]] std::string typeAlias(const TypeAliasInfo &info) const;
   [[nodiscard]] std::string binding(const SemanticOccurrence &occurrence) const;
   [[nodiscard]] std::string destructor(const DestructorInfo &info) const;
+  [[nodiscard]] std::vector<std::string>
+  parameterLabels(const std::vector<SemanticType> &parameterTypes,
+                  const std::vector<Parameter> *parameters,
+                  bool preservePackSyntax) const;
 
 private:
   [[nodiscard]] static std::string path(const NamePath &name);
@@ -149,6 +153,15 @@ enum class CompletionCandidateKind {
   TypeParameter,
 };
 
+// One presentable signature for the innermost call containing the query
+// offset: the printed signature label, each parameter's label, and the
+// active argument index derived from the parser-recorded separators.
+struct SignatureHelpInfo {
+  std::string label;
+  std::vector<std::string> parameterLabels;
+  std::size_t activeParameter = 0;
+};
+
 struct CompletionCandidate {
   CompletionCandidateKind kind = CompletionCandidateKind::Variable;
   std::string label;
@@ -195,6 +208,10 @@ public:
   [[nodiscard]] std::vector<DocumentSymbolInfo>
   documentSymbols(const FrontendResult &snapshot,
                   SourceUnitId sourceUnit) const;
+
+  [[nodiscard]] std::optional<SignatureHelpInfo>
+  signatureHelp(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+                std::size_t byteOffset) const;
   [[nodiscard]] CompletionResult complete(const CompletionInput &input) const;
 };
 
