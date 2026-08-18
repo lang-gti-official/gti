@@ -6660,6 +6660,18 @@ private:
   // free function emits under the transformed private ABI plus a
   // same-signature wrapper. The hosted family keeps precedence for the
   // closed graph it owns.
+  [[nodiscard]] bool
+  classResultBoundaryConstructible(const SemanticType &type) const {
+    const ClassTypeInfo *classInfo = semantics.findClassType(type.classId);
+    const ClassLifecycleInfo *lifecycle =
+        classInfo == nullptr || classInfo->declaration == nullptr
+            ? nullptr
+            : semantics.findClassLifecycle(*classInfo->declaration);
+    return lifecycle != nullptr &&
+           lifecycle->defaultConstructor != SpecialMemberStatus::Deleted &&
+           lifecycle->moveAssignment != SpecialMemberStatus::Deleted;
+  }
+
   [[nodiscard]] const MirFunctionInstance *
   selectedMirGeneralFailureFunction(const FunctionDecl &function) const {
     if (mir == nullptr) {
@@ -6690,14 +6702,15 @@ private:
         !(info->returnType == SemanticType::Void ||
           isMirScalarCfgType(info->returnType) ||
           // Expected results publish by value through the ordinary
-          // out-parameter under the transformed convention. Class results
-          // wait dormant: assignment-publication and the wrapper's
-          // value-initialized boundary both require default
-          // constructibility the emitter cannot prove from rows alone
-          // (storage_sentinel's deleted default surfaced exactly this),
-          // so the class slice needs the placement-new publication design
-          // before its selector opens.
+          // out-parameter under the transformed convention; class results
+          // join only when the semantic lifecycle proves the boundary
+          // shape compiles — assignment-publication and the wrapper's
+          // value-initialized boundary need a usable default constructor
+          // and move assignment (storage_sentinel's deleted default
+          // surfaced exactly this).
           info->returnType.kind == SemanticType::Expected ||
+          (info->returnType.kind == SemanticType::Class &&
+           classResultBoundaryConstructible(info->returnType)) ||
           (info->returnBorrowOrigin != BorrowOriginKind::None &&
            info->returnType.kind == SemanticType::Reference))) {
       return nullptr;
