@@ -1,4 +1,6 @@
 #include "cpp_mir_body_emitter.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include <algorithm>
 #include <iomanip>
@@ -35,6 +37,30 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
         candidate.root == MirPlaceRootKind::Binding &&
         candidate.binding == place.binding && candidate.projections.empty() &&
         candidate.type.kind == SemanticType::Array) {
+      return ArrayElementAccess{candidate.id, place.projections[0].index,
+                                place.projections[0].constantIndex};
+    }
+  }
+  return std::nullopt;
+}
+
+// A string-view element place reads through the terminal bounds-checked
+// helper, exactly like the compatibility subscript: string_view_at
+// contains a violated bound itself, so both text forms spell the plain
+// call. The access reuses the array-element shape with the sibling
+// string-view local as the base.
+[[nodiscard]] std::optional<ArrayElementAccess>
+viewElementAccess(const MirBody &body, const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || place.binding == 0 ||
+      place.projections.size() != 1 ||
+      place.projections[0].kind != MirProjectionKind::Index) {
+    return std::nullopt;
+  }
+  for (const MirPlace &candidate : body.places) {
+    if (candidate.id != place.id &&
+        candidate.root == MirPlaceRootKind::Binding &&
+        candidate.binding == place.binding && candidate.projections.empty() &&
+        candidate.type.kind == SemanticType::StringView) {
       return ArrayElementAccess{candidate.id, place.projections[0].index,
                                 place.projections[0].constantIndex};
     }
@@ -2903,6 +2929,10 @@ public:
       if (arrayElementAccess(facts.body, place)) {
         continue;
       }
+      // A view element spells through the terminal checked helper.
+      if (viewElementAccess(facts.body, place)) {
+        continue;
+      }
       // A loan carrier place spells through its loan pointer (ADR 018).
       if (place.root == MirPlaceRootKind::Loan) {
         continue;
@@ -3828,6 +3858,17 @@ private:
         return;
       }
       if (source != nullptr) {
+        if (const std::optional<ArrayElementAccess> access =
+                viewElementAccess(facts.body, *source)) {
+          // The terminal helper reports the defined bound contract and
+          // never returns on failure, on both text forms.
+          output << "__gti_mir_v_" << *instruction.result
+                 << " = ::gti_internal::backend::string_view_at(__gti_mir_p_"
+                 << access->array << ", ";
+          emitElementIndexValue(*access);
+          output << ");\n";
+          return;
+        }
         if (const std::optional<ArrayElementAccess> access =
                 arrayElementAccess(facts.body, *source)) {
           if (failureForm && !instruction.localFailureSites.empty()) {
@@ -5158,6 +5199,12 @@ std::string cppMirFailureSiblingSpelling(std::string_view memberSpelling) {
   return {};
 }
 
+namespace {
+thread_local int gtiProbeTraceKind;
+thread_local unsigned long gtiProbeTraceOwner;
+thread_local int gtiProbeTraceForm;
+} // namespace
+
 bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {
   if (address.kind != MirBodyKind::Function) {
     return false;
@@ -5182,6 +5229,14 @@ bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {
 
 bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                              bool failureForm) const {
+  // Probe-decline tracing (diagnostic only): with GTI_PROBE_TRACE set in
+  // the environment, every decline point reports its stable ordinal and
+  // the probed body, so decline censuses do not need rebuilt
+  // instrumentation. The ordinals shift only when this function gains or
+  // loses a decline point.
+  gtiProbeTraceKind = static_cast<int>(address.kind);
+  gtiProbeTraceOwner = static_cast<unsigned long>(address.owner);
+  gtiProbeTraceForm = failureForm ? 1 : 0;
   // The vocabulary is shared between function and destructor bodies; the
   // probe needs only the body, the owning class instance for field rows,
   // and the receiver mutability for the store direction. The failure form
@@ -5205,7 +5260,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirFunctionInstance *function =
         program_.findFunctionInstance(address.owner);
     if (function == nullptr) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 1,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     if (failureForm) {
       // The transformed sibling's name comes from the shared naming
@@ -5223,7 +5285,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             });
         if (row == representations_.bodies().end() ||
             cppMirFailureSiblingSpelling(row->spelling).empty()) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 2,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
       }
       // The transformed ABI publishes through a scalar out-parameter; a
@@ -5260,7 +5329,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               *cppMirExpectedTypeRepresentation(
                   function->returnType.arguments.front()) ==
                   CppMirTypeRepresentationKind::Void)))) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 3,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
     }
     bodyPointer = &function->body;
@@ -5273,12 +5349,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   }
   case MirBodyKind::Destructor: {
     if (failureForm) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 4,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     const MirDestructorInstance *destructor =
         program_.findDestructorInstance(address.owner);
     if (destructor == nullptr || destructor->owner == 0) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 5,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     bodyPointer = &destructor->body;
     owner = destructor->owner;
@@ -5290,7 +5380,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     // constructor body; failure-capable construction stays with the
     // rollback machinery until its own slice.
     if (failureForm) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 6,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     const MirConstructorInstance *constructor =
         program_.findConstructorInstance(address.owner);
@@ -5302,7 +5399,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                        return initializer.kind ==
                               ConstructorInitializerTargetKind::Field;
                      })) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 7,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     // Stores-reference initializers bind their fields in the C++ member
     // initializer list from the paired Stored loans; the single pairing
@@ -5314,7 +5418,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           cppMirStoredReferenceBindings(*constructor);
       if (!bindings || (constructor->borrowOrigin != BorrowOriginKind::None &&
                         bindings->empty())) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 8,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       storedReferenceBindings = !bindings->empty();
     }
@@ -5329,24 +5440,49 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     // compatibility parity, so a lambda body admits only in the success
     // form; its checked arithmetic contains terminally instead.
     if (failureForm) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 9,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     const MirLambdaInstance *lambda = program_.findLambda(address.owner);
     if (lambda == nullptr) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 10,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     bodyPointer = &lambda->body;
     receiverMutability = ReceiverMutability::ReadOnly;
     parameterBindings = &lambda->parameterBindings;
     break;
   }
-  default:
+  default: {
+    if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+      std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 11,
+                   gtiProbeTraceKind, gtiProbeTraceOwner, gtiProbeTraceForm);
+    }
     return false;
+  }
   }
   const MirBody &body = *bodyPointer;
   if (body.blocks.empty() || body.entry == 0 ||
       body.entry > body.blocks.size()) {
-    return false;
+    {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 12,
+                     gtiProbeTraceKind, gtiProbeTraceOwner, gtiProbeTraceForm);
+      }
+      return false;
+    }
   }
   const auto loanById = [&](MirLoanId id) -> const MirLoan * {
     for (const MirLoan &loan : body.loans) {
@@ -5363,7 +5499,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   for (const MirLoan &loan : body.loans) {
     const MirPlace *loanSource = body.findPlace(loan.source);
     if (loanSource == nullptr) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 13,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     if (loan.kind == MirLoanKind::Local || loan.kind == MirLoanKind::Return) {
       continue;
@@ -5373,12 +5516,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // stores-reference pairing; the binding spells in the member
       // initializer list and no pointer local exists.
       if (!storedReferenceBindings) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 14,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
     if (loan.kind != MirLoanKind::CallResult) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 15,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     const MirInstruction *discharged =
         pairedDischargedRead(body, loan.producedBy);
@@ -5390,7 +5547,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (loanSource->type.kind != SemanticType::Storage &&
            loanSource->type.kind != SemanticType::PrefixStorage) ||
           loanSource->type.arguments.empty()) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 16,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
     } else if (referenceCall != nullptr) {
       // The pointer local declares from the callee's return element row;
@@ -5411,10 +5575,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               });
       if (producedCallResultLoan(body, *referenceCall) == nullptr ||
           !elementRow) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 17,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
     } else {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 18,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     // The pointer local declares the element type; the producing call's
     // own branch validates its staged storage place and index.
@@ -5428,7 +5606,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (borrowed) {
       // A Borrow would assign the pointer a second time.
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 19,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
   }
 
@@ -5440,7 +5625,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   };
   const auto fieldRow = [&](SymbolId field) {
     if (!owner) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 20,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     const auto found = std::find_if(
         representations_.symbols().begin(), representations_.symbols().end(),
@@ -5545,7 +5737,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   const auto literalSupported = [&](const std::optional<Literal> &literal,
                                     const SemanticType &type) {
     if (!literal) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 21,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     if (std::holds_alternative<std::uint64_t>(*literal)) {
       return typeRow(type);
@@ -5579,7 +5778,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if ((place.projections.size() != 1 && !referenceFieldChain) ||
           place.projections.front().kind != MirProjectionKind::Field ||
           !fieldRow(place.projections.front().field)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 22,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       // A storage-typed receiver field is only the staging carrier for
       // storage-intrinsic calls; it needs a field row but no value row.
@@ -5587,7 +5793,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (slotPlace(place)) {
       if (!lifetimeSlotRow() || !typeRow(place.type)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 23,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       // A function body's slot-allocated parameter constructs its slot
       // from the argument in the prelude. Constructor and lambda bodies
@@ -5597,7 +5810,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           std::find(parameterBindings->begin(), parameterBindings->end(),
                     place.binding) != parameterBindings->end() &&
           address.kind != MirBodyKind::Function) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 24,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
@@ -5606,12 +5826,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // A capture place spells its Capture row name inside the literal.
         if (address.kind != MirBodyKind::Lambda || !place.projections.empty() ||
             !captureRow(address.owner, place.symbol, place.capture)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 25,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       }
       if (!place.projections.empty() || !storageRow(place.symbol)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 26,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
@@ -5619,7 +5853,29 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             arrayElementAccess(body, place)) {
       const MirPlace *array = body.findPlace(access->array);
       if (array == nullptr || !typeRow(array->type) || !typeRow(place.type)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 27,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
+      }
+      continue;
+    }
+    if (const std::optional<ArrayElementAccess> access =
+            viewElementAccess(body, place)) {
+      const MirPlace *view = body.findPlace(access->array);
+      if (view == nullptr || !typeRow(view->type) || !typeRow(place.type)) {
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 28,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
@@ -5631,7 +5887,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          return projection.kind == MirProjectionKind::Field &&
                                 fieldRow(projection.field);
                        })) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 29,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
@@ -5639,7 +5902,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         place.projections[0].kind == MirProjectionKind::Field &&
         place.projections[1].kind == MirProjectionKind::Index) {
       if (!fieldRow(place.projections[0].field) || !typeRow(place.type)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 30,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
@@ -5650,7 +5920,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (parameterBindings == nullptr || !typeRow(place.type) ||
           std::find(parameterBindings->begin(), parameterBindings->end(),
                     place.binding) == parameterBindings->end()) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 31,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
@@ -5672,7 +5949,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          return projection.kind == MirProjectionKind::Field &&
                                 fieldRow(projection.field);
                        })) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 32,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
@@ -5684,12 +5968,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // declares and the fused chain owns every reference or the body
       // declines at the Closure rule or the value rows below.
       if (callableTemplateBody && !typeRow(place.type)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 33,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
     if (!place.projections.empty() || !typeRow(place.type)) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 34,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
   }
   for (const MirValue &value : body.values) {
@@ -5712,7 +6010,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !(callableTemplateBody &&
             (callableReceiverStage(body, value.id) != nullptr ||
              callableArgumentStage(body, value.id) != nullptr))) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 35,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
@@ -5728,12 +6033,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (definition == nullptr ||
           producedCallResultLoan(body, *definition) == nullptr ||
           !body.usesOf(value.id).empty()) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 36,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
     if (!typeRow(value.info.type)) {
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 37,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
   }
 
@@ -5770,10 +6089,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              instruction.kind != MirInstructionKind::Compute &&
              instruction.kind != MirInstructionKind::Move &&
              instruction.kind != MirInstructionKind::Call)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 38,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         if (!consumingCall && referencesPendingStaged(instruction)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 39,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
       }
       switch (instruction.kind) {
@@ -5792,7 +6125,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand) ||
               !instruction.localFailureSites.empty()) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 40,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
@@ -5802,7 +6142,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (slot == nullptr || !slotPlace(*slot) || instruction.receiver ||
             !instruction.operands.empty() ||
             instruction.constructorKind != ConstructorKind::Ordinary) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 41,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       }
@@ -5810,7 +6157,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         const MirLoan *loan =
             instruction.loan ? loanById(*instruction.loan) : nullptr;
         if (loan == nullptr || !instruction.localFailureSites.empty()) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 42,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         if (loan->kind == MirLoanKind::Stored) {
           // The reference field binds in the member initializer list;
@@ -5819,7 +6173,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         const MirPlace *source = body.findPlace(loan->source);
         if (source == nullptr || !typeRow(source->type)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 43,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         if (source->type.kind == SemanticType::Storage ||
             source->type.kind == SemanticType::PrefixStorage) {
@@ -5832,14 +6193,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               storageStagedPlace(body, read->operands.front()) == nullptr ||
               source->type.arguments.empty() ||
               !typeRow(source->type.arguments.front())) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 44,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
         }
         continue;
       }
       case MirInstructionKind::EndBorrow:
         if (!instruction.loan || loanById(*instruction.loan) == nullptr) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 45,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       case MirInstructionKind::Drop: {
@@ -5856,7 +6231,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const MirPlace *cleanupSlot =
               body.findPlace(*instruction.destination);
           if (cleanupSlot == nullptr || !slotPlace(*cleanupSlot)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 46,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
@@ -5864,13 +6246,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                    ? body.findPlace(*instruction.destination)
                                    : nullptr;
         if (slot == nullptr || !slotPlace(*slot)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 47,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       }
       case MirInstructionKind::Compute: {
         if (!instruction.result) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 48,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         if (!failureForm && address.kind == MirBodyKind::Lambda &&
             !cppMirTerminalCheckedHelperSpelling(instruction.operation)
@@ -5894,7 +6290,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            [&](const MirOperand &operand) {
                              return operand.type == instruction.info.type;
                            })) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 49,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
@@ -5920,8 +6323,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             case SemanticType::UInt64:
             case SemanticType::Char:
               return true;
-            default:
+            default: {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 50,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
               return false;
+            }
             }
           };
           const auto detectorOperand = [&](const MirOperand &operand) {
@@ -5931,7 +6340,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                      operand.literal.has_value() && typeRow(operand.type)));
           };
           if (!integralKind(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 51,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           if (instruction.localFailureSites.size() != 1 ||
               instruction.definedFailure.localOrigins.size() != 1 ||
@@ -5941,28 +6357,56 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), detectorOperand) ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 52,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
         switch (instruction.operation) {
         case MirOperation::Literal:
           if (!literalSupported(instruction.literal, instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 53,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         case MirOperation::Identity:
         case MirOperation::LogicalNot:
           if (instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front())) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 54,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         case MirOperation::ExpectedHasValue:
           if (instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !instruction.localFailureSites.empty()) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 55,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         case MirOperation::Unexpected: {
@@ -5979,7 +6423,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.localFailureSites.empty() ||
               expectedRow == representations_.capabilities().end() ||
               expectedRow->spelling.empty()) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 56,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           // The wrapper value never materializes (std::unexpected has no
           // default construction): its only consumer must be the Return
@@ -6005,7 +6456,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   userBlock->terminator.value->value == *instruction.result;
             }
             if (!returnConsumed) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 57,
+                               gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
             }
           }
           continue;
@@ -6020,7 +6478,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !lambdaBodyRow(lambda->id) ||
               !closureChainAdmits(program_, body, instruction) ||
               !typeRow(lambda->returnType)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 58,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           bool rows = true;
           for (const SemanticType &type : lambda->parameterTypes) {
@@ -6036,7 +6501,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (!rows ||
               !supportsBodyTextImpl(
                   {.kind = MirBodyKind::Lambda, .owner = lambda->id}, false)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 59,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
@@ -6045,7 +6517,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 60,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         case MirOperation::Aggregate:
@@ -6054,7 +6533,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (!instruction.operands.empty() ||
               !instruction.localFailureSites.empty() ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 61,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         case MirOperation::Convert:
@@ -6065,7 +6551,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 62,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         case MirOperation::BitwiseAnd:
@@ -6075,7 +6568,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !valueOperand(instruction.operands[0]) ||
               !valueOperand(instruction.operands[1]) ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 63,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         case MirOperation::Equal:
@@ -6087,17 +6587,37 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.operands.size() != 2 ||
               !valueOperand(instruction.operands[0]) ||
               !valueOperand(instruction.operands[1])) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 64,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
-        default:
+        default: {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 65,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
           return false;
+        }
         }
       }
       case MirInstructionKind::Load: {
         if (!instruction.result || instruction.operands.size() != 1 ||
             instruction.operands.front().place == 0) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 66,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         if (!instruction.localFailureSites.empty()) {
           // A bounds-checked element load is a failure detector: exactly
@@ -6111,14 +6631,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 67,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
         }
         continue;
       }
       case MirInstructionKind::Initialize: {
         if (!instruction.destination || instruction.operands.size() != 1) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 68,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         const MirPlace *destination = body.findPlace(*instruction.destination);
         // A store into a receiver field is only expressible through the
@@ -6127,19 +6661,40 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
             receiverMutability != ReceiverMutability::Mutable) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 69,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         if (destination != nullptr && slotPlace(*destination)) {
           // The reparenting Initialize is the slot construct's paired
           // destination and emits as a comment only.
           if (!valueOperand(instruction.operands.front())) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 70,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
         if (!valueOperand(instruction.operands.front()) &&
             !syntheticBool(instruction.operands.front())) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 71,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       }
@@ -6147,13 +6702,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!instruction.destination || !instruction.result ||
             instruction.operands.size() != 1 ||
             !valueOperand(instruction.operands.front())) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 72,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         const MirPlace *destination = body.findPlace(*instruction.destination);
         if (destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
             receiverMutability != ReceiverMutability::Mutable) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 73,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         if (!instruction.localFailureSites.empty()) {
           // A bounds-checked element store is a failure detector spelled
@@ -6164,7 +6733,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.definedFailure.localOrigins.size() != 1 ||
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 74,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
         }
         continue;
@@ -6176,13 +6752,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.operands.front().place == 0 ||
             body.findPlace(instruction.operands.front().place) == nullptr ||
             !instruction.localFailureSites.empty()) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 75,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       case MirInstructionKind::CallInput: {
         if (!instruction.result || instruction.receiver ||
             instruction.operands.size() != 1) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 76,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         const MirOperand &staged = instruction.operands.front();
         if (staged.kind == MirOperandKind::BorrowRead ||
@@ -6190,13 +6780,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // A borrowed call input stages a place the call spells directly;
           // the write form carries the mutable receiver.
           if (staged.place == 0 || body.findPlace(staged.place) == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 77,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           pendingStaged.push_back(*instruction.result);
           continue;
         }
         if (!valueOperand(staged)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 78,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       }
@@ -6210,14 +6814,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   nullptr ||
               !valueOperand(instruction.operands.back()) ||
               !instruction.result || !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 79,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           if (instruction.receiver &&
               ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
                 instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
                instruction.receiver->place == 0 ||
                body.findPlace(instruction.receiver->place) == nullptr)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 80,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
@@ -6230,7 +6848,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               storageStagedPlace(body, instruction.operands.front()) ==
                   nullptr ||
               !typeRow(instruction.info.type)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 81,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
@@ -6245,7 +6870,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.definedFailure.localOrigins.empty() ||
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 82,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           if (instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
             // Allocation publishes into its storage-typed result value;
@@ -6255,7 +6887,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !typeRow(instruction.info.type) ||
                 instruction.info.type.arguments.size() != 1 ||
                 !typeRow(instruction.info.type.arguments.front())) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 83,
+                               gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
             }
             // A growth-path allocation borrows the container it will
             // replace as its modeling receiver; the receiver is a raw
@@ -6266,23 +6905,51 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
                  instruction.receiver->place == 0 ||
                  body.findPlace(instruction.receiver->place) == nullptr)) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 84,
+                               gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
             }
             continue;
           }
           if (instruction.result || instruction.operands.empty()) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 85,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           if (instruction.receiver &&
               ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
                 instruction.receiver->kind != MirOperandKind::BorrowWrite) ||
                instruction.receiver->place == 0 ||
                body.findPlace(instruction.receiver->place) == nullptr)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 86,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           if (storageStagedPlace(body, instruction.operands.front()) ==
               nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 87,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           for (std::size_t index = 1; index < instruction.operands.size();
                ++index) {
@@ -6292,7 +6959,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               continue;
             }
             if (!valueOperand(instruction.operands[index])) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 88,
+                               gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
             }
           }
           continue;
@@ -6317,7 +6991,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand) ||
               (instruction.result && !typeRow(instruction.info.type))) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 89,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
@@ -6330,7 +7011,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (instruction.receiver) {
           if (instruction.intrinsic != IntrinsicKind::None ||
               instruction.dispatch != CallDispatch::Static) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 90,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           // The receiver borrow arrives staged through a CallInput or
           // directly on the receiver operand (a self-member call borrows
@@ -6349,7 +7037,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   ? body.findPlace(receiverBorrow.place)
                   : nullptr;
           if (receiverPlace == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 91,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           const MirFunctionInstance *target =
               instruction.functionTarget
@@ -6366,7 +7061,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               target->linkage != LanguageLinkage::Gti ||
               target->definitionKind !=
                   MirFunctionInstance::DefinitionKind::Source) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 92,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           // The staged place must BE the member's owner object: a place
           // that merely reaches it through an implicit owner dereference
@@ -6375,7 +7077,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               program_.findClassInstance(*target->owner);
           if (ownerInstance == nullptr ||
               receiverPlace->type != ownerInstance->type) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 93,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           if (staged != nullptr) {
             consumedStaged.push_back(*staged->result);
@@ -6399,7 +7108,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                target->linkage == LanguageLinkage::Gti &&
                target->definitionKind ==
                    MirFunctionInstance::DefinitionKind::Source)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 94,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
         }
         if (failureForm) {
@@ -6408,7 +7124,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   ? program_.findFunctionInstance(*instruction.functionTarget)
                   : nullptr;
           if (instruction.functionTarget && target == nullptr) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 95,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           if (target != nullptr && target->mayRaiseDefinedFailure &&
               deducedCallableCallee(program_, instruction)) {
@@ -6421,7 +7144,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // so this call spells the plain name and its invoke edge is a
             // plain goto; only the result row is demanded.
             if (instruction.result && !typeRow(instruction.info.type)) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 96,
+                               gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
             }
           } else if (target != nullptr && target->mayRaiseDefinedFailure) {
             // A failure-capable callee is reached through the transformed
@@ -6447,7 +7177,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 ((*returnKind == CppMirTypeRepresentationKind::Scalar ||
                   *returnKind == CppMirTypeRepresentationKind::Expected) &&
                  !typeRow(target->returnType))) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 97,
+                               gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
             }
           }
         }
@@ -6490,7 +7227,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (instruction.result || instruction.operands.size() != 2 ||
                 !std::all_of(instruction.operands.begin(),
                              instruction.operands.end(), valueOperand)) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 98,
+                               gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
             }
             continue;
           }
@@ -6505,7 +7249,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 instruction.operands.size() != 1 ||
                 !valueOperand(instruction.operands.front()) ||
                 !typeRow(instruction.info.type)) {
-              return false;
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 99,
+                               gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
             }
             continue;
           }
@@ -6516,13 +7267,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.result || instruction.operands.size() != 2 ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 100,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
           continue;
         }
         if (!instruction.functionTarget ||
             !bodyRow(*instruction.functionTarget)) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 101,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         for (const MirOperand &operand : instruction.operands) {
           if (const MirInstruction *staged =
@@ -6533,7 +7298,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             continue;
           }
           if (!valueOperand(operand)) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 102,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
         }
         if (const MirFunctionInstance *target =
@@ -6544,7 +7316,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // converter is modelled, so a view result stays outside the
           // vocabulary.
           if (instruction.info.type.kind == SemanticType::StringView) {
-            return false;
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 103,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
           }
         }
         // Every staged borrow in flight must feed exactly this call: a
@@ -6557,23 +7336,50 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                             pendingStaged.end(),
                                             id) != pendingStaged.end();
                          })) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 104,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         pendingStaged.clear();
         continue;
       }
-      default:
+      default: {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 105,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
         return false;
+      }
       }
     }
     if (!pendingStaged.empty()) {
       // A staged borrow must be consumed by a call in its own block.
-      return false;
+      {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 106,
+                       gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm);
+        }
+        return false;
+      }
     }
     switch (block.terminator.kind) {
     case MirTerminatorKind::Invoke: {
       if (block.terminator.target == 0 || block.terminator.elseTarget == 0) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 107,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       // The invoke's producer must be this block's checked detector (the
       // status local and record write are spellable) or its transformed
@@ -6586,7 +7392,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
       }
       if (producer == nullptr) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 108,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       if (callableValueInvocation(*producer) ||
           terminallyContainedPlainCallee(program_, representations_,
@@ -6609,7 +7422,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             producer->kind != MirInstructionKind::Compute ||
             cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
             producer->localFailureSites.size() != 1) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 109,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       }
@@ -6628,7 +7448,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 ? program_.findFunctionInstance(*producer->functionTarget)
                 : nullptr;
         if (target == nullptr || !target->mayRaiseDefinedFailure) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 110,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       }
@@ -6640,20 +7467,41 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (producer->kind != MirInstructionKind::Compute ||
           cppMirCheckedOperationHelperSpelling(producer->operation).empty() ||
           producer->localFailureSites.size() != 1) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 111,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
     case MirTerminatorKind::PropagateFailure:
       if (block.terminator.failureRecord == 0) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 112,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       if (!failureForm && address.kind != MirBodyKind::Lambda &&
           !callableTemplateBody) {
         // Only a plain shape whose failure sources are all terminally
         // contained admits this terminator: the propagate block is
         // unreachable and spells abort.
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 113,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     case MirTerminatorKind::Goto:
@@ -6661,31 +7509,66 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     case MirTerminatorKind::Branch:
       if (!block.terminator.value || !valueOperand(*block.terminator.value)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 114,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     case MirTerminatorKind::Switch: {
       if (!block.terminator.value || !valueOperand(*block.terminator.value)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 115,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       bool targets = true;
       for (const MirSwitchTarget &target : block.terminator.switchTargets) {
         targets = targets && target.value && typeRow(target.value->type);
       }
       if (!targets) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 116,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
     }
     case MirTerminatorKind::Return:
       if (block.terminator.returnLoan && *block.terminator.returnLoan != 0) {
         if (loanById(*block.terminator.returnLoan) == nullptr) {
-          return false;
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 117,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
+          }
         }
         continue;
       }
       if (block.terminator.value && !valueOperand(*block.terminator.value)) {
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 118,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       if (failureForm && block.terminator.value &&
           block.terminator.value->type.kind == SemanticType::Class &&
@@ -6693,11 +7576,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               nullptr) {
         // A class value publishes only through its paired inline
         // construct; anything else has no local to spell.
-        return false;
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 119,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
       }
       continue;
-    default:
+    default: {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 120,
+                     gtiProbeTraceKind, gtiProbeTraceOwner, gtiProbeTraceForm);
+      }
       return false;
+    }
     }
   }
   return true;
