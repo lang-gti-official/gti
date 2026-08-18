@@ -218,6 +218,12 @@ void writeProjectMetadata(std::ostream &stream,
     writeJsonString(stream, package.identity());
     stream << ", \"membership\": ";
     writeJsonString(stream, packageMembershipName(package.membership));
+    stream << ", \"source\": ";
+    if (const std::optional<std::string> source = package.sourceIdentity()) {
+      writeJsonString(stream, *source);
+    } else {
+      writeJsonString(stream, "path");
+    }
     stream << ", \"root\": ";
     writeJsonString(stream, package.manifest.packageRoot().string());
     stream << ", \"manifest\": ";

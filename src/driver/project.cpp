@@ -414,17 +414,21 @@ int main(int argc, std::vector<std::string> argv) {
 
 } // namespace
 
-ProjectBuildRequest::ProjectBuildRequest(std::filesystem::path startDirectory,
-                                         std::optional<std::string> targetName,
-                                         std::string profileName,
-                                         TargetInfo target,
-                                         ProjectBuildOverrides overrides,
-                                         std::optional<std::string> packageName)
+ProjectBuildRequest::ProjectBuildRequest(
+    std::filesystem::path startDirectory, std::optional<std::string> targetName,
+    std::string profileName, TargetInfo target, ProjectBuildOverrides overrides,
+    std::optional<std::string> packageName,
+    WorkspaceDependencyPolicy dependencyPolicy)
     : discoveryStart(std::move(startDirectory)),
       selectedTarget(std::move(targetName)),
       selectedProfile(std::move(profileName)), targetInfo(std::move(target)),
       cliOverrides(std::move(overrides)),
-      selectedPackage(std::move(packageName)) {}
+      selectedPackage(std::move(packageName)),
+      workspaceDependencyPolicy(dependencyPolicy) {}
+
+const WorkspaceDependencyPolicy &ProjectBuildRequest::dependencyPolicy() const {
+  return workspaceDependencyPolicy;
+}
 
 const std::filesystem::path &ProjectBuildRequest::startDirectory() const {
   return discoveryStart;
@@ -586,7 +590,8 @@ ProjectResolutionResult
 resolveProjectBuild(const ProjectBuildRequest &request) {
   ProjectResolutionResult result;
   WorkspaceResolutionResult resolvedWorkspace =
-      resolveProjectWorkspace(request.startDirectory(), request.packageName());
+      resolveProjectWorkspace(request.startDirectory(), request.packageName(),
+                              request.dependencyPolicy());
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -701,7 +706,8 @@ ProjectTestResolutionResult
 resolveProjectTests(const ProjectBuildRequest &request) {
   ProjectTestResolutionResult result;
   WorkspaceResolutionResult resolvedWorkspace =
-      resolveProjectWorkspace(request.startDirectory(), request.packageName());
+      resolveProjectWorkspace(request.startDirectory(), request.packageName(),
+                              request.dependencyPolicy());
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -882,8 +888,8 @@ resolveProjectMetadata(const std::filesystem::path &startDirectory,
                        TargetInfo target,
                        std::optional<std::string> packageName) {
   ProjectMetadataResult result;
-  WorkspaceResolutionResult resolvedWorkspace =
-      resolveProjectWorkspace(startDirectory, packageName);
+  WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
+      startDirectory, packageName, {.allowAcquisition = false});
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -941,8 +947,8 @@ ProjectCleanResult cleanProject(const std::filesystem::path &startDirectory) {
 
   std::filesystem::path manifest = *discovery.path;
   std::filesystem::path packageRoot = manifest.parent_path();
-  WorkspaceResolutionResult resolvedWorkspace =
-      resolveProjectWorkspace(startDirectory);
+  WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
+      startDirectory, std::nullopt, {.allowAcquisition = false});
   if (resolvedWorkspace.succeeded()) {
     packageRoot = resolvedWorkspace.workspace->root();
     manifest = packageRoot / "gti.toml";

@@ -1,5 +1,7 @@
 #include "gti/driver/manifest.h"
 
+#include "gti/driver/dependencies.h"
+
 #define TOML_EXCEPTIONS 0
 #include "toml.hpp"
 
@@ -1002,11 +1004,95 @@ parseDependencies(const toml::table &document,
       diagnostics.push_back(buildDiagnostic(
           "GTI-B1004", sourceSpan(sourceName, source, dependencyNode),
           "Dependency '" + alias +
-              "' must be an inline or ordinary table containing 'path'."));
+              "' must be an inline or ordinary table containing 'path', or "
+              "'git' with 'rev'."));
       continue;
     }
-    validateFields(*dependencyTable, {"path"}, "dependency", sourceName, source,
-                   diagnostics);
+    validateFields(*dependencyTable, {"path", "git", "rev"}, "dependency",
+                   sourceName, source, diagnostics);
+    const bool hasPath = dependencyTable->get("path") != nullptr;
+    const bool hasGit = dependencyTable->get("git") != nullptr;
+    const bool hasRevision = dependencyTable->get("rev") != nullptr;
+    if (hasPath && (hasGit || hasRevision)) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1006", aliasSpan,
+          "Dependency '" + alias +
+              "' declares both 'path' and a git source; declare exactly "
+              "one."));
+      continue;
+    }
+    if (!hasPath && !hasGit) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1006", aliasSpan,
+          "Dependency '" + alias +
+              "' must declare 'path', or 'git' with a pinned 'rev'."));
+      continue;
+    }
+
+    if (hasGit) {
+      const std::optional<std::string> url =
+          requiredString(*dependencyTable, "git", "dependency", sourceName,
+                         source, diagnostics);
+      if (!url) {
+        continue;
+      }
+      const SourceSpan urlSpan =
+          sourceSpan(sourceName, source, *dependencyTable->get("git"));
+      if (std::any_of(url->begin(), url->end(), [](const char character) {
+            return static_cast<unsigned char>(character) <= 0x20U;
+          })) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1006", urlSpan,
+            "Dependency '" + alias +
+                "' has a git URL containing whitespace or control "
+                "characters."));
+        continue;
+      }
+      if (!hasRevision) {
+        Diagnostic diagnostic = buildDiagnostic(
+            "GTI-B1006", urlSpan,
+            "Git dependency '" + alias +
+                "' must pin 'rev' to a full 40-character commit.");
+        diagnostic.hints.push_back(
+            "Branches and tags are mutable; record the exact commit so the "
+            "build plan cannot change under an unchanged manifest.");
+        diagnostics.push_back(std::move(diagnostic));
+        continue;
+      }
+      const std::optional<std::string> revision =
+          requiredString(*dependencyTable, "rev", "dependency", sourceName,
+                         source, diagnostics);
+      if (!revision) {
+        continue;
+      }
+      const SourceSpan revisionSpan =
+          sourceSpan(sourceName, source, *dependencyTable->get("rev"));
+      std::string normalized = *revision;
+      std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                     [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                     });
+      if (!isFullGitRevision(normalized)) {
+        diagnostics.push_back(buildDiagnostic(
+            "GTI-B1006", revisionSpan,
+            "Git dependency '" + alias +
+                "' must pin 'rev' to a full 40-character hexadecimal "
+                "commit."));
+        continue;
+      }
+      dependencies.push_back(
+          {.alias = alias,
+           .packageRoot = {},
+           .git =
+               ProjectGitDependencySource{.url = *url,
+                                          .revision = std::move(normalized),
+                                          .urlDeclaration = urlSpan,
+                                          .revisionDeclaration = revisionSpan},
+           .declaration = aliasSpan,
+           .pathDeclaration = urlSpan});
+      continue;
+    }
+
     const std::optional<std::string> path =
         requiredString(*dependencyTable, "path", "dependency", sourceName,
                        source, diagnostics);

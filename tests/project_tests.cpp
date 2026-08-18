@@ -1,3 +1,4 @@
+#include "gti/driver/dependencies.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/project.h"
 #include "gti/format_config.h"
@@ -1575,6 +1576,158 @@ void testFormatConfigScaffolding() {
 
 } // namespace
 
+void testDependencyLockModel() {
+  using lang::driver::DependencyLock;
+  using lang::driver::LockedGitPackage;
+
+  expect(lang::driver::isFullGitRevision(
+             "0123456789abcdef0123456789abcdef01234567") &&
+             !lang::driver::isFullGitRevision("0123456789abcdef") &&
+             !lang::driver::isFullGitRevision(
+                 "0123456789ABCDEF0123456789abcdef01234567") &&
+             !lang::driver::isFullGitRevision(
+                 "0123456789abcdef0123456789abcdef0123456z"),
+         "full git revisions are exactly 40 lowercase hex characters");
+
+  const std::string checksum = "sha256:" + std::string(64, 'a');
+  DependencyLock lock;
+  lock.packages.push_back(
+      {.name = "zeta",
+       .version = "0.2.0",
+       .url = "https://example.invalid/zeta.git",
+       .revision = "0123456789abcdef0123456789abcdef01234567",
+       .checksum = checksum,
+       .dependencies = {"beta", "alpha"}});
+  lock.packages.push_back(
+      {.name = "alpha",
+       .version = "1.0.0",
+       .url = "https://example.invalid/alpha.git",
+       .revision = "fedcba9876543210fedcba9876543210fedcba98",
+       .checksum = checksum,
+       .dependencies = {}});
+  const std::string rendered = lang::driver::renderDependencyLock(lock);
+  expect(rendered.find("name = \"alpha\"") < rendered.find("name = \"zeta\"") &&
+             rendered.find("[\"alpha\", \"beta\"]") != std::string::npos,
+         "the lock emitter sorts packages and dependency names "
+         "deterministically");
+  expect(rendered == lang::driver::renderDependencyLock(lock),
+         "lock rendering is deterministic");
+
+  TemporaryDirectory temporary;
+  std::string writeError;
+  expect(lang::driver::writeDependencyLock(temporary.root(), lock, writeError),
+         "the lock should write atomically: " + writeError);
+  const lang::driver::DependencyLockLoadResult loaded =
+      lang::driver::loadDependencyLock(temporary.root());
+  expect(loaded.succeeded() && loaded.lock.packages.size() == 2 &&
+             loaded.lock.packages[0].name == "alpha" &&
+             loaded.lock.packages[1].name == "zeta" &&
+             loaded.lock.packages[1].dependencies ==
+                 std::vector<std::string>({"alpha", "beta"}) &&
+             lang::driver::renderDependencyLock(loaded.lock) == rendered,
+         "a written lock should load back to an identical closure");
+  const lang::driver::LockedGitPackage *found = loaded.lock.find(
+      {.url = "https://example.invalid/zeta.git",
+       .revision = "0123456789abcdef0123456789abcdef01234567"});
+  expect(found != nullptr && found->name == "zeta",
+         "lock lookup resolves by exact URL and revision");
+
+  expect(
+      lang::driver::loadDependencyLock(temporary.root() / "missing").status ==
+          lang::driver::DependencyLockLoadStatus::Missing,
+      "a missing lock reports Missing rather than an error");
+
+  const auto rejects = [&](std::string_view text, std::string_view why) {
+    writeFile(temporary.root() / "gti.lock", text);
+    const lang::driver::DependencyLockLoadResult result =
+        lang::driver::loadDependencyLock(temporary.root());
+    expect(result.status ==
+                   lang::driver::DependencyLockLoadStatus::ParseFailure &&
+               !result.diagnostics.empty() &&
+               result.diagnostics.front().code == "GTI-B1702",
+           std::string(why));
+  };
+  rejects("lock-version = 2\n", "an unsupported lock version is rejected");
+  rejects("lock-version = 1\nmystery = true\n",
+          "unknown lock fields are rejected");
+  rejects("lock-version = 1\n[[package]]\nname = \"a\"\nversion = \"1\"\n"
+          "source = \"git+u\"\nrev = \"abc\"\nchecksum = \"sha256:" +
+              std::string(64, 'a') + "\"\n",
+          "a short revision is rejected");
+  rejects("lock-version = 1\n[[package]]\nname = \"a\"\nversion = \"1\"\n"
+          "source = \"https://u\"\nrev = \"" +
+              std::string(40, 'a') +
+              "\"\nchecksum = \"sha256:" + std::string(64, 'a') + "\"\n",
+          "a non-git source is rejected");
+  rejects("lock-version = 1\n[[package]]\nname = \"a\"\nversion = \"1\"\n"
+          "source = \"git+u\"\nrev = \"" +
+              std::string(40, 'a') + "\"\nchecksum = \"bad\"\n",
+          "a malformed checksum is rejected");
+  const std::string entry =
+      "[[package]]\nname = \"a\"\nversion = \"1\"\nsource = \"git+u\"\n"
+      "rev = \"" +
+      std::string(40, 'a') + "\"\nchecksum = \"sha256:" + std::string(64, 'a') +
+      "\"\n";
+  rejects("lock-version = 1\n" + entry + entry,
+          "duplicate package names are rejected");
+  rejects("not toml at all [", "invalid TOML is rejected with GTI-B1702");
+}
+
+void testGitDependencyManifestValidation() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path manifest = temporary.root() / "gti.toml";
+  const auto load = [&](std::string_view dependency) {
+    writeFile(manifest, "manifest-version = 1\n\n[package]\nname = \"app\"\n"
+                        "version = \"0.1.0\"\n\n[dependencies]\n" +
+                            std::string(dependency) +
+                            "\n\n[targets.app]\nkind = \"executable\"\n"
+                            "root = \"src/main.gti\"\n");
+    writeFile(temporary.root() / "src/main.gti", "int main() { return 0; }\n");
+    return lang::driver::loadProjectManifest(manifest);
+  };
+  const auto failsWith = [&](std::string_view dependency, std::string_view code,
+                             std::string_view why) {
+    const lang::driver::ManifestLoadResult result = load(dependency);
+    const bool matched =
+        !result.succeeded() &&
+        std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                    [&](const lang::Diagnostic &diagnostic) {
+                      return diagnostic.code == code;
+                    });
+    expect(matched, std::string(why));
+  };
+
+  const std::string revision(40, 'a');
+  failsWith("dep = { git = \"https://example.invalid/dep.git\" }", "GTI-B1006",
+            "a git dependency without rev is rejected");
+  failsWith("dep = { git = \"https://example.invalid/dep.git\", rev = "
+            "\"abc\" }",
+            "GTI-B1006", "a short rev is rejected");
+  failsWith("dep = { path = \"../dep\", git = \"https://example.invalid\", "
+            "rev = \"" +
+                revision + "\" }",
+            "GTI-B1006", "path and git together are rejected");
+  failsWith("dep = { rev = \"" + revision + "\" }", "GTI-B1006",
+            "rev without git is rejected");
+  failsWith("dep = { git = \"https://example.invalid/with space\", rev = \"" +
+                revision + "\" }",
+            "GTI-B1006", "whitespace in a git URL is rejected");
+  failsWith("dep = { git = \"https://example.invalid/dep.git\", rev = \"" +
+                revision + "\", branch = \"main\" }",
+            "GTI-B1001", "branch selectors are rejected as unknown fields");
+
+  const lang::driver::ManifestLoadResult valid =
+      load("dep = { git = \"https://example.invalid/dep.git\", rev = \"" +
+           std::string(40, 'A') + "\" }");
+  expect(valid.succeeded() && valid.manifest->dependencies().size() == 1 &&
+             valid.manifest->dependencies().front().git.has_value() &&
+             valid.manifest->dependencies().front().git->revision ==
+                 std::string(40, 'a') &&
+             valid.manifest->dependencies().front().packageRoot.empty(),
+         "a valid git dependency parses with a lowercase-normalized revision "
+         "and no resolved package root");
+}
+
 int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
@@ -1585,6 +1738,8 @@ int main() {
   testNativeManifestDiagnostics();
   testCleanSafety();
   testWorkspaceAndPathDependencies();
+  testDependencyLockModel();
+  testGitDependencyManifestValidation();
   testProjectScaffolding();
   testFormatConfigScaffolding();
 

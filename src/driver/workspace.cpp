@@ -1,5 +1,7 @@
 #include "gti/driver/workspace.h"
 
+#include "gti/driver/dependencies.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
@@ -71,10 +73,31 @@ bool hasNativeInputs(const ProjectNativeSettings &settings) {
                      });
 }
 
+bool pathIsWithin(const std::filesystem::path &root,
+                  const std::filesystem::path &candidate) {
+  auto rootPart = root.begin();
+  auto candidatePart = candidate.begin();
+  for (; rootPart != root.end() && candidatePart != candidate.end();
+       ++rootPart, ++candidatePart) {
+    if (*rootPart != *candidatePart) {
+      return false;
+    }
+  }
+  return rootPart == root.end();
+}
+
 } // namespace
 
 std::string ResolvedProjectPackage::identity() const {
   return manifest.package().name + "@" + manifest.package().version;
+}
+
+std::optional<std::string> ResolvedProjectPackage::sourceIdentity() const {
+  if (!gitSource) {
+    return std::nullopt;
+  }
+  return "git+" + gitSource->url + "#" + gitSource->revision + "#" +
+         gitChecksum;
 }
 
 bool ResolvedProjectPackage::selectable() const {
@@ -136,6 +159,11 @@ std::string ProjectWorkspace::modelIdentity() const {
   std::string identity = "gti-workspace-v1";
   for (const ResolvedProjectPackage &package : resolvedPackages) {
     identity += "\npackage:" + package.identity();
+    if (const std::optional<std::string> source = package.sourceIdentity()) {
+      // A git-sourced package's exact acquisition identity participates so
+      // two revisions of one name@version can never share build state.
+      identity += "@" + *source;
+    }
     for (const ResolvedProjectDependency &dependency : package.dependencies) {
       identity += "\ndependency:" + package.identity() + ":" +
                   dependency.alias + "=" + dependency.targetIdentity;
@@ -146,7 +174,8 @@ std::string ProjectWorkspace::modelIdentity() const {
 
 WorkspaceResolutionResult
 resolveProjectWorkspace(const std::filesystem::path &startDirectory,
-                        const std::optional<std::string> &requestedPackage) {
+                        const std::optional<std::string> &requestedPackage,
+                        const WorkspaceDependencyPolicy &dependencyPolicy) {
   WorkspaceResolutionResult result;
   ManifestDiscoveryResult discovery = discoverProjectManifest(startDirectory);
   if (!discovery.succeeded()) {
@@ -262,6 +291,18 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
     }
   }
 
+  // Pinned git dependencies materialize through the verified store. The lock
+  // is loaded once on first use and its parse diagnostics are reported once.
+  std::optional<DependencyLockLoadResult> lockLoad;
+  bool lockDiagnosticsReported = false;
+  std::string gitExecutable;
+  const auto dependencyLock = [&]() -> const DependencyLockLoadResult & {
+    if (!lockLoad) {
+      lockLoad = loadDependencyLock(workspaceRoot);
+    }
+    return *lockLoad;
+  };
+
   for (std::size_t packageIndex = 0; packageIndex < packages.size();
        ++packageIndex) {
     if (packageIndex != *rootIndex &&
@@ -277,28 +318,195 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
     const std::vector<ProjectDependency> dependencies =
         packages[packageIndex].manifest.dependencies();
     for (const ProjectDependency &dependency : dependencies) {
-      if (!dependencyRoots.insert(dependency.packageRoot.string()).second) {
+      std::filesystem::path targetRoot = dependency.packageRoot;
+      std::optional<GitSourceKey> gitSource;
+      std::string gitChecksum;
+      const LockedGitPackage *locked = nullptr;
+      if (dependency.git) {
+        const GitSourceKey key{.url = dependency.git->url,
+                               .revision = dependency.git->revision};
+        if (!dependencyRoots.insert("git+" + key.url + "#" + key.revision)
+                 .second) {
+          result.diagnostics.push_back(workspaceDiagnostic(
+              "GTI-B1602", dependency.pathDeclaration,
+              "Dependency alias '" + dependency.alias +
+                  "' resolves to a package already declared by this "
+                  "package."));
+          continue;
+        }
+
+        if (dependencyPolicy.requireLock) {
+          const DependencyLockLoadResult &lock = dependencyLock();
+          if (lock.status == DependencyLockLoadStatus::Missing) {
+            Diagnostic diagnostic = workspaceDiagnostic(
+                "GTI-B1701", dependency.pathDeclaration,
+                "Git dependency '" + dependency.alias +
+                    "' is declared, but the workspace has no gti.lock.");
+            diagnostic.hints.push_back(
+                "Run `gti fetch` to acquire pinned git dependencies and "
+                "write gti.lock.");
+            result.diagnostics.push_back(std::move(diagnostic));
+            continue;
+          }
+          if (!lock.succeeded()) {
+            if (!lockDiagnosticsReported) {
+              result.diagnostics.insert(result.diagnostics.end(),
+                                        lock.diagnostics.begin(),
+                                        lock.diagnostics.end());
+              lockDiagnosticsReported = true;
+            }
+            continue;
+          }
+          locked = lock.lock.find(key);
+          if (locked == nullptr) {
+            Diagnostic diagnostic = workspaceDiagnostic(
+                "GTI-B1701", dependency.pathDeclaration,
+                "gti.lock does not record git dependency '" + dependency.alias +
+                    "' at " + key.url + "#" + key.revision + ".");
+            diagnostic.hints.push_back(
+                "The manifest changed after the last `gti fetch`; run it "
+                "again to update gti.lock.");
+            result.diagnostics.push_back(std::move(diagnostic));
+            continue;
+          }
+        }
+
+        const std::filesystem::path checkout =
+            gitCheckoutPath(workspaceRoot, key);
+        std::string checksum;
+        std::error_code checkoutError;
+        if (!dependencyPolicy.requireLock) {
+          // Fetch mode re-derives truth from the immutable object database
+          // even for materialized checkouts, so a locally modified tree can
+          // never launder its content into a freshly written lock.
+          if (gitExecutable.empty()) {
+            gitExecutable = discoverGitExecutable();
+          }
+          const GitFetchResult fetched =
+              fetchGitSource(workspaceRoot, key, gitExecutable,
+                             !dependencyPolicy.allowAcquisition);
+          if (!fetched.succeeded()) {
+            result.diagnostics.push_back(workspaceDiagnostic(
+                "GTI-B1705", dependency.pathDeclaration,
+                "Cannot acquire git dependency '" + dependency.alias +
+                    "' from " + key.url + ": " + fetched.detail + "."));
+            continue;
+          }
+          checksum = fetched.checksum;
+        } else if (std::filesystem::is_directory(checkout, checkoutError) &&
+                   !checkoutError) {
+          std::string checksumError;
+          const std::optional<std::string> verified =
+              checkoutChecksum(checkout, checksumError);
+          if (!verified) {
+            result.diagnostics.push_back(workspaceDiagnostic(
+                "GTI-B1704", dependency.pathDeclaration,
+                "Cannot verify the stored checkout for git dependency '" +
+                    dependency.alias + "': " + checksumError + "."));
+            continue;
+          }
+          checksum = *verified;
+        } else if (!dependencyPolicy.allowAcquisition) {
+          Diagnostic diagnostic = workspaceDiagnostic(
+              "GTI-B1703", dependency.pathDeclaration,
+              "Git dependency '" + dependency.alias + "' at " + key.url + "#" +
+                  key.revision +
+                  " is not materialized, and this command does not acquire "
+                  "dependencies.");
+          diagnostic.hints.push_back(
+              "Run `gti fetch` first, or rerun without --offline/--locked.");
+          result.diagnostics.push_back(std::move(diagnostic));
+          continue;
+        } else {
+          if (gitExecutable.empty()) {
+            gitExecutable = discoverGitExecutable();
+          }
+          const GitFetchResult fetched =
+              fetchGitSource(workspaceRoot, key, gitExecutable);
+          if (!fetched.succeeded()) {
+            result.diagnostics.push_back(workspaceDiagnostic(
+                "GTI-B1705", dependency.pathDeclaration,
+                "Cannot acquire git dependency '" + dependency.alias +
+                    "' from " + key.url + ": " + fetched.detail + "."));
+            continue;
+          }
+          checksum = fetched.checksum;
+        }
+
+        if (locked != nullptr && checksum != locked->checksum) {
+          Diagnostic diagnostic = workspaceDiagnostic(
+              "GTI-B1704", dependency.pathDeclaration,
+              "Git dependency '" + dependency.alias +
+                  "' does not match its gti.lock checksum; refusing to load "
+                  "unverified source.");
+          diagnostic.hints.push_back(
+              "Delete build/gti/deps and run `gti fetch` to re-acquire, or "
+              "investigate how the stored tree changed.");
+          result.diagnostics.push_back(std::move(diagnostic));
+          continue;
+        }
+        targetRoot = checkout;
+        gitSource = key;
+        gitChecksum = checksum;
+      } else if (!dependencyRoots.insert(dependency.packageRoot.string())
+                      .second) {
         result.diagnostics.push_back(workspaceDiagnostic(
             "GTI-B1602", dependency.pathDeclaration,
             "Dependency alias '" + dependency.alias +
                 "' resolves to a package already declared by this package."));
         continue;
       }
+
+      // A fetched package's own path dependencies must stay inside its
+      // verified checkout; escaping the store would load unlocked source.
+      if (!dependency.git && packages[packageIndex].gitSource &&
+          !pathIsWithin(packages[packageIndex].manifest.packageRoot(),
+                        targetRoot)) {
+        Diagnostic diagnostic = workspaceDiagnostic(
+            "GTI-B1707", dependency.pathDeclaration,
+            "Path dependency '" + dependency.alias +
+                "' of a git-sourced package escapes its own checkout.");
+        diagnostic.hints.push_back(
+            "A fetched package may only use path dependencies contained in "
+            "its repository; declare external packages as git dependencies "
+            "with pinned revisions.");
+        result.diagnostics.push_back(std::move(diagnostic));
+        continue;
+      }
+
       std::optional<std::size_t> dependencyIndex;
-      if (const auto existing =
-              packageByRoot.find(dependency.packageRoot.string());
+      if (const auto existing = packageByRoot.find(targetRoot.string());
           existing != packageByRoot.end()) {
         dependencyIndex = existing->second;
       } else {
         dependencyIndex = addLoadedManifest(
-            loadProjectManifest(dependency.packageRoot / manifestFilename),
-            ProjectPackageMembership::Dependency, dependency.packageRoot,
-            dependency.pathDeclaration, "Path dependency");
+            loadProjectManifest(targetRoot / manifestFilename),
+            ProjectPackageMembership::Dependency, targetRoot,
+            dependency.pathDeclaration,
+            dependency.git ? "Git dependency" : "Path dependency");
       }
       if (!dependencyIndex) {
         continue;
       }
       const ProjectManifest &target = packages[*dependencyIndex].manifest;
+      if (locked != nullptr && (target.package().name != locked->name ||
+                                target.package().version != locked->version)) {
+        Diagnostic diagnostic = workspaceDiagnostic(
+            "GTI-B1704", dependency.pathDeclaration,
+            "Git dependency '" + dependency.alias + "' resolves to package " +
+                target.package().name + "@" + target.package().version +
+                ", but gti.lock records " + locked->name + "@" +
+                locked->version + ".");
+        diagnostic.hints.push_back(
+            "Run `gti fetch` to update gti.lock for the pinned revision's "
+            "actual package identity.");
+        result.diagnostics.push_back(std::move(diagnostic));
+        continue;
+      }
+      if (gitSource) {
+        packages[*dependencyIndex].gitSource = std::move(gitSource);
+        packages[*dependencyIndex].gitChecksum = std::move(gitChecksum);
+      }
       std::error_code error;
       if (!std::filesystem::is_directory(target.package().sourceRoot, error) ||
           error) {
@@ -311,7 +519,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
       if (hasNativeInputs(target.package().native)) {
         Diagnostic diagnostic = workspaceDiagnostic(
             "GTI-B1606", dependency.pathDeclaration,
-            "Path dependency '" + dependency.alias +
+            "Dependency '" + dependency.alias +
                 "' declares package-level native inputs, which are not yet "
                 "composed across package boundaries.");
         diagnostic.hints.push_back(
@@ -322,7 +530,7 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
       packages[packageIndex].dependencies.push_back(
           {.alias = dependency.alias,
            .targetIdentity = packages[*dependencyIndex].identity(),
-           .targetRoot = dependency.packageRoot,
+           .targetRoot = targetRoot,
            .declaration = dependency.pathDeclaration});
     }
   }
@@ -455,6 +663,35 @@ resolveProjectWorkspace(const std::filesystem::path &startDirectory,
                                       selectedIdentity, declaredWorkspace);
   result.status = WorkspaceResolutionStatus::Success;
   return result;
+}
+
+DependencyLock lockFromWorkspace(const ProjectWorkspace &workspace) {
+  DependencyLock lock;
+  for (const ResolvedProjectPackage &package : workspace.packages()) {
+    if (!package.gitSource) {
+      continue;
+    }
+    LockedGitPackage locked{.name = package.manifest.package().name,
+                            .version = package.manifest.package().version,
+                            .url = package.gitSource->url,
+                            .revision = package.gitSource->revision,
+                            .checksum = package.gitChecksum,
+                            .dependencies = {}};
+    for (const ResolvedProjectDependency &dependency : package.dependencies) {
+      const std::string &identity = dependency.targetIdentity;
+      locked.dependencies.push_back(identity.substr(0, identity.find('@')));
+    }
+    std::sort(locked.dependencies.begin(), locked.dependencies.end());
+    locked.dependencies.erase(
+        std::unique(locked.dependencies.begin(), locked.dependencies.end()),
+        locked.dependencies.end());
+    lock.packages.push_back(std::move(locked));
+  }
+  std::sort(lock.packages.begin(), lock.packages.end(),
+            [](const LockedGitPackage &left, const LockedGitPackage &right) {
+              return left.name < right.name;
+            });
+  return lock;
 }
 
 } // namespace lang::driver

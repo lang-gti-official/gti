@@ -24,7 +24,8 @@ public:
                       std::optional<std::string> targetName,
                       std::string profileName, TargetInfo target,
                       ProjectBuildOverrides overrides = {},
-                      std::optional<std::string> packageName = std::nullopt);
+                      std::optional<std::string> packageName = std::nullopt,
+                      WorkspaceDependencyPolicy dependencyPolicy = {});
 
   [[nodiscard]] const std::filesystem::path &startDirectory() const;
   [[nodiscard]] const std::optional<std::string> &targetName() const;
@@ -32,6 +33,7 @@ public:
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] const ProjectBuildOverrides &overrides() const;
   [[nodiscard]] const std::optional<std::string> &packageName() const;
+  [[nodiscard]] const WorkspaceDependencyPolicy &dependencyPolicy() const;
 
 private:
   std::filesystem::path discoveryStart;
@@ -40,6 +42,7 @@ private:
   TargetInfo targetInfo;
   ProjectBuildOverrides cliOverrides;
   std::optional<std::string> selectedPackage;
+  WorkspaceDependencyPolicy workspaceDependencyPolicy;
 };
 
 class ProjectBuildPlan final {

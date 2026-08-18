@@ -300,6 +300,7 @@ add_library(
   "src/driver/artifact.cpp"
   "src/driver/build.cpp"
   "src/driver/compilation.cpp"
+  "src/driver/dependencies.cpp"
   "src/driver/manifest.cpp"
   "src/driver/native_toolchain.cpp"
   "src/driver/process.cpp"

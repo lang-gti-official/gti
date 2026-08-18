@@ -421,7 +421,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 7
+        assert metadata_document["schemaVersion"] == 8
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -493,7 +493,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 7
+        assert test_metadata["schemaVersion"] == 8
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -704,7 +704,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 7
+        assert native_document["schemaVersion"] == 8
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1028,7 +1028,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 7
+        assert workspace_metadata["schemaVersion"] == 8
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -1193,6 +1193,323 @@ def main():
         assert "Built psych-core [release," in engine_run.stderr
         run([gti, "clean"], cwd=engine_project)
         assert not (engine_project / "build/gti").exists()
+
+        # --- Locked git dependencies ---
+        git = shutil.which("git")
+        if git is None:
+            raise AssertionError("git dependency tests require git on PATH")
+
+        def git_in(repository, *arguments):
+            return run(
+                [
+                    git,
+                    "-C",
+                    str(repository),
+                    "-c",
+                    "user.email=gti@test",
+                    "-c",
+                    "user.name=gti",
+                    *arguments,
+                ]
+            )
+
+        def make_upstream(path, name, add_bias):
+            (path / "src").mkdir(parents=True)
+            (path / "gti.toml").write_text(
+                "manifest-version = 1\n\n"
+                "[package]\n"
+                f'name = "{name}"\n'
+                'version = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (path / "src/add.gti").write_text(
+                f"namespace {name} {{\n"
+                f"int add(int left, int right) {{ return left + right"
+                f" + {add_bias}; }}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            run([git, "init", "-q", str(path)])
+            git_in(path, "add", "-A")
+            git_in(path, "commit", "-qm", "initial")
+            return git_in(path, "rev-parse", "HEAD").stdout.strip()
+
+        upstream = root / "git-upstream"
+        first_revision = make_upstream(upstream, "mathdep", 0)
+
+        git_app = root / "git-app"
+        (git_app / "src").mkdir(parents=True)
+
+        def write_app_manifest(revision):
+            (git_app / "gti.toml").write_text(
+                "manifest-version = 1\n\n"
+                "[package]\n"
+                'name = "git-app"\n'
+                'version = "0.1.0"\n\n'
+                "[dependencies]\n"
+                f'mathdep = {{ git = "{upstream}", rev = "{revision}" }}\n\n'
+                "[targets.git-app]\n"
+                'kind = "executable"\n'
+                'root = "src/main.gti"\n',
+                encoding="utf-8",
+            )
+
+        write_app_manifest(first_revision)
+        (git_app / "src/main.gti").write_text(
+            "#include <mathdep/add>\n\n"
+            "int main() {\n"
+            "  return mathdep::add(2, 3) == 5 ? 0 : 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        # A build without gti.lock fails closed with guidance.
+        unlocked_build = run([gti, "build"], expected=65, cwd=git_app)
+        assert "error[GTI-B1701]" in unlocked_build.stderr
+        assert "Run `gti fetch`" in unlocked_build.stderr
+
+        # Fetch acquires the pinned revision and writes a deterministic lock.
+        fetched = run([gti, "fetch"], cwd=git_app)
+        assert f"Locked mathdep@0.1.0 git+{upstream}#{first_revision}" in (
+            fetched.stdout
+        )
+        assert "Wrote" in fetched.stdout
+        lock_path = git_app / "gti.lock"
+        lock_text = lock_path.read_text(encoding="utf-8")
+        assert "lock-version = 1" in lock_text
+        assert f'rev = "{first_revision}"' in lock_text
+        assert 'checksum = "sha256:' in lock_text
+        refetched = run([gti, "fetch"], cwd=git_app)
+        assert "gti.lock is up to date (1 git dependency)" in refetched.stdout
+        assert lock_path.read_text(encoding="utf-8") == lock_text
+
+        run([gti, "build"], cwd=git_app)
+        run([gti, "run"], cwd=git_app)
+
+        # Metadata reports the resolved source without acquiring anything.
+        git_metadata = json.loads(run([gti, "metadata"], cwd=git_app).stdout)
+        source_by_name = {
+            package["name"]: package["source"]
+            for package in git_metadata["workspace"]["packages"]
+        }
+        assert source_by_name["git-app"] == "path"
+        assert source_by_name["mathdep"].startswith(f"git+{upstream}#")
+        assert f"#{first_revision}#sha256:" in source_by_name["mathdep"]
+
+        # Upstream advancing cannot change a pinned build.
+        (upstream / "src/add.gti").write_text(
+            "namespace mathdep {\n"
+            "int add(int left, int right) { return left + right + 100; }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        git_in(upstream, "commit", "-qam", "bias")
+        second_revision = git_in(upstream, "rev-parse", "HEAD").stdout.strip()
+        run([gti, "run"], cwd=git_app)
+
+        # Re-pinning without fetch is a stale lock; --locked refuses too.
+        write_app_manifest(second_revision)
+        stale_build = run([gti, "build"], expected=65, cwd=git_app)
+        assert "error[GTI-B1701]" in stale_build.stderr
+        assert "gti.lock does not record" in stale_build.stderr
+        locked_build = run([gti, "build", "--locked"], expected=65, cwd=git_app)
+        assert "error[GTI-B1701]" in locked_build.stderr
+
+        # Fetch updates the lock and the new revision's behavior lands.
+        run([gti, "fetch"], cwd=git_app)
+        biased_run = run([gti, "run"], expected=1, cwd=git_app)
+        assert "Running" in biased_run.stderr
+        second_lock_text = lock_path.read_text(encoding="utf-8")
+        assert f'rev = "{second_revision}"' in second_lock_text
+
+        # Clean removes the store; --offline then fails closed while a plain
+        # build re-acquires from the lock without touching gti.lock.
+        run([gti, "clean"], cwd=git_app)
+        offline_build = run(
+            [gti, "build", "--offline"], expected=65, cwd=git_app
+        )
+        assert "error[GTI-B1703]" in offline_build.stderr
+        run([gti, "build"], cwd=git_app)
+        assert lock_path.read_text(encoding="utf-8") == second_lock_text
+        run([gti, "build", "--offline"], cwd=git_app)
+        offline_check = run([gti, "check", "--offline"], cwd=git_app)
+        assert "Checked git-app" in offline_check.stdout
+
+        # A tampered stored tree is refused before source loading, and fetch
+        # restores the true content without laundering the lock checksum.
+        checkout_files = sorted(
+            (git_app / "build/gti/deps/git/checkouts").rglob("add.gti")
+        )
+        assert checkout_files, "expected a materialized checkout"
+        tampered = checkout_files[0]
+        tampered.write_text(
+            tampered.read_text(encoding="utf-8") + "// tampered\n",
+            encoding="utf-8",
+        )
+        tampered_build = run([gti, "build"], expected=65, cwd=git_app)
+        assert "error[GTI-B1704]" in tampered_build.stderr
+        assert "refusing to load unverified source" in tampered_build.stderr
+        run([gti, "fetch"], cwd=git_app)
+        assert lock_path.read_text(encoding="utf-8") == second_lock_text
+        assert "tampered" not in tampered.read_text(encoding="utf-8")
+        run([gti, "build"], cwd=git_app)
+
+        # A tampered lock checksum is also refused.
+        checksum_marker = 'checksum = "sha256:'
+        digit_index = second_lock_text.index(checksum_marker) + len(
+            checksum_marker
+        )
+        flipped_digit = "0" if second_lock_text[digit_index] != "0" else "1"
+        lock_path.write_text(
+            second_lock_text[:digit_index]
+            + flipped_digit
+            + second_lock_text[digit_index + 1 :],
+            encoding="utf-8",
+        )
+        forged_build = run([gti, "build"], expected=65, cwd=git_app)
+        assert "error[GTI-B1704]" in forged_build.stderr
+        lock_path.write_text("lock-version = 1\nnot valid [", encoding="utf-8")
+        malformed_lock = run([gti, "build"], expected=65, cwd=git_app)
+        assert "error[GTI-B1702]" in malformed_lock.stderr
+        run([gti, "fetch"], cwd=git_app)
+        run([gti, "build"], cwd=git_app)
+
+        # fetch --offline verifies from the local store and fails honestly
+        # when the store is gone.
+        offline_fetch = run([gti, "fetch", "--offline"], cwd=git_app)
+        assert "gti.lock is up to date" in offline_fetch.stdout
+        run([gti, "clean"], cwd=git_app)
+        empty_offline_fetch = run(
+            [gti, "fetch", "--offline"], expected=65, cwd=git_app
+        )
+        assert "error[GTI-B1705]" in empty_offline_fetch.stderr
+        assert "offline" in empty_offline_fetch.stderr
+
+        # Trees carrying symbolic links or submodules are rejected rather
+        # than extracted.
+        linked_upstream = root / "git-linked"
+        make_upstream(linked_upstream, "linkdep", 0)
+        os.symlink("src/add.gti", linked_upstream / "alias.gti")
+        git_in(linked_upstream, "add", "-A")
+        git_in(linked_upstream, "commit", "-qm", "link")
+        linked_revision = git_in(
+            linked_upstream, "rev-parse", "HEAD"
+        ).stdout.strip()
+        linked_app = root / "git-linked-app"
+        (linked_app / "src").mkdir(parents=True)
+        (linked_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "linked-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            f'linkdep = {{ git = "{linked_upstream}", rev = '
+            f'"{linked_revision}" }}\n\n'
+            "[targets.linked-app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (linked_app / "src/main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        rejected_link = run([gti, "fetch"], expected=65, cwd=linked_app)
+        assert "error[GTI-B1705]" in rejected_link.stderr
+        assert "symbolic link" in rejected_link.stderr
+
+        gitlink_upstream = root / "git-gitlink"
+        make_upstream(gitlink_upstream, "subdep", 0)
+        git_in(
+            gitlink_upstream,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{first_revision},vendored",
+        )
+        git_in(gitlink_upstream, "commit", "-qm", "gitlink")
+        gitlink_revision = git_in(
+            gitlink_upstream, "rev-parse", "HEAD"
+        ).stdout.strip()
+        (linked_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "linked-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            f'subdep = {{ git = "{gitlink_upstream}", rev = '
+            f'"{gitlink_revision}" }}\n\n'
+            "[targets.linked-app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (linked_app / "gti.lock").unlink(missing_ok=True)
+        rejected_gitlink = run([gti, "fetch"], expected=65, cwd=linked_app)
+        assert "error[GTI-B1705]" in rejected_gitlink.stderr
+        assert "submodule" in rejected_gitlink.stderr
+
+        # Transitive pinned git dependencies lock as one closure with
+        # recorded dependency edges.
+        middle_upstream = root / "git-middle"
+        (middle_upstream / "src").mkdir(parents=True)
+        (middle_upstream / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "middledep"\n'
+            'version = "0.2.0"\n\n'
+            "[dependencies]\n"
+            f'mathdep = {{ git = "{upstream}", rev = "{second_revision}" }}\n',
+            encoding="utf-8",
+        )
+        (middle_upstream / "src/twice.gti").write_text(
+            "#include <mathdep/add>\n\n"
+            "namespace middledep {\n"
+            "int twice(int value) { return mathdep::add(value, value); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        run([git, "init", "-q", str(middle_upstream)])
+        git_in(middle_upstream, "add", "-A")
+        git_in(middle_upstream, "commit", "-qm", "initial")
+        middle_revision = git_in(
+            middle_upstream, "rev-parse", "HEAD"
+        ).stdout.strip()
+
+        chained_app = root / "git-chained-app"
+        (chained_app / "src").mkdir(parents=True)
+        (chained_app / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "chained-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            f'middledep = {{ git = "{middle_upstream}", rev = '
+            f'"{middle_revision}" }}\n\n'
+            "[targets.chained-app]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+        (chained_app / "src/main.gti").write_text(
+            "#include <middledep/twice>\n\n"
+            "int main() {\n"
+            "  return middledep::twice(3) == 106 ? 0 : 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        chained_fetch = run([gti, "fetch"], cwd=chained_app)
+        assert "Locked mathdep@0.1.0" in chained_fetch.stdout
+        assert "Locked middledep@0.2.0" in chained_fetch.stdout
+        chained_lock = (chained_app / "gti.lock").read_text(encoding="utf-8")
+        assert 'dependencies = ["mathdep"]' in chained_lock
+        run([gti, "build"], cwd=chained_app)
+        run([gti, "run"], cwd=chained_app)
+
+        # No-git projects need no lock.
+        no_git_fetch = run([gti, "fetch"], cwd=new_project)
+        assert "No git dependencies to lock" in no_git_fetch.stdout
+        assert not (new_project / "gti.lock").exists()
+
 
         # --- Native-source whole-program caching ---
         cache_cc = shutil.which("cc")

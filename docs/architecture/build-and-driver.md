@@ -234,6 +234,45 @@ This slice composes GTI source only. A dependency package with package-level
 native inputs is rejected because silently dropping or reordering its native
 contract would be unsound. Native dependency composition remains future work.
 
+### Locked Git Dependencies
+
+`alias = { git = "<url>", rev = "<full 40-hex commit>" }` declares a pinned
+git dependency; branch and tag selectors are rejected so a build plan never
+depends on mutable remote state. `gti fetch` is the sole writer of the
+workspace `gti.lock` (lock-version 1): it resolves the manifest closure,
+acquires every pinned source, and records one sorted entry per git package
+with its `name`, `version`, `source = "git+<url>"`, `rev`, a deterministic
+`sha256:` checksum of the extracted tree, and its direct dependency names.
+Regenerating an unchanged closure is byte-identical, and fetch re-derives
+every checksum from the immutable object database, so a locally modified
+checkout can never launder content into a fresh lock. `gti fetch --offline`
+verifies and extracts from the local store only.
+
+Acquisition never executes repository code. History is fetched into a bare
+object database under `build/gti/deps/git/db/` (keyed by URL identity), and
+the pinned tree is extracted blob-by-blob with `git ls-tree`/`git cat-file`
+into `build/gti/deps/git/checkouts/<url-hash>/<rev>/` — no working-tree
+checkout, hook, filter, or submodule machinery runs. Trees containing
+symbolic links, gitlinks/submodules, unsafe or `.git` paths, or case-folded
+path collisions are rejected. Git discovery follows the toolchain
+convention: `GTI_GIT`, then `git`.
+
+`gti build`, `check`, `run`, and `test` consume the lock: every declared git
+dependency must be recorded at its exact URL and revision (a missing or
+stale lock directs to `gti fetch`), the stored tree's checksum and the
+locked package identity are verified before source loading, and mismatches
+refuse the build with `GTI-B17xx` diagnostics. A plain build may materialize
+a lock-covered missing checkout; `--offline` and `--locked` never run git,
+so `gti fetch && gti build --locked` is the reproducible-pipeline shape.
+`gti metadata` and `gti clean` never acquire dependencies, and metadata
+schema 8 publishes each package's source as `path` or
+`git+<url>#<rev>#<checksum>`. A fetched package's own path dependencies must
+stay inside its checkout; its git dependencies join the same locked closure
+transitively. The workspace model identity carries the git source identity,
+so two revisions of one `name@version` never share cache state. Because the
+store lives under `build/gti`, `gti clean` removes it; rebuilding then
+requires either re-acquisition or a fresh `gti fetch`.
+
 Direct mode also exposes `--emit-native-header`. It runs the same complete
 frontend, optimization compatibility check, and MIR verification as C++
 emission, then selects `NativeHeaderBackend` instead of `CppBackend`. The mode
@@ -414,8 +453,10 @@ rule is driver policy, while the typed `main` contract is compiler semantics.
 
 The cache is whole-program and workspace-local. It does not yet cache individual
 parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
-Git/registry dependencies, lockfiles, `fetch`, native dependency composition,
-arbitrary native build scripts, and a package registry are not implemented.
+Git dependencies support pinned full revisions only; registry ranges, branch
+or tag selectors, replacement/override authority, native dependency
+composition, arbitrary native build scripts, and a package registry are not
+implemented.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP must consume reusable resolved project facts rather than parse manifest

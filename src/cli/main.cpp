@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -71,6 +72,12 @@ struct ProjectOptions {
   std::vector<std::string> programArguments;
   bool verbose = false;
   bool useCache = true;
+  bool offline = false;
+  bool locked = false;
+};
+
+struct FetchOptions {
+  bool offline = false;
 };
 
 struct ScaffoldOptions {
@@ -113,6 +120,7 @@ void printUsage(std::ostream &stream) {
          "       gti test [target] [options]\n"
          "       gti new <path> [--name <name>]\n"
          "       gti init [path] [--name <name>]\n"
+         "       gti fetch [--offline]\n"
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
@@ -160,6 +168,10 @@ void printUsage(std::ostream &stream) {
          "build.\n"
          "      --no-cache       Build without reading or updating the "
          "project cache.\n"
+         "      --offline        Never run git; only already fetched "
+         "dependencies resolve.\n"
+         "      --locked         Require gti.lock coverage without acquiring "
+         "anything.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
          "\n"
@@ -173,6 +185,8 @@ void printUsage(std::ostream &stream) {
          "belong to the program.\n"
          "  test                 Build and run all test targets, or one named "
          "test target.\n"
+         "  fetch                Acquire pinned git dependencies and write "
+         "gti.lock.\n"
          "  clean                Remove the active workspace's build/gti "
          "subtree.\n"
          "  metadata             Print deterministic project metadata as "
@@ -616,6 +630,14 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.useCache = false;
       continue;
     }
+    if (argument == "--offline") {
+      options.offline = true;
+      continue;
+    }
+    if (argument == "--locked") {
+      options.locked = true;
+      continue;
+    }
     if (argument == "-v" || argument == "--verbose") {
       options.verbose = true;
       continue;
@@ -656,6 +678,24 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   }
   if (options.jobs && !options.buildAll) {
     std::cerr << "gti: --jobs requires --all\n";
+    return ArgumentResult::ExitFailure;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult parseFetchArguments(int argc, char *argv[],
+                                   FetchOptions &options) {
+  for (int index = 2; index < argc; ++index) {
+    const std::string argument = argv[index];
+    if (argument == "-h" || argument == "--help") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (argument == "--offline") {
+      options.offline = true;
+      continue;
+    }
+    std::cerr << "gti: unknown fetch option '" << argument << "'\n";
     return ArgumentResult::ExitFailure;
   }
   return ArgumentResult::Run;
@@ -1354,7 +1394,9 @@ int runProject(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectResolutionResult resolution =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
           *currentDirectory, options.target, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package));
+          lang::TargetInfo::host(), std::move(overrides), options.package,
+          {.requireLock = true,
+           .allowAcquisition = !(options.offline || options.locked)}));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1463,7 +1505,9 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectTestResolutionResult resolution =
       lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
           *currentDirectory, options.target, options.profile,
-          lang::TargetInfo::host(), std::move(overrides), options.package));
+          lang::TargetInfo::host(), std::move(overrides), options.package,
+          {.requireLock = true,
+           .allowAcquisition = !(options.offline || options.locked)}));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
     return exitCode(ExitStatus::Compilation);
@@ -1517,6 +1561,69 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   }
   std::cerr << '\n';
   return firstFailure;
+}
+
+int runFetch(const FetchOptions &options) {
+  const std::optional<std::filesystem::path> currentDirectory =
+      workingDirectory();
+  if (!currentDirectory) {
+    return exitCode(ExitStatus::Io);
+  }
+
+  // Fetch is the lock's only writer: it resolves the manifest closure
+  // without requiring gti.lock, materializes every pinned git source (or
+  // verifies the store when offline), and records the result.
+  lang::driver::WorkspaceResolutionResult resolution =
+      lang::driver::resolveProjectWorkspace(
+          *currentDirectory, std::nullopt,
+          {.requireLock = false, .allowAcquisition = !options.offline});
+  if (!resolution.succeeded()) {
+    reportDiagnostics(resolution.diagnostics, resolution.sources);
+    return exitCode(ExitStatus::Compilation);
+  }
+
+  const lang::driver::ProjectWorkspace &workspace = *resolution.workspace;
+  const lang::driver::DependencyLock lock =
+      lang::driver::lockFromWorkspace(workspace);
+  const std::filesystem::path lockPath =
+      lang::driver::dependencyLockPath(workspace.root());
+
+  std::error_code existsError;
+  const bool lockExists =
+      std::filesystem::is_regular_file(lockPath, existsError) && !existsError;
+  if (lock.packages.empty() && !lockExists) {
+    std::cout << "No git dependencies to lock\n";
+    return exitCode(ExitStatus::Success);
+  }
+
+  for (const lang::driver::LockedGitPackage &package : lock.packages) {
+    std::cout << "Locked " << package.name << '@' << package.version << " git+"
+              << package.url << '#' << package.revision << '\n';
+  }
+
+  const std::string rendered = lang::driver::renderDependencyLock(lock);
+  if (lockExists) {
+    std::ifstream existing(lockPath, std::ios::binary);
+    const std::string current{std::istreambuf_iterator<char>(existing),
+                              std::istreambuf_iterator<char>()};
+    if (existing && current == rendered) {
+      std::cout << "gti.lock is up to date (" << lock.packages.size()
+                << (lock.packages.size() == 1 ? " git dependency"
+                                              : " git dependencies")
+                << ")\n";
+      return exitCode(ExitStatus::Success);
+    }
+  }
+  std::string writeError;
+  if (!lang::driver::writeDependencyLock(workspace.root(), lock, writeError)) {
+    std::cerr << "gti: failed to write gti.lock: " << writeError << '\n';
+    return exitCode(ExitStatus::Io);
+  }
+  std::cout << "Wrote " << lockPath.string() << " (" << lock.packages.size()
+            << (lock.packages.size() == 1 ? " git dependency"
+                                          : " git dependencies")
+            << ")\n";
+  return exitCode(ExitStatus::Success);
 }
 
 int runClean() {
@@ -1595,10 +1702,6 @@ int runFormatConfigInit(const FormatConfigInitOptions &options) {
   return exitCode(ExitStatus::Success);
 }
 
-bool isReservedProjectCommand(std::string_view command) {
-  return command == "fetch";
-}
-
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -1627,6 +1730,19 @@ int main(int argc, char *argv[]) {
       return runProjectBuildAll(options, argv[0]);
     }
     return runProject(options, argv[0]);
+  }
+
+  if (command == "fetch") {
+    FetchOptions options;
+    const ArgumentResult argumentResult =
+        parseFetchArguments(argc, argv, options);
+    if (argumentResult == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (argumentResult == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    return runFetch(options);
   }
 
   if (command == "clean") {
@@ -1682,11 +1798,6 @@ int main(int argc, char *argv[]) {
     return runFormatConfigInit(options);
   }
 
-  if (argc > 1 && isReservedProjectCommand(command)) {
-    std::cerr << "gti: project command '" << argv[1]
-              << "' is not implemented yet\n";
-    return exitCode(ExitStatus::Usage);
-  }
   if (argc > 1 && argv[1][0] != '-' &&
       std::filesystem::path(argv[1]).extension() != ".gti") {
     std::cerr << "gti: unknown command '" << argv[1] << "'\n";

@@ -53,9 +53,24 @@ struct ProjectPackage {
   ProjectNativeSettings native;
 };
 
+// A pinned git dependency source as spelled in the manifest: an exact URL
+// plus a mandatory full 40-hex commit. Branch, tag, and range selectors are
+// deliberately rejected so a build plan never depends on mutable remote
+// state.
+struct ProjectGitDependencySource {
+  std::string url;
+  std::string revision;
+  SourceSpan urlDeclaration;
+  SourceSpan revisionDeclaration;
+};
+
 struct ProjectDependency {
   std::string alias;
+  // For a path dependency, the resolved package directory. A git dependency
+  // leaves this empty until workspace resolution materializes its verified
+  // checkout.
   std::filesystem::path packageRoot;
+  std::optional<ProjectGitDependencySource> git;
   SourceSpan declaration;
   SourceSpan pathDeclaration;
 };

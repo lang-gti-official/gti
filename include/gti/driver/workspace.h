@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/driver/dependencies.h"
 #include "gti/driver/manifest.h"
 #include "gti/source_graph.h"
 
@@ -28,9 +29,29 @@ struct ResolvedProjectPackage {
   ProjectManifest manifest;
   ProjectPackageMembership membership = ProjectPackageMembership::Dependency;
   std::vector<ResolvedProjectDependency> dependencies;
+  // Set for a git-sourced package: the pinned acquisition source and the
+  // verified content checksum of its materialized tree.
+  std::optional<GitSourceKey> gitSource;
+  std::string gitChecksum;
 
   [[nodiscard]] std::string identity() const;
+  // "git+<url>#<revision>#<checksum>" for git-sourced packages.
+  [[nodiscard]] std::optional<std::string> sourceIdentity() const;
   [[nodiscard]] bool selectable() const;
+};
+
+// How workspace resolution treats pinned git dependencies. Stored trees are
+// always checksum-verified before source loading; the policy only selects
+// whether gti.lock is the coverage authority and whether a missing checkout
+// may be acquired.
+struct WorkspaceDependencyPolicy {
+  // Verify every git dependency against gti.lock (missing or stale coverage
+  // is a diagnostic). Only `gti fetch` resolves without this requirement,
+  // because it exists to write the lock.
+  bool requireLock = true;
+  // Permit running git to materialize a missing checkout. `--offline`,
+  // `--locked`, `gti metadata`, and `gti clean` refuse acquisition.
+  bool allowAcquisition = true;
 };
 
 class ProjectWorkspace;
@@ -38,7 +59,14 @@ struct WorkspaceResolutionResult;
 
 [[nodiscard]] WorkspaceResolutionResult resolveProjectWorkspace(
     const std::filesystem::path &startDirectory,
-    const std::optional<std::string> &requestedPackage = std::nullopt);
+    const std::optional<std::string> &requestedPackage = std::nullopt,
+    const WorkspaceDependencyPolicy &dependencyPolicy = {});
+
+// The lock closure `gti fetch` records: one entry per git-sourced package in
+// the resolved workspace, with its verified checksum and the names of its
+// direct manifest dependencies.
+[[nodiscard]] DependencyLock
+lockFromWorkspace(const ProjectWorkspace &workspace);
 
 class ProjectWorkspace final {
 public:
@@ -54,7 +82,8 @@ public:
 private:
   friend WorkspaceResolutionResult
   resolveProjectWorkspace(const std::filesystem::path &,
-                          const std::optional<std::string> &);
+                          const std::optional<std::string> &,
+                          const WorkspaceDependencyPolicy &);
 
   ProjectWorkspace(std::filesystem::path root,
                    std::vector<ResolvedProjectPackage> packages,
