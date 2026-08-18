@@ -64,3 +64,6 @@ venv/
 # benchmarks/, while all generated binaries, emitted code, and reports stay
 # beneath this explicit scratch root.
 /benchmark-results/
+
+# Local arming switch for the MIR cutover Stop gate (scripts/mir_cutover_gate.py).
+.claude/mir-cutover-active

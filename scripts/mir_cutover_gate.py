@@ -8,10 +8,18 @@ arithmetic over generated C++, not a judgement about a transcript, so it cannot
 be satisfied by a confident summary, a green suite, or a shipped release — the
 failure mode that cleared two earlier `/goal` attempts.
 
-Inert unless GTI_MIR_GOAL is set in the environment, so ordinary sessions in
-this repository are unaffected. Launch the cutover session with:
+Inert unless armed, so ordinary sessions in this repository are unaffected.
+Two ways to arm it, because they suit different clients:
 
-    GTI_MIR_GOAL=1 claude
+    touch .claude/mir-cutover-active     # any client, including the desktop
+                                         # app; remove the file to disarm
+    GTI_MIR_GOAL=1 claude                # terminal only, scoped to that one
+                                         # session
+
+The sentinel file is the practical option for the desktop app, which is not
+launched from a shell and so has nowhere to carry an environment variable. It
+arms every session in this checkout while it exists, so delete it when the
+cutover run is over.
 
 Fails open. If the count cannot be established — no build, no compiler, a
 compiler that will not run — the hook allows the stop and says why. A gate that
@@ -29,6 +37,7 @@ import tempfile
 
 DEFAULT_TARGET = 2482
 MARKER = "GTI verified-MIR body"
+SENTINEL = "mir-cutover-active"
 
 
 def allow(message: str | None = None) -> int:
@@ -73,13 +82,22 @@ def main() -> int:
     except OSError:
         pass
 
-    if not os.environ.get("GTI_MIR_GOAL"):
-        return allow()
-
     root = Path(
         os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parent.parent
     )
+
+    sentinel = root / ".claude" / SENTINEL
+    if not os.environ.get("GTI_MIR_GOAL") and not sentinel.is_file():
+        return allow()
+
+    # A target in the sentinel file wins, so the desktop app can ratchet
+    # without an environment variable. An unparseable file falls back rather
+    # than failing the gate.
     target = int(os.environ.get("GTI_MIR_TARGET", DEFAULT_TARGET))
+    if sentinel.is_file():
+        written = sentinel.read_text(encoding="utf-8", errors="replace").strip()
+        if written.isdigit():
+            target = int(written)
 
     gti = root / "build" / "gti"
     if not gti.is_file() or not os.access(gti, os.X_OK):
