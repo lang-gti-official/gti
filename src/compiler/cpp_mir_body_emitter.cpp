@@ -6522,6 +6522,21 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
       if (block->terminator.kind == MirTerminatorKind::Exit) {
         break;
       }
+      // Program-initialization units chain by plain Goto; checked steps
+      // chain by Invoke over a terminally-contained compute.
+      if (block->terminator.kind == MirTerminatorKind::Goto) {
+        const MirBlock *next = nullptr;
+        for (const MirBlock &candidate : body->blocks) {
+          if (candidate.id == block->terminator.target) {
+            next = &candidate;
+          }
+        }
+        if (next == nullptr) {
+          return result;
+        }
+        block = next;
+        continue;
+      }
       if (block->terminator.kind != MirTerminatorKind::Invoke) {
         return result;
       }
@@ -6640,6 +6655,16 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
         continue;
       }
       const MirOperand &operand = instruction->operands.front();
+      if (operand.kind == MirOperandKind::Constant && operand.literal &&
+          ScalarBodyTextEmitter::spellableLiteral(*operand.literal,
+                                                  operand.type)) {
+        // A frontend-evaluated constant carries its literal on the
+        // operand itself.
+        result.fields.push_back({.field = destination->symbol,
+                                 .spelling = writer.literalSpelling(
+                                     *operand.literal, operand.type)});
+        continue;
+      }
       const auto spelled = operand.kind == MirOperandKind::Value
                                ? spellings.find(operand.value)
                                : spellings.end();

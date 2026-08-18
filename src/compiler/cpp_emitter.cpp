@@ -1467,7 +1467,24 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
       const CppMirInitializerScheduleText module = emitter.initializerSchedule(
           {.kind = MirBodyKind::Module, .owner = 0});
-      if (module.supported && module.fields.empty()) {
+      // A staged field is admissible only as a data-only constant step:
+      // the frontend evaluated its value, the declaration above already
+      // carries it, and the body performs no runtime work. Anything else
+      // stays with the compatibility route fail-closed.
+      const auto dataOnlyConstant = [&](SymbolId symbol) {
+        const MirProgramInitializationStep *step =
+            mir->programInitializationPlan().findStepForSymbol(symbol);
+        return step != nullptr &&
+               step->role == ProgramInitializationStepRole::DataOnly &&
+               step->dataInitialization ==
+                   MirProgramDataInitializationKind::Constant;
+      };
+      if (module.supported &&
+          std::all_of(module.fields.begin(), module.fields.end(),
+                      [&](const CppMirFieldInitializerSpelling &field) {
+                        return field.spelling.empty() &&
+                               dataOnlyConstant(field.field);
+                      })) {
         writeIndent();
         output << "// GTI verified-MIR body: scalar-cfg-v1 "
                   "module-instance 0\n";

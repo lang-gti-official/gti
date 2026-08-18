@@ -1872,6 +1872,40 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
     }
   }
 
+  // Program-initialization steps for plain namespace globals also carry
+  // storage rows: a constexpr global's reads are frontend-substituted, so
+  // no Symbol-rooted place ever demands the row above, yet the module
+  // body's own Binding places still resolve their storage through it.
+  for (const MirProgramInitializationStep &step :
+       mir.programInitializationPlan().steps) {
+    if (step.ownerClass != 0 || step.symbol == 0) {
+      continue;
+    }
+    if (std::any_of(builder.rows.symbols.begin(), builder.rows.symbols.end(),
+                    [&](const CppMirSymbolRepresentation &row) {
+                      return row.kind ==
+                                 CppMirSymbolRepresentationKind::Storage &&
+                             row.owner == 0 && row.symbol == step.symbol;
+                    })) {
+      continue;
+    }
+    const SymbolRecord *record = semantics.database().findSymbol(step.symbol);
+    const MirPlace *storage = mir.module().findPlace(step.storagePlace);
+    if (record == nullptr || storage == nullptr ||
+        record->kind != SymbolKind::GlobalVariable ||
+        record->qualifiedName != record->name || record->name.empty()) {
+      continue;
+    }
+    builder.rows.symbols.push_back(
+        {.kind = CppMirSymbolRepresentationKind::Storage,
+         .owner = 0,
+         .symbol = step.symbol,
+         .ordinal = 0,
+         .type = storage->type,
+         .spelling = "::__gti_program::" + record->name});
+    builder.addType(storage->type);
+  }
+
   for (const MirClassInstance &instance : mir.classInstances()) {
     for (const MirClassFieldInfo &field : instance.declaredFields) {
       const SymbolRecord *record =
