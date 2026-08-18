@@ -1860,6 +1860,53 @@ int main() {
          "the selected constructor should carry its verified-MIR banner");
 }
 
+// A constructor of a generic class publishes per admitted concrete
+// instance as an explicit specialization carrying the same verified
+// schedule — declaration after the class, definition beside the deferred
+// template, stores-reference initializer list included.
+void testGenericOwnerConstructorSpecialization() {
+  const lang::FrontendResult frontend = analyze("cpp-mir-generic-ctor.gti", R"(
+class wrapper<T> {
+  T& target;
+
+public:
+  wrapper(T& value) : target(value) {}
+
+  T read() { return this.target; }
+};
+
+int main() {
+  mut int cell = 7;
+  wrapper<int> bound = wrapper<int>(cell);
+  return bound.read() - 7;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the generic-owner fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
+                                   .optimizations = optimizations});
+  const auto contains = [&](std::string_view needle) {
+    return artifact.contents.find(needle) != std::string::npos;
+  };
+  expect(contains("template <> __gti_program::wrapper<std::int32_t>::"
+                  "wrapper(const std::int32_t & __gti_mir_arg_0);"),
+         "the specialization should declare after the class definition");
+  expect(contains(" : target(__gti_mir_arg_0) "),
+         "the specialization should bind the reference field in its member "
+         "initializer list");
+}
+
 int main() {
   testExhaustiveEnumClassification();
   testReadyBodyAndRepresentationFailures();
@@ -1878,6 +1925,7 @@ int main() {
   testClosureCaptureFreezeDeclines();
   testCallableTemplateBodyVocabulary();
   testStoredReferenceConstructorSchedule();
+  testGenericOwnerConstructorSpecialization();
   testDeducedCallableTemplateEmission();
   testReferenceReturnFailureAbi();
 

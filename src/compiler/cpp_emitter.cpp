@@ -1607,6 +1607,10 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                 dynamic_cast<const FunctionDecl *>(member.get())) {
           emitGeneralMemberSpecializations(*memberFunction, true);
         }
+        if (const auto *memberConstructor =
+                dynamic_cast<const ConstructorDecl *>(member.get())) {
+          emitGeneralConstructorSpecializations(*memberConstructor, true);
+        }
       }
     }
     emitCAbiRecordAssertions(stmt, classInfo);
@@ -7051,6 +7055,60 @@ private:
     }
   }
 
+  // A constructor of a generic class publishes per admitted concrete
+  // instance as the explicit specialization of that constructor: the
+  // deferred template definition stays for unadmitted instantiations, and
+  // each admitted body's text — including the stores-reference member
+  // initializer list — comes from verified MIR.
+  void emitGeneralConstructorSpecializations(const ConstructorDecl &declaration,
+                                             bool declarationsOnly = false) {
+    if (mir == nullptr || !generalEmissionMap ||
+        !declaration.genericParameters().empty()) {
+      return;
+    }
+    for (const MirConstructorInstance &instance : mir->constructorInstances()) {
+      const HirConstructorInstance *hirInstance =
+          hir.findConstructorInstance(instance.id);
+      if (hirInstance == nullptr || hirInstance->source != &declaration ||
+          hirInstance->body.placeDomain != instance.body.placeDomain) {
+        continue;
+      }
+      const MirClassInstance *ownerInstance =
+          mir->findClassInstance(instance.owner);
+      if (ownerInstance == nullptr || ownerInstance->type.arguments.empty() ||
+          !typeIsConcrete(ownerInstance->type) ||
+          !std::all_of(instance.parameterTypes.begin(),
+                       instance.parameterTypes.end(), typeIsConcrete) ||
+          !generalConstructorOwnerEligible(ownerInstance) ||
+          !generalConstructorInstanceEligible(&instance) ||
+          !generalConstructorBodyAdmitted(instance.id)) {
+        continue;
+      }
+      // The specialization form requires the owner to spell as a genuine
+      // template-id.
+      const std::string ownerSpelling =
+          cppSemanticTypeSpelling(semantics, standard, ownerInstance->type);
+      if (ownerSpelling.find('<') == std::string::npos) {
+        continue;
+      }
+      const std::string owner = ownerSpelling.rfind("::", 0) == 0
+                                    ? ownerSpelling.substr(2)
+                                    : ownerSpelling;
+      const std::string_view name = declaration.name().lexeme;
+      writeIndent();
+      output << "template <> " << owner << "::" << name << '(';
+      emitMirOwnedLifecycleParameters(instance.parameterTypes);
+      output << ')';
+      if (declarationsOnly) {
+        output << ";\n";
+        continue;
+      }
+      emitGeneralMirConstructorInitializerList(instance);
+      output << ' ';
+      emitGeneralMirConstructorBodyText(instance);
+    }
+  }
+
   void emitSpecializationSignature(const FunctionDecl &function,
                                    const MirFunctionInstance &instance) {
     output << "template <> ";
@@ -7841,6 +7899,82 @@ private:
   // constructor body without a C++ member-initializer list, so any base
   // subobject or in-class field initializer — which an initializer list
   // would order or suppress — declines fail-closed.
+  // In-class field initializers stay observation-free under the body
+  // form: default-then-assign is identical to initializer-list
+  // suppression only when nothing can read program state or raise.
+  [[nodiscard]] static bool passiveMirFieldInitializers(const MirBody &body) {
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        switch (instruction.kind) {
+        case MirInstructionKind::Lifecycle:
+          continue;
+        case MirInstructionKind::Compute:
+          if (instruction.operation != MirOperation::Literal ||
+              !instruction.localFailureSites.empty()) {
+            return false;
+          }
+          continue;
+        case MirInstructionKind::Initialize:
+          // An operand-less Initialize is the bare default
+          // (value-initialization); a staged one may carry exactly one
+          // literal-derived value or constant.
+          if (!instruction.localFailureSites.empty() ||
+              instruction.operands.size() > 1 ||
+              (instruction.operands.size() == 1 &&
+               instruction.operands.front().kind != MirOperandKind::Value &&
+               instruction.operands.front().kind != MirOperandKind::Constant)) {
+            return false;
+          }
+          continue;
+        default:
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // The per-instance half of general constructor admission, shared by the
+  // non-generic selector and the generic-owner specialization route: a
+  // source-defined body with no failure records, drops, or cleanup
+  // boundaries, whose loans are exactly the stores-reference initializer
+  // schedule (a nonzero borrow origin is that schedule's caller-side
+  // lifetime fact and is admissible only alongside it).
+  [[nodiscard]] bool generalConstructorInstanceEligible(
+      const MirConstructorInstance *selected) const {
+    if (selected == nullptr ||
+        selected->definitionKind != MirDefinitionKind::Source ||
+        !selected->body.failureRecords.empty() ||
+        !selected->body.dropObligations.empty() ||
+        !selected->body.cleanupBoundaries.empty()) {
+      return false;
+    }
+    const std::optional<std::vector<CppMirStoredReferenceBinding>>
+        storedBindings = cppMirStoredReferenceBindings(*selected);
+    return storedBindings.has_value() &&
+           (selected->borrowOrigin == BorrowOriginKind::None ||
+            !storedBindings->empty()) &&
+           std::none_of(selected->body.loans.begin(),
+                        selected->body.loans.end(), [](const MirLoan &loan) {
+                          return loan.kind != MirLoanKind::Stored;
+                        });
+  }
+
+  // The owner-shape half: the constructed class must carry no bases,
+  // polymorphism, C-ABI layout, union layout, or active cleanup, and its
+  // in-class field initializers must be observation-free, because the
+  // body form runs them under default-then-assign semantics.
+  [[nodiscard]] bool
+  generalConstructorOwnerEligible(const MirClassInstance *ownerInstance) const {
+    return ownerInstance != nullptr && !ownerInstance->abstract &&
+           !ownerInstance->polymorphic && !ownerInstance->cAbiRecord &&
+           ownerInstance->bases.empty() &&
+           ownerInstance->structuralBases.empty() &&
+           !ownerInstance->unionLayout.has_value() &&
+           !ownerInstance->requiresActiveCleanup &&
+           passiveMirFieldInitializers(ownerInstance->fieldInitializers);
+  }
+
   [[nodiscard]] const MirConstructorInstance *
   selectedMirGeneralConstructor(const ConstructorDecl &declaration) const {
     if (mir == nullptr) {
@@ -7872,27 +8006,7 @@ private:
     }
     const MirConstructorInstance *selected =
         mir->findConstructorInstance(hirConstructor->id);
-    if (selected == nullptr ||
-        selected->definitionKind != MirDefinitionKind::Source ||
-        !selected->body.failureRecords.empty() ||
-        !selected->body.dropObligations.empty() ||
-        !selected->body.cleanupBoundaries.empty()) {
-      return nullptr;
-    }
-    // Loans are admissible only as the stores-reference initializer
-    // schedule: every loan is Stored and bijects with a reference field,
-    // bound in the emitted member initializer list. A nonzero constructor
-    // borrow origin is that schedule's caller-side lifetime fact and is
-    // admissible only alongside it.
-    const std::optional<std::vector<CppMirStoredReferenceBinding>>
-        storedBindings = cppMirStoredReferenceBindings(*selected);
-    if (!storedBindings ||
-        (selected->borrowOrigin != BorrowOriginKind::None &&
-         storedBindings->empty()) ||
-        std::any_of(selected->body.loans.begin(), selected->body.loans.end(),
-                    [](const MirLoan &loan) {
-                      return loan.kind != MirLoanKind::Stored;
-                    })) {
+    if (!generalConstructorInstanceEligible(selected)) {
       return nullptr;
     }
     // The owner's in-class field initializers still run under the body
@@ -7900,38 +8014,7 @@ private:
     // observation-free: literal materialization and literal stores make
     // default-then-assign identical to initializer-list suppression.
     // Anything that could read program state or raise declines.
-    const auto passiveFieldInitializers = [](const MirBody &body) {
-      for (const MirBlock &block : body.blocks) {
-        for (const MirInstruction &instruction : block.instructions) {
-          switch (instruction.kind) {
-          case MirInstructionKind::Lifecycle:
-            continue;
-          case MirInstructionKind::Compute:
-            if (instruction.operation != MirOperation::Literal ||
-                !instruction.localFailureSites.empty()) {
-              return false;
-            }
-            continue;
-          case MirInstructionKind::Initialize:
-            // An operand-less Initialize is the bare default
-            // (value-initialization); a staged one may carry exactly one
-            // literal-derived value or constant.
-            if (!instruction.localFailureSites.empty() ||
-                instruction.operands.size() > 1 ||
-                (instruction.operands.size() == 1 &&
-                 instruction.operands.front().kind != MirOperandKind::Value &&
-                 instruction.operands.front().kind !=
-                     MirOperandKind::Constant)) {
-              return false;
-            }
-            continue;
-          default:
-            return false;
-          }
-        }
-      }
-      return true;
-    };
+
     const MirClassInstance *ownerInstance =
         mir->findClassInstance(selected->owner);
     if (ownerInstance == nullptr || !ownerInstance->type.arguments.empty() ||
@@ -7941,7 +8024,7 @@ private:
         ownerInstance->polymorphic || ownerInstance->cAbiRecord ||
         ownerInstance->unionLayout.has_value() ||
         ownerInstance->requiresActiveCleanup ||
-        !passiveFieldInitializers(ownerInstance->fieldInitializers)) {
+        !passiveMirFieldInitializers(ownerInstance->fieldInitializers)) {
       return nullptr;
     }
     if (!generalConstructorBodyAdmitted(selected->id)) {
@@ -13867,6 +13950,10 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
             } else {
               emitBlock(*definition.constructor->body());
             }
+          }
+          if (definition.constructor != nullptr &&
+              !definition.owner->genericParameters().empty()) {
+            emitGeneralConstructorSpecializations(*definition.constructor);
           }
           break;
         case DeferredMemberKind::Destructor:
