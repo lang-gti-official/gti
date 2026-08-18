@@ -13,9 +13,18 @@ local toolchain = require("gti.toolchain")
 toolchain.prepend_path()
 require("gti.treesitter").setup(toolchain)
 
+-- On the nightly channel the checkout runs ahead of the last published build,
+-- so its VERSION legitimately differs from the installed toolchain's. Only the
+-- stable channel pins the two together.
+local channel = vim.g.gti_channel or vim.env.GTI_CHANNEL or "stable"
 local expected_version = toolchain.expected_version()
 local installed_version = toolchain.installed_version()
-if expected_version and installed_version and expected_version ~= installed_version then
+if
+  channel == "stable"
+  and expected_version
+  and installed_version
+  and expected_version ~= installed_version
+then
   vim.schedule(function()
     vim.notify(
       string.format(

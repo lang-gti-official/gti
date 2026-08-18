@@ -12,7 +12,19 @@ local function report(message)
   end
 end
 
+-- The channel is read here rather than from the plugin spec's `opts`, because
+-- lazy.nvim routes `opts` to the plugin's setup function and never to a build
+-- step. `vim.g` is set before the spec loads and is visible to this script.
+local channel = vim.g.gti_channel or vim.env.GTI_CHANNEL or "stable"
+if channel ~= "stable" and channel ~= "nightly" then
+  error(string.format(
+    "vim.g.gti_channel must be \"stable\" or \"nightly\", got %q",
+    tostring(channel)
+  ))
+end
+
 installer.install({
   root = root,
+  channel = channel,
   on_progress = report,
 })

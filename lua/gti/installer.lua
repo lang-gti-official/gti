@@ -147,7 +147,11 @@ local function validate_archive_paths(archive)
   end
 end
 
-local function validate_toolchain(root, version)
+-- A release is identified by one file inside the toolchain. Stable releases
+-- use VERSION, which changes per release. The nightly channel republishes one
+-- rolling release whose VERSION does not move between builds, so it is
+-- identified by BUILD_ID -- the commit it was built from -- instead.
+local function validate_toolchain(root, identity)
   local required = {
     "bin/gti",
     "bin/gti_lsp",
@@ -158,6 +162,7 @@ local function validate_toolchain(root, version)
     "share/gti/stdlib/prelude.gti",
     "share/gti/stdlib/std/array.gti",
     "share/licenses/gti/GTI-LICENSE.txt",
+    identity.relative,
   }
   for _, relative in ipairs(required) do
     if not exists(join(root, relative)) then
@@ -170,17 +175,17 @@ local function validate_toolchain(root, version)
   if vim.fn.executable(join(root, "bin", "gti_lsp")) ~= 1 then
     error("installed GTI language server is not executable")
   end
-  if trim(read_file(join(root, "share", "gti", "VERSION"))) ~= version then
-    error("installed GTI toolchain version does not match " .. version)
+  if trim(read_file(join(root, identity.relative))) ~= identity.value then
+    error("installed GTI toolchain does not match " .. identity.label)
   end
 end
 
-local function current_install_matches(root, version)
-  local version_path = join(root, "share", "gti", "VERSION")
-  if not exists(version_path) then
+local function current_install_matches(root, identity)
+  local identity_path = join(root, identity.relative)
+  if not exists(identity_path) then
     return false
   end
-  if trim(read_file(version_path)) ~= version then
+  if trim(read_file(identity_path)) ~= identity.value then
     return false
   end
   return vim.fn.executable(join(root, "bin", "gti")) == 1
@@ -193,15 +198,71 @@ function M.platform()
   return detect_platform()
 end
 
+-- The nightly BUILD_ID is published as its own small asset so an installed
+-- toolchain can decide whether it is current without downloading a full
+-- platform archive on every sync.
+local function fetch_nightly_build_id(root)
+  local temporary = join(root, string.format(
+    ".gti-build-id-%d-%s",
+    vim.fn.getpid(),
+    tostring(vim.uv.hrtime())
+  ))
+  vim.fn.mkdir(temporary, "p")
+  local path = join(temporary, "BUILD_ID")
+  local ok, failure = pcall(download, string.format(
+    "https://github.com/%s/releases/download/nightly/BUILD_ID",
+    repository
+  ), path)
+  local build_id = ok and trim(read_file(path)) or nil
+  vim.fn.delete(temporary, "rf")
+  if not ok then
+    error("could not read the nightly build identity: " .. tostring(failure))
+  end
+  if not build_id or not build_id:match("^%x+$") then
+    error("the nightly build identity is not a commit identity")
+  end
+  return build_id
+end
+
+local function resolve_release(opts, root, platform)
+  local channel = opts.channel or "stable"
+  if channel == "nightly" then
+    local build_id = opts.build_id or fetch_nightly_build_id(root)
+    return {
+      tag = "nightly",
+      archive_name = string.format("gti-nightly-%s.tar.gz", platform),
+      identity = {
+        relative = "share/gti/BUILD_ID",
+        value = build_id,
+        label = "nightly " .. build_id:sub(1, 8),
+      },
+    }
+  end
+  if channel ~= "stable" then
+    error("unknown GTI release channel: " .. tostring(channel))
+  end
+  local version = opts.version or trim(read_file(join(root, "VERSION")))
+  return {
+    tag = "v" .. version,
+    archive_name = string.format("gti-v%s-%s.tar.gz", version, platform),
+    identity = {
+      relative = "share/gti/VERSION",
+      value = version,
+      label = "GTI " .. version,
+    },
+  }
+end
+
 function M.install(opts)
   opts = opts or {}
   local root = assert(opts.root, "GTI installer requires the plugin root")
-  local version = opts.version or trim(read_file(join(root, "VERSION")))
   local platform = opts.platform or detect_platform()
   local install_root = join(root, "toolchain")
+  local release = resolve_release(opts, root, platform)
+  local identity = release.identity
 
-  if not opts.force and current_install_matches(install_root, version) then
-    progress(opts, "GTI " .. version .. " is already installed")
+  if not opts.force and current_install_matches(install_root, identity) then
+    progress(opts, identity.label .. " is already installed")
     return install_root
   end
 
@@ -209,11 +270,11 @@ function M.install(opts)
     error("tar is required to install the GTI toolchain")
   end
 
-  local archive_name = string.format("gti-v%s-%s.tar.gz", version, platform)
+  local archive_name = release.archive_name
   local base_url = string.format(
-    "https://github.com/%s/releases/download/v%s/%s",
+    "https://github.com/%s/releases/download/%s/%s",
     repository,
-    version,
+    release.tag,
     archive_name
   )
   local temporary = join(root, string.format(
@@ -241,12 +302,12 @@ function M.install(opts)
     verify_checksum(archive, checksum, archive_name)
     validate_archive_paths(archive)
 
-    progress(opts, "Extracting GTI " .. version)
+    progress(opts, "Extracting " .. identity.label)
     local extracted, extract_error = run({ "tar", "-xzf", archive, "-C", extraction })
     if not extracted then
       error("could not extract GTI release archive: " .. extract_error)
     end
-    validate_toolchain(extraction, version)
+    validate_toolchain(extraction, identity)
 
     if exists(backup) then
       vim.fn.delete(backup, "rf")
@@ -270,7 +331,7 @@ function M.install(opts)
       vim.fn.delete(backup, "rf")
     end
 
-    progress(opts, "Installed GTI " .. version .. " for " .. platform)
+    progress(opts, "Installed " .. identity.label .. " for " .. platform)
     return install_root
   end, debug.traceback)
 
