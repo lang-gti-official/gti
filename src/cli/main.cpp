@@ -8,12 +8,15 @@
 #include "gti/support.h"
 #include "project_presentation.h"
 
+#include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -63,6 +66,8 @@ struct ProjectOptions {
   std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
   bool emitMir = false;
+  bool buildAll = false;
+  std::optional<int> jobs;
   std::vector<std::string> programArguments;
   bool verbose = false;
   bool useCache = true;
@@ -137,6 +142,9 @@ void printUsage(std::ostream &stream) {
          "      --package <name> Select a package from the active workspace.\n"
          "      --profile <name> Select a manifest profile (default: dev).\n"
          "      --release        Shorthand for --profile release.\n"
+         "      --all            Build every declared target (gti build "
+         "only).\n"
+         "      --jobs <count>   Bound concurrent target builds with --all.\n"
          "      --cxx <path>     Override the native C++ compiler.\n"
          "      --cc <path>      Override the native C compiler.\n"
          "      --std <version>  Override c++20 or c++23.\n"
@@ -475,6 +483,37 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.emitMir = true;
       continue;
     }
+    if (argument == "--all") {
+      if (options.command != ProjectCommand::Build) {
+        std::cerr << "gti: --all is not supported by gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      options.buildAll = true;
+      continue;
+    }
+    if (argument == "--jobs") {
+      if (options.command != ProjectCommand::Build) {
+        std::cerr << "gti: --jobs is not supported by gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      if (++index >= argc) {
+        std::cerr << "gti: missing job count after --jobs\n";
+        return ArgumentResult::ExitFailure;
+      }
+      const std::string_view value = argv[index];
+      int jobs = 0;
+      const auto [parsedEnd, parseError] =
+          std::from_chars(value.data(), value.data() + value.size(), jobs);
+      if (parseError != std::errc{} ||
+          parsedEnd != value.data() + value.size() || jobs < 1) {
+        std::cerr << "gti: --jobs requires a positive whole number\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.jobs = jobs;
+      continue;
+    }
     if (argument == "--cxx") {
       if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --cxx is not valid for gti "
@@ -605,6 +644,18 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   }
   if (options.emitMir && options.keepCpp.value_or(false)) {
     std::cerr << "gti: --emit-mir and --keep-cpp cannot be used together\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.buildAll && options.target) {
+    std::cerr << "gti: --all cannot be combined with a target selection\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.buildAll && options.emitMir) {
+    std::cerr << "gti: --all and --emit-mir cannot be used together\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.jobs && !options.buildAll) {
+    std::cerr << "gti: --jobs requires --all\n";
     return ArgumentResult::ExitFailure;
   }
   return ArgumentResult::Run;
@@ -1167,6 +1218,127 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
   return reportBuildResult(result, options.verbose);
 }
 
+// Builds every declared target by delegating each one to a child `gti build
+// <target>` invocation. Children are isolated whole-program builds, so a
+// bounded number may run concurrently; the parent replays each child's
+// captured output in deterministic target-name order and reports the first
+// failing target's status regardless of scheduling.
+int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
+  const std::optional<std::filesystem::path> currentDirectory =
+      workingDirectory();
+  if (!currentDirectory) {
+    return exitCode(ExitStatus::Io);
+  }
+
+  lang::driver::ProjectBuildOverrides overrides;
+  overrides.optimization = options.optimization;
+  overrides.cppStandard = options.standard;
+  overrides.executionProfile = options.executionProfile;
+  overrides.keepCpp = options.keepCpp;
+  const lang::driver::ProjectTargetSetResolutionResult resolution =
+      lang::driver::resolveAllProjectTargets(lang::driver::ProjectBuildRequest(
+          *currentDirectory, std::nullopt, options.profile,
+          lang::TargetInfo::host(), std::move(overrides), options.package));
+  if (!resolution.succeeded()) {
+    reportDiagnostics(resolution.diagnostics, resolution.sources);
+    return exitCode(ExitStatus::Compilation);
+  }
+
+  const std::size_t targetCount = resolution.plans.size();
+  const unsigned hardwareJobs =
+      std::max(1u, std::thread::hardware_concurrency());
+  const std::size_t boundedJobs = std::min<std::size_t>(
+      targetCount,
+      options.jobs ? static_cast<std::size_t>(*options.jobs) : hardwareJobs);
+  if (options.verbose) {
+    std::cerr << "gti: building " << targetCount << " targets with "
+              << boundedJobs << " parallel jobs\n";
+  }
+
+  const auto childCommand = [&](const lang::driver::ProjectBuildPlan &plan) {
+    std::vector<std::string> command{driver, "build", plan.targetName(),
+                                     "--profile", options.profile};
+    if (options.package) {
+      command.emplace_back("--package");
+      command.push_back(*options.package);
+    }
+    if (options.cxx) {
+      command.emplace_back("--cxx");
+      command.push_back(*options.cxx);
+    }
+    if (options.cc) {
+      command.emplace_back("--cc");
+      command.push_back(*options.cc);
+    }
+    if (options.standard) {
+      command.emplace_back("--std");
+      command.emplace_back(lang::cli::cppStandardName(*options.standard));
+    }
+    if (options.optimization) {
+      command.emplace_back("-O" + std::to_string(lang::cli::optimizationNumber(
+                                      *options.optimization)));
+    }
+    if (options.executionProfile) {
+      command.emplace_back("--execution-profile");
+      command.emplace_back(
+          lang::executionProfileName(*options.executionProfile));
+    }
+    if (options.keepCpp) {
+      command.emplace_back(*options.keepCpp ? "--keep-cpp" : "--no-keep-cpp");
+    }
+    if (!options.useCache) {
+      command.emplace_back("--no-cache");
+    }
+    if (options.verbose) {
+      command.emplace_back("--verbose");
+    }
+    return command;
+  };
+
+  std::vector<lang::driver::StartedProcess> running;
+  running.reserve(targetCount);
+  std::size_t nextToStart = 0;
+  const auto startNext = [&]() {
+    const lang::driver::ProjectBuildPlan &plan = resolution.plans[nextToStart];
+    running.push_back(lang::driver::startProcess(
+        childCommand(plan),
+        {.captureSuccessfulOutput = true,
+         .description = "build of target '" + plan.targetName() + "'"}));
+    ++nextToStart;
+  };
+  while (nextToStart < std::min(boundedJobs, targetCount)) {
+    startNext();
+  }
+
+  int firstFailure = exitCode(ExitStatus::Success);
+  for (std::size_t index = 0; index < targetCount; ++index) {
+    const lang::driver::ProcessResult result = running[index].wait();
+    if (nextToStart < targetCount) {
+      startNext();
+    }
+    const lang::driver::ProjectBuildPlan &plan = resolution.plans[index];
+    if (result.succeeded()) {
+      std::cout << result.output;
+      continue;
+    }
+    std::cerr << result.output;
+    if (result.driverDiagnostic) {
+      std::cerr << *result.driverDiagnostic << '\n';
+    }
+    std::cerr << "gti: build --all: target '" << plan.targetName()
+              << "' failed with exit code " << result.exitCode << '\n';
+    if (firstFailure == exitCode(ExitStatus::Success)) {
+      firstFailure = result.exitCode;
+    }
+  }
+  if (firstFailure == exitCode(ExitStatus::Success)) {
+    std::cout << "Built " << targetCount
+              << (targetCount == 1 ? " target" : " targets") << " ["
+              << options.profile << "]\n";
+  }
+  return firstFailure;
+}
+
 int runProject(const ProjectOptions &options, const char *driver) {
   const std::optional<std::filesystem::path> currentDirectory =
       workingDirectory();
@@ -1448,9 +1620,13 @@ int main(int argc, char *argv[]) {
     if (argumentResult == ArgumentResult::ExitFailure) {
       return exitCode(ExitStatus::Usage);
     }
-    return options.command == ProjectCommand::Test
-               ? runProjectTests(options, argv[0])
-               : runProject(options, argv[0]);
+    if (options.command == ProjectCommand::Test) {
+      return runProjectTests(options, argv[0]);
+    }
+    if (options.buildAll) {
+      return runProjectBuildAll(options, argv[0]);
+    }
+    return runProject(options, argv[0]);
   }
 
   if (command == "clean") {

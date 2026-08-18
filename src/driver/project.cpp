@@ -802,6 +802,81 @@ resolveProjectTests(const ProjectBuildRequest &request) {
   return result;
 }
 
+ProjectTargetSetResolutionResult
+resolveAllProjectTargets(const ProjectBuildRequest &request) {
+  ProjectTargetSetResolutionResult result;
+  if (request.targetName()) {
+    result.status = ProjectResolutionStatus::SelectionFailure;
+    result.diagnostics.push_back(projectDiagnostic(
+        "GTI-B1205", {request.startDirectory().string(), 0, 1, 1},
+        "Building every target does not accept a target selection."));
+    return result;
+  }
+
+  WorkspaceResolutionResult resolvedWorkspace =
+      resolveProjectWorkspace(request.startDirectory(), request.packageName());
+  result.sources = std::move(resolvedWorkspace.sources);
+  if (!resolvedWorkspace.succeeded()) {
+    switch (resolvedWorkspace.status) {
+    case WorkspaceResolutionStatus::DiscoveryFailure:
+      result.status = ProjectResolutionStatus::DiscoveryFailure;
+      break;
+    case WorkspaceResolutionStatus::ManifestFailure:
+      result.status = ProjectResolutionStatus::ManifestFailure;
+      break;
+    case WorkspaceResolutionStatus::GraphFailure:
+      result.status = ProjectResolutionStatus::GraphFailure;
+      break;
+    case WorkspaceResolutionStatus::SelectionFailure:
+      result.status = ProjectResolutionStatus::SelectionFailure;
+      break;
+    case WorkspaceResolutionStatus::Success:
+      result.status = ProjectResolutionStatus::GraphFailure;
+      break;
+    }
+    result.diagnostics = std::move(resolvedWorkspace.diagnostics);
+    return result;
+  }
+
+  const ProjectWorkspace &workspace = *resolvedWorkspace.workspace;
+  const ProjectManifest &manifest = workspace.selectedPackage().manifest;
+  if (manifest.targets().empty()) {
+    Diagnostic diagnostic = projectDiagnostic(
+        "GTI-B1201", manifestSpan(manifest),
+        "Package '" + manifest.package().name +
+            "' is source-only and declares no build targets.");
+    diagnostic.hints.push_back(
+        "Select a workspace package with a target using --package, or declare "
+        "a [targets.<name>] table.");
+    result.diagnostics.push_back(std::move(diagnostic));
+  }
+
+  const ProjectProfile *selectedProfile =
+      selectProfile(manifest, request.profileName(), result.diagnostics);
+  if (!result.diagnostics.empty() || selectedProfile == nullptr) {
+    result.status = ProjectResolutionStatus::SelectionFailure;
+    return result;
+  }
+
+  result.plans.reserve(manifest.targets().size());
+  for (const ProjectTarget &target : manifest.targets()) {
+    std::optional<NativeInputs> nativeInputs =
+        resolveNativeInputs(manifest, target, *selectedProfile,
+                            request.target(), result.diagnostics);
+    if (!nativeInputs) {
+      result.status = ProjectResolutionStatus::ManifestFailure;
+      result.plans.clear();
+      return result;
+    }
+    result.plans.push_back(makeBuildPlan(
+        workspace, manifest, target, *selectedProfile, request.target(),
+        std::move(*nativeInputs), request.overrides()));
+  }
+
+  result.status = ProjectResolutionStatus::Success;
+  return result;
+}
+
 ProjectMetadataResult
 resolveProjectMetadata(const std::filesystem::path &startDirectory,
                        TargetInfo target,

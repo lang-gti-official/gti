@@ -229,14 +229,21 @@ and dependency cycles or duplicate package identities fail before compilation.
 Git dependencies and `gti.lock` remain the next package-system phase.
 
 Project `build`, `run`, and `test` commands use a verified local whole-program
-cache under `build/gti/cache/v1`. An unchanged eligible build restores the
-executable without rerunning the frontend/backend or native compiler. Builds
-with native sources, search paths, opaque native arguments, link inputs, or
-dependency-injecting environment paths conservatively bypass the cache until
-their transitive inputs can be modeled. Use `--verbose` to see the cache
-identity and hit/miss reason, or `--no-cache` to bypass both lookup and
-publication for verification. Direct `gti file.gti` compilation and `gti
-check` remain uncached.
+cache under `build/gti/cache/v2`. An unchanged eligible build restores the
+executable without rerunning the frontend/backend or native compiler. Declared
+native C/C++ sources, declared include directories, and exact archive/object
+link files participate in the cache through compiler dependency discovery;
+opaque native argument vectors, name-resolved libraries and frameworks,
+library search directories, non-content-complete link inputs (thin archives,
+linker scripts, shared libraries), time-and-date preprocessor macros, and
+dependency-injecting environment search paths conservatively bypass. Use
+`--verbose` to see the cache identity and hit/miss/bypass reason, or
+`--no-cache` to bypass both lookup and publication for verification. Direct
+`gti file.gti` compilation and `gti check` remain uncached.
+
+`gti build --all` builds every declared target concurrently with a bounded job
+count (`--jobs <count>`), deterministic name-ordered output, and byte-identical
+artifacts whether built serially or in parallel.
 
 Create a new manifest-driven executable package with:
 

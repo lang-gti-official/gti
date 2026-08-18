@@ -90,7 +90,14 @@ arrays remain a trusted escape hatch: the driver does not claim to classify
 every vendor-specific ABI flag, and admitted arguments must not contradict the
 resolved `TargetInfo`. The driver appends `-fno-fast-math` and
 `-ffp-contract=off` after every forwarded argument, followed by the generated
-artifact's `__gti_strict_ieee754=1` policy marker. `TargetInfo` is resolved
+artifact's `__gti_strict_ieee754=1` policy marker. On Apple hosts the final
+link also appends `-Wl,-reproducible`, because Apple's linker otherwise
+randomizes `LC_UUID` in its fast mode; equal inputs must produce equal output
+bytes for serial/parallel build equivalence and cache verification. For the
+same reason the staged link output keeps the final executable's filename
+inside a unique staging directory rather than using a uniquely named staged
+file, since the linker derives output-identity metadata from the output
+basename. `TargetInfo` is resolved
 before frontend entry and passed unchanged through semantics, optimization,
 and backend generation. `--execution-profile single-threaded|concurrent`
 selects its execution-profile fact; omission remains single-threaded. The
@@ -119,6 +126,20 @@ rejects a test target and points to `gti test`. `clean` removes only a validated
 tool-owned subtree. When a package has one executable plus test targets, that
 executable remains the default for `build`, `check`, and `run`. `metadata` is
 read-only.
+
+`gti build --all` builds every declared executable and test target of the
+selected package for one profile. Each target is delegated to a child
+`gti build <target>` invocation carrying the parent's resolved options, so
+every target remains an independent whole-program build; `--jobs <count>`
+bounds how many children run concurrently (defaulting to the host's hardware
+concurrency, clamped to the target count). Children start in deterministic
+target-name order and the parent replays each child's captured output in that
+same order, so output and diagnostics are byte-stable regardless of
+scheduling. A failing target does not stop the remaining targets; the command
+reports each failure and returns the first failing target's status in name
+order. Serial (`--jobs 1`) and parallel builds produce byte-identical
+artifacts. `--all` rejects an explicit target selection and `--emit-mir`, and
+`--jobs` requires `--all`.
 
 Package, target, and profile names have portable artifact identity: reserved
 device names and case-fold collisions are rejected before filesystem mutation.
@@ -249,17 +270,20 @@ the same resolved configuration.
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,
-content-addressed whole-program cache by default when the build has no declared
-native C or C++ source, native search directory, opaque native argument vector,
-native link operand, name-resolved library/framework, or dependency-injecting
-native environment search path. Search paths and native link files bypass the
-cache: a header, linker script, or thin archive can name transitive inputs
-outside the declared tree, file, or environment value. Those native
-configurations, direct `gti source.gti` mode, and `gti check` remain uncached.
-`--no-cache` disables
+content-addressed whole-program cache by default. Declared native C and C++
+sources, declared native include directories, and content-complete exact link
+files (regular non-thin archives and relocatable objects) participate in cache
+identity exactly and no longer force a bypass. The remaining conservative
+bypasses are opaque native argument vectors, name-resolved libraries and
+frameworks, native library search directories, link inputs that are not
+content-complete (thin archives, linker scripts, shared libraries, and
+unrecognized formats), dependency-injecting native environment search paths,
+and any input whose exact identity cannot be established. Direct
+`gti source.gti` mode and `gti check` remain uncached. `--no-cache` disables
 both lookup and publication for one project build/run/test command; under
 `--verbose`, the CLI reports the cache identity and whether the request hit,
-missed, recovered a corrupt entry, or was conservatively bypassed.
+missed, recovered a corrupt entry, or was conservatively bypassed with its
+reason.
 
 The cache does not parse includes or manifests independently. The driver calls
 `loadCompilationInputs`, which uses the compiler's existing `SourceLoader` to
@@ -277,11 +301,31 @@ The current key includes:
   SHA-256 content identities for every loaded GTI unit, ordered logical source
   edges, and standard-library import names;
 - the native C++ compiler command, resolved executable content, and `--version`
-  output;
+  output (plus the same identity for the C compiler when C sources are
+  declared);
 - runtime headers/archive and the C++20 compatibility headers when selected;
-- selected native standards; and
+- selected native standards;
+- declared native include directories as full sorted tree identities, so
+  adding, removing, or editing any file below a declared include root changes
+  the key and header shadowing cannot restore a stale executable;
+- for every declared C or C++ source, a native dependency discovery probe: the
+  driver runs the exact object-compile argument vector with `-E -MD -MF`,
+  consumes the compiler's own make-style dependency report for the exact
+  discovered input set, hashes every discovered file's content and path
+  identity, and hashes the preprocessed translation unit itself so include
+  resolution is captured as the compiler saw it at lookup time;
+- exact link files and file link operands classified content-complete by
+  magic (regular archives and relocatable objects), with content identity; and
 - bounded scalar native-toolchain environment values that affect policy without
   injecting a mutable search root.
+
+The deterministic preprocessing policy is part of discovery: a declared source
+or discovered dependency spelling `__DATE__`, `__TIME__`, or `__TIMESTAMP__`
+bypasses the cache, because object content would depend on ambient build time
+that no input content identity can record. The scan is a conservative byte
+match; a spelling inside a comment costs a rebuild, never a stale hit. A
+failed probe, unreadable discovered input, or unparseable dependency report
+likewise bypasses with an `identity unavailable` reason.
 
 Application GTI paths in a resolved package graph use package
 `name@version` plus the package-relative unit path; standalone application
@@ -316,20 +360,21 @@ not discard a successfully published program. Deleting only `build/gti/cache`
 does not modify sources or published target artifacts; `gti clean` deliberately
 removes the entire validated `build/gti` subtree, including both.
 
-Builds with declared C or C++ source files currently bypass whole-program cache
-lookup and publication. Native preprocessing can read compiler-discovered
-headers and time/metadata-sensitive macros that a source-content-only key cannot
-represent safely. Opaque `c-compile-args`, `compile-args`, `link-args`, and
-`raw-args` also bypass because options such as `-include` and linker scripts can
-introduce undeclared inputs. Native include/library search directories, exact
-link files, ordered link operands, and named libraries/frameworks also bypass.
-A header, linker script, or thin archive can name transitive files outside a
-declared directory or file, and the driver does not yet retain the exact file
-selected by native search. Every such build recompiles and relinks until native
-depfiles and resolved link-input discovery are part of the cache input model.
-Non-empty compiler/SDK/include/library search environment variables likewise
-bypass: hashing `CPATH=/path`, for example, does not identify a transitive or
-subsequently mutated header below that path.
+The remaining bypasses are exact-identity boundaries, not native-source
+boundaries. Opaque `c-compile-args`, `compile-args`, `link-args`, and
+`raw-args` bypass because options such as `-include` and linker scripts can
+introduce undeclared inputs outside the probed translation units and the final
+generated-C++ link. Named libraries/frameworks, non-file ordered link
+operands, and native library search directories bypass because the driver
+does not model the linker's search algorithm and must not guess which file a
+name would resolve to. A link file that is not a content-complete regular
+archive or relocatable object (thin archives, linker scripts, shared
+libraries, unrecognized formats) bypasses because its bytes do not determine
+its full contribution to the link. Non-empty compiler/SDK/include/library
+search environment variables likewise bypass: hashing `CPATH=/path`, for
+example, does not identify a transitive or subsequently mutated header below
+that path. Narrowing any of these requires establishing exact identity first;
+widening what the key trusts is never an acceptable way to obtain a hit.
 
 Cacheable builds still consume implicit C++ standard-library and platform SDK
 headers/libraries selected by the native compiler. The bounded toolchain

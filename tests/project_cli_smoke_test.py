@@ -1194,6 +1194,404 @@ def main():
         run([gti, "clean"], cwd=engine_project)
         assert not (engine_project / "build/gti").exists()
 
+        # --- Native-source whole-program caching ---
+        cache_cc = shutil.which("cc")
+        cache_cxx = shutil.which("c++")
+        if cache_cc is None or cache_cxx is None:
+            raise AssertionError("native cache tests require cc and c++ on PATH")
+        cache_native = root / "cache-native"
+        (cache_native / "src").mkdir(parents=True)
+        (cache_native / "native/include").mkdir(parents=True)
+        (cache_native / "native/lib").mkdir(parents=True)
+
+        def cache_native_manifest(native_lines):
+            (cache_native / "gti.toml").write_text(
+                "manifest-version = 1\n\n"
+                "[package]\n"
+                'name = "cache-native"\n'
+                'version = "0.1.0"\n\n'
+                "[package.native]\n"
+                + "".join(line + "\n" for line in native_lines)
+                + "\n[targets.cache-native]\n"
+                'kind = "executable"\n'
+                'root = "src/main.gti"\n',
+                encoding="utf-8",
+            )
+
+        (cache_native / "native/include/support.h").write_text(
+            "#define NATIVE_BIAS 0\n"
+            "int native_add(int left, int right);\n",
+            encoding="utf-8",
+        )
+        (cache_native / "native/support.c").write_text(
+            '#include "support.h"\n'
+            "int native_add(int left, int right) {\n"
+            "  return left + right + NATIVE_BIAS;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (cache_native / "src/main.gti").write_text(
+            'extern "C" {\n'
+            "int native_add(int left, int right);\n"
+            "}\n\n"
+            "int main() {\n"
+            "  return native_add(2, 3) == 5 ? 0 : 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        link_object = cache_native / "native/lib/extra.o"
+        run(
+            [
+                cache_cc,
+                "-c",
+                str(cache_native / "native/support.c"),
+                "-I",
+                str(cache_native / "native/include"),
+                "-o",
+                str(link_object),
+            ]
+        )
+
+        def cache_native_build(expected=0, extra=(), env=None):
+            return run(
+                [
+                    gti,
+                    "build",
+                    "--verbose",
+                    "--cc",
+                    cache_cc,
+                    "--cxx",
+                    cache_cxx,
+                    *extra,
+                ],
+                expected=expected,
+                cwd=cache_native,
+                env=env,
+            )
+
+        def cache_key(report):
+            for line in report.stderr.splitlines():
+                for status in ("gti: cache miss ", "gti: cache hit "):
+                    if line.startswith(status):
+                        return line[len(status):].split(" ", 1)[0]
+            raise AssertionError(f"no cache key in stderr: {report.stderr}")
+
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'c-sources = ["native/support.c"]',
+            ]
+        )
+        native_cache_first = cache_native_build()
+        assert "gti: cache miss " in native_cache_first.stderr
+        first_native_key = cache_key(native_cache_first)
+        native_cache_second = cache_native_build()
+        assert "gti: cache hit " in native_cache_second.stderr
+        assert cache_key(native_cache_second) == first_native_key
+        assert not any(
+            line.startswith("+ ")
+            for line in native_cache_second.stderr.splitlines()
+        )
+        run([gti, "run"], cwd=cache_native)
+
+        # A header added beside the C source shadows the declared include
+        # directory through quote-include search order. The cache must miss
+        # and rebuild with the shadowing header rather than restore the
+        # previous executable.
+        shadow_header = cache_native / "native/support.h"
+        shadow_header.write_text(
+            "#define NATIVE_BIAS 1\n"
+            "int native_add(int left, int right);\n",
+            encoding="utf-8",
+        )
+        shadowed_build = cache_native_build()
+        assert "gti: cache miss " in shadowed_build.stderr
+        assert cache_key(shadowed_build) != first_native_key
+        run([gti, "run"], expected=1, cwd=cache_native)
+        shadow_header.unlink()
+        unshadowed_build = cache_native_build()
+        assert "gti: cache hit " in unshadowed_build.stderr
+        assert cache_key(unshadowed_build) == first_native_key
+        run([gti, "run"], cwd=cache_native)
+
+        # Changing a depfile-discovered header invalidates the identity.
+        (cache_native / "native/include/support.h").write_text(
+            "#define NATIVE_BIAS 0\n"
+            "int native_add(int left, int right);\n"
+            "/* revised */\n",
+            encoding="utf-8",
+        )
+        revised_header_build = cache_native_build()
+        assert "gti: cache miss " in revised_header_build.stderr
+        assert cache_key(revised_header_build) != first_native_key
+
+        # A content-complete relocatable object as an exact link file joins
+        # the identity instead of bypassing.
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'link-files = ["native/lib/extra.o"]',
+            ]
+        )
+        link_file_first = cache_native_build()
+        assert "gti: cache miss " in link_file_first.stderr
+        link_file_second = cache_native_build()
+        assert "gti: cache hit " in link_file_second.stderr
+
+        # Every remaining bypass reason is reported explicitly.
+        shared_library = cache_native / (
+            "native/lib/libextra_shared."
+            + ("dylib" if sys.platform == "darwin" else "so")
+        )
+        run(
+            [
+                cache_cc,
+                "-shared",
+                "-fPIC",
+                str(cache_native / "native/support.c"),
+                "-I",
+                str(cache_native / "native/include"),
+                "-o",
+                str(shared_library),
+            ]
+        )
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                f'link-files = ["native/lib/{shared_library.name}"]',
+            ]
+        )
+        shared_bypass = cache_native_build()
+        assert "gti: cache bypassed" in shared_bypass.stderr
+        assert (
+            "not a content-complete archive or object" in shared_bypass.stderr
+        )
+
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'c-sources = ["native/support.c"]',
+                'c-compile-args = ["-DNATIVE_EXTRA=1"]',
+            ]
+        )
+        opaque_bypass = cache_native_build()
+        assert "gti: cache bypassed" in opaque_bypass.stderr
+        assert "opaque native argument vectors" in opaque_bypass.stderr
+
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'c-sources = ["native/support.c"]',
+                'libraries = ["m"]',
+            ]
+        )
+        named_bypass = cache_native_build()
+        assert "gti: cache bypassed" in named_bypass.stderr
+        assert "name-resolved libraries and frameworks" in named_bypass.stderr
+
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'c-sources = ["native/support.c"]',
+                'library-dirs = ["native/lib"]',
+            ]
+        )
+        library_dir_bypass = cache_native_build()
+        assert "gti: cache bypassed" in library_dir_bypass.stderr
+        assert "library search directories" in library_dir_bypass.stderr
+
+        cache_native_manifest(
+            [
+                'include-dirs = ["native/include"]',
+                'c-sources = ["native/support.c"]',
+            ]
+        )
+        injected_environment = os.environ.copy()
+        injected_environment["CPATH"] = str(cache_native / "native/include")
+        environment_bypass = cache_native_build(env=injected_environment)
+        assert "gti: cache bypassed" in environment_bypass.stderr
+        assert "environment search paths" in environment_bypass.stderr
+
+        time_macro_source = cache_native / "native/support.c"
+        time_macro_source.write_text(
+            '#include "support.h"\n'
+            "int native_add(int left, int right) {\n"
+            "  return left + right + NATIVE_BIAS + (__DATE__[0] == 0);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        time_macro_bypass = cache_native_build()
+        assert "gti: cache bypassed" in time_macro_bypass.stderr
+        assert "time-and-date preprocessor macros" in time_macro_bypass.stderr
+        time_macro_source.write_text(
+            '#include "support.h"\n'
+            "int native_add(int left, int right) {\n"
+            "  return left + right + NATIVE_BIAS;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        # Malformed and partial cache entries are diagnosed, never executed,
+        # and are replaced only after a successful rebuild.
+        rebuilt = cache_native_build()
+        assert "gti: cache " in rebuilt.stderr
+        entry_directory = (
+            cache_native / "build/gti/cache/v2" / cache_key(rebuilt)
+        )
+        if "gti: cache miss " in rebuilt.stderr:
+            assert "gti: cache hit " in cache_native_build().stderr
+        assert entry_directory.is_dir()
+        (entry_directory / "executable").write_bytes(b"corrupt")
+        corrupt_payload = cache_native_build()
+        assert "ignored corrupt build cache entry" in corrupt_payload.stderr
+        assert "gti: cache recovered " in corrupt_payload.stderr
+        run([gti, "run"], cwd=cache_native)
+        (entry_directory / "generated.cpp").unlink()
+        partial_entry = cache_native_build()
+        assert "ignored corrupt build cache entry" in partial_entry.stderr
+        assert "gti: cache recovered " in partial_entry.stderr
+        (entry_directory / "metadata").write_text(
+            "not a cache metadata document\n", encoding="utf-8"
+        )
+        malformed_metadata = cache_native_build()
+        assert "ignored corrupt build cache entry" in malformed_metadata.stderr
+        assert "gti: cache recovered " in malformed_metadata.stderr
+        assert "gti: cache hit " in cache_native_build().stderr
+
+        # --- Multi-target parallel builds ---
+        multi_project = root / "multi-target"
+        (multi_project / "src").mkdir(parents=True)
+        (multi_project / "tests").mkdir(parents=True)
+        multi_targets = ["alpha", "beta", "gamma"]
+        manifest_lines = [
+            "manifest-version = 1",
+            "",
+            "[package]",
+            'name = "multi-target"',
+            'version = "0.1.0"',
+            "",
+        ]
+        for name in multi_targets:
+            (multi_project / "src" / f"{name}.gti").write_text(
+                "int main() { return 0; }\n", encoding="utf-8"
+            )
+            manifest_lines += [
+                f"[targets.{name}]",
+                'kind = "executable"',
+                f'root = "src/{name}.gti"',
+                "",
+            ]
+        (multi_project / "tests/zulu.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        manifest_lines += [
+            "[targets.zulu-check]",
+            'kind = "test"',
+            'root = "tests/zulu.gti"',
+        ]
+        (multi_project / "gti.toml").write_text(
+            "\n".join(manifest_lines) + "\n", encoding="utf-8"
+        )
+        all_target_names = multi_targets + ["zulu-check"]
+
+        def multi_artifact_bytes():
+            triple_directories = [
+                entry
+                for entry in (multi_project / "build/gti/dev").iterdir()
+                if entry.is_dir()
+            ]
+            assert len(triple_directories) == 1
+            return {
+                name: (
+                    triple_directories[0]
+                    / (f"{name}.exe" if sys.platform == "win32" else name)
+                ).read_bytes()
+                for name in all_target_names
+            }
+
+        parallel_all = run(
+            [gti, "build", "--all", "--jobs", "4", "--no-cache"],
+            cwd=multi_project,
+        )
+        built_positions = [
+            parallel_all.stdout.index(f"Built {name} [dev,")
+            for name in all_target_names
+        ]
+        assert built_positions == sorted(built_positions)
+        assert "Built 4 targets [dev]" in parallel_all.stdout
+        parallel_artifacts = multi_artifact_bytes()
+
+        run([gti, "clean"], cwd=multi_project)
+        serial_all = run(
+            [gti, "build", "--all", "--jobs", "1", "--no-cache"],
+            cwd=multi_project,
+        )
+        assert serial_all.stdout == parallel_all.stdout
+        assert serial_all.stderr == parallel_all.stderr
+        serial_artifacts = multi_artifact_bytes()
+        assert serial_artifacts == parallel_artifacts
+
+        # A cached rebuild restores every target through the same command.
+        cached_all = run([gti, "build", "--all"], cwd=multi_project)
+        assert "Built 4 targets [dev]" in cached_all.stdout
+
+        # One failing target must produce the same ordered diagnostics and
+        # the same first-failure status regardless of scheduling.
+        (multi_project / "src/delta.gti").write_text(
+            "int main() { return undeclared_symbol; }\n", encoding="utf-8"
+        )
+        failing_manifest = (multi_project / "gti.toml").read_text(
+            encoding="utf-8"
+        ) + (
+            "\n[targets.delta]\n"
+            'kind = "executable"\n'
+            'root = "src/delta.gti"\n'
+        )
+        (multi_project / "gti.toml").write_text(
+            failing_manifest, encoding="utf-8"
+        )
+        parallel_failure = run(
+            [gti, "build", "--all", "--jobs", "4", "--no-cache"],
+            expected=65,
+            cwd=multi_project,
+        )
+        assert (
+            "gti: build --all: target 'delta' failed with exit code 65"
+            in parallel_failure.stderr
+        )
+        for name in all_target_names:
+            assert f"Built {name} [dev," in parallel_failure.stdout
+        run([gti, "clean"], cwd=multi_project)
+        serial_failure = run(
+            [gti, "build", "--all", "--jobs", "1", "--no-cache"],
+            expected=65,
+            cwd=multi_project,
+        )
+        assert serial_failure.stdout == parallel_failure.stdout
+        assert serial_failure.stderr == parallel_failure.stderr
+
+        # Option surface errors stay focused usage failures.
+        all_with_target = run(
+            [gti, "build", "--all", "alpha"], expected=64, cwd=multi_project
+        )
+        assert "--all cannot be combined with a target selection" in (
+            all_with_target.stderr
+        )
+        jobs_without_all = run(
+            [gti, "build", "--jobs", "2"], expected=64, cwd=multi_project
+        )
+        assert "--jobs requires --all" in jobs_without_all.stderr
+        invalid_jobs = run(
+            [gti, "build", "--all", "--jobs", "0"],
+            expected=64,
+            cwd=multi_project,
+        )
+        assert "--jobs requires a positive whole number" in invalid_jobs.stderr
+        all_on_check = run(
+            [gti, "check", "--all"], expected=64, cwd=multi_project
+        )
+        assert "--all is not supported by gti check" in all_on_check.stderr
+
 
 if __name__ == "__main__":
     main()

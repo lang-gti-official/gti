@@ -745,10 +745,97 @@ bool addPathDirectorySequence(IdentityBuilder &identity, std::string_view label,
   return true;
 }
 
+std::optional<std::string> readTextFile(const std::filesystem::path &path,
+                                        std::string &errorMessage);
+
+std::vector<std::filesystem::path>
+nativeCppIncludeDirectories(const ToolchainLayout &toolchain,
+                            CppStandard standard,
+                            const NativeInputs &additional);
+
+// Runs one native preprocessor probe and folds the compiler's own dependency
+// report into the cache identity: every file the preprocessor opened joins
+// with content identity, and the preprocessed translation unit itself is
+// hashed so include resolution changes (for example a newly added shadowing
+// header) always change the key. Policy violations set `policyBypassDetail`;
+// mechanical failures set `errorMessage`.
+bool addNativeSourceDiscovery(IdentityBuilder &identity, std::string_view label,
+                              const std::vector<std::string> &probeCommand,
+                              const std::filesystem::path &source,
+                              const std::filesystem::path &preprocessed,
+                              const std::filesystem::path &depfile,
+                              std::string &errorMessage,
+                              std::string &policyBypassDetail) {
+  const ProcessResult probe = invokeProcess(
+      probeCommand, {.outputMode = ProcessOutputMode::Capture,
+                     .captureSuccessfulOutput = false,
+                     .description = "native dependency discovery"});
+  if (!probe.succeeded()) {
+    errorMessage = "native dependency discovery failed for '" +
+                   source.string() + "' with exit code " +
+                   std::to_string(probe.exitCode);
+    return false;
+  }
+  const std::optional<std::string> report = readTextFile(depfile, errorMessage);
+  if (!report) {
+    return false;
+  }
+  const std::optional<std::vector<std::filesystem::path>> dependencies =
+      parseNativeDependencyFile(*report, errorMessage);
+  if (!dependencies) {
+    errorMessage = "cannot interpret the native dependency report for '" +
+                   source.string() + "': " + errorMessage;
+    return false;
+  }
+
+  std::vector<std::string> discovered;
+  discovered.reserve(dependencies->size() + 1);
+  discovered.push_back(normalizedAbsolute(source).generic_string());
+  for (const std::filesystem::path &dependency : *dependencies) {
+    discovered.push_back(normalizedAbsolute(dependency).generic_string());
+  }
+  std::sort(discovered.begin(), discovered.end());
+  discovered.erase(std::unique(discovered.begin(), discovered.end()),
+                   discovered.end());
+
+  identity.add(std::string(label) + ".source",
+               normalizedAbsolute(source).generic_string());
+  identity.add(std::string(label) + ".deps",
+               static_cast<std::uint64_t>(discovered.size()));
+  for (const std::string &dependency : discovered) {
+    const std::optional<std::string> contents =
+        readTextFile(dependency, errorMessage);
+    if (!contents) {
+      return false;
+    }
+    if (containsTimeSensitivePreprocessorUse(*contents)) {
+      policyBypassDetail = "time-and-date preprocessor macros in '" +
+                           dependency + "' prevent deterministic native reuse";
+      return false;
+    }
+    identity.add(std::string(label) + ".dep.path", dependency);
+    identity.add(std::string(label) + ".dep.size",
+                 static_cast<std::uint64_t>(contents->size()));
+    identity.add(std::string(label) + ".dep.sha256", digestText(*contents));
+  }
+
+  const std::optional<FileDigest> preprocessedDigest =
+      digestFile(preprocessed, errorMessage);
+  if (!preprocessedDigest) {
+    return false;
+  }
+  identity.add(std::string(label) + ".preprocessed.size",
+               static_cast<std::uint64_t>(preprocessedDigest->size));
+  identity.add(std::string(label) + ".preprocessed.sha256",
+               preprocessedDigest->hash);
+  return true;
+}
+
 std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                                          const CompilationInputs &inputs,
                                          const BuildCachePolicy &policy,
-                                         std::string &errorMessage) {
+                                         std::string &errorMessage,
+                                         std::string &policyBypassDetail) {
   IdentityBuilder identity;
   identity.add("cache.schema", cacheSchema);
   identity.add("compiler.identity", policy.compilerIdentity);
@@ -891,6 +978,62 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                          std::filesystem::path(operand.value), true,
                          errorMessage)) {
       return std::nullopt;
+    }
+  }
+
+  if (!native.cSources.empty() || !native.cppSources.empty()) {
+    std::error_code temporaryError;
+    const std::filesystem::path temporaryRoot =
+        std::filesystem::temp_directory_path(temporaryError);
+    if (temporaryError) {
+      errorMessage = "cannot resolve a temporary directory for native "
+                     "dependency discovery: " +
+                     temporaryError.message();
+      return std::nullopt;
+    }
+    const NativeToolchain nativeToolchain;
+    std::vector<std::filesystem::path> cIncludeDirectories{
+        request.toolchain().runtimeInclude};
+    append(cIncludeDirectories, native.includeDirectories);
+    const std::vector<std::filesystem::path> cppIncludeDirectories =
+        nativeCppIncludeDirectories(
+            request.toolchain(), request.compilation().cppStandard(), native);
+    const auto discover = [&](const std::filesystem::path &source,
+                              std::string_view label, bool cSource) {
+      const std::filesystem::path preprocessed = stagedArtifactPath(
+          temporaryRoot / (source.stem().string() + ".gti-discovery.i"));
+      const std::filesystem::path depfile = stagedArtifactPath(
+          temporaryRoot / (source.stem().string() + ".gti-discovery.d"));
+      TemporaryArtifact preprocessedCleanup(preprocessed, true);
+      TemporaryArtifact depfileCleanup(depfile, true);
+      const std::vector<std::string> probeCommand =
+          cSource ? nativeToolchain.preprocessCommand(
+                        NativeCCompileRequest(
+                            *request.cCompiler(), source, preprocessed,
+                            native.cStandard.value_or(CStandard::C17),
+                            request.compilation().optimization(),
+                            cIncludeDirectories, native.cCompilerArguments),
+                        depfile)
+                  : nativeToolchain.preprocessCommand(
+                        NativeCppCompileRequest(
+                            request.nativeCompiler(), source, preprocessed,
+                            request.compilation().cppStandard(),
+                            request.compilation().optimization(),
+                            cppIncludeDirectories, native.compilerArguments),
+                        depfile);
+      return addNativeSourceDiscovery(identity, label, probeCommand, source,
+                                      preprocessed, depfile, errorMessage,
+                                      policyBypassDetail);
+    };
+    for (const std::filesystem::path &source : native.cSources) {
+      if (!discover(source, "native.c-source.discovery", true)) {
+        return std::nullopt;
+      }
+    }
+    for (const std::filesystem::path &source : native.cppSources) {
+      if (!discover(source, "native.cpp-source.discovery", false)) {
+        return std::nullopt;
+      }
     }
   }
   return identity.finish();
@@ -1195,16 +1338,54 @@ loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
          "' with " + std::string(artifactKind) + " '" + artifact.string() + "'";
 }
 
-bool hasOpaqueNativeCacheInputs(const NativeInputs &inputs) {
+// Returns the reason a native configuration must bypass the cache, or
+// nullopt when every native input can join the identity exactly. Declared C
+// and C++ sources and include directories are cacheable through dependency
+// discovery and full-tree identity; the remaining bypasses are inputs the
+// driver cannot resolve to exact content identities. Narrowing a bypass here
+// must never widen what the key trusts: an unidentifiable input bypasses.
+std::optional<std::string> nativeCacheBypassDetail(const NativeInputs &inputs) {
   if (!inputs.compilerArguments.empty() || !inputs.cCompilerArguments.empty() ||
-      !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty() ||
-      !inputs.includeDirectories.empty() ||
-      !inputs.libraryDirectories.empty() || !inputs.libraryFiles.empty() ||
-      !inputs.libraries.empty() || !inputs.frameworks.empty() ||
-      !inputs.orderedLinkOperands.empty()) {
-    return true;
+      !inputs.linkerArguments.empty() || !inputs.trailingArguments.empty()) {
+    return "opaque native argument vectors can introduce undeclared "
+           "compiler and linker inputs";
   }
-  return false;
+  const bool namedOperands =
+      !inputs.libraries.empty() || !inputs.frameworks.empty() ||
+      std::any_of(inputs.orderedLinkOperands.begin(),
+                  inputs.orderedLinkOperands.end(),
+                  [](const NativeLinkOperand &operand) {
+                    return operand.kind != NativeLinkOperandKind::File;
+                  });
+  if (namedOperands) {
+    return "name-resolved libraries and frameworks require linker search "
+           "resolution";
+  }
+  if (!inputs.libraryDirectories.empty()) {
+    return "native library search directories require linker search "
+           "resolution";
+  }
+
+  std::vector<std::filesystem::path> linkFiles = inputs.libraryFiles;
+  for (const NativeLinkOperand &operand : inputs.orderedLinkOperands) {
+    linkFiles.emplace_back(operand.value);
+  }
+  for (const std::filesystem::path &linkFile : linkFiles) {
+    switch (classifyNativeLinkInput(linkFile)) {
+    case NativeLinkInputClass::StaticArchive:
+    case NativeLinkInputClass::RelocatableObject:
+      break;
+    case NativeLinkInputClass::RequiresDependencyDiscovery:
+      return "link input '" + linkFile.string() +
+             "' is not a content-complete archive or object (thin archives, "
+             "linker scripts, and shared libraries require link-input "
+             "discovery)";
+    case NativeLinkInputClass::Unreadable:
+      return "link input '" + linkFile.string() +
+             "' cannot be read for cache identity";
+    }
+  }
+  return std::nullopt;
 }
 
 bool hasDependencyInjectingNativeEnvironment() {
@@ -1295,6 +1476,205 @@ nativeObjectPath(const std::filesystem::path &generatedSource,
 }
 
 } // namespace
+
+std::optional<std::vector<std::filesystem::path>>
+parseNativeDependencyFile(std::string_view contents,
+                          std::string &errorMessage) {
+  std::vector<std::filesystem::path> dependencies;
+  std::string token;
+  bool sawSeparator = false;
+  bool tokenEndedRule = false;
+
+  const auto finishToken = [&]() -> bool {
+    if (token.empty()) {
+      tokenEndedRule = false;
+      return true;
+    }
+    if (tokenEndedRule) {
+      // A token ending in an unescaped colon after the rule separator would
+      // be an additional make rule (for example -MP phony targets). The
+      // driver never requests those, so refuse rather than guess.
+      errorMessage = "dependency report contains an unexpected second rule";
+      return false;
+    }
+    if (sawSeparator) {
+      dependencies.emplace_back(token);
+    }
+    // Tokens before the separator name the rule target and carry no
+    // dependency identity.
+    token.clear();
+    return true;
+  };
+
+  for (std::size_t index = 0; index < contents.size(); ++index) {
+    const char character = contents[index];
+    if (character == '\\') {
+      if (index + 1 < contents.size()) {
+        const char next = contents[index + 1];
+        if (next == '\n') {
+          ++index;
+          if (!finishToken()) {
+            return std::nullopt;
+          }
+          continue;
+        }
+        if (next == '\r' && index + 2 < contents.size() &&
+            contents[index + 2] == '\n') {
+          index += 2;
+          if (!finishToken()) {
+            return std::nullopt;
+          }
+          continue;
+        }
+        if (next == ' ' || next == '\t' || next == '#' || next == ':' ||
+            next == '\\') {
+          token.push_back(next);
+          ++index;
+          continue;
+        }
+      }
+      // A lone backslash is an ordinary path character (Windows separators).
+      token.push_back(character);
+      continue;
+    }
+    if (character == '$' && index + 1 < contents.size() &&
+        contents[index + 1] == '$') {
+      token.push_back('$');
+      ++index;
+      continue;
+    }
+    if (character == ' ' || character == '\t' || character == '\n' ||
+        character == '\r') {
+      if (!finishToken()) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (character == ':' && !sawSeparator) {
+      // A colon directly after a single leading letter with a path separator
+      // following is a Windows drive specifier, not the rule separator.
+      const bool driveColon =
+          token.size() == 1 &&
+          std::isalpha(static_cast<unsigned char>(token.front())) != 0 &&
+          index + 1 < contents.size() &&
+          (contents[index + 1] == '/' || contents[index + 1] == '\\');
+      if (!driveColon) {
+        token.clear();
+        sawSeparator = true;
+        continue;
+      }
+      token.push_back(character);
+      continue;
+    }
+    if (character == ':' && sawSeparator) {
+      const bool endsToken =
+          index + 1 >= contents.size() || contents[index + 1] == ' ' ||
+          contents[index + 1] == '\t' || contents[index + 1] == '\n' ||
+          contents[index + 1] == '\r';
+      const bool driveColon =
+          token.size() == 1 &&
+          std::isalpha(static_cast<unsigned char>(token.front())) != 0 &&
+          !endsToken &&
+          (contents[index + 1] == '/' || contents[index + 1] == '\\');
+      if (driveColon) {
+        token.push_back(character);
+        continue;
+      }
+      token.push_back(character);
+      if (endsToken) {
+        token.pop_back();
+        tokenEndedRule = true;
+      }
+      continue;
+    }
+    token.push_back(character);
+  }
+  if (!finishToken()) {
+    return std::nullopt;
+  }
+  if (!sawSeparator) {
+    errorMessage = "dependency report has no rule separator";
+    return std::nullopt;
+  }
+  return dependencies;
+}
+
+NativeLinkInputClass
+classifyNativeLinkInput(const std::filesystem::path &path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error) || error) {
+    return NativeLinkInputClass::Unreadable;
+  }
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return NativeLinkInputClass::Unreadable;
+  }
+  std::array<unsigned char, 20> header{};
+  input.read(reinterpret_cast<char *>(header.data()),
+             static_cast<std::streamsize>(header.size()));
+  const std::size_t available = static_cast<std::size_t>(input.gcount());
+
+  const auto startsWith = [&](std::string_view magic) {
+    if (available < magic.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < magic.size(); ++index) {
+      if (header[index] != static_cast<unsigned char>(magic[index])) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (startsWith("!<arch>\n")) {
+    return NativeLinkInputClass::StaticArchive;
+  }
+  if (startsWith("!<thin>\n")) {
+    return NativeLinkInputClass::RequiresDependencyDiscovery;
+  }
+
+  const auto read32 = [&](std::size_t offset, bool littleEndian) {
+    std::uint32_t value = 0;
+    for (std::size_t index = 0; index < 4; ++index) {
+      const std::size_t position =
+          littleEndian ? offset + 3 - index : offset + index;
+      value = (value << 8U) | header[position];
+    }
+    return value;
+  };
+  if (available >= 18 && header[0] == 0x7fU && header[1] == 'E' &&
+      header[2] == 'L' && header[3] == 'F') {
+    const bool bigEndian = header[5] == 2;
+    const std::uint16_t type =
+        bigEndian ? static_cast<std::uint16_t>((header[16] << 8U) | header[17])
+                  : static_cast<std::uint16_t>(header[16] | (header[17] << 8U));
+    constexpr std::uint16_t elfRelocatable = 1;
+    return type == elfRelocatable
+               ? NativeLinkInputClass::RelocatableObject
+               : NativeLinkInputClass::RequiresDependencyDiscovery;
+  }
+  if (available >= 16) {
+    constexpr std::uint32_t machO32 = 0xfeedfaceU;
+    constexpr std::uint32_t machO64 = 0xfeedfacfU;
+    constexpr std::uint32_t machObjectFile = 1;
+    for (const bool littleEndian : {true, false}) {
+      const std::uint32_t magic = read32(0, littleEndian);
+      if (magic == machO32 || magic == machO64) {
+        return read32(12, littleEndian) == machObjectFile
+                   ? NativeLinkInputClass::RelocatableObject
+                   : NativeLinkInputClass::RequiresDependencyDiscovery;
+      }
+    }
+  }
+  // Text linker scripts, universal/fat binaries, import libraries, and every
+  // unrecognized format may reference inputs beyond their own bytes.
+  return NativeLinkInputClass::RequiresDependencyDiscovery;
+}
+
+bool containsTimeSensitivePreprocessorUse(std::string_view text) {
+  return text.find("__DATE__") != std::string_view::npos ||
+         text.find("__TIME__") != std::string_view::npos ||
+         text.find("__TIMESTAMP__") != std::string_view::npos;
+}
 
 ExecutableBuildRequest::ExecutableBuildRequest(
     CompilationRequest compilation, ToolchainLayout toolchain,
@@ -1469,16 +1849,10 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   std::optional<std::filesystem::path> cacheEntry;
   bool corruptCacheEntry = false;
   if (request.cache()) {
-    if (!request.nativeInputs().cSources.empty() ||
-        !request.nativeInputs().cppSources.empty()) {
+    if (const std::optional<std::string> bypassDetail =
+            nativeCacheBypassDetail(request.nativeInputs())) {
       result.cache.status = BuildCacheStatus::Bypassed;
-      result.cache.detail =
-          "declared native sources require compiler dependency discovery";
-    } else if (hasOpaqueNativeCacheInputs(request.nativeInputs())) {
-      result.cache.status = BuildCacheStatus::Bypassed;
-      result.cache.detail =
-          "opaque native arguments, native search paths, or link dependencies "
-          "require compiler/linker dependency discovery";
+      result.cache.detail = bypassDetail;
     } else if (hasDependencyInjectingNativeEnvironment()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail =
@@ -1498,11 +1872,16 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
       }
 
       std::string cacheIdentityError;
-      const std::optional<std::string> key = buildCacheKey(
-          request, compilationInputs, *request.cache(), cacheIdentityError);
+      std::string cachePolicyBypass;
+      const std::optional<std::string> key =
+          buildCacheKey(request, compilationInputs, *request.cache(),
+                        cacheIdentityError, cachePolicyBypass);
       if (!key) {
         result.cache.status = BuildCacheStatus::Bypassed;
-        result.cache.detail = "identity unavailable: " + cacheIdentityError;
+        result.cache.detail =
+            cachePolicyBypass.empty()
+                ? "identity unavailable: " + cacheIdentityError
+                : cachePolicyBypass;
       } else {
         result.cache.key = *key;
         cacheEntry = versionRoot / *key;
@@ -1712,8 +2091,28 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     }
   }
 
-  const std::filesystem::path stagedOutput =
+  // The native linker derives output-identity metadata from the output
+  // basename (for example the macOS ad-hoc code-signature identifier), so
+  // the staged link output keeps the final filename inside a unique staging
+  // directory. Staging under a uniquely named file would make otherwise
+  // identical builds produce different bytes.
+  const std::filesystem::path stagedOutputDirectory =
       stagedArtifactPath(request.output());
+  std::error_code stagedDirectoryError;
+  std::filesystem::create_directory(stagedOutputDirectory,
+                                    stagedDirectoryError);
+  if (stagedDirectoryError) {
+    generatedArtifact.keep();
+    result.generatedSourceRetained = true;
+    result.driverDiagnostic =
+        "gti: failed to create staged output directory '" +
+        stagedOutputDirectory.string() + "': " + stagedDirectoryError.message();
+    result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+    return result;
+  }
+  TemporaryArtifact stagedDirectoryCleanup(stagedOutputDirectory, true);
+  const std::filesystem::path stagedOutput =
+      stagedOutputDirectory / request.output().filename();
   TemporaryArtifact stagedArtifact(stagedOutput, true);
   const NativeCompileRequest nativeRequest(
       request.nativeCompiler(), request.generatedSource(), stagedOutput,

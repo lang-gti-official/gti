@@ -39,6 +39,36 @@ enum class BuildCacheStatus {
   Bypassed,
 };
 
+// Parses a make-style dependency report written by a native compiler's
+// -MD/-MF option: one rule whose prerequisites are every file the
+// preprocessor opened. Handles backslash line continuations, escaped spaces,
+// `$$`, and a Windows drive colon inside the rule target. Returns every
+// prerequisite path in report order, or nullopt with a diagnostic when the
+// report has no rule separator.
+[[nodiscard]] std::optional<std::vector<std::filesystem::path>>
+parseNativeDependencyFile(std::string_view contents, std::string &errorMessage);
+
+// Classification of an exact native link-input file for cache identity. Only
+// inputs whose bytes fully determine their contribution to the link are
+// content-complete; a thin archive, linker script, or shared library can pull
+// in members or transitive dependencies that its own content identity cannot
+// record, so those classes must bypass the cache.
+enum class NativeLinkInputClass {
+  StaticArchive,
+  RelocatableObject,
+  RequiresDependencyDiscovery,
+  Unreadable,
+};
+
+[[nodiscard]] NativeLinkInputClass
+classifyNativeLinkInput(const std::filesystem::path &path);
+
+// Deterministic preprocessing policy: __DATE__, __TIME__, and __TIMESTAMP__
+// make object content depend on ambient build time, which no input content
+// identity can record. The check is a conservative byte scan; a spelling in a
+// comment or string bypasses the cache rather than risking a stale hit.
+[[nodiscard]] bool containsTimeSensitivePreprocessorUse(std::string_view text);
+
 struct BuildCacheResult {
   BuildCacheStatus status = BuildCacheStatus::NotConfigured;
   std::string key;

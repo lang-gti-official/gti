@@ -373,7 +373,7 @@ void testNativeCommandConstruction() {
       lang::OptimizationLevel::O3, std::move(inputs));
   const std::vector<std::string> command =
       lang::driver::NativeToolchain().command(request);
-  const std::vector<std::string> expected{
+  std::vector<std::string> expected{
       "custom-c++",
       "-std=c++20",
       "-O3",
@@ -395,6 +395,9 @@ void testNativeCommandConstruction() {
       "-ffp-contract=off",
       "-D__gti_strict_ieee754=1",
   };
+#if defined(__APPLE__)
+  expected.emplace_back("-Wl,-reproducible");
+#endif
   expect(command == expected,
          "native command construction should preserve structured input order");
   const std::string rendered = lang::driver::renderCommand(command);
@@ -452,24 +455,28 @@ void testNativeCommandConstruction() {
               "custom-c++", "generated.cpp", "program",
               lang::CppStandard::Cpp23, lang::OptimizationLevel::O2,
               std::move(orderedInputs)));
-  expect(orderedCommand == std::vector<std::string>({
-                               "custom-c++",
-                               "-std=c++23",
-                               "-O2",
-                               "generated.cpp",
-                               "-Lnative lib",
-                               "libgti_runtime.a",
-                               "-ltarget",
-                               "package-provider.a",
-                               "-framework",
-                               "CoreFoundation",
-                               "-pthread",
-                               "-o",
-                               "program",
-                               "-fno-fast-math",
-                               "-ffp-contract=off",
-                               "-D__gti_strict_ieee754=1",
-                           }),
+  std::vector<std::string> expectedOrderedCommand{
+      "custom-c++",
+      "-std=c++23",
+      "-O2",
+      "generated.cpp",
+      "-Lnative lib",
+      "libgti_runtime.a",
+      "-ltarget",
+      "package-provider.a",
+      "-framework",
+      "CoreFoundation",
+      "-pthread",
+      "-o",
+      "program",
+      "-fno-fast-math",
+      "-ffp-contract=off",
+      "-D__gti_strict_ieee754=1",
+  };
+#if defined(__APPLE__)
+  expectedOrderedCommand.emplace_back("-Wl,-reproducible");
+#endif
+  expect(orderedCommand == expectedOrderedCommand,
          "ordered native link operands should preserve mixed file, -l, and "
          "framework dependency order after the build-owned runtime and be "
          "authoritative over compatibility category vectors");
@@ -1084,8 +1091,8 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              forcedHeaderBuild.cache.status ==
                  lang::driver::BuildCacheStatus::Bypassed &&
              forcedHeaderBuild.cache.detail &&
-             forcedHeaderBuild.cache.detail->find("opaque native arguments") !=
-                 std::string::npos &&
+             forcedHeaderBuild.cache.detail->find(
+                 "opaque native argument vectors") != std::string::npos &&
              forcedHeaderBuild.nativeProcess,
          "opaque compiler arguments should bypass cache lookup because they "
          "can introduce dependencies such as forced native headers");
@@ -1100,37 +1107,83 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "changing a header introduced through an opaque compiler argument "
          "should force native compilation rather than restore a stale entry");
 
-  lang::driver::NativeInputs exactNativeLinkInput;
-  exactNativeLinkInput.libraryFiles.push_back(localRuntimeLibrary);
+  const auto buildWithExactLinkFile = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.libraryFiles.push_back(localRuntimeLibrary);
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
   const lang::driver::ExecutableBuildResult exactNativeLinkBuild =
-      build(lang::OptimizationLevel::O0, std::move(exactNativeLinkInput));
+      buildWithExactLinkFile();
   expect(exactNativeLinkBuild.succeeded() &&
              exactNativeLinkBuild.cache.status ==
-                 lang::driver::BuildCacheStatus::Bypassed &&
-             exactNativeLinkBuild.cache.detail &&
-             exactNativeLinkBuild.cache.detail->find(
-                 "opaque native arguments") != std::string::npos &&
+                 lang::driver::BuildCacheStatus::Miss &&
+             exactNativeLinkBuild.cache.key != firstKey &&
              exactNativeLinkBuild.nativeProcess,
-         "exact native link files should bypass the whole-program cache until "
-         "linker scripts, thin archives, and transitive inputs can be "
-         "discovered");
+         "a content-complete exact link archive should join cache identity "
+         "with its own key instead of bypassing");
+  const lang::driver::ExecutableBuildResult exactNativeLinkHit =
+      buildWithExactLinkFile();
+  expect(exactNativeLinkHit.succeeded() &&
+             exactNativeLinkHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             exactNativeLinkHit.cache.key == exactNativeLinkBuild.cache.key &&
+             !exactNativeLinkHit.nativeProcess,
+         "an unchanged exact link archive should verify and restore the "
+         "cached executable");
+
+  const std::filesystem::path linkerScript = project / "script.a";
+  expect(writeFile(linkerScript, "INPUT(missing.o)\n"),
+         "the linker-script link-input fixture should be writable");
+  lang::driver::NativeInputs scriptLinkInput;
+  scriptLinkInput.libraryFiles.push_back(linkerScript);
+  const lang::driver::ExecutableBuildResult scriptLinkBuild =
+      build(lang::OptimizationLevel::O0, std::move(scriptLinkInput));
+  expect(scriptLinkBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             scriptLinkBuild.cache.detail &&
+             scriptLinkBuild.cache.detail->find(
+                 "not a content-complete archive or object") !=
+                 std::string::npos,
+         "a link input that is not a content-complete archive or object "
+         "should bypass the whole-program cache with its reason");
 
   const std::filesystem::path nativeSearchDirectory = project / "native-search";
   std::filesystem::create_directories(nativeSearchDirectory);
-  lang::driver::NativeInputs nativeIncludeDirectory;
-  nativeIncludeDirectory.includeDirectories.push_back(nativeSearchDirectory);
+  const auto buildWithIncludeDirectory = [&]() {
+    lang::driver::NativeInputs inputs;
+    inputs.includeDirectories.push_back(nativeSearchDirectory);
+    return build(lang::OptimizationLevel::O0, std::move(inputs));
+  };
   const lang::driver::ExecutableBuildResult nativeIncludeDirectoryBuild =
-      build(lang::OptimizationLevel::O0, std::move(nativeIncludeDirectory));
+      buildWithIncludeDirectory();
   expect(nativeIncludeDirectoryBuild.succeeded() &&
              nativeIncludeDirectoryBuild.cache.status ==
-                 lang::driver::BuildCacheStatus::Bypassed &&
-             nativeIncludeDirectoryBuild.cache.detail &&
-             nativeIncludeDirectoryBuild.cache.detail->find(
-                 "native search paths") != std::string::npos &&
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeIncludeDirectoryBuild.cache.key != firstKey &&
              nativeIncludeDirectoryBuild.nativeProcess,
-         "native include directories should bypass the whole-program cache "
-         "until compiler depfiles identify transitive headers outside the "
-         "declared tree");
+         "declared native include directories should join cache identity "
+         "through full-tree content instead of bypassing");
+  const lang::driver::ExecutableBuildResult nativeIncludeDirectoryHit =
+      buildWithIncludeDirectory();
+  expect(nativeIncludeDirectoryHit.succeeded() &&
+             nativeIncludeDirectoryHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             nativeIncludeDirectoryHit.cache.key ==
+                 nativeIncludeDirectoryBuild.cache.key,
+         "an unchanged declared include tree should verify and restore the "
+         "cached executable");
+  expect(writeFile(nativeSearchDirectory / "added.h", "#define ADDED 1\n"),
+         "the include-tree invalidation fixture should be writable");
+  const lang::driver::ExecutableBuildResult nativeIncludeDirectoryChange =
+      buildWithIncludeDirectory();
+  expect(nativeIncludeDirectoryChange.succeeded() &&
+             nativeIncludeDirectoryChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeIncludeDirectoryChange.cache.key !=
+                 nativeIncludeDirectoryBuild.cache.key,
+         "adding any file below a declared include directory should change "
+         "cache identity so header shadowing can never restore a stale "
+         "executable");
 
   lang::driver::NativeInputs nativeLibraryDirectory;
   nativeLibraryDirectory.libraryDirectories.push_back(nativeSearchDirectory);
@@ -1141,11 +1194,22 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
                  lang::driver::BuildCacheStatus::Bypassed &&
              nativeLibraryDirectoryBuild.cache.detail &&
              nativeLibraryDirectoryBuild.cache.detail->find(
-                 "native search paths") != std::string::npos &&
+                 "library search directories") != std::string::npos &&
              nativeLibraryDirectoryBuild.nativeProcess,
-         "native library directories should bypass the whole-program cache "
-         "until linker tracing identifies scripts, thin archives, and other "
-         "transitive inputs");
+         "native library search directories should bypass the whole-program "
+         "cache until linker search is resolved to exact inputs");
+
+  lang::driver::NativeInputs namedLibraryInput;
+  namedLibraryInput.libraries.emplace_back("m");
+  const lang::driver::ExecutableBuildResult namedLibraryBuild =
+      build(lang::OptimizationLevel::O0, std::move(namedLibraryInput));
+  expect(namedLibraryBuild.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             namedLibraryBuild.cache.detail &&
+             namedLibraryBuild.cache.detail->find("name-resolved") !=
+                 std::string::npos,
+         "name-resolved libraries should bypass the whole-program cache "
+         "until linker search resolution is modeled");
 
   {
     ScopedEnvironment injectedIncludePath("CPATH",
@@ -1171,7 +1235,7 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
                        "#include \"cache-native.hpp\"\n"
                        "extern \"C\" int gti_cache_native_value() { "
                        "return GTI_CACHE_NATIVE_VALUE; }\n"),
-         "native cache-bypass fixtures should be writable");
+         "native source cache fixtures should be writable");
   const auto buildWithNativeSource = [&]() {
     lang::driver::NativeInputs inputs;
     inputs.cppSources.push_back(nativeSource);
@@ -1181,23 +1245,49 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
       buildWithNativeSource();
   expect(nativeSourceBuild.succeeded() &&
              nativeSourceBuild.cache.status ==
-                 lang::driver::BuildCacheStatus::Bypassed &&
-             nativeSourceBuild.cache.detail &&
-             nativeSourceBuild.cache.detail->find("dependency discovery") !=
-                 std::string::npos &&
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeSourceBuild.cache.key != firstKey &&
              nativeSourceBuild.cppCompilations.size() == 1,
-         "declared native sources should bypass the whole-program cache until "
-         "compiler-discovered header dependencies can join its identity");
+         "a declared native source should join cache identity through "
+         "compiler dependency discovery instead of bypassing");
+  const lang::driver::ExecutableBuildResult nativeSourceHit =
+      buildWithNativeSource();
+  expect(nativeSourceHit.succeeded() &&
+             nativeSourceHit.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             nativeSourceHit.cache.key == nativeSourceBuild.cache.key &&
+             nativeSourceHit.cppCompilations.empty() &&
+             !nativeSourceHit.nativeProcess,
+         "an unchanged declared native source should verify and restore the "
+         "cached executable without native compilation");
   expect(writeFile(nativeHeader, "#define GTI_CACHE_NATIVE_VALUE 2\n"),
          "the native transitive-header fixture should be writable");
   const lang::driver::ExecutableBuildResult nativeHeaderChange =
       buildWithNativeSource();
   expect(nativeHeaderChange.succeeded() &&
              nativeHeaderChange.cache.status ==
-                 lang::driver::BuildCacheStatus::Bypassed &&
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeHeaderChange.cache.key != nativeSourceBuild.cache.key &&
              nativeHeaderChange.cppCompilations.size() == 1,
-         "changing a compiler-discovered native header should force native "
-         "recompilation instead of restoring a stale cached executable");
+         "changing a compiler-discovered native header must change cache "
+         "identity and force native recompilation");
+
+  expect(
+      writeFile(nativeHeader, "#define GTI_CACHE_NATIVE_VALUE (__TIME__[0])\n"),
+      "the time-sensitive native header fixture should be writable");
+  const lang::driver::ExecutableBuildResult timeSensitiveNative =
+      buildWithNativeSource();
+  expect(timeSensitiveNative.succeeded() &&
+             timeSensitiveNative.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             timeSensitiveNative.cache.detail &&
+             timeSensitiveNative.cache.detail->find(
+                 "time-and-date preprocessor macros") != std::string::npos,
+         "a discovered native input using time-and-date preprocessor macros "
+         "should bypass the cache under the deterministic preprocessing "
+         "policy");
+  expect(writeFile(nativeHeader, "#define GTI_CACHE_NATIVE_VALUE 1\n"),
+         "the original native header should be restorable");
 
   expect(writeFile(firstEntry / "executable", "corrupt"),
          "the cache corruption fixture should be writable");
@@ -1240,6 +1330,141 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              afterDeletion.cache.entry.parent_path() == cache.root / "v2",
          "a deleted v2 cache entry should ignore a same-key v1 entry and "
          "degrade to a clean rebuild");
+
+  const lang::driver::ExecutableBuildResult unmanagedCache =
+      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+          lang::driver::CompilationRequest(
+              source, toolchain.standardLibrary, lang::TargetInfo::host(),
+              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+          toolchain, temporary.root() / "unmanaged.gti.cpp",
+          temporary.root() / "unmanaged-program", nativeCompiler, {}, false,
+          true, false, std::nullopt, std::nullopt, cache));
+  expect(unmanagedCache.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             unmanagedCache.cache.detail &&
+             unmanagedCache.cache.detail->find("managed project output") !=
+                 std::string::npos,
+         "a cache policy without a managed project output should bypass with "
+         "its reason rather than publish unchecked paths");
+
+  const lang::driver::ExecutableBuildResult unresolvableIdentity =
+      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+          lang::driver::CompilationRequest(
+              source, toolchain.standardLibrary, lang::TargetInfo::host(),
+              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+          toolchain, generated, output,
+          (temporary.root() / "missing-native-compiler").string(), {}, false,
+          true, false, managed, std::nullopt, cache));
+  expect(unresolvableIdentity.cache.status ==
+                 lang::driver::BuildCacheStatus::Bypassed &&
+             unresolvableIdentity.cache.detail &&
+             unresolvableIdentity.cache.detail->find("identity unavailable") !=
+                 std::string::npos,
+         "an unresolvable native compiler identity should bypass the cache "
+         "with its reason instead of guessing a key");
+}
+
+void testNativeDependencyDiscoveryPrimitives() {
+  std::string errorMessage;
+  const auto parsed = [&](std::string_view contents) {
+    errorMessage.clear();
+    return lang::driver::parseNativeDependencyFile(contents, errorMessage);
+  };
+
+  const auto simple = parsed("main.o: main.c include/support.h\n");
+  expect(simple && simple->size() == 2 &&
+             (*simple)[0] == std::filesystem::path("main.c") &&
+             (*simple)[1] == std::filesystem::path("include/support.h"),
+         "a plain dependency rule should list every prerequisite in order");
+
+  const auto continued = parsed("main.o: main.c \\\n  a.h \\\r\n  b.h\n");
+  expect(continued && continued->size() == 3 &&
+             (*continued)[1] == std::filesystem::path("a.h") &&
+             (*continued)[2] == std::filesystem::path("b.h"),
+         "backslash line continuations should join one dependency rule");
+
+  const auto escaped =
+      parsed("out.o: with\\ space.h dollar$$sign.h back\\\\slash.h\n");
+  expect(escaped && escaped->size() == 3 &&
+             (*escaped)[0] == std::filesystem::path("with space.h") &&
+             (*escaped)[1] == std::filesystem::path("dollar$sign.h") &&
+             (*escaped)[2] == std::filesystem::path("back\\slash.h"),
+         "escaped spaces, doubled dollars, and escaped backslashes should "
+         "decode to literal path characters");
+
+  const auto driveLetters = parsed("C:/build/out.obj: C:/src/main.c\n");
+  expect(driveLetters && driveLetters->size() == 1 &&
+             (*driveLetters)[0] == std::filesystem::path("C:/src/main.c"),
+         "Windows drive colons should not terminate the dependency rule");
+
+  const auto noDependencies = parsed("main.o:\n");
+  expect(noDependencies && noDependencies->empty(),
+         "a rule without prerequisites should parse to an empty list");
+
+  expect(!parsed("no separator here\n") && !errorMessage.empty(),
+         "a report without a rule separator should be rejected with a "
+         "diagnostic");
+  expect(!parsed("main.o: a.h\nphony.h:\n"),
+         "an unexpected second rule should be rejected rather than guessed "
+         "at");
+
+  TemporaryDirectory temporary;
+  const auto classify = [&](std::string_view name, std::string_view contents) {
+    const std::filesystem::path path = temporary.root() / name;
+    writeFile(path, contents);
+    return lang::driver::classifyNativeLinkInput(path);
+  };
+  expect(classify("regular.a", "!<arch>\ncontents") ==
+             lang::driver::NativeLinkInputClass::StaticArchive,
+         "a regular ar archive should classify as content-complete");
+  expect(classify("thin.a", "!<thin>\ncontents") ==
+             lang::driver::NativeLinkInputClass::RequiresDependencyDiscovery,
+         "a thin archive references external members and requires discovery");
+  const std::string elfRelocatable{
+      '\x7f', 'E', 'L', 'F', 2, 1, 1, 0, 0,
+      0,      0,   0,   0,   0, 0, 0, 1, 0, /* ET_REL little-endian */
+      0x3e,   0};
+  expect(classify("object.o", elfRelocatable) ==
+             lang::driver::NativeLinkInputClass::RelocatableObject,
+         "an ELF relocatable object should classify as content-complete");
+  const std::string elfShared{'\x7f', 'E', 'L', 'F', 2, 1, 1, 0, 0,
+                              0,      0,   0,   0,   0, 0, 0, 3, 0, /* ET_DYN */
+                              0x3e,   0};
+  expect(classify("shared.so", elfShared) ==
+             lang::driver::NativeLinkInputClass::RequiresDependencyDiscovery,
+         "an ELF shared library requires transitive dependency discovery");
+  const std::string machOObject{
+      '\xcf', '\xfa', '\xed', '\xfe', 12, 0, 0, 1,
+      0,      0,      0,      0,      1,  0, 0, 0, /* MH_OBJECT */
+      2,      0,      0,      0};
+  expect(classify("object.mach.o", machOObject) ==
+             lang::driver::NativeLinkInputClass::RelocatableObject,
+         "a Mach-O relocatable object should classify as content-complete");
+  const std::string machODylib{
+      '\xcf', '\xfa', '\xed', '\xfe', 12, 0, 0, 1,
+      0,      0,      0,      0,      6,  0, 0, 0, /* MH_DYLIB */
+      2,      0,      0,      0};
+  expect(classify("shared.dylib", machODylib) ==
+             lang::driver::NativeLinkInputClass::RequiresDependencyDiscovery,
+         "a Mach-O dynamic library requires transitive dependency discovery");
+  expect(classify("script.a", "INPUT(other.o)\n") ==
+             lang::driver::NativeLinkInputClass::RequiresDependencyDiscovery,
+         "a text linker script must never classify as content-complete");
+  expect(
+      lang::driver::classifyNativeLinkInput(temporary.root() / "missing.a") ==
+          lang::driver::NativeLinkInputClass::Unreadable,
+      "a missing link input should classify as unreadable");
+
+  expect(lang::driver::containsTimeSensitivePreprocessorUse(
+             "const char *when = __DATE__;") &&
+             lang::driver::containsTimeSensitivePreprocessorUse(
+                 "#define STAMP __TIMESTAMP__") &&
+             lang::driver::containsTimeSensitivePreprocessorUse(
+                 "int t = __TIME__[0];") &&
+             !lang::driver::containsTimeSensitivePreprocessorUse(
+                 "int date = 0; // date and time words alone\n"),
+         "the deterministic preprocessing policy should detect exactly the "
+         "time-and-date macro spellings");
 }
 
 void testResourcesAndArtifactOwnership() {
@@ -1456,6 +1681,7 @@ int main(int argc, char *argv[]) {
   testOrderedExecutableBuildCommand();
   testManagedOutputSafety();
   testWholeProgramBuildCache(std::filesystem::absolute(argv[0]));
+  testNativeDependencyDiscoveryPrimitives();
   testResourcesAndArtifactOwnership();
 
   if (failures != 0) {

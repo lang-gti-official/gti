@@ -482,45 +482,84 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   // The generated artifact requires this opt-in marker so direct backend
   // consumers cannot unknowingly compile it without the same strict policy.
   command.emplace_back("-D__gti_strict_ieee754=1");
+#if defined(__APPLE__)
+  // Apple's linker randomizes LC_UUID in its fast (-O0) mode, which would
+  // make identical builds produce different executables. Equal inputs must
+  // produce equal bytes for serial/parallel build equivalence and cache
+  // verification.
+  command.emplace_back("-Wl,-reproducible");
+#endif
   return command;
 }
 
-std::vector<std::string>
-NativeToolchain::command(const NativeCCompileRequest &request) const {
-  std::vector<std::string> command{
-      request.compiler(), cStandardFlag(request.standard()),
-      std::string(optimizationFlag(request.optimization()))};
-  for (const std::filesystem::path &directory : request.includeDirectories()) {
+namespace {
+
+std::vector<std::string> nativeSourceCommand(
+    const std::string &compiler, std::string standardFlagValue,
+    OptimizationLevel optimization,
+    const std::vector<std::filesystem::path> &includeDirectories,
+    const std::vector<std::string> &compilerArguments,
+    const std::filesystem::path &source, const std::filesystem::path &output,
+    const std::filesystem::path *depfile) {
+  std::vector<std::string> command{compiler, std::move(standardFlagValue),
+                                   std::string(optimizationFlag(optimization))};
+  for (const std::filesystem::path &directory : includeDirectories) {
     command.emplace_back("-I" + directory.string());
   }
-  command.insert(command.end(), request.compilerArguments().begin(),
-                 request.compilerArguments().end());
-  command.emplace_back("-c");
-  command.push_back(request.source().string());
+  command.insert(command.end(), compilerArguments.begin(),
+                 compilerArguments.end());
+  if (depfile == nullptr) {
+    command.emplace_back("-c");
+  } else {
+    command.emplace_back("-E");
+    command.emplace_back("-MD");
+    command.emplace_back("-MF");
+    command.push_back(depfile->string());
+  }
+  command.push_back(source.string());
   command.emplace_back("-o");
-  command.push_back(request.output().string());
-  // Foreign C sources are separate translation units. The generated GTI
-  // artifact's strict binary32 policy flags deliberately do not apply here.
+  command.push_back(output.string());
+  // Foreign C and C++ sources are separate translation units. The generated
+  // GTI artifact's strict binary32 policy flags deliberately do not apply.
   return command;
+}
+
+} // namespace
+
+std::vector<std::string>
+NativeToolchain::command(const NativeCCompileRequest &request) const {
+  return nativeSourceCommand(
+      request.compiler(), cStandardFlag(request.standard()),
+      request.optimization(), request.includeDirectories(),
+      request.compilerArguments(), request.source(), request.output(), nullptr);
 }
 
 std::vector<std::string>
 NativeToolchain::command(const NativeCppCompileRequest &request) const {
-  std::vector<std::string> command{
+  return nativeSourceCommand(
       request.compiler(), std::string(standardFlag(request.standard())),
-      std::string(optimizationFlag(request.optimization()))};
-  for (const std::filesystem::path &directory : request.includeDirectories()) {
-    command.emplace_back("-I" + directory.string());
-  }
-  command.insert(command.end(), request.compilerArguments().begin(),
-                 request.compilerArguments().end());
-  command.emplace_back("-c");
-  command.push_back(request.source().string());
-  command.emplace_back("-o");
-  command.push_back(request.output().string());
-  // Foreign C++ sources are separate translation units. The generated GTI
-  // artifact's strict binary32 policy flags deliberately do not apply here.
-  return command;
+      request.optimization(), request.includeDirectories(),
+      request.compilerArguments(), request.source(), request.output(), nullptr);
+}
+
+std::vector<std::string>
+NativeToolchain::preprocessCommand(const NativeCCompileRequest &request,
+                                   const std::filesystem::path &depfile) const {
+  return nativeSourceCommand(
+      request.compiler(), cStandardFlag(request.standard()),
+      request.optimization(), request.includeDirectories(),
+      request.compilerArguments(), request.source(), request.output(),
+      &depfile);
+}
+
+std::vector<std::string>
+NativeToolchain::preprocessCommand(const NativeCppCompileRequest &request,
+                                   const std::filesystem::path &depfile) const {
+  return nativeSourceCommand(
+      request.compiler(), std::string(standardFlag(request.standard())),
+      request.optimization(), request.includeDirectories(),
+      request.compilerArguments(), request.source(), request.output(),
+      &depfile);
 }
 
 NativeProcessResult

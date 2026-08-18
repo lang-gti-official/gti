@@ -29,13 +29,22 @@ int main() {
       lang::OptimizationLevel::O2, std::move(inputs));
   const std::vector<std::string> command =
       lang::driver::NativeToolchain().command(request);
-  if (command.size() != 12 || command.front() != "c++" ||
-      command[1] != "-std=c++23" || command[2] != "-O2" ||
-      command[3] != "-Iruntime include" || command[4] != "generated.cpp" ||
-      command[5] != "libgti_runtime.a" || command[6] != "-o" ||
-      command[7] != "program" || command[8] != "-pthread" ||
-      command[9] != "-fno-fast-math" || command[10] != "-ffp-contract=off" ||
-      command[11] != "-D__gti_strict_ieee754=1") {
+  std::vector<std::string> expectedCommand{"c++",
+                                           "-std=c++23",
+                                           "-O2",
+                                           "-Iruntime include",
+                                           "generated.cpp",
+                                           "libgti_runtime.a",
+                                           "-o",
+                                           "program",
+                                           "-pthread",
+                                           "-fno-fast-math",
+                                           "-ffp-contract=off",
+                                           "-D__gti_strict_ieee754=1"};
+#if defined(__APPLE__)
+  expectedCommand.emplace_back("-Wl,-reproducible");
+#endif
+  if (command != expectedCommand) {
     return 2;
   }
 

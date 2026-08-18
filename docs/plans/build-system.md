@@ -69,11 +69,15 @@ parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 and writes artifacts beneath
 `build/gti/<profile>/<arch>-<vendor>-<os>/` for standalone packages (and the
 package-qualified workspace layout above), with verified-payload whole-program
-cache entries beneath `build/gti/cache/v2/` for builds without declared native
-source files, native search directories, opaque native arguments, native link
-operands, name-resolved link inputs, or dependency-injecting native environment
-search paths. Those native configurations bypass the cache until
-compiler/linker-discovered inputs are represented. Plain project commands select the
+cache entries beneath `build/gti/cache/v2/`. Declared native C/C++ sources,
+declared include directories, and content-complete exact link files now join
+cache identity through native dependency discovery; opaque native argument
+vectors, name-resolved libraries/frameworks, native library search
+directories, non-content-complete link inputs, and dependency-injecting
+native environment search paths still bypass the cache until their exact
+inputs can be identified. `gti build --all [--jobs <count>]` builds every
+declared target through bounded concurrent child builds with deterministic
+name-ordered output and byte-identical serial/parallel artifacts. Plain project commands select the
 `dev` profile; `--release` is an exact alias for `--profile release`. Only the
 selected profile directory is created, a symbolic-link package trust root is
 rejected, and existing symbolic-link components or artifact leaves below the
@@ -512,6 +516,7 @@ gti build chip8 --profile release
 gti build chip8 --release
 gti build chip8 --verbose
 gti build chip8 --no-cache
+gti build --all --jobs 4
 gti check chip8
 gti check chip8 --release
 gti run chip8
@@ -774,15 +779,24 @@ Their string values do not identify mutable or transitive resources selected
 below those roots. Scalar policy environment values that do not inject a search
 root remain part of eligible cache identity.
 
-Declared C and C++ sources bypass the whole-program cache. Their preprocessors
-may consume undeclared adjacent/system headers or time- and metadata-sensitive
-macros, so hashing the declared source alone would permit stale executable
-reuse. Native include/library search directories, exact link files, ordered
-link operands, and named libraries/frameworks also bypass: a header, linker
-script, or thin archive can name files outside a declared tree or file, and
-native search has not been resolved to exact content identities. A future
-cacheable native phase requires compiler depfiles, exact link-input discovery,
-and a defined deterministic preprocessing policy.
+Declared C and C++ sources now participate in the whole-program cache through
+native dependency discovery (implemented): at lookup time each declared source
+is preprocessed with its exact object-compile argument vector plus
+`-E -MD -MF`, the compiler's own dependency report supplies the exact
+discovered input set with content identity, and the preprocessed translation
+unit itself is hashed so include resolution — including shadowing — is
+captured as the compiler would see it. The deterministic preprocessing policy
+is defined as: any declared source or discovered dependency spelling
+`__DATE__`, `__TIME__`, or `__TIMESTAMP__` bypasses the cache. Declared
+include directories join the key as full sorted content trees, and exact link
+files/file operands join with content identity when their magic classifies
+them as content-complete regular archives or relocatable objects. Thin
+archives, linker scripts, shared libraries, unrecognized link-input formats,
+name-resolved libraries/frameworks, native library search directories, and
+opaque argument vectors still bypass, because a name or script resolves to
+files the driver has not identified exactly. Narrowing a bypass must always
+come from establishing exact identity, never from widening what the key
+trusts.
 
 The remaining cacheable generated C++ build can still consume implicit system
 headers and libraries. The current bounded contract assumes those resources are
@@ -1099,6 +1113,44 @@ Acceptance criteria:
   path spelling is semantically observable;
 - **Passed:** deleting a cache entry never damages source or the published
   target and degrades to a clean rebuild.
+
+### Post-Milestone 4 addition: native-source cache identity and parallel target builds
+
+Status: complete
+
+- Consume native compiler depfiles (`-E -MD -MF` discovery probes with the
+  exact object-compile argument vector) so declared C/C++ sources join the
+  whole-program cache identity with exact header content, and hash the
+  preprocessed translation unit so include resolution and shadowing are part
+  of the key.
+- Define the deterministic preprocessing policy: `__DATE__`, `__TIME__`, and
+  `__TIMESTAMP__` in any declared source or discovered dependency bypass.
+- Resolve exact link files to content identities and classify them by magic;
+  only regular non-thin archives and relocatable objects are trusted, while
+  thin archives, linker scripts, shared libraries, and unknown formats keep
+  bypassing with a stated reason.
+- Add `gti build --all [--jobs <count>]`: every declared target builds as an
+  independent child whole-program build with a bounded concurrent job count,
+  deterministic name-ordered output/diagnostics, name-ordered first-failure
+  status, and byte-identical serial/parallel artifacts.
+- Make link output deterministic: the staged link output keeps its final
+  basename inside a unique staging directory, and Apple links append
+  `-Wl,-reproducible` so identical inputs produce identical bytes.
+
+Acceptance criteria:
+
+- **Passed:** a project with a declared C source reports a verified cache hit
+  on an unchanged rebuild and misses when any discovered header, shadowing
+  header, declared include tree entry, or link input changes;
+- **Passed:** every remaining bypass reason is reported explicitly and covered
+  by CLI tests, including opaque argument vectors, name resolution, library
+  search directories, non-content-complete link inputs, injected environment
+  search paths, and time-sensitive macros;
+- **Passed:** serial and parallel `--all` builds produce byte-identical
+  artifacts and byte-identical ordered output, including under a failing
+  target;
+- **Passed:** malformed or partial cache entries are diagnosed, never
+  executed, and replaced only after a successful rebuild.
 
 ### Milestone 5: tests and workspaces
 

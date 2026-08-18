@@ -175,6 +175,20 @@ public:
   [[nodiscard]] std::vector<std::string>
   command(const NativeCppCompileRequest &request) const;
 
+  // Dependency-discovery variants of the object-compile commands above. They
+  // preserve the exact argument vector of the corresponding compile and only
+  // replace `-c` with `-E -MD -MF <depfile>`, so the preprocessor resolves
+  // includes exactly as the object compile would. The request output receives
+  // the preprocessed translation unit and `depfile` receives the compiler's
+  // make-style dependency report.
+  [[nodiscard]] std::vector<std::string>
+  preprocessCommand(const NativeCCompileRequest &request,
+                    const std::filesystem::path &depfile) const;
+
+  [[nodiscard]] std::vector<std::string>
+  preprocessCommand(const NativeCppCompileRequest &request,
+                    const std::filesystem::path &depfile) const;
+
   [[nodiscard]] NativeProcessResult
   invoke(const NativeCompileRequest &request,
          NativeInvocationOptions options = {}) const;

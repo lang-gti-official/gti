@@ -1839,13 +1839,20 @@ def main():
             ]
         )
         recorded_arguments = argument_log.read_text(encoding="utf-8").splitlines()
-        assert recorded_arguments[-5:] == [
+        expected_command_tail = [
             "-DGTI_FIRST=1",
             "-DGTI_SECOND=2",
             "-fno-fast-math",
             "-ffp-contract=off",
             "-D__gti_strict_ieee754=1",
         ]
+        if sys.platform == "darwin":
+            # Apple's linker randomizes LC_UUID in fast mode; the driver pins
+            # deterministic output after every forwarded argument.
+            expected_command_tail.append("-Wl,-reproducible")
+        assert recorded_arguments[-len(expected_command_tail):] == (
+            expected_command_tail
+        )
         run([str(argument_executable)])
 
         loop_control_source = root / "loop-control.gti"

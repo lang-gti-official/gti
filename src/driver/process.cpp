@@ -225,4 +225,180 @@ ProcessResult invokeProcess(const std::vector<std::string> &arguments,
   return invokeCaptured(arguments, options);
 }
 
+StartedProcess::StartedProcess(StartedProcess &&other) noexcept
+    : child(other.child), capture(other.capture),
+      captureSuccessfulOutput(other.captureSuccessfulOutput),
+      description(std::move(other.description)),
+      startFailure(std::move(other.startFailure)) {
+  other.child = -1;
+  other.capture = nullptr;
+  other.startFailure.reset();
+}
+
+StartedProcess &StartedProcess::operator=(StartedProcess &&other) noexcept {
+  if (this != &other) {
+    if (running()) {
+      static_cast<void>(wait());
+    }
+    child = other.child;
+    capture = other.capture;
+    captureSuccessfulOutput = other.captureSuccessfulOutput;
+    description = std::move(other.description);
+    startFailure = std::move(other.startFailure);
+    other.child = -1;
+    other.capture = nullptr;
+    other.startFailure.reset();
+  }
+  return *this;
+}
+
+StartedProcess::~StartedProcess() {
+  if (running()) {
+    static_cast<void>(wait());
+  }
+}
+
+bool StartedProcess::running() const { return child != -1; }
+
+ProcessResult StartedProcess::wait() {
+  if (startFailure) {
+    ProcessResult failure = std::move(*startFailure);
+    startFailure.reset();
+    return failure;
+  }
+  if (child == -1) {
+    return {.exitCode = 127,
+            .driverDiagnostic =
+                "gti: " + description + " has already been waited for"};
+  }
+  std::FILE *captureFile = static_cast<std::FILE *>(capture);
+  capture = nullptr;
+#if defined(_WIN32)
+  int status = 0;
+  const intptr_t waited = _cwait(&status, child, 0);
+  child = -1;
+  if (waited == -1) {
+    if (captureFile != nullptr) {
+      std::fclose(captureFile);
+    }
+    return {.exitCode = 127,
+            .driverDiagnostic = "gti: failed while waiting for " + description +
+                                ": " + std::strerror(errno)};
+  }
+  return finishCapturedProcess(captureFile, status, captureSuccessfulOutput);
+#else
+  const pid_t waitedChild = static_cast<pid_t>(child);
+  child = -1;
+  return waitForProcess(waitedChild, description, captureFile,
+                        captureSuccessfulOutput);
+#endif
+}
+
+StartedProcess startProcess(const std::vector<std::string> &arguments,
+                            ProcessInvocationOptions options) {
+  StartedProcess started;
+  started.description = options.description;
+  started.captureSuccessfulOutput = options.captureSuccessfulOutput;
+  if (arguments.empty() || arguments.front().empty()) {
+    started.startFailure =
+        ProcessResult{.exitCode = 127,
+                      .driverDiagnostic =
+                          "gti: " + options.description + " command is empty"};
+    return started;
+  }
+
+  std::vector<char *> process = processArguments(arguments);
+  std::FILE *capture = std::tmpfile();
+  if (capture == nullptr) {
+    started.startFailure = ProcessResult{
+        .exitCode = 74,
+        .driverDiagnostic = "gti: failed to create " + options.description +
+                            " output capture: " + std::strerror(errno)};
+    return started;
+  }
+  std::cout.flush();
+  std::cerr.flush();
+
+#if defined(_WIN32)
+  // Spawned children inherit the standard handles active at spawn time, so
+  // the parent's handles are redirected only for the non-waiting spawn call
+  // and restored immediately afterwards.
+  const int standardOutput = _fileno(stdout);
+  const int standardError = _fileno(stderr);
+  const int savedOutput = _dup(standardOutput);
+  const int savedError = _dup(standardError);
+  if (savedOutput == -1 || savedError == -1 ||
+      _dup2(_fileno(capture), standardOutput) != 0 ||
+      _dup2(_fileno(capture), standardError) != 0) {
+    if (savedOutput != -1) {
+      _dup2(savedOutput, standardOutput);
+      _close(savedOutput);
+    }
+    if (savedError != -1) {
+      _dup2(savedError, standardError);
+      _close(savedError);
+    }
+    std::fclose(capture);
+    started.startFailure =
+        ProcessResult{.exitCode = 74,
+                      .driverDiagnostic = "gti: failed to redirect " +
+                                          options.description + " output"};
+    return started;
+  }
+  const intptr_t spawned = _spawnvp(_P_NOWAIT, process.front(), process.data());
+  const int spawnError = errno;
+  std::fflush(stdout);
+  std::fflush(stderr);
+  _dup2(savedOutput, standardOutput);
+  _dup2(savedError, standardError);
+  _close(savedOutput);
+  _close(savedError);
+  if (spawned == -1) {
+    std::fclose(capture);
+    started.startFailure = ProcessResult{
+        .exitCode = 127,
+        .driverDiagnostic = "gti: failed to execute '" + arguments.front() +
+                            "': " + std::strerror(spawnError)};
+    return started;
+  }
+  started.child = spawned;
+  started.capture = capture;
+  return started;
+#else
+  const pid_t child = fork();
+  if (child == -1) {
+    const int forkError = errno;
+    std::fclose(capture);
+    started.startFailure = ProcessResult{
+        .exitCode = 127,
+        .driverDiagnostic = "gti: failed to start " + options.description +
+                            ": " + std::strerror(forkError)};
+    return started;
+  }
+  if (child == 0) {
+    const int descriptor = fileno(capture);
+    if (descriptor == -1 || dup2(descriptor, STDOUT_FILENO) == -1 ||
+        dup2(descriptor, STDERR_FILENO) == -1) {
+      const int redirectError = errno;
+      std::fprintf(stderr, "gti: failed to redirect %s output: %s\n",
+                   options.description.c_str(), std::strerror(redirectError));
+      std::fflush(stderr);
+      _exit(127);
+    }
+    if (descriptor > STDERR_FILENO) {
+      close(descriptor);
+    }
+    execvp(process.front(), process.data());
+    const int executeError = errno;
+    std::fprintf(stderr, "gti: failed to execute '%s': %s\n",
+                 arguments.front().c_str(), std::strerror(executeError));
+    std::fflush(stderr);
+    _exit(127);
+  }
+  started.child = child;
+  started.capture = capture;
+  return started;
+#endif
+}
+
 } // namespace lang::driver
