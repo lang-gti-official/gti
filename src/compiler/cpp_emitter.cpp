@@ -7994,8 +7994,10 @@ private:
            !ownerInstance->polymorphic && !ownerInstance->cAbiRecord &&
            ownerInstance->bases.empty() &&
            ownerInstance->structuralBases.empty() &&
+           // Active cleanup governs destruction, not construction: the
+           // instance-eligibility half already refuses failure records,
+           // drops, and cleanup boundaries inside the body itself.
            !ownerInstance->unionLayout.has_value() &&
-           !ownerInstance->requiresActiveCleanup &&
            passiveMirFieldInitializers(ownerInstance->fieldInitializers);
   }
 
@@ -8043,12 +8045,7 @@ private:
         mir->findClassInstance(selected->owner);
     if (ownerInstance == nullptr || !ownerInstance->type.arguments.empty() ||
         !ownerInstance->type.valueArguments.empty() ||
-        !ownerInstance->bases.empty() ||
-        !ownerInstance->structuralBases.empty() || ownerInstance->abstract ||
-        ownerInstance->polymorphic || ownerInstance->cAbiRecord ||
-        ownerInstance->unionLayout.has_value() ||
-        ownerInstance->requiresActiveCleanup ||
-        !passiveMirFieldInitializers(ownerInstance->fieldInitializers)) {
+        !generalConstructorOwnerEligible(ownerInstance)) {
       return nullptr;
     }
     if (!generalConstructorBodyAdmitted(selected->id)) {
