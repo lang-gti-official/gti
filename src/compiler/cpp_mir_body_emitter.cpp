@@ -382,6 +382,40 @@ hasExecutableProgramInitialization(const MirProgram &program) {
   return definition;
 }
 
+// The bounds-checked element borrow publishing a Return loan: a Borrow
+// of a This-rooted Field+Index place with exactly one failure site whose
+// loan is the return loan. The compatibility spelling is the terminal
+// array_at accessor, which contains the bounds failure inside itself.
+[[nodiscard]] const MirInstruction *
+elementBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::Return) {
+    return nullptr;
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Borrow || !instruction.loan ||
+          *instruction.loan != loan.id ||
+          instruction.localFailureSites.size() != 1 ||
+          instruction.operands.size() != 1 ||
+          (instruction.operands.front().kind != MirOperandKind::BorrowRead &&
+           instruction.operands.front().kind != MirOperandKind::BorrowWrite)) {
+        continue;
+      }
+      const MirPlace *place =
+          body.findPlace(instruction.operands.front().place);
+      if (place == nullptr || place->root != MirPlaceRootKind::This ||
+          place->projections.size() != 2 ||
+          place->projections[0].kind != MirProjectionKind::Field ||
+          place->projections[1].kind != MirProjectionKind::Index ||
+          place->projections[1].index == 0) {
+        continue;
+      }
+      return &instruction;
+    }
+  }
+  return nullptr;
+}
+
 [[nodiscard]] bool deducedCallableCallee(const MirProgram &program,
                                          const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Call ||
@@ -2820,8 +2854,19 @@ private:
              // call site.
              instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
              instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut);
+        // A bounds-checked element borrow publishing the return loan
+        // contains its failure terminally inside the array_at accessor,
+        // exactly like the compatibility subscript body.
+        bool terminalElementBorrow = false;
+        if (instruction.kind == MirInstructionKind::Borrow &&
+            instruction.loan) {
+          const MirLoan *borrowLoan = body.findLoan(*instruction.loan);
+          terminalElementBorrow =
+              borrowLoan != nullptr &&
+              elementBorrowLoanProducer(body, *borrowLoan) == &instruction;
+        }
         if (!dischargedStorageRead && !transparentCallPropagation &&
-            !terminalAllocation &&
+            !terminalAllocation && !terminalElementBorrow &&
             (elementPlace == nullptr ||
              !arrayElementAccess(body, *elementPlace))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
@@ -3918,6 +3963,12 @@ public:
         if (place.projections.empty()) {
           continue;
         }
+        // A field element place spells only inside its fused array_at
+        // accessor; no alias binds (its index value assigns later).
+        if (place.projections.size() == 2 &&
+            place.projections[1].kind == MirProjectionKind::Index) {
+          continue;
+        }
         writeIndent();
         output << (facts.receiverMutability == ReceiverMutability::Mutable
                        ? "auto &__gti_mir_p_"
@@ -4085,6 +4136,11 @@ public:
       // A Return loan erased into a fused construct return binds no
       // pointer local either (ADR 018).
       if (returnLoanErasedByConstruct(facts.body, loan)) {
+        continue;
+      }
+      // A bounds-checked element borrow's return loan publishes as the
+      // fused array_at spelling at the consuming return.
+      if (elementBorrowLoanProducer(facts.body, loan) != nullptr) {
         continue;
       }
       const MirPlace *source = facts.body.findPlace(loan.source);
@@ -4838,6 +4894,15 @@ private:
         // accessor spelling publishes at the consuming return.
         writeIndent();
         output << "// GTI MIR owner-borrow loan " << loan->id
+               << " publishes at its consuming return\n";
+        return;
+      }
+      if (loan != nullptr &&
+          elementBorrowLoanProducer(facts.body, *loan) != nullptr) {
+        // The element borrow's loan has no pointer local; the fused
+        // array_at spelling publishes at the consuming return.
+        writeIndent();
+        output << "// GTI MIR element-borrow loan " << loan->id
                << " publishes at its consuming return\n";
         return;
       }
@@ -6310,6 +6375,33 @@ private:
           }
           return;
         }
+        if (const MirLoan *returnLoan =
+                facts.body.findLoan(*terminator.returnLoan)) {
+          if (const MirInstruction *borrow =
+                  elementBorrowLoanProducer(facts.body, *returnLoan)) {
+            // The bounds-checked element borrow spells the terminal
+            // array_at accessor over the field and staged index, exactly
+            // like the compatibility subscript body.
+            const MirPlace *place =
+                facts.body.findPlace(borrow->operands.front().place);
+            writeIndent();
+            if (failureForm) {
+              output << "*__gti_mir_out_result = &::gti_internal::backend::"
+                        "array_at((*this)."
+                     << fieldSpelling(facts, place->projections[0].field)
+                     << ", __gti_mir_v_" << place->projections[1].index
+                     << ");\n";
+              writeIndent();
+              output << "return true;\n";
+            } else {
+              output << "return ::gti_internal::backend::array_at((*this)."
+                     << fieldSpelling(facts, place->projections[0].field)
+                     << ", __gti_mir_v_" << place->projections[1].index
+                     << ");\n";
+            }
+            return;
+          }
+        }
         if (failureForm) {
           // The loan pointer publishes through the `T **` out-parameter
           // (ADR 018 §5); the wrapper dereferences on the boundary.
@@ -7697,7 +7789,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           place.projections.size() == 2 &&
           place.projections[0].kind == MirProjectionKind::Field &&
           place.projections[1].kind == MirProjectionKind::Dereference;
-      if ((place.projections.size() != 1 && !referenceFieldChain) ||
+      // A field element place carries the staged index value; it spells
+      // only inside the fused array_at accessor, never as an alias.
+      const bool fieldElementChain =
+          place.projections.size() == 2 &&
+          place.projections[0].kind == MirProjectionKind::Field &&
+          place.projections[1].kind == MirProjectionKind::Index &&
+          place.projections[1].index != 0;
+      if ((place.projections.size() != 1 && !referenceFieldChain &&
+           !fieldElementChain) ||
           place.projections.front().kind != MirProjectionKind::Field ||
           !fieldRow(place.projections.front().field)) {
         {
@@ -8390,7 +8490,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       case MirInstructionKind::Borrow: {
         const MirLoan *loan =
             instruction.loan ? loanById(*instruction.loan) : nullptr;
-        if (loan == nullptr || !instruction.localFailureSites.empty()) {
+        // The fused element borrow carries its bounds failure site; the
+        // terminal array_at accessor contains it.
+        if (loan == nullptr ||
+            (!instruction.localFailureSites.empty() &&
+             elementBorrowLoanProducer(body, *loan) != &instruction)) {
           {
             if (::getenv("GTI_PROBE_TRACE") != nullptr) {
               std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 42,
