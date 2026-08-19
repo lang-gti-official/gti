@@ -16,9 +16,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# First-party code builds warning-clean under -Werror on both clang and
-# GCC so the macOS/Linux toolchain divergence class (e.g. C++20 designator
-# order, which clang only warns about) breaks locally instead of in CI.
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -716,6 +713,14 @@ if(BUILD_TESTING)
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_version_test.py"
               "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_release_version.py"
+    )
+    add_test(
+      NAME mir_census_regression
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_census_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_census_baseline.json"
     )
     add_test(
       NAME tree_sitter_queries
