@@ -3687,12 +3687,26 @@ public:
             definition->kind == MirInstructionKind::Call &&
             definition->result && *definition->result == value.id &&
             transformedCallee(*definition) != nullptr;
+        // A terminally contained plain callee's class result assigns into
+        // the declared local exactly like the compatibility call site;
+        // return-fused results keep their no-local spelling.
+        const bool containedPlainResult =
+            !valueProducingConstruct && !transformedClassResult &&
+            definition != nullptr &&
+            definition->kind == MirInstructionKind::Call &&
+            definition->result && *definition->result == value.id &&
+            definition->functionTarget &&
+            definition->intrinsic == IntrinsicKind::None &&
+            returnCallDefinition(facts.body, value.id) == nullptr &&
+            terminallyContainedPlainCallee(program, representations,
+                                           *definition);
         const auto row = std::find_if(
             representations.types().begin(), representations.types().end(),
             [&](const CppMirTypeRepresentation &candidate) {
               return candidate.type == value.info.type;
             });
-        if ((!valueProducingConstruct && !transformedClassResult) ||
+        if ((!valueProducingConstruct && !transformedClassResult &&
+             !containedPlainResult) ||
             row == representations.types().end() || row->spelling.empty() ||
             !row->boundaryConstructible) {
           continue;
@@ -7365,8 +7379,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                !terminallyContainedPlainCallee(program_, representations_,
                                                *definition);
       };
-      const bool declared = (valueProducing || transformedResult()) &&
-                            constructibleClassRow(value.info.type);
+      const auto containedPlainResult = [&]() {
+        return definition != nullptr &&
+               definition->kind == MirInstructionKind::Call &&
+               definition->functionTarget &&
+               definition->intrinsic == IntrinsicKind::None &&
+               returnCallDefinition(body, value.id) == nullptr &&
+               terminallyContainedPlainCallee(program_, representations_,
+                                              *definition);
+      };
+      const bool declared =
+          (valueProducing || transformedResult() || containedPlainResult()) &&
+          constructibleClassRow(value.info.type);
       const auto movedIntoValueStage = [&]() {
         if (definition == nullptr ||
             definition->kind != MirInstructionKind::Move ||

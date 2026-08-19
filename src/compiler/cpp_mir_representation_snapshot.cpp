@@ -1989,6 +1989,54 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
       spelling += "::";
     }
     spelling += cppFunctionSpelling(semantics, *info->declaration);
+    // A generic parameter that appears in no parameter type cannot be
+    // deduced at a call site, so the instance's call spelling carries its
+    // substituted arguments explicitly — exactly like the compatibility
+    // call site. Deducible instances keep the bare name so shipped
+    // spellings stay byte-stable.
+    if (!function.typeArguments.empty() &&
+        !info->declaration->genericParameters().empty()) {
+      const auto mentionsParameter = [&](const GenericParameterId parameter) {
+        const auto mentions = [&](const auto &self,
+                                  const SemanticType &type) -> bool {
+          if (type.kind == SemanticType::TypeParameter &&
+              type.genericParameterId == parameter) {
+            return true;
+          }
+          for (const SemanticType &argument : type.arguments) {
+            if (self(self, argument)) {
+              return true;
+            }
+          }
+          return false;
+        };
+        for (const SemanticType &parameterType : info->parameterTypes) {
+          if (mentions(mentions, parameterType)) {
+            return true;
+          }
+        }
+        return false;
+      };
+      bool needsExplicit = false;
+      for (const GenericParameterInfo &parameter : info->genericParameters) {
+        if (!parameter.pack && !mentionsParameter(parameter.id)) {
+          needsExplicit = true;
+          break;
+        }
+      }
+      if (needsExplicit) {
+        spelling += '<';
+        for (std::size_t index = 0; index < function.typeArguments.size();
+             ++index) {
+          if (index != 0) {
+            spelling += ", ";
+          }
+          spelling += cppSemanticTypeSpelling(semantics, standard,
+                                              function.typeArguments[index]);
+        }
+        spelling += '>';
+      }
+    }
     builder.rows.bodies.push_back(
         {.address = {.kind = MirBodyKind::Function, .owner = function.id},
          .spelling = std::move(spelling)});

@@ -11255,7 +11255,10 @@ int main() {
           "::gti_internal::backend::make_unique<T>(::gti_internal::backend::"
           "forward_pack_argument(args)...)") != std::string::npos &&
           artifact.contents.find("__gti_std::__gti_fn_") != std::string::npos &&
-          artifact.contents.find("_make_unique<Widget>(value)") !=
+          // The migrated caller emits from verified MIR and spells the
+          // factory's non-deducible arguments explicitly.
+          artifact.contents.find(
+              "_make_unique<::__gti_program::Widget, std::int32_t>(") !=
               std::string::npos &&
           artifact.contents.find(
               "::gti_internal::backend::owner_access(((*this)).owner)") !=
@@ -11265,7 +11268,11 @@ int main() {
       "the public factory should remain ordinary GTI while its wrapper "
       "lowers only narrow owner capabilities");
   expect(
-      artifact.contents.find("return std::move(widget)") != std::string::npos &&
+      // The factory's verified-MIR sibling publishes the owner by move
+      // into the caller's receiving local.
+      artifact.contents.find("*__gti_mir_out_result = "
+                             "std::move(__gti_mir_p_2.get())") !=
+              std::string::npos &&
           artifact.contents.find("unique_ptr(const unique_ptr &) = delete") !=
               std::string::npos &&
           artifact.contents.find("unique_ptr(unique_ptr &&) = default") !=

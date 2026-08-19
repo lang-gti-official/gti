@@ -720,6 +720,10 @@ enum class MirDefinitionKind {
 struct MirFunctionInstance {
   HirFunctionInstanceId id = 0;
   FunctionId declaration = 0;
+  // The instance's substituted generic arguments in declaration order;
+  // empty for non-generic declarations. Emission spells them explicitly
+  // where C++ deduction cannot recover them from the parameter types.
+  std::vector<SemanticType> typeArguments;
   std::optional<HirClassInstanceId> owner;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;

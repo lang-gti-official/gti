@@ -11,7 +11,7 @@
     "09-target-selection.gti": 29,
     "11-overloads.gti": 31,
     "12-fixed-arrays.gti": 29,
-    "13-ownership.gti": 35,
+    "13-ownership.gti": 36,
     "14-operators.gti": 36,
     "15-variadic-generics.gti": 27,
     "16-move-generics.gti": 34,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 71
   },
-  "total": 2277
+  "total": 2278
 }
