@@ -26,10 +26,10 @@ namespace std {
     }
   };
 
-  class rand_engine {
+  class random_engine {
   public:
     // splitmix64 expands the seed across all four state words. Running it once
-    rand_engine(uint64_t seed) {
+    random_engine(uint64_t seed) {
       mut uint64_t z = seed;
       for (mut uint64_t i = uint64_t(0); i<uint64_t(4); i++) {
         z = std::wrapping_add(z, uint64_t(0x9e3779b97f4a7c15));
@@ -40,7 +40,7 @@ namespace std {
       }
     }
 
-    ~rand_engine() {}
+    ~random_engine() {}
 
     // xoshiro256++. `mut` because the call advances the state, and the state is
     uint64_t operator()() mut {
