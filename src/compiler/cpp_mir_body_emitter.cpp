@@ -1819,7 +1819,11 @@ private:
       }
       add(CppMirBodyEmissionIssueKind::MissingSymbolRepresentation, block,
           instruction,
-          "copied map has no exact storage, field, or capture name row");
+          "copied map has no exact storage, field, or capture name row "
+          "(kind=" +
+              std::to_string(static_cast<int>(kind)) +
+              " owner=" + std::to_string(owner) +
+              " symbol=" + std::to_string(symbol) + ")");
       return;
     }
     if ((type != nullptr && row->type != *type) || row->spelling.empty()) {
@@ -2216,6 +2220,7 @@ private:
       const bool ownedArgumentsSchedule =
           cppMirHostedStartupOwnedArgumentsSchedule(program);
       if (!cppMirHostedStartupNoArgumentsSchedule(program) &&
+          !cppMirHostedStartupFailureFreeSchedule(program) &&
           !ownedArgumentsSchedule) {
         add(CppMirBodyEmissionIssueKind::MissingFailureCleanupMir, 0, 0,
             "compiler-generated hosted startup lacks the Stage-E terminal "
@@ -6368,6 +6373,18 @@ private:
                 }
               }
               output << ')';
+            } else if (const MirInstruction *unexpectedValue =
+                           terminator.value->kind == MirOperandKind::Value
+                               ? unexpectedDefinition(facts.body,
+                                                      terminator.value->value)
+                               : nullptr;
+                       unexpectedValue != nullptr) {
+              // The unexpected wrapper converts into the expected-typed
+              // result exactly like the plain return spelling; the
+              // wrapped value never declares a local.
+              output << expectedConstructionSpelling() << '(';
+              emitOperand(unexpectedValue->operands.front());
+              output << ')';
             } else {
               emitOperand(*terminator.value);
             }
@@ -6864,6 +6881,26 @@ bool cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program) {
          plan->operations[2].kind ==
              MirHostedStartupOperationKind::ContainFailure &&
          plan->operations[3].kind == MirHostedStartupOperationKind::ReturnEntry;
+}
+
+// The failure-free no-argument variant: an entry that cannot raise emits
+// the bare call/return adapter, so the schedule is exactly CallEntry with
+// no failure behavior followed by ReturnEntry under the same exit policy.
+bool cppMirHostedStartupFailureFreeSchedule(const MirProgram &program) {
+  const std::optional<MirHostedStartupPlan> &plan = program.hostedStartupPlan();
+  if (!plan || plan->kind != ProgramEntryKind::NoArguments ||
+      plan->entry == 0 ||
+      plan->exitPolicy != MirHostedStartupExitPolicy::ImmediateExit70 ||
+      plan->operations.size() != 2) {
+    return false;
+  }
+  return plan->operations[0].kind == MirHostedStartupOperationKind::CallEntry &&
+         plan->operations[0].failureBehavior ==
+             MirHostedStartupFailureBehavior::None &&
+         plan->operations[1].kind ==
+             MirHostedStartupOperationKind::ReturnEntry &&
+         plan->operations[1].failureBehavior ==
+             MirHostedStartupFailureBehavior::None;
 }
 
 bool cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program) {

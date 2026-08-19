@@ -504,15 +504,11 @@ void testHostedStartupOwnsRemainingAuthorityGap() {
       "the source entry body should no longer claim ownership of generated "
       "hosted startup");
   expect(
-      startupAnalysis.readiness ==
-              lang::CppMirBodyEmissionReadiness::MissingMirAuthority &&
-          hasIssue(
-              startupAnalysis,
-              lang::CppMirBodyEmissionIssueKind::MissingFailureCleanupMir) &&
+      startupAnalysis.ready() &&
           !hasIssue(startupAnalysis,
                     lang::CppMirBodyEmissionIssueKind::MissingHostedStartupMir),
-      "the generated startup body should expose only its remaining Stage-E "
-      "failure-containment authority gap");
+      "the generated failure-free startup body carries its complete "
+      "verified two-operation schedule authority");
 
   const lang::FrontendResult owned =
       analyzeWithStandardLibrary("cpp-mir-body-owned-entry.gti", R"(

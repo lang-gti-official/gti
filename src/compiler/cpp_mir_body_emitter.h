@@ -349,6 +349,12 @@ struct CppMirInitializerScheduleText {
 [[nodiscard]] bool
 cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program);
 
+// The failure-free no-argument hosted schedule: CallEntry with no failure
+// behavior, then ReturnEntry — the bare call/return adapter of an entry
+// that cannot raise.
+[[nodiscard]] bool
+cppMirHostedStartupFailureFreeSchedule(const MirProgram &program);
+
 // Single authority for the owned-arguments hosted-startup marshaling
 // schedule: count validation and conversion, argument-vector construction,
 // the per-argument view/string/append loop with its failure-cleanup

@@ -5,7 +5,7 @@
     "03-functions.gti": 31,
     "04-integers.gti": 28,
     "05-objects.gti": 35,
-    "06-namespaces.gti": 28,
+    "06-namespaces.gti": 29,
     "07-generics.gti": 37,
     "08-expected.gti": 28,
     "09-target-selection.gti": 29,
@@ -19,8 +19,8 @@
     "18-lambdas.gti": 30,
     "19-auto.gti": 35,
     "20-strings.gti": 70,
-    "21-scoped-enums.gti": 27,
-    "22-switch.gti": 27,
+    "21-scoped-enums.gti": 28,
+    "22-switch.gti": 28,
     "23-direct-initialization.gti": 35,
     "24-static.gti": 28,
     "25-polymorphic-ranges.gti": 39,
@@ -34,7 +34,7 @@
     "33-source-concepts.gti": 29,
     "34-do-while.gti": 28,
     "35-conditional-expressions.gti": 35,
-    "36-c-abi-sockets.gti": 29,
+    "36-c-abi-sockets.gti": 30,
     "37-tcp-socket-owner.gti": 37,
     "38-vector-emplace.gti": 60,
     "39-raw-pointers.gti": 27,
@@ -48,7 +48,7 @@
     "47-binary64.gti": 27,
     "48-native-c-records.gti": 30,
     "49-native-bridge-header.gti": 30,
-    "50-opaque-native-handles.gti": 36,
+    "50-opaque-native-handles.gti": 37,
     "51-callable-value-results.gti": 37,
     "52-stateful-callables.gti": 134,
     "53-consuming-callables.gti": 39,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 75
   },
-  "total": 2303
+  "total": 2308
 }

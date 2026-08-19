@@ -6704,10 +6704,11 @@ private:
                        static_cast<unsigned long long>(body.body.owner),
                        body.issues.size());
           for (const auto &issue : body.issues) {
-            std::fprintf(stderr, "  issue kind=%d block=%llu inst=%llu\n",
+            std::fprintf(stderr, "  issue kind=%d block=%llu inst=%llu %s\n",
                          static_cast<int>(issue.kind),
                          static_cast<unsigned long long>(issue.block),
-                         static_cast<unsigned long long>(issue.instruction));
+                         static_cast<unsigned long long>(issue.instruction),
+                         issue.detail.c_str());
           }
         }
         continue;
@@ -13567,6 +13568,7 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   void emitHostedStartupMarker() {
     if (mir == nullptr || !generalEmissionMap || !mir->hostedStartupPlan() ||
         (!cppMirHostedStartupNoArgumentsSchedule(*mir) &&
+         !cppMirHostedStartupFailureFreeSchedule(*mir) &&
          !cppMirHostedStartupOwnedArgumentsSchedule(*mir))) {
       return;
     }

@@ -1712,7 +1712,9 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
 
   // A verified no-argument hosted-startup body's emitted name is the
   // program entry adapter itself.
-  if (cppMirHostedStartupNoArgumentsSchedule(mir) && mir.hostedStartupPlan()) {
+  if ((cppMirHostedStartupNoArgumentsSchedule(mir) ||
+       cppMirHostedStartupFailureFreeSchedule(mir)) &&
+      mir.hostedStartupPlan()) {
     builder.rows.bodies.push_back(
         {.address = {.kind = MirBodyKind::HostedStartup,
                      .owner = mir.hostedStartupPlan()->entry},
@@ -1873,8 +1875,33 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
       }
       const SymbolRecord *record =
           semantics.database().findSymbol(place.symbol);
-      if (record == nullptr || record->kind != SymbolKind::GlobalVariable ||
-          record->qualifiedName != record->name || record->name.empty()) {
+      if (record == nullptr || record->name.empty()) {
+        continue;
+      }
+      // An enumerator read spells the enum type's qualified constant; the
+      // enum spelling is the same authority the enum rows carry. Payload
+      // enums stay rowless — their variants are not plain constants.
+      if (record->kind == SymbolKind::Enumerator &&
+          place.type.kind == SemanticType::Enum) {
+        const EnumTypeInfo *enumInfo =
+            semantics.findEnumType(place.type.enumId);
+        const std::string enumSpelling =
+            cppSemanticTypeSpelling(semantics, standard, place.type);
+        if (enumInfo == nullptr || enumInfo->payload || enumSpelling.empty()) {
+          continue;
+        }
+        builder.rows.symbols.push_back(
+            {.kind = CppMirSymbolRepresentationKind::Storage,
+             .owner = 0,
+             .symbol = place.symbol,
+             .ordinal = 0,
+             .type = place.type,
+             .spelling = enumSpelling + "::" + record->name});
+        builder.addType(place.type);
+        continue;
+      }
+      if (record->kind != SymbolKind::GlobalVariable ||
+          record->qualifiedName != record->name) {
         continue;
       }
       builder.rows.symbols.push_back(
