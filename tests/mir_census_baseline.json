@@ -42,7 +42,7 @@
     "41-owner-dependencies.gti": 38,
     "42-exclusive-reborrows.gti": 37,
     "43-program-arguments.gti": 81,
-    "44-bounded-requires.gti": 129,
+    "44-bounded-requires.gti": 130,
     "45-layout-queries.gti": 28,
     "46-defined-integer-arithmetic.gti": 111,
     "47-binary64.gti": 27,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 76
   },
-  "total": 2330
+  "total": 2331
 }

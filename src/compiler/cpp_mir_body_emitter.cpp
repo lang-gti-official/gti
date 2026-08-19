@@ -759,6 +759,73 @@ inlineNestedCallResult(const MirProgram &program,
   return nullptr;
 }
 
+// A Move-defined value whose single record is one Call operand in the
+// same block declares at its move — `auto v = std::move(<place>);` — and
+// the consuming argument spells std::move(v). The sequenced local keeps
+// MIR's move-before-call order (an inline std::move(<place>) in the
+// argument list would race sibling arguments under C++'s unspecified
+// evaluation order), and auto needs no representation row. Nothing
+// between the move and the call may touch the source place.
+[[nodiscard]] const MirInstruction *sequencedMovedArgument(const MirBody &body,
+                                                           MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (definition == nullptr || definition->kind != MirInstructionKind::Move ||
+      definition->operands.size() != 1 ||
+      definition->operands.front().place == 0) {
+    return nullptr;
+  }
+  const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand) {
+    return nullptr;
+  }
+  const MirInstruction *consumer =
+      findInstruction(body, uses.front().instruction);
+  if (consumer == nullptr || consumer->kind != MirInstructionKind::Call) {
+    return nullptr;
+  }
+  const MirPlaceId movedPlace = definition->operands.front().place;
+  for (const MirBlock &block : body.blocks) {
+    bool sawDefinition = false;
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.id == definition->id) {
+        sawDefinition = true;
+        continue;
+      }
+      if (!sawDefinition) {
+        continue;
+      }
+      if (instruction.id == consumer->id) {
+        return definition;
+      }
+      switch (instruction.kind) {
+      case MirInstructionKind::Move:
+      case MirInstructionKind::CallInput:
+      case MirInstructionKind::Compute:
+      case MirInstructionKind::Load:
+      case MirInstructionKind::Lifecycle:
+        break;
+      default:
+        return nullptr;
+      }
+      if (instruction.destination == movedPlace ||
+          (instruction.receiver && instruction.receiver->place == movedPlace) ||
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      [&](const MirOperand &operand) {
+                        return operand.place == movedPlace;
+                      })) {
+        return nullptr;
+      }
+    }
+    if (sawDefinition) {
+      return nullptr;
+    }
+  }
+  return nullptr;
+}
+
 // The terminal consumer of a moved-value staging chain: each link is a
 // destination-less single-consumer CallInput, and the walk ends at the
 // first non-link instruction.
@@ -5723,6 +5790,18 @@ private:
       }
     }
     if (instruction.kind == MirInstructionKind::Move && instruction.result &&
+        sequencedMovedArgument(facts.body, *instruction.result) ==
+            &instruction) {
+      // The sequenced moved argument declares here, keeping MIR's
+      // move-before-call order; auto needs no representation row.
+      writeIndent();
+      output << "auto __gti_mir_v_" << *instruction.result << " = std::move(";
+      emitStoragePlaceValue(
+          facts, *facts.body.findPlace(instruction.operands.front().place));
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Move && instruction.result &&
         instruction.operands.size() == 1) {
       if (const MirPlace *source =
               facts.body.findPlace(instruction.operands.front().place);
@@ -6319,6 +6398,13 @@ private:
         }
       }
       if (operand.kind == MirOperandKind::Value) {
+        if (sequencedMovedArgument(facts.body, operand.value) != nullptr) {
+          // The sequenced local was declared at its move; the argument
+          // consumes it by move — a sibling argument can only touch its
+          // own distinct local.
+          output << "std::move(__gti_mir_v_" << operand.value << ')';
+          return;
+        }
         if (const MirInstruction *stage =
                 callableArgumentStage(facts.body, operand.value)) {
           // The staged callable argument passes the parameter place by
@@ -8592,6 +8678,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             returnCallDefinition(body, value.id) == definition)) ||
           (constructDefined && slotConsumed(*definition)) ||
           movedIntoValueStage() ||
+          // A sequenced moved argument declares at its move with auto and
+          // needs no representation row.
+          sequencedMovedArgument(body, value.id) != nullptr ||
           // An owner-borrow element value publishes through its return
           // loan's fused accessor spelling; it never declares a local.
           (definition != nullptr &&
