@@ -521,11 +521,40 @@ terminallyContainedMemberCallee(const MirProgram &program,
   return definition;
 }
 
-// A by-value argument staging temporary: one CallInput copies a source
-// place into a bare class-typed temporary that nothing else references,
-// and the staged value feeds exactly one call. The consuming call spells
-// the source place and C++ performs the copy at the call boundary, so
-// the temporary never materializes — exactly like the compatibility call.
+// The source feeding a value-staged temporary: a Copy operand names its
+// place directly, and a Value operand fed by a Move of a place names the
+// moved source (spelled std::move(source) at the consuming call).
+struct StagedTemporarySource {
+  const MirPlace *place = nullptr;
+  bool moved = false;
+};
+[[nodiscard]] StagedTemporarySource
+stagedTemporarySourceFor(const MirBody &body, const MirInstruction &stage) {
+  const MirOperand &operand = stage.operands.front();
+  if (operand.kind == MirOperandKind::Copy && operand.place != 0) {
+    return {body.findPlace(operand.place), false};
+  }
+  if (operand.kind == MirOperandKind::Value && operand.value != 0 &&
+      body.usesOf(operand.value).size() == 1) {
+    const MirValue *value = body.findValue(operand.value);
+    const MirInstruction *definition =
+        value == nullptr ? nullptr : findInstruction(body, value->definition);
+    if (definition != nullptr && definition->kind == MirInstructionKind::Move &&
+        definition->operands.size() == 1 &&
+        definition->operands.front().kind == MirOperandKind::Move &&
+        definition->operands.front().place != 0) {
+      return {body.findPlace(definition->operands.front().place), true};
+    }
+  }
+  return {};
+}
+
+// A by-value argument staging temporary: one CallInput carries a source
+// place — copied, or moved through its staged value — into a bare
+// class-typed temporary that nothing else references, and the staged
+// value feeds exactly one call. The consuming call spells the source
+// place (moved sources under std::move) and C++ materializes the
+// temporary at the call boundary, exactly like the compatibility call.
 [[nodiscard]] const MirInstruction *
 copyStageForTemporary(const MirBody &body, const MirPlace &place) {
   if (place.root != MirPlaceRootKind::Temporary || !place.projections.empty() ||
@@ -549,17 +578,17 @@ copyStageForTemporary(const MirBody &body, const MirPlace &place) {
           instruction.kind != MirInstructionKind::CallInput ||
           instruction.destination != place.id || !instruction.result ||
           instruction.receiver || instruction.operands.size() != 1 ||
-          instruction.operands.front().kind != MirOperandKind::Copy ||
-          instruction.operands.front().place == 0 ||
-          body.findPlace(instruction.operands.front().place) == nullptr) {
+          stagedTemporarySourceFor(body, instruction).place == nullptr) {
         return nullptr;
       }
       stage = &instruction;
     }
   }
   if (stage == nullptr || body.usesOf(*stage->result).size() != 1 ||
-      body.usesOf(*stage->result).front().kind !=
-          MirValueUseKind::InstructionOperand) {
+      (body.usesOf(*stage->result).front().kind !=
+           MirValueUseKind::InstructionOperand &&
+       body.usesOf(*stage->result).front().kind !=
+           MirValueUseKind::InstructionReceiver)) {
     return nullptr;
   }
   const MirInstruction *user =
@@ -4772,6 +4801,22 @@ private:
       output << ");\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Move && instruction.result &&
+        !facts.body.usesOf(*instruction.result).empty()) {
+      const MirInstruction *user = findInstruction(
+          facts.body,
+          facts.body.usesOf(*instruction.result).front().instruction);
+      if (user != nullptr && user->kind == MirInstructionKind::CallInput &&
+          user->result &&
+          copyStagedCallInput(facts.body, *user->result) == user) {
+        // The moved source feeds a value-staged call input; the consuming
+        // call spells std::move over the place expression directly.
+        writeIndent();
+        output << "// move " << *instruction.result
+               << " stages into its call input\n";
+        return;
+      }
+    }
     if (instruction.kind == MirInstructionKind::Move) {
       // By-value element staging: the moved place feeds exactly the
       // staged element value.
@@ -5104,6 +5149,7 @@ private:
     // the qualified member name: the explicit qualification states the
     // static dispatch MIR proved.
     const MirPlace *receiverPlace = nullptr;
+    bool receiverMoved = false;
     if (instruction.receiver) {
       // Staged through a CallInput, or borrowed directly on the receiver
       // operand (a self-member call); both name the spellable place.
@@ -5111,11 +5157,24 @@ private:
           borrowStagedCallInput(facts.body, *instruction.receiver);
       const MirOperand &receiverBorrow =
           staged != nullptr ? staged->operands.front() : *instruction.receiver;
-      receiverPlace = (receiverBorrow.kind == MirOperandKind::BorrowRead ||
-                       receiverBorrow.kind == MirOperandKind::BorrowWrite) &&
-                              receiverBorrow.place != 0
-                          ? facts.body.findPlace(receiverBorrow.place)
-                          : nullptr;
+      const MirInstruction *movedStage =
+          staged == nullptr &&
+                  instruction.receiver->kind == MirOperandKind::Value
+              ? copyStagedCallInput(facts.body, instruction.receiver->value)
+              : nullptr;
+      if (movedStage != nullptr) {
+        const StagedTemporarySource source =
+            stagedTemporarySourceFor(facts.body, *movedStage);
+        receiverPlace = source.moved ? source.place : nullptr;
+        receiverMoved = receiverPlace != nullptr;
+      }
+      if (receiverPlace == nullptr) {
+        receiverPlace = (receiverBorrow.kind == MirOperandKind::BorrowRead ||
+                         receiverBorrow.kind == MirOperandKind::BorrowWrite) &&
+                                receiverBorrow.place != 0
+                            ? facts.body.findPlace(receiverBorrow.place)
+                            : nullptr;
+      }
       if (receiverPlace == nullptr) {
         throw std::logic_error(
             "verified MIR receiver call lost its staged borrowed place");
@@ -5152,15 +5211,22 @@ private:
         }
         if (const MirInstruction *stage =
                 copyStagedCallInput(facts.body, operand.value)) {
-          // The copy-staged argument spells its source place; C++ copies
+          // The value-staged argument spells its source place — moved
+          // sources under std::move — and C++ materializes the argument
           // at the call boundary, exactly like the compatibility call.
-          const MirPlace *source =
-              facts.body.findPlace(stage->operands.front().place);
-          if (source == nullptr) {
+          const StagedTemporarySource source =
+              stagedTemporarySourceFor(facts.body, *stage);
+          if (source.place == nullptr) {
             throw std::logic_error(
-                "verified MIR call lost its copy-staged source place");
+                "verified MIR call lost its value-staged source place");
           }
-          emitStoragePlaceValue(facts, *source);
+          if (source.moved) {
+            output << "std::move(";
+          }
+          emitStoragePlaceValue(facts, *source.place);
+          if (source.moved) {
+            output << ')';
+          }
           return;
         }
       }
@@ -5189,7 +5255,13 @@ private:
       // success bool.
       output << "__gti_mir_call_success_" << instruction.id << " = ";
       if (receiverPlace != nullptr) {
+        if (receiverMoved) {
+          output << "std::move(";
+        }
         emitStoragePlaceValue(facts, *receiverPlace);
+        if (receiverMoved) {
+          output << ')';
+        }
         output << '.';
       }
       const std::string sibling = cppMirFailureSiblingSpelling(
@@ -5250,7 +5322,13 @@ private:
       output << "__gti_mir_v_" << *instruction.result << " = ";
     }
     if (receiverPlace != nullptr) {
+      if (receiverMoved) {
+        output << "std::move(";
+      }
       emitStoragePlaceValue(facts, *receiverPlace);
+      if (receiverMoved) {
+        output << ')';
+      }
       output << '.';
     }
     output << bodySpelling(*instruction.functionTarget);
@@ -8374,12 +8452,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const MirOperand &receiverBorrow = staged != nullptr
                                                  ? staged->operands.front()
                                                  : *instruction.receiver;
-          const MirPlace *receiverPlace =
-              (receiverBorrow.kind == MirOperandKind::BorrowRead ||
-               receiverBorrow.kind == MirOperandKind::BorrowWrite) &&
-                      receiverBorrow.place != 0
-                  ? body.findPlace(receiverBorrow.place)
+          const MirInstruction *movedStage =
+              staged == nullptr &&
+                      instruction.receiver->kind == MirOperandKind::Value
+                  ? copyStagedCallInput(body, instruction.receiver->value)
                   : nullptr;
+          const StagedTemporarySource movedSource =
+              movedStage != nullptr
+                  ? stagedTemporarySourceFor(body, *movedStage)
+                  : StagedTemporarySource{};
+          const MirPlace *receiverPlace =
+              movedSource.place != nullptr && movedSource.moved
+                  ? movedSource.place
+                  : ((receiverBorrow.kind == MirOperandKind::BorrowRead ||
+                      receiverBorrow.kind == MirOperandKind::BorrowWrite) &&
+                             receiverBorrow.place != 0
+                         ? body.findPlace(receiverBorrow.place)
+                         : nullptr);
           if (receiverPlace == nullptr) {
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
@@ -8395,9 +8484,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   ? program_.findFunctionInstance(*instruction.functionTarget)
                   : nullptr;
           const ReceiverMutability stagedMutability =
-              receiverBorrow.kind == MirOperandKind::BorrowWrite
-                  ? ReceiverMutability::Mutable
-                  : ReceiverMutability::ReadOnly;
+              movedSource.place != nullptr && movedSource.moved
+                  ? ReceiverMutability::Consuming
+                  : (receiverBorrow.kind == MirOperandKind::BorrowWrite
+                         ? ReceiverMutability::Mutable
+                         : ReceiverMutability::ReadOnly);
           if (target == nullptr || !target->owner || target->staticMember ||
               target->virtualMethod || target->pureVirtual ||
               target->overrideMethod ||

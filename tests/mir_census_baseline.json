@@ -51,12 +51,12 @@
     "50-opaque-native-handles.gti": 36,
     "51-callable-value-results.gti": 37,
     "52-stateful-callables.gti": 132,
-    "53-consuming-callables.gti": 38,
+    "53-consuming-callables.gti": 39,
     "54-owned-move-captures.gti": 32,
     "55-owned-callable-transport.gti": 31,
     "56-sum-types.gti": 27,
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 71
   },
-  "total": 2276
+  "total": 2277
 }
