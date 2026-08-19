@@ -1177,6 +1177,38 @@ storeConsumedStorageValueDrop(const MirBody &body,
 // family checks and contains the defined failure itself and never returns
 // on failure. Inline lambda literals keep exactly that spelling, so their
 // MIR failure edges are unreachable in emitted text.
+// The closed narrowing compound assignment keeps its fused origin by
+// design (docs/architecture/mir.md): semantics folds the arithmetic and
+// the checked conversion into one HIR-authored origin, and the terminal
+// compatibility helper spells arithmetic, conversion, and write in one
+// call that contains the failure at the site.
+std::string_view cppMirCompoundAssignHelperSpelling(MirOperation operation) {
+  switch (operation) {
+  case MirOperation::AddAssign:
+    return "::gti_internal::backend::add_assign";
+  case MirOperation::SubtractAssign:
+    return "::gti_internal::backend::subtract_assign";
+  case MirOperation::MultiplyAssign:
+    return "::gti_internal::backend::multiply_assign";
+  case MirOperation::DivideAssign:
+    return "::gti_internal::backend::divide_assign";
+  case MirOperation::RemainderAssign:
+    return "::gti_internal::backend::remainder_assign";
+  case MirOperation::BitwiseAndAssign:
+    return "::gti_internal::backend::bitwise_and_assign";
+  case MirOperation::BitwiseOrAssign:
+    return "::gti_internal::backend::bitwise_or_assign";
+  case MirOperation::BitwiseXorAssign:
+    return "::gti_internal::backend::bitwise_xor_assign";
+  case MirOperation::ShiftLeftAssign:
+    return "::gti_internal::backend::shift_left_assign";
+  case MirOperation::ShiftRightAssign:
+    return "::gti_internal::backend::shift_right_assign";
+  default:
+    return {};
+  }
+}
+
 [[nodiscard]] std::string_view
 cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
   switch (operation) {
@@ -2570,10 +2602,27 @@ private:
             "PackExpansion has no concrete ordered element operands or "
             "targets in MIR");
       } else {
-        add(CppMirBodyEmissionIssueKind::MissingOrderedCompoundMir, block.id,
-            instruction.id,
-            "compound operation lacks the complete verified target/operand/"
-            "commit schedule required for generic emission");
+        // The closed narrowing compound assignment keeps its fused origin
+        // by design; the terminal compatibility helper spells it whole
+        // and contains the failure at the site. The per-form walks own
+        // the invoke-edge decision.
+        const bool closedCompoundAssign =
+            instruction.kind == MirInstructionKind::Assign &&
+            !cppMirCompoundAssignHelperSpelling(instruction.operation)
+                 .empty() &&
+            instruction.destination && instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Value &&
+            instruction.operands.front().value != 0 &&
+            instruction.localFailureSites.size() <= 1 &&
+            (instruction.localFailureSites.empty() ||
+             program.failureMetadata().findSite(
+                 instruction.localFailureSites.front()) != nullptr);
+        if (!closedCompoundAssign) {
+          add(CppMirBodyEmissionIssueKind::MissingOrderedCompoundMir, block.id,
+              instruction.id,
+              "compound operation lacks the complete verified target/operand/"
+              "commit schedule required for generic emission");
+        }
       }
     }
 
@@ -2975,6 +3024,14 @@ private:
             instruction.kind == MirInstructionKind::CallInput &&
             instruction.localFailureSites.size() == 1 &&
             !instructionHasInvoke(block, instruction);
+        // The closed compound assignment contains its fused narrowing
+        // failure inside the terminal helper.
+        const bool terminalCompoundAssign =
+            instruction.kind == MirInstructionKind::Assign &&
+            !cppMirCompoundAssignHelperSpelling(instruction.operation)
+                 .empty() &&
+            instruction.localFailureSites.size() == 1 &&
+            !instructionHasInvoke(block, instruction);
         // A bounds-checked element borrow publishing the return loan
         // contains its failure terminally inside the array_at accessor,
         // exactly like the compatibility subscript body.
@@ -2989,7 +3046,7 @@ private:
         if (!dischargedStorageRead && !transparentCallPropagation &&
             !terminalAllocation && !terminalElementBorrow &&
             !terminalConversion && !terminalAppendCall && !terminalExtraction &&
-            !stagedProofSite &&
+            !stagedProofSite && !terminalCompoundAssign &&
             (elementPlace == nullptr ||
              !arrayElementAccess(body, *elementPlace))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
@@ -5437,6 +5494,21 @@ private:
         return;
       }
     }
+    // The closed narrowing compound assignment spells the terminal
+    // compatibility helper whole: arithmetic, conversion, and write share
+    // one origin, and the helper's returned target re-reads into the
+    // result exactly like the plain assignment's follow-up read.
+    if (instruction.kind == MirInstructionKind::Assign &&
+        !cppMirCompoundAssignHelperSpelling(instruction.operation).empty()) {
+      if (instruction.result) {
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+      }
+      output << cppMirCompoundAssignHelperSpelling(instruction.operation) << '('
+             << destinationSpelling(facts, *instruction.destination) << ", ";
+      emitOperand(instruction.operands.front());
+      output << ");\n";
+      return;
+    }
     // Storage values and unique-owner values are move-only in the C++
     // representation; the store is their consuming use, so it spells as a
     // move.
@@ -6386,6 +6458,12 @@ private:
              producer->kind == MirInstructionKind::Compute &&
              !cppMirTerminalCheckedHelperSpelling(producer->operation)
                   .empty() &&
+             !producer->localFailureSites.empty()) ||
+            // The closed compound assignment spells its terminal helper;
+            // it never returns on failure, so the edge is a plain goto.
+            (producer != nullptr &&
+             producer->kind == MirInstructionKind::Assign &&
+             !cppMirCompoundAssignHelperSpelling(producer->operation).empty() &&
              !producer->localFailureSites.empty()) ||
             (producer != nullptr &&
              producer->kind == MirInstructionKind::Call) ||
