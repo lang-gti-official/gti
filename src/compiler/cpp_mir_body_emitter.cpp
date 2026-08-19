@@ -4553,6 +4553,17 @@ private:
       }
       return;
     }
+    if (instruction.kind == MirInstructionKind::Compute &&
+        instruction.operation == MirOperation::PackExpansion &&
+        instruction.result &&
+        packExpansionForwardedOnce(facts.body, *instruction.result) ==
+            &instruction) {
+      // The pack's flattened parameters spell at the one consuming
+      // allocation call; the expansion itself never materializes.
+      output << "// pack " << *instruction.result
+             << " expands at its consuming call\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Compute) {
       if (failureForm &&
           !cppMirCheckedOperationHelperSpelling(instruction.operation)
@@ -5488,6 +5499,37 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner) {
+      // The unique-owner allocation spells the backend helper over the
+      // pack's flattened parameters, exactly like the compatibility
+      // call site, and contains its failure terminally inside the
+      // helper.
+      const MirFunctionInstance *owner = program.findFunctionInstance(facts.id);
+      if (owner == nullptr || !instruction.result ||
+          instruction.info.type.arguments.empty()) {
+        throw std::logic_error(
+            "verified MIR unique-owner allocation lost its instance shape");
+      }
+      writeIndent();
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::make_unique<"
+             << typeSpelling(instruction.info.type.arguments.front()) << ">(";
+      const std::size_t leading = facts.parameterBindings.empty()
+                                      ? 0
+                                      : facts.parameterBindings.size() - 1;
+      for (std::size_t index = leading; index < owner->parameterTypes.size();
+           ++index) {
+        if (index != leading) {
+          output << ", ";
+        }
+        output << "::gti_internal::backend::forward_pack_argument(__gti_mir_"
+                  "arg_"
+               << index << ')';
+      }
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic != IntrinsicKind::None) {
       const std::string_view helper =
           cppIntegerArithmeticIntrinsicSpelling(instruction.intrinsic);
@@ -5763,11 +5805,16 @@ private:
     case MirTerminatorKind::Invoke: {
       const MirInstruction *producer =
           findInstruction(facts.body, terminator.invokeInstruction);
-      if (producer != nullptr && (callableValueInvocation(*producer) ||
-                                  deducedCallableCallee(program, *producer) ||
-                                  terminallyContainedPlainCallee(
-                                      program, representations, *producer) ||
-                                  storageBoundsCheckCall(*producer))) {
+      if (producer != nullptr &&
+          (callableValueInvocation(*producer) ||
+           deducedCallableCallee(program, *producer) ||
+           terminallyContainedPlainCallee(program, representations,
+                                          *producer) ||
+           // The unique-owner allocation contains its failure terminally
+           // inside the backend helper, exactly like the compatibility
+           // call site.
+           producer->intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+           storageBoundsCheckCall(*producer))) {
         // The fused literal or template callee contains its failure
         // terminally; the edge is a plain goto and the else block never
         // runs.
@@ -7600,7 +7647,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           unexpectedDefinition(body, value.id) != nullptr ||
           (definition != nullptr &&
            (returnConstructDefinition(body, value.id) == definition ||
-            returnMoveDefinition(body, value.id) == definition ||
+            (failureForm &&
+             returnMoveDefinition(body, value.id) == definition) ||
             returnCallDefinition(body, value.id) == definition)) ||
           (constructDefined && slotConsumed(*definition)) ||
           movedIntoValueStage() ||
@@ -9737,7 +9785,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     case MirTerminatorKind::Return:
       if (block.terminator.returnLoan && *block.terminator.returnLoan != 0) {
-        if (loanById(*block.terminator.returnLoan) == nullptr) {
+        if (loanById(*block.terminator.returnLoan) == nullptr ||
+            // A class-valued return published through a loan would copy
+            // the borrowed referent — a deleted copy constructor rejects
+            // it and moving from a borrowed place is unsound — so the
+            // shape stays on the compatibility path until rows carry the
+            // copyability proof.
+            body.returnType.kind == SemanticType::Class) {
           {
             if (::getenv("GTI_PROBE_TRACE") != nullptr) {
               std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 117,

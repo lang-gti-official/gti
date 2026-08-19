@@ -7412,16 +7412,22 @@ private:
         return isMirScalarCfgSignatureType(type) ||
                type.kind == SemanticType::Class;
       };
-      // Class returns wait on the class-value flow audit: the value rows
-      // admit every class-typed value silently, but only some defining
-      // instructions have a no-local spelling, so widening the return
-      // here exposed assignments into undeclared locals (measured on
-      // 16-move-generics, 31-exact-constraints, 41-owner-dependencies).
+      // Class returns opened once the class-value flow enumeration
+      // replaced the blanket value skip: every class-typed value now
+      // proves a declared or no-local spelling, so the widening that
+      // once exposed undeclared locals is guarded at the gate itself.
       if (!std::all_of(instance.parameterTypes.begin(),
                        instance.parameterTypes.end(),
                        specializationParameter) ||
           !(instance.returnType == SemanticType::Void ||
-            isMirScalarCfgSignatureType(instance.returnType))) {
+            isMirScalarCfgSignatureType(instance.returnType) ||
+            (instance.returnType.kind == SemanticType::Class &&
+             std::any_of(generalEmissionMap->types().begin(),
+                         generalEmissionMap->types().end(),
+                         [&](const CppMirTypeRepresentation &row) {
+                           return row.type == instance.returnType &&
+                                  row.boundaryConstructible;
+                         })))) {
         if (::getenv("GTI_PROBE_TRACE") != nullptr) {
           std::fprintf(stderr, "SPEC skip signature owner=%llu\n",
                        static_cast<unsigned long long>(instance.id));
@@ -7583,7 +7589,18 @@ private:
            << '(';
     for (std::size_t index = 0; index < instance.parameterTypes.size();
          ++index) {
-      output << "__gti_mir_arg_" << index << ", ";
+      // The sibling takes consumable owners and class values by value;
+      // the wrapper forwards them by move so deleted copy constructors
+      // cannot reject the hand-off.
+      const SemanticType::Kind kind = instance.parameterTypes[index].kind;
+      const bool moved =
+          kind == SemanticType::Class || kind == SemanticType::UniqueOwner ||
+          kind == SemanticType::Storage || kind == SemanticType::PrefixStorage;
+      if (moved) {
+        output << "std::move(__gti_mir_arg_" << index << "), ";
+      } else {
+        output << "__gti_mir_arg_" << index << ", ";
+      }
     }
     if (!voidBoundary) {
       output << "&__gti_mir_boundary_result, ";
