@@ -22,7 +22,7 @@
     "21-scoped-enums.gti": 28,
     "22-switch.gti": 28,
     "23-direct-initialization.gti": 35,
-    "24-static.gti": 28,
+    "24-static.gti": 30,
     "25-polymorphic-ranges.gti": 39,
     "26-stored-references.gti": 39,
     "27-copy-move-policies.gti": 35,
@@ -53,10 +53,10 @@
     "52-stateful-callables.gti": 134,
     "53-consuming-callables.gti": 39,
     "54-owned-move-captures.gti": 32,
-    "55-owned-callable-transport.gti": 31,
+    "55-owned-callable-transport.gti": 33,
     "56-sum-types.gti": 27,
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 75
   },
-  "total": 2308
+  "total": 2312
 }

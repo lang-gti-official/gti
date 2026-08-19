@@ -6871,16 +6871,31 @@ bool cppMirHostedStartupNoArgumentsSchedule(const MirProgram &program) {
   const std::optional<MirHostedStartupPlan> &plan = program.hostedStartupPlan();
   if (!plan || plan->kind != ProgramEntryKind::NoArguments ||
       plan->entry == 0 ||
-      plan->exitPolicy != MirHostedStartupExitPolicy::ImmediateExit70 ||
-      plan->operations.size() != 4) {
+      plan->exitPolicy != MirHostedStartupExitPolicy::ImmediateExit70) {
     return false;
   }
-  return plan->operations[0].kind == MirHostedStartupOperationKind::CallEntry &&
-         plan->operations[1].kind ==
+  // An optional leading module-initialization call stages nothing at the
+  // adapter: C++ static initialization of the emitted definitions
+  // performs it before main, in plan order (the shipped
+  // cpp_static_initialization_v1 contract).
+  std::size_t first = 0;
+  if (plan->operations.size() == 5 &&
+      plan->operations[0].kind ==
+          MirHostedStartupOperationKind::CallProgramInitialization &&
+      plan->operations[0].failureBehavior ==
+          MirHostedStartupFailureBehavior::None) {
+    first = 1;
+  } else if (plan->operations.size() != 4) {
+    return false;
+  }
+  return plan->operations[first].kind ==
+             MirHostedStartupOperationKind::CallEntry &&
+         plan->operations[first + 1].kind ==
              MirHostedStartupOperationKind::RouteOperationFailure &&
-         plan->operations[2].kind ==
+         plan->operations[first + 2].kind ==
              MirHostedStartupOperationKind::ContainFailure &&
-         plan->operations[3].kind == MirHostedStartupOperationKind::ReturnEntry;
+         plan->operations[first + 3].kind ==
+             MirHostedStartupOperationKind::ReturnEntry;
 }
 
 // The failure-free no-argument variant: an entry that cannot raise emits

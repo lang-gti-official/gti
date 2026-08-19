@@ -1446,6 +1446,24 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
     emitUserMacroIsolation();
     emitPublicOpaqueHandleForwardDeclarations(program.declarations());
+    // The verified module schedule authors program-storage initializer
+    // text: when the extraction supports every staged step, each static
+    // or global definition below spells its initializer from MIR and the
+    // module body's runtime work is completely represented by C++ static
+    // initialization in plan order.
+    moduleGeneralInitializers.clear();
+    moduleGeneralSupported = false;
+    if (mir != nullptr && generalEmissionMap) {
+      const CppMirInitializerScheduleText module =
+          CppMirBodyEmitter(*mir, *generalEmissionMap)
+              .initializerSchedule({.kind = MirBodyKind::Module, .owner = 0});
+      if (module.supported) {
+        moduleGeneralSupported = true;
+        for (const CppMirFieldInitializerSpelling &field : module.fields) {
+          moduleGeneralInitializers.emplace(field.field, field.spelling);
+        }
+      }
+    }
     output << "namespace __gti_program {\n";
     ++indentation;
     collectScheduledTypes(program.declarations(), {});
@@ -1467,10 +1485,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const CppMirBodyEmitter emitter(*mir, *generalEmissionMap);
       const CppMirInitializerScheduleText module = emitter.initializerSchedule(
           {.kind = MirBodyKind::Module, .owner = 0});
-      // A staged field is admissible only as a data-only constant step:
-      // the frontend evaluated its value, the declaration above already
-      // carries it, and the body performs no runtime work. Anything else
-      // stays with the compatibility route fail-closed.
+      // A staged field is admissible as a data-only constant step — the
+      // frontend evaluated its value and the declaration above already
+      // carries it — or as a schedule-spelled step whose definition took
+      // its initializer text from MIR above. Either way the body performs
+      // no runtime work beyond C++ static initialization in plan order.
       const auto dataOnlyConstant = [&](SymbolId symbol) {
         const MirProgramInitializationStep *step =
             mir->programInitializationPlan().findStepForSymbol(symbol);
@@ -1482,8 +1501,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       if (module.supported &&
           std::all_of(module.fields.begin(), module.fields.end(),
                       [&](const CppMirFieldInitializerSpelling &field) {
-                        return field.spelling.empty() &&
-                               dataOnlyConstant(field.field);
+                        return moduleGeneralSupported ||
+                               (field.spelling.empty() &&
+                                dataOnlyConstant(field.field));
                       })) {
         writeIndent();
         output << "// GTI verified-MIR body: scalar-cfg-v1 "
@@ -14215,6 +14235,22 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   }
 
   void emitVariableInitializer(const VariableDecl &variable) {
+    // A program-storage definition whose staged step the verified module
+    // schedule spelled takes its initializer text from MIR; the bare
+    // default emits no initializer. Constexpr stays frontend-evaluated
+    // and local bindings never carry plan-step symbols.
+    if (moduleGeneralSupported && !variable.isConstexpr()) {
+      if (const BindingInfo *binding = semantics.findBinding(variable);
+          binding != nullptr && binding->symbol != 0) {
+        const auto field = moduleGeneralInitializers.find(binding->symbol);
+        if (field != moduleGeneralInitializers.end()) {
+          if (!field->second.empty()) {
+            output << " = " << field->second;
+          }
+          return;
+        }
+      }
+    }
     // A non-static field of a class whose verified field-initializer body
     // the general route owns spells its in-class initializer from MIR: the
     // staged literal, or no initializer text for the bare default.
@@ -15095,6 +15131,8 @@ namespace gti_internal::backend {
   std::unordered_set<const ClassDecl *> scheduledClasses;
   std::unordered_set<const EnumDecl *> scheduledEnums;
   std::unordered_set<const VariableDecl *> namespaceStaticVariables;
+  std::unordered_map<SymbolId, std::string> moduleGeneralInitializers;
+  bool moduleGeneralSupported = false;
   std::unordered_set<SymbolId> namespaceStaticVariableSymbols;
   std::vector<ScheduledClassDefinition> classDefinitions;
   std::vector<ScheduledEnumDefinition> enumDefinitions;

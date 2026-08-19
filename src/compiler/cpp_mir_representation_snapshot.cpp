@@ -1735,6 +1735,14 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::LifetimeStorage,
        .spelling = "::gti_internal::backend::mir_lifetime_slot"});
+  // Program initialization names the shipped representation of the
+  // merged module schedule: every staged step's definition carries its
+  // initializer in the emitted declaration surface, so C++ static
+  // initialization in plan order performs the module body's work and
+  // the hosted CallProgramInitialization operation stages nothing.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::ProgramInitialization,
+       .spelling = "cpp_static_initialization_v1"});
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::DefinedFailure,
        .spelling = "mir_failure_status_v1"});
@@ -1900,8 +1908,50 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
         builder.addType(place.type);
         continue;
       }
-      if (record->kind != SymbolKind::GlobalVariable ||
-          record->qualifiedName != record->name) {
+      if (record->kind != SymbolKind::GlobalVariable) {
+        continue;
+      }
+      // An internal-linkage global spells the compatibility emitter's
+      // wrapped static holder under its namespace path; a constexpr
+      // global's reads are frontend-substituted, so a Symbol-rooted
+      // demand here is always the static form.
+      if (record->internalLinkage) {
+        std::string spelling = "::__gti_program";
+        const std::string &qualified = record->qualifiedName;
+        if (qualified.size() > record->name.size()) {
+          std::size_t begin = 0;
+          std::size_t scopeIndex = 0;
+          const std::string scopes =
+              qualified.substr(0, qualified.size() - record->name.size() - 2);
+          while (begin <= scopes.size()) {
+            const std::size_t end = scopes.find("::", begin);
+            const std::string scope = scopes.substr(
+                begin,
+                end == std::string::npos ? std::string::npos : end - begin);
+            spelling += "::";
+            spelling += scopeIndex == 0 && scope == "std"
+                            ? std::string(cppEmittedStandardNamespace)
+                            : scope;
+            ++scopeIndex;
+            if (end == std::string::npos) {
+              break;
+            }
+            begin = end + 2;
+          }
+        }
+        spelling += "::";
+        spelling += cppStaticStorageValueSpelling(place.symbol, record->name);
+        builder.rows.symbols.push_back(
+            {.kind = CppMirSymbolRepresentationKind::Storage,
+             .owner = 0,
+             .symbol = place.symbol,
+             .ordinal = 0,
+             .type = place.type,
+             .spelling = std::move(spelling)});
+        builder.addType(place.type);
+        continue;
+      }
+      if (record->qualifiedName != record->name) {
         continue;
       }
       builder.rows.symbols.push_back(
@@ -1921,7 +1971,37 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   // body's own Binding places still resolve their storage through it.
   for (const MirProgramInitializationStep &step :
        mir.programInitializationPlan().steps) {
-    if (step.ownerClass != 0 || step.symbol == 0) {
+    if (step.symbol == 0) {
+      continue;
+    }
+    // A class-owned static's storage row spells the class-qualified
+    // member, exactly the compatibility definition's access path.
+    if (step.ownerClass != 0) {
+      const MirClassInstance *ownerInstance =
+          mir.findClassInstance(step.ownerClass);
+      const SymbolRecord *record = semantics.database().findSymbol(step.symbol);
+      const MirPlace *storage = mir.module().findPlace(step.storagePlace);
+      if (ownerInstance == nullptr || record == nullptr || storage == nullptr ||
+          record->name.empty() ||
+          std::any_of(builder.rows.symbols.begin(), builder.rows.symbols.end(),
+                      [&](const CppMirSymbolRepresentation &row) {
+                        return row.kind ==
+                                   CppMirSymbolRepresentationKind::Storage &&
+                               row.owner == step.ownerClass &&
+                               row.symbol == step.symbol;
+                      })) {
+        continue;
+      }
+      builder.rows.symbols.push_back(
+          {.kind = CppMirSymbolRepresentationKind::Storage,
+           .owner = step.ownerClass,
+           .symbol = step.symbol,
+           .ordinal = 0,
+           .type = storage->type,
+           .spelling = cppSemanticTypeSpelling(semantics, standard,
+                                               ownerInstance->type) +
+                       "::" + record->name});
+      builder.addType(storage->type);
       continue;
     }
     if (std::any_of(builder.rows.symbols.begin(), builder.rows.symbols.end(),
