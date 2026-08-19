@@ -6169,9 +6169,31 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     if (loan.kind == MirLoanKind::Stored) {
-      // Admitted only when the Constructor case proved the bijective
-      // stores-reference pairing; the binding spells in the member
-      // initializer list and no pointer local exists.
+      // A field-carrying stored loan is admitted only when the
+      // Constructor case proved the bijective stores-reference pairing;
+      // the binding spells in the member initializer list and no pointer
+      // local exists. A field-less stored loan rides a borrow-carrying
+      // object value: the object local holds the borrow internally, no
+      // pointer ever binds, and its call-result children bind their own
+      // pointers — admissible exactly when nothing roots a place at it.
+      if (loan.storedField == 0 && !storedReferenceBindings) {
+        bool rootedPlace = false;
+        for (const MirPlace &place : body.places) {
+          if (place.root == MirPlaceRootKind::Loan &&
+              place.loan == loan.id) {
+            rootedPlace = true;
+          }
+        }
+        if (rootedPlace) {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 133,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
+        continue;
+      }
       if (!storedReferenceBindings) {
         {
           if (::getenv("GTI_PROBE_TRACE") != nullptr) {
