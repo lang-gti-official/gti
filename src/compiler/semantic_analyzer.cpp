@@ -16196,11 +16196,11 @@ private:
     // The builtin view members carry their identity to MIR as intrinsics:
     // the call names no declaration, so without this record the lowered
     // Call would be target-less and the backends could not name it.
-    ResolvedCallInfo resolved{
-        .returnType = currentType,
-        .intrinsic = size ? IntrinsicKind::StringViewSize
-                          : IntrinsicKind::StringViewEmpty,
-        .dispatchOwner = SemanticType::StringView};
+    ResolvedCallInfo resolved{.returnType = currentType,
+                              .intrinsic = size
+                                               ? IntrinsicKind::StringViewSize
+                                               : IntrinsicKind::StringViewEmpty,
+                              .dispatchOwner = SemanticType::StringView};
     semanticModel.record(call, resolved);
     recordSelectedCallOccurrence(call, std::move(resolved));
   }

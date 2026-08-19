@@ -6430,8 +6430,8 @@ private:
     // The deduction-called fact is not required here: the overlay loop
     // itself demands type-parameter declarations bound to callable
     // concretes, and every other shape fails closed on the row rules.
-    if (info == nullptr || info->id == 0 ||
-        info->ownerClass != 0 || info->staticMember || info->internalLinkage ||
+    if (info == nullptr || info->id == 0 || info->ownerClass != 0 ||
+        info->staticMember || info->internalLinkage ||
         info->linkage != LanguageLinkage::Gti ||
         !info->externalSymbol.empty() || info->virtualMethod ||
         info->pureVirtual || info->overrideMethod || info->parameterPack ||
@@ -6723,15 +6723,17 @@ private:
     // their callers because the plain body contains terminally.
     for (auto iterator = generalCfgAdmitted->begin();
          iterator != generalCfgAdmitted->end();) {
-      const MirFunctionInstance *instance = mir->findFunctionInstance(*iterator);
+      const MirFunctionInstance *instance =
+          mir->findFunctionInstance(*iterator);
       const HirFunctionInstance *instanceHir =
-          instance == nullptr ? nullptr : hir.findFunctionInstance(instance->id);
+          instance == nullptr ? nullptr
+                              : hir.findFunctionInstance(instance->id);
       if (instance == nullptr || !instance->owner ||
           !instance->mayRaiseDefinedFailure ||
-          instance->linkage != LanguageLinkage::Gti ||
-          instanceHir == nullptr || instanceHir->source == nullptr ||
-          !emitter.supportsFailureBodyText({.kind = MirBodyKind::Function,
-                                            .owner = instance->id})) {
+          instance->linkage != LanguageLinkage::Gti || instanceHir == nullptr ||
+          instanceHir->source == nullptr ||
+          !emitter.supportsFailureBodyText(
+              {.kind = MirBodyKind::Function, .owner = instance->id})) {
         ++iterator;
         continue;
       }
@@ -7432,8 +7434,7 @@ private:
     output << "bool "
            << cppMirFailureSiblingSpelling(emittedFunctionName(function))
            << '(';
-    for (std::size_t index = 0; index < function.parameters().size();
-         ++index) {
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
       if (index > 0) {
         output << ", ";
       }
@@ -7473,8 +7474,7 @@ private:
     output << "if ("
            << cppMirFailureSiblingSpelling(emittedFunctionName(function))
            << '(';
-    for (std::size_t index = 0; index < function.parameters().size();
-         ++index) {
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
       output << "__gti_mir_arg_" << index << ", ";
     }
     if (!voidBoundary) {
