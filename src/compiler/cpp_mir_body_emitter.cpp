@@ -549,6 +549,39 @@ stagedTemporarySourceFor(const MirBody &body, const MirInstruction &stage) {
   return {};
 }
 
+// A bare value-rooted place that no instruction, loan, or terminator
+// references is a pure root record: the rooted value flows through its
+// own uses and the place spells nothing, so it needs no declaration and
+// no representation row.
+[[nodiscard]] bool unreferencedValueRootedPlace(const MirBody &body,
+                                                const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Value || !place.projections.empty() ||
+      place.type.kind != SemanticType::Class) {
+    return false;
+  }
+  for (const MirLoan &loan : body.loans) {
+    if (loan.source == place.id) {
+      return false;
+    }
+  }
+  for (const MirBlock &block : body.blocks) {
+    if (block.terminator.value && block.terminator.value->place == place.id) {
+      return false;
+    }
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.destination == place.id ||
+          (instruction.receiver && instruction.receiver->place == place.id) ||
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      [&](const MirOperand &operand) {
+                        return operand.place == place.id;
+                      })) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // A by-value argument staging temporary: one CallInput carries a source
 // place — copied, or moved through its staged value — into a bare
 // class-typed temporary that nothing else references, and the staged
@@ -3502,6 +3535,10 @@ public:
       // A by-value argument staging temporary never materializes; the
       // consuming call spells the source place.
       if (copyStageForTemporary(facts.body, place) != nullptr) {
+        continue;
+      }
+      // A pure root record spells nothing.
+      if (unreferencedValueRootedPlace(facts.body, place)) {
         continue;
       }
       // A This-rooted field element spells through the live member.
@@ -7125,6 +7162,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // The by-value argument staging temporary never materializes: the
       // consuming call spells the source place and C++ performs the copy
       // at the call boundary.
+      continue;
+    }
+    if (unreferencedValueRootedPlace(body, place)) {
+      // A pure root record: the rooted value flows through its own uses
+      // and the place spells nothing.
       continue;
     }
     if (!place.projections.empty() || !typeRow(place.type) ||

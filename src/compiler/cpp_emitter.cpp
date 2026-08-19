@@ -6808,6 +6808,12 @@ private:
                     generalCfgAdmitted->contains(target->id)) {
                   continue;
                 }
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr,
+                               "FIXPOINT drop caller=%llu callee=%llu\n",
+                               static_cast<unsigned long long>(*iterator),
+                               static_cast<unsigned long long>(target->id));
+                }
                 calleesAvailable = false;
                 continue;
               }
@@ -6833,6 +6839,13 @@ private:
                   }
                 }
                 if (!available) {
+                  if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                    std::fprintf(
+                        stderr,
+                        "FIXPOINT drop caller=%llu member-callee=%llu\n",
+                        static_cast<unsigned long long>(*iterator),
+                        static_cast<unsigned long long>(target->id));
+                  }
                   calleesAvailable = false;
                 }
               }
