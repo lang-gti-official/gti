@@ -13,6 +13,12 @@
 #include <utility>
 #include <variant>
 
+namespace {
+thread_local int gtiProbeTraceKind;
+thread_local unsigned long gtiProbeTraceOwner;
+thread_local int gtiProbeTraceForm;
+} // namespace
+
 namespace lang {
 namespace {
 
@@ -2798,10 +2804,164 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
       }
     }
   }
-  if (home == nullptr || home->terminator.kind != MirTerminatorKind::Return ||
-      !home->terminator.value ||
-      home->terminator.value->kind != MirOperandKind::Value ||
-      home->terminator.value->value != value) {
+  if (home == nullptr) {
+    return nullptr;
+  }
+  const auto returnsValue = [&](const MirBlock &block) {
+    return block.terminator.kind == MirTerminatorKind::Return &&
+           block.terminator.value &&
+           block.terminator.value->kind == MirOperandKind::Value &&
+           block.terminator.value->value == value;
+  };
+  const auto touchesSource = [&](const MirInstruction &member) {
+    if (member.kind == MirInstructionKind::Drop) {
+      // A drop of the moved-from source is a no-op by representation.
+      return false;
+    }
+    if ((member.destination && *member.destination == source) ||
+        (member.receiver && member.receiver->place == source)) {
+      return true;
+    }
+    for (const MirOperand &operand : member.operands) {
+      if (operand.place == source) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const MirBlock *returnBlock = nullptr;
+  // Every path leaving the Move's block may touch the source only via
+  // drops — this single scan vets same-block secondary Returns and the
+  // cross-block form alike, because def-dominance routes every
+  // value-consuming Return through blocks reachable from here.
+  {
+    const auto successorsOf = [&](MirBlockId id, std::vector<MirBlockId> &out) {
+      for (const MirBlock &candidate : body.blocks) {
+        if (candidate.id != id) {
+          continue;
+        }
+        const MirTerminator &edge = candidate.terminator;
+        if (edge.kind == MirTerminatorKind::Goto ||
+            edge.kind == MirTerminatorKind::Branch ||
+            edge.kind == MirTerminatorKind::Invoke) {
+          out.push_back(edge.target);
+        }
+        if (edge.kind == MirTerminatorKind::Branch ||
+            edge.kind == MirTerminatorKind::Invoke) {
+          out.push_back(edge.elseTarget);
+        }
+      }
+    };
+    std::vector<MirBlockId> stack;
+    std::vector<MirBlockId> seen;
+    successorsOf(home->id, stack);
+    while (!stack.empty()) {
+      const MirBlockId id = stack.back();
+      stack.pop_back();
+      if (id == 0 || id == home->id ||
+          std::find(seen.begin(), seen.end(), id) != seen.end()) {
+        continue;
+      }
+      seen.push_back(id);
+      for (const MirBlock &candidate : body.blocks) {
+        if (candidate.id != id) {
+          continue;
+        }
+        for (const MirInstruction &member : candidate.instructions) {
+          if (touchesSource(member)) {
+            return nullptr;
+          }
+        }
+      }
+      successorsOf(id, stack);
+    }
+  }
+  if (returnsValue(*home)) {
+    returnBlock = home;
+  } else if (home->terminator.kind == MirTerminatorKind::Invoke &&
+             home->terminator.target != 0) {
+    // Cross-block form: the invoke's success target returns the value,
+    // the Move's block dominates it — so no merge path reaches the
+    // Return without executing the Move — and every block reachable
+    // after the Move touches the source only through drops (a drop of
+    // the moved-from local is a no-op by representation).
+    const auto successors = [&](MirBlockId id, std::vector<MirBlockId> &out) {
+      for (const MirBlock &candidate : body.blocks) {
+        if (candidate.id != id) {
+          continue;
+        }
+        const MirTerminator &edge = candidate.terminator;
+        if (edge.kind == MirTerminatorKind::Goto ||
+            edge.kind == MirTerminatorKind::Branch ||
+            edge.kind == MirTerminatorKind::Invoke) {
+          out.push_back(edge.target);
+        }
+        if (edge.kind == MirTerminatorKind::Branch ||
+            edge.kind == MirTerminatorKind::Invoke) {
+          out.push_back(edge.elseTarget);
+        }
+      }
+    };
+    // Dominance by removal: the target is dominated by `home` when the
+    // entry cannot reach it without passing through `home`.
+    bool dominated = true;
+    {
+      std::vector<MirBlockId> stack{body.entry};
+      std::vector<MirBlockId> seen;
+      while (!stack.empty()) {
+        const MirBlockId id = stack.back();
+        stack.pop_back();
+        if (id == 0 || id == home->id ||
+            std::find(seen.begin(), seen.end(), id) != seen.end()) {
+          continue;
+        }
+        seen.push_back(id);
+        if (id == home->terminator.target) {
+          dominated = false;
+          break;
+        }
+        successors(id, stack);
+      }
+    }
+    const MirBlock *target = nullptr;
+    for (const MirBlock &candidate : body.blocks) {
+      if (candidate.id == home->terminator.target) {
+        target = &candidate;
+      }
+    }
+    bool clean = dominated && target != nullptr && returnsValue(*target);
+    if (clean) {
+      // Every block reachable from the Move's block may only drop the
+      // source.
+      std::vector<MirBlockId> stack;
+      std::vector<MirBlockId> seen;
+      successors(home->id, stack);
+      while (!stack.empty() && clean) {
+        const MirBlockId id = stack.back();
+        stack.pop_back();
+        if (id == 0 || id == home->id ||
+            std::find(seen.begin(), seen.end(), id) != seen.end()) {
+          continue;
+        }
+        seen.push_back(id);
+        for (const MirBlock &candidate : body.blocks) {
+          if (candidate.id != id) {
+            continue;
+          }
+          for (const MirInstruction &member : candidate.instructions) {
+            if (touchesSource(member)) {
+              clean = false;
+            }
+          }
+        }
+        successors(id, stack);
+      }
+    }
+    if (clean) {
+      returnBlock = target;
+    }
+  }
+  if (returnBlock == nullptr) {
     return nullptr;
   }
   bool afterMove = false;
@@ -2810,29 +2970,29 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
       afterMove = true;
       continue;
     }
-    if (!afterMove) {
-      continue;
-    }
-    if (member.destination && *member.destination == source) {
+    if (afterMove && touchesSource(member)) {
+      // Publication happens at the Move itself, so a later drop of the
+      // moved-from source is the only admissible touch.
       return nullptr;
-    }
-    if (member.receiver && member.receiver->place == source) {
-      return nullptr;
-    }
-    for (const MirOperand &operand : member.operands) {
-      if (operand.place == source) {
-        return nullptr;
-      }
     }
   }
   const MirPlace *rooted = nullptr;
-  bool terminatorUse = false;
+  std::size_t terminatorUses = 0;
   for (const MirValueUse &use : body.usesOf(value)) {
     if (use.kind == MirValueUseKind::Terminator) {
-      if (terminatorUse) {
+      // Every consuming terminator must be a Return of this value; the
+      // universal reachable-only-drops scan above proved the source
+      // untouched on every path to each publication.
+      const MirBlock *user = nullptr;
+      for (const MirBlock &candidate : body.blocks) {
+        if (candidate.id == use.block) {
+          user = &candidate;
+        }
+      }
+      if (user == nullptr || !returnsValue(*user)) {
         return nullptr;
       }
-      terminatorUse = true;
+      ++terminatorUses;
       continue;
     }
     if (use.kind == MirValueUseKind::PlaceRoot && rooted == nullptr) {
@@ -2844,7 +3004,7 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
     }
     return nullptr;
   }
-  if (!terminatorUse) {
+  if (terminatorUses == 0) {
     return nullptr;
   }
   if (rooted != nullptr) {
@@ -4348,9 +4508,14 @@ private:
     if (failureForm && instruction.kind == MirInstructionKind::Move &&
         instruction.result &&
         returnMoveDefinition(facts.body, *instruction.result) == &instruction) {
+      // The publication happens here, where MIR consumes the source —
+      // before any later drop of the moved-from local — and the paired
+      // Return then only reports success.
       writeIndent();
-      output << "// move " << *instruction.result
-             << " publishes at its consuming return\n";
+      output << "*__gti_mir_out_result = std::move(";
+      emitStoragePlaceValue(
+          facts, *facts.body.findPlace(instruction.operands.front().place));
+      output << ");\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Move) {
@@ -4964,37 +5129,36 @@ private:
                   ? returnConstructDefinition(facts.body,
                                               terminator.value->value)
                   : nullptr;
-          writeIndent();
-          output << "*__gti_mir_out_result = ";
           const MirInstruction *moved =
               construct == nullptr &&
                       terminator.value->kind == MirOperandKind::Value
                   ? returnMoveDefinition(facts.body, terminator.value->value)
                   : nullptr;
-          if (construct != nullptr) {
-            // The class value publishes its constructor call inline; the
-            // move-assignment into the out-parameter matches the
-            // compatibility return's observable behavior exactly.
-            output << typeSpelling(construct->info.type) << '(';
-            for (std::size_t index = 0; index < construct->operands.size();
-                 ++index) {
-              if (index != 0) {
-                output << ", ";
-              }
-              emitOperand(construct->operands[index]);
-            }
-            output << ')';
-          } else if (moved != nullptr) {
-            // The moved local publishes directly at the point the Move
-            // proved it live (same block, nothing between).
-            output << "std::move(";
-            emitStoragePlaceValue(
-                facts, *facts.body.findPlace(moved->operands.front().place));
-            output << ')';
+          if (moved != nullptr) {
+            // Already published at its Move; nothing to assign here.
+            writeIndent();
+            output << "// GTI MIR moved value published at its move\n";
           } else {
-            emitOperand(*terminator.value);
+            writeIndent();
+            output << "*__gti_mir_out_result = ";
+            if (construct != nullptr) {
+              // The class value publishes its constructor call inline;
+              // the move-assignment into the out-parameter matches the
+              // compatibility return's observable behavior exactly.
+              output << typeSpelling(construct->info.type) << '(';
+              for (std::size_t index = 0; index < construct->operands.size();
+                   ++index) {
+                if (index != 0) {
+                  output << ", ";
+                }
+                emitOperand(construct->operands[index]);
+              }
+              output << ')';
+            } else {
+              emitOperand(*terminator.value);
+            }
+            output << ";\n";
           }
-          output << ";\n";
         }
         writeIndent();
         output << "return true;\n";
@@ -5561,12 +5725,6 @@ std::string cppMirFailureSiblingSpelling(std::string_view memberSpelling) {
   }
   return {};
 }
-
-namespace {
-thread_local int gtiProbeTraceKind;
-thread_local unsigned long gtiProbeTraceOwner;
-thread_local int gtiProbeTraceForm;
-} // namespace
 
 bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {
   if (address.kind != MirBodyKind::Function) {
