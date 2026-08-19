@@ -14,7 +14,7 @@
     "13-ownership.gti": 36,
     "14-operators.gti": 36,
     "15-variadic-generics.gti": 27,
-    "16-move-generics.gti": 34,
+    "16-move-generics.gti": 35,
     "17-standard-array.gti": 32,
     "18-lambdas.gti": 30,
     "19-auto.gti": 33,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 71
   },
-  "total": 2278
+  "total": 2279
 }

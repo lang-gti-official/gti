@@ -600,6 +600,108 @@ packExpansionForwardedOnce(const MirBody &body, MirValueId id) {
   return uses;
 }
 
+// The terminal consumer of a moved-value staging chain: each link is a
+// destination-less single-consumer CallInput, and the walk ends at the
+// first non-link instruction.
+struct MovedChainTerminal {
+  MirValueId top = 0;
+  const MirInstruction *consumer = nullptr;
+};
+[[nodiscard]] MovedChainTerminal movedChainTerminal(const MirBody &body,
+                                                    MirValueId id) {
+  MirValueId current = id;
+  for (std::size_t depth = 0; depth < 5; ++depth) {
+    const std::vector<MirValueUse> uses = nonRootRecordUses(body, current);
+    if (uses.size() != 1) {
+      return {};
+    }
+    const MirInstruction *user =
+        findInstruction(body, uses.front().instruction);
+    if (user == nullptr) {
+      return {};
+    }
+    if (user->kind == MirInstructionKind::CallInput && !user->destination &&
+        !user->receiver && user->result) {
+      current = *user->result;
+      continue;
+    }
+    return {current, user};
+  }
+  return {};
+}
+
+// A moved place flowing through plain value staging into one consumer in
+// the move's own block, with nothing between the move and the consumer
+// touching the source place (drops of the moved-from source are
+// representation no-ops): the chain spells std::move over the place at
+// the consumer's argument position and no link materializes a local.
+[[nodiscard]] const MirPlace *
+movedPlaceChainSource(const MirBody &body, MirValueId id,
+                      const MirInstruction &consumer) {
+  MirValueId current = id;
+  const MirInstruction *move = nullptr;
+  for (std::size_t depth = 0; depth < 5; ++depth) {
+    if (nonRootRecordUses(body, current).size() != 1) {
+      return nullptr;
+    }
+    const MirValue *value = body.findValue(current);
+    const MirInstruction *definition =
+        value == nullptr ? nullptr : findInstruction(body, value->definition);
+    if (definition == nullptr) {
+      return nullptr;
+    }
+    if (definition->kind == MirInstructionKind::Move &&
+        definition->operands.size() == 1 &&
+        definition->operands.front().kind == MirOperandKind::Move &&
+        definition->operands.front().place != 0) {
+      move = definition;
+      break;
+    }
+    if (definition->kind == MirInstructionKind::CallInput &&
+        !definition->destination && !definition->receiver &&
+        definition->operands.size() == 1 &&
+        definition->operands.front().kind == MirOperandKind::Value) {
+      current = definition->operands.front().value;
+      continue;
+    }
+    return nullptr;
+  }
+  if (move == nullptr) {
+    return nullptr;
+  }
+  const MirPlaceId source = move->operands.front().place;
+  for (const MirBlock &block : body.blocks) {
+    bool sawMove = false;
+    for (const MirInstruction &member : block.instructions) {
+      if (member.id == move->id) {
+        sawMove = true;
+        continue;
+      }
+      if (!sawMove) {
+        continue;
+      }
+      if (member.id == consumer.id) {
+        return body.findPlace(source);
+      }
+      if (member.kind == MirInstructionKind::Drop) {
+        continue;
+      }
+      if ((member.destination && *member.destination == source) ||
+          (member.receiver && member.receiver->place == source) ||
+          std::any_of(member.operands.begin(), member.operands.end(),
+                      [&](const MirOperand &operand) {
+                        return operand.place == source;
+                      })) {
+        return nullptr;
+      }
+    }
+    if (sawMove) {
+      return nullptr;
+    }
+  }
+  return nullptr;
+}
+
 // The source feeding a value-staged temporary: a Copy operand names its
 // place directly, and a Value operand fed by a Move of a place names the
 // moved source (spelled std::move(source) at the consuming call).
@@ -4792,6 +4894,25 @@ private:
               if (index != 0) {
                 output << ", ";
               }
+              // An ordered moved-place chain operand spells std::move
+              // over the source place directly.
+              if (const MirPlace *chainSource =
+                      definition->operands[index].kind == MirOperandKind::Value
+                          ? movedPlaceChainSource(
+                                facts.body, definition->operands[index].value,
+                                *definition)
+                          : nullptr) {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(
+                      stderr, "CHAIN spell inst=%llu place=%llu\n",
+                      static_cast<unsigned long long>(definition->id),
+                      static_cast<unsigned long long>(chainSource->id));
+                }
+                output << "std::move(";
+                emitStoragePlaceValue(facts, *chainSource);
+                output << ')';
+                continue;
+              }
               // The construction consumes its arguments: class-typed
               // operands move so deleted copy constructors cannot reject
               // the call.
@@ -4983,10 +5104,11 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Move && instruction.result &&
-        !facts.body.usesOf(*instruction.result).empty()) {
+        !nonRootRecordUses(facts.body, *instruction.result).empty()) {
       const MirInstruction *user = findInstruction(
-          facts.body,
-          facts.body.usesOf(*instruction.result).front().instruction);
+          facts.body, nonRootRecordUses(facts.body, *instruction.result)
+                          .front()
+                          .instruction);
       if (user != nullptr && user->kind == MirInstructionKind::CallInput &&
           user->result &&
           copyStagedCallInput(facts.body, *user->result) == user) {
@@ -4996,6 +5118,21 @@ private:
         output << "// move " << *instruction.result
                << " stages into its call input\n";
         return;
+      }
+      {
+        const MovedChainTerminal terminal =
+            movedChainTerminal(facts.body, *instruction.result);
+        if (terminal.consumer != nullptr &&
+            terminal.consumer->kind == MirInstructionKind::Construct &&
+            movedPlaceChainSource(facts.body, terminal.top,
+                                  *terminal.consumer) != nullptr) {
+          // The moved source reaches its construction in order; the
+          // construction spells std::move over the place directly.
+          writeIndent();
+          output << "// move " << *instruction.result
+                 << " stages into its construction\n";
+          return;
+        }
       }
     }
     if (instruction.kind == MirInstructionKind::Move) {
@@ -5046,6 +5183,24 @@ private:
            ++index) {
         if (index != 0) {
           output << ", ";
+        }
+        // An ordered moved-place chain operand spells std::move over
+        // the source place directly.
+        if (const MirPlace *chainSource =
+                instruction.operands[index].kind == MirOperandKind::Value
+                    ? movedPlaceChainSource(facts.body,
+                                            instruction.operands[index].value,
+                                            instruction)
+                    : nullptr) {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "CHAIN spell inst=%llu place=%llu\n",
+                         static_cast<unsigned long long>(instruction.id),
+                         static_cast<unsigned long long>(chainSource->id));
+          }
+          output << "std::move(";
+          emitStoragePlaceValue(facts, *chainSource);
+          output << ')';
+          continue;
         }
         // The construction consumes its arguments: class-typed operands
         // move so deleted copy constructors cannot reject the call.
@@ -5098,6 +5253,21 @@ private:
         output << "// call input " << *instruction.result
                << " stages a by-value argument copy\n";
         return;
+      }
+      if (instruction.result) {
+        const MovedChainTerminal terminal =
+            movedChainTerminal(facts.body, *instruction.result);
+        if (terminal.consumer != nullptr &&
+            terminal.consumer->kind == MirInstructionKind::Construct &&
+            movedPlaceChainSource(facts.body, terminal.top,
+                                  *terminal.consumer) != nullptr) {
+          // The staged link of an ordered moved-place chain never
+          // materializes; the construction spells std::move over the
+          // place.
+          output << "// call input " << *instruction.result
+                 << " links a moved-place chain\n";
+          return;
+        }
       }
       output << "__gti_mir_v_" << *instruction.result << " = ";
       emitOperand(instruction.operands.front());
@@ -7434,6 +7604,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             returnCallDefinition(body, value.id) == definition)) ||
           (constructDefined && slotConsumed(*definition)) ||
           movedIntoValueStage() ||
+          [&]() {
+            const MovedChainTerminal terminal =
+                movedChainTerminal(body, value.id);
+            return terminal.consumer != nullptr &&
+                   terminal.consumer->kind == MirInstructionKind::Construct &&
+                   movedPlaceChainSource(body, terminal.top,
+                                         *terminal.consumer) != nullptr;
+          }() ||
           (definition != nullptr && dischargedStorageReadCall(*definition));
       if (!declared && !noLocal) {
         {
