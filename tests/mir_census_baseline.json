@@ -43,7 +43,7 @@
     "42-exclusive-reborrows.gti": 34,
     "43-program-arguments.gti": 78,
     "44-bounded-requires.gti": 126,
-    "45-layout-queries.gti": 27,
+    "45-layout-queries.gti": 28,
     "46-defined-integer-arithmetic.gti": 111,
     "47-binary64.gti": 27,
     "48-native-c-records.gti": 30,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 69
   },
-  "total": 2267
+  "total": 2268
 }

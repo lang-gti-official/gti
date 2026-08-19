@@ -873,6 +873,32 @@ public:
                    typeSpelling(fieldType) + "' with a value of type '" +
                    typeSpelling(valueType) + "'.",
                "GTI-S2003");
+      } else if (field != nullptr && initializer.arguments.size() == 1 &&
+                 fieldType != valueType && isInteger(fieldType) &&
+                 isInteger(valueType)) {
+        // The accepted constant widening re-types the literal itself: the
+        // constructor-stage lowering demands the field type on its staged
+        // operand, and a range-checked constant needs no conversion
+        // machinery. Only the direct (possibly grouped) literal re-types;
+        // isAssignable already proved the value fits the field.
+        const Expr *argument = initializer.arguments.front().get();
+        std::vector<const Expr *> chain;
+        while (const auto *grouping =
+                   dynamic_cast<const Grouping *>(argument)) {
+          chain.push_back(argument);
+          argument = grouping->expression().get();
+        }
+        if (dynamic_cast<const LiteralExpr *>(argument) != nullptr) {
+          chain.push_back(argument);
+          for (const Expr *node : chain) {
+            if (const ExpressionInfo *info =
+                    semanticModel.findExpression(*node)) {
+              ExpressionInfo widened = *info;
+              widened.type = fieldType;
+              semanticModel.record(*node, widened);
+            }
+          }
+        }
       }
       if (field != nullptr && fieldSymbol != 0 &&
           initializer.arguments.size() == 1) {
@@ -3170,7 +3196,7 @@ public:
             expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
             "Fixed-array member receiver overlaps a mutable borrow or child "
             "reborrow that may still be live.");
-        analyzeArrayMemberCall(*member, argumentTypes, expr.paren());
+        analyzeArrayMemberCall(expr, *member, argumentTypes, expr.paren());
         return;
       }
       if (objectType != nullptr &&
@@ -16131,7 +16157,7 @@ private:
     }
   }
 
-  void analyzeArrayMemberCall(const Get &member,
+  void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren) {
     if (member.name().lexeme != "size") {
@@ -16142,6 +16168,13 @@ private:
       report(paren, "Fixed array 'size' expects no arguments.", "GTI-S2016");
     }
     currentType = SemanticType::UInt64;
+    // The builtin member carries its identity to MIR as an intrinsic: the
+    // call names no declaration, so without the record the lowered Call
+    // would be target-less and unnameable by a backend.
+    ResolvedCallInfo resolved{.returnType = currentType,
+                              .intrinsic = IntrinsicKind::ArraySize};
+    semanticModel.record(call, resolved);
+    recordSelectedCallOccurrence(call, std::move(resolved));
   }
 
   void
@@ -24450,6 +24483,7 @@ private:
           // resolved record only carries the spelling identity.
           case IntrinsicKind::ExpectedValue:
           case IntrinsicKind::ExpectedError:
+          case IntrinsicKind::ArraySize:
             break;
           case IntrinsicKind::StorageBoundsCheck:
             // The identity-bound public logical-size check (P-STORAGE-01):

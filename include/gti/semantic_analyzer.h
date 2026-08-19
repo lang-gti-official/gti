@@ -716,6 +716,7 @@ enum class IntrinsicKind {
   StringViewEmpty,
   ExpectedValue,
   ExpectedError,
+  ArraySize,
   Count,
 };
 

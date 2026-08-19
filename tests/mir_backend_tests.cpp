@@ -842,6 +842,38 @@ int main() { return huge() == int64_t(9223372036854775807) ? 0 : 1; }
 
 } // namespace
 
+// An untyped non-negative literal widening into a larger scalar field
+// through a constructor initializer list must lower to verifiable MIR:
+// the stage lowering represents the value-preserving conversion
+// explicitly, so the coverage verifier's operand-type demand holds.
+// (Regression: the seven-line form ICEd with GTI-B0001 while every
+// explicit spelling — uint64_t(0), int32 fields, in-class defaults —
+// passed, so no corpus source could catch it.)
+void testImplicitLiteralWideningConstructorStageVerifies() {
+  lang::FrontendResult frontend = analyze("ctor-literal-widening.gti", R"(
+class C {
+  mut uint64_t a;
+public:
+  C() : a(0) {}
+};
+int main() { mut C c = C(); return 0; }
+)");
+  if (!frontend.canGenerateCode()) {
+    expect(false, "the widening-constructor fixture should pass the frontend");
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "an implicit literal widening in a constructor initializer must "
+         "lower to verifiable MIR");
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      emit(frontend, frontend.mir, compatibility);
+  expect(artifact.contents.find("int __gti_entry()") != std::string::npos,
+         "the widening constructor's program should reach code generation");
+}
+
 int main() {
   testSelectedFamilyAndCompatibilityFallback();
   testUnverifiedMirIsRejected();
@@ -851,5 +883,6 @@ int main() {
   testForgedValidLiteralIsRejected();
   testMissingEligibleInstanceIsRejected();
   testJointHirMirLiteralForgeryIsRejected();
+  testImplicitLiteralWideningConstructorStageVerifies();
   return failures == 0 ? 0 : 1;
 }

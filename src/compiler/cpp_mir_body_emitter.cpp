@@ -4734,6 +4734,7 @@ private:
         instruction.receiver &&
         (instruction.intrinsic == IntrinsicKind::StringViewSize ||
          instruction.intrinsic == IntrinsicKind::StringViewEmpty ||
+         instruction.intrinsic == IntrinsicKind::ArraySize ||
          instruction.intrinsic == IntrinsicKind::ExpectedValue ||
          instruction.intrinsic == IntrinsicKind::ExpectedError)) {
       // A builtin member read spells the staged place's member directly,
@@ -4758,6 +4759,7 @@ private:
       emitPlaceExpression(facts, *viewPlace);
       switch (instruction.intrinsic) {
       case IntrinsicKind::StringViewSize:
+      case IntrinsicKind::ArraySize:
         output << ".size();\n";
         break;
       case IntrinsicKind::StringViewEmpty:
@@ -7833,6 +7835,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (instruction.receiver &&
             (instruction.intrinsic == IntrinsicKind::StringViewSize ||
              instruction.intrinsic == IntrinsicKind::StringViewEmpty ||
+             instruction.intrinsic == IntrinsicKind::ArraySize ||
              instruction.intrinsic == IntrinsicKind::ExpectedValue ||
              instruction.intrinsic == IntrinsicKind::ExpectedError)) {
           // A builtin member read spells the staged place's member
