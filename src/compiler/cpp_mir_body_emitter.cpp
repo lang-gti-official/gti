@@ -4949,17 +4949,23 @@ private:
         return;
       }
       if (!failureForm) {
-        // Plain shape: checked arithmetic spells its terminal helper, and
-        // a template body's may-raise call reaches a terminally-contained
-        // convention; neither ever returns on failure, so the edge is a
-        // plain goto. The probe admits exactly these producers.
+        // Plain shape: checked arithmetic spells its terminal helper, a
+        // template body's may-raise call reaches a terminally-contained
+        // convention, and a propagating construction terminates at its own
+        // site; none ever returns on failure, so the edge is a plain goto.
+        // The probe admits exactly these producers.
         if ((producer != nullptr &&
              producer->kind == MirInstructionKind::Compute &&
              !cppMirTerminalCheckedHelperSpelling(producer->operation)
                   .empty() &&
              !producer->localFailureSites.empty()) ||
             (producer != nullptr &&
-             producer->kind == MirInstructionKind::Call)) {
+             producer->kind == MirInstructionKind::Call) ||
+            (producer != nullptr &&
+             producer->kind == MirInstructionKind::Construct &&
+             producer->localFailureSites.empty() &&
+             producer->definedFailure.propagation ==
+                 FailurePropagationKind::Constructor)) {
           writeIndent();
           output << "__gti_mir_bb = " << terminator.target << ";\n";
           writeIndent();
@@ -7878,10 +7884,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             continue;
           }
           if (checkedConversionIntrinsicCall(instruction)) {
-            // The checked-conversion detector belongs to the failure
-            // form: one site, one origin, a status helper writing the
-            // converted result.
-            if (!failureForm || !instruction.result ||
+            // The checked-conversion detector: one site, one origin, one
+            // staged operand. The failure form spells the status helper
+            // writing the converted result; the plain shape spells the
+            // terminal numeric_cast, which contains its failure by
+            // terminating at the site.
+            if (!instruction.result ||
                 instruction.definedFailure.localOrigins.size() != 1 ||
                 program_.failureMetadata().findSite(
                     instruction.localFailureSites.front()) == nullptr ||
@@ -8163,6 +8171,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             producer->kind == MirInstructionKind::Call) {
           continue;
         }
+        if (producer->kind == MirInstructionKind::Construct &&
+            producer->localFailureSites.empty() &&
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::Constructor) {
+          // A propagating construction terminates at its own site on every
+          // shipped path — the constructor failure ABI does not exist yet —
+          // so the else edge is dead in the plain shape exactly as it is in
+          // the failure form below.
+          continue;
+        }
+        if (checkedConversionIntrinsicCall(*producer)) {
+          // The plain shape spells the terminal numeric_cast, which never
+          // returns on failure, so the else edge is dead.
+          continue;
+        }
         if (address.kind != MirBodyKind::Lambda ||
             producer->kind != MirInstructionKind::Compute ||
             cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
@@ -8256,10 +8279,53 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       if (!failureForm && address.kind != MirBodyKind::Lambda &&
           !callableTemplateBody) {
-        // Only a plain shape whose failure sources are all terminally
-        // contained admits this terminator: the propagate block is
-        // unreachable and spells abort.
-        {
+        // A plain shape admits this terminator only with an unreachability
+        // proof: walk from the entry following every edge except an
+        // invoke's else edge (every invoke producer this probe admits in
+        // the plain shape terminates at its own site on failure, so that
+        // edge is dead), and require the walk never lands here. The block
+        // then spells abort.
+        bool reachable = false;
+        std::vector<MirBlockId> stack{body.entry};
+        std::vector<MirBlockId> seen;
+        while (!stack.empty()) {
+          const MirBlockId id = stack.back();
+          stack.pop_back();
+          if (std::find(seen.begin(), seen.end(), id) != seen.end()) {
+            continue;
+          }
+          seen.push_back(id);
+          if (id == block.id) {
+            reachable = true;
+            break;
+          }
+          for (const MirBlock &candidate : body.blocks) {
+            if (candidate.id != id) {
+              continue;
+            }
+            const MirTerminator &edge = candidate.terminator;
+            if (edge.kind == MirTerminatorKind::Invoke) {
+              stack.push_back(edge.target);
+              continue;
+            }
+            if (edge.kind == MirTerminatorKind::Return ||
+                edge.kind == MirTerminatorKind::Exit ||
+                edge.kind == MirTerminatorKind::Unreachable ||
+                edge.kind == MirTerminatorKind::PropagateFailure) {
+              continue;
+            }
+            if (edge.target != 0) {
+              stack.push_back(edge.target);
+            }
+            if (edge.elseTarget != 0) {
+              stack.push_back(edge.elseTarget);
+            }
+            for (const MirSwitchTarget &target : edge.switchTargets) {
+              stack.push_back(target.target);
+            }
+          }
+        }
+        if (reachable) {
           if (::getenv("GTI_PROBE_TRACE") != nullptr) {
             std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 113,
                          gtiProbeTraceKind, gtiProbeTraceOwner,

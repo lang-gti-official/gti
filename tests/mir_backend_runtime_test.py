@@ -78,7 +78,9 @@ def main() -> int:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
                 if (
-                    generated.count(f"{marker} function-instance") != 22
+                    # The char println joined once the plain shape proved
+                    # its vestigial propagate block unreachable (0.246.0).
+                    generated.count(f"{marker} function-instance") != 23
                     # file_handle's computed negate(1) default joined the
                     # verified initializer schedule as a terminally-contained
                     # expression.
@@ -96,12 +98,12 @@ def main() -> int:
                     != 7
                 ):
                     sys.stderr.write(
-                        "generated C++ did not select exactly the twenty-six "
+                        "generated C++ did not select exactly the twenty-seven "
                         "verified scalar MIR markers (twelve fixture bodies "
-                        "plus ten prelude bodies, counting both print "
-                        "overloads, the prelude's verified-empty initializer "
-                        "bodies, the empty module body, and the seven "
-                        "native boundary declaration shells)\n"
+                        "plus eleven prelude bodies, counting both print and "
+                        "both println overloads, the prelude's verified-empty "
+                        "initializer bodies, the empty module body, and the "
+                        "seven native boundary declaration shells)\n"
                     )
                     return 1
                 checked = function_definition(generated, "compatibility_checked")
@@ -111,17 +113,16 @@ def main() -> int:
                     or generated.count(
                         "// GTI verified-MIR body: scalar-cfg-failure-v1"
                     )
-                    != 6
+                    != 5
                 ):
                     sys.stderr.write(
-                        "the six failure-form bodies should emit their "
+                        "the five failure-form bodies should emit their "
                         "transformed bodies plus boundary wrappers (ADR 017: "
                         "compatibility_checked, checked_leaf, checked_caller, "
-                        "the prelude's file_handle release member, the "
-                        "fixture's entry main, and the prelude's char "
-                        "println overload recovered once its may-raise "
-                        "callee proved terminally contained in the plain "
-                        "form)\n"
+                        "the prelude's file_handle release member, and the "
+                        "fixture's entry main; the char println overload "
+                        "moved to the plain family once the propagate-block "
+                        "unreachability proof landed in 0.246.0)\n"
                     )
                     return 1
                 if (

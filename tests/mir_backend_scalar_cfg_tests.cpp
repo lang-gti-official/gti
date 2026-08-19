@@ -580,9 +580,14 @@ int main() {
              sameBody.find("(*__gti_mir_p_") != std::string_view::npos,
          "a reference parameter should bind its pointer carrier and read "
          "the other object's field through the dereference chain (ADR 018)");
+  // The frontend marks the two call-forwarding members may-raise, so the
+  // admission selector prefers their failure form (0.246.0): the staged
+  // receiver-call vocabulary now lives in the transformed sibling and the
+  // original member name carries the terminating boundary wrapper.
   const std::string_view twinsBody =
-      memberDefinition(artifact.contents, "twins_with");
-  expect(twinsBody.find(marker) != std::string_view::npos &&
+      memberDefinition(artifact.contents, "twins_with__gti_mir_failure");
+  expect(twinsBody.find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
+                 std::string_view::npos &&
              twinsBody.find("stages a borrowed place") !=
                  std::string_view::npos &&
              twinsBody.find("(*this).::__gti_program::") !=
@@ -604,16 +609,21 @@ int main() {
                  std::string::npos,
          "the concrete class's passive initializer bodies should publish "
          "their verified schedule and verified-empty markers");
-  const std::string_view bumpBody = memberDefinition(artifact.contents, "bump");
+  const std::string_view bumpBody =
+      memberDefinition(artifact.contents, "bump__gti_mir_failure");
   expect(
-      bumpBody.find(marker) != std::string_view::npos &&
+      bumpBody.find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
+              std::string_view::npos &&
           bumpBody.find("stages a borrowed place") != std::string_view::npos &&
           bumpBody.find("(*this).::__gti_program::") != std::string_view::npos,
       "a mutable-receiver call should stage its write borrow and spell "
       "the qualified member name exactly like the read form");
   expect(
       count(artifact.contents,
-            "// GTI verified-MIR body: scalar-cfg-v1 function-instance") == 7 &&
+            "// GTI verified-MIR body: scalar-cfg-v1 function-instance") == 5 &&
+          count(artifact.contents,
+                "// GTI verified-MIR body: scalar-cfg-failure-v1 "
+                "function-instance") == 2 &&
           count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
                                    "constructor-instance") == 1 &&
           count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
@@ -622,9 +632,9 @@ int main() {
                                    "static-field-initializers-instance") == 1 &&
           count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
                                    "module-instance") == 1,
-      "exactly the seven eligible member bodies, the constructor, the "
-      "two initializer bodies, and the empty module body should carry "
-      "the family marker");
+      "exactly the five plain member bodies, the two may-raise members' "
+      "transformed siblings, the constructor, the two initializer bodies, "
+      "and the empty module body should carry their family markers");
 }
 
 // A member access whose object is a local binding rather than `this` reads

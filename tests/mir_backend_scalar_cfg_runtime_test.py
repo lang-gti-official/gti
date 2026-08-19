@@ -47,6 +47,10 @@ STDLIB_SELECTED = (
     # name-derived count honest for the char overload admitted once
     # unchecked conversions joined the vocabulary (0.181.0).
     "print",
+    # The char println joined once the plain shape proved its vestigial
+    # propagate block unreachable (0.246.0): its print-chain invokes are
+    # terminally contained, so the else edges are dead.
+    "println",
 )
 COMPATIBILITY = (
     "compatibility_checked",

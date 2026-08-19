@@ -12,7 +12,7 @@
     "11-overloads.gti": 31,
     "12-fixed-arrays.gti": 29,
     "13-ownership.gti": 35,
-    "14-operators.gti": 32,
+    "14-operators.gti": 36,
     "15-variadic-generics.gti": 27,
     "16-move-generics.gti": 34,
     "17-standard-array.gti": 32,
@@ -36,12 +36,12 @@
     "35-conditional-expressions.gti": 33,
     "36-c-abi-sockets.gti": 29,
     "37-tcp-socket-owner.gti": 37,
-    "38-vector-emplace.gti": 56,
+    "38-vector-emplace.gti": 57,
     "39-raw-pointers.gti": 27,
     "40-loan-flow-edges.gti": 66,
-    "41-owner-dependencies.gti": 37,
+    "41-owner-dependencies.gti": 38,
     "42-exclusive-reborrows.gti": 34,
-    "43-program-arguments.gti": 73,
+    "43-program-arguments.gti": 74,
     "44-bounded-requires.gti": 126,
     "45-layout-queries.gti": 27,
     "46-defined-integer-arithmetic.gti": 111,
@@ -55,8 +55,8 @@
     "54-owned-move-captures.gti": 32,
     "55-owned-callable-transport.gti": 31,
     "56-sum-types.gti": 27,
-    "57-contextual-array-arguments.gti": 35,
+    "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 65
   },
-  "total": 2242
+  "total": 2250
 }

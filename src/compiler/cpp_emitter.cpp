@@ -6559,6 +6559,45 @@ private:
         generalFailureAdmitted->insert(body.body.owner);
       }
     }
+    // A may-raise member's containing callers reach it only through its
+    // emitted transformed sibling, so when both forms are spellable the
+    // failure admission must win — but only where a failure surface will
+    // actually emit it (the declaration-keyed concrete selector or the
+    // ADR 019 specialization; both consult the finished admission sets,
+    // which is why this runs as a post-pass). Where no failure surface
+    // exists, the plain admission keeps the body emitted. Free may-raise
+    // functions keep the plain-first order: the fixpoint below exempts
+    // their callers because the plain body contains terminally.
+    for (auto iterator = generalCfgAdmitted->begin();
+         iterator != generalCfgAdmitted->end();) {
+      const MirFunctionInstance *instance = mir->findFunctionInstance(*iterator);
+      const HirFunctionInstance *instanceHir =
+          instance == nullptr ? nullptr : hir.findFunctionInstance(instance->id);
+      if (instance == nullptr || !instance->owner ||
+          !instance->mayRaiseDefinedFailure ||
+          instance->linkage != LanguageLinkage::Gti ||
+          instanceHir == nullptr || instanceHir->source == nullptr ||
+          !emitter.supportsFailureBodyText({.kind = MirBodyKind::Function,
+                                            .owner = instance->id})) {
+        ++iterator;
+        continue;
+      }
+      generalFailureAdmitted->insert(instance->id);
+      bool available =
+          selectedMirGeneralFailureFunction(*instanceHir->source) == instance;
+      if (!available) {
+        const FunctionInfo *info = semantics.findFunction(*instanceHir->source);
+        available = info != nullptr &&
+                    memberFailureSpecializationEligible(*instanceHir->source,
+                                                        *info, *instance);
+      }
+      if (available) {
+        iterator = generalCfgAdmitted->erase(iterator);
+      } else {
+        generalFailureAdmitted->erase(instance->id);
+        ++iterator;
+      }
+    }
     // Greatest-fixpoint filter (ADR 017): a transformed body may call a
     // failure-capable GTI callee only through the callee's own transformed
     // body, so drop admissions whose may-raise callees fall outside the
