@@ -26,7 +26,7 @@
     "25-polymorphic-ranges.gti": 39,
     "26-stored-references.gti": 39,
     "27-copy-move-policies.gti": 35,
-    "28-callable-parameters.gti": 32,
+    "28-callable-parameters.gti": 34,
     "29-callable-predicates.gti": 35,
     "30-callable-forwarding.gti": 32,
     "31-exact-constraints.gti": 37,
@@ -42,7 +42,7 @@
     "41-owner-dependencies.gti": 38,
     "42-exclusive-reborrows.gti": 37,
     "43-program-arguments.gti": 81,
-    "44-bounded-requires.gti": 130,
+    "44-bounded-requires.gti": 131,
     "45-layout-queries.gti": 28,
     "46-defined-integer-arithmetic.gti": 111,
     "47-binary64.gti": 27,
@@ -50,7 +50,7 @@
     "49-native-bridge-header.gti": 30,
     "50-opaque-native-handles.gti": 37,
     "51-callable-value-results.gti": 37,
-    "52-stateful-callables.gti": 135,
+    "52-stateful-callables.gti": 136,
     "53-consuming-callables.gti": 39,
     "54-owned-move-captures.gti": 32,
     "55-owned-callable-transport.gti": 33,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 76
   },
-  "total": 2331
+  "total": 2335
 }

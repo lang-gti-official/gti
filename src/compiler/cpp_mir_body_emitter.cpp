@@ -1480,9 +1480,18 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
                                      HirValueId callSite, MirCallInputRole role,
                                      std::size_t index) {
   const MirInstruction *input = definitionFor(body, operand);
-  return input != nullptr && input->kind == MirInstructionKind::CallInput &&
-         input->callSite == callSite && input->callInputRole == role &&
-         input->callInputIndex == index;
+  if (input != nullptr && input->kind == MirInstructionKind::CallInput &&
+      input->callSite == callSite && input->callInputRole == role &&
+      input->callInputIndex == index) {
+    return true;
+  }
+  // A direct borrow operand is its own schedule entry: forming the place
+  // lvalue has no effects, so the evaluation order it must preserve is
+  // vacuous — exactly like the direct-borrow receiver of a self-member
+  // call.
+  return (operand.kind == MirOperandKind::BorrowRead ||
+          operand.kind == MirOperandKind::BorrowWrite) &&
+         operand.place != 0 && body.findPlace(operand.place) != nullptr;
 }
 
 // A borrow-staged call input carries a read borrow of a place instead of a
@@ -1531,11 +1540,18 @@ borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
         (call.receiver->kind == MirOperandKind::BorrowRead ||
          call.receiver->kind == MirOperandKind::BorrowWrite) &&
         call.receiver->place != 0;
-    const bool directValues = std::all_of(
-        call.operands.begin(), call.operands.end(),
-        [](const MirOperand &operand) {
-          return operand.kind == MirOperandKind::Value && operand.value != 0;
-        });
+    const bool directValues =
+        std::all_of(call.operands.begin(), call.operands.end(),
+                    [&](const MirOperand &operand) {
+                      return (operand.kind == MirOperandKind::Value &&
+                              operand.value != 0) ||
+                             // A direct borrow argument binds the live place
+                             // lvalue; its formation has no effects to order.
+                             ((operand.kind == MirOperandKind::BorrowRead ||
+                               operand.kind == MirOperandKind::BorrowWrite) &&
+                              operand.place != 0 &&
+                              body.findPlace(operand.place) != nullptr);
+                    });
     return (!call.receiver || stagedReceiver) && directValues;
   }
   if (call.receiver && !hasExactCallInput(body, *call.receiver, call.callSite,
@@ -6457,6 +6473,20 @@ private:
         emitPlaceExpression(facts, *place);
         return;
       }
+      if ((operand.kind == MirOperandKind::BorrowRead ||
+           operand.kind == MirOperandKind::BorrowWrite) &&
+          operand.place != 0) {
+        // A direct borrow argument binds the live place value, exactly
+        // like the compatibility reference argument; a lifetime slot
+        // exposes it through its checked accessor.
+        const MirPlace *place = facts.body.findPlace(operand.place);
+        if (place == nullptr) {
+          throw std::logic_error(
+              "verified MIR call lost a direct borrowed argument place");
+        }
+        emitStoragePlaceValue(facts, *place);
+        return;
+      }
       if (marshalled) {
         output << "::gti_internal::backend::to_c_string_view(";
       }
@@ -9151,6 +9181,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!cppMirTerminalCheckedHelperSpelling(instruction.operation)
                  .empty() &&
             !instruction.localFailureSites.empty() &&
+            // A PAIRED site carries the record protocol: its report names
+            // the exact source site, which the terminal helper cannot
+            // spell (the cli arithmetic fixtures pin file:line and exit
+            // 70). Only unpaired sites — where MIR lowered no edge — are
+            // the compatibility terminal-helper shape.
             (!failureForm ? address.kind == MirBodyKind::Lambda ||
                                 !instructionHasInvoke(block, instruction)
                           : !instructionHasInvoke(block, instruction))) {
@@ -10522,6 +10557,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // A borrow-staged argument passes the place as a C++ lvalue;
             // the callee's reference parameter binds it directly.
             consumedStaged.push_back(*staged->result);
+            continue;
+          }
+          // A direct borrow argument binds the live place lvalue with no
+          // staging step, exactly like the direct-borrow receiver.
+          if ((operand.kind == MirOperandKind::BorrowRead ||
+               operand.kind == MirOperandKind::BorrowWrite) &&
+              operand.place != 0 && body.findPlace(operand.place) != nullptr) {
             continue;
           }
           if (!valueOperand(operand)) {
