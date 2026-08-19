@@ -3999,6 +3999,17 @@ private:
       output << ");\n";
       return;
     }
+    if (instruction.operation == MirOperation::Index) {
+      // A value-level view element read: the terminal helper reports the
+      // defined bound contract and never returns on failure, exactly like
+      // the place-projected form.
+      output << "::gti_internal::backend::string_view_at(";
+      emitOperand(instruction.operands[0]);
+      output << ", ";
+      emitOperand(instruction.operands[1]);
+      output << ");\n";
+      return;
+    }
     const auto spelling = [&]() -> std::string_view {
       switch (instruction.operation) {
       case MirOperation::BitwiseAnd:
@@ -4720,28 +4731,7 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
-        instruction.intrinsic != IntrinsicKind::None) {
-      const std::string_view helper =
-          cppIntegerArithmeticIntrinsicSpelling(instruction.intrinsic);
-      if (!scalarSpellableArithmeticIntrinsic(instruction.intrinsic) ||
-          helper.empty() || instruction.receiver || !instruction.result ||
-          instruction.operands.size() != 2) {
-        throw std::logic_error(
-            "verified MIR intrinsic call is outside the spellable "
-            "arithmetic helper family");
-      }
-      output << "__gti_mir_v_" << *instruction.result << " = " << helper << '(';
-      emitOperand(instruction.operands[0]);
-      output << ", ";
-      emitOperand(instruction.operands[1]);
-      output << ");\n";
-      return;
-    }
-    if (!instruction.functionTarget) {
-      throw std::logic_error(
-          "verified MIR direct call lost its exact target declaration");
-    }
-    if (instruction.receiver &&
+        instruction.receiver &&
         (instruction.intrinsic == IntrinsicKind::StringViewSize ||
          instruction.intrinsic == IntrinsicKind::StringViewEmpty)) {
       // The builtin view read spells the staged view place's member
@@ -4767,6 +4757,28 @@ private:
                      ? ".size();\n"
                      : ".empty();\n");
       return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic != IntrinsicKind::None) {
+      const std::string_view helper =
+          cppIntegerArithmeticIntrinsicSpelling(instruction.intrinsic);
+      if (!scalarSpellableArithmeticIntrinsic(instruction.intrinsic) ||
+          helper.empty() || instruction.receiver || !instruction.result ||
+          instruction.operands.size() != 2) {
+        throw std::logic_error(
+            "verified MIR intrinsic call is outside the spellable "
+            "arithmetic helper family");
+      }
+      output << "__gti_mir_v_" << *instruction.result << " = " << helper << '(';
+      emitOperand(instruction.operands[0]);
+      output << ", ";
+      emitOperand(instruction.operands[1]);
+      output << ");\n";
+      return;
+    }
+    if (!instruction.functionTarget) {
+      throw std::logic_error(
+          "verified MIR direct call lost its exact target declaration");
     }
     // A receiver-carrying call spells its staged borrowed place followed by
     // the qualified member name: the explicit qualification states the
@@ -5015,7 +5027,11 @@ private:
            (producer->kind == MirInstructionKind::Construct &&
             producer->localFailureSites.empty() &&
             producer->definedFailure.propagation ==
-                FailurePropagationKind::Constructor))) {
+                FailurePropagationKind::Constructor) ||
+           // The value-level view element read spells the terminal
+           // string_view_at helper; the else edge is dead.
+           (producer->kind == MirInstructionKind::Compute &&
+            producer->operation == MirOperation::Index))) {
         writeIndent();
         output << "__gti_mir_bb = " << terminator.target << ";\n";
         writeIndent();
@@ -7300,6 +7316,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         }
+        case MirOperation::Index: {
+          // A value-level view element read: string_view_at contains the
+          // defined bound contract terminally on both forms, exactly like
+          // the place-projected form the Load path spells.
+          if (instruction.operands.size() != 2 ||
+              !valueOperand(instruction.operands[0]) ||
+              !valueOperand(instruction.operands[1]) ||
+              instruction.operands[0].type.kind != SemanticType::StringView ||
+              !instruction.result || !typeRow(instruction.info.type)) {
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 129,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+          }
+          continue;
+        }
         default: {
           if (::getenv("GTI_PROBE_TRACE") != nullptr) {
             std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 65,
@@ -8354,6 +8390,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // shipped path — the constructor failure ABI does not exist yet —
         // so the invoke's else edge is unreachable and the edge is a
         // plain goto, exactly like the analysis's transparent exemption.
+        continue;
+      }
+      if (producer->kind == MirInstructionKind::Compute &&
+          producer->operation == MirOperation::Index) {
+        // The value-level view element read spells the terminal
+        // string_view_at helper on both forms; it never returns on
+        // failure, so the else edge is dead in the failure form too.
         continue;
       }
       if (producer->kind == MirInstructionKind::Call) {
