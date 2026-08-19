@@ -18,10 +18,10 @@
     "17-standard-array.gti": 32,
     "18-lambdas.gti": 30,
     "19-auto.gti": 33,
-    "20-strings.gti": 69,
+    "20-strings.gti": 70,
     "21-scoped-enums.gti": 27,
     "22-switch.gti": 27,
-    "23-direct-initialization.gti": 34,
+    "23-direct-initialization.gti": 35,
     "24-static.gti": 28,
     "25-polymorphic-ranges.gti": 39,
     "26-stored-references.gti": 38,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 71
   },
-  "total": 2271
+  "total": 2273
 }

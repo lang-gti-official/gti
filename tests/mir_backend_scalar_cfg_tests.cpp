@@ -619,8 +619,10 @@ int main() {
       "a mutable-receiver call should stage its write borrow and spell "
       "the qualified member name exactly like the read form");
   expect(
+      // The fixture's entry joined once class-typed locals carried the
+      // boundary proof (0.255.0): six plain bodies including main.
       count(artifact.contents,
-            "// GTI verified-MIR body: scalar-cfg-v1 function-instance") == 5 &&
+            "// GTI verified-MIR body: scalar-cfg-v1 function-instance") == 6 &&
           count(artifact.contents,
                 "// GTI verified-MIR body: scalar-cfg-failure-v1 "
                 "function-instance") == 2 &&
@@ -783,9 +785,10 @@ int main() {
       emit(frontend, optimized.mir, compatibility);
   expect(count(artifact.contents,
                "// GTI verified-MIR body: scalar-cfg-v1 function-instance") ==
-             1,
+             2,
          "the generic owner's admitted member instance should emit exactly "
-         "one specialized verified-MIR body");
+         "one specialized verified-MIR body beside the entry that joined "
+         "once class-typed locals carried the boundary proof (0.255.0)");
   expect(artifact.contents.find(
              "template <> bool __gti_program::Wrap<std::int32_t>::") !=
              std::string::npos,

@@ -4347,7 +4347,28 @@ private:
         throw std::logic_error(
             "verified MIR class construction lost its reparent slot");
       }
-      output << "__gti_mir_p_" << destination << ".construct();\n";
+      output << "__gti_mir_p_" << destination << ".construct(";
+      for (std::size_t index = 0; index < instruction.operands.size();
+           ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        const bool consumed =
+            instruction.operands[index].type.kind == SemanticType::Class ||
+            instruction.operands[index].type.kind ==
+                SemanticType::UniqueOwner ||
+            instruction.operands[index].type.kind == SemanticType::Storage ||
+            instruction.operands[index].type.kind ==
+                SemanticType::PrefixStorage;
+        if (consumed) {
+          output << "std::move(";
+        }
+        emitOperand(instruction.operands[index]);
+        if (consumed) {
+          output << ')';
+        }
+      }
+      output << ");\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Drop) {
@@ -4450,6 +4471,30 @@ private:
                  << ".construct(std::move(__gti_mir_v_"
                  << instruction.operands.front().value << "));\n";
           return;
+        }
+        if (instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Value &&
+            instruction.operands.front().type.kind == SemanticType::Class) {
+          // A class value that lives in a declared local (a transformed
+          // callee's published result) engages the slot here by move; the
+          // reparent comment is exact only when the paired construct
+          // built the value inside the slot already.
+          const MirValue *record =
+              facts.body.findValue(instruction.operands.front().value);
+          const MirInstruction *definition =
+              record == nullptr
+                  ? nullptr
+                  : findInstruction(facts.body, record->definition);
+          const bool builtInSlot =
+              definition != nullptr &&
+              definition->kind == MirInstructionKind::Construct &&
+              slotConsumedConstruct(facts, *definition);
+          if (!builtInSlot) {
+            output << "__gti_mir_p_" << *instruction.destination
+                   << ".construct(std::move(__gti_mir_v_"
+                   << instruction.operands.front().value << "));\n";
+            return;
+          }
         }
         output << "// GTI MIR reparent into p" << *instruction.destination
                << "\n";
@@ -4648,7 +4693,22 @@ private:
         if (index != 0) {
           output << ", ";
         }
+        // The construction consumes its arguments: class-typed operands
+        // move so deleted copy constructors cannot reject the call.
+        const bool consumed =
+            instruction.operands[index].type.kind == SemanticType::Class ||
+            instruction.operands[index].type.kind ==
+                SemanticType::UniqueOwner ||
+            instruction.operands[index].type.kind == SemanticType::Storage ||
+            instruction.operands[index].type.kind ==
+                SemanticType::PrefixStorage;
+        if (consumed) {
+          output << "std::move(";
+        }
         emitOperand(instruction.operands[index]);
+        if (consumed) {
+          output << ')';
+        }
       }
       output << ");\n";
       return;
@@ -6783,7 +6843,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
-    if (!place.projections.empty() || !typeRow(place.type)) {
+    if (!place.projections.empty() || !typeRow(place.type) ||
+        // A class-typed local declares value-initialized, so its row must
+        // carry the boundary proof (a deleted default constructor cannot
+        // spell the declaration).
+        (place.type.kind == SemanticType::Class &&
+         !constructibleClassRow(place.type))) {
       {
         if (::getenv("GTI_PROBE_TRACE") != nullptr) {
           std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 34,
@@ -7064,7 +7129,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         const MirPlace *slot =
             destination == 0 ? nullptr : body.findPlace(destination);
         if (slot == nullptr || !slotPlace(*slot) || instruction.receiver ||
-            !instruction.operands.empty() ||
+            !std::all_of(instruction.operands.begin(),
+                         instruction.operands.end(), valueOperand) ||
             instruction.constructorKind != ConstructorKind::Ordinary) {
           {
             if (::getenv("GTI_PROBE_TRACE") != nullptr) {
