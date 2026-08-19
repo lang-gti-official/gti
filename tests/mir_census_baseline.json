@@ -18,7 +18,7 @@
     "17-standard-array.gti": 34,
     "18-lambdas.gti": 30,
     "19-auto.gti": 35,
-    "20-strings.gti": 71,
+    "20-strings.gti": 72,
     "21-scoped-enums.gti": 28,
     "22-switch.gti": 28,
     "23-direct-initialization.gti": 35,
@@ -38,10 +38,10 @@
     "37-tcp-socket-owner.gti": 37,
     "38-vector-emplace.gti": 62,
     "39-raw-pointers.gti": 27,
-    "40-loan-flow-edges.gti": 71,
+    "40-loan-flow-edges.gti": 72,
     "41-owner-dependencies.gti": 38,
     "42-exclusive-reborrows.gti": 37,
-    "43-program-arguments.gti": 80,
+    "43-program-arguments.gti": 81,
     "44-bounded-requires.gti": 129,
     "45-layout-queries.gti": 28,
     "46-defined-integer-arithmetic.gti": 111,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 76
   },
-  "total": 2325
+  "total": 2328
 }

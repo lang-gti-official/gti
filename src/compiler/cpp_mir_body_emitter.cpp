@@ -1463,6 +1463,20 @@ isHostedStartupArgumentIndexAdvance(const MirBody &body,
          block.terminator.invokeInstruction == instruction.id;
 }
 
+// True when any block's Invoke terminator pairs with this instruction:
+// the failure edge exists, so the status protocol owns the spelling. A
+// site with no edge is MIR's own assertion of terminal containment.
+[[nodiscard]] bool invokePairedInstruction(const MirBody &body,
+                                           MirInstructionId id) {
+  for (const MirBlock &block : body.blocks) {
+    if (block.terminator.kind == MirTerminatorKind::Invoke &&
+        block.terminator.invokeInstruction == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // True when the constructor's verified MIR carries the complete rollback
 // authority for its owner: no state-bearing bases, no unarmed subobject
 // transfer (the body still routes failure edges), and every declared field
@@ -2929,13 +2943,23 @@ private:
             }
           }
         }
-        // A checked conversion compute with no failure edge spells the
-        // terminal numeric_cast, which contains the range failure at the
-        // site exactly like the compatibility spelling.
+        // A checked compute or storage append with no failure edge spells
+        // the terminal compatibility helper, which contains the failure
+        // at the site: no edge in MIR means no propagation semantics to
+        // preserve, exactly like the compatibility spelling.
         const bool terminalConversion =
             instruction.kind == MirInstructionKind::Compute &&
-            instruction.operation == MirOperation::Convert &&
-            instruction.localFailureSites.size() == 1;
+            instruction.localFailureSites.size() == 1 &&
+            !instructionHasInvoke(block, instruction) &&
+            (instruction.operation == MirOperation::Convert ||
+             instruction.operation == MirOperation::Index ||
+             !cppMirTerminalCheckedHelperSpelling(instruction.operation)
+                  .empty());
+        const bool terminalAppendCall =
+            instruction.kind == MirInstructionKind::Call &&
+            instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+            instruction.localFailureSites.size() == 1 &&
+            !instructionHasInvoke(block, instruction);
         // A bounds-checked element borrow publishing the return loan
         // contains its failure terminally inside the array_at accessor,
         // exactly like the compatibility subscript body.
@@ -2949,7 +2973,7 @@ private:
         }
         if (!dischargedStorageRead && !transparentCallPropagation &&
             !terminalAllocation && !terminalElementBorrow &&
-            !terminalConversion &&
+            !terminalConversion && !terminalAppendCall &&
             (elementPlace == nullptr ||
              !arrayElementAccess(body, *elementPlace))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
@@ -4917,7 +4941,8 @@ private:
       if (failureForm &&
           !cppMirCheckedOperationHelperSpelling(instruction.operation)
                .empty() &&
-          !instruction.localFailureSites.empty()) {
+          !instruction.localFailureSites.empty() &&
+          invokePairedInstruction(facts.body, instruction.id)) {
         output << "__gti_mir_failure_status_" << instruction.id << " = "
                << cppMirCheckedOperationHelperSpelling(instruction.operation)
                << '<' << typeSpelling(instruction.info.type) << ">(";
@@ -4947,11 +4972,15 @@ private:
                << " spells at its consuming return\n";
         return;
       }
-      if (!failureForm && !instruction.localFailureSites.empty() &&
-          !cppMirTerminalCheckedHelperSpelling(instruction.operation).empty()) {
-        // Plain literal shape: the compatibility terminal helper both
-        // checks and contains, so the result assignment is unconditional
-        // and the paired invoke edge is a plain goto.
+      if (!instruction.localFailureSites.empty() &&
+          !cppMirTerminalCheckedHelperSpelling(instruction.operation).empty() &&
+          (!failureForm ||
+           !invokePairedInstruction(facts.body, instruction.id))) {
+        // The compatibility terminal helper both checks and contains, so
+        // the result assignment is unconditional. In the failure form
+        // this spelling applies exactly when no invoke edge pairs: MIR
+        // asserted terminal containment, and the status protocol would
+        // silently swallow the failure the helper must report.
         output << "__gti_mir_v_" << *instruction.result << " = "
                << cppMirTerminalCheckedHelperSpelling(instruction.operation)
                << '(';
@@ -4960,7 +4989,12 @@ private:
           if (index != 0) {
             output << ", ";
           }
-          emitOperand(instruction.operands[index]);
+          const MirOperand &operand = instruction.operands[index];
+          if (operand.kind == MirOperandKind::Constant && operand.literal) {
+            emitLiteral(*operand.literal, operand.type);
+          } else {
+            emitOperand(operand);
+          }
         }
         output << ");\n";
         return;
@@ -5793,6 +5827,23 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         prefixStorageIntrinsic(instruction.intrinsic)) {
+      if (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+          !invokePairedInstruction(facts.body, instruction.id)) {
+        // The unpaired append contains its exhaustion terminally inside
+        // the compatibility helper, in either form.
+        const MirPlace *storage =
+            storageStagedPlace(facts.body, instruction.operands.front());
+        if (storage == nullptr) {
+          throw std::logic_error(
+              "verified MIR terminal append lost its staged storage place");
+        }
+        output << "::gti_internal::backend::prefix_storage_append(";
+        emitStoragePlaceValue(facts, *storage);
+        output << ", ";
+        emitOperand(instruction.operands[1]);
+        output << ");\n";
+        return;
+      }
       if (!failureForm &&
           instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
         // The plain allocation contains exhaustion terminally inside the
@@ -8771,22 +8822,29 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         }
-        if (!failureForm && address.kind == MirBodyKind::Lambda &&
-            !cppMirTerminalCheckedHelperSpelling(instruction.operation)
+        if (!cppMirTerminalCheckedHelperSpelling(instruction.operation)
                  .empty() &&
-            !instruction.localFailureSites.empty()) {
+            !instruction.localFailureSites.empty() &&
+            (!failureForm ? address.kind == MirBodyKind::Lambda ||
+                                !instructionHasInvoke(block, instruction)
+                          : !instructionHasInvoke(block, instruction))) {
           // Plain-shape checked arithmetic spells the compatibility
           // terminal helper: it contains the failure itself and never
           // returns on it, so the paired invoke edge cannot branch. The
           // operand types must equal the result type so the helper's
           // deduced result assigns without conversion.
+          const auto terminalOperand = [&](const MirOperand &operand) {
+            return valueOperand(operand) ||
+                   (operand.kind == MirOperandKind::Constant &&
+                    operand.literal.has_value() && typeRow(operand.type));
+          };
           if (instruction.localFailureSites.size() != 1 ||
               instruction.definedFailure.localOrigins.size() != 1 ||
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) == nullptr ||
               instruction.operands.empty() || instruction.operands.size() > 2 ||
               !std::all_of(instruction.operands.begin(),
-                           instruction.operands.end(), valueOperand) ||
+                           instruction.operands.end(), terminalOperand) ||
               !typeRow(instruction.info.type) ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(),
@@ -8807,7 +8865,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (failureForm &&
             !cppMirCheckedOperationHelperSpelling(instruction.operation)
                  .empty() &&
-            !instruction.localFailureSites.empty()) {
+            !instruction.localFailureSites.empty() &&
+            instructionHasInvoke(block, instruction)) {
           // A checked detector spells as its status helper and its failure
           // edge writes one exact record: one site, one origin, both known
           // to the program's failure metadata.
@@ -9486,7 +9545,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.localFailureSites.size() == 1 &&
               program_.failureMetadata().findSite(
                   instruction.localFailureSites.front()) != nullptr;
-          if (!plainTerminalAllocation &&
+          // An append with no failure edge contains its exhaustion
+          // terminally inside the compatibility helper in either form.
+          const bool terminalAppend =
+              instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
+              !instruction.functionTarget &&
+              instruction.localFailureSites.size() == 1 &&
+              program_.failureMetadata().findSite(
+                  instruction.localFailureSites.front()) != nullptr &&
+              !instructionHasInvoke(block, instruction) &&
+              instruction.operands.size() == 2;
+          if (!plainTerminalAllocation && !terminalAppend &&
               (!failureForm || instruction.functionTarget ||
                instruction.localFailureSites.empty() ||
                instruction.definedFailure.localOrigins.empty() ||
