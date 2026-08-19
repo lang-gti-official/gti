@@ -6697,6 +6697,19 @@ private:
     }
     for (const CppMirBodyEmissionAnalysis &body : analysis.bodies) {
       if (!body.ready()) {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr,
+                       "ADMIT not-ready kind=%d owner=%llu issues=%zu\n",
+                       static_cast<int>(body.body.kind),
+                       static_cast<unsigned long long>(body.body.owner),
+                       body.issues.size());
+          for (const auto &issue : body.issues) {
+            std::fprintf(stderr, "  issue kind=%d block=%llu inst=%llu\n",
+                         static_cast<int>(issue.kind),
+                         static_cast<unsigned long long>(issue.block),
+                         static_cast<unsigned long long>(issue.instruction));
+          }
+        }
         continue;
       }
       if (emitter.supportsBodyText(body.body)) {
@@ -7369,22 +7382,37 @@ private:
     for (const MirFunctionInstance &instance : mir->functionInstances()) {
       if (instance.declaration != info->id ||
           !generalSpecializationEligible(function, *info, instance)) {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr &&
+            instance.declaration == info->id) {
+          std::fprintf(stderr, "SPEC skip eligibility owner=%llu\n",
+                       static_cast<unsigned long long>(instance.id));
+        }
         continue;
       }
       // Every substituted type must be concretely spellable; a pack or
       // parameter-typed instance stays on the primary template. A
-      // concrete class-typed parameter — a deduction-called declaration's
-      // stateful callable — is nameable, and the admitted body's analysis
-      // already demanded its type rows.
+      // concrete class-typed parameter or return — a deduction-called
+      // declaration's stateful callable, or a class value flowing through
+      // the deduced result — is nameable, and the admitted body's
+      // analysis already demanded its type rows.
       const auto specializationParameter = [](const SemanticType &type) {
         return isMirScalarCfgSignatureType(type) ||
                type.kind == SemanticType::Class;
       };
+      // Class returns wait on the class-value flow audit: the value rows
+      // admit every class-typed value silently, but only some defining
+      // instructions have a no-local spelling, so widening the return
+      // here exposed assignments into undeclared locals (measured on
+      // 16-move-generics, 31-exact-constraints, 41-owner-dependencies).
       if (!std::all_of(instance.parameterTypes.begin(),
                        instance.parameterTypes.end(),
                        specializationParameter) ||
           !(instance.returnType == SemanticType::Void ||
             isMirScalarCfgSignatureType(instance.returnType))) {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "SPEC skip signature owner=%llu\n",
+                       static_cast<unsigned long long>(instance.id));
+        }
         continue;
       }
       if (generalBodyAdmitted(instance.id)) {

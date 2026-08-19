@@ -2889,6 +2889,35 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
   return definition;
 }
 
+// A class-valued plain Return may publish its defining call directly:
+// the call sits last in the Return's own block and the value's only use
+// is the Return, so the call spells `return <call>` and the class
+// result never materializes as a local.
+[[nodiscard]] const MirInstruction *returnCallDefinition(const MirBody &body,
+                                                         MirValueId value) {
+  const MirValue *record = body.findValue(value);
+  const MirInstruction *definition =
+      record == nullptr ? nullptr : findInstruction(body, record->definition);
+  if (record == nullptr || record->info.type.kind != SemanticType::Class ||
+      definition == nullptr || definition->kind != MirInstructionKind::Call ||
+      !definition->result || body.usesOf(value).size() != 1 ||
+      body.usesOf(value).front().kind != MirValueUseKind::Terminator) {
+    return nullptr;
+  }
+  for (const MirBlock &block : body.blocks) {
+    if (!block.instructions.empty() &&
+        block.instructions.back().id == definition->id) {
+      return block.terminator.kind == MirTerminatorKind::Return &&
+                     block.terminator.value &&
+                     block.terminator.value->kind == MirOperandKind::Value &&
+                     block.terminator.value->value == value
+                 ? definition
+                 : nullptr;
+    }
+  }
+  return nullptr;
+}
+
 // A class-valued failure Return may publish a moved local instead: the
 // Move sits in the Return's own block with nothing between them touching
 // the source place, the value's uses are exactly the Return plus at most
@@ -5319,7 +5348,15 @@ private:
       return;
     }
     if (instruction.result) {
-      output << "__gti_mir_v_" << *instruction.result << " = ";
+      if (!failureForm &&
+          returnCallDefinition(facts.body, *instruction.result) ==
+              &instruction) {
+        // The class result publishes at its consuming return: the call
+        // spells the return expression and the value never declares.
+        output << "return ";
+      } else {
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+      }
     }
     if (receiverPlace != nullptr) {
       if (receiverMoved) {
@@ -5649,6 +5686,14 @@ private:
         }
         writeIndent();
         output << "return true;\n";
+        return;
+      }
+      if (terminator.value && terminator.value->kind == MirOperandKind::Value &&
+          returnCallDefinition(facts.body, terminator.value->value) !=
+              nullptr) {
+        // The class result already published at its defining call.
+        writeIndent();
+        output << "// GTI MIR class result returned at its call\n";
         return;
       }
       writeIndent();
@@ -8553,6 +8598,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               }
               return false;
             }
+          }
+        }
+        if (!failureForm && instruction.result &&
+            instruction.info.type.kind == SemanticType::Class &&
+            returnCallDefinition(body, *instruction.result) == nullptr) {
+          // A plain class result publishes only at its consuming return;
+          // any other consumer would need an undeclarable class local.
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 132,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
           }
         }
         if (failureForm) {
