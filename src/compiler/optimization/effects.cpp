@@ -242,6 +242,10 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{},
     // StringViewEmpty
     MirEffectTraits{},
+    // ExpectedValue: extraction terminates on the wrong state.
+    MirEffectTraits{.mayTrap = true},
+    // ExpectedError
+    MirEffectTraits{.mayTrap = true},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -399,6 +403,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "prefix-storage-erase",
     "string-view-size",
     "string-view-empty",
+    "expected-value",
+    "expected-error",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

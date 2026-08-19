@@ -2479,7 +2479,11 @@ def main():
         emitted = root / "main.cpp"
         run([gti, str(source), "--emit-cpp", "-o", str(emitted)])
         emitted_source = emitted.read_text(encoding="utf-8")
-        assert "const std::int32_t answer = 42" in emitted_source
+        # The entry emits from verified MIR once the expected extractions
+        # joined the intrinsic vocabulary (0.250.0): the source binding's
+        # literal stages as a typed MIR value instead of a named local.
+        assert "// GTI verified-MIR body: scalar-cfg-failure-v1" in emitted_source
+        assert "static_cast<std::int32_t>(42)" in emitted_source
         assert "#include <expected>" in emitted_source
         assert "std::expected<std::int32_t, std::int32_t>" in emitted_source
         assert "#if" not in emitted_source

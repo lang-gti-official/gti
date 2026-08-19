@@ -4733,10 +4733,13 @@ private:
     if (instruction.kind == MirInstructionKind::Call &&
         instruction.receiver &&
         (instruction.intrinsic == IntrinsicKind::StringViewSize ||
-         instruction.intrinsic == IntrinsicKind::StringViewEmpty)) {
-      // The builtin view read spells the staged view place's member
-      // directly, exactly like the compatibility route's generic member
-      // spelling on std::string_view.
+         instruction.intrinsic == IntrinsicKind::StringViewEmpty ||
+         instruction.intrinsic == IntrinsicKind::ExpectedValue ||
+         instruction.intrinsic == IntrinsicKind::ExpectedError)) {
+      // A builtin member read spells the staged place's member directly,
+      // exactly like the compatibility route's generic member spelling;
+      // the expected extractions contain their wrong-state failure inside
+      // the spelled member itself.
       const MirInstruction *staged =
           borrowStagedCallInput(facts.body, *instruction.receiver);
       const MirOperand &receiverBorrow =
@@ -4748,14 +4751,25 @@ private:
               : nullptr;
       if (viewPlace == nullptr || !instruction.result) {
         throw std::logic_error(
-            "verified MIR view read lost its staged view place");
+            "verified MIR builtin member read lost its staged place");
       }
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result << " = ";
       emitPlaceExpression(facts, *viewPlace);
-      output << (instruction.intrinsic == IntrinsicKind::StringViewSize
-                     ? ".size();\n"
-                     : ".empty();\n");
+      switch (instruction.intrinsic) {
+      case IntrinsicKind::StringViewSize:
+        output << ".size();\n";
+        break;
+      case IntrinsicKind::StringViewEmpty:
+        output << ".empty();\n";
+        break;
+      case IntrinsicKind::ExpectedValue:
+        output << ".value();\n";
+        break;
+      default:
+        output << ".error();\n";
+        break;
+      }
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -5031,7 +5045,12 @@ private:
            // The value-level view element read spells the terminal
            // string_view_at helper; the else edge is dead.
            (producer->kind == MirInstructionKind::Compute &&
-            producer->operation == MirOperation::Index))) {
+            producer->operation == MirOperation::Index) ||
+           // The expected extraction's spelled member contains the
+           // wrong-state failure terminally; the else edge is dead.
+           (producer->kind == MirInstructionKind::Call &&
+            (producer->intrinsic == IntrinsicKind::ExpectedValue ||
+             producer->intrinsic == IntrinsicKind::ExpectedError)))) {
         writeIndent();
         output << "__gti_mir_bb = " << terminator.target << ";\n";
         writeIndent();
@@ -7813,10 +7832,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         std::vector<MirValueId> consumedStaged;
         if (instruction.receiver &&
             (instruction.intrinsic == IntrinsicKind::StringViewSize ||
-             instruction.intrinsic == IntrinsicKind::StringViewEmpty)) {
-          // The builtin view read spells the staged view place's member
-          // directly (std::string_view size()/empty()): no arguments, no
-          // failure, a scalar result.
+             instruction.intrinsic == IntrinsicKind::StringViewEmpty ||
+             instruction.intrinsic == IntrinsicKind::ExpectedValue ||
+             instruction.intrinsic == IntrinsicKind::ExpectedError)) {
+          // A builtin member read spells the staged place's member
+          // directly: the view size/empty pair is failure-free, and the
+          // expected extractions contain their wrong-state failure
+          // terminally inside the spelled member itself.
+          const bool expectedExtraction =
+              instruction.intrinsic == IntrinsicKind::ExpectedValue ||
+              instruction.intrinsic == IntrinsicKind::ExpectedError;
           const MirInstruction *staged =
               borrowStagedCallInput(body, *instruction.receiver);
           const MirOperand &receiverBorrow = staged != nullptr
@@ -7829,7 +7854,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   : nullptr;
           if (viewPlace == nullptr || !instruction.result ||
               !instruction.operands.empty() ||
-              !instruction.localFailureSites.empty() ||
+              instruction.localFailureSites.size() >
+                  (expectedExtraction ? 1u : 0u) ||
               instruction.dispatch != CallDispatch::Static ||
               !typeRow(instruction.info.type)) {
             {
@@ -8367,6 +8393,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // returns on failure, so the else edge is dead.
           continue;
         }
+        if (producer->intrinsic == IntrinsicKind::ExpectedValue ||
+            producer->intrinsic == IntrinsicKind::ExpectedError) {
+          // The expected extraction's spelled member contains the
+          // wrong-state failure terminally; the else edge is dead.
+          continue;
+        }
         if (address.kind != MirBodyKind::Lambda ||
             producer->kind != MirInstructionKind::Compute ||
             cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
@@ -8397,6 +8429,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // The value-level view element read spells the terminal
         // string_view_at helper on both forms; it never returns on
         // failure, so the else edge is dead in the failure form too.
+        continue;
+      }
+      if (producer->kind == MirInstructionKind::Call &&
+          (producer->intrinsic == IntrinsicKind::ExpectedValue ||
+           producer->intrinsic == IntrinsicKind::ExpectedError)) {
+        // The expected extraction's spelled member contains the
+        // wrong-state failure terminally on both forms.
         continue;
       }
       if (producer->kind == MirInstructionKind::Call) {

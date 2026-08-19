@@ -7,7 +7,7 @@
     "05-objects.gti": 35,
     "06-namespaces.gti": 28,
     "07-generics.gti": 37,
-    "08-expected.gti": 27,
+    "08-expected.gti": 28,
     "09-target-selection.gti": 29,
     "11-overloads.gti": 31,
     "12-fixed-arrays.gti": 29,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 69
   },
-  "total": 2266
+  "total": 2267
 }

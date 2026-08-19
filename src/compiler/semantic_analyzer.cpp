@@ -3157,7 +3157,7 @@ public:
             expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
             "Expected member receiver overlaps a mutable borrow or child "
             "reborrow that may still be live.");
-        analyzeExpectedMemberCall(*member, *objectType, argumentTypes,
+        analyzeExpectedMemberCall(expr, *member, *objectType, argumentTypes,
                                   expr.paren());
         return;
       }
@@ -16076,7 +16076,7 @@ private:
     currentType = constructedType;
   }
 
-  void analyzeExpectedMemberCall(const Get &member,
+  void analyzeExpectedMemberCall(const Call &call, const Get &member,
                                  const SemanticType &expected,
                                  const std::vector<SemanticType> &argumentTypes,
                                  const Token &paren) {
@@ -16088,6 +16088,16 @@ private:
       }
       return true;
     };
+    // The builtin extraction members carry their identity to MIR as
+    // intrinsics: the calls name no declaration, so without the record
+    // the lowered Call would be target-less and unnameable by a backend.
+    const auto recordExtraction = [&](IntrinsicKind intrinsic) {
+      ResolvedCallInfo resolved{.returnType = currentType,
+                                .intrinsic = intrinsic,
+                                .dispatchOwner = expected};
+      semanticModel.record(call, resolved);
+      recordSelectedCallOccurrence(call, std::move(resolved));
+    };
 
     if (member.name().lexeme == "has_value") {
       requireArity(0);
@@ -16097,11 +16107,13 @@ private:
     if (member.name().lexeme == "value") {
       requireArity(0);
       currentType = expected.arguments[0];
+      recordExtraction(IntrinsicKind::ExpectedValue);
       return;
     }
     if (member.name().lexeme == "error") {
       requireArity(0);
       currentType = expected.arguments[1];
+      recordExtraction(IntrinsicKind::ExpectedError);
       return;
     }
     if (member.name().lexeme == "value_or") {
@@ -24433,6 +24445,11 @@ private:
           case IntrinsicKind::PrefixStorageLength:
           case IntrinsicKind::StringViewSize:
           case IntrinsicKind::StringViewEmpty:
+          // The expected extractions' defined-failure outcomes anchor in
+          // the member-call analysis that has always owned them; the
+          // resolved record only carries the spelling identity.
+          case IntrinsicKind::ExpectedValue:
+          case IntrinsicKind::ExpectedError:
             break;
           case IntrinsicKind::StorageBoundsCheck:
             // The identity-bound public logical-size check (P-STORAGE-01):

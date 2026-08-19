@@ -714,6 +714,8 @@ enum class IntrinsicKind {
   PrefixStorageErase,
   StringViewSize,
   StringViewEmpty,
+  ExpectedValue,
+  ExpectedError,
   Count,
 };
 
