@@ -5549,11 +5549,13 @@ private:
   // Owning class types stay outside the signature boundary.
   [[nodiscard]] static bool
   isMirScalarCfgSignatureType(const SemanticType &type) {
-    // An Expected of a scalar payload and an enum (or scalar) error is a
-    // passive value-semantic sum: parameters and returns copy freely.
+    // An Expected of a scalar (or void) payload and an enum (or scalar)
+    // error is a passive value-semantic sum: parameters and returns copy
+    // freely, and the void payload adds no state at all.
     const bool scalarExpected = type.kind == SemanticType::Expected &&
                                 type.arguments.size() == 2 &&
-                                isMirScalarCfgType(type.arguments[0]) &&
+                                (isMirScalarCfgType(type.arguments[0]) ||
+                                 type.arguments[0] == SemanticType::Void) &&
                                 (type.arguments[1].kind == SemanticType::Enum ||
                                  isMirScalarCfgType(type.arguments[1]));
     // A reference parameter keeps its C++ reference at the ABI while the
@@ -6594,6 +6596,10 @@ private:
                      isMirScalarCfgSignatureType) ||
         !(info->returnType == SemanticType::Void ||
           isMirScalarCfgSignatureType(info->returnType))) {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "SEL decl=%llu reason=eligibility\n",
+                     static_cast<unsigned long long>(info->id));
+      }
       return nullptr;
     }
     const MirFunctionInstance *selected = nullptr;
@@ -6617,12 +6623,20 @@ private:
       // the compatibility path; forged whole-program drift is owned by the
       // backend snapshot gate rather than this selector.
       if (selected == nullptr || ambiguousInstances || !selected->owner) {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "SEL decl=%llu reason=member-instances\n",
+                       static_cast<unsigned long long>(info->id));
+        }
         return nullptr;
       }
       const MirClassInstance *ownerInstance =
           mir->findClassInstance(*selected->owner);
       if (ownerInstance == nullptr || !ownerInstance->type.arguments.empty() ||
           !ownerInstance->type.valueArguments.empty()) {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "SEL decl=%llu reason=generic-owner\n",
+                       static_cast<unsigned long long>(info->id));
+        }
         return nullptr;
       }
     } else {
@@ -6695,6 +6709,11 @@ private:
     // re-models emission through a HIR body shape. A declined body stays on
     // the compatibility path instead of becoming a near-miss internal error.
     if (!generalBodyAdmitted(selected->id)) {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "SEL decl=%llu reason=not-admitted inst=%llu\n",
+                     static_cast<unsigned long long>(info->id),
+                     static_cast<unsigned long long>(selected->id));
+      }
       return nullptr;
     }
     return selected;

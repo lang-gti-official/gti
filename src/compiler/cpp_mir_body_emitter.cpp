@@ -2960,6 +2960,18 @@ private:
             instruction.intrinsic == IntrinsicKind::PrefixStorageAppend &&
             instruction.localFailureSites.size() == 1 &&
             !instructionHasInvoke(block, instruction);
+        // The expected extraction's spelled member contains the
+        // wrong-state failure terminally; a staging call-input's site is
+        // proof metadata with no compatibility runtime manifestation.
+        const bool terminalExtraction =
+            instruction.kind == MirInstructionKind::Call &&
+            (instruction.intrinsic == IntrinsicKind::ExpectedValue ||
+             instruction.intrinsic == IntrinsicKind::ExpectedError) &&
+            !instructionHasInvoke(block, instruction);
+        const bool stagedProofSite =
+            instruction.kind == MirInstructionKind::CallInput &&
+            instruction.localFailureSites.size() == 1 &&
+            !instructionHasInvoke(block, instruction);
         // A bounds-checked element borrow publishing the return loan
         // contains its failure terminally inside the array_at accessor,
         // exactly like the compatibility subscript body.
@@ -2973,7 +2985,8 @@ private:
         }
         if (!dischargedStorageRead && !transparentCallPropagation &&
             !terminalAllocation && !terminalElementBorrow &&
-            !terminalConversion && !terminalAppendCall &&
+            !terminalConversion && !terminalAppendCall && !terminalExtraction &&
+            !stagedProofSite &&
             (elementPlace == nullptr ||
              !arrayElementAccess(body, *elementPlace))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
@@ -4144,13 +4157,22 @@ public:
             returnCallDefinition(facts.body, value.id) == nullptr &&
             terminallyContainedPlainCallee(program, representations,
                                            *definition);
+        // An expected extraction's class payload lands in the declared
+        // local through the spelled member read.
+        const bool extractionClassResult =
+            !valueProducingConstruct && !transformedClassResult &&
+            !containedPlainResult && definition != nullptr &&
+            definition->kind == MirInstructionKind::Call &&
+            definition->result && *definition->result == value.id &&
+            (definition->intrinsic == IntrinsicKind::ExpectedValue ||
+             definition->intrinsic == IntrinsicKind::ExpectedError);
         const auto row = std::find_if(
             representations.types().begin(), representations.types().end(),
             [&](const CppMirTypeRepresentation &candidate) {
               return candidate.type == value.info.type;
             });
         if ((!valueProducingConstruct && !transformedClassResult &&
-             !containedPlainResult) ||
+             !containedPlainResult && !extractionClassResult) ||
             row == representations.types().end() || row->spelling.empty() ||
             !row->boundaryConstructible) {
           continue;
@@ -8326,9 +8348,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                terminallyContainedPlainCallee(program_, representations_,
                                               *definition);
       };
-      const bool declared =
-          (valueProducing || transformedResult() || containedPlainResult()) &&
-          constructibleClassRow(value.info.type);
+      // An expected extraction's class payload assigns into its declared
+      // local through the spelled member, exactly like the builtin member
+      // read's existing text arm.
+      const auto extractionResult = [&]() {
+        return definition != nullptr &&
+               definition->kind == MirInstructionKind::Call &&
+               (definition->intrinsic == IntrinsicKind::ExpectedValue ||
+                definition->intrinsic == IntrinsicKind::ExpectedError);
+      };
+      const bool declared = (valueProducing || transformedResult() ||
+                             containedPlainResult() || extractionResult()) &&
+                            constructibleClassRow(value.info.type);
       const auto movedIntoValueStage = [&]() {
         const std::vector<MirValueUse> stageUses =
             nonRootRecordUses(body, value.id);
