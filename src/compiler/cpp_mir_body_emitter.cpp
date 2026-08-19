@@ -5157,7 +5157,22 @@ private:
                 if (index != 0) {
                   output << ", ";
                 }
-                emitOperand(construct->operands[index]);
+                // A borrow-staged argument never materialized a local;
+                // the constructor call spells its place directly, exactly
+                // like a call argument.
+                if (const MirInstruction *staged = borrowStagedCallInput(
+                        facts.body, construct->operands[index])) {
+                  const MirPlace *place =
+                      facts.body.findPlace(staged->operands.front().place);
+                  if (place == nullptr) {
+                    throw std::logic_error(
+                        "verified MIR publication construct lost a staged "
+                        "borrowed argument place");
+                  }
+                  emitPlaceExpression(facts, *place);
+                } else {
+                  emitOperand(construct->operands[index]);
+                }
               }
               output << ')';
             } else {
@@ -6621,6 +6636,48 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     // valid: only value-producing reads may intervene, none may observe a
     // staged value, and the block must not end with staging pending.
     std::vector<MirValueId> pendingStaged;
+    // A borrow staged in the unique invoke-predecessor whose success edge
+    // targets this block hands its place spelling across the edge; the
+    // consuming instruction here spells the place exactly as a same-block
+    // consumer would.
+    const auto stagedInInvokePredecessor = [&](MirValueId id) {
+      const MirValue *record = body.findValue(id);
+      const MirInstruction *stage =
+          record == nullptr ? nullptr
+                            : findInstruction(body, record->definition);
+      if (stage == nullptr || stage->kind != MirInstructionKind::CallInput) {
+        return false;
+      }
+      const MirBlock *stageBlock = nullptr;
+      for (const MirBlock &candidate : body.blocks) {
+        for (const MirInstruction &member : candidate.instructions) {
+          if (member.id == stage->id) {
+            stageBlock = &candidate;
+          }
+        }
+      }
+      if (stageBlock == nullptr ||
+          stageBlock->terminator.kind != MirTerminatorKind::Invoke ||
+          stageBlock->terminator.target != block.id) {
+        return false;
+      }
+      std::size_t predecessors = 0;
+      for (const MirBlock &candidate : body.blocks) {
+        const MirTerminator &edge = candidate.terminator;
+        if ((edge.kind == MirTerminatorKind::Goto ||
+             edge.kind == MirTerminatorKind::Branch ||
+             edge.kind == MirTerminatorKind::Invoke) &&
+            edge.target == block.id) {
+          ++predecessors;
+        }
+        if ((edge.kind == MirTerminatorKind::Branch ||
+             edge.kind == MirTerminatorKind::Invoke) &&
+            edge.elseTarget == block.id) {
+          ++predecessors;
+        }
+      }
+      return predecessors == 1;
+    };
     const auto referencesPendingStaged = [&](const MirInstruction &between) {
       for (const MirOperand &operand : between.operands) {
         if (operand.kind == MirOperandKind::Value &&
@@ -6637,8 +6694,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     for (const MirInstruction &instruction : block.instructions) {
       if (!pendingStaged.empty()) {
         const bool consumingCall =
-            instruction.kind == MirInstructionKind::Call &&
-            instruction.intrinsic == IntrinsicKind::None;
+            (instruction.kind == MirInstructionKind::Call &&
+             instruction.intrinsic == IntrinsicKind::None) ||
+            // The class-valued publication construct consumes its staged
+            // arguments exactly like a call: the constructor call spells
+            // the staged places directly.
+            (instruction.kind == MirInstructionKind::Construct &&
+             instruction.result &&
+             returnConstructDefinition(body, *instruction.result) ==
+                 &instruction);
         // A Move between the staging and its consuming call is inert
         // argument staging: it neither raises nor observes, so the
         // staged callable's deferred spelling stays exact. Lifecycle and
@@ -6691,6 +6755,39 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
                 std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 40,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+          }
+          // A borrow-staged argument consumes its stage here: pending in
+          // this block, or handed off from the unique invoke-predecessor.
+          bool stagedConsumable = true;
+          for (const MirOperand &operand : instruction.operands) {
+            const MirValue *record = body.findValue(operand.value);
+            const MirInstruction *stage =
+                record == nullptr ? nullptr
+                                  : findInstruction(body, record->definition);
+            if (stage == nullptr ||
+                stage->kind != MirInstructionKind::CallInput ||
+                stage->operands.empty() ||
+                (stage->operands.front().kind != MirOperandKind::BorrowRead &&
+                 stage->operands.front().kind != MirOperandKind::BorrowWrite)) {
+              continue;
+            }
+            const auto pending = std::find(pendingStaged.begin(),
+                                           pendingStaged.end(), operand.value);
+            if (pending != pendingStaged.end()) {
+              pendingStaged.erase(pending);
+            } else if (!stagedInInvokePredecessor(operand.value)) {
+              stagedConsumable = false;
+            }
+          }
+          if (!stagedConsumable) {
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 126,
                              gtiProbeTraceKind, gtiProbeTraceOwner,
                              gtiProbeTraceForm);
               }
@@ -7982,45 +8079,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // check still demands the set drains to empty. A consumed borrow
         // staged in the unique invoke-predecessor block is equally
         // exact: the predecessor's block-end rule proved the hand-off.
-        const auto stagedInInvokePredecessor = [&](MirValueId id) {
-          const MirValue *record = body.findValue(id);
-          const MirInstruction *stage =
-              record == nullptr ? nullptr
-                                : findInstruction(body, record->definition);
-          if (stage == nullptr ||
-              stage->kind != MirInstructionKind::CallInput) {
-            return false;
-          }
-          const MirBlock *stageBlock = nullptr;
-          for (const MirBlock &candidate : body.blocks) {
-            for (const MirInstruction &member : candidate.instructions) {
-              if (member.id == stage->id) {
-                stageBlock = &candidate;
-              }
-            }
-          }
-          if (stageBlock == nullptr ||
-              stageBlock->terminator.kind != MirTerminatorKind::Invoke ||
-              stageBlock->terminator.target != block.id) {
-            return false;
-          }
-          std::size_t predecessors = 0;
-          for (const MirBlock &candidate : body.blocks) {
-            const MirTerminator &edge = candidate.terminator;
-            if ((edge.kind == MirTerminatorKind::Goto ||
-                 edge.kind == MirTerminatorKind::Branch ||
-                 edge.kind == MirTerminatorKind::Invoke) &&
-                edge.target == block.id) {
-              ++predecessors;
-            }
-            if ((edge.kind == MirTerminatorKind::Branch ||
-                 edge.kind == MirTerminatorKind::Invoke) &&
-                edge.elseTarget == block.id) {
-              ++predecessors;
-            }
-          }
-          return predecessors == 1;
-        };
         if (!std::all_of(consumedStaged.begin(), consumedStaged.end(),
                          [&](MirValueId id) {
                            return std::find(pendingStaged.begin(),
@@ -8063,7 +8121,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       for (const MirValueId id : pendingStaged) {
         bool consumedInTarget = false;
         for (const MirValueUse &use : body.usesOf(id)) {
-          if (use.kind == MirValueUseKind::InstructionReceiver &&
+          // A staged borrow hands off whether the success target consumes
+          // it as a call receiver or as a staged argument value (the
+          // publication construct's operands arrive this way).
+          if ((use.kind == MirValueUseKind::InstructionReceiver ||
+               use.kind == MirValueUseKind::InstructionOperand) &&
               use.block == block.terminator.target) {
             consumedInTarget = true;
           }
