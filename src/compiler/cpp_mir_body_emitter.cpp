@@ -4688,7 +4688,8 @@ private:
           // A class value that lives in a declared local (a transformed
           // callee's published result) engages the slot here by move; the
           // reparent comment is exact only when the paired construct
-          // built the value inside the slot already.
+          // built the value inside this slot already — a destination on
+          // the construct itself, not merely a consuming initialize.
           const MirValue *record =
               facts.body.findValue(instruction.operands.front().value);
           const MirInstruction *definition =
@@ -4698,7 +4699,45 @@ private:
           const bool builtInSlot =
               definition != nullptr &&
               definition->kind == MirInstructionKind::Construct &&
+              definition->destination &&
               slotConsumedConstruct(facts, *definition);
+          if (definition != nullptr &&
+              definition->kind == MirInstructionKind::Construct &&
+              !definition->destination && !definition->receiver &&
+              slotConsumedConstruct(facts, *definition)) {
+            // The undeclarable class value publishes here instead: the
+            // slot constructs in place from the construction's own
+            // arguments, exactly like the compatibility direct
+            // initialization.
+            output << "__gti_mir_p_" << *instruction.destination
+                   << ".construct(";
+            for (std::size_t index = 0; index < definition->operands.size();
+                 ++index) {
+              if (index != 0) {
+                output << ", ";
+              }
+              // The construction consumes its arguments: class-typed
+              // operands move so deleted copy constructors cannot reject
+              // the call.
+              const bool consumed = definition->operands[index].type.kind ==
+                                        SemanticType::Class ||
+                                    definition->operands[index].type.kind ==
+                                        SemanticType::UniqueOwner ||
+                                    definition->operands[index].type.kind ==
+                                        SemanticType::Storage ||
+                                    definition->operands[index].type.kind ==
+                                        SemanticType::PrefixStorage;
+              if (consumed) {
+                output << "std::move(";
+              }
+              emitOperand(definition->operands[index]);
+              if (consumed) {
+                output << ')';
+              }
+            }
+            output << ");\n";
+            return;
+          }
           if (!builtInSlot) {
             output << "__gti_mir_p_" << *instruction.destination
                    << ".construct(std::move(__gti_mir_v_"
@@ -4900,6 +4939,19 @@ private:
       writeIndent();
       output << "// construct " << *instruction.result
              << " publishes at its consuming return\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Construct &&
+        instruction.result && !instruction.destination &&
+        !instruction.receiver &&
+        instruction.info.type.kind == SemanticType::Class &&
+        slotConsumedConstruct(facts, instruction)) {
+      // The undeclarable class value publishes at its consuming
+      // initialize, which constructs the destination slot in place from
+      // these arguments.
+      writeIndent();
+      output << "// construct " << *instruction.result
+             << " publishes at its consuming initialize\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Construct &&
