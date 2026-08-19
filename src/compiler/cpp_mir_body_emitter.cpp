@@ -7968,12 +7968,57 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // Every staged borrow in flight must feed exactly this call: a
         // borrowed place must not outlive its block or bypass a call that
         // could observe or invalidate it.
-        if (consumedStaged.size() != pendingStaged.size() ||
-            !std::all_of(consumedStaged.begin(), consumedStaged.end(),
+        // Each call consumes exactly its own staged inputs; borrows
+        // staged for a later call in the same block stay pending — the
+        // window rule polices what may sit between, and the block-end
+        // check still demands the set drains to empty. A consumed borrow
+        // staged in the unique invoke-predecessor block is equally
+        // exact: the predecessor's block-end rule proved the hand-off.
+        const auto stagedInInvokePredecessor = [&](MirValueId id) {
+          const MirValue *record = body.findValue(id);
+          const MirInstruction *stage =
+              record == nullptr ? nullptr
+                                : findInstruction(body, record->definition);
+          if (stage == nullptr ||
+              stage->kind != MirInstructionKind::CallInput) {
+            return false;
+          }
+          const MirBlock *stageBlock = nullptr;
+          for (const MirBlock &candidate : body.blocks) {
+            for (const MirInstruction &member : candidate.instructions) {
+              if (member.id == stage->id) {
+                stageBlock = &candidate;
+              }
+            }
+          }
+          if (stageBlock == nullptr ||
+              stageBlock->terminator.kind != MirTerminatorKind::Invoke ||
+              stageBlock->terminator.target != block.id) {
+            return false;
+          }
+          std::size_t predecessors = 0;
+          for (const MirBlock &candidate : body.blocks) {
+            const MirTerminator &edge = candidate.terminator;
+            if ((edge.kind == MirTerminatorKind::Goto ||
+                 edge.kind == MirTerminatorKind::Branch ||
+                 edge.kind == MirTerminatorKind::Invoke) &&
+                edge.target == block.id) {
+              ++predecessors;
+            }
+            if ((edge.kind == MirTerminatorKind::Branch ||
+                 edge.kind == MirTerminatorKind::Invoke) &&
+                edge.elseTarget == block.id) {
+              ++predecessors;
+            }
+          }
+          return predecessors == 1;
+        };
+        if (!std::all_of(consumedStaged.begin(), consumedStaged.end(),
                          [&](MirValueId id) {
                            return std::find(pendingStaged.begin(),
                                             pendingStaged.end(),
-                                            id) != pendingStaged.end();
+                                            id) != pendingStaged.end() ||
+                                  stagedInInvokePredecessor(id);
                          })) {
           {
             if (::getenv("GTI_PROBE_TRACE") != nullptr) {
@@ -7984,7 +8029,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
         }
-        pendingStaged.clear();
+        for (const MirValueId id : consumedStaged) {
+          pendingStaged.erase(
+              std::remove(pendingStaged.begin(), pendingStaged.end(), id),
+              pendingStaged.end());
+        }
         continue;
       }
       default: {
@@ -7995,6 +8044,61 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         return false;
       }
+      }
+    }
+    if (!pendingStaged.empty() &&
+        block.terminator.kind == MirTerminatorKind::Invoke) {
+      // A staged borrow may hand off across the invoke edge when every
+      // leftover's consuming call sits in the success target and the
+      // else path never references the staged places.
+      bool handsOff = true;
+      for (const MirValueId id : pendingStaged) {
+        bool consumedInTarget = false;
+        for (const MirValueUse &use : body.usesOf(id)) {
+          if (use.kind == MirValueUseKind::InstructionReceiver &&
+              use.block == block.terminator.target) {
+            consumedInTarget = true;
+          }
+        }
+        if (!consumedInTarget) {
+          handsOff = false;
+        }
+        const MirValue *record = body.findValue(id);
+        const MirInstruction *stage =
+            record == nullptr ? nullptr
+                              : findInstruction(body, record->definition);
+        const MirPlace *stagedPlace =
+            stage != nullptr && !stage->operands.empty()
+                ? body.findPlace(stage->operands.front().place)
+                : nullptr;
+        if (stagedPlace == nullptr) {
+          handsOff = false;
+          continue;
+        }
+        for (const MirBlock &candidate : body.blocks) {
+          if (candidate.id != block.terminator.elseTarget) {
+            continue;
+          }
+          for (const MirInstruction &member : candidate.instructions) {
+            if (member.kind == MirInstructionKind::Drop) {
+              continue;
+            }
+            if ((member.destination &&
+                 *member.destination == stagedPlace->id) ||
+                (member.receiver &&
+                 member.receiver->place == stagedPlace->id)) {
+              handsOff = false;
+            }
+            for (const MirOperand &operand : member.operands) {
+              if (operand.place == stagedPlace->id) {
+                handsOff = false;
+              }
+            }
+          }
+        }
+      }
+      if (handsOff) {
+        pendingStaged.clear();
       }
     }
     if (!pendingStaged.empty()) {
