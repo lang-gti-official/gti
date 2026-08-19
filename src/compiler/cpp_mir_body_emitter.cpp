@@ -7314,6 +7314,95 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     if (value.info.type.kind == SemanticType::Class) {
+      // A class value is admissible only when the declaration loop will
+      // declare it or a no-local vocabulary spells it at its consumer;
+      // anything else would assign into an undeclared local (measured on
+      // the caller bodies the pack admission flipped).
+      const MirInstruction *definition =
+          findInstruction(body, value.definition);
+      const auto slotConsumed = [&](const MirInstruction &construct) {
+        if (!construct.result) {
+          return false;
+        }
+        for (const MirValueUse &use : body.usesOf(*construct.result)) {
+          const MirInstruction *consumer =
+              findInstruction(body, use.instruction);
+          if (consumer != nullptr &&
+              consumer->kind == MirInstructionKind::Initialize &&
+              consumer->destination) {
+            const MirPlace *destinationPlace =
+                body.findPlace(*consumer->destination);
+            if (destinationPlace != nullptr && slotPlace(*destinationPlace)) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      const bool constructDefined =
+          definition != nullptr &&
+          definition->kind == MirInstructionKind::Construct &&
+          definition->result && *definition->result == value.id &&
+          !definition->destination && !definition->receiver;
+      const bool valueProducing =
+          constructDefined &&
+          returnConstructDefinition(body, value.id) != definition &&
+          !slotConsumed(*definition);
+      const auto transformedResult = [&]() {
+        if (definition == nullptr ||
+            definition->kind != MirInstructionKind::Call ||
+            !definition->functionTarget ||
+            definition->intrinsic != IntrinsicKind::None) {
+          return false;
+        }
+        const MirFunctionInstance *target =
+            program_.findFunctionInstance(*definition->functionTarget);
+        return target != nullptr && target->mayRaiseDefinedFailure &&
+               target->callableParameters.empty() &&
+               target->linkage == LanguageLinkage::Gti &&
+               target->definitionKind ==
+                   MirFunctionInstance::DefinitionKind::Source &&
+               !terminallyContainedPlainCallee(program_, representations_,
+                                               *definition);
+      };
+      const bool declared = (valueProducing || transformedResult()) &&
+                            constructibleClassRow(value.info.type);
+      const auto movedIntoValueStage = [&]() {
+        if (definition == nullptr ||
+            definition->kind != MirInstructionKind::Move ||
+            body.usesOf(value.id).size() != 1) {
+          return false;
+        }
+        const MirInstruction *user =
+            findInstruction(body, body.usesOf(value.id).front().instruction);
+        return user != nullptr && user->kind == MirInstructionKind::CallInput &&
+               user->result && copyStagedCallInput(body, *user->result) == user;
+      };
+      const bool noLocal =
+          (definition != nullptr &&
+           definition->kind == MirInstructionKind::CallInput) ||
+          isBorrowStagedResult(body, value) ||
+          isStorageStagedResult(body, value) ||
+          unexpectedDefinition(body, value.id) != nullptr ||
+          (definition != nullptr &&
+           (returnConstructDefinition(body, value.id) == definition ||
+            returnMoveDefinition(body, value.id) == definition ||
+            returnCallDefinition(body, value.id) == definition)) ||
+          (constructDefined && slotConsumed(*definition)) ||
+          movedIntoValueStage() ||
+          (definition != nullptr && dischargedStorageReadCall(*definition));
+      if (!declared && !noLocal) {
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(
+                stderr, "PD id=%d kind=%d owner=%lu ff=%d defkind=%d\n", 138,
+                gtiProbeTraceKind, gtiProbeTraceOwner, gtiProbeTraceForm,
+                definition == nullptr ? -1
+                                      : static_cast<int>(definition->kind));
+          }
+          return false;
+        }
+      }
       continue;
     }
     // A borrow-staged call input never materializes as a local, so its
@@ -7726,13 +7815,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (instruction.operation == MirOperation::PackExpansion) {
           // Only the bounded forward-once shape is spellable: the pack's
           // flattened parameters spell at the consuming allocation call.
-          // HELD CLOSED until the class-value flow guards land: admitting
-          // the allocation body flips its callers through the admission
-          // fixpoint, and their class-typed call results have no declared
-          // spelling yet (measured: 13-ownership and 16-move-generics
-          // mains emitted assignments into undeclared locals).
-          if (true || packExpansionForwardedOnce(body, *instruction.result) !=
-                          &instruction) {
+          if (packExpansionForwardedOnce(body, *instruction.result) !=
+              &instruction) {
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
                 std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 136,
