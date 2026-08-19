@@ -2853,7 +2853,17 @@ private:
              // inside the backend accessor, exactly like the compatibility
              // call site.
              instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
-             instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut);
+             instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
+             // Prefix-storage allocation aborts inside the backend helper
+             // on exhaustion, exactly like the compatibility call site.
+             instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage);
+        // A checked conversion compute with no failure edge spells the
+        // terminal numeric_cast, which contains the range failure at the
+        // site exactly like the compatibility spelling.
+        const bool terminalConversion =
+            instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::Convert &&
+            instruction.localFailureSites.size() == 1;
         // A bounds-checked element borrow publishing the return loan
         // contains its failure terminally inside the array_at accessor,
         // exactly like the compatibility subscript body.
@@ -2867,6 +2877,7 @@ private:
         }
         if (!dischargedStorageRead && !transparentCallPropagation &&
             !terminalAllocation && !terminalElementBorrow &&
+            !terminalConversion &&
             (elementPlace == nullptr ||
              !arrayElementAccess(body, *elementPlace))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
@@ -4679,6 +4690,15 @@ private:
       return;
     }
     if (instruction.operation == MirOperation::Convert) {
+      if (!instruction.localFailureSites.empty()) {
+        // The checked conversion contains its range failure terminally
+        // inside numeric_cast, exactly like the compatibility spelling.
+        output << "::gti_internal::backend::numeric_cast<"
+               << typeSpelling(instruction.info.type) << ">(";
+        emitOperand(instruction.operands.front());
+        output << ");\n";
+        return;
+      }
       output << "static_cast<" << typeSpelling(instruction.info.type) << ">(";
       emitOperand(instruction.operands.front());
       output << ");\n";
@@ -5664,6 +5684,18 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         prefixStorageIntrinsic(instruction.intrinsic)) {
+      if (!failureForm &&
+          instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
+        // The plain allocation contains exhaustion terminally inside the
+        // compatibility helper, exactly like the initializer-list call
+        // site the compatibility constructor spells.
+        output << "__gti_mir_v_" << *instruction.result
+               << " = ::gti_internal::backend::allocate_prefix_storage<"
+               << typeSpelling(instruction.info.type.arguments.front()) << ">(";
+        emitOperand(instruction.operands.front());
+        output << ");\n";
+        return;
+      }
       if (instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage) {
         output << "__gti_mir_failure_status_" << instruction.id << " = "
                << prefixStorageHelperSpelling(instruction.intrinsic) << '<'
@@ -8906,10 +8938,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         case MirOperation::Convert:
-          // An unchecked conversion is proven in-range by MIR; a checked
-          // one carries sites and belongs to the failure vocabulary's
-          // detector rules above.
-          if (!instruction.localFailureSites.empty() ||
+          // An unchecked conversion is proven in-range by MIR. A checked
+          // one in the failure form belongs to the detector rules above;
+          // in the plain form its single site spells the terminal
+          // numeric_cast, which contains the range failure at the site
+          // exactly like the compatibility spelling.
+          if (instruction.localFailureSites.size() > 1 ||
+              (instruction.localFailureSites.size() == 1 &&
+               program_.failureMetadata().findSite(
+                   instruction.localFailureSites.front()) == nullptr) ||
               instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front()) ||
               !typeRow(instruction.info.type)) {
@@ -9328,13 +9365,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // The storage failure form spells the shipped mir_prefix_*_v1
           // checked helper over the staged storage place lvalue; every
           // operation carries checkable sites, so the success form
-          // declines. The modeling receiver is a raw borrow of a
-          // spellable place and never spells.
-          if (!failureForm || instruction.functionTarget ||
-              instruction.localFailureSites.empty() ||
-              instruction.definedFailure.localOrigins.empty() ||
+          // declines — except the plain allocation, which contains
+          // exhaustion terminally inside the compatibility helper and
+          // publishes into its storage-typed result. The modeling
+          // receiver is a raw borrow of a spellable place and never
+          // spells.
+          const bool plainTerminalAllocation =
+              !failureForm &&
+              instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage &&
+              !instruction.functionTarget &&
+              instruction.localFailureSites.size() == 1 &&
               program_.failureMetadata().findSite(
-                  instruction.localFailureSites.front()) == nullptr) {
+                  instruction.localFailureSites.front()) != nullptr;
+          if (!plainTerminalAllocation &&
+              (!failureForm || instruction.functionTarget ||
+               instruction.localFailureSites.empty() ||
+               instruction.definedFailure.localOrigins.empty() ||
+               program_.failureMetadata().findSite(
+                   instruction.localFailureSites.front()) == nullptr)) {
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
                 std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 82,
