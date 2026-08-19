@@ -521,6 +521,74 @@ terminallyContainedMemberCallee(const MirProgram &program,
   return definition;
 }
 
+// A by-value argument staging temporary: one CallInput copies a source
+// place into a bare class-typed temporary that nothing else references,
+// and the staged value feeds exactly one call. The consuming call spells
+// the source place and C++ performs the copy at the call boundary, so
+// the temporary never materializes — exactly like the compatibility call.
+[[nodiscard]] const MirInstruction *
+copyStageForTemporary(const MirBody &body, const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Temporary || !place.projections.empty() ||
+      place.type.kind != SemanticType::Class) {
+    return nullptr;
+  }
+  const MirInstruction *stage = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      const bool references =
+          instruction.destination == place.id ||
+          (instruction.receiver && instruction.receiver->place == place.id) ||
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      [&](const MirOperand &operand) {
+                        return operand.place == place.id;
+                      });
+      if (!references) {
+        continue;
+      }
+      if (stage != nullptr ||
+          instruction.kind != MirInstructionKind::CallInput ||
+          instruction.destination != place.id || !instruction.result ||
+          instruction.receiver || instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Copy ||
+          instruction.operands.front().place == 0 ||
+          body.findPlace(instruction.operands.front().place) == nullptr) {
+        return nullptr;
+      }
+      stage = &instruction;
+    }
+  }
+  if (stage == nullptr || body.usesOf(*stage->result).size() != 1 ||
+      body.usesOf(*stage->result).front().kind !=
+          MirValueUseKind::InstructionOperand) {
+    return nullptr;
+  }
+  const MirInstruction *user =
+      findInstruction(body, body.usesOf(*stage->result).front().instruction);
+  if (user == nullptr || user->kind != MirInstructionKind::Call) {
+    return nullptr;
+  }
+  return stage;
+}
+
+// The value-side view of the same shape, keyed by the staged value.
+[[nodiscard]] const MirInstruction *copyStagedCallInput(const MirBody &body,
+                                                        MirValueId id) {
+  const MirValue *value = body.findValue(id);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (definition == nullptr ||
+      definition->kind != MirInstructionKind::CallInput ||
+      !definition->destination) {
+    return nullptr;
+  }
+  const MirPlace *destination = body.findPlace(*definition->destination);
+  if (destination == nullptr ||
+      copyStageForTemporary(body, *destination) != definition) {
+    return nullptr;
+  }
+  return definition;
+}
+
 [[nodiscard]] const MirInstruction *closureChainDefinition(const MirBody &body,
                                                            MirValueId id) {
   const MirValue *value = body.findValue(id);
@@ -3339,6 +3407,10 @@ public:
       // An owning class local lives in a sealed lifetime slot so failure
       // and scope cleanup can destroy it exactly once from verified MIR.
       if (slotPlace(place)) {
+        if (canonicalSlotPlaceId(facts.body, place) != place.id) {
+          // The duplicate view shares its binding's canonical slot.
+          continue;
+        }
         writeIndent();
         output << lifetimeSlotSpelling() << '<' << typeSpelling(place.type)
                << "> __gti_mir_p_" << place.id << ";\n";
@@ -3367,6 +3439,11 @@ public:
       }
       // A loan carrier place spells through its loan pointer (ADR 018).
       if (place.root == MirPlaceRootKind::Loan) {
+        continue;
+      }
+      // A by-value argument staging temporary never materializes; the
+      // consuming call spells the source place.
+      if (copyStageForTemporary(facts.body, place) != nullptr) {
         continue;
       }
       // A This-rooted field element spells through the live member.
@@ -3757,6 +3834,23 @@ private:
             place.type.kind == SemanticType::Storage ||
             place.type.kind == SemanticType::PrefixStorage) &&
            place.projections.empty();
+  }
+
+  // Duplicate bare binding places (a mutable store view and a read-only
+  // view of one local) share the local's single lifetime slot: every
+  // sibling spells the lowest-id place so the construct, each read, and
+  // the destroy all touch the same slot.
+  [[nodiscard]] MirPlaceId canonicalSlotPlaceId(const MirBody &body,
+                                                const MirPlace &place) const {
+    MirPlaceId canonical = place.id;
+    for (const MirPlace &candidate : body.places) {
+      if (candidate.root == MirPlaceRootKind::Binding &&
+          candidate.binding == place.binding && candidate.projections.empty() &&
+          candidate.type.kind == place.type.kind && candidate.id < canonical) {
+        canonical = candidate.id;
+      }
+    }
+    return canonical;
   }
 
   [[nodiscard]] const std::string &lifetimeSlotSpelling() {
@@ -4757,6 +4851,15 @@ private:
                << " stages a loaned argument\n";
         return;
       }
+      if (instruction.result &&
+          copyStagedCallInput(facts.body, *instruction.result) ==
+              &instruction) {
+        // The staged copy never materializes; the call spells the source
+        // place and C++ copies at the call boundary.
+        output << "// call input " << *instruction.result
+               << " stages a by-value argument copy\n";
+        return;
+      }
       output << "__gti_mir_v_" << *instruction.result << " = ";
       emitOperand(instruction.operands.front());
       output << ";\n";
@@ -5045,6 +5148,19 @@ private:
           // The loan-staged argument dereferences its pointer carrier
           // (ADR 018 §4), exactly like a directly loaned operand.
           output << "(*__gti_mir_loan_" << stage->operands.front().loan << ')';
+          return;
+        }
+        if (const MirInstruction *stage =
+                copyStagedCallInput(facts.body, operand.value)) {
+          // The copy-staged argument spells its source place; C++ copies
+          // at the call boundary, exactly like the compatibility call.
+          const MirPlace *source =
+              facts.body.findPlace(stage->operands.front().place);
+          if (source == nullptr) {
+            throw std::logic_error(
+                "verified MIR call lost its copy-staged source place");
+          }
+          emitStoragePlaceValue(facts, *source);
           return;
         }
       }
@@ -5590,7 +5706,9 @@ private:
       return;
     }
     if (place.projections.empty()) {
-      output << "__gti_mir_p_" << place.id;
+      output << "__gti_mir_p_"
+             << (slotPlace(place) ? canonicalSlotPlaceId(facts.body, place)
+                                  : place.id);
       return;
     }
     throw std::logic_error("place expression is outside the loan vocabulary");
@@ -6880,6 +6998,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (copyStageForTemporary(body, place) != nullptr) {
+      // The by-value argument staging temporary never materializes: the
+      // consuming call spells the source place and C++ performs the copy
+      // at the call boundary.
+      continue;
+    }
     if (!place.projections.empty() || !typeRow(place.type) ||
         // A class-typed local declares value-initialized, so its row must
         // carry the boundary proof (a deleted default constructor cannot
@@ -6888,9 +7012,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
          !constructibleClassRow(place.type))) {
       {
         if (::getenv("GTI_PROBE_TRACE") != nullptr) {
-          std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 34,
-                       gtiProbeTraceKind, gtiProbeTraceOwner,
-                       gtiProbeTraceForm);
+          std::fprintf(stderr,
+                       "PD id=%d kind=%d owner=%lu ff=%d place=%lu ptype=%d "
+                       "proj=%zu row=%d boundary=%d\n",
+                       34, gtiProbeTraceKind, gtiProbeTraceOwner,
+                       gtiProbeTraceForm, static_cast<unsigned long>(place.id),
+                       static_cast<int>(place.type.kind),
+                       place.projections.size(), typeRow(place.type) ? 1 : 0,
+                       place.type.kind == SemanticType::Class
+                           ? (constructibleClassRow(place.type) ? 1 : 0)
+                           : -1);
         }
         return false;
       }
@@ -7926,6 +8057,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (loanStagedCallInput(body, *instruction.result) == &instruction) {
           // The loan-staged input spells its dereferenced pointer carrier
           // at the consuming call; nothing stages here.
+          continue;
+        }
+        if (copyStagedCallInput(body, *instruction.result) == &instruction) {
+          // The by-value copy stage spells its source place at the
+          // consuming call; the temporary never materializes.
           continue;
         }
         if (!valueOperand(staged)) {
