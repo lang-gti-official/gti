@@ -3503,6 +3503,15 @@ public:
                << " *__gti_mir_loan_" << loan.id << "{};\n";
         continue;
       }
+      if (loan.kind == MirLoanKind::Parameter) {
+        // The entry loan aliases the reference parameter's pointer
+        // carrier (ADR 018 §4): the place prelude above already bound
+        // the carrier from the argument, so the loan pointer copies it.
+        writeIndent();
+        output << "auto *__gti_mir_loan_" << loan.id << " = __gti_mir_p_"
+               << loan.source << ";\n";
+        continue;
+      }
       // A loan published by a transformed reference-returning callee
       // points at the callee's return element, not the receiver that
       // sources it (ADR 018 §5).
@@ -4066,6 +4075,22 @@ private:
     if (place != nullptr && place->root == MirPlaceRootKind::Symbol) {
       return storageSpelling(place->symbol);
     }
+    // A dereference-projected reference place stores through its sibling
+    // pointer carrier (ADR 018 §4), exactly as the read path spells it.
+    if (place != nullptr && place->root == MirPlaceRootKind::Binding &&
+        place->projections.size() == 1 &&
+        place->projections[0].kind == MirProjectionKind::Dereference) {
+      for (const MirPlace &candidate : facts.body.places) {
+        if (candidate.id != place->id &&
+            candidate.root == MirPlaceRootKind::Binding &&
+            candidate.binding == place->binding &&
+            candidate.projections.empty()) {
+          return "(*__gti_mir_p_" + std::to_string(candidate.id) + ")";
+        }
+      }
+      throw std::logic_error(
+          "dereference store destination lost its base carrier");
+    }
     return "__gti_mir_p_" + std::to_string(destination);
   }
 
@@ -4627,7 +4652,14 @@ private:
         if (index != 0) {
           output << ", ";
         }
-        emitOperand(instruction.operands[index]);
+        // A loaned argument dereferences its pointer carrier (ADR 018
+        // §4); every other argument is a staged value.
+        if (instruction.operands[index].kind == MirOperandKind::Loan) {
+          output << "(*__gti_mir_loan_" << instruction.operands[index].loan
+                 << ')';
+        } else {
+          emitOperand(instruction.operands[index]);
+        }
       }
       output << ");\n";
       return;
@@ -6144,6 +6176,29 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         {
           if (::getenv("GTI_PROBE_TRACE") != nullptr) {
             std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 14,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
+      }
+      continue;
+    }
+    if (loan.kind == MirLoanKind::Parameter) {
+      // The entry loan aliases the reference parameter's pointer carrier
+      // (ADR 018 §4): bound once in the prelude, dereferenced at use.
+      // Admission requires exactly the carrier shape the reference-local
+      // place vocabulary already spells.
+      if (!loan.entry || loan.carriers.size() != 1 ||
+          loanSource->root != MirPlaceRootKind::Binding ||
+          !loanSource->projections.empty() ||
+          loanSource->type.kind != SemanticType::Reference ||
+          parameterBindings == nullptr ||
+          std::find(parameterBindings->begin(), parameterBindings->end(),
+                    loanSource->binding) == parameterBindings->end()) {
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 130,
                          gtiProbeTraceKind, gtiProbeTraceOwner,
                          gtiProbeTraceForm);
           }
@@ -7808,12 +7863,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               callableTemplateBody &&
               callableReceiverStage(body, instruction.receiver->value) !=
                   nullptr;
+          // An invocation argument is a staged value or a loan of an
+          // admitted entry parameter (spelled as the dereferenced
+          // pointer carrier; the loan loop above vetted every loan).
+          const auto invocationOperand = [&](const MirOperand &operand) {
+            return valueOperand(operand) ||
+                   (operand.kind == MirOperandKind::Loan &&
+                    operand.loan != 0 && body.findLoan(operand.loan) != nullptr);
+          };
           if (!pendingStaged.empty() ||
               !capabilityRow(CppMirEmissionCapabilityKind::Closure) ||
               !capabilityRow(CppMirEmissionCapabilityKind::CallableDispatch) ||
               (!fusedLiteral && !stagedPlace) ||
               !std::all_of(instruction.operands.begin(),
-                           instruction.operands.end(), valueOperand) ||
+                           instruction.operands.end(), invocationOperand) ||
               (instruction.result && !typeRow(instruction.info.type))) {
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
