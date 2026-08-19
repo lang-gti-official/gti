@@ -39,6 +39,12 @@ struct CppMirTypeRepresentation {
   SemanticType type = SemanticType::Unknown;
   CppMirTypeRepresentationKind kind = CppMirTypeRepresentationKind::Scalar;
   std::string spelling;
+  // A Class row's semantic lifecycle proves the prelude-declaration shape
+  // compiles: a usable default constructor and move assignment let the
+  // value declare value-initialized and receive its construction by
+  // assignment (the 0.215 boundary rule, carried here because the MIR
+  // program records no special-member status).
+  bool boundaryConstructible = false;
 
   friend bool operator==(const CppMirTypeRepresentation &,
                          const CppMirTypeRepresentation &) = default;

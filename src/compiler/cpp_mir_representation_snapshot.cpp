@@ -1509,10 +1509,26 @@ struct RowsBuilder {
                              [&](const CppMirTypeRepresentation &row) {
                                return row.type == type;
                              })) {
+      // A Class row carries the 0.215 boundary proof: a usable default
+      // constructor and move assignment let a value of the type declare
+      // in the prelude and receive its construction by assignment.
+      bool boundaryConstructible = false;
+      if (type.kind == SemanticType::Class) {
+        const ClassTypeInfo *classInfo = semantics.findClassType(type.classId);
+        const ClassLifecycleInfo *lifecycle =
+            classInfo == nullptr || classInfo->declaration == nullptr
+                ? nullptr
+                : semantics.findClassLifecycle(*classInfo->declaration);
+        boundaryConstructible =
+            lifecycle != nullptr &&
+            lifecycle->defaultConstructor != SpecialMemberStatus::Deleted &&
+            lifecycle->moveAssignment != SpecialMemberStatus::Deleted;
+      }
       rows.types.push_back(
           {.type = type,
            .kind = *kind,
-           .spelling = cppSemanticTypeSpelling(semantics, standard, type)});
+           .spelling = cppSemanticTypeSpelling(semantics, standard, type),
+           .boundaryConstructible = boundaryConstructible});
     }
     for (const SemanticType &argument : type.arguments) {
       addType(argument);

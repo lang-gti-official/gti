@@ -3429,6 +3429,40 @@ public:
     }
     for (const MirValue &value : facts.body.values) {
       if (value.info.type.kind == SemanticType::Class) {
+        // A class value declares only when its row carries the 0.215
+        // boundary proof AND its definition is the value-producing
+        // construction that assigns into it — a blanket declaration would
+        // run default constructors for values other vocabularies spell
+        // without a local.
+        const MirInstruction *definition =
+            findInstruction(facts.body, value.definition);
+        const bool valueProducingConstruct =
+            definition != nullptr &&
+            definition->kind == MirInstructionKind::Construct &&
+            definition->result && *definition->result == value.id &&
+            !definition->destination && !definition->receiver &&
+            returnConstructDefinition(facts.body, value.id) != definition &&
+            !slotConsumedConstruct(facts, *definition);
+        // A transformed callee's class result lands in the declared
+        // receiving local through the `T *` out-parameter.
+        const bool transformedClassResult =
+            !valueProducingConstruct && definition != nullptr &&
+            definition->kind == MirInstructionKind::Call &&
+            definition->result && *definition->result == value.id &&
+            transformedCallee(*definition) != nullptr;
+        const auto row = std::find_if(
+            representations.types().begin(), representations.types().end(),
+            [&](const CppMirTypeRepresentation &candidate) {
+              return candidate.type == value.info.type;
+            });
+        if ((!valueProducingConstruct && !transformedClassResult) ||
+            row == representations.types().end() ||
+            row->spelling.empty() || !row->boundaryConstructible) {
+          continue;
+        }
+        writeIndent();
+        output << typeSpelling(value.info.type) << " __gti_mir_v_" << value.id
+               << "{};\n";
         continue;
       }
       // A borrow-staged call input never materializes: the call spells its
@@ -3670,6 +3704,30 @@ private:
       }
     }
     return selected;
+  }
+
+  // The slot protocol owns any construct whose value a slot-place
+  // Initialize consumes; the value route must not bypass slot engagement.
+  [[nodiscard]] bool
+  slotConsumedConstruct(const ScalarBodyFacts &facts,
+                        const MirInstruction &instruction) const {
+    if (!instruction.result) {
+      return false;
+    }
+    for (const MirValueUse &use : facts.body.usesOf(*instruction.result)) {
+      const MirInstruction *consumer =
+          findInstruction(facts.body, use.instruction);
+      if (consumer != nullptr &&
+          consumer->kind == MirInstructionKind::Initialize &&
+          consumer->destination) {
+        const MirPlace *destinationPlace =
+            facts.body.findPlace(*consumer->destination);
+        if (destinationPlace != nullptr && slotPlace(*destinationPlace)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   [[nodiscard]] bool slotPlace(const MirPlace &place) const {
@@ -4571,6 +4629,28 @@ private:
       writeIndent();
       output << "// construct " << *instruction.result
              << " publishes at its consuming return\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Construct &&
+        instruction.result && !instruction.destination &&
+        !instruction.receiver &&
+        instruction.info.type.kind == SemanticType::Class &&
+        !slotConsumedConstruct(facts, instruction)) {
+      // A value-producing construction assigns the constructor call into
+      // its declared class local; the row's boundary proof guaranteed the
+      // declaration above. Slot-consumed constructs keep the slot
+      // protocol's own spelling.
+      writeIndent();
+      output << "__gti_mir_v_" << *instruction.result << " = "
+             << typeSpelling(instruction.info.type) << '(';
+      for (std::size_t index = 0; index < instruction.operands.size();
+           ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        emitOperand(instruction.operands[index]);
+      }
+      output << ");\n";
       return;
     }
     if (instruction.kind != MirInstructionKind::CallInput &&
@@ -6325,6 +6405,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         [&](const CppMirTypeRepresentation &row) { return row.type == type; });
     return found != representations_.types().end() && !found->spelling.empty();
   };
+  // A class value declares in the prelude only when its row carries the
+  // 0.215 boundary proof (usable default constructor and move assignment).
+  const auto constructibleClassRow = [&](const SemanticType &type) {
+    const auto found = std::find_if(
+        representations_.types().begin(), representations_.types().end(),
+        [&](const CppMirTypeRepresentation &row) { return row.type == type; });
+    return found != representations_.types().end() &&
+           !found->spelling.empty() && found->boundaryConstructible;
+  };
   const auto fieldRow = [&](SymbolId field) {
     if (!owner) {
       {
@@ -6936,6 +7025,40 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
           }
           continue;
+        }
+        if (instruction.result && !instruction.destination &&
+            !instruction.receiver &&
+            instruction.constructorKind == ConstructorKind::Ordinary &&
+            instruction.localFailureSites.empty() &&
+            std::all_of(instruction.operands.begin(),
+                        instruction.operands.end(), valueOperand) &&
+            constructibleClassRow(instruction.info.type)) {
+          // A value-producing construction assigns the constructor call
+          // into its declared class local; the row's boundary proof
+          // guarantees the declaration and the assignment both compile,
+          // and a propagating construction's invoke edge stays vacuous
+          // under the producer rules. The slot protocol keeps ownership
+          // of any construct whose value a slot-place Initialize
+          // consumes: the value route would bypass slot engagement and
+          // later slot reads would find the slot empty.
+          bool slotConsumer = false;
+          for (const MirValueUse &use : body.usesOf(*instruction.result)) {
+            const MirInstruction *consumer =
+                findInstruction(body, use.instruction);
+            if (consumer != nullptr &&
+                consumer->kind == MirInstructionKind::Initialize &&
+                consumer->destination) {
+              const MirPlace *destinationPlace =
+                  body.findPlace(*consumer->destination);
+              if (destinationPlace != nullptr &&
+                  slotPlace(*destinationPlace)) {
+                slotConsumer = true;
+              }
+            }
+          }
+          if (!slotConsumer) {
+            continue;
+          }
         }
         const MirPlaceId destination = constructSlot(instruction);
         const MirPlace *slot =
@@ -8144,6 +8267,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 (*returnKind != CppMirTypeRepresentationKind::Scalar &&
                  *returnKind != CppMirTypeRepresentationKind::Void &&
                  *returnKind != CppMirTypeRepresentationKind::Expected &&
+                 // A class result lands in the declared receiving local
+                 // (or a declared discard), which the boundary-proof row
+                 // guarantees compiles.
+                 !(*returnKind == CppMirTypeRepresentationKind::Class &&
+                   constructibleClassRow(target->returnType)) &&
                  // A reference result arrives through the callee's `T **`
                  // out-parameter, landing directly in this call's paired
                  // loan pointer (ADR 018 §5).
