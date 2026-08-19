@@ -208,6 +208,11 @@ cppMirStringViewLiteralSpelling(std::string_view value);
 [[nodiscard]] std::string_view
 cppMirCheckedOperationHelperSpelling(MirOperation operation);
 
+// The status-returning compound assignment helper family
+// (`mir_checked_compound_*_v1`); empty for non-compound operations.
+[[nodiscard]] std::string_view
+cppMirCompoundCheckedHelperSpelling(MirOperation operation);
+
 // The single spelling authority for the shipped integer-arithmetic helper
 // family (`gti_internal_backend_helpers_v1`): the fully qualified helper a
 // backend spells for one of the nine wrapping/saturating/checked intrinsic

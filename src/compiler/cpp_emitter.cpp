@@ -12057,6 +12057,24 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
   return mir_failure_success_v1;
 }
 
+// The status-returning compound assignment family composes exactly the
+// terminal add_assign contract: the base operation checks in the C++
+// common type and the narrowing conversion checks the commit, so each
+// failure mode carries its own code. The target is written only when
+// both steps succeed.
+#define GTI_MIR_CHECKED_COMPOUND_V1(name, base)                                  template <typename Target, typename Value>                                    inline mir_failure_status_v1 name(Target &target, Value value) noexcept {       using Common = decltype(target + value);                                      Common computed{};                                                            const mir_failure_status_v1 checked =                                             base<Common>(target, value, &computed);                                   if (checked.code != GTI_FAILURE_CODE_NONE_V1) {                                 return checked;                                                             }                                                                             return mir_checked_convert_v1(computed, &target);                           }
+
+GTI_MIR_CHECKED_COMPOUND_V1(mir_checked_compound_add_v1, mir_checked_add_v1)
+GTI_MIR_CHECKED_COMPOUND_V1(mir_checked_compound_subtract_v1,
+                            mir_checked_subtract_v1)
+GTI_MIR_CHECKED_COMPOUND_V1(mir_checked_compound_multiply_v1,
+                            mir_checked_multiply_v1)
+GTI_MIR_CHECKED_COMPOUND_V1(mir_checked_compound_divide_v1,
+                            mir_checked_divide_v1)
+GTI_MIR_CHECKED_COMPOUND_V1(mir_checked_compound_remainder_v1,
+                            mir_checked_remainder_v1)
+#undef GTI_MIR_CHECKED_COMPOUND_V1
+
 } // namespace gti_internal::backend
 
 )";

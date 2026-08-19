@@ -2270,6 +2270,17 @@ def main():
                 55,
                 "negation",
             ),
+            # Migrated at 0.279.0: the checked compound assignment detects
+            # through the status-returning compound helper, so the
+            # narrowing commit reports the structured conversion record.
+            "compound-narrowing": (
+                "GTI-R0006",
+                "numeric_conversion_out_of_range",
+                1,
+                44,
+                45,
+                "numeric_cast",
+            ),
         }
         for name, failure_source, expected_error in arithmetic_failures:
             failure_path = root / f"{name}.gti"

@@ -5759,6 +5759,41 @@ private:
         return;
       }
     }
+    // The failure form's checked compound assignment detects through the
+    // base operation's status helper over the destination place; the
+    // paired invoke consumes the status and writes the record. The result
+    // value re-reads the committed destination, exactly like the plain
+    // assignment's follow-up read (the helper leaves the destination
+    // untouched on failure, and the failure edge never reads the result).
+    if (failureForm && instruction.kind == MirInstructionKind::Assign &&
+        !instruction.localFailureSites.empty() &&
+        !cppMirCompoundCheckedHelperSpelling(instruction.operation).empty()) {
+      const MirPlace *destinationPlace =
+          facts.body.findPlace(*instruction.destination);
+      if (destinationPlace == nullptr) {
+        throw std::logic_error(
+            "verified MIR checked compound assignment lost its place");
+      }
+      output << "__gti_mir_failure_status_" << instruction.id << " = "
+             << cppMirCompoundCheckedHelperSpelling(instruction.operation)
+             << '(' << destinationSpelling(facts, *instruction.destination)
+             << ", ";
+      {
+        const MirOperand &operand = instruction.operands.front();
+        if (operand.kind == MirOperandKind::Constant && operand.literal) {
+          emitLiteral(*operand.literal, operand.type);
+        } else {
+          emitOperand(operand);
+        }
+      }
+      output << ");\n";
+      if (instruction.result) {
+        writeIndent();
+        output << "__gti_mir_v_" << *instruction.result << " = "
+               << destinationSpelling(facts, *instruction.destination) << ";\n";
+      }
+      return;
+    }
     // The closed narrowing compound assignment spells the terminal
     // compatibility helper whole: arithmetic, conversion, and write share
     // one origin, and the helper's returned target re-reads into the
@@ -6552,7 +6587,10 @@ private:
           throw std::logic_error(
               "verified MIR call lost a staged borrowed argument place");
         }
-        emitPlaceExpression(facts, *place);
+        // The borrowed place binds the live value: a lifetime slot
+        // exposes it through its checked accessor, exactly like the
+        // direct borrow argument below.
+        emitStoragePlaceValue(facts, *place);
         return;
       }
       if ((operand.kind == MirOperandKind::BorrowRead ||
@@ -7491,6 +7529,28 @@ std::string_view cppMirCheckedOperationHelperSpelling(MirOperation operation) {
     return "::gti_internal::backend::mir_checked_negate_v1";
   case MirOperation::Convert:
     return "::gti_internal::backend::mir_checked_convert_v1";
+  default:
+    return {};
+  }
+}
+
+// A checked compound assignment detects through the status-returning
+// compound helper family, which composes exactly the terminal
+// add_assign contract: the base operation checks in the C++ common type
+// and the narrowing conversion checks the commit.
+[[nodiscard]] std::string_view
+cppMirCompoundCheckedHelperSpelling(MirOperation operation) {
+  switch (operation) {
+  case MirOperation::AddAssign:
+    return "::gti_internal::backend::mir_checked_compound_add_v1";
+  case MirOperation::SubtractAssign:
+    return "::gti_internal::backend::mir_checked_compound_subtract_v1";
+  case MirOperation::MultiplyAssign:
+    return "::gti_internal::backend::mir_checked_compound_multiply_v1";
+  case MirOperation::DivideAssign:
+    return "::gti_internal::backend::mir_checked_compound_divide_v1";
+  case MirOperation::RemainderAssign:
+    return "::gti_internal::backend::mir_checked_compound_remainder_v1";
   default:
     return {};
   }
@@ -9913,14 +9973,52 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
         }
         if (!instruction.localFailureSites.empty()) {
+          // A checked compound assignment into a bare scalar local is the
+          // same detector shape as the value-level checked compute: the
+          // base operation's status helper reads the place, checks, and
+          // commits, and the paired invoke consumes the status.
+          const bool checkedCompound =
+              failureForm && instruction.kind == MirInstructionKind::Assign &&
+              !cppMirCompoundCheckedHelperSpelling(instruction.operation)
+                   .empty() &&
+              destination != nullptr &&
+              destination->root == MirPlaceRootKind::Binding &&
+              // Either a bare local, or the dereference-projected
+              // reference place whose sibling pointer carrier the store
+              // path already spells (ADR 018 Â§4).
+              (destination->projections.empty() ||
+               (destination->projections.size() == 1 &&
+                destination->projections[0].kind ==
+                    MirProjectionKind::Dereference &&
+                std::any_of(body.places.begin(), body.places.end(),
+                            [&](const MirPlace &candidate) {
+                              return candidate.id != destination->id &&
+                                     candidate.root ==
+                                         MirPlaceRootKind::Binding &&
+                                     candidate.binding ==
+                                         destination->binding &&
+                                     candidate.projections.empty();
+                            }))) &&
+              expectedTypeRepresentation(destination->type) ==
+                  CppMirTypeRepresentationKind::Scalar &&
+              typeRow(destination->type) && instruction.operands.size() == 1 &&
+              (valueOperand(instruction.operands.front()) ||
+               (instruction.operands.front().kind == MirOperandKind::Constant &&
+                instruction.operands.front().literal.has_value())) &&
+              instruction.localFailureSites.size() == 1 &&
+              instruction.definedFailure.localOrigins.size() == 1 &&
+              program_.failureMetadata().findSite(
+                  instruction.localFailureSites.front()) != nullptr &&
+              invokePairedInstruction(body, instruction.id);
           // A bounds-checked element store is a failure detector spelled
           // through the checked-write helper.
-          if (!failureForm || destination == nullptr ||
-              !arrayElementAccess(body, *destination) ||
-              instruction.localFailureSites.size() != 1 ||
-              instruction.definedFailure.localOrigins.size() != 1 ||
-              program_.failureMetadata().findSite(
-                  instruction.localFailureSites.front()) == nullptr) {
+          if (!checkedCompound &&
+              (!failureForm || destination == nullptr ||
+               !arrayElementAccess(body, *destination) ||
+               instruction.localFailureSites.size() != 1 ||
+               instruction.definedFailure.localOrigins.size() != 1 ||
+               program_.failureMetadata().findSite(
+                   instruction.localFailureSites.front()) == nullptr)) {
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
                 std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 74,
