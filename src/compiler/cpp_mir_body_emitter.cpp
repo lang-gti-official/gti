@@ -500,6 +500,27 @@ terminallyContainedMemberCallee(const MirProgram &program,
   return definition;
 }
 
+// A loan-staged call input carries a borrowed entry parameter into a staged
+// invocation: the call spells the dereferenced pointer carrier (ADR 018 §4)
+// and the staged reference value never materializes as a local.
+[[nodiscard]] const MirInstruction *loanStagedCallInput(const MirBody &body,
+                                                        MirValueId id) {
+  const MirValue *value = body.findValue(id);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (definition == nullptr ||
+      definition->kind != MirInstructionKind::CallInput ||
+      definition->receiver || definition->operands.size() != 1 ||
+      definition->operands.front().kind != MirOperandKind::Loan ||
+      definition->operands.front().loan == 0 ||
+      body.findLoan(definition->operands.front().loan) == nullptr ||
+      body.usesOf(id).size() != 1 ||
+      body.usesOf(id).front().kind != MirValueUseKind::InstructionOperand) {
+    return nullptr;
+  }
+  return definition;
+}
+
 [[nodiscard]] const MirInstruction *closureChainDefinition(const MirBody &body,
                                                            MirValueId id) {
   const MirValue *value = body.findValue(id);
@@ -3456,8 +3477,8 @@ public:
               return candidate.type == value.info.type;
             });
         if ((!valueProducingConstruct && !transformedClassResult) ||
-            row == representations.types().end() ||
-            row->spelling.empty() || !row->boundaryConstructible) {
+            row == representations.types().end() || row->spelling.empty() ||
+            !row->boundaryConstructible) {
           continue;
         }
         writeIndent();
@@ -4727,6 +4748,15 @@ private:
                << " stages a borrowed place\n";
         return;
       }
+      if (instruction.result &&
+          loanStagedCallInput(facts.body, *instruction.result) ==
+              &instruction) {
+        // The staged loan never materializes; the call spells the
+        // dereferenced pointer carrier (ADR 018 §4).
+        output << "// call input " << *instruction.result
+               << " stages a loaned argument\n";
+        return;
+      }
       output << "__gti_mir_v_" << *instruction.result << " = ";
       emitOperand(instruction.operands.front());
       output << ";\n";
@@ -4902,8 +4932,7 @@ private:
       output << ");\n";
       return;
     }
-    if (instruction.kind == MirInstructionKind::Call &&
-        instruction.receiver &&
+    if (instruction.kind == MirInstructionKind::Call && instruction.receiver &&
         (instruction.intrinsic == IntrinsicKind::StringViewSize ||
          instruction.intrinsic == IntrinsicKind::StringViewEmpty ||
          instruction.intrinsic == IntrinsicKind::ArraySize ||
@@ -5009,6 +5038,13 @@ private:
                 "verified MIR call lost its staged callable argument place");
           }
           emitStoragePlaceValue(facts, *place);
+          return;
+        }
+        if (const MirInstruction *stage =
+                loanStagedCallInput(facts.body, operand.value)) {
+          // The loan-staged argument dereferences its pointer carrier
+          // (ADR 018 §4), exactly like a directly loaned operand.
+          output << "(*__gti_mir_loan_" << stage->operands.front().loan << ')';
           return;
         }
       }
@@ -6321,8 +6357,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (loan.storedField == 0 && !storedReferenceBindings) {
         bool rootedPlace = false;
         for (const MirPlace &place : body.places) {
-          if (place.root == MirPlaceRootKind::Loan &&
-              place.loan == loan.id) {
+          if (place.root == MirPlaceRootKind::Loan && place.loan == loan.id) {
             rootedPlace = true;
           }
         }
@@ -6901,6 +6936,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           referenceValue == nullptr
               ? nullptr
               : findInstruction(body, referenceValue->definition);
+      if (loanStagedCallInput(body, value.id) != nullptr) {
+        // The loan-staged reference argument spells its dereferenced
+        // pointer carrier at the consuming call and never declares.
+        continue;
+      }
       if (definition == nullptr ||
           producedCallResultLoan(body, *definition) == nullptr ||
           !body.usesOf(value.id).empty()) {
@@ -7117,8 +7157,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 consumer->destination) {
               const MirPlace *destinationPlace =
                   body.findPlace(*consumer->destination);
-              if (destinationPlace != nullptr &&
-                  slotPlace(*destinationPlace)) {
+              if (destinationPlace != nullptr && slotPlace(*destinationPlace)) {
                 slotConsumer = true;
               }
             }
@@ -7884,6 +7923,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           pendingStaged.push_back(*instruction.result);
           continue;
         }
+        if (loanStagedCallInput(body, *instruction.result) == &instruction) {
+          // The loan-staged input spells its dereferenced pointer carrier
+          // at the consuming call; nothing stages here.
+          continue;
+        }
         if (!valueOperand(staged)) {
           {
             if (::getenv("GTI_PROBE_TRACE") != nullptr) {
@@ -8081,8 +8125,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // pointer carrier; the loan loop above vetted every loan).
           const auto invocationOperand = [&](const MirOperand &operand) {
             return valueOperand(operand) ||
-                   (operand.kind == MirOperandKind::Loan &&
-                    operand.loan != 0 && body.findLoan(operand.loan) != nullptr);
+                   (operand.kind == MirOperandKind::Loan && operand.loan != 0 &&
+                    body.findLoan(operand.loan) != nullptr);
           };
           if (!pendingStaged.empty() ||
               !capabilityRow(CppMirEmissionCapabilityKind::Closure) ||
