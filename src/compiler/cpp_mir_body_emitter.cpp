@@ -2731,7 +2731,12 @@ private:
         // exists to demand.
         const bool terminalAllocation =
             instruction.kind == MirInstructionKind::Call &&
-            instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner;
+            (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+             // The owner borrow contains its null-state failure terminally
+             // inside the backend accessor, exactly like the compatibility
+             // call site.
+             instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+             instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut);
         if (!dischargedStorageRead && !transparentCallPropagation &&
             !terminalAllocation &&
             (elementPlace == nullptr ||
@@ -3453,6 +3458,56 @@ loanProducingReferenceCall(const MirProgram &program, const MirBody &body,
   return found;
 }
 
+// The owner-borrow call feeding a loan, resolved through the loan's own
+// producedBy or its parent chain (a Return loan parents the producing
+// CallResult loan), with a final source-place match for return loans that
+// alias the borrowed owner-field place directly. Nullptr when the loan is
+// not owner-borrow-fed.
+[[nodiscard]] const MirInstruction *
+ownerBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
+  const MirLoan *current = &loan;
+  for (int depth = 0; current != nullptr && depth < 4; ++depth) {
+    if (current->producedBy != 0) {
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.hirValue == current->producedBy &&
+              (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+               instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) {
+            return &instruction;
+          }
+        }
+      }
+    }
+    current = current->parent != 0 ? body.findLoan(current->parent) : nullptr;
+  }
+  if (loan.kind == MirLoanKind::Return && loan.source != 0) {
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Call ||
+            (instruction.intrinsic != IntrinsicKind::UniqueOwnerBorrow &&
+             instruction.intrinsic != IntrinsicKind::UniqueOwnerBorrowMut) ||
+            instruction.operands.size() != 1) {
+          continue;
+        }
+        const MirValue *operandValue =
+            body.findValue(instruction.operands.front().value);
+        const MirInstruction *fieldLoad =
+            operandValue == nullptr
+                ? nullptr
+                : findInstruction(body, operandValue->definition);
+        if (fieldLoad != nullptr &&
+            fieldLoad->kind == MirInstructionKind::Load &&
+            fieldLoad->operands.size() == 1 &&
+            fieldLoad->operands.front().place == loan.source) {
+          return &instruction;
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
 // The Borrow that publishes a discharged read's element pairs with its
 // producing call through the shared HIR value; ambiguity declines.
 [[nodiscard]] const MirInstruction *pairedDischargedRead(const MirBody &body,
@@ -3853,6 +3908,25 @@ public:
       if (isStorageStagedResult(facts.body, value)) {
         continue;
       }
+      // An owner field staged by a Load for an owner-borrow call never
+      // copies; the borrow spells the field lvalue directly.
+      {
+        const MirInstruction *definition =
+            findInstruction(facts.body, value.definition);
+        const std::vector<MirValueUse> stagedUses =
+            nonRootRecordUses(facts.body, value.id);
+        const MirInstruction *user =
+            stagedUses.size() == 1
+                ? findInstruction(facts.body, stagedUses.front().instruction)
+                : nullptr;
+        if (definition != nullptr &&
+            definition->kind == MirInstructionKind::Load && user != nullptr &&
+            user->kind == MirInstructionKind::Call &&
+            (user->intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+             user->intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) {
+          continue;
+        }
+      }
       // An Unexpected result spells inline at its consuming Return and
       // never declares: std::unexpected has no default construction.
       if (unexpectedDefinition(facts.body, value.id) != nullptr) {
@@ -3897,6 +3971,11 @@ public:
       // A Stored loan binds its reference field in the member initializer
       // list; no pointer local exists in the body.
       if (loan.kind == MirLoanKind::Stored) {
+        continue;
+      }
+      // An owner borrow's loans publish as the fused accessor spelling at
+      // the consuming return; no pointer local exists.
+      if (ownerBorrowLoanProducer(facts.body, loan) != nullptr) {
         continue;
       }
       const MirPlace *source = facts.body.findPlace(loan.source);
@@ -4644,6 +4723,15 @@ private:
                << " binds its reference field in the initializer list\n";
         return;
       }
+      if (loan != nullptr &&
+          ownerBorrowLoanProducer(facts.body, *loan) != nullptr) {
+        // The owner borrow's loan has no pointer local; the fused
+        // accessor spelling publishes at the consuming return.
+        writeIndent();
+        output << "// GTI MIR owner-borrow loan " << loan->id
+               << " publishes at its consuming return\n";
+        return;
+      }
       const MirPlace *source =
           loan == nullptr ? nullptr : facts.body.findPlace(loan->source);
       if (source == nullptr) {
@@ -5126,6 +5214,23 @@ private:
       output << ");\n";
       return;
     }
+    if (instruction.kind == MirInstructionKind::Load && instruction.result &&
+        nonRootRecordUses(facts.body, *instruction.result).size() == 1) {
+      const MirInstruction *user = findInstruction(
+          facts.body, nonRootRecordUses(facts.body, *instruction.result)
+                          .front()
+                          .instruction);
+      if (user != nullptr && user->kind == MirInstructionKind::Call &&
+          (user->intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+           user->intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) {
+        // The owner field never copies; the borrow spells the field
+        // lvalue directly at its consuming return.
+        writeIndent();
+        output << "// load " << *instruction.result
+               << " stages the owner field\n";
+        return;
+      }
+    }
     if (instruction.kind == MirInstructionKind::Move && instruction.result &&
         !nonRootRecordUses(facts.body, *instruction.result).empty()) {
       const MirInstruction *user = findInstruction(
@@ -5508,6 +5613,16 @@ private:
         output << ".error();\n";
         break;
       }
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+         instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) {
+      // The borrow publishes at its consuming return, which spells the
+      // backend accessor over the owner field directly.
+      writeIndent();
+      output << "// owner borrow " << instruction.id
+             << " publishes at its consuming return\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -6009,6 +6124,45 @@ private:
       return;
     case MirTerminatorKind::Return:
       if (terminator.returnLoan && *terminator.returnLoan != 0) {
+        // A return loan produced by an owner borrow spells the backend
+        // accessor over the owner field directly — no loan pointer ever
+        // binds, exactly like the compatibility body.
+        const auto ownerBorrowField = [&]() -> const MirPlace * {
+          const MirLoan *loan = facts.body.findLoan(*terminator.returnLoan);
+          const MirInstruction *producer =
+              loan == nullptr ? nullptr
+                              : ownerBorrowLoanProducer(facts.body, *loan);
+          const MirValue *operandValue =
+              producer != nullptr && producer->operands.size() == 1
+                  ? facts.body.findValue(producer->operands.front().value)
+                  : nullptr;
+          const MirInstruction *fieldLoad =
+              operandValue == nullptr
+                  ? nullptr
+                  : findInstruction(facts.body, operandValue->definition);
+          return fieldLoad != nullptr &&
+                         fieldLoad->kind == MirInstructionKind::Load &&
+                         fieldLoad->operands.size() == 1 &&
+                         fieldLoad->operands.front().place != 0
+                     ? facts.body.findPlace(fieldLoad->operands.front().place)
+                     : nullptr;
+        };
+        if (const MirPlace *field = ownerBorrowField()) {
+          writeIndent();
+          if (failureForm) {
+            output << "*__gti_mir_out_result = &::gti_internal::backend::"
+                      "owner_access((*this)."
+                   << fieldSpelling(facts, field->projections.front().field)
+                   << ");\n";
+            writeIndent();
+            output << "return true;\n";
+          } else {
+            output << "return ::gti_internal::backend::owner_access((*this)."
+                   << fieldSpelling(facts, field->projections.front().field)
+                   << ");\n";
+          }
+          return;
+        }
         if (failureForm) {
           // The loan pointer publishes through the `T **` out-parameter
           // (ADR 018 §5); the wrapper dereferences on the boundary.
@@ -7051,6 +7205,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         return false;
       }
     }
+    // An owner-borrow's call-result loan never binds a pointer local:
+    // the paired return loan publishes the backend accessor expression
+    // directly at the consuming return.
+    {
+      bool ownerBorrowLoan = false;
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &member : block.instructions) {
+          if (member.kind == MirInstructionKind::Call &&
+              member.hirValue == loan.producedBy &&
+              (member.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+               member.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) {
+            ownerBorrowLoan = true;
+          }
+        }
+      }
+      if (ownerBorrowLoan) {
+        continue;
+      }
+    }
     const MirInstruction *discharged =
         pairedDischargedRead(body, loan.producedBy);
     const MirInstruction *referenceCall =
@@ -7664,6 +7837,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             returnCallDefinition(body, value.id) == definition)) ||
           (constructDefined && slotConsumed(*definition)) ||
           movedIntoValueStage() ||
+          // An owner-borrow element value publishes through its return
+          // loan's fused accessor spelling; it never declares a local.
+          (definition != nullptr &&
+           definition->kind == MirInstructionKind::Call &&
+           (definition->intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+            definition->intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&
+           nonRootRecordUses(body, value.id).empty()) ||
           [&]() {
             const MovedChainTerminal terminal =
                 movedChainTerminal(body, value.id);
@@ -9024,6 +9204,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         }
+        if (instruction.receiver &&
+            (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+             instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) {
+          // The owner borrow validates in its dedicated intrinsic arm; its
+          // receiver borrows the owner field directly with no staging step.
+          continue;
+        }
         if (instruction.receiver) {
           if (instruction.intrinsic != IntrinsicKind::None ||
               instruction.dispatch != CallDispatch::Static) {
@@ -9305,6 +9492,47 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 if (::getenv("GTI_PROBE_TRACE") != nullptr) {
                   std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 99,
                                gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
+            }
+            continue;
+          }
+          if (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+              instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) {
+            // The owner borrow spells the backend accessor over the
+            // receiver's owner field and publishes through its paired
+            // return loan at the consuming return; the null-state failure
+            // contains terminally inside the accessor.
+            const MirValue *operandValue =
+                instruction.operands.size() == 1 &&
+                        valueOperand(instruction.operands.front())
+                    ? body.findValue(instruction.operands.front().value)
+                    : nullptr;
+            const MirInstruction *fieldLoad =
+                operandValue == nullptr
+                    ? nullptr
+                    : findInstruction(body, operandValue->definition);
+            const MirPlace *fieldPlace =
+                fieldLoad != nullptr &&
+                        fieldLoad->kind == MirInstructionKind::Load &&
+                        fieldLoad->operands.size() == 1 &&
+                        fieldLoad->operands.front().place != 0
+                    ? body.findPlace(fieldLoad->operands.front().place)
+                    : nullptr;
+            if (fieldPlace == nullptr ||
+                fieldPlace->root != MirPlaceRootKind::This ||
+                fieldPlace->projections.size() != 1 ||
+                fieldPlace->projections.front().kind !=
+                    MirProjectionKind::Field ||
+                !fieldRow(fieldPlace->projections.front().field) ||
+                !instruction.result ||
+                !body.usesOf(*instruction.result).empty()) {
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n",
+                               140, gtiProbeTraceKind, gtiProbeTraceOwner,
                                gtiProbeTraceForm);
                 }
                 return false;
