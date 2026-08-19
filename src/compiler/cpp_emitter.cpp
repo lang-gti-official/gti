@@ -7361,7 +7361,55 @@ private:
                                    const MirFunctionInstance &instance) {
     output << "template <> ";
     emitSemanticType(instance.returnType);
-    output << ' ' << emittedFunctionName(function) << '(';
+    output << ' ' << emittedFunctionName(function);
+    // A generic parameter that appears in no declared parameter type is
+    // not deducible, so the specialization names its substituted
+    // arguments explicitly — exactly like the call-site spelling.
+    const FunctionInfo *info = semantics.findFunction(function);
+    if (info != nullptr && !instance.typeArguments.empty()) {
+      const auto mentions = [&](const auto &self, const SemanticType &type,
+                                GenericParameterId parameter) -> bool {
+        if (type.kind == SemanticType::TypeParameter &&
+            type.genericParameterId == parameter) {
+          return true;
+        }
+        for (const SemanticType &argument : type.arguments) {
+          if (self(self, argument, parameter)) {
+            return true;
+          }
+        }
+        return false;
+      };
+      bool needsExplicit = false;
+      for (const GenericParameterInfo &parameter : info->genericParameters) {
+        if (parameter.pack) {
+          continue;
+        }
+        bool mentioned = false;
+        for (const SemanticType &parameterType : info->parameterTypes) {
+          if (mentions(mentions, parameterType, parameter.id)) {
+            mentioned = true;
+            break;
+          }
+        }
+        if (!mentioned) {
+          needsExplicit = true;
+          break;
+        }
+      }
+      if (needsExplicit) {
+        output << '<';
+        for (std::size_t index = 0; index < instance.typeArguments.size();
+             ++index) {
+          if (index != 0) {
+            output << ", ";
+          }
+          emitSemanticType(instance.typeArguments[index]);
+        }
+        output << '>';
+      }
+    }
+    output << '(';
     emitMirOwnedLifecycleParameters(instance.parameterTypes);
     output << ')';
   }
@@ -7387,9 +7435,12 @@ private:
       return;
     }
     const FunctionInfo *info = semantics.findFunction(function);
+    // A parameter-pack declaration is eligible: each instance's
+    // parameter types arrive flattened to the substituted elements, so
+    // the specialization signature is fully concrete.
     if (info == nullptr || info->ownerClass != 0 || info->entryPoint ||
         info->internalLinkage || !info->externalSymbol.empty() ||
-        info->parameterPack || info->linkage != LanguageLinkage::Gti) {
+        info->linkage != LanguageLinkage::Gti) {
       return;
     }
     for (const MirFunctionInstance &instance : mir->functionInstances()) {

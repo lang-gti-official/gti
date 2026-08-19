@@ -3705,6 +3705,13 @@ public:
       if (unreferencedValueRootedPlace(facts.body, place)) {
         continue;
       }
+      // The trailing parameter pack's flattened parameters spell at the
+      // one forwarding call; the pack place itself never declares.
+      if (place.root == MirPlaceRootKind::Binding &&
+          place.projections.empty() &&
+          place.type.kind == SemanticType::TypePack) {
+        continue;
+      }
       // A This-rooted field element spells through the live member.
       if (place.root == MirPlaceRootKind::This &&
           place.projections.size() == 2 &&
@@ -3854,6 +3861,11 @@ public:
       // A lambda-typed value never declares either; the fused closure
       // chain spells the literal at each consuming invocation.
       if (value.info.type.kind == SemanticType::Lambda) {
+        continue;
+      }
+      // The pack value spells nothing: its flattened parameters spell at
+      // the one forwarding call the bounded shape proved.
+      if (value.info.type.kind == SemanticType::TypePack) {
         continue;
       }
       // A reference-typed value never declares; its paired call-result
