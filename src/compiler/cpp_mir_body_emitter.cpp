@@ -582,6 +582,34 @@ stagedTemporarySourceFor(const MirBody &body, const MirInstruction &stage) {
   return true;
 }
 
+// The bounded pack-forwarding shape: an operand-less PackExpansion whose
+// TypePack value feeds exactly one allocation-intrinsic call. The pack's
+// flattened parameters spell at that call and nothing else references
+// the pack, so neither the expansion nor the pack value materializes.
+[[nodiscard]] const MirInstruction *
+packExpansionForwardedOnce(const MirBody &body, MirValueId id) {
+  const MirValue *value = body.findValue(id);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (definition == nullptr ||
+      definition->kind != MirInstructionKind::Compute ||
+      definition->operation != MirOperation::PackExpansion ||
+      !definition->operands.empty() ||
+      value->info.type.kind != SemanticType::TypePack ||
+      body.usesOf(id).size() != 1 ||
+      body.usesOf(id).front().kind != MirValueUseKind::InstructionOperand) {
+    return nullptr;
+  }
+  const MirInstruction *user =
+      findInstruction(body, body.usesOf(id).front().instruction);
+  if (user == nullptr || user->kind != MirInstructionKind::Call ||
+      user->intrinsic != IntrinsicKind::AllocateUniqueOwner ||
+      user->operands.size() != 1 || user->receiver || !user->result) {
+    return nullptr;
+  }
+  return definition;
+}
+
 // A by-value argument staging temporary: one CallInput carries a source
 // place — copied, or moved through its staged value — into a bare
 // class-typed temporary that nothing else references, and the staged
@@ -2235,6 +2263,14 @@ private:
     if (encoding == CppMirEmissionEncoding::MissingMirAuthority &&
         !isHostedStartupArgumentIndexAdvance(body, instruction)) {
       if (instruction.operation == MirOperation::PackExpansion) {
+        // The bounded forward-once shape needs no per-element MIR: the
+        // pack's flattened parameters spell at the one consuming
+        // allocation call.
+        if (instruction.result &&
+            packExpansionForwardedOnce(body, *instruction.result) ==
+                &instruction) {
+          return;
+        }
         add(CppMirBodyEmissionIssueKind::MissingPackExpansionMir, block.id,
             instruction.id,
             "PackExpansion has no concrete ordered element operands or "
@@ -2569,7 +2605,15 @@ private:
              instruction.definedFailure.propagation ==
                  FailurePropagationKind::Constructor &&
              instruction.definedFailure.localOrigins.empty());
+        // A unique-owner allocation contains its failure terminally
+        // inside the backend helper — the compatibility call site carries
+        // no handling either — so no Invoke, record, or cleanup successor
+        // exists to demand.
+        const bool terminalAllocation =
+            instruction.kind == MirInstructionKind::Call &&
+            instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner;
         if (!dischargedStorageRead && !transparentCallPropagation &&
+            !terminalAllocation &&
             (elementPlace == nullptr ||
              !arrayElementAccess(body, *elementPlace))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
@@ -7221,6 +7265,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // and the place spells nothing.
       continue;
     }
+    if (place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
+        place.type.kind == SemanticType::TypePack &&
+        parameterBindings != nullptr &&
+        std::find(parameterBindings->begin(), parameterBindings->end(),
+                  place.binding) != parameterBindings->end()) {
+      // The trailing parameter pack's flattened parameters spell at the
+      // one forwarding call; the pack place itself never declares.
+      continue;
+    }
     if (!place.projections.empty() || !typeRow(place.type) ||
         // A class-typed local declares value-initialized, so its row must
         // carry the boundary proof (a deleted default constructor cannot
@@ -7245,6 +7298,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
   }
   for (const MirValue &value : body.values) {
+    if (value.info.type.kind == SemanticType::TypePack) {
+      // The pack value spells nothing: its flattened parameters spell at
+      // the one forwarding call the bounded shape proved.
+      if (packExpansionForwardedOnce(body, value.id) == nullptr) {
+        {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 135,
+                         gtiProbeTraceKind, gtiProbeTraceOwner,
+                         gtiProbeTraceForm);
+          }
+          return false;
+        }
+      }
+      continue;
+    }
     if (value.info.type.kind == SemanticType::Class) {
       continue;
     }
@@ -7654,6 +7722,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
             return false;
           }
+        }
+        if (instruction.operation == MirOperation::PackExpansion) {
+          // Only the bounded forward-once shape is spellable: the pack's
+          // flattened parameters spell at the consuming allocation call.
+          // HELD CLOSED until the class-value flow guards land: admitting
+          // the allocation body flips its callers through the admission
+          // fixpoint, and their class-typed call results have no declared
+          // spelling yet (measured: 13-ownership and 16-move-generics
+          // mains emitted assignments into undeclared locals).
+          if (true || packExpansionForwardedOnce(body, *instruction.result) !=
+                          &instruction) {
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 136,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+          }
+          continue;
         }
         if (!failureForm && address.kind == MirBodyKind::Lambda &&
             !cppMirTerminalCheckedHelperSpelling(instruction.operation)
@@ -8850,6 +8939,34 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 if (::getenv("GTI_PROBE_TRACE") != nullptr) {
                   std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 99,
                                gtiProbeTraceKind, gtiProbeTraceOwner,
+                               gtiProbeTraceForm);
+                }
+                return false;
+              }
+            }
+            continue;
+          }
+          if (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner) {
+            // The unique-owner allocation spells the backend helper over
+            // the pack's flattened parameters and contains its failure
+            // terminally inside the helper, exactly like the
+            // compatibility call site.
+            const MirValue *packValue =
+                instruction.operands.size() == 1 &&
+                        valueOperand(instruction.operands.front())
+                    ? body.findValue(instruction.operands.front().value)
+                    : nullptr;
+            if (packValue == nullptr || !instruction.result ||
+                instruction.receiver || instruction.functionTarget ||
+                packExpansionForwardedOnce(body, packValue->id) == nullptr ||
+                instruction.info.type.kind != SemanticType::UniqueOwner ||
+                instruction.info.type.arguments.size() != 1 ||
+                !typeRow(instruction.info.type) ||
+                !typeRow(instruction.info.type.arguments.front())) {
+              {
+                if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n",
+                               137, gtiProbeTraceKind, gtiProbeTraceOwner,
                                gtiProbeTraceForm);
                 }
                 return false;
