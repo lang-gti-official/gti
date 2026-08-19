@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -33,22 +34,36 @@ import tempfile
 
 MARKER = "GTI verified-MIR body"
 
+# Diagnostics from examples that failed to compile, for the FAIL report.
+FAILURES: dict[str, str] = {}
+
 
 def census(gti: Path, root: Path) -> dict[str, int | None]:
     """Per-example MIR-emitted body counts. None means the example failed."""
     counts: dict[str, int | None] = {}
+    # A release-configured gti discovers only the installed stdlib layout;
+    # point it at the repository stdlib so the census is build-flavor
+    # independent.
+    env = dict(os.environ)
+    env.setdefault("GTI_STDLIB_PATH", str(root / "stdlib"))
     with tempfile.TemporaryDirectory(prefix="gti-census-") as scratch:
         out = Path(scratch) / "census.cpp"
         for source in sorted((root / "examples").glob("*.gti")):
+            out.unlink(missing_ok=True)
             completed = subprocess.run(
                 [str(gti), "--emit-cpp", str(source), "-o", str(out)],
                 cwd=root,
                 capture_output=True,
                 timeout=180,
                 check=False,
+                env=env,
             )
             if completed.returncode != 0 or not out.exists():
                 counts[source.name] = None
+                FAILURES[source.name] = (
+                    completed.stderr.decode("utf-8", errors="replace").strip()
+                    or completed.stdout.decode("utf-8", errors="replace").strip()
+                )
                 continue
             counts[source.name] = out.read_text(
                 encoding="utf-8", errors="replace"
@@ -129,6 +144,9 @@ def main() -> int:
               file=sys.stderr)
         for name in broken:
             print(f"  {name}", file=sys.stderr)
+            diagnostic = FAILURES.get(name, "")
+            for line in diagnostic.splitlines()[:5]:
+                print(f"    {line}", file=sys.stderr)
         return 1
 
     if regressed:
