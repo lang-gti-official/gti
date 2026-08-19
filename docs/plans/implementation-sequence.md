@@ -191,6 +191,23 @@ shadow infrastructure:
    The evidence standard is recorded under "Cutover Evidence After The
    Differential Oracle" below.
 
+   The remaining mass is measured, not estimated: at 2277 emitted bodies the
+   per-body vocabulary arms are near-exhausted, and every surveyed decline
+   terminates at a missing upstream authority rather than a missing spelling.
+   The next authority slice is a **bounded pack-forwarding schedule** built on
+   the shipped `PackFold` pattern (semantics proves the forward-once shape the
+   way `findPackFold` proves the fold shape; HIR records one concrete element
+   per substituted pack type via the same per-element instantiation;
+   MIR carries ordered element operands under its own bounded verifier
+   contract) plus the signature flattening no pack body has today — a
+   `TypePack` parameter spells as its concrete element parameters on the
+   emitted specialization. `make_unique` is the pilot and gates the largest
+   measured caller set. Behind it, in measured order: backend storage rows
+   (`P-STORAGE-01` slices 3-4), program/module initialization, the class-value
+   flow audit (the value rows must demand a spelled vocabulary per defining
+   instruction before class returns widen), owned-callable transport, and the
+   deduced-callable partial-subset canonical text.
+
 Backward compatibility with accidental compatibility-emitter behavior or with
 the textual form of generated C++ is not a migration requirement. GTI has no
 downstream source ecosystem that justifies preserving those implementation
