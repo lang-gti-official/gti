@@ -6570,8 +6570,12 @@ private:
         // The probe admits exactly these producers.
         if ((producer != nullptr &&
              producer->kind == MirInstructionKind::Compute &&
-             !cppMirTerminalCheckedHelperSpelling(producer->operation)
-                  .empty() &&
+             (!cppMirTerminalCheckedHelperSpelling(producer->operation)
+                   .empty() ||
+              // The view element read and the checked conversion spell
+              // their terminal helpers (string_view_at, numeric_cast).
+              producer->operation == MirOperation::Index ||
+              producer->operation == MirOperation::Convert) &&
              !producer->localFailureSites.empty()) ||
             // The closed compound assignment spells its terminal helper;
             // it never returns on failure, so the edge is a plain goto.
@@ -10644,10 +10648,30 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // only cleans up and terminates, so the edge is dead.
           continue;
         }
-        if (address.kind != MirBodyKind::Lambda ||
+        // Outside a lambda the else edge must be provably terminal-only
+        // (cleanup glue ending in the failure family): the terminal
+        // helper never returns on failure, so the never-taken path stays
+        // dead exactly like the compatibility spelling. The view element
+        // read and the checked conversion carry terminal helpers too.
+        if ((address.kind != MirBodyKind::Lambda &&
+             (failureForm ||
+              !failurePathTerminates(body, block.terminator.elseTarget))) ||
             producer->kind != MirInstructionKind::Compute ||
-            cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
+            (cppMirTerminalCheckedHelperSpelling(producer->operation).empty() &&
+             producer->operation != MirOperation::Index &&
+             producer->operation != MirOperation::Convert) ||
             producer->localFailureSites.size() != 1) {
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr,
+                           "PD id=109 kind=%d owner=%lu ff=%d pkind=%d "
+                           "pop=%d plfs=%zu\n",
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm, static_cast<int>(producer->kind),
+                           static_cast<int>(producer->operation),
+                           producer->localFailureSites.size());
+            }
+          }
           {
             if (::getenv("GTI_PROBE_TRACE") != nullptr) {
               std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 109,
