@@ -461,7 +461,10 @@ terminallyContainedPlainCallee(const MirProgram &program,
   probing.push_back(target->id);
   // Only the success shape contains terminally inside its own text; a
   // failure-admitted callee keeps the transformed propagation convention
-  // and never claims the plain call.
+  // and never claims the plain call. (Widening this to the boundary-
+  // wrapper route was tried twice and oracle-rejected both times: the
+  // 07-generics caller admits and its emitted program faults — the
+  // exclusion is load-bearing.)
   const bool contained = CppMirBodyEmitter(program, representations)
                              .supportsBodyText({.kind = MirBodyKind::Function,
                                                 .owner = target->id});
