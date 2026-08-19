@@ -1913,12 +1913,22 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                 mirGeneralFailure == nullptr
             ? selectedMirCallableTemplateText(stmt)
             : std::string();
+    const std::string callableFailureTemplate =
+        mirFailure == nullptr && mirBody == nullptr &&
+                mirGeneralFailure == nullptr && callableTemplate.empty()
+            ? selectedMirCallableTemplateFailureText(stmt)
+            : std::string();
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     if (mirFailure != nullptr) {
       emitMirScalarFailureSignature(stmt, *mirFailure);
     } else if (mirGeneralFailure != nullptr) {
       emitGeneralFailureSignature(stmt, *mirGeneralFailure);
+    } else if (!callableFailureTemplate.empty()) {
+      // The may-raise deduced-callable template publishes its transformed
+      // sibling under the template header; the wrapper template follows
+      // the body.
+      emitCallableTemplateFailureSignature(stmt);
     } else {
       // The deduced-callable template keeps the compat template header
       // and return type but names its parameters for the MIR body text.
@@ -1995,6 +2005,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         } else {
           emitMirOwnedLifecycleBody(*mirOwned);
         }
+        if (!emittingDeferredMember) {
+          emitStructuralOperatorAdapter(stmt);
+          emitCallableAdapter(stmt);
+        }
+        return;
+      }
+      if (!callableFailureTemplate.empty()) {
+        // The transformed sibling template body, then the boundary
+        // wrapper template carrying the original name and signature.
+        output << ' ' << callableFailureTemplate;
+        emitCallableTemplateFailureWrapper(stmt);
         if (!emittingDeferredMember) {
           emitStructuralOperatorAdapter(stmt);
           emitCallableAdapter(stmt);
@@ -6394,6 +6415,138 @@ private:
     return assembled;
   }
 
+  // The failure-form twin of the deduced-callable template route: every
+  // monomorphized instance must prove the same transformed-body text
+  // under its overlay rows, and the assembled template pairs with the
+  // boundary wrapper at the declaration site.
+  [[nodiscard]] std::string
+  selectedMirCallableTemplateFailureText(const FunctionDecl &function) const {
+    if (mir == nullptr || !generalEmissionMap || !function.body() ||
+        currentClass != nullptr || function.genericParameters().empty() ||
+        function.hasCLinkage() || function.requiresClause()) {
+      return std::string();
+    }
+    const FunctionInfo *info = semantics.findFunction(function);
+    // The deduction-called fact is not required here: the overlay loop
+    // itself demands type-parameter declarations bound to callable
+    // concretes, and every other shape fails closed on the row rules.
+    if (info == nullptr || info->id == 0 ||
+        info->ownerClass != 0 || info->staticMember || info->internalLinkage ||
+        info->linkage != LanguageLinkage::Gti ||
+        !info->externalSymbol.empty() || info->virtualMethod ||
+        info->pureVirtual || info->overrideMethod || info->parameterPack ||
+        info->intrinsic != IntrinsicKind::None ||
+        info->returnBorrowOrigin != BorrowOriginKind::None ||
+        !info->requirements.empty()) {
+      return std::string();
+    }
+    std::vector<const MirFunctionInstance *> instances;
+    for (const MirFunctionInstance &candidate : mir->functionInstances()) {
+      if (candidate.declaration == info->id) {
+        instances.push_back(&candidate);
+      }
+    }
+    if (instances.empty()) {
+      return std::string();
+    }
+    constexpr std::string_view familyLabel = "deduced-callable-failure-v1";
+    std::vector<std::string> banners;
+    std::string canonical;
+    for (const MirFunctionInstance *instance : instances) {
+      if (instance->parameterTypes.size() != info->parameterTypes.size() ||
+          !instance->mayRaiseDefinedFailure) {
+        return std::string();
+      }
+      CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
+                                     .bodies = generalEmissionMap->bodies(),
+                                     .symbols = generalEmissionMap->symbols(),
+                                     .enums = generalEmissionMap->enums(),
+                                     .capabilities =
+                                         generalEmissionMap->capabilities()};
+      for (std::size_t index = 0; index < info->parameterTypes.size();
+           ++index) {
+        const SemanticType &declared = info->parameterTypes[index];
+        if (declared.kind != SemanticType::TypeParameter) {
+          continue;
+        }
+        const GenericParameterInfo *parameter =
+            semantics.findGenericParameter(declared.genericParameterId);
+        const SemanticType &concrete = instance->parameterTypes[index];
+        const std::optional<CppMirTypeRepresentationKind> concreteKind =
+            cppMirExpectedTypeRepresentation(concrete);
+        if (parameter == nullptr ||
+            (concrete.kind != SemanticType::Lambda &&
+             concrete.kind != SemanticType::Function) ||
+            !concreteKind) {
+          return std::string();
+        }
+        const auto existing =
+            std::find_if(rows.types.begin(), rows.types.end(),
+                         [&](const CppMirTypeRepresentation &row) {
+                           return row.type == concrete;
+                         });
+        if (existing != rows.types.end()) {
+          if (existing->spelling != parameter->name.lexeme) {
+            return std::string();
+          }
+          continue;
+        }
+        rows.types.push_back({.type = concrete,
+                              .kind = *concreteKind,
+                              .spelling = parameter->name.lexeme});
+      }
+      if (rows.types.size() == generalEmissionMap->types().size()) {
+        // No overlay row was created: the declaration binds no callable
+        // concretes, so the compatibility template keeps ownership (a
+        // scalar generic body would displace its own linkage story).
+        return std::string();
+      }
+      const CppMirBodyEmissionMap overlay{std::move(rows)};
+      const CppMirBodyEmitter emitter(*mir, overlay);
+      const MirBodyAddress address{.kind = MirBodyKind::Function,
+                                   .owner = instance->id};
+      if (!emitter.analyze(address).ready() ||
+          !emitter.supportsFailureBodyText(address)) {
+        return std::string();
+      }
+      const CppMirBodyEmissionText emission =
+          emitter.emitFailureBodyText(address, familyLabel, indentation);
+      if (!emission.emitted()) {
+        return std::string();
+      }
+      const std::string marker =
+          std::string("// GTI verified-MIR body: ") + std::string(familyLabel) +
+          " function-instance " + std::to_string(instance->id) + "\n";
+      const std::size_t at = emission.text.find(marker);
+      if (at == std::string::npos) {
+        return std::string();
+      }
+      std::size_t lineStart = at;
+      while (lineStart > 0 && emission.text[lineStart - 1] != '\n') {
+        --lineStart;
+      }
+      banners.push_back(
+          emission.text.substr(lineStart, at - lineStart + marker.size()));
+      std::string body = emission.text;
+      body.erase(lineStart, at - lineStart + marker.size());
+      if (canonical.empty()) {
+        canonical = body;
+      } else if (body != canonical) {
+        return std::string();
+      }
+    }
+    const std::size_t brace = canonical.find("{\n");
+    if (brace == std::string::npos) {
+      return std::string();
+    }
+    std::string assembled = canonical.substr(0, brace + 2);
+    for (const std::string &banner : banners) {
+      assembled += banner;
+    }
+    assembled += canonical.substr(brace + 2);
+    return assembled;
+  }
+
   [[nodiscard]] const MirFunctionInstance *
   selectedMirScalarCfg(const FunctionDecl &function) const {
     if (mir == nullptr || !function.body()) {
@@ -7270,6 +7423,88 @@ private:
   // The boundary wrapper carries the original name and signature so every
   // caller stays unchanged; on failure the record reaches the defined
   // contract through the runtime terminator (ADR 017).
+  // The transformed sibling signature for a deduced-callable template:
+  // declared source types (the template parameter names survive) with MIR
+  // argument naming, the scalar/void publication tail, and the sibling
+  // name (loan and pack shapes are excluded by the selector).
+  void emitCallableTemplateFailureSignature(const FunctionDecl &function) {
+    const FunctionInfo *info = semantics.findFunction(function);
+    output << "bool "
+           << cppMirFailureSiblingSpelling(emittedFunctionName(function))
+           << '(';
+    for (std::size_t index = 0; index < function.parameters().size();
+         ++index) {
+      if (index > 0) {
+        output << ", ";
+      }
+      emitParameter(function.parameters().at(index),
+                    "__gti_mir_arg_" + std::to_string(index));
+    }
+    if (!function.parameters().empty()) {
+      output << ", ";
+    }
+    if (info != nullptr && info->returnType != SemanticType::Void) {
+      emitSemanticType(info->returnType);
+      output << " *__gti_mir_out_result, ";
+    }
+    output << "::gti_failure_record_v1 *__gti_mir_failure_record)";
+  }
+
+  // The boundary wrapper template: the original template signature
+  // delegates to the sibling and terminates on a propagated record,
+  // exactly like the concrete wrapper.
+  void emitCallableTemplateFailureWrapper(const FunctionDecl &function) {
+    const FunctionInfo *info = semantics.findFunction(function);
+    const bool voidBoundary =
+        info == nullptr || info->returnType == SemanticType::Void;
+    emitTemplateDeclaration(function.genericParameters());
+    writeIndent();
+    emitFunctionSignature(function, nullptr, true);
+    output << " {\n";
+    ++indentation;
+    if (!voidBoundary) {
+      writeIndent();
+      emitSemanticType(info->returnType);
+      output << " __gti_mir_boundary_result{};\n";
+    }
+    writeIndent();
+    output << "::gti_failure_record_v1 __gti_mir_boundary_record{};\n";
+    writeIndent();
+    output << "if ("
+           << cppMirFailureSiblingSpelling(emittedFunctionName(function))
+           << '(';
+    for (std::size_t index = 0; index < function.parameters().size();
+         ++index) {
+      output << "__gti_mir_arg_" << index << ", ";
+    }
+    if (!voidBoundary) {
+      output << "&__gti_mir_boundary_result, ";
+    }
+    output << "&__gti_mir_boundary_record)) {\n";
+    ++indentation;
+    writeIndent();
+    if (voidBoundary) {
+      output << "return;\n";
+    } else {
+      output << "return __gti_mir_boundary_result;\n";
+    }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    writeIndent();
+    output << "::gti_rt_failure_terminate_v1(\n";
+    writeIndent();
+    output << "  &__gti_mir_boundary_record,\n";
+    writeIndent();
+    output << "  &::gti_internal::backend::__gti_failure_artifact_"
+              "descriptor_v1,\n";
+    writeIndent();
+    output << "  nullptr, nullptr);\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
   void emitGeneralFailureWrapper(const FunctionDecl &function,
                                  const MirFunctionInstance &instance) {
     writeIndent();

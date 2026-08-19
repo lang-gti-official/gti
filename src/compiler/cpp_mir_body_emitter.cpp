@@ -6140,8 +6140,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     owner = function->owner;
     receiverMutability = function->receiverMutability;
     parameterBindings = &function->parameterBindings;
-    callableTemplateBody =
-        !failureForm && !function->callableParameters.empty();
+    // Both forms ride the overlay route: the plain template since 0.209,
+    // and the transformed sibling template whose invocations keep the
+    // same terminally-contained callable conventions.
+    callableTemplateBody = !function->callableParameters.empty();
     break;
   }
   case MirBodyKind::Destructor: {
