@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/c_abi.h"
+#include "gti/random.h"
 #include "gti/runtime_failure.h"
 
 #include <stdint.h>
@@ -9,6 +10,7 @@
 extern "C" {
 #endif
 
+// IO
 int32_t gti_rt_write_stdout(gti_c_string_view value);
 int32_t gti_rt_write_stdout_byte(uint8_t value);
 int32_t gti_rt_read_stdin_byte(void);

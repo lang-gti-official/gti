@@ -283,6 +283,7 @@ add_library(
   "gti_runtime" STATIC
   "runtime/src/failure.cpp"
   "runtime/src/io.cpp"
+  "runtime/src/random.cpp"
 )
 target_include_directories(
   "gti_runtime"
