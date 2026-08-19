@@ -10134,9 +10134,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    MirFunctionInstance::DefinitionKind::Source)) {
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
-                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 94,
-                             gtiProbeTraceKind, gtiProbeTraceOwner,
-                             gtiProbeTraceForm);
+                std::fprintf(
+                    stderr, "PD id=%d kind=%d owner=%lu ff=%d target=%llu\n",
+                    94, gtiProbeTraceKind, gtiProbeTraceOwner,
+                    gtiProbeTraceForm,
+                    static_cast<unsigned long long>(
+                        instruction.functionTarget ? *instruction.functionTarget
+                                                   : 0));
               }
               return false;
             }
@@ -10160,7 +10164,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         if (!failureForm && instruction.result &&
             instruction.info.type.kind == SemanticType::Class &&
-            returnCallDefinition(body, *instruction.result) == nullptr) {
+            returnCallDefinition(body, *instruction.result) == nullptr &&
+            // A nested contained-member result spells inline at its
+            // consuming argument and needs no local either.
+            inlineNestedCallResult(program_, representations_, body,
+                                   *instruction.result) == nullptr) {
           // A plain class result publishes only at its consuming return;
           // any other consumer would need an undeclarable class local.
           {
