@@ -24,7 +24,7 @@
     "23-direct-initialization.gti": 35,
     "24-static.gti": 28,
     "25-polymorphic-ranges.gti": 39,
-    "26-stored-references.gti": 38,
+    "26-stored-references.gti": 39,
     "27-copy-move-policies.gti": 35,
     "28-callable-parameters.gti": 32,
     "29-callable-predicates.gti": 35,
@@ -36,13 +36,13 @@
     "35-conditional-expressions.gti": 35,
     "36-c-abi-sockets.gti": 29,
     "37-tcp-socket-owner.gti": 37,
-    "38-vector-emplace.gti": 58,
+    "38-vector-emplace.gti": 60,
     "39-raw-pointers.gti": 27,
     "40-loan-flow-edges.gti": 70,
     "41-owner-dependencies.gti": 38,
     "42-exclusive-reborrows.gti": 37,
     "43-program-arguments.gti": 78,
-    "44-bounded-requires.gti": 126,
+    "44-bounded-requires.gti": 128,
     "45-layout-queries.gti": 28,
     "46-defined-integer-arithmetic.gti": 111,
     "47-binary64.gti": 27,
@@ -50,7 +50,7 @@
     "49-native-bridge-header.gti": 30,
     "50-opaque-native-handles.gti": 36,
     "51-callable-value-results.gti": 37,
-    "52-stateful-callables.gti": 132,
+    "52-stateful-callables.gti": 134,
     "53-consuming-callables.gti": 39,
     "54-owned-move-captures.gti": 32,
     "55-owned-callable-transport.gti": 31,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 75
   },
-  "total": 2296
+  "total": 2303
 }

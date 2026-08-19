@@ -600,6 +600,84 @@ packExpansionForwardedOnce(const MirBody &body, MirValueId id) {
   return uses;
 }
 
+// A class result of a receiver-only, operand-free, terminally contained
+// member callee whose single consumer is a later call in the same block
+// spells inline at that consuming argument — the emitted consumer
+// expression is then textually identical to the compatibility call
+// site's nested expression, so evaluation order matches by construction.
+// The window between producer and consumer must be reorder-safe: only
+// read-only call-input staging, computes, loads, and sibling producers
+// of the same consumer may intervene, and nothing may write a place.
+[[nodiscard]] const MirInstruction *
+inlineNestedCallResult(const MirProgram &program,
+                       const CppMirBodyEmissionMap &representations,
+                       const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  if (value == nullptr || value->info.type.kind != SemanticType::Class) {
+    return nullptr;
+  }
+  const MirInstruction *definition = findInstruction(body, value->definition);
+  if (definition == nullptr || definition->kind != MirInstructionKind::Call ||
+      !definition->functionTarget || !definition->receiver ||
+      !definition->operands.empty() || !definition->result ||
+      *definition->result != valueId ||
+      !terminallyContainedMemberCallee(program, representations, *definition)) {
+    return nullptr;
+  }
+  const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand) {
+    return nullptr;
+  }
+  const MirInstruction *consumer =
+      findInstruction(body, uses.front().instruction);
+  if (consumer == nullptr || consumer->kind != MirInstructionKind::Call) {
+    return nullptr;
+  }
+  for (const MirBlock &block : body.blocks) {
+    bool sawDefinition = false;
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.id == definition->id) {
+        sawDefinition = true;
+        continue;
+      }
+      if (!sawDefinition) {
+        continue;
+      }
+      if (instruction.id == consumer->id) {
+        return definition;
+      }
+      if (instruction.destination) {
+        return nullptr;
+      }
+      for (const MirOperand &operand : instruction.operands) {
+        if (operand.kind == MirOperandKind::BorrowWrite ||
+            operand.kind == MirOperandKind::Move) {
+          return nullptr;
+        }
+      }
+      if (instruction.kind == MirInstructionKind::CallInput ||
+          instruction.kind == MirInstructionKind::Compute ||
+          instruction.kind == MirInstructionKind::Load) {
+        continue;
+      }
+      if (instruction.kind == MirInstructionKind::Call &&
+          instruction.functionTarget && instruction.receiver &&
+          instruction.operands.empty() &&
+          terminallyContainedMemberCallee(program, representations,
+                                          instruction)) {
+        continue;
+      }
+      return nullptr;
+    }
+    if (sawDefinition) {
+      // The block ended without reaching the consumer.
+      return nullptr;
+    }
+  }
+  return nullptr;
+}
+
 // The terminal consumer of a moved-value staging chain: each link is a
 // destination-less single-consumer CallInput, and the walk ends at the
 // first non-link instruction.
@@ -3091,6 +3169,27 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
   return definition;
 }
 
+// A Return loan erased into a fused construct return (ADR 018): the
+// constructed value carries the borrowed reference, so the loan never
+// binds a pointer local and nothing spells it.
+[[nodiscard]] bool returnLoanErasedByConstruct(const MirBody &body,
+                                               const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::Return) {
+    return false;
+  }
+  for (const MirBlock &block : body.blocks) {
+    if (block.terminator.kind == MirTerminatorKind::Return &&
+        block.terminator.returnLoan &&
+        *block.terminator.returnLoan == loan.id) {
+      return block.terminator.value &&
+             block.terminator.value->kind == MirOperandKind::Value &&
+             returnConstructDefinition(body, block.terminator.value->value) !=
+                 nullptr;
+    }
+  }
+  return false;
+}
+
 // A class-valued plain Return may publish its defining call directly:
 // the call sits last in the Return's own block and the value's only use
 // is the Return, so the call spells `return <call>` and the class
@@ -3976,6 +4075,11 @@ public:
       // An owner borrow's loans publish as the fused accessor spelling at
       // the consuming return; no pointer local exists.
       if (ownerBorrowLoanProducer(facts.body, loan) != nullptr) {
+        continue;
+      }
+      // A Return loan erased into a fused construct return binds no
+      // pointer local either (ADR 018).
+      if (returnLoanErasedByConstruct(facts.body, loan)) {
         continue;
       }
       const MirPlace *source = facts.body.findPlace(loan.source);
@@ -5678,6 +5782,15 @@ private:
       throw std::logic_error(
           "verified MIR direct call lost its exact target declaration");
     }
+    if (instruction.result &&
+        inlineNestedCallResult(program, representations, facts.body,
+                               *instruction.result) == &instruction) {
+      // The nested contained-member call spells inline at its consuming
+      // argument; nothing publishes here.
+      output << "// call " << instruction.id
+             << " spells inline at its consuming argument\n";
+      return;
+    }
     // A receiver-carrying call spells its staged borrowed place followed by
     // the qualified member name: the explicit qualification states the
     // static dispatch MIR proved.
@@ -5720,6 +5833,31 @@ private:
           closureChainDefinition(facts.body, operand.value) != nullptr) {
         emitClosureLiteral(facts, operand.value);
         return;
+      }
+      if (operand.kind == MirOperandKind::Value) {
+        if (const MirInstruction *producer = inlineNestedCallResult(
+                program, representations, facts.body, operand.value)) {
+          // The nested contained-member call spells inline here, exactly
+          // like the compatibility call site's nested expression.
+          const MirInstruction *producerStage =
+              borrowStagedCallInput(facts.body, *producer->receiver);
+          const MirOperand &producerBorrow =
+              producerStage != nullptr ? producerStage->operands.front()
+                                       : *producer->receiver;
+          const MirPlace *producerPlace =
+              (producerBorrow.kind == MirOperandKind::BorrowRead ||
+               producerBorrow.kind == MirOperandKind::BorrowWrite) &&
+                      producerBorrow.place != 0
+                  ? facts.body.findPlace(producerBorrow.place)
+                  : nullptr;
+          if (producerPlace == nullptr) {
+            throw std::logic_error(
+                "verified MIR inline nested call lost its receiver place");
+          }
+          emitStoragePlaceValue(facts, *producerPlace);
+          output << '.' << bodySpelling(*producer->functionTarget) << "()";
+          return;
+        }
       }
       if (operand.kind == MirOperandKind::Value) {
         if (const MirInstruction *stage =
@@ -6123,7 +6261,11 @@ private:
       output << "continue;\n";
       return;
     case MirTerminatorKind::Return:
-      if (terminator.returnLoan && *terminator.returnLoan != 0) {
+      if (terminator.returnLoan && *terminator.returnLoan != 0 &&
+          !(terminator.value &&
+            terminator.value->kind == MirOperandKind::Value &&
+            returnConstructDefinition(facts.body, terminator.value->value) !=
+                nullptr)) {
         // A return loan produced by an owner borrow spells the backend
         // accessor over the owner field directly — no loan pointer ever
         // binds, exactly like the compatibility body.
@@ -6243,6 +6385,38 @@ private:
         writeIndent();
         output << "// GTI MIR class result returned at its call\n";
         return;
+      }
+      if (terminator.value && terminator.value->kind == MirOperandKind::Value) {
+        if (const MirInstruction *construct = returnConstructDefinition(
+                facts.body, terminator.value->value)) {
+          // The class value publishes its constructor call inline at the
+          // return, exactly like the compatibility return expression.
+          writeIndent();
+          output << "return " << typeSpelling(construct->info.type) << '(';
+          for (std::size_t index = 0; index < construct->operands.size();
+               ++index) {
+            if (index != 0) {
+              output << ", ";
+            }
+            // A borrow-staged argument never materialized a local; the
+            // constructor call spells its place directly.
+            if (const MirInstruction *staged = borrowStagedCallInput(
+                    facts.body, construct->operands[index])) {
+              const MirPlace *place =
+                  facts.body.findPlace(staged->operands.front().place);
+              if (place == nullptr) {
+                throw std::logic_error(
+                    "verified MIR publication construct lost a staged "
+                    "borrowed argument place");
+              }
+              emitPlaceExpression(facts, *place);
+            } else {
+              emitOperand(construct->operands[index]);
+            }
+          }
+          output << ");\n";
+          return;
+        }
       }
       writeIndent();
       output << "return";
@@ -7844,6 +8018,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            (definition->intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
             definition->intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&
            nonRootRecordUses(body, value.id).empty()) ||
+          // A nested contained-member call result spells inline at its
+          // consuming argument and never declares a local.
+          inlineNestedCallResult(program_, representations_, body, value.id) !=
+              nullptr ||
           [&]() {
             const MovedChainTerminal terminal =
                 movedChainTerminal(body, value.id);
@@ -7857,10 +8035,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         {
           if (::getenv("GTI_PROBE_TRACE") != nullptr) {
             std::fprintf(
-                stderr, "PD id=%d kind=%d owner=%lu ff=%d defkind=%d\n", 138,
-                gtiProbeTraceKind, gtiProbeTraceOwner, gtiProbeTraceForm,
-                definition == nullptr ? -1
-                                      : static_cast<int>(definition->kind));
+                stderr,
+                "PD id=%d kind=%d owner=%lu ff=%d defkind=%d vp=%d tr=%d "
+                "cp=%d row=%d\n",
+                138, gtiProbeTraceKind, gtiProbeTraceOwner, gtiProbeTraceForm,
+                definition == nullptr ? -1 : static_cast<int>(definition->kind),
+                valueProducing ? 1 : 0, transformedResult() ? 1 : 0,
+                containedPlainResult() ? 1 : 0,
+                constructibleClassRow(value.info.type) ? 1 : 0);
           }
           return false;
         }
@@ -8047,11 +8229,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // The slot vocabulary spells argument-less generated-default
         // construction only; a declared constructor's arguments would be
         // silently dropped by `.construct()`.
-        if (failureForm && instruction.result &&
+        if (instruction.result &&
             returnConstructDefinition(body, *instruction.result) ==
                 &instruction) {
           // The class-valued publication construct: every operand is a
           // staged value and the constructor's own row spells the call.
+          // Both forms fuse — the plain return spells the constructor
+          // call inline exactly like the compatibility return.
           if (!typeRow(instruction.info.type) ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand) ||
@@ -8649,9 +8833,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         default: {
           if (::getenv("GTI_PROBE_TRACE") != nullptr) {
-            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 65,
+            std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d op=%d\n", 65,
                          gtiProbeTraceKind, gtiProbeTraceOwner,
-                         gtiProbeTraceForm);
+                         gtiProbeTraceForm,
+                         static_cast<int>(instruction.operation));
           }
           return false;
         }
@@ -10030,8 +10215,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // the borrowed referent — a deleted copy constructor rejects
             // it and moving from a borrowed place is unsound — so the
             // shape stays on the compatibility path until rows carry the
-            // copyability proof.
-            body.returnType.kind == SemanticType::Class) {
+            // copyability proof. A return whose VALUE operand fuses its
+            // construct is different: the loan only records the borrowed
+            // reference escaping inside the constructed value, erased
+            // per ADR 018, and nothing ever spells the loan pointer.
+            (body.returnType.kind == SemanticType::Class &&
+             !(block.terminator.value &&
+               block.terminator.value->kind == MirOperandKind::Value &&
+               returnConstructDefinition(body, block.terminator.value->value) !=
+                   nullptr))) {
           {
             if (::getenv("GTI_PROBE_TRACE") != nullptr) {
               std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 117,
