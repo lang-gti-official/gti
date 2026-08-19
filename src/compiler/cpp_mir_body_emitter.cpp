@@ -555,6 +555,46 @@ terminallyContainedMemberCallee(const MirProgram &program,
   return definition;
 }
 
+// True when the value's only records are bare value-rooted places that
+// no instruction, loan, or terminator touches: the value has no consumer
+// and may publish elsewhere without disturbing any spelled state. Unlike
+// the Class-scoped root-record filter, this applies to any type.
+[[nodiscard]] bool onlyRootRecordUses(const MirBody &body, MirValueId id) {
+  for (const MirValueUse &use : body.usesOf(id)) {
+    if (use.kind != MirValueUseKind::PlaceRoot) {
+      return false;
+    }
+    const MirPlace *place = body.findPlace(use.place);
+    if (place == nullptr || !place->projections.empty()) {
+      return false;
+    }
+    for (const MirLoan &loan : body.loans) {
+      if (loan.source == place->id) {
+        return false;
+      }
+    }
+    for (const MirBlock &block : body.blocks) {
+      if (block.terminator.value &&
+          block.terminator.value->place == place->id) {
+        return false;
+      }
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.destination == place->id ||
+            (instruction.receiver &&
+             instruction.receiver->place == place->id) ||
+            std::any_of(instruction.operands.begin(),
+                        instruction.operands.end(),
+                        [&](const MirOperand &operand) {
+                          return operand.place == place->id;
+                        })) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 // A bare value-rooted place that no instruction, loan, or terminator
 // references is a pure root record: the rooted value flows through its
 // own uses and the place spells nothing, so it needs no declaration and
@@ -2857,6 +2897,38 @@ private:
              // Prefix-storage allocation aborts inside the backend helper
              // on exhaustion, exactly like the compatibility call site.
              instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage);
+        // An unconsumed constructor-initializer argument publishes into
+        // its field: the binding resolves through the initializer's HIR
+        // argument, and the field row must exist or the body fails
+        // closed — a dropped publication would leave the field
+        // default-constructed.
+        if (instruction.hirValue != 0 && instruction.result &&
+            result.body.kind == MirBodyKind::Constructor &&
+            onlyRootRecordUses(body, *instruction.result)) {
+          const MirConstructorInstance *constructorInstance =
+              program.findConstructorInstance(result.body.owner);
+          if (constructorInstance != nullptr) {
+            for (const MirConstructorInitializer &initializer :
+                 constructorInstance->initializers) {
+              if (initializer.arguments.size() != 1 ||
+                  initializer.arguments.front() != instruction.hirValue ||
+                  initializer.storesReference) {
+                continue;
+              }
+              if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+                  initializer.field == 0) {
+                add(CppMirBodyEmissionIssueKind::MissingConstructionScheduleMir,
+                    block.id, instruction.id,
+                    "unconsumed initializer argument has no exact field "
+                    "binding");
+              } else {
+                requireSymbol(CppMirSymbolRepresentationKind::Field,
+                              constructorInstance->owner, initializer.field,
+                              nullptr, 0, block.id, instruction.id);
+              }
+            }
+          }
+        }
         // A checked conversion compute with no failure edge spells the
         // terminal numeric_cast, which contains the range failure at the
         // site exactly like the compatibility spelling.
@@ -4282,6 +4354,7 @@ public:
       }
       for (const MirInstruction &instruction : block.instructions) {
         emitInstruction(instruction, facts);
+        emitStagedFieldPublication(instruction, facts);
       }
       emitTerminator(block.terminator, facts);
       --indentation;
@@ -5326,6 +5399,42 @@ private:
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result << " = "
              << destinationSpelling(facts, *instruction.destination) << ";\n";
+    }
+  }
+
+  // A constructor-prologue instruction whose staged result reaches no
+  // other consumer publishes into its initializer's field here: the
+  // compatibility route performs the same initialization in the member
+  // initializer list, and dropping it leaves the field default-
+  // constructed (the allocate-empty family was behaviorally masked only
+  // because a zero-capacity allocation equals the default).
+  void emitStagedFieldPublication(const MirInstruction &instruction,
+                                  const ScalarBodyFacts &facts) {
+    if (instruction.hirValue == 0 || !instruction.result ||
+        facts.instanceLabel != std::string_view("constructor-instance") ||
+        !onlyRootRecordUses(facts.body, *instruction.result)) {
+      return;
+    }
+    const MirConstructorInstance *constructor =
+        program.findConstructorInstance(facts.id);
+    if (constructor == nullptr) {
+      return;
+    }
+    for (const MirConstructorInitializer &initializer :
+         constructor->initializers) {
+      if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+          initializer.field == 0 || initializer.arguments.size() != 1 ||
+          initializer.arguments.front() != instruction.hirValue ||
+          // A reference-storing initializer binds in the member
+          // initializer list through its stored loan; nothing publishes
+          // in the body.
+          initializer.storesReference) {
+        continue;
+      }
+      writeIndent();
+      output << "(*this)." << fieldSpelling(facts, initializer.field)
+             << " = std::move(__gti_mir_v_" << *instruction.result << ");\n";
+      return;
     }
   }
 
