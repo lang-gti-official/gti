@@ -285,6 +285,46 @@ expectedTypeRepresentation(const SemanticType &type) {
   return std::nullopt;
 }
 
+// An enum result crosses the transformed failure boundary by value: the
+// receiving local declares value-initialized and the publication assigns.
+// A plain enum is scalar-like. A payload enum's variant record keeps that
+// boundary default-constructible and move-assignable only when every
+// copied variant field is itself scalar or a view, so this proof demands
+// exactly that from the copied enum row, plus the enum's own type row.
+[[nodiscard]] bool
+cppMirEnumBoundaryRow(const CppMirBodyEmissionMap &representations,
+                      const SemanticType &type) {
+  if (type.kind != SemanticType::Enum) {
+    return false;
+  }
+  const auto typeRow = std::find_if(
+      representations.types().begin(), representations.types().end(),
+      [&](const CppMirTypeRepresentation &row) { return row.type == type; });
+  if (typeRow == representations.types().end() || typeRow->spelling.empty()) {
+    return false;
+  }
+  const auto enumRow = std::find_if(representations.enums().begin(),
+                                    representations.enums().end(),
+                                    [&](const CppMirEnumRepresentation &row) {
+                                      return row.owner == type.enumId;
+                                    });
+  if (enumRow == representations.enums().end()) {
+    return false;
+  }
+  for (const CppMirPayloadVariantRepresentation &variant :
+       enumRow->payloadVariants) {
+    for (const SemanticType &field : variant.fieldTypes) {
+      const std::optional<CppMirTypeRepresentationKind> kind =
+          expectedTypeRepresentation(field);
+      if (!kind || (*kind != CppMirTypeRepresentationKind::Scalar &&
+                    *kind != CppMirTypeRepresentationKind::StringView)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 [[nodiscard]] bool isInitializerBody(MirBodyKind kind) {
   return kind == MirBodyKind::Module ||
          kind == MirBodyKind::FieldInitializers ||
@@ -5051,6 +5091,48 @@ private:
       output << typeSpelling(instruction.info.type) << "{};\n";
       return;
     }
+    if (instruction.operation == MirOperation::PayloadConstruct ||
+        instruction.operation == MirOperation::PayloadExtract) {
+      const CppMirEnumRepresentation *enumRow = nullptr;
+      if (instruction.enumOwner) {
+        for (const CppMirEnumRepresentation &row : representations.enums()) {
+          if (row.owner == *instruction.enumOwner) {
+            enumRow = &row;
+          }
+        }
+      }
+      const CppMirPayloadVariantRepresentation *variant = nullptr;
+      if (enumRow != nullptr && instruction.enumVariant) {
+        for (const CppMirPayloadVariantRepresentation &candidate :
+             enumRow->payloadVariants) {
+          if (candidate.index == *instruction.enumVariant) {
+            variant = &candidate;
+          }
+        }
+      }
+      if (variant == nullptr) {
+        throw std::logic_error(
+            "verified MIR payload operation lost its variant row");
+      }
+      if (instruction.operation == MirOperation::PayloadConstruct) {
+        output << enumRow->spelling << '{' << enumRow->spelling
+               << "::" << variant->spelling << '{';
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          if (index != 0) {
+            output << ", ";
+          }
+          emitOperand(instruction.operands[index]);
+        }
+        output << "}};\n";
+        return;
+      }
+      output << "std::get<" << variant->index << ">(";
+      emitOperand(instruction.operands.front());
+      output << ".__gti_value).__gti_field_" << *instruction.payloadIndex
+             << ";\n";
+      return;
+    }
     if (instruction.operation == MirOperation::Convert) {
       if (!instruction.localFailureSites.empty()) {
         // The checked conversion contains its range failure terminally
@@ -6826,18 +6908,37 @@ private:
       writeIndent();
       output << "continue;\n";
       return;
-    case MirTerminatorKind::Switch:
+    case MirTerminatorKind::Switch: {
+      // A payload-enum discriminant switches over the variant record's
+      // alternative index; its cases are the copied variant indices,
+      // exactly like the compatibility payload switch.
+      const CppMirEnumRepresentation *payloadRow = nullptr;
+      if (terminator.value->type.kind == SemanticType::Enum) {
+        for (const CppMirEnumRepresentation &row : representations.enums()) {
+          if (row.owner == terminator.value->type.enumId &&
+              !row.payloadVariants.empty()) {
+            payloadRow = &row;
+          }
+        }
+      }
       writeIndent();
       output << "switch (";
       emitOperand(*terminator.value);
+      if (payloadRow != nullptr) {
+        output << ".__gti_value.index()";
+      }
       output << ") {\n";
       ++indentation;
       for (const MirSwitchTarget &target : terminator.switchTargets) {
         writeIndent();
-        output << "case static_cast<" << typeSpelling(target.value->type)
-               << ">(";
-        emitSwitchInteger(target.value->value, target.value->type);
-        output << "):\n";
+        if (payloadRow != nullptr) {
+          output << "case " << target.value->value.magnitude << ":\n";
+        } else {
+          output << "case static_cast<" << typeSpelling(target.value->type)
+                 << ">(";
+          emitSwitchInteger(target.value->value, target.value->type);
+          output << "):\n";
+        }
         ++indentation;
         writeIndent();
         output << "__gti_mir_bb = " << target.target << ";\n";
@@ -6859,6 +6960,7 @@ private:
       writeIndent();
       output << "continue;\n";
       return;
+    }
     case MirTerminatorKind::Return:
       if (terminator.returnLoan && *terminator.returnLoan != 0 &&
           !(terminator.value &&
@@ -7795,6 +7897,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            return row.type == function->returnType &&
                                   !row.spelling.empty();
                          })) &&
+           !(*returnKind == CppMirTypeRepresentationKind::Enum &&
+             cppMirEnumBoundaryRow(representations_, function->returnType)) &&
            !(*returnKind == CppMirTypeRepresentationKind::Expected &&
              function->returnType.arguments.size() == 2 &&
              cppMirExpectedTypeRepresentation(
@@ -7804,7 +7908,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   CppMirTypeRepresentationKind::Scalar ||
               *cppMirExpectedTypeRepresentation(
                   function->returnType.arguments.front()) ==
-                  CppMirTypeRepresentationKind::Void)))) {
+                  CppMirTypeRepresentationKind::Void ||
+              // A class success payload keeps the Expected boundary
+              // declarable only with the 0.215 boundary proof: the
+              // wrapper's receiving local default-constructs the engaged
+              // payload and publication move-assigns it.
+              (*cppMirExpectedTypeRepresentation(
+                   function->returnType.arguments.front()) ==
+                   CppMirTypeRepresentationKind::Class &&
+               std::any_of(representations_.types().begin(),
+                           representations_.types().end(),
+                           [&](const CppMirTypeRepresentation &row) {
+                             return row.type == function->returnType.arguments
+                                                    .front() &&
+                                    !row.spelling.empty() &&
+                                    row.boundaryConstructible;
+                           })))))) {
         {
           if (::getenv("GTI_PROBE_TRACE") != nullptr) {
             std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 3,
@@ -9466,6 +9585,54 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
           }
           continue;
+        case MirOperation::PayloadConstruct:
+        case MirOperation::PayloadExtract: {
+          // Both spell through the copied payload variant row: a
+          // construction wraps the variant record, an extraction reads
+          // one field of the proven alternative. Both are pure computes
+          // over staged values.
+          const CppMirEnumRepresentation *enumRow = nullptr;
+          if (instruction.enumOwner) {
+            for (const CppMirEnumRepresentation &row :
+                 representations_.enums()) {
+              if (row.owner == *instruction.enumOwner) {
+                enumRow = &row;
+              }
+            }
+          }
+          const CppMirPayloadVariantRepresentation *variant = nullptr;
+          if (enumRow != nullptr && instruction.enumVariant) {
+            for (const CppMirPayloadVariantRepresentation &candidate :
+                 enumRow->payloadVariants) {
+              if (candidate.index == *instruction.enumVariant) {
+                variant = &candidate;
+              }
+            }
+          }
+          const bool stagedOperands =
+              std::all_of(instruction.operands.begin(),
+                          instruction.operands.end(), valueOperand);
+          if (variant == nullptr || variant->spelling.empty() ||
+              !stagedOperands || !instruction.localFailureSites.empty() ||
+              !capabilityRow(CppMirEmissionCapabilityKind::Payload) ||
+              !typeRow(instruction.info.type) ||
+              (instruction.operation == MirOperation::PayloadConstruct
+                   ? variant->fieldTypes.size() != instruction.operands.size()
+                   : instruction.operands.size() != 1 ||
+                         !instruction.payloadIndex ||
+                         *instruction.payloadIndex >=
+                             variant->fieldTypes.size())) {
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 121,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+          }
+          continue;
+        }
         case MirOperation::Convert:
           // An unchecked conversion is proven in-range by MIR. A checked
           // one in the failure form belongs to the detector rules above;
@@ -10364,7 +10531,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                  // out-parameter, landing directly in this call's paired
                  // loan pointer (ADR 018 §5).
                  !(*returnKind == CppMirTypeRepresentationKind::Reference &&
-                   producedCallResultLoan(body, instruction) != nullptr)) ||
+                   producedCallResultLoan(body, instruction) != nullptr) &&
+                 // An enum result lands in the declared receiving local
+                 // by value; the copied enum row's boundary proof
+                 // guarantees the declaration compiles.
+                 !(*returnKind == CppMirTypeRepresentationKind::Enum &&
+                   cppMirEnumBoundaryRow(representations_,
+                                         target->returnType))) ||
                 ((*returnKind == CppMirTypeRepresentationKind::Scalar ||
                   *returnKind == CppMirTypeRepresentationKind::Expected) &&
                  !typeRow(target->returnType))) {
@@ -10999,6 +11172,29 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       bool targets = true;
       for (const MirSwitchTarget &target : block.terminator.switchTargets) {
         targets = targets && target.value && typeRow(target.value->type);
+        // A payload-enum case must resolve its variant in the copied enum
+        // row: the text spells the discriminant as the variant record's
+        // alternative index, and an unproven index must fail closed here
+        // rather than in the plain integral spelling.
+        if (targets && target.value->kind == SwitchCaseKind::Enumerator &&
+            target.value->enumOwner != 0) {
+          const CppMirEnumRepresentation *enumRow = nullptr;
+          for (const CppMirEnumRepresentation &row : representations_.enums()) {
+            if (row.owner == target.value->enumOwner) {
+              enumRow = &row;
+            }
+          }
+          if (enumRow != nullptr && !enumRow->payloadVariants.empty()) {
+            targets =
+                targets && !target.value->value.negative &&
+                std::any_of(
+                    enumRow->payloadVariants.begin(),
+                    enumRow->payloadVariants.end(),
+                    [&](const CppMirPayloadVariantRepresentation &variant) {
+                      return variant.index == target.value->value.magnitude;
+                    });
+          }
+        }
       }
       if (!targets) {
         {

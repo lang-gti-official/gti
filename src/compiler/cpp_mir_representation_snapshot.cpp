@@ -1529,6 +1529,12 @@ struct RowsBuilder {
            .kind = *kind,
            .spelling = cppSemanticTypeSpelling(semantics, standard, type),
            .boundaryConstructible = boundaryConstructible});
+      // An enum type's declaration authority is its enum row; copy it
+      // alongside the type row so a boundary that carries the enum can
+      // prove its variant inventory.
+      if (type.kind == SemanticType::Enum) {
+        addEnum(type.enumId);
+      }
     }
     for (const SemanticType &argument : type.arguments) {
       addType(argument);
@@ -1549,18 +1555,33 @@ struct RowsBuilder {
       return;
     }
     const EnumTypeInfo *info = semantics.findEnumType(owner);
-    // Payload enums carry variant inventories this builder does not copy
-    // yet; omitting the row keeps every payload-consuming body fail-closed.
-    if (info == nullptr || info->payload) {
+    if (info == nullptr) {
       return;
     }
     SemanticType type;
     type.kind = SemanticType::Enum;
     type.enumId = owner;
-    rows.enums.push_back(
-        {.owner = owner,
-         .spelling = cppSemanticTypeSpelling(semantics, standard, type),
-         .underlyingType = info->underlyingType});
+    CppMirEnumRepresentation row{
+        .owner = owner,
+        .spelling = cppSemanticTypeSpelling(semantics, standard, type),
+        .underlyingType = info->underlyingType};
+    // A payload enum's row copies the compatibility record layout: each
+    // enumerator is a __gti_variant_<index> alternative of the __gti_value
+    // variant, holding its payload fields in declaration order.
+    if (info->payload) {
+      for (const EnumeratorInfo &enumerator : info->enumerators) {
+        row.payloadVariants.push_back(
+            {.index = enumerator.variantIndex,
+             .spelling =
+                 "__gti_variant_" + std::to_string(enumerator.variantIndex),
+             .fieldTypes = enumerator.payloadTypes});
+        for (const SemanticType &field : enumerator.payloadTypes) {
+          addType(field);
+        }
+      }
+    }
+    rows.enums.push_back(std::move(row));
+    addType(type);
     addType(info->underlyingType);
   }
 
@@ -1815,6 +1836,14 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::CallableDispatch,
        .spelling = "cpp_deduced_callable_v1"});
+  // Payload names the variant record representation the artifact ships
+  // for payload enums: a struct wrapping std::variant of per-enumerator
+  // __gti_variant_<index> records, constructed by wrapping the variant
+  // record and read by std::get over the proven alternative. The enum
+  // row's copied variant inventory carries the exact spellings.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::Payload,
+       .spelling = "cpp_variant_record_v1"});
 
   // Executable per-instance field-initializer bodies carry their own name
   // row like every other executable body; the spelling is the owner scope

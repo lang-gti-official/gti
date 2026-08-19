@@ -5542,6 +5542,39 @@ private:
            type == SemanticType::Char;
   }
 
+  // A class crosses the transformed failure boundary only with the 0.215
+  // boundary proof: a usable default constructor lets the receiving local
+  // declare value-initialized and a usable move assignment publishes into
+  // it, mirroring the copied row's boundaryConstructible bit exactly.
+  [[nodiscard]] bool
+  boundaryConstructibleClass(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class) {
+      return false;
+    }
+    const ClassTypeInfo *classInfo = semantics.findClassType(type.classId);
+    const ClassLifecycleInfo *lifecycle =
+        classInfo == nullptr || classInfo->declaration == nullptr
+            ? nullptr
+            : semantics.findClassLifecycle(*classInfo->declaration);
+    return lifecycle != nullptr &&
+           lifecycle->defaultConstructor != SpecialMemberStatus::Deleted &&
+           lifecycle->moveAssignment != SpecialMemberStatus::Deleted;
+  }
+
+  // An Expected whose class payload carries the boundary proof joins the
+  // declaration eligibility boundary: the Expected itself stays
+  // default-constructible and move-assignable, so the transformed
+  // convention's receiving locals declare and publish exactly like the
+  // scalar-payload form. The static predicate below stays the authority
+  // for every other signature position.
+  [[nodiscard]] bool
+  boundaryExpectedSignatureType(const SemanticType &type) const {
+    return type.kind == SemanticType::Expected && type.arguments.size() == 2 &&
+           boundaryConstructibleClass(type.arguments[0]) &&
+           (type.arguments[1].kind == SemanticType::Enum ||
+            isMirScalarCfgType(type.arguments[1]));
+  }
+
   // The signature boundary additionally admits the passive string view: a
   // value-semantic C-ABI view whose representation row spells
   // std::string_view, so parameters and returns copy freely and the general
@@ -6593,9 +6626,13 @@ private:
         info->returnBorrowOrigin != BorrowOriginKind::None ||
         !info->callableParameters.empty() ||
         !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
-                     isMirScalarCfgSignatureType) ||
+                     [&](const SemanticType &parameter) {
+                       return isMirScalarCfgSignatureType(parameter) ||
+                              boundaryExpectedSignatureType(parameter);
+                     }) ||
         !(info->returnType == SemanticType::Void ||
-          isMirScalarCfgSignatureType(info->returnType))) {
+          isMirScalarCfgSignatureType(info->returnType) ||
+          boundaryExpectedSignatureType(info->returnType))) {
       if (::getenv("GTI_PROBE_TRACE") != nullptr) {
         std::fprintf(stderr, "SEL decl=%llu reason=eligibility\n",
                      static_cast<unsigned long long>(info->id));
@@ -7002,10 +7039,18 @@ private:
            classResultBoundaryConstructible(info->returnType)) ||
           (info->returnBorrowOrigin != BorrowOriginKind::None &&
            info->returnType.kind == SemanticType::Reference))) {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "SELF decl=%llu reason=eligibility\n",
+                     static_cast<unsigned long long>(info->id));
+      }
       return nullptr;
     }
     if (info->returnBorrowOrigin != BorrowOriginKind::None &&
         info->returnType.kind != SemanticType::Reference) {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "SELF decl=%llu reason=borrow-origin\n",
+                     static_cast<unsigned long long>(info->id));
+      }
       return nullptr;
     }
     const MirFunctionInstance *selected = nullptr;
@@ -7014,11 +7059,19 @@ private:
         continue;
       }
       if (selected != nullptr) {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "SELF decl=%llu reason=multi-instance\n",
+                       static_cast<unsigned long long>(info->id));
+        }
         return nullptr;
       }
       selected = &candidate;
     }
     if (selected == nullptr || !selected->mayRaiseDefinedFailure) {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "SELF decl=%llu reason=no-mayraise-instance\n",
+                     static_cast<unsigned long long>(info->id));
+      }
       return nullptr;
     }
     // A member is admitted only when its owner is one concrete non-generic
@@ -7036,9 +7089,17 @@ private:
     }
     prepareMirScalarFailureSelection();
     if (mirScalarFailureFunctions.contains(selected->id)) {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "SELF decl=%llu reason=scalar-selected\n",
+                     static_cast<unsigned long long>(info->id));
+      }
       return nullptr;
     }
     if (!generalFailureBodyAdmitted(selected->id)) {
+      if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+        std::fprintf(stderr, "SELF decl=%llu reason=not-ff-admitted\n",
+                     static_cast<unsigned long long>(info->id));
+      }
       return nullptr;
     }
     const HirFunctionInstance *hirInstance =
