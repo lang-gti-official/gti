@@ -521,34 +521,6 @@ terminallyContainedMemberCallee(const MirProgram &program,
   return definition;
 }
 
-// The source feeding a value-staged temporary: a Copy operand names its
-// place directly, and a Value operand fed by a Move of a place names the
-// moved source (spelled std::move(source) at the consuming call).
-struct StagedTemporarySource {
-  const MirPlace *place = nullptr;
-  bool moved = false;
-};
-[[nodiscard]] StagedTemporarySource
-stagedTemporarySourceFor(const MirBody &body, const MirInstruction &stage) {
-  const MirOperand &operand = stage.operands.front();
-  if (operand.kind == MirOperandKind::Copy && operand.place != 0) {
-    return {body.findPlace(operand.place), false};
-  }
-  if (operand.kind == MirOperandKind::Value && operand.value != 0 &&
-      body.usesOf(operand.value).size() == 1) {
-    const MirValue *value = body.findValue(operand.value);
-    const MirInstruction *definition =
-        value == nullptr ? nullptr : findInstruction(body, value->definition);
-    if (definition != nullptr && definition->kind == MirInstructionKind::Move &&
-        definition->operands.size() == 1 &&
-        definition->operands.front().kind == MirOperandKind::Move &&
-        definition->operands.front().place != 0) {
-      return {body.findPlace(definition->operands.front().place), true};
-    }
-  }
-  return {};
-}
-
 // A bare value-rooted place that no instruction, loan, or terminator
 // references is a pure root record: the rooted value flows through its
 // own uses and the place spells nothing, so it needs no declaration and
@@ -608,6 +580,52 @@ packExpansionForwardedOnce(const MirBody &body, MirValueId id) {
     return nullptr;
   }
   return definition;
+}
+
+// Uses of a value excluding PlaceRoot records of pure root-record
+// places: the root record spells nothing, so it must not defeat a
+// single-consumer proof.
+[[nodiscard]] std::vector<MirValueUse> nonRootRecordUses(const MirBody &body,
+                                                         MirValueId id) {
+  std::vector<MirValueUse> uses;
+  for (const MirValueUse &use : body.usesOf(id)) {
+    if (use.kind == MirValueUseKind::PlaceRoot) {
+      const MirPlace *place = body.findPlace(use.place);
+      if (place != nullptr && unreferencedValueRootedPlace(body, *place)) {
+        continue;
+      }
+    }
+    uses.push_back(use);
+  }
+  return uses;
+}
+
+// The source feeding a value-staged temporary: a Copy operand names its
+// place directly, and a Value operand fed by a Move of a place names the
+// moved source (spelled std::move(source) at the consuming call).
+struct StagedTemporarySource {
+  const MirPlace *place = nullptr;
+  bool moved = false;
+};
+[[nodiscard]] StagedTemporarySource
+stagedTemporarySourceFor(const MirBody &body, const MirInstruction &stage) {
+  const MirOperand &operand = stage.operands.front();
+  if (operand.kind == MirOperandKind::Copy && operand.place != 0) {
+    return {body.findPlace(operand.place), false};
+  }
+  if (operand.kind == MirOperandKind::Value && operand.value != 0 &&
+      nonRootRecordUses(body, operand.value).size() == 1) {
+    const MirValue *value = body.findValue(operand.value);
+    const MirInstruction *definition =
+        value == nullptr ? nullptr : findInstruction(body, value->definition);
+    if (definition != nullptr && definition->kind == MirInstructionKind::Move &&
+        definition->operands.size() == 1 &&
+        definition->operands.front().kind == MirOperandKind::Move &&
+        definition->operands.front().place != 0) {
+      return {body.findPlace(definition->operands.front().place), true};
+    }
+  }
+  return {};
 }
 
 // A by-value argument staging temporary: one CallInput carries a source
@@ -7392,13 +7410,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (valueProducing || transformedResult() || containedPlainResult()) &&
           constructibleClassRow(value.info.type);
       const auto movedIntoValueStage = [&]() {
+        const std::vector<MirValueUse> stageUses =
+            nonRootRecordUses(body, value.id);
         if (definition == nullptr ||
             definition->kind != MirInstructionKind::Move ||
-            body.usesOf(value.id).size() != 1) {
+            stageUses.size() != 1) {
           return false;
         }
         const MirInstruction *user =
-            findInstruction(body, body.usesOf(value.id).front().instruction);
+            findInstruction(body, stageUses.front().instruction);
         return user != nullptr && user->kind == MirInstructionKind::CallInput &&
                user->result && copyStagedCallInput(body, *user->result) == user;
       };
