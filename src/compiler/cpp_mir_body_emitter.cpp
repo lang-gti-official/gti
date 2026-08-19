@@ -459,12 +459,16 @@ terminallyContainedPlainCallee(const MirProgram &program,
     return false;
   }
   probing.push_back(target->id);
-  // Only the success shape contains terminally inside its own text; a
+  // Only the success shape contains terminally inside its own text. A
   // failure-admitted callee keeps the transformed propagation convention
-  // and never claims the plain call. (Widening this to the boundary-
-  // wrapper route was tried twice and oracle-rejected both times: the
-  // 07-generics caller admits and its emitted program faults — the
-  // exclusion is load-bearing.)
+  // and never claims the plain call AS A CALLEE PROPERTY: a caller that
+  // handles the callee's failure needs the transformed sibling's error
+  // value, and claiming containment here would terminate where the
+  // caller propagates (mir_backend_first_family pins that convention).
+  // The sound widening, if ever needed, is per call site — a site whose
+  // failure continuation is provably unused — not per callee. Two
+  // oracle rejections traced to a separate null-loan-capture defect;
+  // the third attempt was caught by the suite pin above.
   const bool contained = CppMirBodyEmitter(program, representations)
                              .supportsBodyText({.kind = MirBodyKind::Function,
                                                 .owner = target->id});
@@ -6348,7 +6352,17 @@ private:
       }
       return;
     }
-    if (instruction.result) {
+    const MirLoan *pairedResultLoan =
+        !failureForm ? producedCallResultLoan(facts.body, instruction)
+                     : nullptr;
+    if (pairedResultLoan != nullptr) {
+      // A reference-returning contained callee publishes its result
+      // through the paired loan pointer: the referent binds by address,
+      // exactly like the compatibility reference binding. Spelling the
+      // returned reference into a value local instead would leave the
+      // loan pointer null at its first read.
+      output << "__gti_mir_loan_" << pairedResultLoan->id << " = &(";
+    } else if (instruction.result) {
       if (!failureForm &&
           returnCallDefinition(facts.body, *instruction.result) ==
               &instruction) {
@@ -6385,7 +6399,11 @@ private:
                        cBoundary && instruction.operands[index].type.kind ==
                                         SemanticType::StringView);
     }
-    output << ");\n";
+    output << ')';
+    if (pairedResultLoan != nullptr) {
+      output << ')';
+    }
+    output << ";\n";
   }
 
   void emitSwitchInteger(const EnumConstant &value, const SemanticType &type) {
@@ -10013,6 +10031,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               }
               return false;
             }
+          }
+        }
+        // A paired call-result loan owns the publication: the plain call
+        // spells the loan capture, so a direct consumer of the result
+        // value would read the never-assigned local instead of the
+        // loan's referent.
+        if (!failureForm && instruction.result &&
+            producedCallResultLoan(body, instruction) != nullptr &&
+            !nonRootRecordUses(body, *instruction.result).empty()) {
+          {
+            if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+              std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 141,
+                           gtiProbeTraceKind, gtiProbeTraceOwner,
+                           gtiProbeTraceForm);
+            }
+            return false;
           }
         }
         if (!failureForm && instruction.result &&
