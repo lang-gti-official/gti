@@ -6,7 +6,7 @@
     "04-integers.gti": 28,
     "05-objects.gti": 35,
     "06-namespaces.gti": 29,
-    "07-generics.gti": 37,
+    "07-generics.gti": 38,
     "08-expected.gti": 28,
     "09-target-selection.gti": 29,
     "11-overloads.gti": 31,
@@ -35,7 +35,7 @@
     "34-do-while.gti": 28,
     "35-conditional-expressions.gti": 35,
     "36-c-abi-sockets.gti": 30,
-    "37-tcp-socket-owner.gti": 37,
+    "37-tcp-socket-owner.gti": 38,
     "38-vector-emplace.gti": 62,
     "39-raw-pointers.gti": 27,
     "40-loan-flow-edges.gti": 72,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 76
   },
-  "total": 2328
+  "total": 2330
 }

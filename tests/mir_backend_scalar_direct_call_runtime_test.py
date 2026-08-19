@@ -70,13 +70,15 @@ SELECTED = (
     "compatibility_constexpr_call",
     "compatibility_for_target",
     "compatibility_for_call",
+    # Per-site wrapper containment (0.275.0): plain calls with provably
+    # unused failure continuations take the terminating plain name.
+    "compatibility_checked_target",
+    "compatibility_checked_call",
+    "compatibility_recursive",
 )
 COMPATIBILITY = (
     "checked_target",
-    "compatibility_checked_target",
-    "compatibility_checked_call",
     "compatibility_internal_target",
-    "compatibility_recursive",
 )
 
 
@@ -108,7 +110,9 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
     # fixture classes', the text_view capability pair) and the empty
     # module body join the named function bodies.
     if (
-        generated.count(f"{MARKER} function-instance") != len(SELECTED)
+        # The fixture's entry main emits under per-site wrapper
+        # containment (0.275.0) and joins the named selections.
+        generated.count(f"{MARKER} function-instance") != len(SELECTED) + 1
         # file_handle's computed negate(1) default joined the verified
         # initializer schedule as a terminally-contained expression.
         or generated.count(f"{MARKER} field-initializers-instance") != 3

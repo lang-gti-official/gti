@@ -210,6 +210,9 @@ void expectSelectedDefinitions(std::string_view generated) {
       // signature keeps the C++ reference and the body binds a pointer
       // carrier.
       "compatibility_reference",
+      // Per-site wrapper containment (0.275.0): the propagate-only call
+      // site takes the terminating plain name, so the caller emits.
+      "compatibility_call",
   };
   expect(count(generated,
                "// GTI verified-MIR body: scalar-cfg-v1 function-instance") ==
@@ -227,7 +230,6 @@ void expectSelectedDefinitions(std::string_view generated) {
   constexpr std::string_view compatibility[] = {
       "compatibility_checked",
       "compatibility_call_target",
-      "compatibility_call",
   };
   for (const std::string_view name : compatibility) {
     expect(functionDefinition(generated, name).find(marker) ==

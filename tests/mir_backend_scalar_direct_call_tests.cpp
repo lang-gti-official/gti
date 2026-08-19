@@ -191,6 +191,13 @@ void expectSelectedDefinitions(std::string_view generated) {
       "compatibility_internal_call",
       "compatibility_for_target",
       "compatibility_for_call",
+      // Per-site wrapper containment (0.275.0): a plain call whose failure
+      // continuation is provably unused takes the ff-admitted callee's
+      // terminating plain name, so these callers and the checked leaves
+      // they reach emit from verified MIR.
+      "compatibility_checked_target",
+      "compatibility_checked_call",
+      "compatibility_recursive",
   };
   expect(std::count(generated.begin(), generated.end(), '\n') != 0,
          "generated C++ should be non-empty");
@@ -202,10 +209,7 @@ void expectSelectedDefinitions(std::string_view generated) {
   }
   constexpr std::string_view compatibility[] = {
       "checked_target",
-      "compatibility_checked_target",
-      "compatibility_checked_call",
       "compatibility_internal_target",
-      "compatibility_recursive",
   };
   for (const std::string_view name : compatibility) {
     expect(functionDefinition(generated, name).find(marker) ==

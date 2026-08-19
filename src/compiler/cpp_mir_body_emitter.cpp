@@ -1502,6 +1502,102 @@ isHostedStartupArgumentIndexAdvance(const MirBody &body,
          block.terminator.invokeInstruction == instruction.id;
 }
 
+// True when every block reachable from the invoke's else target ends in
+// the terminal failure family, with only goto/branch cleanup glue in
+// between: the failure path performs cleanup and terminates, never
+// rejoining normal flow or returning, so a plain-form spelling that
+// never takes the edge observes exactly the compatibility behavior
+// (whose helper terminated before any cleanup could run).
+[[nodiscard]] bool failurePathTerminates(const MirBody &body,
+                                         MirBlockId elseTarget) {
+  std::vector<MirBlockId> pending{elseTarget};
+  std::vector<MirBlockId> seen;
+  while (!pending.empty()) {
+    const MirBlockId currentId = pending.back();
+    pending.pop_back();
+    if (std::find(seen.begin(), seen.end(), currentId) != seen.end()) {
+      continue;
+    }
+    seen.push_back(currentId);
+    if (seen.size() > 32) {
+      return false;
+    }
+    const MirBlock *current = nullptr;
+    for (const MirBlock &candidate : body.blocks) {
+      if (candidate.id == currentId) {
+        current = &candidate;
+      }
+    }
+    if (current == nullptr) {
+      return false;
+    }
+    switch (current->terminator.kind) {
+    case MirTerminatorKind::PropagateFailure:
+    case MirTerminatorKind::ContainFailure:
+    case MirTerminatorKind::TerminateCleanupFailure:
+      continue;
+    case MirTerminatorKind::Goto:
+      pending.push_back(current->terminator.target);
+      continue;
+    case MirTerminatorKind::Branch:
+      pending.push_back(current->terminator.target);
+      pending.push_back(current->terminator.elseTarget);
+      continue;
+    default:
+      return false;
+    }
+  }
+  return true;
+}
+
+// A plain-form call site whose failure continuation is provably unused
+// may take an ff-admitted callee's plain (wrapper) name: the site
+// propagates transparently or is flow-discharged, and any paired invoke
+// else path only cleans up and terminates. A handled site — one whose
+// else path reads the error or rejoins flow — never matches, which is
+// the convention the mir_backend fixtures pin.
+[[nodiscard]] bool
+wrapperContainedCallSite(const MirProgram &program,
+                         const CppMirBodyEmissionMap &representations,
+                         const MirBody &body, const MirBlock &block,
+                         const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      !instruction.functionTarget ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      (instruction.definedFailure.propagation !=
+           FailurePropagationKind::DirectCall &&
+       instruction.definedFailure.propagation !=
+           FailurePropagationKind::None) ||
+      !instruction.definedFailure.localOrigins.empty() ||
+      !instruction.localFailureSites.empty()) {
+    return false;
+  }
+  if (instructionHasInvoke(block, instruction) &&
+      !failurePathTerminates(body, block.terminator.elseTarget)) {
+    return false;
+  }
+  const MirFunctionInstance *target =
+      program.findFunctionInstance(*instruction.functionTarget);
+  if (target == nullptr || !target->mayRaiseDefinedFailure ||
+      target->linkage != LanguageLinkage::Gti ||
+      target->definitionKind != MirFunctionInstance::DefinitionKind::Source ||
+      !target->callableParameters.empty() ||
+      target->entryKind != ProgramEntryKind::None) {
+    return false;
+  }
+  thread_local std::vector<HirFunctionInstanceId> probing;
+  if (std::find(probing.begin(), probing.end(), target->id) != probing.end()) {
+    return false;
+  }
+  probing.push_back(target->id);
+  const bool contained =
+      CppMirBodyEmitter(program, representations)
+          .supportsFailureBodyText(
+              {.kind = MirBodyKind::Function, .owner = target->id});
+  probing.pop_back();
+  return contained;
+}
+
 // True when any block's Invoke terminator pairs with this instruction:
 // the failure edge exists, so the status protocol owns the spelling. A
 // site with no edge is MIR's own assertion of terminal containment.
@@ -6842,6 +6938,13 @@ private:
       }
       writeIndent();
       output << "return";
+      if (!terminator.value &&
+          facts.body.returnType.kind == SemanticType::Expected) {
+        // The valueless success return of an Expected<void, E> body
+        // spells the engaged empty value, exactly like the compatibility
+        // `return {};`.
+        output << " {}";
+      }
       if (terminator.value) {
         output << ' ';
         const MirInstruction *unexpectedValue =
@@ -10019,6 +10122,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                instruction) &&
                !terminallyContainedMemberCallee(program_, representations_,
                                                 instruction) &&
+               !wrapperContainedCallSite(program_, representations_, body,
+                                         block, instruction) &&
                target->mayRaiseDefinedFailure &&
                target->linkage == LanguageLinkage::Gti &&
                target->definitionKind ==
@@ -10529,6 +10634,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             producer->intrinsic == IntrinsicKind::ExpectedError) {
           // The expected extraction's spelled member contains the
           // wrong-state failure terminally; the else edge is dead.
+          continue;
+        }
+        if (producer->kind == MirInstructionKind::Call &&
+            wrapperContainedCallSite(program_, representations_, body, block,
+                                     *producer)) {
+          // The plain wrapper name terminates the escaping failure at the
+          // callee's own boundary; the per-site proof shows the else path
+          // only cleans up and terminates, so the edge is dead.
           continue;
         }
         if (address.kind != MirBodyKind::Lambda ||
