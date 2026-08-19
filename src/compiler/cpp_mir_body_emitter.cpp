@@ -4741,6 +4741,33 @@ private:
       throw std::logic_error(
           "verified MIR direct call lost its exact target declaration");
     }
+    if (instruction.receiver &&
+        (instruction.intrinsic == IntrinsicKind::StringViewSize ||
+         instruction.intrinsic == IntrinsicKind::StringViewEmpty)) {
+      // The builtin view read spells the staged view place's member
+      // directly, exactly like the compatibility route's generic member
+      // spelling on std::string_view.
+      const MirInstruction *staged =
+          borrowStagedCallInput(facts.body, *instruction.receiver);
+      const MirOperand &receiverBorrow =
+          staged != nullptr ? staged->operands.front() : *instruction.receiver;
+      const MirPlace *viewPlace =
+          receiverBorrow.kind == MirOperandKind::BorrowRead &&
+                  receiverBorrow.place != 0
+              ? facts.body.findPlace(receiverBorrow.place)
+              : nullptr;
+      if (viewPlace == nullptr || !instruction.result) {
+        throw std::logic_error(
+            "verified MIR view read lost its staged view place");
+      }
+      writeIndent();
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+      emitPlaceExpression(facts, *viewPlace);
+      output << (instruction.intrinsic == IntrinsicKind::StringViewSize
+                     ? ".size();\n"
+                     : ".empty();\n");
+      return;
+    }
     // A receiver-carrying call spells its staged borrowed place followed by
     // the qualified member name: the explicit qualification states the
     // static dispatch MIR proved.
@@ -7748,6 +7775,62 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // source-defined GTI member target; write-staged receivers wait
         // for measured demand.
         std::vector<MirValueId> consumedStaged;
+        if (instruction.receiver &&
+            (instruction.intrinsic == IntrinsicKind::StringViewSize ||
+             instruction.intrinsic == IntrinsicKind::StringViewEmpty)) {
+          // The builtin view read spells the staged view place's member
+          // directly (std::string_view size()/empty()): no arguments, no
+          // failure, a scalar result.
+          const MirInstruction *staged =
+              borrowStagedCallInput(body, *instruction.receiver);
+          const MirOperand &receiverBorrow = staged != nullptr
+                                                 ? staged->operands.front()
+                                                 : *instruction.receiver;
+          const MirPlace *viewPlace =
+              receiverBorrow.kind == MirOperandKind::BorrowRead &&
+                      receiverBorrow.place != 0
+                  ? body.findPlace(receiverBorrow.place)
+                  : nullptr;
+          if (viewPlace == nullptr || !instruction.result ||
+              !instruction.operands.empty() ||
+              !instruction.localFailureSites.empty() ||
+              instruction.dispatch != CallDispatch::Static ||
+              !typeRow(instruction.info.type)) {
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 127,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+          }
+          if (staged != nullptr) {
+            consumedStaged.push_back(*staged->result);
+          }
+          if (!std::all_of(consumedStaged.begin(), consumedStaged.end(),
+                           [&](MirValueId id) {
+                             return std::find(pendingStaged.begin(),
+                                              pendingStaged.end(),
+                                              id) != pendingStaged.end() ||
+                                    stagedInInvokePredecessor(id);
+                           })) {
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 128,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+          }
+          for (const MirValueId id : consumedStaged) {
+            pendingStaged.erase(
+                std::remove(pendingStaged.begin(), pendingStaged.end(), id),
+                pendingStaged.end());
+          }
+          continue;
+        }
         if (instruction.receiver) {
           if (instruction.intrinsic != IntrinsicKind::None ||
               instruction.dispatch != CallDispatch::Static) {

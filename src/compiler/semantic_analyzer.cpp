@@ -3184,7 +3184,7 @@ public:
             expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
             "String-view member receiver overlaps a mutable borrow or child "
             "reborrow that may still be live.");
-        analyzeStringViewMemberCall(*member, argumentTypes, expr.paren());
+        analyzeStringViewMemberCall(expr, *member, argumentTypes, expr.paren());
         return;
       }
     }
@@ -16133,7 +16133,7 @@ private:
   }
 
   void
-  analyzeStringViewMemberCall(const Get &member,
+  analyzeStringViewMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren) {
     if (member.name().lexeme != "size" && member.name().lexeme != "empty") {
@@ -16146,8 +16146,18 @@ private:
                  "' expects no arguments.",
              "GTI-S2035");
     }
-    currentType = member.name().lexeme == "size" ? SemanticType::UInt64
-                                                 : SemanticType::Bool;
+    const bool size = member.name().lexeme == "size";
+    currentType = size ? SemanticType::UInt64 : SemanticType::Bool;
+    // The builtin view members carry their identity to MIR as intrinsics:
+    // the call names no declaration, so without this record the lowered
+    // Call would be target-less and the backends could not name it.
+    ResolvedCallInfo resolved{
+        .returnType = currentType,
+        .intrinsic = size ? IntrinsicKind::StringViewSize
+                          : IntrinsicKind::StringViewEmpty,
+        .dispatchOwner = SemanticType::StringView};
+    semanticModel.record(call, resolved);
+    recordSelectedCallOccurrence(call, std::move(resolved));
   }
 
   SemanticType analyzeStringViewIndexAfterOperands(
@@ -24421,6 +24431,8 @@ private:
                               DefinedFailureDetail::PrivateStorage);
             break;
           case IntrinsicKind::PrefixStorageLength:
+          case IntrinsicKind::StringViewSize:
+          case IntrinsicKind::StringViewEmpty:
             break;
           case IntrinsicKind::StorageBoundsCheck:
             // The identity-bound public logical-size check (P-STORAGE-01):

@@ -238,6 +238,10 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .movesValue = true,
                     .dropsValue = true,
                     .invokesUserCode = true},
+    // StringViewSize: a pure read of the view's stored length.
+    MirEffectTraits{},
+    // StringViewEmpty
+    MirEffectTraits{},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -393,6 +397,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "prefix-storage-relocate",
     "prefix-storage-insert",
     "prefix-storage-erase",
+    "string-view-size",
+    "string-view-empty",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
