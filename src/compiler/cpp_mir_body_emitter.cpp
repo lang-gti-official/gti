@@ -4446,9 +4446,51 @@ public:
                                            *definition);
         // An expected extraction's class payload lands in the declared
         // local through the spelled member read.
-        const bool extractionClassResult =
+        // The explicit default construction of a class with no declared
+        // constructor assigns the value-initialized temporary into the
+        // declared local.
+        const bool defaultConstructionResult =
+            !valueProducingConstruct && !transformedClassResult &&
+            definition != nullptr &&
+            definition->kind == MirInstructionKind::Call &&
+            definition->result && *definition->result == value.id &&
+            !definition->functionTarget && !definition->constructorTarget &&
+            !definition->lambdaTarget && !definition->bodyTarget &&
+            !definition->callableInvocation && !definition->receiver &&
+            definition->operands.empty() &&
+            definition->callableArguments.empty() &&
+            definition->localFailureSites.empty();
+        // A constructor invocation's class result assigns the
+        // constructed temporary into the declared local.
+        const bool constructorInvocationResult =
+            !valueProducingConstruct && !transformedClassResult &&
+            definition != nullptr &&
+            definition->kind == MirInstructionKind::Call &&
+            definition->result && *definition->result == value.id &&
+            definition->constructorTarget.has_value() &&
+            definition->intrinsic == IntrinsicKind::None &&
+            definition->localFailureSites.empty();
+        // A never-raising callee's class result assigns into the
+        // declared local; the call has no failure dimension at all.
+        const bool plainNoRaiseCallResult =
             !valueProducingConstruct && !transformedClassResult &&
             !containedPlainResult && definition != nullptr &&
+            definition->kind == MirInstructionKind::Call &&
+            definition->result && *definition->result == value.id &&
+            definition->functionTarget &&
+            definition->intrinsic == IntrinsicKind::None &&
+            returnCallDefinition(facts.body, value.id) == nullptr && [&]() {
+              const MirFunctionInstance *target =
+                  program.findFunctionInstance(*definition->functionTarget);
+              return target != nullptr && !target->mayRaiseDefinedFailure &&
+                     target->linkage == LanguageLinkage::Gti &&
+                     target->definitionKind ==
+                         MirFunctionInstance::DefinitionKind::Source;
+            }();
+        const bool extractionClassResult =
+            !valueProducingConstruct && !transformedClassResult &&
+            !containedPlainResult && !plainNoRaiseCallResult &&
+            definition != nullptr &&
             definition->kind == MirInstructionKind::Call &&
             definition->result && *definition->result == value.id &&
             (definition->intrinsic == IntrinsicKind::ExpectedValue ||
@@ -4459,7 +4501,9 @@ public:
               return candidate.type == value.info.type;
             });
         if ((!valueProducingConstruct && !transformedClassResult &&
-             !containedPlainResult && !extractionClassResult) ||
+             !containedPlainResult && !plainNoRaiseCallResult &&
+             !constructorInvocationResult && !defaultConstructionResult &&
+             !extractionClassResult) ||
             row == representations.types().end() || row->spelling.empty() ||
             !row->boundaryConstructible) {
           continue;
@@ -6464,6 +6508,18 @@ private:
       output << ");\n";
       return;
     }
+    if (!instruction.functionTarget && !instruction.constructorTarget &&
+        !instruction.lambdaTarget && !instruction.bodyTarget &&
+        !instruction.callableInvocation && !instruction.receiver &&
+        instruction.operands.empty() && instruction.callableArguments.empty() &&
+        instruction.localFailureSites.empty() && instruction.result) {
+      // The explicit default construction of a class with no declared
+      // constructor: the value-initialized temporary assigns into the
+      // declared local, exactly like the compatibility spelling.
+      output << "__gti_mir_v_" << *instruction.result << " = "
+             << typeSpelling(instruction.info.type) << "{};\n";
+      return;
+    }
     if (!instruction.functionTarget) {
       throw std::logic_error(
           "verified MIR direct call lost its exact target declaration");
@@ -7954,6 +8010,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           cppMirExpectedTypeRepresentation(function->returnType);
       if (!function->mayRaiseDefinedFailure || !returnKind ||
           (*returnKind != CppMirTypeRepresentationKind::Scalar &&
+           // The passive string view publishes by value through the
+           // ordinary out-parameter exactly like a scalar.
+           *returnKind != CppMirTypeRepresentationKind::StringView &&
            *returnKind != CppMirTypeRepresentationKind::Void &&
            // A loan-returning body publishes through a `T **`
            // out-parameter (ADR 018 §5); its Return-with-loan rule and
@@ -8864,6 +8923,48 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                terminallyContainedPlainCallee(program_, representations_,
                                               *definition);
       };
+      // The explicit default construction of a class with no declared
+      // constructor is a targetless empty call: the value-initialized
+      // temporary assigns into the declared local.
+      const auto defaultConstructionResult = [&]() {
+        return definition != nullptr &&
+               definition->kind == MirInstructionKind::Call &&
+               !definition->functionTarget && !definition->constructorTarget &&
+               !definition->lambdaTarget && !definition->bodyTarget &&
+               !definition->callableInvocation && !definition->receiver &&
+               definition->operands.empty() &&
+               definition->callableArguments.empty() &&
+               definition->localFailureSites.empty();
+      };
+      // A constructor invocation's class result assigns the constructed
+      // temporary into the declared local; the call arm already proved
+      // the invocation itself.
+      const auto constructorInvocationResult = [&]() {
+        return definition != nullptr &&
+               definition->kind == MirInstructionKind::Call &&
+               definition->constructorTarget &&
+               definition->intrinsic == IntrinsicKind::None &&
+               definition->localFailureSites.empty();
+      };
+      // A never-raising callee's class result assigns into the declared
+      // local exactly like the compatibility call site: the plain call
+      // has no failure dimension at all, so only the boundary row is in
+      // question.
+      const auto plainNoRaiseCallResult = [&]() {
+        if (definition == nullptr ||
+            definition->kind != MirInstructionKind::Call ||
+            !definition->functionTarget ||
+            definition->intrinsic != IntrinsicKind::None ||
+            returnCallDefinition(body, value.id) != nullptr) {
+          return false;
+        }
+        const MirFunctionInstance *target =
+            program_.findFunctionInstance(*definition->functionTarget);
+        return target != nullptr && !target->mayRaiseDefinedFailure &&
+               target->linkage == LanguageLinkage::Gti &&
+               target->definitionKind ==
+                   MirFunctionInstance::DefinitionKind::Source;
+      };
       // An expected extraction's class payload assigns into its declared
       // local through the spelled member, exactly like the builtin member
       // read's existing text arm.
@@ -8873,9 +8974,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                (definition->intrinsic == IntrinsicKind::ExpectedValue ||
                 definition->intrinsic == IntrinsicKind::ExpectedError);
       };
-      const bool declared = (valueProducing || transformedResult() ||
-                             containedPlainResult() || extractionResult()) &&
-                            constructibleClassRow(value.info.type);
+      const bool declared =
+          (valueProducing || transformedResult() || containedPlainResult() ||
+           plainNoRaiseCallResult() || constructorInvocationResult() ||
+           defaultConstructionResult() || extractionResult()) &&
+          constructibleClassRow(value.info.type);
       const auto movedIntoValueStage = [&]() {
         const std::vector<MirValueUse> stageUses =
             nonRootRecordUses(body, value.id);
@@ -10640,6 +10743,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     MirFunctionInstance::DefinitionKind::Source ||
                 !returnKind ||
                 (*returnKind != CppMirTypeRepresentationKind::Scalar &&
+                 *returnKind != CppMirTypeRepresentationKind::StringView &&
                  *returnKind != CppMirTypeRepresentationKind::Void &&
                  *returnKind != CppMirTypeRepresentationKind::Expected &&
                  // A class result lands in the declared receiving local
@@ -10659,13 +10763,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    cppMirEnumBoundaryRow(representations_,
                                          target->returnType))) ||
                 ((*returnKind == CppMirTypeRepresentationKind::Scalar ||
+                  *returnKind == CppMirTypeRepresentationKind::StringView ||
                   *returnKind == CppMirTypeRepresentationKind::Expected) &&
                  !typeRow(target->returnType))) {
               {
                 if (::getenv("GTI_PROBE_TRACE") != nullptr) {
-                  std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 97,
-                               gtiProbeTraceKind, gtiProbeTraceOwner,
-                               gtiProbeTraceForm);
+                  std::fprintf(
+                      stderr,
+                      "PD id=%d kind=%d owner=%lu ff=%d target=%llu rk=%d "
+                      "row=%d\n",
+                      97, gtiProbeTraceKind, gtiProbeTraceOwner,
+                      gtiProbeTraceForm,
+                      static_cast<unsigned long long>(target->id),
+                      returnKind ? static_cast<int>(*returnKind) : -1,
+                      typeRow(target->returnType) ? 1 : 0);
                 }
                 return false;
               }
@@ -10831,6 +10942,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               return false;
             }
           }
+          continue;
+        }
+        // The explicit default construction of a class with no declared
+        // constructor names no body: the value-initialized temporary
+        // assigns into the declared local, so only the type row is in
+        // question.
+        if (!instruction.functionTarget && !instruction.constructorTarget &&
+            !instruction.lambdaTarget && !instruction.bodyTarget &&
+            !instruction.callableInvocation && !instruction.receiver &&
+            instruction.operands.empty() &&
+            instruction.callableArguments.empty() &&
+            instruction.localFailureSites.empty() && instruction.result &&
+            typeRow(instruction.info.type)) {
           continue;
         }
         if (!instruction.functionTarget ||

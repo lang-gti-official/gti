@@ -7048,6 +7048,9 @@ private:
         // void under this convention.
         !(info->returnType == SemanticType::Void ||
           isMirScalarCfgType(info->returnType) ||
+          // The passive string view publishes by value through the
+          // ordinary out-parameter exactly like a scalar.
+          info->returnType.kind == SemanticType::StringView ||
           // Expected results publish by value through the ordinary
           // out-parameter under the transformed convention; class results
           // join only when the semantic lifecycle proves the boundary
