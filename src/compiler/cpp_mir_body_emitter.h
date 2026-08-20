@@ -45,6 +45,9 @@ struct CppMirTypeRepresentation {
   // assignment (the 0.215 boundary rule, carried here because the MIR
   // program records no special-member status).
   bool boundaryConstructible = false;
+  // The 0.286 copy proof: a usable copy constructor and copy assignment
+  // let a Load copy the place into the declared local.
+  bool copyable = false;
 
   friend bool operator==(const CppMirTypeRepresentation &,
                          const CppMirTypeRepresentation &) = default;

@@ -1513,6 +1513,7 @@ struct RowsBuilder {
       // constructor and move assignment let a value of the type declare
       // in the prelude and receive its construction by assignment.
       bool boundaryConstructible = false;
+      bool copyable = false;
       if (type.kind == SemanticType::Class) {
         const ClassTypeInfo *classInfo = semantics.findClassType(type.classId);
         const ClassLifecycleInfo *lifecycle =
@@ -1523,12 +1524,16 @@ struct RowsBuilder {
             lifecycle != nullptr &&
             lifecycle->defaultConstructor != SpecialMemberStatus::Deleted &&
             lifecycle->moveAssignment != SpecialMemberStatus::Deleted;
+        copyable = lifecycle != nullptr &&
+                   lifecycle->copyConstructor != SpecialMemberStatus::Deleted &&
+                   lifecycle->copyAssignment != SpecialMemberStatus::Deleted;
       }
       rows.types.push_back(
           {.type = type,
            .kind = *kind,
            .spelling = cppSemanticTypeSpelling(semantics, standard, type),
-           .boundaryConstructible = boundaryConstructible});
+           .boundaryConstructible = boundaryConstructible,
+           .copyable = copyable});
       // An enum type's declaration authority is its enum row; copy it
       // alongside the type row so a boundary that carries the enum can
       // prove its variant inventory.

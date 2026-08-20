@@ -4446,6 +4446,25 @@ public:
                                            *definition);
         // An expected extraction's class payload lands in the declared
         // local through the spelled member read.
+        // A copy load assigns the place into the declared local when the
+        // copied row proves both copy members usable.
+        const bool copyLoadResult =
+            !valueProducingConstruct && !transformedClassResult &&
+            definition != nullptr &&
+            definition->kind == MirInstructionKind::Load &&
+            definition->result && *definition->result == value.id &&
+            definition->operands.size() == 1 &&
+            definition->operands.front().kind == MirOperandKind::Copy &&
+            definition->operands.front().place != 0 &&
+            facts.body.findPlace(definition->operands.front().place) !=
+                nullptr &&
+            definition->localFailureSites.empty() &&
+            std::any_of(representations.types().begin(),
+                        representations.types().end(),
+                        [&](const CppMirTypeRepresentation &candidate) {
+                          return candidate.type == value.info.type &&
+                                 candidate.copyable;
+                        });
         // The explicit default construction of a class with no declared
         // constructor assigns the value-initialized temporary into the
         // declared local.
@@ -4503,7 +4522,7 @@ public:
         if ((!valueProducingConstruct && !transformedClassResult &&
              !containedPlainResult && !plainNoRaiseCallResult &&
              !constructorInvocationResult && !defaultConstructionResult &&
-             !extractionClassResult) ||
+             !copyLoadResult && !extractionClassResult) ||
             row == representations.types().end() || row->spelling.empty() ||
             !row->boundaryConstructible) {
           continue;
@@ -5685,8 +5704,12 @@ private:
           return;
         }
       }
-      output << "__gti_mir_v_" << *instruction.result << " = __gti_mir_p_"
-             << instruction.operands.front().place << ";\n";
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+      // The loaded place binds the live value: a lifetime slot exposes it
+      // through its checked accessor.
+      emitStoragePlaceValue(
+          facts, *facts.body.findPlace(instruction.operands.front().place));
+      output << ";\n";
       return;
     }
     if (instruction.kind == MirInstructionKind::Initialize &&
@@ -8953,6 +8976,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                terminallyContainedPlainCallee(program_, representations_,
                                               *definition);
       };
+      // A copy load assigns the place into the declared local when the
+      // copied row proves both copy members usable.
+      const auto copyLoadResult = [&]() {
+        if (definition == nullptr ||
+            definition->kind != MirInstructionKind::Load ||
+            definition->operands.size() != 1 ||
+            definition->operands.front().kind != MirOperandKind::Copy ||
+            definition->operands.front().place == 0 ||
+            body.findPlace(definition->operands.front().place) == nullptr ||
+            !definition->localFailureSites.empty()) {
+          return false;
+        }
+        const auto row = std::find_if(
+            representations_.types().begin(), representations_.types().end(),
+            [&](const CppMirTypeRepresentation &candidate) {
+              return candidate.type == value.info.type;
+            });
+        return row != representations_.types().end() && row->copyable;
+      };
       // The explicit default construction of a class with no declared
       // constructor is a targetless empty call: the value-initialized
       // temporary assigns into the declared local.
@@ -9007,7 +9049,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const bool declared =
           (valueProducing || transformedResult() || containedPlainResult() ||
            plainNoRaiseCallResult() || constructorInvocationResult() ||
-           defaultConstructionResult() || extractionResult()) &&
+           defaultConstructionResult() || copyLoadResult() ||
+           extractionResult()) &&
           constructibleClassRow(value.info.type);
       const auto movedIntoValueStage = [&]() {
         const std::vector<MirValueUse> stageUses =
