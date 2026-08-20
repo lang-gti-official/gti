@@ -1549,7 +1549,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       if (const std::optional<GeneralClassInitializerSelection> initializers =
               selectedMirGeneralClassInitializers(stmt)) {
         for (const HirClassInstanceId instance : initializers->instances) {
-          if (initializers->fieldsSupported && initializers->fields.empty()) {
+          // The capability representation carries no GTI-authored
+          // initialization text; bare defaults are covered by its own
+          // compiler-provided definition exactly like the empty schedule.
+          if (initializers->fieldsSupported &&
+              std::all_of(
+                  initializers->fields.begin(), initializers->fields.end(),
+                  [](const auto &field) { return field.second.empty(); })) {
             writeIndent();
             output << "// GTI verified-MIR body: scalar-cfg-v1 "
                       "field-initializers-instance "
@@ -8348,14 +8354,19 @@ private:
   // compatibility spelling.
   [[nodiscard]] std::optional<GeneralClassInitializerSelection>
   selectedMirGeneralClassInitializers(const ClassDecl &declaration) const {
-    if (mir == nullptr || !generalEmissionMap ||
-        declaration.kind() == ClassKind::Union) {
+    if (mir == nullptr || !generalEmissionMap) {
       return std::nullopt;
     }
     const ClassTypeInfo *info = semantics.findClassType(declaration);
-    if (info == nullptr || info->id == 0 || info->cAbiRecord) {
+    if (info == nullptr || info->id == 0) {
       return std::nullopt;
     }
+    // A union or C-ABI record keeps its representation token-fixed: no
+    // in-class initializer text may be added, so its verified schedule is
+    // covered by the definition only when every field is the bare default
+    // (exactly the ordinary route's no-text spelling for bare defaults).
+    const bool fixedRepresentation =
+        declaration.kind() == ClassKind::Union || info->cAbiRecord;
     // The class definition is spelled once, so its in-class initializer
     // text is simultaneously the projection of every instance's verified
     // FieldInitializers body. The program is whole-program compiled: every
@@ -8402,6 +8413,11 @@ private:
         result.staticsVerifiedEmpty = false;
       }
       firstInstance = false;
+    }
+    if (fixedRepresentation && result.fieldsSupported &&
+        !std::all_of(result.fields.begin(), result.fields.end(),
+                     [](const auto &field) { return field.second.empty(); })) {
+      result.fieldsSupported = false;
     }
     if (!result.fieldsSupported) {
       result.fields.clear();
