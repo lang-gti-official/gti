@@ -4660,7 +4660,9 @@ public:
           if (instruction.kind == MirInstructionKind::Compute &&
               !cppMirCheckedOperationHelperSpelling(instruction.operation)
                    .empty() &&
-              !instruction.localFailureSites.empty()) {
+              !instruction.localFailureSites.empty() &&
+              instruction.info.type.kind != SemanticType::Float &&
+              instruction.info.type.kind != SemanticType::Double) {
             writeIndent();
             output << "::gti_internal::backend::mir_failure_status_v1 "
                       "__gti_mir_failure_status_"
@@ -5344,6 +5346,30 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Compute) {
+      if (!cppMirTerminalCheckedHelperSpelling(instruction.operation).empty() &&
+          (instruction.info.type.kind == SemanticType::Float ||
+           instruction.info.type.kind == SemanticType::Double)) {
+        // The floating site never fires (IEEE-754 nontrapping); the
+        // terminal helper spells identically on both forms.
+        writeIndent();
+        output << "__gti_mir_v_" << *instruction.result << " = "
+               << cppMirTerminalCheckedHelperSpelling(instruction.operation)
+               << '(';
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          if (index != 0) {
+            output << ", ";
+          }
+          const MirOperand &operand = instruction.operands[index];
+          if (operand.kind == MirOperandKind::Constant && operand.literal) {
+            emitLiteral(*operand.literal, operand.type);
+          } else {
+            emitOperand(operand);
+          }
+        }
+        output << ");\n";
+        return;
+      }
       if (failureForm &&
           !cppMirCheckedOperationHelperSpelling(instruction.operation)
                .empty() &&
@@ -6911,7 +6937,11 @@ private:
       // construction (constructor failure terminates at its own site);
       // their edges are plain gotos.
       if (producer != nullptr &&
-          ((producer->kind == MirInstructionKind::Call &&
+          ((producer->kind == MirInstructionKind::Compute &&
+            !cppMirTerminalCheckedHelperSpelling(producer->operation).empty() &&
+            (producer->info.type.kind == SemanticType::Float ||
+             producer->info.type.kind == SemanticType::Double)) ||
+           (producer->kind == MirInstructionKind::Call &&
             prefixStorageIntrinsic(producer->intrinsic) &&
             producer->localFailureSites.empty() &&
             producer->definedFailure.propagation ==
@@ -9520,6 +9550,37 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         }
+        if (!cppMirTerminalCheckedHelperSpelling(instruction.operation)
+                 .empty() &&
+            (instruction.info.type.kind == SemanticType::Float ||
+             instruction.info.type.kind == SemanticType::Double)) {
+          // IEEE-754 nontrapping results are not defined runtime failures
+          // (docs/language/execution.md): a floating site never fires,
+          // the compatibility helper performs no check, and any paired
+          // failure edge is dead — the terminal helper spells on both
+          // forms.
+          const auto floatingOperand = [&](const MirOperand &operand) {
+            return (operand.type.kind == SemanticType::Float ||
+                    operand.type.kind == SemanticType::Double) &&
+                   (valueOperand(operand) ||
+                    (operand.kind == MirOperandKind::Constant &&
+                     operand.literal.has_value()));
+          };
+          if (instruction.operands.empty() || instruction.operands.size() > 2 ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), floatingOperand) ||
+              !typeRow(instruction.info.type)) {
+            {
+              if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+                std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 122,
+                             gtiProbeTraceKind, gtiProbeTraceOwner,
+                             gtiProbeTraceForm);
+              }
+              return false;
+            }
+          }
+          continue;
+        }
         if (failureForm &&
             !cppMirCheckedOperationHelperSpelling(instruction.operation)
                  .empty() &&
@@ -11165,6 +11226,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // The fused literal, terminally-contained plain callee, or
         // terminal logical-size check contains its failure; the edge is a
         // plain goto and the else block never runs.
+        continue;
+      }
+      if (producer->kind == MirInstructionKind::Compute &&
+          !cppMirTerminalCheckedHelperSpelling(producer->operation).empty() &&
+          !producer->localFailureSites.empty() &&
+          (producer->info.type.kind == SemanticType::Float ||
+           producer->info.type.kind == SemanticType::Double)) {
+        // IEEE-754 nontrapping results are not defined runtime failures:
+        // the floating site never fires, so the edge is a plain goto on
+        // both forms.
         continue;
       }
       if (!failureForm) {

@@ -45,7 +45,7 @@
     "44-bounded-requires.gti": 131,
     "45-layout-queries.gti": 28,
     "46-defined-integer-arithmetic.gti": 111,
-    "47-binary64.gti": 27,
+    "47-binary64.gti": 28,
     "48-native-c-records.gti": 34,
     "49-native-bridge-header.gti": 34,
     "50-opaque-native-handles.gti": 39,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 83
   },
-  "total": 2363
+  "total": 2364
 }
