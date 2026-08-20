@@ -1,0 +1,24 @@
+#include <std/string>
+#include <std/random>
+#include <std/vector>
+#include <std/format>
+
+expected<void, std::string> random_test() {
+  mut std::random_device rd{};
+  mut std::random_engine engine{uint64_t(rd().value())};
+
+  auto value1 = engine();
+  auto value2 = engine();
+  auto value3 = engine();
+
+  if (value1 == value2 || value1 == value3) {
+    auto result = std::format("failed value1 {} was equal to 2 or 3 {}{}", value1, value2, value3);
+    return unexpected(result.value());
+  }
+  if (value2 == value3) {
+    auto result = std::format("failed value2 was equal to value3 {}{}", value2, value3);
+    return unexpected(result.value());
+  }
+
+  return;
+}

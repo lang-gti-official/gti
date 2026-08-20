@@ -6,10 +6,10 @@
 extern "C" {
 #endif
 
-typedef struct gti_c_string_view {
+using gti_c_string_view = struct gti_c_string_view {
   const char *data;
   uint64_t length;
-} gti_c_string_view;
+};
 
 #ifdef __cplusplus
 }

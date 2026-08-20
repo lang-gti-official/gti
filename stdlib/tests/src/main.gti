@@ -2,6 +2,7 @@
 #include <std/numeric>
 #include "numeric.gti"
 #include "foundations.gti"
+#include "random.gti"
 
 int main() {
   int result = stdlib::tests::numeric::numeric_tests();
@@ -16,8 +17,7 @@ int main() {
     return 1;
   }
 
-  int container_result =
-      stdlib::tests::foundations::test_values_and_containers();
+  int container_result = stdlib::tests::foundations::test_values_and_containers();
   if (container_result > 0) {
     if (container_result == 1) {
       std::println("array tests failed");
@@ -46,6 +46,12 @@ int main() {
 
   if (acc == 445) {
     std::println("acc worked");
+  }
+
+  auto random_result = random_test();
+  if (!random_result) {
+    std::println("random testing failed");
+    return 1;
   }
 
   std::println("numeric tests passed");
