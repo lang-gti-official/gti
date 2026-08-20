@@ -1,0 +1,25 @@
+#include <std/string>
+
+namespace std {
+  namespace filesystem {
+    class path {
+    public:
+      // using value_type = char;
+
+      path() {}
+      path(std::string path) : internal_path(path.clone()) {}
+
+      void clear() mut {
+        internal_path = std::string("");
+      }
+
+    private:
+      mut std::string internal_path = std::string("");
+#if target.os == "apple"
+      constexpr char preferred_separator = '/';
+#elif target.os == "windows"
+      constexpr char preferred_separator = '\\';
+#endif
+    };
+  }
+}

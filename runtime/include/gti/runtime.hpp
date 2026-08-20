@@ -4,6 +4,7 @@
 #include "gti/runtime.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <string_view>
 
 namespace gti_internal::runtime {
@@ -37,5 +38,4 @@ inline std::int32_t close_file(std::int64_t descriptor) {
 inline std::int32_t random_bytes(uint8_t *out, uint64_t count) {
   return gti_rt_random_bytes(out, count);
 }
-
 } // namespace gti_internal::runtime

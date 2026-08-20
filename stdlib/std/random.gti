@@ -1,5 +1,13 @@
 #include <std/numeric>
 
+namespace gti_interal {
+  namespace runtime {
+    extern "C" {
+      int32_t random_bytes(uint8_t* out, uint64_t count);
+    }
+  }
+}
+
 namespace std {
   class random_device {
     mut uint8_t buffer[32] = {};
