@@ -10421,7 +10421,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         if (instruction.receiver) {
           if (instruction.intrinsic != IntrinsicKind::None ||
-              instruction.dispatch != CallDispatch::Static) {
+              // A virtual call spells the ordinary member call through
+              // the base-typed receiver — C++ carries the dispatch — so
+              // it only demands the named callee's body-name row like
+              // the static member call.
+              (instruction.dispatch != CallDispatch::Static &&
+               !(instruction.dispatch == CallDispatch::Virtual &&
+                 instruction.functionTarget &&
+                 bodyRow(*instruction.functionTarget)))) {
             {
               if (::getenv("GTI_PROBE_TRACE") != nullptr) {
                 std::fprintf(stderr, "PD id=%d kind=%d owner=%lu ff=%d\n", 90,

@@ -1844,6 +1844,14 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Payload,
        .spelling = "cpp_variant_record_v1"});
+  // VirtualDispatch names the C++ virtual member representation: a
+  // virtual or override method's emitted in-class definition carries the
+  // language's own dispatch, and a virtual call spells the ordinary
+  // member call through the base-typed receiver. The text vocabulary
+  // still declines any dispatch shape it cannot spell.
+  builder.rows.capabilities.push_back(
+      {.kind = CppMirEmissionCapabilityKind::VirtualDispatch,
+       .spelling = "cpp_virtual_member_v1"});
 
   // Executable per-instance field-initializer bodies carry their own name
   // row like every other executable body; the spelling is the owner scope

@@ -6626,9 +6626,11 @@ private:
         info->entryKind == ProgramEntryKind::OwnedArguments ||
         info->staticMember || info->internalLinkage ||
         info->linkage != LanguageLinkage::Gti ||
-        !info->externalSymbol.empty() || info->virtualMethod ||
-        info->pureVirtual || info->overrideMethod ||
-        info->intrinsic != IntrinsicKind::None ||
+        !info->externalSymbol.empty() ||
+        // A virtual or override method's body is ordinary; the emitted
+        // in-class definition carries the language's own dispatch. A
+        // pure virtual declaration has no body to select.
+        info->pureVirtual || info->intrinsic != IntrinsicKind::None ||
         info->returnBorrowOrigin != BorrowOriginKind::None ||
         !info->callableParameters.empty() ||
         !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
@@ -6739,9 +6741,9 @@ private:
         selected->parameterTypes != info->parameterTypes ||
         selected->returnBorrowOrigin != BorrowOriginKind::None ||
         selected->linkage != LanguageLinkage::Gti ||
-        !selected->externalSymbol.empty() || selected->virtualMethod ||
-        selected->pureVirtual || selected->overrideMethod ||
-        !selected->virtualRoots.empty() ||
+        !selected->externalSymbol.empty() || selected->pureVirtual ||
+        selected->virtualMethod != info->virtualMethod ||
+        selected->overrideMethod != info->overrideMethod ||
         !selected->callableParameters.empty()) {
       throw std::logic_error(
           "eligible MIR scalar-CFG metadata does not match its HIR and "
@@ -6794,6 +6796,17 @@ private:
           }
         }
         continue;
+      }
+      // A pure virtual member is a contract with no body to emit: its
+      // MIR stub must never join either admission set, or the
+      // specialization surfaces would define specializations of a
+      // deleted definition.
+      if (body.body.kind == MirBodyKind::Function) {
+        const MirFunctionInstance *instance =
+            mir->findFunctionInstance(body.body.owner);
+        if (instance != nullptr && instance->pureVirtual) {
+          continue;
+        }
       }
       if (emitter.supportsBodyText(body.body)) {
         if (body.body.kind == MirBodyKind::Function) {
@@ -7022,9 +7035,11 @@ private:
         info->entryKind == ProgramEntryKind::OwnedArguments ||
         info->staticMember || info->internalLinkage ||
         info->linkage != LanguageLinkage::Gti ||
-        !info->externalSymbol.empty() || info->virtualMethod ||
-        info->pureVirtual || info->overrideMethod ||
-        info->intrinsic != IntrinsicKind::None ||
+        !info->externalSymbol.empty() ||
+        // A virtual or override method's transformed sibling is an
+        // ordinary member; the wrapper keeps the virtual entry. A pure
+        // virtual declaration has no body.
+        info->pureVirtual || info->intrinsic != IntrinsicKind::None ||
         !info->callableParameters.empty() ||
         !std::all_of(info->parameterTypes.begin(), info->parameterTypes.end(),
                      isMirScalarCfgSignatureType) ||
