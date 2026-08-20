@@ -4205,6 +4205,10 @@ public:
   // can decline unsupported literal representations fail-closed.
   [[nodiscard]] static bool spellableLiteral(const Literal &literal,
                                              const SemanticType &type) {
+    if (std::holds_alternative<std::nullptr_t>(literal)) {
+      return type.kind == SemanticType::NullPtr ||
+             type.kind == SemanticType::RawPointer;
+    }
     if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
       return integerFitsType(*integer, type);
     }
@@ -4954,6 +4958,17 @@ private:
   }
 
   void emitLiteral(const Literal &literal, const SemanticType &type) {
+    if (std::holds_alternative<std::nullptr_t>(literal)) {
+      // The null literal spells identically for the null type itself and
+      // for a pointer-typed use of it.
+      if (type.kind != SemanticType::NullPtr &&
+          type.kind != SemanticType::RawPointer) {
+        throw std::logic_error(
+            "verified MIR null literal is not pointer-typed");
+      }
+      output << "nullptr";
+      return;
+    }
     if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
       if (!integerFitsType(*integer, type)) {
         throw std::logic_error(
@@ -11451,8 +11466,16 @@ CppMirBodyEmitter::emitFailureBodyText(MirBodyAddress address,
 CppMirInitializerScheduleText
 CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
   CppMirInitializerScheduleText result;
+  const auto initProbe = [&](int point) {
+    if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+      std::fprintf(stderr, "INIT decline kind=%d owner=%llu point=%d\n",
+                   static_cast<int>(address.kind),
+                   static_cast<unsigned long long>(address.owner), point);
+    }
+  };
   result.analysis = analyze(address);
   if (!result.analysis.ready()) {
+    initProbe(0);
     return result;
   }
   const MirBody *body = nullptr;
@@ -11461,6 +11484,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
   case MirBodyKind::StaticFieldInitializers: {
     const MirClassInstance *owner = program_.findClassInstance(address.owner);
     if (owner == nullptr) {
+      initProbe(1);
       return result;
     }
     body = address.kind == MirBodyKind::FieldInitializers
@@ -11472,6 +11496,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
     body = &program_.module();
     break;
   default:
+    initProbe(2);
     return result;
   }
   // The schedule is the straight-line chain of blocks from the entry:
@@ -11483,6 +11508,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
   // route.
   if (body->blocks.empty() || body->entry != 1 || !body->loans.empty() ||
       !body->dropObligations.empty() || !body->cleanupBoundaries.empty()) {
+    initProbe(3);
     return result;
   }
   std::vector<const MirInstruction *> schedule;
@@ -11491,6 +11517,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
     std::size_t visited = 0;
     for (;;) {
       if (++visited > body->blocks.size()) {
+        initProbe(4);
         return result;
       }
       for (const MirInstruction &instruction : block->instructions) {
@@ -11509,12 +11536,14 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
           }
         }
         if (next == nullptr) {
+          initProbe(5);
           return result;
         }
         block = next;
         continue;
       }
       if (block->terminator.kind != MirTerminatorKind::Invoke) {
+        initProbe(6);
         return result;
       }
       // The invoke's producer must be this block's terminally-contained
@@ -11542,6 +11571,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
           producer->localFailureSites.size() != 1 || next == nullptr ||
           elseBlock == nullptr || !elseBlock->instructions.empty() ||
           elseBlock->terminator.kind != MirTerminatorKind::PropagateFailure) {
+        initProbe(7);
         return result;
       }
       block = next;
@@ -11571,6 +11601,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
       continue;
     case MirInstructionKind::Compute: {
       if (!instruction->result) {
+        initProbe(8);
         return result;
       }
       if (instruction->operation == MirOperation::Literal) {
@@ -11578,11 +11609,38 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
             !instruction->localFailureSites.empty() ||
             !ScalarBodyTextEmitter::spellableLiteral(*instruction->literal,
                                                      instruction->info.type)) {
+          if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+            std::fprintf(
+                stderr, "INIT p9 lit=%d ops=%zu lfs=%zu tkind=%d litidx=%zu\n",
+                instruction->literal.has_value() ? 1 : 0,
+                instruction->operands.size(),
+                instruction->localFailureSites.size(),
+                static_cast<int>(instruction->info.type.kind),
+                instruction->literal ? instruction->literal->index() : 999);
+          }
+          initProbe(9);
           return result;
         }
         spellings.emplace(*instruction->result,
                           writer.literalSpelling(*instruction->literal,
                                                  instruction->info.type));
+        continue;
+      }
+      // The empty aggregate spells the row type's value initialization,
+      // exactly like the compute vocabulary's Aggregate arm.
+      if (instruction->operation == MirOperation::Aggregate) {
+        const auto row = std::find_if(
+            representations_.types().begin(), representations_.types().end(),
+            [&](const CppMirTypeRepresentation &candidate) {
+              return candidate.type == instruction->info.type;
+            });
+        if (!instruction->operands.empty() ||
+            !instruction->localFailureSites.empty() ||
+            row == representations_.types().end() || row->spelling.empty()) {
+          initProbe(15);
+          return result;
+        }
+        spellings.emplace(*instruction->result, row->spelling + "{}");
         continue;
       }
       // A terminally-contained checked compute spells the compatibility
@@ -11593,6 +11651,14 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
       if (helper.empty() || instruction->localFailureSites.size() != 1 ||
           instruction->operands.empty() || instruction->operands.size() > 2 ||
           !integralKind(instruction->info.type)) {
+        if (::getenv("GTI_PROBE_TRACE") != nullptr) {
+          std::fprintf(stderr, "INIT p10 op=%d lfs=%zu ops=%zu tkind=%d\n",
+                       static_cast<int>(instruction->operation),
+                       instruction->localFailureSites.size(),
+                       instruction->operands.size(),
+                       static_cast<int>(instruction->info.type.kind));
+        }
+        initProbe(10);
         return result;
       }
       std::string spelled(helper);
@@ -11604,6 +11670,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
                                ? spellings.find(operand.value)
                                : spellings.end();
         if (found == spellings.end() || !integralKind(operand.type)) {
+          initProbe(11);
           return result;
         }
         if (index != 0) {
@@ -11624,6 +11691,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
           !destination->projections.empty() || destination->symbol == 0 ||
           !instruction->localFailureSites.empty() ||
           instruction->operands.size() > 1) {
+        initProbe(12);
         return result;
       }
       if (instruction->operands.empty()) {
@@ -11646,6 +11714,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
                                ? spellings.find(operand.value)
                                : spellings.end();
       if (spelled == spellings.end()) {
+        initProbe(13);
         return result;
       }
       result.fields.push_back(
@@ -11653,6 +11722,7 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
       continue;
     }
     default:
+      initProbe(14);
       return result;
     }
   }
