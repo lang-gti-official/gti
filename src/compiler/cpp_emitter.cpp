@@ -5602,8 +5602,13 @@ private:
     // stays with the vocabulary probe.
     const bool referenceParameter =
         type.kind == SemanticType::Reference && type.arguments.size() == 1;
-    return isMirScalarCfgType(type) || type.kind == SemanticType::StringView ||
-           scalarExpected || referenceParameter;
+    // Floating widths are passive pass-by-value scalars at every
+    // signature position: IEEE-754 nontrapping results are not defined
+    // runtime failures, so no convention dimension attaches to them.
+    return isMirScalarCfgType(type) || type == SemanticType::Float ||
+           type == SemanticType::Double ||
+           type.kind == SemanticType::StringView || scalarExpected ||
+           referenceParameter;
   }
 
   [[nodiscard]] static bool isMirScalarCfgLiteral(const Literal &literal,
