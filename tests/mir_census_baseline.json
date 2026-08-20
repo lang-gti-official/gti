@@ -10,12 +10,12 @@
     "08-expected.gti": 28,
     "09-target-selection.gti": 29,
     "11-overloads.gti": 34,
-    "12-fixed-arrays.gti": 29,
+    "12-fixed-arrays.gti": 30,
     "13-ownership.gti": 40,
     "14-operators.gti": 38,
     "15-variadic-generics.gti": 27,
     "16-move-generics.gti": 38,
-    "17-standard-array.gti": 34,
+    "17-standard-array.gti": 35,
     "18-lambdas.gti": 30,
     "19-auto.gti": 36,
     "20-strings.gti": 72,
@@ -58,5 +58,5 @@
     "57-contextual-array-arguments.gti": 36,
     "58-formatted-output.gti": 83
   },
-  "total": 2372
+  "total": 2374
 }

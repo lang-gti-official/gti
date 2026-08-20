@@ -1504,8 +1504,14 @@ def main():
             capture_output=True,
             check=False,
         )
-        assert bounds_failure.returncode != 0
-        assert "fixed array index out of bounds" in bounds_failure.stderr
+        # Migrated at 0.288.0: the aggregate-initialized main emits from
+        # verified MIR, so the bounds failure reports through the
+        # structured defined-failure contract.
+        assert bounds_failure.returncode == 70
+        assert (
+            "runtime error[GTI-R0007]: index_out_of_bounds in fixed_array"
+            in bounds_failure.stderr
+        )
 
         overload_source = root / "overloads.gti"
         overload_executable = root / "overloads"

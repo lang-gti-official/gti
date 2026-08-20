@@ -5209,7 +5209,20 @@ private:
       return;
     }
     if (instruction.operation == MirOperation::Aggregate) {
-      output << typeSpelling(instruction.info.type) << "{};\n";
+      output << typeSpelling(instruction.info.type) << '{';
+      for (std::size_t index = 0; index < instruction.operands.size();
+           ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        const MirOperand &operand = instruction.operands[index];
+        if (operand.kind == MirOperandKind::Constant && operand.literal) {
+          emitLiteral(*operand.literal, operand.type);
+        } else {
+          emitOperand(operand);
+        }
+      }
+      output << "};\n";
       return;
     }
     if (instruction.operation == MirOperation::PayloadConstruct ||
@@ -9955,8 +9968,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         case MirOperation::Aggregate:
           // The empty aggregate spells as the row type's value
-          // initialization; element-carrying aggregates stay outside.
-          if (!instruction.operands.empty() ||
+          // initialization; a fixed-array aggregate spells its staged
+          // elements in operand order inside the braces, exactly like
+          // the compatibility aggregate initialization.
+          if ((!instruction.operands.empty() &&
+               (instruction.info.type.kind != SemanticType::Array ||
+                !std::all_of(
+                    instruction.operands.begin(), instruction.operands.end(),
+                    [&](const MirOperand &operand) {
+                      return valueOperand(operand) ||
+                             (operand.kind == MirOperandKind::Constant &&
+                              operand.literal.has_value());
+                    }))) ||
               !instruction.localFailureSites.empty() ||
               !typeRow(instruction.info.type)) {
             {
