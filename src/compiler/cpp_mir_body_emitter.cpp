@@ -3622,6 +3622,26 @@ returnConstructDefinition(const MirBody &body, MirValueId value) {
   return definition;
 }
 
+// The substituted type parameter's default construction fused into its
+// consuming Return: the value publishes as the concrete value
+// initialization at the Return and no local ever declares.
+[[nodiscard]] const MirInstruction *
+returnDefaultConstructionDefinition(const MirBody &body, MirValueId value) {
+  const MirValue *record = body.findValue(value);
+  const MirInstruction *definition =
+      record == nullptr ? nullptr : findInstruction(body, record->definition);
+  if (definition == nullptr || definition->kind != MirInstructionKind::Call ||
+      definition->intrinsic !=
+          IntrinsicKind::DefaultTypeParameterConstruction ||
+      definition->functionTarget || definition->receiver ||
+      !definition->operands.empty() || !definition->localFailureSites.empty() ||
+      !definition->result || body.usesOf(value).size() != 1 ||
+      body.usesOf(value).front().kind != MirValueUseKind::Terminator) {
+    return nullptr;
+  }
+  return definition;
+}
+
 // A Return loan erased into a fused construct return (ADR 018): the
 // constructed value carries the borrowed reference, so the loan never
 // binds a pointer local and nothing spells it.
@@ -4446,6 +4466,23 @@ public:
                                            *definition);
         // An expected extraction's class payload lands in the declared
         // local through the spelled member read.
+        // A call-input stage sourced from a declared class value copies
+        // it into its own declared local under the copyable row.
+        const bool valueStagedCopyResult =
+            !valueProducingConstruct && !transformedClassResult &&
+            definition != nullptr &&
+            definition->kind == MirInstructionKind::CallInput &&
+            definition->result && *definition->result == value.id &&
+            definition->operands.size() == 1 &&
+            definition->operands.front().kind == MirOperandKind::Value &&
+            definition->localFailureSites.empty() &&
+            copyStagedCallInput(facts.body, value.id) == nullptr &&
+            std::any_of(representations.types().begin(),
+                        representations.types().end(),
+                        [&](const CppMirTypeRepresentation &candidate) {
+                          return candidate.type == value.info.type &&
+                                 candidate.copyable;
+                        });
         // A copy load assigns the place into the declared local when the
         // copied row proves both copy members usable.
         const bool copyLoadResult =
@@ -4476,6 +4513,9 @@ public:
             !definition->functionTarget && !definition->constructorTarget &&
             !definition->lambdaTarget && !definition->bodyTarget &&
             !definition->callableInvocation && !definition->receiver &&
+            (definition->intrinsic == IntrinsicKind::None ||
+             definition->intrinsic ==
+                 IntrinsicKind::DefaultTypeParameterConstruction) &&
             definition->operands.empty() &&
             definition->callableArguments.empty() &&
             definition->localFailureSites.empty();
@@ -4522,7 +4562,8 @@ public:
         if ((!valueProducingConstruct && !transformedClassResult &&
              !containedPlainResult && !plainNoRaiseCallResult &&
              !constructorInvocationResult && !defaultConstructionResult &&
-             !copyLoadResult && !extractionClassResult) ||
+             !copyLoadResult && !valueStagedCopyResult &&
+             !extractionClassResult) ||
             row == representations.types().end() || row->spelling.empty() ||
             !row->boundaryConstructible) {
           continue;
@@ -6540,6 +6581,25 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic ==
+            IntrinsicKind::DefaultTypeParameterConstruction &&
+        !instruction.functionTarget && !instruction.receiver &&
+        instruction.operands.empty() && instruction.localFailureSites.empty() &&
+        instruction.result) {
+      if (returnDefaultConstructionDefinition(
+              facts.body, *instruction.result) == &instruction) {
+        // The fused value publishes at its consuming return.
+        output << "// default construction " << *instruction.result
+               << " publishes at its consuming return\n";
+        return;
+      }
+      // The substituted type parameter's default construction spells the
+      // concrete value initialization.
+      output << "__gti_mir_v_" << *instruction.result << " = "
+             << typeSpelling(instruction.info.type) << "{};\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic != IntrinsicKind::None) {
       const std::string_view helper =
           cppIntegerArithmeticIntrinsicSpelling(instruction.intrinsic);
@@ -6560,6 +6620,9 @@ private:
     if (!instruction.functionTarget && !instruction.constructorTarget &&
         !instruction.lambdaTarget && !instruction.bodyTarget &&
         !instruction.callableInvocation && !instruction.receiver &&
+        (instruction.intrinsic == IntrinsicKind::None ||
+         instruction.intrinsic ==
+             IntrinsicKind::DefaultTypeParameterConstruction) &&
         instruction.operands.empty() && instruction.callableArguments.empty() &&
         instruction.localFailureSites.empty() && instruction.result) {
       // The explicit default construction of a class with no declared
@@ -7218,6 +7281,12 @@ private:
                   ? returnConstructDefinition(facts.body,
                                               terminator.value->value)
                   : nullptr;
+          const MirInstruction *defaulted =
+              construct == nullptr &&
+                      terminator.value->kind == MirOperandKind::Value
+                  ? returnDefaultConstructionDefinition(facts.body,
+                                                        terminator.value->value)
+                  : nullptr;
           const MirInstruction *moved =
               construct == nullptr &&
                       terminator.value->kind == MirOperandKind::Value
@@ -7230,7 +7299,11 @@ private:
           } else {
             writeIndent();
             output << "*__gti_mir_out_result = ";
-            if (construct != nullptr) {
+            if (defaulted != nullptr) {
+              // The substituted default construction publishes the
+              // concrete value initialization inline.
+              output << typeSpelling(defaulted->info.type) << "{}";
+            } else if (construct != nullptr) {
               // The class value publishes its constructor call inline;
               // the move-assignment into the out-parameter matches the
               // compatibility return's observable behavior exactly.
@@ -7289,6 +7362,15 @@ private:
         return;
       }
       if (terminator.value && terminator.value->kind == MirOperandKind::Value) {
+        if (const MirInstruction *defaulted =
+                returnDefaultConstructionDefinition(facts.body,
+                                                    terminator.value->value)) {
+          // The substituted default construction publishes the concrete
+          // value initialization inline at the return.
+          writeIndent();
+          output << "return " << typeSpelling(defaulted->info.type) << "{};\n";
+          return;
+        }
         if (const MirInstruction *construct = returnConstructDefinition(
                 facts.body, terminator.value->value)) {
           // The class value publishes its constructor call inline at the
@@ -8976,6 +9058,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                terminallyContainedPlainCallee(program_, representations_,
                                               *definition);
       };
+      // A call-input stage sourced from a declared class value copies it
+      // into its own declared local; the copyable row is the demand.
+      const auto valueStagedCopyResult = [&]() {
+        if (definition == nullptr ||
+            definition->kind != MirInstructionKind::CallInput ||
+            definition->operands.size() != 1 ||
+            definition->operands.front().kind != MirOperandKind::Value ||
+            !definition->localFailureSites.empty()) {
+          return false;
+        }
+        const auto row = std::find_if(
+            representations_.types().begin(), representations_.types().end(),
+            [&](const CppMirTypeRepresentation &candidate) {
+              return candidate.type == value.info.type;
+            });
+        return row != representations_.types().end() && row->copyable;
+      };
       // A copy load assigns the place into the declared local when the
       // copied row proves both copy members usable.
       const auto copyLoadResult = [&]() {
@@ -9004,6 +9103,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                !definition->functionTarget && !definition->constructorTarget &&
                !definition->lambdaTarget && !definition->bodyTarget &&
                !definition->callableInvocation && !definition->receiver &&
+               (definition->intrinsic == IntrinsicKind::None ||
+                definition->intrinsic ==
+                    IntrinsicKind::DefaultTypeParameterConstruction) &&
                definition->operands.empty() &&
                definition->callableArguments.empty() &&
                definition->localFailureSites.empty();
@@ -9050,7 +9152,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (valueProducing || transformedResult() || containedPlainResult() ||
            plainNoRaiseCallResult() || constructorInvocationResult() ||
            defaultConstructionResult() || copyLoadResult() ||
-           extractionResult()) &&
+           valueStagedCopyResult() || extractionResult()) &&
           constructibleClassRow(value.info.type);
       const auto movedIntoValueStage = [&]() {
         const std::vector<MirValueUse> stageUses =
@@ -10783,6 +10885,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!failureForm && instruction.result &&
             instruction.info.type.kind == SemanticType::Class &&
             returnCallDefinition(body, *instruction.result) == nullptr &&
+            returnDefaultConstructionDefinition(body, *instruction.result) ==
+                nullptr &&
             // A nested contained-member result spells inline at its
             // consuming argument and needs no local either.
             inlineNestedCallResult(program_, representations_, body,
@@ -11030,6 +11134,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
             continue;
           }
+          // The substituted type parameter's default construction names
+          // no body and takes the empty-call shape below.
+          if (instruction.intrinsic ==
+                  IntrinsicKind::DefaultTypeParameterConstruction &&
+              !instruction.functionTarget && !instruction.receiver &&
+              instruction.operands.empty() &&
+              instruction.localFailureSites.empty() && instruction.result &&
+              typeRow(instruction.info.type)) {
+            continue;
+          }
           // An arithmetic intrinsic call names no body: it spells directly
           // as the shipped helper over its two staged scalar operands.
           if (instruction.functionTarget ||
@@ -11055,6 +11169,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!instruction.functionTarget && !instruction.constructorTarget &&
             !instruction.lambdaTarget && !instruction.bodyTarget &&
             !instruction.callableInvocation && !instruction.receiver &&
+            // The substituted type parameter's default construction is
+            // the same shape: the concrete instance spells T{}.
+            (instruction.intrinsic == IntrinsicKind::None ||
+             instruction.intrinsic ==
+                 IntrinsicKind::DefaultTypeParameterConstruction) &&
             instruction.operands.empty() &&
             instruction.callableArguments.empty() &&
             instruction.localFailureSites.empty() && instruction.result &&
@@ -11607,6 +11726,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           block.terminator.value->type.kind == SemanticType::Class &&
           returnConstructDefinition(body, block.terminator.value->value) ==
               nullptr &&
+          returnDefaultConstructionDefinition(
+              body, block.terminator.value->value) == nullptr &&
           returnMoveDefinition(body, block.terminator.value->value) ==
               nullptr) {
         // A class value publishes only through its paired inline
