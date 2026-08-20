@@ -10,7 +10,58 @@ namespace std {
       path(std::string path) : internal_path(path.clone()) {}
 
       void clear() mut {
-        internal_path = std::string("");
+        internal_path.clear();
+      }
+
+      bool empty() {
+        return internal_path.empty();
+      }
+
+      bool operator!=(std::string_view other) {
+        return internal_path != other;
+      }
+
+      std::string filename() {
+        mut std::size_t last_separator = 0;
+        for (mut std::size_t index = 0; index < internal_path.size(); index++) {
+          if (internal_path[index] == preferred_separator) {
+            last_separator = index;
+          }
+        }
+
+        if (last_separator == internal_path.size()) {
+          return std::string("");
+        }
+
+        mut std::string name = std::string("");
+        for (mut std::size_t index = last_separator + 1; index < internal_path.size(); index++) {
+          name.push_back(internal_path[index]);
+        }
+
+        return std::move(name);
+      }
+
+      std::string extension() {
+        mut std::size_t last_separator = 0;
+        mut bool contains_dot = false;
+
+        for (mut std::size_t index = 0; index < internal_path.size(); index++) {
+          if (internal_path[index] == '.') {
+            contains_dot = true;
+            last_separator = index;
+          }
+        }
+
+        if (!contains_dot) {
+          return std::string("");
+        }
+
+        mut std::string name = std::string("");
+        for (mut std::size_t index = last_separator; index < internal_path.size(); index++) {
+          name.push_back(internal_path[index]);
+        }
+
+        return std::move(name);
       }
 
     private:
