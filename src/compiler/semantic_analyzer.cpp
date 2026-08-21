@@ -3410,11 +3410,11 @@ public:
       });
     }
 
-    retainBestRawPointerMatches(viable, argumentTypes,
-                                [](const ViableOverload &candidate)
-                                    -> const std::vector<SemanticType> & {
-                                  return candidate.function.parameterTypes;
-                                });
+    retainBestCallConversionMatches(viable, argumentTypes,
+                                    [](const ViableOverload &candidate)
+                                        -> const std::vector<SemanticType> & {
+                                      return candidate.function.parameterTypes;
+                                    });
 
     const bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
@@ -7928,6 +7928,7 @@ private:
     case SemanticType::Unknown:
     case SemanticType::Void:
     case SemanticType::StringView:
+    case SemanticType::CString:
     case SemanticType::RawPointer:
     case SemanticType::Reference:
     case SemanticType::SharedPointer:
@@ -14849,11 +14850,11 @@ private:
       });
     }
 
-    retainBestRawPointerMatches(viable, argumentTypes,
-                                [](const FunctionCandidate &candidate)
-                                    -> const std::vector<SemanticType> & {
-                                  return candidate.parameterTypes;
-                                });
+    retainBestCallConversionMatches(viable, argumentTypes,
+                                    [](const FunctionCandidate &candidate)
+                                        -> const std::vector<SemanticType> & {
+                                      return candidate.parameterTypes;
+                                    });
 
     if (viable.size() != 1) {
       if (viable.empty() && rejectedCompilerPrivate) {
@@ -15302,17 +15303,25 @@ private:
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
-  [[nodiscard]] static int
-  rawPointerConversionRank(const SemanticType &parameter,
-                           const SemanticType &argument) {
-    if (parameter.kind != SemanticType::RawPointer) {
+  [[nodiscard]] static int callConversionRank(const SemanticType &parameter,
+                                              const SemanticType &argument) {
+    if (parameter == argument) {
       return 0;
+    }
+    if (parameter == SemanticType::CString) {
+      if (argument == SemanticType::StringView) {
+        return 1;
+      }
+      if (argument == SemanticType::NullPtr) {
+        return 2;
+      }
+      return 1000;
+    }
+    if (parameter.kind != SemanticType::RawPointer) {
+      return 1000;
     }
     if (argument == SemanticType::NullPtr) {
       return 2;
-    }
-    if (parameter == argument) {
-      return 0;
     }
     if (argument.kind == SemanticType::RawPointer &&
         parameter.arguments.size() == 1 && argument.arguments.size() == 1 &&
@@ -15325,7 +15334,7 @@ private:
   }
 
   [[nodiscard]] static bool
-  rawPointerCallIsBetter(std::span<const SemanticType> leftParameters,
+  callConversionIsBetter(std::span<const SemanticType> leftParameters,
                          std::span<const SemanticType> rightParameters,
                          std::span<const SemanticType> arguments) {
     bool strictlyBetter = false;
@@ -15333,9 +15342,9 @@ private:
         {leftParameters.size(), rightParameters.size(), arguments.size()});
     for (std::size_t index = 0; index < count; ++index) {
       const int left =
-          rawPointerConversionRank(leftParameters[index], arguments[index]);
+          callConversionRank(leftParameters[index], arguments[index]);
       const int right =
-          rawPointerConversionRank(rightParameters[index], arguments[index]);
+          callConversionRank(rightParameters[index], arguments[index]);
       if (left > right) {
         return false;
       }
@@ -15346,9 +15355,9 @@ private:
 
   template <typename Candidate, typename ParameterSelector>
   static void
-  retainBestRawPointerMatches(std::vector<Candidate> &candidates,
-                              std::span<const SemanticType> arguments,
-                              ParameterSelector parameters) {
+  retainBestCallConversionMatches(std::vector<Candidate> &candidates,
+                                  std::span<const SemanticType> arguments,
+                                  ParameterSelector parameters) {
     if (candidates.size() < 2) {
       return;
     }
@@ -15357,7 +15366,7 @@ private:
          ++candidate) {
       for (std::size_t other = 0; other < candidates.size(); ++other) {
         if (candidate != other &&
-            rawPointerCallIsBetter(parameters(candidates[other]),
+            callConversionIsBetter(parameters(candidates[other]),
                                    parameters(candidates[candidate]),
                                    arguments)) {
           dominated[candidate] = true;
@@ -15465,6 +15474,11 @@ private:
       return true;
     }
     if (parameter.kind != SemanticType::Reference) {
+      if (parameter == SemanticType::CString) {
+        return argument == SemanticType::CString ||
+               argument == SemanticType::StringView ||
+               argument == SemanticType::NullPtr;
+      }
       if (parameter.kind == SemanticType::RawPointer) {
         return isAssignable(parameter, argument, expression.get());
       }
@@ -15903,11 +15917,11 @@ private:
     for (const AnalyzedCallArgument &argument : arguments) {
       argumentTypes.emplace_back(argument.type);
     }
-    retainBestRawPointerMatches(viable, argumentTypes,
-                                [](const ViableConstructor &candidate)
-                                    -> const std::vector<SemanticType> & {
-                                  return candidate.parameterTypes;
-                                });
+    retainBestCallConversionMatches(viable, argumentTypes,
+                                    [](const ViableConstructor &candidate)
+                                        -> const std::vector<SemanticType> & {
+                                      return candidate.parameterTypes;
+                                    });
 
     bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
@@ -16724,6 +16738,14 @@ private:
         report(type.name.last(),
                "gti_internal::text_view does not take generic arguments.",
                "GTI-S2034");
+      }
+      return;
+    }
+    if (compilerCapability == CompilerCapabilityTypeKind::CString) {
+      if (!type.arguments.empty()) {
+        report(type.name.last(),
+               "gti_internal::c_string does not take generic arguments.",
+               "GTI-S2054");
       }
       return;
     }
@@ -18506,6 +18528,7 @@ private:
            type.arguments.size() == 1 &&
            (type.arguments.front() == SemanticType::Void ||
             isCAbiScalar(type.arguments.front()) ||
+            type.arguments.front() == SemanticType::CString ||
             isCAbiRecordType(type.arguments.front()) ||
             isCOpaqueHandleType(type.arguments.front()));
   }
@@ -18552,12 +18575,14 @@ private:
     }
     if (function.returnMutability() == Mutability::Mutable ||
         function.returnType().reference ||
-        (returnType != SemanticType::Void && !isCAbiScalar(returnType) &&
+        (returnType != SemanticType::Void &&
+         returnType != SemanticType::CString && !isCAbiScalar(returnType) &&
          !isCAbiRawPointer(returnType) && !isCAbiRecordType(returnType))) {
       fail(function.returnType().name.last(),
            "extern \"C\" return types are limited to void, fixed-width "
-           "integer or float scalars, valid [[c_abi]] records, and one-level "
-           "raw pointers to those types, opaque C handles, or void.");
+           "integer or float scalars, c_string, valid [[c_abi]] records, and "
+           "one-level raw pointers to those types, opaque C handles, or "
+           "void.");
     }
 
     for (const Parameter &parameter : function.parameters()) {
@@ -18570,6 +18595,7 @@ private:
           parameter.type.reference || !parameter.type.arrayExtents.empty() ||
           (!isCAbiScalar(parameterType) &&
            parameterType != SemanticType::StringView &&
+           parameterType != SemanticType::CString &&
            !isCAbiRawPointer(parameterType) &&
            !isCAbiRecordType(parameterType))) {
         const Token &location = parameter.name.lexeme.empty()
@@ -18578,8 +18604,9 @@ private:
         fail(location,
              "extern \"C\" parameters are limited to immutable by-value "
              "fixed-width scalars, valid [[c_abi]] records, std::string_view "
-             "counted buffers, and one-level raw pointers to those record or "
-             "scalar types, opaque C handles, or void.");
+             "counted buffers, c_string NUL-terminated pointers, and "
+             "one-level raw pointers to those record or scalar types, opaque "
+             "C handles, or void.");
       }
     }
 
@@ -20286,6 +20313,10 @@ private:
                    classDecl->genericParameters().empty() &&
                    classDecl->name().lexeme == "text_view") {
           compilerCapability = CompilerCapabilityTypeKind::TextView;
+        } else if (trustedCapabilityScope &&
+                   classDecl->genericParameters().empty() &&
+                   classDecl->name().lexeme == "c_string") {
+          compilerCapability = CompilerCapabilityTypeKind::CString;
         }
         CapabilityPolicyRegistration capabilityPolicies;
         if (classDecl->kind() == ClassKind::Union) {
@@ -20981,11 +21012,11 @@ private:
       viable.push_back({nullptr, {}, true});
     }
 
-    retainBestRawPointerMatches(viable, argumentTypes,
-                                [](const ViableConstructor &candidate)
-                                    -> const std::vector<SemanticType> & {
-                                  return candidate.parameterTypes;
-                                });
+    retainBestCallConversionMatches(viable, argumentTypes,
+                                    [](const ViableConstructor &candidate)
+                                        -> const std::vector<SemanticType> & {
+                                      return candidate.parameterTypes;
+                                    });
 
     const bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
@@ -28675,6 +28706,9 @@ private:
     if (target == SemanticType::Float && isInteger(value)) {
       return true;
     }
+    if (target == SemanticType::CString && value == SemanticType::NullPtr) {
+      return true;
+    }
     if (target.kind == SemanticType::RawPointer) {
       if (value == SemanticType::NullPtr) {
         return true;
@@ -28726,6 +28760,10 @@ private:
       return numericResult(left, right, leftExpression, rightExpression) !=
              SemanticType::Unknown;
     }
+    if ((left == SemanticType::CString && right == SemanticType::NullPtr) ||
+        (right == SemanticType::CString && left == SemanticType::NullPtr)) {
+      return true;
+    }
     return isAssignable(left, right, rightExpression) ||
            isAssignable(right, left, leftExpression);
   }
@@ -28737,6 +28775,10 @@ private:
         compilerCapabilityType(type, fromScope);
     if (compilerCapability == CompilerCapabilityTypeKind::TextView) {
       return type.arguments.empty() ? SemanticType::StringView
+                                    : SemanticType::Unknown;
+    }
+    if (compilerCapability == CompilerCapabilityTypeKind::CString) {
+      return type.arguments.empty() ? SemanticType::CString
                                     : SemanticType::Unknown;
     }
     if (compilerCapability == CompilerCapabilityTypeKind::UniqueOwner) {

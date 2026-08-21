@@ -82,6 +82,8 @@ representationKind(const lang::SemanticType &type) {
     return lang::CppMirTypeRepresentationKind::Scalar;
   case lang::SemanticType::StringView:
     return lang::CppMirTypeRepresentationKind::StringView;
+  case lang::SemanticType::CString:
+    return lang::CppMirTypeRepresentationKind::RawPointer;
   case lang::SemanticType::NullPtr:
     return lang::CppMirTypeRepresentationKind::NullPointer;
   case lang::SemanticType::RawPointer:

@@ -4139,8 +4139,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (source == parameter) {
         return true;
       }
-      if (kind != HirCallInputKind::Value ||
-          parameter.kind != SemanticType::RawPointer) {
+      if (kind != HirCallInputKind::Value) {
+        return false;
+      }
+      if (parameter == SemanticType::CString) {
+        return source == SemanticType::StringView ||
+               source == SemanticType::NullPtr;
+      }
+      if (parameter.kind != SemanticType::RawPointer) {
         return false;
       }
       if (source == SemanticType::NullPtr) {
@@ -8827,7 +8833,8 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
   // through exact verified MIR shapes below.
   const auto passiveType = [&](const SemanticType &type) {
     return scalarType(type) || type.kind == SemanticType::StringView ||
-           rawPointerType(type) || passiveCAbiRecordType(type);
+           type.kind == SemanticType::CString || rawPointerType(type) ||
+           passiveCAbiRecordType(type);
   };
   const auto passiveInfo = [&](const ExpressionInfo &info) {
     return passiveType(info.type) && info.traits.drop == DropKind::Trivial &&
@@ -12796,6 +12803,7 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
     case SemanticType::Bool:
     case SemanticType::Char:
     case SemanticType::StringView:
+    case SemanticType::CString:
     case SemanticType::NullPtr:
     case SemanticType::RawPointer:
     case SemanticType::Enum:

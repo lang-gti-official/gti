@@ -80,13 +80,22 @@ extern "C" {
   void c_macro_name_probe(offsetof value, int32_t offsetof,
                           int32_t INT32_C, int32_t _parameter);
   uint32_t c_boundary_version();
+  c_string c_static_name();
+  int32_t c_c_string_length(c_string value);
+  void c_replace_description(c_string* value);
   NativePoint cpp_point_scale(NativePoint value, float factor);
   int32_t cpp_text_length(std::string_view value);
 }
 
+int32_t c_string_overload(std::string_view value) { return 41; }
+int32_t c_string_overload(c_string value) { return 42; }
+c_string empty_c_string() { return nullptr; }
+
 int main() {
   mut NativePoint point = c_point_make(3.0, 4.0);
   mut int32_t counter_value = 0;
+  mut c_string native_name = c_static_name();
+  mut c_string description = native_name;
   unsafe {
     NativeCounter* counter = c_counter_create(17);
     bridge_cpp::Engine* engine = bridge_cpp::cpp_engine_create(2.0);
@@ -97,10 +106,15 @@ int main() {
     counter_value = c_counter_read(counter);
     bridge_cpp::cpp_engine_destroy(engine);
     c_counter_destroy(counter);
+    c_replace_description(&description);
   }
   if (point.x != 7.0 || point.y != 7.0 ||
       counter_value != 17 || c_boundary_version() != uint32_t(17) ||
-      cpp_text_length("bridge") != 6) {
+      cpp_text_length("bridge") != 6 || native_name == nullptr ||
+      c_c_string_length("bridge") != 6 ||
+      c_c_string_length(description) != 8 ||
+      c_string_overload("exact string view") != 41 ||
+      empty_c_string() != nullptr) {
     return 1;
   }
   std::println("native C/C++ bridge header passed");
@@ -112,6 +126,7 @@ int main() {
 #include "native_bridge.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 struct NativeCounter {
   int32_t value;
@@ -137,6 +152,18 @@ NativePoint c_point_make(float x, float y) {
 }
 
 uint32_t c_boundary_version(void) { return 17U; }
+
+const char* c_static_name(void) { return "native"; }
+
+int32_t c_c_string_length(const char* value) {
+  return value == NULL ? -1 : (int32_t)strlen(value);
+}
+
+void c_replace_description(const char** value) {
+  if (value != NULL) {
+    *value = "replaced";
+  }
+}
 '''
 
     cpp_source = r'''
@@ -263,6 +290,12 @@ extern "C" NativePoint cpp_apply_offset(NativePoint value, Offset offset) {
         header = header_path.read_text(encoding="utf-8")
         if "#ifdef __cplusplus" not in header or "extern \"C\"" not in header:
             raise RuntimeError("generated native header lacks its dual C/C++ surface")
+        if (
+            "const char* c_static_name(void)" not in header
+            or "c_c_string_length(const char* value)" not in header
+            or "c_replace_description(const char** value)" not in header
+        ):
+            raise RuntimeError("generated native header lacks exact c_string spelling")
         if (
             "typedef struct NativeCounter NativeCounter;" not in header
             or "bridge_cpp::Engine (opaque handle)" not in header

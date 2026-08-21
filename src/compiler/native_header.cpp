@@ -281,6 +281,8 @@ private:
       return "double";
     case SemanticType::StringView:
       return "::gti_c_string_view";
+    case SemanticType::CString:
+      return "const char*";
     case SemanticType::Class:
       return qualifiedCppName(*nativeTypeFor(type.classId).info);
     case SemanticType::RawPointer: {
@@ -324,6 +326,8 @@ private:
       return "double";
     case SemanticType::StringView:
       return "gti_c_string_view";
+    case SemanticType::CString:
+      return "const char*";
     case SemanticType::Class:
       return nativeTypeFor(type.classId).cName;
     case SemanticType::RawPointer: {

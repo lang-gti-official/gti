@@ -3299,8 +3299,11 @@ def test_native_record_tooling(executable, root):
         "[[c_abi]] struct NativeBytes { mut uint8_t bytes[4]; };\n"
         "extern \"C\" { NativeHandle* native_open(); "
         "void native_close(NativeHandle* handle); "
-        "NativePoint point_roundtrip(NativePoint value); }\n"
-        "int main() { return int32_t(sizeof(NativePoint) - uint64_t(8)); }\n"
+        "NativePoint point_roundtrip(NativePoint value); "
+        "c_string native_name(); "
+        "int32_t native_length(c_string value); }\n"
+        "int main() { return native_length(\"gti\") - 3 + "
+        "int32_t(sizeof(NativePoint) - uint64_t(8)); }\n"
     )
     path = root / "native-record-tooling.gti"
     path.write_text(source, encoding="utf-8")
@@ -3431,6 +3434,25 @@ def test_native_record_tooling(executable, root):
             "start": lsp_position(source, opaque_name),
             "end": lsp_position(source, opaque_name + len("NativeHandle")),
         }, opaque_definition
+
+        c_string_name = source.index("c_string")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 22,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, c_string_name + 1),
+                },
+            }
+        )
+        c_string_hover = session.receive_until(
+            lambda message: message.get("id") == 22
+        )["result"]
+        assert c_string_hover and "c_string" in json.dumps(c_string_hover), (
+            c_string_hover
+        )
 
         session.send(
             {

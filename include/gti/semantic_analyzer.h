@@ -251,6 +251,7 @@ struct SemanticType {
     Bool,
     Char,
     StringView,
+    CString,
     NullPtr,
     RawPointer,
     Array,
@@ -737,6 +738,7 @@ enum class CompilerCapabilityTypeKind {
   UniqueOwner,
   Storage,
   TextView,
+  CString,
   PrefixStorage,
 };
 

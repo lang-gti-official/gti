@@ -5687,6 +5687,7 @@ private:
              candidate == SemanticType::Float ||
              candidate == SemanticType::Double ||
              candidate.kind == SemanticType::StringView ||
+             candidate.kind == SemanticType::CString ||
              candidate.kind == SemanticType::Enum;
     };
     // An Expected of passive value types is itself a passive value-semantic
@@ -5708,6 +5709,7 @@ private:
     return isMirScalarCfgType(type) || type == SemanticType::Float ||
            type == SemanticType::Double ||
            type.kind == SemanticType::StringView ||
+           type.kind == SemanticType::CString ||
            type.kind == SemanticType::Enum ||
            type.kind == SemanticType::NullPtr || scalarExpected ||
            referenceParameter;
@@ -5729,6 +5731,7 @@ private:
     return isMirScalarCfgType(element) || element == SemanticType::Float ||
            element == SemanticType::Double ||
            element.kind == SemanticType::StringView ||
+           element.kind == SemanticType::CString ||
            element.kind == SemanticType::Enum;
   }
 
@@ -6906,6 +6909,7 @@ private:
            info.returnType == SemanticType::Double ||
            info.returnType.kind == SemanticType::Enum ||
            info.returnType.kind == SemanticType::StringView ||
+           info.returnType.kind == SemanticType::CString ||
            isMirPassiveFixedArrayType(info.returnType) ||
            (info.returnType.kind == SemanticType::Expected &&
             isMirScalarCfgSignatureType(info.returnType)) ||
@@ -6935,6 +6939,7 @@ private:
            type == SemanticType::Float || type == SemanticType::Double ||
            type.kind == SemanticType::Enum ||
            type.kind == SemanticType::StringView ||
+           type.kind == SemanticType::CString ||
            type.kind == SemanticType::NullPtr ||
            failureReferenceResultEligible(type, function.returnBorrowOrigin);
   }

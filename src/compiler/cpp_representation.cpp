@@ -41,6 +41,8 @@ std::string cppSemanticTypeSpelling(const SemanticModel &semantics,
     return "std::uint8_t";
   case SemanticType::StringView:
     return "std::string_view";
+  case SemanticType::CString:
+    return "const char*";
   case SemanticType::NullPtr:
     return "std::nullptr_t";
   case SemanticType::RawPointer: {

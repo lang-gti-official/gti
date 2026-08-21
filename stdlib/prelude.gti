@@ -10,6 +10,7 @@ class storage<T> {};
 // the complete prefix, and reads check the logical prefix.
 class prefix_storage<T> {};
 class text_view {};
+class c_string {};
 
 @compiler_constraint("numeric")
 concept numeric_capability<T>;
@@ -158,6 +159,8 @@ int32_t close_file(int64_t descriptor) {
 }
 }
 }
+
+using c_string = gti_internal::c_string;
 
 namespace std {
 concept movable<T> = gti_internal::movable_capability<T>;

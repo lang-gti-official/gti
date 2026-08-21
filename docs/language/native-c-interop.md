@@ -97,12 +97,14 @@ follows the same rule as its canonical allowed type:
 
 - returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
   `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, valid `[[c_abi]]`
-  records, and one-level raw pointers whose pointee is `void`, one of those
-  scalar types, a valid C ABI record, or a `[[c_opaque]]` handle;
+  records, `c_string`, and one-level raw pointers whose pointee is `void`, one
+  of those scalar types, `c_string`, a valid C ABI record, or a
+  `[[c_opaque]]` handle;
 - parameters: the same fixed-width scalar types, passed immutably by value,
   valid C ABI records passed immutably by value, one-level raw pointers with
   immutable bindings and the same permitted pointees, plus
-  `std::string_view` as the counted input-buffer case; and
+  `std::string_view` as the counted input-buffer case and `c_string` as the
+  NUL-terminated input-pointer case; and
 - compatibility spellings `int`, `uint`, `int8` through `int64`, and `uint8`
   through `uint64` resolve to their documented fixed-width types and therefore
   follow the corresponding scalar rule.
@@ -116,14 +118,40 @@ local parameter binding, not the C ABI.
 their source meaning should not inherit platform C representation choices.
 Enums, ordinary complete classes/structs/interfaces, `expected`, owners,
 references, arrays, mutable parameters, packs, string-view returns,
-pointer-to-pointer types, function pointers, and pointers to non-ABI pointees
-are also rejected.
+general pointer-to-pointer types, function pointers, and pointers to non-ABI
+pointees are also rejected. `c_string*` is the one existing bounded
+pointer-to-pointer representation: it spells `const char**` for a C out
+parameter without admitting nested raw-pointer syntax.
 The allowlist does not define array parameters, callbacks, opaque ownership
 transfer, or direct C++ linkage.
 
 Every C ABI call is conservatively effectful. A successful declaration says
 only how GTI calls the symbol; it does not make the native implementation safe,
 portable, available on every target, or linked into the executable.
+
+## NUL-Terminated C Strings
+
+`c_string` is a compiler-owned boundary type with the native representation
+`const char*`. It is not `std::string`, does not own storage, and exposes no
+derefencing or indexing operations. A value returned by C may be null; GTI can
+compare it with `nullptr`, copy it as the same exact type, initialize it from
+`nullptr`, and pass its address as `c_string*` inside the ordinary raw-pointer
+`unsafe` boundary.
+
+The only implicit production conversion in the current bounded slice is from
+`std::string_view` to a `c_string` **call parameter**. Current string views can
+only denote complete static string literals, whose backing arrays include a
+terminator, so MIR verifies the exact source/parameter pair and the backend
+passes the literal's `.data()` pointer. Exact overloads remain preferred: a
+literal selects a `std::string_view` overload over a `c_string` overload.
+This conversion is not a general class conversion and does not permit a
+`c_string` local to be initialized from a string view.
+
+Dynamic `std::string::c_string()` is intentionally not implemented yet. It
+requires the owner to maintain a terminator and the returned value to retain a
+loan invalidated by mutation or destruction. Until that lifetime contract is
+implemented, GTI rejects retained string-view-to-`c_string` conversions rather
+than reproducing C++'s dangling `c_str()` behavior.
 
 ## Passive Native Records
 

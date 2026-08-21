@@ -39,6 +39,8 @@ public:
       return "char";
     case SemanticType::StringView:
       return "std::string_view";
+    case SemanticType::CString:
+      return "c_string";
     case SemanticType::NullPtr:
       return "nullptr_t";
     case SemanticType::RawPointer:

@@ -578,6 +578,8 @@ expectedTypeRepresentation(const SemanticType &type) {
     return CppMirTypeRepresentationKind::Scalar;
   case SemanticType::StringView:
     return CppMirTypeRepresentationKind::StringView;
+  case SemanticType::CString:
+    return CppMirTypeRepresentationKind::RawPointer;
   case SemanticType::NullPtr:
     return CppMirTypeRepresentationKind::NullPointer;
   case SemanticType::RawPointer:
@@ -4947,6 +4949,7 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
   case SemanticType::Bool:
   case SemanticType::Char:
   case SemanticType::StringView:
+  case SemanticType::CString:
   case SemanticType::NullPtr:
   case SemanticType::RawPointer:
   case SemanticType::Enum:
@@ -10743,7 +10746,8 @@ public:
                                              const SemanticType &type) {
     if (std::holds_alternative<std::nullptr_t>(literal)) {
       return type.kind == SemanticType::NullPtr ||
-             type.kind == SemanticType::RawPointer;
+             type.kind == SemanticType::RawPointer ||
+             type.kind == SemanticType::CString;
     }
     if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
       return integerFitsType(*integer, type);
@@ -12143,7 +12147,8 @@ private:
       // The null literal spells identically for the null type itself and
       // for a pointer-typed use of it.
       if (type.kind != SemanticType::NullPtr &&
-          type.kind != SemanticType::RawPointer) {
+          type.kind != SemanticType::RawPointer &&
+          type.kind != SemanticType::CString) {
         throw std::logic_error(
             "verified MIR null literal is not pointer-typed");
       }
@@ -14517,6 +14522,10 @@ private:
       }
       output << "__gti_mir_v_" << *instruction.result << " = ";
       emitOperand(instruction.operands.front());
+      if (instruction.info.type == SemanticType::CString &&
+          instruction.operands.front().type == SemanticType::StringView) {
+        output << ".data()";
+      }
       output << ";\n";
       return;
     }

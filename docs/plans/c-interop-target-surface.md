@@ -1,7 +1,8 @@
 # C Interop Target Surface
 
 > **Plan status:** active implementation artifact. F1 fixed-array native fields
-> compile and pass the independent C oracle; F2/F3 and `S-CALL-01` remain. This
+> and the bounded F2 `c_string` boundary compile and pass the independent C
+> oracle; dynamic owner borrowing, F3, and `S-CALL-01` remain. This
 > is the surface `S-FFI-02` families F1/F2/F3 and `S-CALL-01` are built
 > against, kept here rather than under `examples/` because CMake globs
 > `examples/*.gti` into
@@ -124,12 +125,13 @@ public:
 };
 ```
 
-Two properties this layer gets from F1 and F2 that C++ does not have:
+The implemented raw layer already keeps `c_string` opaque: a nullable native
+return can be compared with `nullptr`, but cannot be indexed or dereferenced,
+and a complete static string literal converts only at an exact `c_string` call
+boundary. Dynamic `title.c_string()` remains planned until it can carry an
+owner-tied loan rather than reproduce C++'s dangling `c_str()`.
 
-- `title.c_string()` is a **borrow**, so its loan is tracked against `title`.
-  A `c_string` outliving the string it views is `GTI-S2072` at compile time —
-  the dangling `c_str()` that C++ accepts silently.
-- `state.buttons[20]` is bounds-checked like any GTI fixed array, so it is a
+`state.buttons[20]` is bounds-checked like any GTI fixed array, so it is a
   defined `GTI-R0007` failure rather than a silent out-of-bounds read.
 
 ## Acceptance program

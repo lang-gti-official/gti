@@ -2048,6 +2048,7 @@ semanticFloatFormat(const SemanticType &type) {
     return traits;
   case SemanticType::RawPointer:
   case SemanticType::StringView:
+  case SemanticType::CString:
     traits.transferCapable = false;
     traits.shareCapable = false;
     return traits;

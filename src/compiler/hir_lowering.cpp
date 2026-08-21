@@ -2024,6 +2024,7 @@ private:
     case SemanticType::Bool:
     case SemanticType::Char:
     case SemanticType::StringView:
+    case SemanticType::CString:
     case SemanticType::NullPtr:
     case SemanticType::RawPointer:
     case SemanticType::Enum:
