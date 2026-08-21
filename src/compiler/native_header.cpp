@@ -221,8 +221,13 @@ private:
     }
     const NativeRecord &record = records[found->second];
     for (const CAbiRecordFieldLayout &field : record.info->cAbiLayout->fields) {
-      if (field.type.kind == SemanticType::Class) {
-        orderRecord(field.type.classId, visiting);
+      const SemanticType *dependency = &field.type;
+      while (dependency->kind == SemanticType::Array &&
+             dependency->arguments.size() == 1) {
+        dependency = &dependency->arguments.front();
+      }
+      if (dependency->kind == SemanticType::Class) {
+        orderRecord(dependency->classId, visiting);
       }
     }
     visiting.erase(id);
@@ -336,6 +341,24 @@ private:
         "unsupported checked C ABI type reached native header backend");
   }
 
+  template <typename TypeEmitter>
+  std::string fieldDeclaration(const CAbiRecordFieldLayout &field,
+                               TypeEmitter emitType) const {
+    const SemanticType *element = &field.type;
+    std::vector<std::uint64_t> extents;
+    while (element->kind == SemanticType::Array &&
+           element->arguments.size() == 1) {
+      extents.push_back(element->arrayLength);
+      element = &element->arguments.front();
+    }
+    std::string result =
+        emitType(*element) + " " + field.declaration->name().lexeme;
+    for (const std::uint64_t extent : extents) {
+      result += "[" + std::to_string(extent) + "]";
+    }
+    return result;
+  }
+
   void emitCppForward(std::ostream &output, const NativeRecord &record) const {
     if (record.info->cOpaqueHandle) {
       openPublicCppNamespaces(output, record.info->namespaceScope);
@@ -354,8 +377,11 @@ private:
     openCppNamespaces(output, record.info->namespaceScope);
     output << "struct " << record.declaration->name().lexeme << " {\n";
     for (const CAbiRecordFieldLayout &field : record.info->cAbiLayout->fields) {
-      output << "  " << cppType(field.type) << ' '
-             << field.declaration->name().lexeme << ";\n";
+      output << "  "
+             << fieldDeclaration(
+                    field,
+                    [this](const SemanticType &type) { return cppType(type); })
+             << ";\n";
     }
     output << "};\n";
     closeCppNamespaces(output, record.info->namespaceScope);
@@ -507,8 +533,11 @@ private:
       output << "struct " << record.cName << " {\n";
       for (const CAbiRecordFieldLayout &field :
            record.info->cAbiLayout->fields) {
-        output << "  " << cType(field.type) << ' '
-               << field.declaration->name().lexeme << ";\n";
+        output << "  "
+               << fieldDeclaration(
+                      field,
+                      [this](const SemanticType &type) { return cType(type); })
+               << ";\n";
       }
       output << "};\n\n";
     }

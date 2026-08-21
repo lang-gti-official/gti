@@ -38,6 +38,7 @@ using NativeInt = int32_t;
 [[c_abi]]
 struct RootRecord {
   mut NativeInt value;
+  mut uint8_t bytes[4];
 };
 
 namespace graphics {
@@ -92,6 +93,8 @@ int main() { return 0; }
           header.find("struct RootHandle;") != std::string::npos &&
           header.find("struct Context;") != std::string::npos &&
           header.find("struct Pair {") != std::string::npos &&
+          header.find("std::uint8_t bytes[4];") != std::string::npos &&
+          header.find("uint8_t bytes[4];") != std::string::npos &&
           header.find("::graphics::Context* cpp_context_create(") !=
               std::string::npos &&
           header.find("::graphics::Pair cpp_pair_scale(") !=
@@ -126,6 +129,9 @@ int main() { return 0; }
           ? std::string{}
           : cpp.contents.substr(record, recordEnd - record);
   expect(recordBody.find("std::int32_t value;") != std::string::npos &&
+             recordBody.find("std::uint8_t bytes[4];") != std::string::npos &&
+             recordBody.find("std::array<std::uint8_t, 4>") ==
+                 std::string::npos &&
              recordBody.find("RootRecord()") == std::string::npos &&
              recordBody.find("NativeInt") == std::string::npos,
          "emitted native records should use the same canonical, policy-free "

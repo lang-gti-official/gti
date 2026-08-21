@@ -41,8 +41,9 @@ The opt-in is nominal and closed. A C ABI record:
 - has no bases, access sections, static fields, methods, constructors,
   destructors, or copy/move policy declarations;
 - may contain fixed-width signed or unsigned integers, `float`, `double`, a
-  valid nested C ABI record, or one-level raw pointers to `void`, those scalar
-  types, or C ABI records;
+  valid nested C ABI record, positive concrete fixed arrays of any admitted
+  field type, or one-level raw pointers to `void`, those scalar types, or C ABI
+  records;
 - may use aliases of an admitted field type;
 - cannot give fields GTI initializers; construction policy belongs in an
   ordinary wrapper or native factory, while the ABI declaration remains a
@@ -52,9 +53,8 @@ The opt-in is nominal and closed. A C ABI record:
 
 `bool`, `char`, enums, ordinary classes/structs/interfaces, references,
 owners, borrowed-state carriers, expected values, compiler-private types,
-fixed-array fields, symbolic types, and cleanup-owning values are excluded.
-Fixed-array fields can be proposed later once their backend representation is
-defined directly rather than inherited from `std::array`.
+symbolic or zero-length arrays, symbolic types, and cleanup-owning values are
+excluded.
 
 Fields remain in source order. For each field, semantics rounds the current
 offset up to the field's ABI alignment, places the field there, and advances by
@@ -102,6 +102,22 @@ C++ forward declaration, allowing either language to complete its private
 implementation while the exported functions retain C linkage. GTI infers no
 ownership or cleanup from such a pointer.
 
+### Follow-on: fixed-array fields
+
+GTI admits `T field[N]` when every extent is a positive concrete value and the
+ultimate element type is otherwise valid in a C ABI record. Semantics computes
+the array layout recursively from target-owned element facts. Native headers
+and generated C++ emit direct C array declarators rather than `std::array`, so
+the representation is identical in C17 and C++20/C++23. GTI element access
+retains its ordinary checked-index contract; the backend's verified-MIR array
+helpers accept either native C arrays or ordinary GTI fixed arrays without
+changing failure behavior.
+
+`GTI-S2069` owns an invalid extent and points at that extent. `GTI-S2070` owns
+an inadmissible ultimate element type and points at the written type. Neither
+diagnostic offers a fix-it because choosing a portable replacement is a design
+decision.
+
 ## Consequences
 
 - GTI can now express a substantial class of real C struct APIs without making
@@ -110,9 +126,10 @@ ownership or cleanup from such a pointer.
   expose ordinary GTI ownership and invariants above it.
 - Native records are trivially copyable non-owning values. A pointer copied in
   a record is still only an address.
-- Annotated opaque ownership transfer, pointer-to-pointer out parameters, callbacks,
-  retained userdata, arrays, unions, bit-fields, packing, varargs, C++ ABI,
-  and automatic foreign-header import remain separate capability slices.
+- Annotated opaque ownership transfer, pointer-to-pointer out parameters,
+  callbacks, retained userdata, flexible arrays, unions, bit-fields, packing,
+  varargs, C++ ABI, and automatic foreign-header import remain separate
+  capability slices.
 - C++ libraries are supported through a generated-header C adapter: ordinary
   C++ classes and RAII stay behind `extern "C"`, and exceptions must be caught
   before they cross the boundary. GTI does not adopt native C++ ABI identity.

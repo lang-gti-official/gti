@@ -77,6 +77,84 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
   return std::nullopt;
 }
 
+// A fixed-array field element on a binding-rooted record. The sibling field
+// place owns the complete field projection and concrete array type; the
+// element adds one or more Index projections. Nonterminal indices must be
+// compile-time in bounds because one MIR instruction carries only the
+// terminal access's failure edge.
+struct BindingArrayFieldElementAccess {
+  MirPlaceId array = 0;
+  std::vector<MirPlaceProjection> indices;
+
+  [[nodiscard]] const MirPlaceProjection &terminalIndex() const {
+    return indices.back();
+  }
+};
+
+[[nodiscard]] std::optional<BindingArrayFieldElementAccess>
+bindingArrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || place.binding == 0 ||
+      place.projections.size() < 2) {
+    return std::nullopt;
+  }
+  const auto firstIndex =
+      std::find_if(place.projections.begin(), place.projections.end(),
+                   [](const MirPlaceProjection &projection) {
+                     return projection.kind == MirProjectionKind::Index;
+                   });
+  if (firstIndex == place.projections.begin() ||
+      firstIndex == place.projections.end() ||
+      !std::all_of(place.projections.begin(), firstIndex,
+                   [](const MirPlaceProjection &projection) {
+                     return projection.kind == MirProjectionKind::Field &&
+                            projection.field != 0;
+                   }) ||
+      !std::all_of(firstIndex, place.projections.end(),
+                   [](const MirPlaceProjection &projection) {
+                     return projection.kind == MirProjectionKind::Index &&
+                            (projection.index != 0 ||
+                             projection.constantIndex.has_value());
+                   })) {
+    return std::nullopt;
+  }
+
+  const std::vector<MirPlaceProjection> fields(place.projections.begin(),
+                                               firstIndex);
+  const std::vector<MirPlaceProjection> indices(firstIndex,
+                                                place.projections.end());
+  for (const MirPlace &candidate : body.places) {
+    if (candidate.id == place.id ||
+        candidate.root != MirPlaceRootKind::Binding ||
+        candidate.binding != place.binding || candidate.projections != fields ||
+        candidate.type.kind != SemanticType::Array) {
+      continue;
+    }
+    SemanticType current = candidate.type;
+    bool valid = true;
+    for (std::size_t index = 0; index < indices.size(); ++index) {
+      if (current.kind != SemanticType::Array ||
+          current.arguments.size() != 1) {
+        valid = false;
+        break;
+      }
+      if (index + 1 < indices.size()) {
+        if (!indices[index].constantIndex ||
+            current.arrayLengthParameterId != 0 ||
+            *indices[index].constantIndex >= current.arrayLength) {
+          valid = false;
+          break;
+        }
+      }
+      SemanticType element = current.arguments.front();
+      current = std::move(element);
+    }
+    if (valid && current == place.type) {
+      return BindingArrayFieldElementAccess{candidate.id, indices};
+    }
+  }
+  return std::nullopt;
+}
+
 struct ConstantArrayElementFieldAccess {
   ArrayElementAccess element;
   SemanticType elementType = SemanticType::Unknown;
@@ -8899,6 +8977,7 @@ private:
             !stagedProofSite && !terminalCompoundAssign &&
             (elementPlace == nullptr ||
              (!arrayElementAccess(body, *elementPlace) &&
+              !bindingArrayFieldElementAccess(body, *elementPlace) &&
               !receiverArrayElementAccess(body, *elementPlace)))) {
           add(CppMirBodyEmissionIssueKind::MissingCheckedFailureControlFlow,
               block.id, instruction.id,
@@ -10812,6 +10891,9 @@ public:
       }
       // An element place spells as subscription on its sibling array.
       if (arrayElementAccess(facts.body, place)) {
+        continue;
+      }
+      if (bindingArrayFieldElementAccess(facts.body, place)) {
         continue;
       }
       if (constantArrayElementFieldAccess(facts.body, place)) {
@@ -13036,6 +13118,31 @@ private:
         return;
       }
       if (source != nullptr) {
+        if (const std::optional<BindingArrayFieldElementAccess> access =
+                bindingArrayFieldElementAccess(facts.body, *source)) {
+          if (failureForm && !instruction.localFailureSites.empty()) {
+            output << "__gti_mir_failure_status_" << instruction.id
+                   << " = ::gti_internal::backend::mir_checked_array_read_v1(";
+            emitBindingArrayFieldParent(facts, *access);
+            output << ", ";
+            emitElementIndexValue(access->terminalIndex());
+            output << ", &__gti_mir_v_" << *instruction.result << ");\n";
+            return;
+          }
+          if (!instruction.localFailureSites.empty()) {
+            output << "__gti_mir_v_" << *instruction.result
+                   << " = ::gti_internal::backend::array_at(";
+            emitBindingArrayFieldParent(facts, *access);
+            output << ", ";
+            emitElementIndexValue(access->terminalIndex());
+            output << ");\n";
+            return;
+          }
+          output << "__gti_mir_v_" << *instruction.result << " = ";
+          emitBindingArrayFieldElement(facts, *access);
+          output << ";\n";
+          return;
+        }
         if (const std::optional<ReceiverArrayElementAccess> access =
                 receiverArrayElementAccess(facts.body, *source)) {
           if (failureForm && !instruction.localFailureSites.empty()) {
@@ -13482,6 +13589,33 @@ private:
     }
     if (const MirPlace *destinationPlace =
             facts.body.findPlace(*instruction.destination)) {
+      if (const std::optional<BindingArrayFieldElementAccess> access =
+              bindingArrayFieldElementAccess(facts.body, *destinationPlace)) {
+        if (failureForm && !instruction.localFailureSites.empty()) {
+          output << "__gti_mir_failure_status_" << instruction.id
+                 << " = ::gti_internal::backend::mir_checked_array_write_v1(";
+          emitBindingArrayFieldParent(facts, *access);
+          output << ", ";
+          emitElementIndexValue(access->terminalIndex());
+          output << ", ";
+          emitOperand(instruction.operands.front());
+          output << ");\n";
+        } else {
+          emitBindingArrayFieldElement(facts, *access);
+          output << " = ";
+          emitOperand(instruction.operands.front());
+          output << ";\n";
+        }
+        if (instruction.kind == MirInstructionKind::Assign &&
+            instruction.result &&
+            !nonRootRecordUses(facts.body, *instruction.result).empty()) {
+          writeIndent();
+          output << "__gti_mir_v_" << *instruction.result << " = ";
+          emitOperand(instruction.operands.front());
+          output << ";\n";
+        }
+        return;
+      }
       if (const std::optional<ReceiverArrayElementAccess> access =
               receiverArrayElementAccess(facts.body, *destinationPlace)) {
         if (failureForm && !instruction.localFailureSites.empty()) {
@@ -16540,6 +16674,11 @@ private:
       emitArrayElement(facts, *access);
       return;
     }
+    if (const std::optional<BindingArrayFieldElementAccess> access =
+            bindingArrayFieldElementAccess(facts.body, place)) {
+      emitBindingArrayFieldElement(facts, *access);
+      return;
+    }
     if (const std::optional<ConstantArrayElementFieldAccess> access =
             constantArrayElementFieldAccess(facts.body, place)) {
       emitArrayElement(facts, access->element);
@@ -16645,6 +16784,31 @@ private:
     output << ']';
   }
 
+  void
+  emitBindingArrayFieldParent(const ScalarBodyFacts &facts,
+                              const BindingArrayFieldElementAccess &access) {
+    const MirPlace *array = facts.body.findPlace(access.array);
+    if (array == nullptr) {
+      throw std::logic_error(
+          "verified native array field access lost its sibling place");
+    }
+    emitPlaceExpression(facts, *array);
+    for (std::size_t index = 0; index + 1 < access.indices.size(); ++index) {
+      output << '[';
+      emitElementIndex(access.indices[index]);
+      output << ']';
+    }
+  }
+
+  void
+  emitBindingArrayFieldElement(const ScalarBodyFacts &facts,
+                               const BindingArrayFieldElementAccess &access) {
+    emitBindingArrayFieldParent(facts, access);
+    output << '[';
+    emitElementIndex(access.terminalIndex());
+    output << ']';
+  }
+
   void emitReceiverArrayParent(const ScalarBodyFacts &facts,
                                const ReceiverArrayElementAccess &access) {
     output << "(*this)." << fieldSpelling(facts, access.field);
@@ -16681,6 +16845,15 @@ private:
       emitArrayParent(facts, *access);
       output << ", ";
       emitElementIndexValue(*access);
+      output << ')';
+      return;
+    }
+    if (const std::optional<BindingArrayFieldElementAccess> access =
+            bindingArrayFieldElementAccess(facts.body, *source)) {
+      output << "::gti_internal::backend::array_at(";
+      emitBindingArrayFieldParent(facts, *access);
+      output << ", ";
+      emitElementIndexValue(access->terminalIndex());
       output << ')';
       return;
     }
@@ -18698,6 +18871,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (const std::optional<BindingArrayFieldElementAccess> access =
+            bindingArrayFieldElementAccess(body, place)) {
+      const MirPlace *array = body.findPlace(access->array);
+      if (array == nullptr || !typeRow(array->type) || !typeRow(place.type)) {
+        return false;
+      }
+      continue;
+    }
     if (const std::optional<ConstantArrayElementFieldAccess> access =
             constantArrayElementFieldAccess(body, place)) {
       const MirPlace *array = body.findPlace(access->element.array);
@@ -20178,6 +20359,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // contains the bounds failure inside itself.
           if (source == nullptr ||
               (!arrayElementAccess(body, *source) &&
+               !bindingArrayFieldElementAccess(body, *source) &&
                !receiverArrayElementAccess(body, *source)) ||
               instruction.localFailureSites.size() != 1 ||
               instruction.definedFailure.localOrigins.size() != 1 ||
@@ -20330,6 +20512,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (!checkedCompound &&
               (!failureForm || destination == nullptr ||
                (!arrayElementAccess(body, *destination) &&
+                !bindingArrayFieldElementAccess(body, *destination) &&
                 !receiverArrayElementAccess(body, *destination)) ||
                instruction.localFailureSites.size() != 1 ||
                instruction.definedFailure.localOrigins.size() != 1 ||
@@ -20353,6 +20536,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         const bool terminalElementMove =
             movedSource != nullptr &&
             (arrayElementAccess(body, *movedSource) ||
+             bindingArrayFieldElementAccess(body, *movedSource) ||
              receiverArrayElementAccess(body, *movedSource)) &&
             instruction.localFailureSites.size() == 1 &&
             instruction.definedFailure.localOrigins.size() == 1 &&

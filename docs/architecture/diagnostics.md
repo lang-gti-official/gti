@@ -101,6 +101,14 @@ diagnostics or letting a backend message choose either identity.
   same code and points at that field: native records are representation-only so
   initialization belongs in a safe wrapper or native factory, and no
   replacement is universally correct.
+- `GTI-S2069` owns a fixed-array field in a `[[c_abi]]` record whose written
+  extent is not a positive concrete integer. Point at the offending extent,
+  name the field and owning record, explain that symbolic and zero extents
+  cannot define a portable C layout, and do not offer a fix-it.
+- `GTI-S2070` owns a fixed-array field in a `[[c_abi]]` record whose ultimate
+  element type is outside the bounded native field set. Point at the written
+  element type, name the field and owning record, preserve ordinary
+  type-resolution diagnostics, and do not guess a replacement type.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

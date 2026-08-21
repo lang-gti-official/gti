@@ -1762,7 +1762,8 @@ do not expose C++ object layout as GTI semantics.
   declaration is provably safe. Restricting what may be *declared* pushes the
   problem outside the language, where GTI can say nothing about it at all.
 - **Remaining families, ordered against the GLFW binding.** A binding attempt
-  at 0.199.0 bound 3 of 5 records and roughly 90 of ~110 functions; the
+  at 0.199.0 bound 3 of 5 records and roughly 90 functions; GLFW 3.4 has 120
+  public function declarations. The
   measured blockers below are what the remainder needs. Each family must state
   initialization, retention, aliasing, nullability, cleanup, and unsafe
   obligations. A selected ownership family must build on the opaque identity
@@ -1770,7 +1771,7 @@ do not expose C++ object layout as GTI semantics.
   Diagnostic codes below are allocated from the first free `GTI-S20xx` range;
   `GTI-S2068` is the highest currently in use.
 
-  - **F1 — fixed-array `[[c_abi]]` fields.** Admit `T[N]` fields of otherwise
+  - **F1 — fixed-array `[[c_abi]]` fields (complete).** Admit `T[N]` fields of otherwise
     admissible element types. ADR 013 already anticipates this: it excluded
     them only until their backend representation is defined directly rather
     than inherited from `std::array`. C array layout is unambiguous, so no
@@ -1794,8 +1795,10 @@ do not expose C++ object layout as GTI semantics.
     - *Acceptance.* `GLFWgamepadstate` (`uint8_t buttons[15]`,
       `float axes[6]`), which unblocks `glfwGetGamepadState`. Its measured C
       layout is size 40, alignment 4, `buttons` at 0, `axes` at 16; that
-      target is already pinned in `tests/native_record_c_oracle_test.py` as a
-      pending case asserting the current rejection.
+      target is pinned in `tests/native_record_c_oracle_test.py`. The C oracle
+      now proves layout plus C-to-GTI and GTI-to-C element access at O0/O3
+      under C++20/C++23, while native-header tests prove direct C declarators
+      and reject a `std::array` representation.
   - **F2 — the C-string boundary.** `char` stays excluded from `[[c_abi]]`
     records for the implementation-defined-signedness reason already recorded
     in `R-NATIVE-RECORDS`. The gap is that a C API's `const char*` means
@@ -2759,3 +2762,23 @@ The nearest architectural follow-up is a target-independent generated-item
 inventory for adapters that still derive representation shape from sealed
 frontend facts. It must preserve MIR body authority and must not recreate the
 retired no-MIR emitter as a comparison, fallback, or legacy mode.
+
+### Next migration campaign: generated-item inventory
+
+1. Give every hosted-entry, program-initialization, native-boundary,
+   lifecycle, and concrete-instance adapter a stable generated-item identity
+   in the sealed whole-program plan. Record an exact census before moving any
+   family.
+2. Move one adapter family at a time into immutable, target-independent
+   representation rows whose inputs are semantic identities, concrete HIR
+   instances, and verified MIR schedules. Keep C++ spelling and ABI policy in
+   the backend representation layer.
+3. Make each migrated row structurally verifiable, switch its sole production
+   consumer, and delete the corresponding AST/HIR query immediately. GTI has
+   no compatibility obligation during this pre-1.0 migration, so no fallback
+   or dual-route comparison remains after a family lands.
+4. Exit when the generated-item census is complete, mutation tests reject
+   missing, duplicate, stale, and reordered rows, and native O0/O3 C++20/C++23
+   plus installed-toolchain oracles preserve program behavior. That sealed
+   inventory becomes the shared input seam for the current C++ backend and a
+   future LLVM backend.

@@ -1,16 +1,19 @@
 # C Interop Target Surface
 
-> **Plan status:** design artifact. Nothing here compiles today. This is the
-> surface `S-FFI-02` families F1/F2/F3 and `S-CALL-01` are built against, kept
-> here rather than under `examples/` because CMake globs `examples/*.gti` into
+> **Plan status:** active implementation artifact. F1 fixed-array native fields
+> compile and pass the independent C oracle; F2/F3 and `S-CALL-01` remain. This
+> is the surface `S-FFI-02` families F1/F2/F3 and `S-CALL-01` are built
+> against, kept here rather than under `examples/` because CMake globs
+> `examples/*.gti` into
 > the MIR differential corpus and a new file there would move the body count
 > the backend-authority campaign is measured against.
 
 GLFW 3.4 is the named acceptance client for
 [`S-FFI-02`](implementation-sequence.md). A binding attempt at 0.199.0 bound
-3 of 5 records and roughly 90 of ~110 functions using only what exists today;
-this document shows the same header once the four remaining pieces land, so an
-implementer has a concrete target rather than a prose description.
+3 of 5 records and roughly 90 functions using only the earlier boundary. GLFW
+3.4 declares 120 public functions; this document shows the same header once the
+remaining pieces land, so an implementer has a concrete target rather than a
+prose description.
 
 ## What each piece contributes
 

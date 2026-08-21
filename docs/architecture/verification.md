@@ -134,11 +134,14 @@ ordinary nominal aggregates, payload enums, and other unsupported categories
 must fail before lowering.
 
 For bounded native records, `native_record_pipeline` owns the source opt-in,
-passive-record and field allowlists, checked source-order layout, `GTI-S2064`,
-safe pointer-free versus unsafe pointer-containing calls, and cross-phase
-metadata. `native_record_c_oracle` is deliberately independent of the C++
-record assertions: C defines the matching structs and functions, and a GTI
-program crosses the real C ABI by value and through one-level pointers.
+passive-record and field allowlists, concrete fixed-array admission, checked
+source-order layout, `GTI-S2064`/`GTI-S2069`/`GTI-S2070`, safe pointer-free
+versus unsafe pointer-containing calls, and cross-phase metadata.
+`native_record_c_oracle` is deliberately independent of the C++ record
+assertions: C defines the matching structs and functions, and a GTI program
+crosses the real C ABI by value and through one-level pointers. Its
+GLFW-shaped gamepad record proves direct C array layout plus checked GTI reads
+and writes at O0/O3 under C++20/C++23.
 `native_header_c_cpp_oracle` instead emits the header through the public CLI,
 compiles one implementation as C17 and one as C++20/C++23, links both into GTI
 at O0/O3, and exercises a private C++ class behind the C adapter. A namespaced

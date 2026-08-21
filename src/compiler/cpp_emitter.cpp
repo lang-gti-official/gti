@@ -83,6 +83,7 @@ public:
               "#include <cstdint>\n"
               "#include <cstdio>\n"
               "#include <cstdlib>\n"
+              "#include <iterator>\n"
               "#include <limits>\n"
               "#include <memory>\n"
               "#include <new>\n"
@@ -1081,7 +1082,7 @@ template <typename Array, typename Index>
 inline decltype(auto) array_at(Array &&array, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
   if (std::cmp_less(index, 0) ||
-      std::cmp_greater_equal(index, array.size())) {
+      std::cmp_greater_equal(index, std::size(array))) {
     array_bounds_error();
   }
   return std::forward<Array>(array)[static_cast<std::size_t>(index)];
@@ -9352,11 +9353,11 @@ mir_expected_error_ref_v1(Expected &expected, ResultPointer *result) noexcept {
   return mir_failure_success_v1;
 }
 
-template <typename Value, std::size_t Length>
+template <typename Array, typename Value>
 inline mir_failure_status_v1
-mir_checked_array_read_v1(const std::array<Value, Length> &array,
-                          std::uint64_t index, Value *result) noexcept {
-  if (index >= Length) {
+mir_checked_array_read_v1(const Array &array, std::uint64_t index,
+                          Value *result) noexcept {
+  if (index >= std::size(array)) {
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
@@ -9364,14 +9365,15 @@ mir_checked_array_read_v1(const std::array<Value, Length> &array,
   return mir_failure_success_v1;
 }
 
-template <typename Value, typename Stored, std::size_t Length>
+template <typename Array, typename Value>
 inline mir_failure_status_v1
-mir_checked_array_write_v1(std::array<Stored, Length> &array,
-                           std::uint64_t index, Value value) noexcept {
-  if (index >= Length) {
+mir_checked_array_write_v1(Array &array, std::uint64_t index,
+                           Value value) noexcept {
+  if (index >= std::size(array)) {
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
+  using Stored = std::remove_cvref_t<decltype(array[0])>;
   array[static_cast<std::size_t>(index)] =
       static_cast<Stored>(std::move(value));
   return mir_failure_success_v1;
@@ -11740,7 +11742,22 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
                  (binding == nullptr || !binding->explicitlyMoved)))) {
       output << "const ";
     }
-    if (cAbiField) {
+    bool emittedName = false;
+    if (cAbiField && binding->type.kind == SemanticType::Array) {
+      const SemanticType *element = &binding->type;
+      std::vector<std::uint64_t> extents;
+      while (element->kind == SemanticType::Array &&
+             element->arguments.size() == 1) {
+        extents.push_back(element->arrayLength);
+        element = &element->arguments.front();
+      }
+      emitSemanticType(*element);
+      output << ' ' << emittedVariableName(variable);
+      for (const std::uint64_t extent : extents) {
+        output << '[' << extent << ']';
+      }
+      emittedName = true;
+    } else if (cAbiField) {
       // Canonical resolved spellings keep aliases from changing the native
       // representation definition across GTI and generated C++ headers.
       emitSemanticType(binding->type);
@@ -11749,8 +11766,10 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     } else {
       emitType(variable.type());
     }
-    output << (variable.type().reference ? " &" : " ")
-           << emittedVariableName(variable);
+    if (!emittedName) {
+      output << (variable.type().reference ? " &" : " ")
+             << emittedVariableName(variable);
+    }
     if (emittingField && variable.isStatic() && !variable.isConstexpr()) {
       return;
     }

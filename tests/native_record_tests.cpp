@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -272,6 +273,39 @@ void expectNativeRecordFailure(std::string_view name, std::string source,
                       "' should fail in semantics with focused GTI-S2064");
 }
 
+void expectNativeArrayFieldFailure(std::string_view name, std::string source,
+                                   std::string_view code,
+                                   std::string_view primarySpelling,
+                                   std::string_view messageFragment) {
+  const std::size_t expectedStart = source.find(primarySpelling);
+  const std::filesystem::path expectedSource =
+      (std::filesystem::current_path() / name).lexically_normal();
+  const lang::FrontendResult result = analyze(name, std::move(source));
+  const lang::Diagnostic *diagnostic = findCode(result, code);
+  const bool focused =
+      !result.canGenerateCode() && expectedStart != std::string::npos &&
+      diagnostic != nullptr &&
+      diagnostic->phase == lang::DiagnosticPhase::Semantics &&
+      std::filesystem::path(diagnostic->primary.source) == expectedSource &&
+      diagnostic->primary.start == expectedStart &&
+      diagnostic->primary.end == expectedStart + primarySpelling.size() &&
+      diagnostic->message.find(messageFragment) != std::string::npos &&
+      !diagnostic->hints.empty() && diagnostic->fixes.empty() &&
+      countCode(result, code) == 1 && countCode(result, "GTI-B0001") == 0;
+  if (!focused) {
+    printDiagnostics(result);
+    if (diagnostic != nullptr) {
+      std::cerr << "primary=" << diagnostic->primary.source << ':'
+                << diagnostic->primary.start << ".." << diagnostic->primary.end
+                << " phase=" << static_cast<int>(diagnostic->phase)
+                << " expected=" << expectedStart << ".."
+                << expectedStart + primarySpelling.size() << '\n';
+    }
+  }
+  expect(focused, "invalid native array field '" + std::string(name) +
+                      "' should fail in semantics with " + std::string(code));
+}
+
 void expectOpaqueHandleFailure(std::string_view name, std::string source,
                                std::string_view messageFragment) {
   const lang::FrontendResult result = analyze(name, std::move(source));
@@ -350,10 +384,14 @@ void testNativeRecordDiagnostics() {
       "bool-field.gti",
       "[[c_abi]] struct Bad { bool value; }; int main() { return 0; }",
       "outside the bounded");
-  expectNativeRecordFailure("array-field.gti",
-                            "[[c_abi]] struct Bad { int32_t values[4]; }; "
-                            "int main() { return 0; }",
-                            "outside the bounded");
+  expectNativeArrayFieldFailure("zero-array-field.gti",
+                                "[[c_abi]] struct Bad { int32_t values[0]; }; "
+                                "int main() { return 0; }",
+                                "GTI-S2069", "0", "positive concrete extent");
+  expectNativeArrayFieldFailure("invalid-array-element.gti",
+                                "[[c_abi]] struct Bad { bool values[4]; }; "
+                                "int main() { return 0; }",
+                                "GTI-S2070", "bool", "element type outside");
   expectNativeRecordFailure(
       "ordinary-field.gti",
       "struct Ordinary { int32_t value; }; [[c_abi]] struct Bad { "

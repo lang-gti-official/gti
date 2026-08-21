@@ -161,15 +161,18 @@ An admitted field is one of:
 
 - a fixed-width signed or unsigned integer, `float`, or `double`;
 - another valid `[[c_abi]]` record by value; or
+- a positive concrete fixed array whose ultimate element is itself an
+  admitted field type; or
 - a one-level raw pointer to `void`, an admitted scalar, a valid C ABI record,
   or a `[[c_opaque]]` handle, with optional pointee `const`.
 
 Transparent aliases follow the resolved type. `bool`, `char`, enums, ordinary
-nominal types, references, owners, borrowed values, `expected`, fixed arrays,
-symbolic types, and cleanup-owning values are rejected. Fixed arrays remain a
-later record-field family because their native representation must not depend
-on the backend's `std::array` choice. Empty records and recursive by-value
-records are rejected; a one-level pointer is the bounded linked/opaque edge.
+nominal types, references, owners, borrowed values, `expected`, symbolic or
+zero-length arrays, symbolic types, and cleanup-owning values are rejected.
+Native fixed-array fields emit direct C array declarators in both header
+branches and generated C++, never `std::array`; their ordinary GTI indexing
+remains bounds checked. Empty records and recursive by-value records are
+rejected; a one-level pointer is the bounded linked/opaque edge.
 
 Fields remain in source order. Starting at offset zero, semantics rounds each
 field offset up to that field's ABI alignment, advances by its size, records
@@ -177,8 +180,10 @@ the maximum field alignment as the record ABI alignment, and rounds final size
 up to that alignment. Every operation is checked in the compiler's unsigned
 64-bit layout domain. `sizeof(NativePoint)` and `alignof(NativePoint)` consume
 these frontend facts just like the existing scalar and fixed-array queries.
-`GTI-S2064` owns invalid native-record declarations and fields; `GTI-S2063`
-continues to own an unsupported standalone layout query.
+`GTI-S2064` owns invalid native-record declarations and non-array fields;
+`GTI-S2069` owns a fixed-array field with a non-concrete or zero extent;
+`GTI-S2070` owns an inadmissible array element type. `GTI-S2063` continues to
+own an unsupported standalone layout query.
 
 A field cannot have a GTI initializer. A C ABI record is representation only:
 default construction policy belongs in an ordinary safe GTI wrapper or in a

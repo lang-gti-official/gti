@@ -6,22 +6,9 @@ GTI states a record's size, alignment, and field offsets; this test asserts
 those same numbers in C and lets the platform C compiler reject them. Nothing
 here trusts GTI's own layout model.
 
-Record families are data. `ADMITTED` holds the families the compiler accepts
-today and drives both the generated C `_Static_assert` block and the GTI
-`sizeof`/`alignof` check. `PENDING` holds families that `S-FFI-02` family F1
-(fixed-array `[[c_abi]]` fields) will admit; because F1 is not implemented,
-each pending case asserts the *current* rejection and its exact diagnostic.
-
-HOW A PENDING CASE FLIPS WHEN F1 LANDS
---------------------------------------
-1. Move the entry from `PENDING` to `ADMITTED`.
-2. Rename `intended_layout` to `layout` and `intended_offsets` to `offsets`;
-   the values are already the real C ones, measured with `cc`, so they do not
-   change.
-3. Delete `rejected_field` and `diagnostic`.
-Nothing else moves: the generated C block, the static asserts, and the GTI
-check all derive from the same fields either way. A pending case that starts
-compiling before step 1 fails loudly rather than silently passing.
+Record families are data. `ADMITTED` drives both the generated C
+`_Static_assert` block and the GTI `sizeof`/`alignof` check, including direct C
+array fields used by GLFW's gamepad state.
 """
 
 from dataclasses import dataclass
@@ -41,25 +28,6 @@ class AdmittedRecord:
     gti_fields: str
     layout: tuple[int, int]
     offsets: tuple[tuple[str, int], ...]
-
-
-@dataclass(frozen=True)
-class PendingRecord:
-    """A record family F1 will admit. See "HOW A PENDING CASE FLIPS".
-
-    `intended_layout` and `intended_offsets` are the real layout measured with
-    the platform C compiler, so the target is recorded before the compiler can
-    produce it. `rejected_field` is the first field the current admission check
-    reports, which is the one the diagnostic names.
-    """
-
-    name: str
-    c_fields: str
-    gti_fields: str
-    rejected_field: str
-    diagnostic: str
-    intended_layout: tuple[int, int]
-    intended_offsets: tuple[tuple[str, int], ...]
 
 
 ADMITTED: tuple[AdmittedRecord, ...] = (
@@ -94,30 +62,20 @@ ADMITTED: tuple[AdmittedRecord, ...] = (
         layout=(16, 8),
         offsets=(("next", 0), ("code", 8)),
     ),
-)
-
-
-# Layouts measured with `cc -std=c17` on the reference target and confirmed by
-# the generated static asserts once F1 admits them.
-PENDING: tuple[PendingRecord, ...] = (
-    PendingRecord(
+    AdmittedRecord(
         name="ArrayHead",
         c_fields="  uint8_t a[4];\n  uint32_t b;\n",
         gti_fields="  mut uint8_t a[4];\n  mut uint32_t b;\n",
-        rejected_field="a",
-        diagnostic="GTI-S2064",
-        intended_layout=(8, 4),
-        intended_offsets=(("a", 0), ("b", 4)),
+        layout=(8, 4),
+        offsets=(("a", 0), ("b", 4)),
     ),
-    PendingRecord(
-        # The GLFW acceptance client's blocked record, verbatim in shape.
+    AdmittedRecord(
+        # The GLFW acceptance client's record, verbatim in shape.
         name="Gamepad",
         c_fields="  uint8_t buttons[15];\n  float axes[6];\n",
         gti_fields="  mut uint8_t buttons[15];\n  mut float axes[6];\n",
-        rejected_field="buttons",
-        diagnostic="GTI-S2064",
-        intended_layout=(40, 4),
-        intended_offsets=(("buttons", 0), ("axes", 16)),
+        layout=(40, 4),
+        offsets=(("buttons", 0), ("axes", 16)),
     ),
 )
 
@@ -199,6 +157,23 @@ Link c_link_null(uint32_t code) {
   Link result = {.next = NULL, .code = code};
   return result;
 }
+
+Gamepad c_gamepad_make(void) {
+  Gamepad result = {0};
+  return result;
+}
+
+int32_t c_gamepad_fill(Gamepad *state) {
+  state->buttons[0] = 7;
+  state->buttons[14] = 9;
+  state->axes[0] = 1.5f;
+  state->axes[5] = -2.0f;
+  return 1;
+}
+
+int32_t c_gamepad_verify(const Gamepad *state) {
+  return state->buttons[1] == 4 && state->axes[1] == 3.25f;
+}
 """
 
 GTI_BEHAVIOUR = r"""
@@ -209,6 +184,9 @@ extern "C" {
   uint64_t c_packet_checksum(Packet value);
   void c_packet_translate(Packet* value, float dx, float dy);
   Link c_link_null(uint32_t code);
+  Gamepad c_gamepad_make();
+  int32_t c_gamepad_fill(Gamepad* state);
+  int32_t c_gamepad_verify(const Gamepad* state);
 }
 
 Link make_link(uint32_t code) {
@@ -258,54 +236,31 @@ def build_gti_source() -> str:
     return 4;
   }
 
+  mut Gamepad gamepad = c_gamepad_make();
+  unsafe {
+    if (c_gamepad_fill(&gamepad) != 1) {
+      return 5;
+    }
+  }
+  if (gamepad.buttons[0] != uint8_t(7) ||
+      gamepad.buttons[14] != uint8_t(9) || gamepad.axes[0] != 1.5 ||
+      gamepad.axes[5] != -2.0) {
+    return 6;
+  }
+  gamepad.buttons[1] = uint8_t(4);
+  gamepad.axes[1] = 3.25;
+  unsafe {
+    if (c_gamepad_verify(&gamepad) != 1) {
+      return 7;
+    }
+  }
+
   std::println("native C record oracle passed");
   return 0;
 }
 """
     )
     return "\n".join(parts)
-
-
-def check_pending(gti: Path, root: Path, temp: Path) -> None:
-    """Assert each F1 family is still rejected, with its exact diagnostic.
-
-    This is the half of the oracle that runs before the feature exists. It
-    pins the diagnostic and the field it names, so F1 landing is visible here
-    as a failure rather than as silence.
-    """
-    for record in PENDING:
-        source = temp / f"pending_{record.name}.gti"
-        source.write_text(
-            gti_record(record.name, record.gti_fields) + "int main() { return 0; }\n",
-            encoding="utf-8",
-        )
-        result = run(
-            [gti, source, "--emit-cpp", "-o", temp / f"pending_{record.name}.cpp"],
-            cwd=root,
-            check=False,
-        )
-        if result.returncode == 0:
-            raise RuntimeError(
-                f"{record.name} now compiles as a [[c_abi]] record. S-FFI-02 "
-                f"family F1 has landed: move this case from PENDING to "
-                f"ADMITTED per the flip procedure at the top of this file. Its "
-                f"intended layout {record.intended_layout} and offsets "
-                f"{record.intended_offsets} become the asserted ones."
-            )
-        if record.diagnostic not in result.stderr:
-            raise RuntimeError(
-                f"{record.name} was rejected without {record.diagnostic}:\n"
-                f"{result.stderr}"
-            )
-        if f"'{record.rejected_field}'" not in result.stderr:
-            raise RuntimeError(
-                f"{record.diagnostic} for {record.name} did not name field "
-                f"'{record.rejected_field}':\n{result.stderr}"
-            )
-    print(
-        f"F1 pending: {len(PENDING)} fixed-array families still rejected with "
-        "their exact diagnostics."
-    )
 
 
 def main():
@@ -350,8 +305,6 @@ def main():
                         f"unexpected native oracle output for {optimization}/{standard}: "
                         f"{executed.stdout!r}"
                     )
-
-        check_pending(gti, root, temp)
 
     print("GTI native C record oracle passed for O0/O3 and C++20/C++23.")
 

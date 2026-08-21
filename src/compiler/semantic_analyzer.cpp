@@ -21416,6 +21416,10 @@ private:
     if (isCAbiScalar(type)) {
       return true;
     }
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+        type.arrayLength != 0 && type.arrayLengthParameterId == 0) {
+      return cAbiFieldTypeAllowed(type.arguments.front());
+    }
     if (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) {
       return cAbiPointerPointeeAllowed(type.arguments.front());
     }
@@ -21529,6 +21533,58 @@ private:
         valid = false;
       }
       const SemanticType &fieldType = member->second.symbol.type;
+      if (!field.declaration->type().arrayExtents.empty()) {
+        bool extentsValid = true;
+        const SemanticType *extentType = &fieldType;
+        for (const ArrayExtentExprPtr &extent :
+             field.declaration->type().arrayExtents) {
+          const bool concrete = extentType->kind == SemanticType::Array &&
+                                extentType->arguments.size() == 1 &&
+                                extentType->arrayLength != 0 &&
+                                extentType->arrayLengthParameterId == 0;
+          if (!concrete) {
+            const Token &location = extent
+                                        ? lastArrayExtentToken(*extent)
+                                        : field.declaration->type().name.last();
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2069", DiagnosticPhase::Semantics, location,
+                "Fixed-array field '" + field.declaration->name().lexeme +
+                    "' in C ABI record '" + owner.name.lexeme +
+                    "' requires a positive concrete extent.");
+            diagnostic.hints.emplace_back(
+                "Use a non-zero integer constant extent; symbolic and "
+                "negative extents cannot define a portable C record layout.");
+            diagnostics.emplace_back(std::move(diagnostic));
+            extentsValid = false;
+          }
+          if (extentType->kind == SemanticType::Array &&
+              extentType->arguments.size() == 1) {
+            extentType = &extentType->arguments.front();
+          }
+        }
+        const SemanticType *elementType = &fieldType;
+        while (elementType->kind == SemanticType::Array &&
+               elementType->arguments.size() == 1) {
+          elementType = &elementType->arguments.front();
+        }
+        if (fieldType != SemanticType::Unknown &&
+            !cAbiFieldTypeAllowed(*elementType)) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2070", DiagnosticPhase::Semantics,
+              field.declaration->type().name.last(),
+              "Fixed-array field '" + field.declaration->name().lexeme +
+                  "' in C ABI record '" + owner.name.lexeme +
+                  "' has an element type outside the bounded C ABI field "
+                  "set.");
+          diagnostic.hints.emplace_back(
+              "Use fixed-width integer or floating elements, one-level raw "
+              "pointers, or valid passive C ABI records.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          valid = false;
+        }
+        valid = extentsValid && valid;
+        continue;
+      }
       if (fieldType == SemanticType::Unknown) {
         valid = false;
         continue;
@@ -21591,7 +21647,8 @@ private:
       std::uint64_t fieldSize = 0;
       std::uint32_t fieldAlignment = 0;
       if (isCAbiScalar(fieldType) ||
-          fieldType.kind == SemanticType::RawPointer) {
+          fieldType.kind == SemanticType::RawPointer ||
+          fieldType.kind == SemanticType::Array) {
         const LayoutEvaluation fieldLayout = evaluateLayout(fieldType);
         if (!fieldLayout) {
           reportCAbiRecord(field.declaration->type().name.last(),

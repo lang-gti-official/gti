@@ -3296,6 +3296,7 @@ def test_native_record_tooling(executable, root):
         "  mut float x;\n"
         "  mut float y;\n"
         "};\n"
+        "[[c_abi]] struct NativeBytes { mut uint8_t bytes[4]; };\n"
         "extern \"C\" { NativeHandle* native_open(); "
         "void native_close(NativeHandle* handle); "
         "NativePoint point_roundtrip(NativePoint value); }\n"
@@ -3492,6 +3493,43 @@ def test_native_record_tooling(executable, root):
         }, diagnostic
         assert "fixes" not in diagnostic.get("data", {}), diagnostic
 
+        invalid_array_source = (
+            "[[c_abi]] struct Bad { bool values[4]; };\n"
+            "int main() { return 0; }\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": invalid_array_source}],
+                },
+            }
+        )
+        invalid_array = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        array_diagnostic = next(
+            item
+            for item in invalid_array["diagnostics"]
+            if item.get("code") == "GTI-S2070"
+        )
+        array_type = invalid_array_source.index("bool")
+        assert array_diagnostic["range"] == {
+            "start": lsp_position(invalid_array_source, array_type),
+            "end": lsp_position(
+                invalid_array_source, array_type + len("bool")
+            ),
+        }, array_diagnostic
+        assert array_diagnostic["data"]["phase"] == "semantics", (
+            array_diagnostic
+        )
+        assert "fixes" not in array_diagnostic.get("data", {}), array_diagnostic
+
         invalid_opaque_source = (
             "[[c_opaque]] struct Bad { int32_t value; };\n"
             "int main() { return 0; }\n"
@@ -3501,7 +3539,7 @@ def test_native_record_tooling(executable, root):
                 "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
-                    "textDocument": {"uri": uri, "version": 3},
+                    "textDocument": {"uri": uri, "version": 4},
                     "contentChanges": [{"text": invalid_opaque_source}],
                 },
             }
@@ -3510,7 +3548,7 @@ def test_native_record_tooling(executable, root):
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 3
+            and message["params"].get("version") == 4
         )["params"]
         opaque_diagnostic = next(
             item
@@ -3537,7 +3575,7 @@ def test_native_record_tooling(executable, root):
                 "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
-                    "textDocument": {"uri": uri, "version": 4},
+                    "textDocument": {"uri": uri, "version": 5},
                     "contentChanges": [{"text": opaque_operation_source}],
                 },
             }
@@ -3546,7 +3584,7 @@ def test_native_record_tooling(executable, root):
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 4
+            and message["params"].get("version") == 5
         )["params"]
         operation_diagnostic = next(
             item
@@ -3574,7 +3612,7 @@ def test_native_record_tooling(executable, root):
                 "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
-                    "textDocument": {"uri": uri, "version": 5},
+                    "textDocument": {"uri": uri, "version": 6},
                     "contentChanges": [{"text": incomplete_source}],
                 },
             }
@@ -3583,7 +3621,7 @@ def test_native_record_tooling(executable, root):
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 5
+            and message["params"].get("version") == 6
         )["params"]
         assert any(
             item.get("code") == "GTI-P0001"
