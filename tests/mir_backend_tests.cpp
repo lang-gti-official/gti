@@ -1,5 +1,4 @@
 #include "gti/cpp_backend.h"
-#include "gti/cpp_emitter.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/optimizer.h"
@@ -173,7 +172,7 @@ lang::BackendArtifact emit(const lang::FrontendResult &frontend,
                                       .optimizations = compatibility});
 }
 
-void testSelectedFamilyAndCompatibilityFallback() {
+void testVerifiedMirRouteAndOptimizationCoherence() {
   const lang::FrontendResult frontend =
       analyze("mir-backend-first-family.gti", source());
   expect(frontend.canGenerateCode(),
@@ -207,15 +206,17 @@ void testSelectedFamilyAndCompatibilityFallback() {
   expect(o0Artifact.contents.find("__gti_mir_arg_0") != std::string::npos &&
              o0Artifact.contents.find("__gti_mir_v_") != std::string::npos,
          "the selected definitions should name MIR parameters and SSA values");
-  // The checked sibling migrated to the per-body defined-failure boundary
-  // (ADR 017): its transformed body emits from verified MIR and the
-  // same-signature wrapper routes failure into the structured contract.
-  expect(count(o0Artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-failure-v1") == 4 &&
-             functionDefinition(o0Artifact.contents, "compatibility_checked")
-                     .find("gti_rt_failure_terminate_v1") != std::string::npos,
-         "the checked arithmetic sibling should emit its transformed "
-         "failure-form body plus the defined-failure boundary wrapper");
+  // The checked component uses only the explicit defined-failure ABI. An
+  // ordinary wrapper here would terminate before its caller's MIR cleanup.
+  expect(
+      count(o0Artifact.contents,
+            "// GTI verified-MIR body: scalar-cfg-failure-v1") == 4 &&
+          functionDefinition(o0Artifact.contents, "compatibility_checked")
+              .empty() &&
+          o0Artifact.contents.find("compatibility_checked__gti_mir_failure(") !=
+              std::string::npos,
+      "the checked arithmetic sibling should emit its transformed "
+      "failure-form body without an ordinary boundary wrapper");
   expect(o0Artifact.contents.find("checked_leaf__gti_mir_failure(") !=
                  std::string::npos &&
              o0Artifact.contents.find("__gti_mir_call_success_") !=
@@ -255,13 +256,6 @@ void testSelectedFamilyAndCompatibilityFallback() {
                   .find(marker) != std::string_view::npos,
       "bool and character identity bodies are admitted per body by the "
       "general emitter");
-
-  const std::string direct =
-      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
-  expect(direct.find(marker) == std::string::npos &&
-             direct.find("return (value);") != std::string::npos,
-         "direct CppEmitter construction should remain an explicit "
-         "compatibility-only API");
 
   const lang::OptimizationResult o1Compatibility =
       pipeline.run(frontend.hir, lang::OptimizationLevel::O1);
@@ -870,12 +864,14 @@ int main() { mut C c = C(); return 0; }
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       emit(frontend, frontend.mir, compatibility);
-  expect(artifact.contents.find("int __gti_entry()") != std::string::npos,
+  expect(artifact.contents.find("int main()") != std::string::npos &&
+             artifact.contents.find("__gti_entry__gti_mir_failure(") !=
+                 std::string::npos,
          "the widening constructor's program should reach code generation");
 }
 
 int main() {
-  testSelectedFamilyAndCompatibilityFallback();
+  testVerifiedMirRouteAndOptimizationCoherence();
   testUnverifiedMirIsRejected();
   testStaleMirSnapshotIsRejected();
   testForgedFunctionHeaderIsRejected();

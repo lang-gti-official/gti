@@ -45,9 +45,10 @@ invocation cleanup. Dependencies initialize before requesters, direct
 dependencies follow lexical include-directive order, and globals/static fields
 within a unit follow source order as specified in
 [Execution Section 4.2.4](execution.md#424-program-wide-initialization). The
-current compatibility emitter does not yet lower that plan inside the adapter
-and therefore cannot claim conforming initializer order or failure behavior.
-It shall not expose native C++ pre-`main` failure as a different policy.
+verified `Module/0` body and program-initialization thunk carry that plan into
+the hosted adapter. Data-only constant and implicit-zero stages may use native
+static representation, but GTI-visible dynamic work and failure do not execute
+as an uncontained C++ pre-`main` policy.
 
 For the owned entry form, safely detected native-state validation and checked
 count conversion occur first, followed by program-wide initialization and then

@@ -22,6 +22,8 @@ namespace {
 // destructor-definition route keeps the family label below.
 constexpr std::string_view functionMarker =
     "// GTI verified-MIR body: scalar-cfg-v1 function-instance ";
+constexpr std::string_view failureFunctionMarker =
+    "// GTI verified-MIR body: scalar-cfg-failure-v1 function-instance ";
 constexpr std::string_view destructorMarker =
     "// GTI verified-MIR body: scalar-cfg-v1 destructor-instance ";
 int failures = 0;
@@ -283,9 +285,9 @@ void expectSelectedDefinitions(std::string_view generated) {
 
   // Ordinary lifetimes the whole-family contract had to reject now emit
   // per body through the same slot vocabulary.
-  constexpr std::array<std::string_view, 4> migratedFunctions = {
-      "compatibility_declared_constructor", "compatibility_field_owner",
-      "compatibility_nested_scope", "compatibility_branch"};
+  constexpr std::array<std::string_view, 3> migratedFunctions = {
+      "compatibility_declared_constructor", "compatibility_nested_scope",
+      "compatibility_branch"};
   for (const std::string_view name : migratedFunctions) {
     const std::string_view body = functionDefinition(generated, name);
     expect(body.find(functionMarker) != std::string_view::npos &&
@@ -295,6 +297,14 @@ void expectSelectedDefinitions(std::string_view generated) {
                        "vocabulary: "} +
                std::string{name});
   }
+  const std::string_view fieldOwner = functionDefinition(
+      generated, "compatibility_field_owner__gti_mir_failure");
+  expect(fieldOwner.find(failureFunctionMarker) != std::string_view::npos &&
+             fieldOwner.find(".construct()") != std::string_view::npos &&
+             fieldOwner.find(".destroy()") != std::string_view::npos &&
+             functionDefinition(generated, "compatibility_field_owner").empty(),
+         "the field-owning function should preserve its slot schedule only "
+         "through the explicit failure-form body");
   expect(functionDefinition(generated, "compatibility_checked_cleanup")
                  .find(".construct()") == std::string_view::npos,
          "the checked-cleanup near miss should remain compatible");
@@ -592,9 +602,9 @@ void testMutations(const std::filesystem::path &fixture) {
     (void)lang::rebuildMirValueUses(early->body);
   }
   expect(movedCleanupBeforeReturnLoad &&
-             lang::verifyMirProgram(earlyCleanup).valid(),
-         "cleanup timing drift should remain a generic failure-free MIR "
-         "effect shape for backend coherence to reject");
+             !lang::verifyMirProgram(earlyCleanup).valid(),
+         "generic MIR verification should reject cleanup moved before the "
+         "value it protects is loaded for return");
   expect(emissionRejected(frontend, earlyCleanup, compatibility),
          "the backend must reject cleanup timing drift that would change "
          "the returned global value");

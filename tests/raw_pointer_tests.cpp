@@ -259,21 +259,31 @@ int main() {
     bool address = false;
     bool add = false;
     bool subtract = false;
-    std::size_t pointerCompoundAssignments = 0;
+    bool pointerDifferenceFailureFree = true;
+    bool rawLoadsFailureFree = true;
     bool rawMethodReceiver = false;
     bool rawRead = false;
     bool rawWrite = false;
+    bool fusedPointerModify = false;
+    bool fusedPointerCompoundAssignment = false;
+    std::size_t orderedPointerModifications = 0;
     for (const lang::MirBlock &block : body->blocks) {
-      for (const lang::MirInstruction &instruction : block.instructions) {
+      for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+        const lang::MirInstruction &instruction = block.instructions[index];
         address |= instruction.operation == lang::MirOperation::AddressOf;
         add |= instruction.operation == lang::MirOperation::PointerAdd;
-        subtract |=
-            instruction.operation == lang::MirOperation::PointerDifference;
-        if (instruction.unsafeOperation ==
-                lang::UnsafeOperationKind::PointerArithmetic &&
+        fusedPointerModify |=
+            instruction.kind == lang::MirInstructionKind::Modify &&
+            instruction.info.type.kind == lang::SemanticType::RawPointer;
+        fusedPointerCompoundAssignment |=
+            instruction.kind == lang::MirInstructionKind::Assign &&
+            instruction.info.type.kind == lang::SemanticType::RawPointer &&
             (instruction.operation == lang::MirOperation::AddAssign ||
-             instruction.operation == lang::MirOperation::SubtractAssign)) {
-          ++pointerCompoundAssignments;
+             instruction.operation == lang::MirOperation::SubtractAssign);
+        if (instruction.operation == lang::MirOperation::PointerDifference) {
+          subtract = true;
+          pointerDifferenceFailureFree &= instruction.definedFailure.empty() &&
+                                          instruction.localFailureSites.empty();
         }
         if (instruction.kind == lang::MirInstructionKind::Call &&
             instruction.receiver && instruction.receiver->place != 0) {
@@ -296,14 +306,68 @@ int main() {
           const lang::MirEffectTraits effects = lang::effects(instruction);
           rawRead |= effects.readsUnknownMemory;
           rawWrite |= effects.writesUnknownMemory;
+          if (instruction.kind == lang::MirInstructionKind::Load) {
+            rawLoadsFailureFree &= instruction.definedFailure.empty() &&
+                                   instruction.localFailureSites.empty();
+          }
+        }
+      }
+    }
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &compute : block.instructions) {
+        const bool pointerArithmetic =
+            compute.kind == lang::MirInstructionKind::Compute &&
+            (compute.operation == lang::MirOperation::PointerAdd ||
+             compute.operation == lang::MirOperation::PointerSubtract);
+        if (!pointerArithmetic ||
+            compute.unsafeOperation == lang::UnsafeOperationKind::None ||
+            !compute.result || compute.operands.size() != 2 ||
+            compute.operands.front().kind != lang::MirOperandKind::Value ||
+            (compute.operands.back().kind != lang::MirOperandKind::Constant &&
+             compute.operands.back().kind != lang::MirOperandKind::Value)) {
+          continue;
+        }
+        const lang::MirInstruction *read = nullptr;
+        const lang::MirInstruction *commit = nullptr;
+        for (const lang::MirBlock &candidateBlock : body->blocks) {
+          for (const lang::MirInstruction &candidate :
+               candidateBlock.instructions) {
+            if (candidate.hirValue != compute.hirValue) {
+              continue;
+            }
+            if (candidate.kind == lang::MirInstructionKind::Load &&
+                candidate.result && candidate.operands.size() == 1 &&
+                candidate.operands.front().place != 0 &&
+                *candidate.result == compute.operands.front().value) {
+              read = &candidate;
+            }
+            if (candidate.kind == lang::MirInstructionKind::Assign &&
+                candidate.operation == lang::MirOperation::Assign &&
+                candidate.destination && candidate.operands.size() == 1 &&
+                candidate.operands.front().value == *compute.result) {
+              commit = &candidate;
+            }
+          }
+        }
+        if (read != nullptr && commit != nullptr && commit->destination &&
+            *commit->destination == read->operands.front().place) {
+          ++orderedPointerModifications;
         }
       }
     }
     expect(address && add && subtract,
            "MIR should distinguish address, pointer offset, and difference");
-    expect(pointerCompoundAssignments == 2,
-           "MIR should retain pointer-arithmetic metadata for raw-pointer "
-           "field and array-element compound assignments");
+    expect(!fusedPointerModify && !fusedPointerCompoundAssignment &&
+               orderedPointerModifications == 5,
+           "raw pointer increments, decrements, and compound assignments "
+           "should lower to five ordered read/offset/commit schedules "
+           "without fused update nodes");
+    expect(pointerDifferenceFailureFree,
+           "unsafe pointer difference should not acquire a checked-integer "
+           "overflow edge from its int64_t result type");
+    expect(rawLoadsFailureFree,
+           "unsafe raw-pointer loads should not acquire checked arithmetic "
+           "failure edges from their loaded integer type");
     expect(rawMethodReceiver,
            "raw pointer method calls should borrow the unchecked pointee "
            "place and retain unsafe memory metadata");
@@ -337,17 +401,29 @@ int main() {
                                    .optimizations = optimizations});
   expect(artifact.contents.find("owner_access(pointer)") == std::string::npos,
          "raw dereference must not use checked-owner lowering");
-  expect(artifact.contents.find("pointer->value") != std::string::npos &&
-             artifact.contents.find("pointer[1]") != std::string::npos,
+  const std::size_t mainMarker =
+      artifact.contents.find("scalar-cfg-failure-v1 function-instance");
+  const std::string_view emittedMain =
+      mainMarker == std::string::npos
+          ? std::string_view{}
+          : std::string_view(artifact.contents).substr(mainMarker);
+  expect(emittedMain.find("(*__gti_mir_v_") != std::string_view::npos &&
+             emittedMain.find(").value") != std::string_view::npos &&
+             emittedMain.find("[__gti_mir_v_") != std::string_view::npos &&
+             emittedMain.find("(&__gti_mir_p_") != std::string_view::npos &&
+             emittedMain.find(".get());") != std::string_view::npos,
          "raw member and index operations should remain native C++ syntax");
-  expect(artifact.contents.find("(holder).pointer += 1") != std::string::npos &&
-             artifact.contents.find(
-                 "gti_internal::backend::array_at(pointers, 0) += 2") !=
-                 std::string::npos &&
-             artifact.contents.find("holder_pointer->pointer -= 1") !=
-                 std::string::npos,
+  expect(emittedMain.find("mir_checked_array_read_v1(") !=
+                 std::string_view::npos &&
+             emittedMain.find(".get().pointer = __gti_mir_v_") !=
+                 std::string_view::npos &&
+             emittedMain.find(").pointer = __gti_mir_v_") !=
+                 std::string_view::npos &&
+             emittedMain.find("[static_cast<std::size_t>(0)] = ") !=
+                 std::string_view::npos,
          "raw-pointer compound field and fixed-array element targets should "
-         "use native pointer arithmetic");
+         "use ordered native pointer arithmetic after any required bounds "
+         "check");
 }
 
 void testUnsafeAndPointerDiagnostics() {

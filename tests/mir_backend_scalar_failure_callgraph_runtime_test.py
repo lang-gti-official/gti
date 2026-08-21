@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import pathlib
 import re
 import subprocess
@@ -7,7 +8,7 @@ import sys
 import tempfile
 
 
-MARKER = "// GTI verified-MIR body: scalar-failure-callgraph-v1"
+MARKER = "// GTI verified-MIR body: scalar-cfg-failure-v1"
 
 
 def report_pattern(
@@ -74,7 +75,8 @@ def validate_emission(
             )
             return False
     signature = re.compile(
-        r"  bool (?:__gti_entry|__gti_fn_[0-9]+_[A-Za-z_][A-Za-z0-9_]*)\("
+        r"  bool (?:__gti_entry|__gti_fn_[0-9]+_[A-Za-z_][A-Za-z0-9_]*)"
+        r"__gti_mir_failure\("
         r"[^{};]*std::int32_t \*__gti_mir_out_result, "
         r"::gti_failure_record_v1 \*__gti_mir_failure_record\) \{\n"
         r"    "
@@ -178,7 +180,7 @@ def emit_program(
 
 
 def main() -> int:
-    if len(sys.argv) != 20:
+    if len(sys.argv) != 21:
         raise SystemExit(
             "usage: mir_backend_scalar_failure_callgraph_runtime_test.py "
             "<gti> <lifecycle-success-source> <all-operations-success-source> "
@@ -190,13 +192,14 @@ def main() -> int:
             "<wide-right-shift-source> <negation-overflow-source> "
             "<wide-conversion-source> <negative-conversion-source> "
             "<unsigned-addition-source> <unsigned-subtraction-source> "
-            "<unsigned-multiplication-source>"
+            "<unsigned-multiplication-source> <owning-array-parameter-source>"
         )
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     success_cases = (
         ("lifecycle-success", pathlib.Path(sys.argv[2]).resolve(), 3),
         ("all-operations-success", pathlib.Path(sys.argv[3]).resolve(), 2),
+        ("owning-array-parameter", pathlib.Path(sys.argv[20]).resolve(), 3),
     )
     failure_cases = (
         (
@@ -379,6 +382,10 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-mir-scalar-failure-") as temporary:
         root = pathlib.Path(temporary)
+        standard_library = root / "stdlib"
+        standard_library.mkdir()
+        (standard_library / "prelude.gti").write_text("", encoding="utf8")
+        os.environ["GTI_STDLIB_PATH"] = str(standard_library)
         observed_identities: dict[str, bytes] = {}
         for optimization in ("O0", "O1", "O3"):
             for standard in ("c++20", "c++23"):

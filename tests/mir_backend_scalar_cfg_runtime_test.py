@@ -7,6 +7,7 @@ import tempfile
 
 
 MARKER = "// GTI verified-MIR body: scalar-cfg-v1"
+FAILURE_MARKER = "// GTI verified-MIR body: scalar-cfg-failure-v1"
 SELECTED = (
     "cfg_not",
     "cfg_char",
@@ -18,11 +19,6 @@ SELECTED = (
     "cfg_short",
     "cfg_loop",
     "cfg_fold",
-    # Converts under ADR 018: reference parameter bound as pointer carrier.
-    "compatibility_reference",
-    # Per-site wrapper containment (0.275.0): the propagate-only call site
-    # takes the terminating plain name.
-    "compatibility_call",
 )
 # Standard-library scalar bodies selected per body once compiler-private
 # declarations were admitted; the fixture links them through the prelude.
@@ -46,18 +42,13 @@ STDLIB_SELECTED = (
     # String-view literals joined the vocabulary in 0.178.0.
     "println",
     "print_decimal_digit",
-    # Both print overloads carry markers; the second entry keeps the
-    # name-derived count honest for the char overload admitted once
-    # unchecked conversions joined the vocabulary (0.181.0).
-    "print",
-    # The char println joined once the plain shape proved its vestigial
-    # propagate block unreachable (0.246.0): its print-chain invokes are
-    # terminally contained, so the else edges are dead.
-    "println",
 )
-COMPATIBILITY = (
+FAILURE_SELECTED = (
     "compatibility_checked",
     "compatibility_call_target",
+    "compatibility_call",
+    "compatibility_reference",
+    "release",
 )
 
 
@@ -91,6 +82,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
     if (
         generated.count(f"{MARKER} function-instance")
         != len(SELECTED) + len(STDLIB_SELECTED)
+        or generated.count(f"{FAILURE_MARKER} function-instance") != 8
         # file_handle's computed negate(1) default joined the verified
         # initializer schedule as a terminally-contained expression.
         or generated.count(f"{MARKER} field-initializers-instance") != 2
@@ -108,13 +100,27 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
                 f"{optimization}/{standard} did not select {name} from MIR\n"
             )
             return False
-    for name in COMPATIBILITY:
-        if MARKER in function_definition(generated, name):
+    for name in FAILURE_SELECTED:
+        if FAILURE_MARKER not in function_definition(
+            generated, f"{name}__gti_mir_failure"
+        ):
             sys.stderr.write(
-                f"{optimization}/{standard} selected ineligible {name} "
-                "from MIR\n"
+                f"{optimization}/{standard} did not select {name} through "
+                "the closed failure-form MIR component\n"
             )
             return False
+    if (
+        "_print__gti_mir_failure(std::uint8_t" not in generated
+        or "_println__gti_mir_failure(std::uint8_t" not in generated
+        or f"{FAILURE_MARKER} function-instance" not in function_definition(
+            generated, "entry__gti_mir_failure"
+        )
+    ):
+        sys.stderr.write(
+            f"{optimization}/{standard} lost a transformed char-output or "
+            "hosted-entry body\n"
+        )
+        return False
     return True
 
 

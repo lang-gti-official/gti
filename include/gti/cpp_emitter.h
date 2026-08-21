@@ -18,10 +18,6 @@ class CppBackend;
 
 class CppEmitter final {
 public:
-  explicit CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
-                      CppStandard standard = CppStandard::Cpp23,
-                      TargetInfo target = TargetInfo::host(),
-                      const OptimizationResult *optimizations = nullptr);
   ~CppEmitter();
 
   CppEmitter(const CppEmitter &) = delete;
@@ -29,25 +25,14 @@ public:
   CppEmitter(CppEmitter &&) noexcept;
   CppEmitter &operator=(CppEmitter &&) noexcept;
 
-  CppEmitter(const SemanticModel &&, const HirProgram &,
-             CppStandard = CppStandard::Cpp23, TargetInfo = TargetInfo::host(),
-             const OptimizationResult * = nullptr) = delete;
-  CppEmitter(const SemanticModel &, const HirProgram &&,
-             CppStandard = CppStandard::Cpp23, TargetInfo = TargetInfo::host(),
-             const OptimizationResult * = nullptr) = delete;
-  CppEmitter(const SemanticModel &&, const HirProgram &&,
-             CppStandard = CppStandard::Cpp23, TargetInfo = TargetInfo::host(),
-             const OptimizationResult * = nullptr) = delete;
-
   [[nodiscard]] std::string emit(const Program &program);
 
 private:
   friend class CppBackend;
 
-  // The copied representation rows are built at the backend boundary
-  // (ADR 016): CppBackend constructs and validates them beside the program
-  // plan and passes ownership in, so the emitter never derives a spelling
-  // authority of its own.
+  // CppBackend is the only construction boundary. Verified MIR and copied
+  // representation rows are mandatory, so executable emission cannot fall
+  // back to the former AST/HIR-only route.
   CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
              const MirProgram &verifiedMir, CppMirBodyEmissionMap generalRows,
              CppStandard standard, TargetInfo target,

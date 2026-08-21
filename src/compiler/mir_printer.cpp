@@ -247,7 +247,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v34 valid=" << program.valid() << '\n';
+    output << "mir-v37 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -277,10 +277,18 @@ public:
       output << "class @" << instance.id
              << " declaration=" << instance.declaration << " type=";
       type(instance.type);
+      output << ' ';
+      traits(instance.traits);
       output << " kind=" << number(instance.kind)
              << " abstract=" << instance.abstract
              << " polymorphic=" << instance.polymorphic
-             << " c-abi=" << instance.cAbiRecord;
+             << " c-abi=" << instance.cAbiRecord << " special-members={default="
+             << number(instance.defaultConstructor)
+             << ",copy-constructor=" << number(instance.copyConstructor)
+             << ",move-constructor=" << number(instance.moveConstructor)
+             << ",copy-assignment=" << number(instance.copyAssignment)
+             << ",move-assignment=" << number(instance.moveAssignment)
+             << ",destructor=" << number(instance.destructorStatus) << '}';
       if (instance.cAbiLayout) {
         output << " layout={size=" << instance.cAbiLayout->sizeBytes
                << ",align=" << instance.cAbiLayout->abiAlignmentBytes
@@ -551,7 +559,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v34\n";
+    output << "mir-body-v37\n";
     body(value, 0);
     return output.str();
   }
@@ -999,6 +1007,8 @@ private:
     optional(value.preparedParameterDrop);
     output << " success-result-drop=";
     optional(value.successResultDrop);
+    output << " success-result-destination=";
+    optional(value.successResultDestination);
     output << " unsafe-operation=" << number(value.unsafeOperation)
            << " raw-memory=" << value.rawMemoryAccess << " result=";
     optional(value.result);
@@ -1031,32 +1041,6 @@ private:
          ++index) {
       separator(index);
       output << lambdaCaptureModeName(value.closureCaptureModes[index]);
-    }
-    output << "] pack-fold-symbol=" << value.packFoldSymbol
-           << " pack-fold-parameter=" << value.packFoldParameter
-           << " pack-fold-function=" << value.packFoldFunction
-           << " pack-fold-argument=" << value.packFoldArgument
-           << " pack-fold-fixed-places=[";
-    for (std::size_t index = 0; index < value.packFoldFixedPlaces.size();
-         ++index) {
-      separator(index);
-      output << value.packFoldFixedPlaces[index];
-    }
-    output << "]"
-           << " pack-fold-elements=[";
-    for (std::size_t index = 0; index < value.packFoldElements.size();
-         ++index) {
-      separator(index);
-      const MirPackFoldElement &element = value.packFoldElements[index];
-      output << "{type=";
-      type(element.elementType);
-      output << ",function=" << element.functionTarget << ",parameters=[";
-      for (std::size_t parameter = 0; parameter < element.parameterTypes.size();
-           ++parameter) {
-        separator(parameter);
-        type(element.parameterTypes[parameter]);
-      }
-      output << "]}";
     }
     output << "] loan=";
     optional(value.loan);

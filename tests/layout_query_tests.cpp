@@ -23,6 +23,9 @@
 namespace {
 
 static_assert(!std::is_default_constructible_v<lang::CppEmitter>);
+static_assert(
+    !std::is_constructible_v<lang::CppEmitter, const lang::SemanticModel &,
+                             const lang::HirProgram &>);
 static_assert(!std::is_constructible_v<lang::CppEmitter, lang::SemanticModel &&,
                                        const lang::HirProgram &>);
 static_assert(
@@ -533,9 +536,10 @@ void testHirMirAndBackend() {
          "the backend should emit frontend-computed numeric constants, not "
          "native C++ layout queries for source expressions");
 
-  expect(!std::is_default_constructible_v<lang::CppEmitter>,
-         "backend emission should require semantic and HIR facts at its API "
-         "boundary");
+  expect(!std::is_constructible_v<lang::CppEmitter, const lang::SemanticModel &,
+                                  const lang::HirProgram &>,
+         "only CppBackend should construct the emitter, with verified MIR and "
+         "its copied representation rows");
 }
 
 void testConstexprControlFlow() {

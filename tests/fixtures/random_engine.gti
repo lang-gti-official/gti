@@ -1,0 +1,162 @@
+// Behavioural test for <std/random>.
+//
+// The strong assertion is the reference vectors: splitmix64 seeding followed by
+// xoshiro256++ is fully specified, so a correct implementation must reproduce a
+// fixed sequence for a fixed seed. That catches the porting mistakes this code
+// is actually exposed to — a rotate in the wrong direction, a shift constant
+// off by one, seeding only state[0] — none of which a duplicate-hunting or
+// distribution test would reliably notice.
+//
+// The splitmix64 half is pinned independently: state[0] for seed 0 is the
+// published vector 0xe220a8397b1dcdaf. The xoshiro256++ half is transcribed
+// from the published algorithm, so these vectors verify the GTI port against a
+// reference, not the algorithm against itself.
+
+#include <std/random>
+
+mut uint64_t failures = 0;
+
+void check(uint64_t actual, uint64_t wanted, std::string_view label) {
+  if (actual != wanted) {
+    failures = failures + uint64_t(1);
+    std::print("FAIL ");
+    std::print(label);
+    std::print("\n  expected ");
+    std::print(wanted);
+    std::print("\n  actual   ");
+    std::print(actual);
+    std::print("\n");
+  }
+}
+
+// A fixed seed must reproduce a fixed sequence.
+void reference_vectors() {
+  mut std::random_engine a{uint64_t(0)};
+  check(a(), uint64_t(0x53175d61490b23df), "seed 0 draw 0");
+  check(a(), uint64_t(0x61da6f3dc380d507), "seed 0 draw 1");
+  check(a(), uint64_t(0x5c0fdf91ec9a7bfc), "seed 0 draw 2");
+  check(a(), uint64_t(0x02eebf8c3bbe5e1a), "seed 0 draw 3");
+
+  mut std::random_engine b{uint64_t(1)};
+  check(b(), uint64_t(0xcfc5d07f6f03c29b), "seed 1 draw 0");
+  check(b(), uint64_t(0xbf424132963fe08d), "seed 1 draw 1");
+
+  // A seed with bits set across the whole word, so a truncating or
+  // sign-extending mistake in seeding cannot pass.
+  mut std::random_engine c{uint64_t(0x123456789abcdef0)};
+  check(c(), uint64_t(0x4d4f7607a97a1bd6), "wide seed draw 0");
+  check(c(), uint64_t(0x9ba027c76910d021), "wide seed draw 1");
+  check(c(), uint64_t(0x87adb062153ae0bc), "wide seed draw 2");
+}
+
+// Two engines on the same seed must agree, and the state must actually advance.
+void determinism() {
+  mut std::random_engine a{uint64_t(42)};
+  mut std::random_engine b{uint64_t(42)};
+  mut uint64_t previous = uint64_t(0);
+  mut uint64_t repeats = uint64_t(0);
+  for (mut uint64_t i = uint64_t(0); i < uint64_t(64); i = i + uint64_t(1)) {
+    uint64_t left = a();
+    uint64_t right = b();
+    check(left, right, "same seed diverged");
+    if (i > uint64_t(0) && left == previous) {
+      repeats = repeats + uint64_t(1);
+    }
+    previous = left;
+  }
+  // A stuck state repeats immediately; genuine collisions at this length have
+  // probability around 2^-58 and are not worth tolerating a stuck engine for.
+  check(repeats, uint64_t(0), "engine state did not advance");
+}
+
+// Different seeds must not produce the same stream. Seeding only state[0], the
+// most common splitmix64 mistake, still passes the vectors above if the vectors
+// were generated from the same bug, so this is checked separately.
+void seed_separation() {
+  mut std::random_engine a{uint64_t(1)};
+  mut std::random_engine b{uint64_t(2)};
+  mut uint64_t matches = uint64_t(0);
+  for (mut uint64_t i = uint64_t(0); i < uint64_t(32); i = i + uint64_t(1)) {
+    if (a() == b()) {
+      matches = matches + uint64_t(1);
+    }
+  }
+  check(matches, uint64_t(0), "distinct seeds produced identical stream");
+}
+
+// Cheap bit-balance smoke test: over 4096 draws each of the 64 bit positions
+// should be set close to half the time. This is a weak statistical claim on
+// purpose — it exists to catch a bit plane that is always 0 or always 1, which
+// is what a botched shift or mask produces, not to stand in for a test suite
+// like PractRand.
+void bit_balance() {
+  mut std::random_engine engine{uint64_t(0xdeadbeefcafef00d)};
+  mut uint64_t ones[64] = {};
+  constexpr uint64_t DRAWS = 4096;
+  for (mut uint64_t i = uint64_t(0); i < DRAWS; i = i + uint64_t(1)) {
+    uint64_t value = engine();
+    for (mut uint64_t bit = uint64_t(0); bit < uint64_t(64); bit = bit + uint64_t(1)) {
+      if (((value >> bit) & uint64_t(1)) == uint64_t(1)) {
+        ones[bit] = ones[bit] + uint64_t(1);
+      }
+    }
+  }
+  // Half of 4096 is 2048; ±256 is roughly 8 standard deviations, so a healthy
+  // generator effectively never trips this while a dead bit plane always does.
+  for (mut uint64_t bit = uint64_t(0); bit < uint64_t(64); bit = bit + uint64_t(1)) {
+    if (ones[bit] < uint64_t(1792) || ones[bit] > uint64_t(2304)) {
+      failures = failures + uint64_t(1);
+      std::print("FAIL bit plane out of balance at bit ");
+      std::print(bit);
+      std::print(" count ");
+      std::print(ones[bit]);
+      std::print("\n");
+    }
+  }
+}
+
+// random_device draws real entropy, so it cannot be checked against a vector.
+// What is checkable: it succeeds, it crosses its internal 32-byte refill
+// boundary without failing, and it does not return a constant.
+void device_sanity() {
+  mut std::random_device device{};
+  mut uint32_t first = uint32_t(0);
+  mut uint64_t distinct = uint64_t(0);
+  // 16 draws is two full refills of the 32-byte buffer at 4 bytes per draw.
+  for (mut uint64_t i = uint64_t(0); i < uint64_t(16); i = i + uint64_t(1)) {
+    expected<uint32_t, int> drawn = device();
+    if (!drawn.has_value()) {
+      failures = failures + uint64_t(1);
+      std::print("FAIL random_device reported entropy failure\n");
+      return;
+    }
+    if (i == uint64_t(0)) {
+      first = drawn.value();
+    } else {
+      if (drawn.value() != first) {
+        distinct = distinct + uint64_t(1);
+      }
+    }
+  }
+  if (distinct == uint64_t(0)) {
+    failures = failures + uint64_t(1);
+    std::print("FAIL random_device returned a constant across 16 draws\n");
+  }
+}
+
+int main() {
+  reference_vectors();
+  determinism();
+  seed_separation();
+  bit_balance();
+  device_sanity();
+
+  if (failures != uint64_t(0)) {
+    std::print("random: ");
+    std::print(failures);
+    std::print(" checks failed\n");
+    return 1;
+  }
+  std::print("random: all checks passed\n");
+  return 0;
+}

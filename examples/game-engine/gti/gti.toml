@@ -15,7 +15,7 @@ root = "src/tests/layer_stack_test.gti"
 [profiles.dev]
 optimization = 0
 cpp-standard = "c++23"
-keep-cpp = true
+keep-cpp = false
 
 [profiles.release]
 optimization = 3

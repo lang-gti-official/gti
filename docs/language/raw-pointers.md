@@ -102,7 +102,10 @@ assigned, compared, passed, and returned as described in
 Pointer arithmetic accepts integer offsets. Adding or subtracting an integer
 produces the same pointer type; subtracting two identical non-`void` pointer
 types produces `int64_t` (the canonical type behind `std::ptrdiff_t`). Ordering
-comparisons are not part of this surface.
+comparisons are not part of this surface. Pointer difference is the native
+unsafe pointer operation, not checked integer subtraction merely because its
+result type is `int64_t`; its same-allocation and representability conditions
+remain programmer proof obligations.
 
 Address formation requires a supported addressable place. GTI does not form a
 pointer to a temporary, function, fixed array as a whole, or another raw
@@ -131,7 +134,8 @@ condition:
 - a write targets writable storage and does not pass through `const T*`;
 - indexing and arithmetic remain within one valid object or array allocation,
   allowing a one-past value only for arithmetic or comparison and never for
-  access;
+  access, and a pointer difference is representable as `std::ptrdiff_t` and
+  GTI `int64_t`;
 - aliases, native retention, and concurrent access satisfy the called API's
   contract and the data-race/happens-before rules in
   [Execution section 4.9](execution.md#49-concurrency-boundary); and

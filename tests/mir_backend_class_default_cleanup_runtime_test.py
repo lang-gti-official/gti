@@ -21,9 +21,11 @@ DESTRUCTOR_MARKER = (
 # MIR drops).
 MIGRATED_FUNCTIONS = (
     "compatibility_declared_constructor",
-    "compatibility_field_owner",
     "compatibility_nested_scope",
     "compatibility_branch",
+)
+FAILURE_MIGRATED_FUNCTIONS = (
+    "compatibility_field_owner",
 )
 COMPATIBILITY_FUNCTIONS = (
     "compatibility_checked_cleanup",
@@ -132,6 +134,19 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             sys.stderr.write(
                 f"{mode} did not emit migrated {name} through the slot "
                 "vocabulary\n"
+            )
+            return False
+    for name in FAILURE_MIGRATED_FUNCTIONS:
+        body = function_definition(generated, f"{name}__gti_mir_failure")
+        if (
+            "// GTI verified-MIR body: scalar-cfg-failure-v1" not in body
+            or ".construct()" not in body
+            or ".destroy()" not in body
+            or function_definition(generated, name)
+        ):
+            sys.stderr.write(
+                f"{mode} did not emit migrated {name} solely through its "
+                "failure-form slot vocabulary\n"
             )
             return False
     for name in COMPATIBILITY_FUNCTIONS:

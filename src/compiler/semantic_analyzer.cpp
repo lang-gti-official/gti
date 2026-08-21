@@ -150,6 +150,7 @@ public:
     programEffects.clear();
     programStoragePlaceUseDepth = 0;
     contextualInitializerType.reset();
+    contextualInitializerExpression = nullptr;
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -274,6 +275,7 @@ public:
     programEffects.clear();
     programStoragePlaceUseDepth = 0;
     contextualInitializerType.reset();
+    contextualInitializerExpression = nullptr;
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -3500,6 +3502,18 @@ public:
                "GTI-S2029");
         valid = false;
       }
+      // Generic instance analysis substitutes T before revisiting T(). Once
+      // that substitution is a class, resolve the exact zero-argument
+      // constructor like any other class construction. Leaving the generic
+      // intrinsic in place loses the constructor instance from HIR/MIR and
+      // can produce a declaration with no definition after the MIR cutover.
+      if (valid && targetType.kind == SemanticType::Class) {
+        semanticModel.suppressInheritedCall(expr);
+        analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
+                               targetType.valueArguments, {}, expr.arguments(),
+                               expr.paren());
+        return;
+      }
       currentType = valid ? targetType : SemanticType::Unknown;
       if (valid) {
         semanticModel.record(
@@ -4455,6 +4469,8 @@ public:
     const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
     const std::optional<SemanticType> enclosingInitializerType =
         contextualInitializerType;
+    const Expr *enclosingInitializerExpression =
+        contextualInitializerExpression;
     const std::optional<ContextualCallableResult> enclosingCallableResult =
         contextualCallableResult;
     scopes.clear();
@@ -4465,6 +4481,7 @@ public:
     valueControlFlow.clear();
     analyzingCallCallee = false;
     contextualInitializerType.reset();
+    contextualInitializerExpression = nullptr;
     contextualCallableResult.reset();
     loopDepth = 0;
     switchDepth = 0;
@@ -4508,6 +4525,7 @@ public:
     loopDepth = enclosingLoopDepth;
     switchDepth = enclosingSwitchDepth;
     contextualInitializerType = enclosingInitializerType;
+    contextualInitializerExpression = enclosingInitializerExpression;
     contextualCallableResult = enclosingCallableResult;
     analyzingCallCallee = enclosingAnalyzingCallCallee;
     loanFlow = std::move(enclosingLoanFlow);
@@ -4811,6 +4829,15 @@ public:
         std::holds_alternative<std::uint64_t>(expr.value())) {
       currentType = *contextualOperatorIntegerType;
       return;
+    }
+    if (contextualInitializerExpression == &expr && contextualInitializerType &&
+        isInteger(*contextualInitializerType) &&
+        std::holds_alternative<std::uint64_t>(expr.value())) {
+      const std::optional<IntegerConstant> constant = integerConstant(&expr);
+      if (constant && integerFits(*contextualInitializerType, *constant)) {
+        currentType = *contextualInitializerType;
+        return;
+      }
     }
     currentType = literalType(expr.value());
   }
@@ -5409,6 +5436,12 @@ public:
           literal != nullptr) {
         const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
         if (magnitude != nullptr && *magnitude == (std::uint64_t{1} << 63U)) {
+          const std::optional<SemanticType> enclosing =
+              contextualOperatorIntegerType;
+          contextualOperatorIntegerType = SemanticType::Int64;
+          semanticModel.recordContextualIntegerOperand(expr);
+          (void)analyze(expr.right());
+          contextualOperatorIntegerType = enclosing;
           currentType = SemanticType::Int64;
           return;
         }
@@ -11384,6 +11417,35 @@ private:
     }
     const SemanticType storageType = argumentTypes.front();
     const SemanticType elementType = storageType.arguments.front();
+    const auto analyzeElementConstruction = [&](std::size_t argumentOffset) {
+      if (argumentTypes.size() < argumentOffset) {
+        return;
+      }
+      std::vector<AnalyzedCallArgument> constructorArguments;
+      bool concreteArguments = true;
+      for (std::size_t index = argumentOffset; index < argumentTypes.size();
+           ++index) {
+        if (!appendConcreteCallArgument(argumentTypes[index],
+                                        expr.arguments()[index],
+                                        constructorArguments)) {
+          concreteArguments = false;
+          break;
+        }
+      }
+      if (!concreteArguments) {
+        return;
+      }
+      if (elementType.kind == SemanticType::Class) {
+        analyzeConstructorCallArguments(
+            expr, elementType.classId, elementType.arguments,
+            elementType.valueArguments, std::move(constructorArguments),
+            expr.paren());
+      } else if (elementType != SemanticType::Unknown &&
+                 elementType.kind != SemanticType::TypeParameter) {
+        validateStorageValueConstruction(expr, elementType,
+                                         constructorArguments);
+      }
+    };
     const auto requireUInt64 = [&](std::size_t index) {
       if (argumentTypes.size() > index &&
           argumentTypes[index] != SemanticType::UInt64 &&
@@ -11406,6 +11468,7 @@ private:
     case IntrinsicKind::PrefixStorageAppend:
       // Appends exactly at the live length, constructing in place from the
       // analyzed arguments; movability is a shift requirement only.
+      analyzeElementConstruction(1);
       currentType = SemanticType::Void;
       break;
     case IntrinsicKind::PrefixStorageInsert:
@@ -11420,6 +11483,7 @@ private:
                "GTI-S2019");
       }
       requireUInt64(1);
+      analyzeElementConstruction(2);
       currentType = SemanticType::Void;
       break;
     case IntrinsicKind::PrefixStorageErase:
@@ -16114,10 +16178,10 @@ private:
       }
       return true;
     };
-    // The builtin extraction members carry their identity to MIR as
+    // The builtin expected members carry their identity to MIR as
     // intrinsics: the calls name no declaration, so without the record
     // the lowered Call would be target-less and unnameable by a backend.
-    const auto recordExtraction = [&](IntrinsicKind intrinsic) {
+    const auto recordIntrinsic = [&](IntrinsicKind intrinsic) {
       ResolvedCallInfo resolved{.returnType = currentType,
                                 .intrinsic = intrinsic,
                                 .dispatchOwner = expected};
@@ -16126,20 +16190,24 @@ private:
     };
 
     if (member.name().lexeme == "has_value") {
-      requireArity(0);
+      if (!requireArity(0)) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
       currentType = SemanticType::Bool;
+      recordIntrinsic(IntrinsicKind::ExpectedHasValue);
       return;
     }
     if (member.name().lexeme == "value") {
       requireArity(0);
       currentType = expected.arguments[0];
-      recordExtraction(IntrinsicKind::ExpectedValue);
+      recordIntrinsic(IntrinsicKind::ExpectedValue);
       return;
     }
     if (member.name().lexeme == "error") {
       requireArity(0);
       currentType = expected.arguments[1];
-      recordExtraction(IntrinsicKind::ExpectedError);
+      recordIntrinsic(IntrinsicKind::ExpectedError);
       return;
     }
     if (member.name().lexeme == "value_or") {
@@ -16154,6 +16222,7 @@ private:
                "value_or fallback must exactly match the value type.");
       }
       currentType = expected.arguments[0];
+      recordIntrinsic(IntrinsicKind::ExpectedValueOr);
     }
   }
 
@@ -17838,6 +17907,7 @@ private:
     nextSemanticLoanId = 1;
     nextPlaceSelectionId = 1;
     contextualInitializerType.reset();
+    contextualInitializerExpression = nullptr;
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -24483,7 +24553,9 @@ private:
           // resolved record only carries the spelling identity.
           case IntrinsicKind::ExpectedValue:
           case IntrinsicKind::ExpectedError:
+          case IntrinsicKind::ExpectedValueOr:
           case IntrinsicKind::ArraySize:
+          case IntrinsicKind::ExpectedHasValue:
             break;
           case IntrinsicKind::StorageBoundsCheck:
             // The identity-bound public logical-size check (P-STORAGE-01):
@@ -24571,25 +24643,44 @@ private:
     }
 
     if (const auto *binary = dynamic_cast<const Binary *>(&expr)) {
-      if (isIntegral(info.type)) {
+      const SemanticType leftType = semanticModel.typeOf(*binary->left());
+      const SemanticType rightType = semanticModel.typeOf(*binary->right());
+      // Raw-pointer difference is an unsafe pointer operation whose
+      // same-allocation and representability preconditions belong to the
+      // programmer's raw-memory proof. Its int64_t result does not turn the
+      // operation into GTI checked integer subtraction.
+      const bool rawPointerOperation =
+          leftType.kind == SemanticType::RawPointer ||
+          rightType.kind == SemanticType::RawPointer;
+      if (isIntegral(info.type) && !rawPointerOperation) {
         anchor(binary->oper());
         addIntegerOperationFailures(operation, binary->oper().kind, info.type,
-                                    semanticModel.typeOf(*binary->right()));
+                                    rightType);
       }
     } else if (const auto *unary = dynamic_cast<const Unary *>(&expr)) {
       if (isIntegral(info.type)) {
-        anchor(unary->oper());
         if (unary->oper().kind == TokenKind::MINUS) {
-          addFailureOutcome(operation, DefinedFailureCode::IntegerOverflow,
-                            DefinedFailureDetail::Negation);
-        } else {
+          anchor(unary->oper());
+          const std::optional<IntegerConstant> constant =
+              integerConstant(unary);
+          const int width = integerRank(info.type);
+          const bool exactSignedMinimum =
+              isSignedInteger(info.type) && width > 0 && constant &&
+              constant->negative &&
+              constant->magnitude ==
+                  (std::uint64_t{1} << (static_cast<unsigned>(width) - 1U));
+          if (!exactSignedMinimum) {
+            addFailureOutcome(operation, DefinedFailureCode::IntegerOverflow,
+                              DefinedFailureDetail::Negation);
+          }
+        } else if (unary->oper().kind == TokenKind::PLUS_PLUS ||
+                   unary->oper().kind == TokenKind::MINUS_MINUS) {
+          anchor(unary->oper());
           const SemanticType operandType =
               semanticModel.typeOf(*unary->right());
           addIntegerOperationFailures(operation, unary->oper().kind,
                                       promotedInteger(operandType));
-          if ((unary->oper().kind == TokenKind::PLUS_PLUS ||
-               unary->oper().kind == TokenKind::MINUS_MINUS) &&
-              numericConversionMayFail(promotedInteger(info.type), info.type)) {
+          if (numericConversionMayFail(promotedInteger(info.type), info.type)) {
             addFailureOutcome(operation,
                               DefinedFailureCode::NumericConversionOutOfRange,
                               DefinedFailureDetail::NumericCast);
@@ -24854,7 +24945,9 @@ private:
                                   const SemanticType &expectedType,
                                   bool allowExactNullConstruction = false) {
     const std::optional<SemanticType> enclosingType = contextualInitializerType;
+    const Expr *enclosingExpression = contextualInitializerExpression;
     contextualInitializerType = expectedType;
+    contextualInitializerExpression = expr.get();
     SemanticType result = analyzeExpectedCallableResult(expr, expectedType);
     if (allowExactNullConstruction && expr &&
         expectedType.kind == SemanticType::Class &&
@@ -24872,6 +24965,7 @@ private:
                                          classifyDefinedFailure(*expr, info));
     }
     contextualInitializerType = enclosingType;
+    contextualInitializerExpression = enclosingExpression;
     return result;
   }
 
@@ -28970,6 +29064,7 @@ private:
   const SemanticModel *instanceBaseModel = nullptr;
   const FunctionDecl *currentFunctionDeclaration = nullptr;
   std::optional<SemanticType> contextualInitializerType;
+  const Expr *contextualInitializerExpression = nullptr;
   std::optional<SemanticType> contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> contextualCallableResult;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;

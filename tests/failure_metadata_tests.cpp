@@ -251,7 +251,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v34 ") &&
+      snapshot.starts_with("mir-v37 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -312,6 +312,17 @@ Token produce(mut int value) {
 }
 
 Token owning_result(mut int value) { return produce(value); }
+
+expected<int, int> produce_expected(mut int value) {
+  int checked = value + 1;
+  return checked;
+}
+
+int direct_result(mut int value) {
+  expected<int, int> result = produce_expected(value);
+  expected<int, int> spare = produce_expected(value);
+  return value;
+}
 
 int main() { return caller(1); }
 )");
@@ -694,6 +705,101 @@ int main() { return caller(1); }
   expect(exactOwningResultEdge,
          "a cleanup-owning call result should initialize only on the invoke "
          "success edge and remain absent from failure cleanup");
+
+  const lang::MirBody *directResult = functionBody(frontend, "direct_result");
+  bool exactDirectResultEdge = false;
+  const lang::MirInstruction *directCall = nullptr;
+  const lang::MirFailureRecord *directRecord = nullptr;
+  if (directResult != nullptr) {
+    for (const lang::MirBlock &block : directResult->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.successResultDestination) {
+          directCall = &instruction;
+        }
+      }
+    }
+    if (directCall != nullptr) {
+      const auto found =
+          std::find_if(directResult->failureRecords.begin(),
+                       directResult->failureRecords.end(),
+                       [&](const lang::MirFailureRecord &record) {
+                         return record.producerInstruction == directCall->id;
+                       });
+      if (found != directResult->failureRecords.end()) {
+        directRecord = &*found;
+      }
+    }
+  }
+  if (directResult != nullptr && directCall != nullptr &&
+      directRecord != nullptr) {
+    const lang::MirFailureRecord &record = *directRecord;
+    const lang::MirBlock *producer =
+        directResult->findBlock(record.producerBlock);
+    const lang::MirBlock *success =
+        producer == nullptr
+            ? nullptr
+            : directResult->findBlock(producer->terminator.target);
+    const lang::MirInstruction *call = directCall;
+    const lang::MirInstruction *initialize =
+        success == nullptr ? nullptr : [&]() -> const lang::MirInstruction * {
+      const auto found = std::find_if(
+          success->instructions.begin(), success->instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Initialize;
+          });
+      return found == success->instructions.end() ? nullptr : &*found;
+    }();
+    exactDirectResultEdge =
+        call != nullptr && call->result && call->successResultDestination &&
+        !call->successResultDrop &&
+        producer->terminator.kind == lang::MirTerminatorKind::Invoke &&
+        producer->terminator.successLifecycle.empty() &&
+        initialize != nullptr &&
+        initialize->destination == call->successResultDestination &&
+        initialize->operands.size() == 1 &&
+        initialize->operands.front().kind == lang::MirOperandKind::Value &&
+        initialize->operands.front().value == *call->result;
+  }
+  expect(exactDirectResultEdge,
+         "a direct-initialization call result should publish only into its "
+         "exact binding on the invoke success edge");
+
+  const std::optional<lang::HirFunctionInstanceId> directResultId =
+      functionInstance(frontend, "direct_result");
+  lang::MirProgram mismatchedDirectDestination = frontend.mir;
+  lang::MirBody *mismatchedDirectResult =
+      directResultId
+          ? functionBody(mismatchedDirectDestination, *directResultId)
+          : nullptr;
+  lang::MirInstruction *firstDirectCall = nullptr;
+  std::optional<lang::MirPlaceId> alternateDirectDestination;
+  if (mismatchedDirectResult != nullptr) {
+    for (lang::MirBlock &block : mismatchedDirectResult->blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (!instruction.successResultDestination) {
+          continue;
+        }
+        if (firstDirectCall == nullptr) {
+          firstDirectCall = &instruction;
+        } else if (instruction.successResultDestination !=
+                   firstDirectCall->successResultDestination) {
+          alternateDirectDestination = instruction.successResultDestination;
+        }
+      }
+    }
+  }
+  if (firstDirectCall != nullptr && alternateDirectDestination) {
+    firstDirectCall->successResultDestination = alternateDirectDestination;
+  }
+  const lang::MirVerificationResult mismatchedDirectDestinationResult =
+      lang::verifyMirProgram(mismatchedDirectDestination);
+  expect(firstDirectCall != nullptr && alternateDirectDestination &&
+             !mismatchedDirectDestinationResult.valid() &&
+             hasVerificationError(mismatchedDirectDestinationResult,
+                                  "direct destination"),
+         "MIR verification should reject a direct call result redirected to "
+         "another valid binding");
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   expect(snapshot.find("failure-records 1") != std::string::npos &&
@@ -1336,8 +1442,13 @@ uint32_t checked_right_shift(uint32_t left, uint32_t count) {
   return left >> count;
 }
 int32_t checked_negate(int32_t value) { return -value; }
+int32_t unchecked_positive(int32_t value) { return +value; }
 int8_t contextual_negative_literal() { return -1; }
 int32_t signed_minimum_literal() { return -2147483648; }
+bool contextual_int8_minimum(int8_t value) { return value == -128; }
+bool contextual_int32_minimum(int32_t value) {
+  return value == -2147483648;
+}
 int8_t checked_convert(int32_t value) { return int8_t(value); }
 int32_t safe_convert(int8_t value) { return int32_t(value); }
 int main() { return checked_add(1, 2); }
@@ -1395,6 +1506,7 @@ int main() { return checked_add(1, 2); }
        lang::MirOperation::Negate,
        {{.code = lang::DefinedFailureCode::IntegerOverflow,
          .detail = lang::DefinedFailureDetail::Negation}}},
+      {"unchecked_positive", lang::MirOperation::Positive, {}},
       {"contextual_negative_literal",
        lang::MirOperation::Negate,
        {{.code = lang::DefinedFailureCode::IntegerOverflow,
@@ -1403,6 +1515,8 @@ int main() { return checked_add(1, 2); }
        lang::MirOperation::Negate,
        {{.code = lang::DefinedFailureCode::IntegerOverflow,
          .detail = lang::DefinedFailureDetail::Negation}}},
+      {"contextual_int8_minimum", lang::MirOperation::Negate, {}},
+      {"contextual_int32_minimum", lang::MirOperation::Negate, {}},
       {"checked_convert",
        lang::MirOperation::Convert,
        {{.code = lang::DefinedFailureCode::NumericConversionOutOfRange,

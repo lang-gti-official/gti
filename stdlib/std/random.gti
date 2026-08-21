@@ -1,11 +1,17 @@
 #include <std/numeric>
 
-namespace gti_interal {
-  namespace runtime {
-    extern "C" {
-      int32_t random_bytes(uint8_t* out, uint64_t count);
-    }
-  }
+namespace gti_internal {
+namespace runtime {
+extern "C" {
+int32_t gti_rt_random_bytes(uint8_t* out, uint64_t count);
+}
+
+// The prelude pairs each extern "C" line with a safe GTI wrapper, but those
+// wrappers are safe because text_view carries its own length. A wrapper over a
+// raw pointer and a count could not check anything, so it would only launder
+// the unsafety behind a safe-looking name. Callers use the C declaration
+// directly inside the unsafe block that establishes the buffer's validity.
+}
 }
 
 namespace std {
@@ -18,7 +24,7 @@ namespace std {
     expected<uint32_t, int> operator()() mut {
       if (this.position >= 32) {
         unsafe {
-          int status = gti_internal::runtime::random_bytes(&this.buffer[0], uint64_t(32));
+          int status = gti_internal::runtime::gti_rt_random_bytes(&this.buffer[0], uint64_t(32));
           if (status != 0) {
             return unexpected(status);
           }

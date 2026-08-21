@@ -120,22 +120,12 @@ programInitializationBodyCallCount(const MirProgram &program) {
          kind == CppMirThunkKind::ProgramInitialization;
 }
 
-[[nodiscard]] bool familySupportsBody(CppMirExecutionFamily family,
-                                      MirBodyKind kind) {
+[[nodiscard]] bool familySupportsBody(CppMirExecutionFamily family) {
   switch (family) {
   case CppMirExecutionFamily::None:
   case CppMirExecutionFamily::Unsupported:
+  case CppMirExecutionFamily::GeneralV1:
     return true;
-  case CppMirExecutionFamily::ScalarLeafV1:
-  case CppMirExecutionFamily::ScalarCfgV1:
-  case CppMirExecutionFamily::ScalarDirectCallV1:
-    return kind == MirBodyKind::Function;
-  case CppMirExecutionFamily::ClassDefaultCleanupV1:
-    return kind == MirBodyKind::Function || kind == MirBodyKind::Destructor;
-  case CppMirExecutionFamily::OwnedLifecycleCallV1:
-  case CppMirExecutionFamily::ScalarFailureCallgraphV1:
-    return kind == MirBodyKind::Function || kind == MirBodyKind::Constructor ||
-           kind == MirBodyKind::Destructor;
   case CppMirExecutionFamily::Count:
     return false;
   }
@@ -421,8 +411,7 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
       const bool validFamilyValue =
           ordinal(current->family) < ordinal(CppMirExecutionFamily::Count);
       const bool familyValid =
-          validFamilyValue &&
-          familySupportsBody(current->family, address.kind) &&
+          validFamilyValue && familySupportsBody(current->family) &&
           (executable ? current->family != CppMirExecutionFamily::None
                       : current->family == CppMirExecutionFamily::None);
       if (!familyValid) {
@@ -430,10 +419,10 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
                  "execution-family claim is invalid for the body role or "
                  "kind",
                  address);
-      } else if (executable) {
-        // These labels are a transitional inventory only. Until the sealed
-        // snapshot builder and generic emitter derive exhaustive coverage, no
-        // hand-authored family claim can authorize Complete.
+      } else if (executable &&
+                 current->family != CppMirExecutionFamily::GeneralV1) {
+        // Only the sealed builder can derive GeneralV1 after complete text
+        // preflight. Historical or unsupported labels remain inventory-only.
         addUnsupported(plan, CppMirUnsupportedSurfaceKind::Body, address);
       }
 

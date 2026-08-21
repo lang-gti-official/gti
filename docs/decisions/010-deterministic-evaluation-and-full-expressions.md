@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+Implementation note (2026-08-22): source executable bodies now emit only from
+verified MIR. References below to the transitional C++ body emitter describe
+the problem this decision resolved, not a current fallback.
+
 ## Context
 
 GTI promises deterministic cleanup and backend-independent behavior, but the

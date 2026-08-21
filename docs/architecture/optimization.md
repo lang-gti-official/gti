@@ -1,11 +1,11 @@
 # Optimization
 
-Status: Current compatibility pipeline, bounded MIR transform, and bounded
-MIR-controlled production body families.
+Status: Current HIR constant-analysis pass and bounded authoritative MIR
+transform.
 
 GTI optimization currently has two entry paths in `OptimizationPipeline`.
 
-## HIR Compatibility Pass
+## HIR Constant Analysis
 
 `run(const HirProgram&, OptimizationLevel, TargetInfo)` performs constant
 folding at `-O1` and above and stores proven replacements by `HirValueId`.
@@ -24,38 +24,42 @@ fold only to the exact retained `BinaryFloat` bit pattern in the selected
 width. Floating exceptions produce their specified IEEE default result rather
 than an integer-style failure.
 
-The compatibility path in `CppEmitter` still consumes this replacement table.
-Because one source expression can produce several concrete HIR values, a
-source replacement is available only when every instance has the same value.
+The C++ representation emitter still consumes this replacement table for
+non-body source surfaces such as declaration initializers. It does not control
+executable body text. Because one source expression can produce several
+concrete HIR values, a source replacement is available only when every
+instance has the same value.
 
 ## Owned MIR Path
 
 `run(OptimizationRequest)` takes ownership of a `MirProgram`, verifies it, and
 returns an `OptimizedProgram` containing both the unchanged canonical
 `sourceMir` snapshot and the possibly transformed `mir`. At `-O1` and above it
-now runs one bounded
-transform: a primitive scalar grouping (`Compute/Identity`) whose value resolves
-through grouping identities to an exact MIR literal becomes an in-place
-`Compute/Literal`. Every candidate is compared by `HirValueId` with the
-compatibility result, and disagreements are reported rather than selected for
-rewriting. `-O0` schedules no transform and remains byte-identical. The
-optimized instruction controls production C++ for the selected fixed-width-
-integer `scalar-leaf-v1`, call-free scalar `scalar-cfg-v1`, and acyclic
-failure-free static-call `scalar-direct-call-v1` body families. The additional
-`class-default-cleanup-v1` production family consumes the verified optimized
-MIR snapshot but is not a client of this literal-identity transform; remaining
-bodies retain compatibility emission. Each `Compute/Literal`
-instruction carries MIR-owned provenance: source instructions are marked
-directly, while an identity-fold replacement
-retains its original input value. Verification follows that dominating,
-same-typed identity chain to the exact literal, so the production backend does
-not need the HIR replacement table to authorize the transformed instruction.
+runs one bounded fixpoint pass with three replayable edits:
+
+- an exact scalar `Compute/Identity` chain ending in a literal becomes
+  `Compute/Literal` with `IdentityFold` provenance;
+- an admitted comparison, logical-not, binary-float conversion, or binary-
+  float arithmetic computation over literal operands becomes
+  `Compute/Literal` with `ComputeFold` provenance naming the original
+  operation and operands; and
+- a function-body `Branch` over a proven literal boolean becomes the selected
+  `Goto` with `BranchFold` provenance. This CFG edit is confined to bodies with
+  no loans, drop obligations, cleanup boundaries, failure records, or frozen
+  program-initialization steps.
+
+Every value candidate is compared by `HirValueId` with the HIR constant-
+analysis result; disagreements are reported rather than rewritten. `-O0`
+schedules no transform and remains byte-identical. The optimized MIR controls
+production C++ for every executable source body.
+
+MIR verification re-evaluates compute folds from dominating literal
+definitions and requires a folded branch condition to dominate its terminator.
 Before production emission, `verifyMirOptimizationCoherence` independently
-replays every admitted fold by copying its exact source instruction and changing
-only operation, operands, literal, and rewrite provenance. It rebuilds only the
-derived value-use index and then compares the complete MIR structures. No
-operation substitution, operand reorder, CFG change, instance/header drift, or
-other metadata change is currently authorized. The comparison includes the
+replays every edit from canonical source MIR, rebuilds value uses and
+reachability as required, and exact-compares the complete MIR structures.
+Source MIR carrying optimizer provenance is rejected. No unlisted operation,
+operand, CFG, instance/header, or metadata change is authorized. The comparison includes the
 complete `MirProgramInitializationPlan`, including empty source-unit rows and
 their order, plus every `MirBlock::programInitializationStep` tag. A pass may
 rewrite an admitted instruction but cannot reorder, retarget, or stale the
@@ -85,18 +89,18 @@ deterministic body inventory and const/mutable lookup used by the pass, editor,
 and source/optimized coherence check. Applying a batch validates every address
 before any mutation, sorts deterministically, rewrites a copied program,
 rebuilds dirty value uses, verifies the complete result, and commits atomically.
-Instruction, result, and HIR provenance IDs remain stable. The current
-replacement changes no blocks or edges, so reachability and dominance are
-explicitly preserved; instruction facts and the value-use index are the only
-invalidated facts. Integer replacements must also fit the exact target domain
-at the editor boundary; the verifier's contextual allowance for signed-minimum
-lexical magnitudes is not a general rewrite permission.
+Instruction, result, and HIR provenance IDs remain stable. Literal edits
+invalidate instruction facts and value uses; a branch fold additionally
+invalidates control flow, reachability, and dominance and recomputes the
+derived indexes before verification. Integer replacements must fit the exact
+target domain at the editor boundary; the verifier's contextual allowance for
+signed-minimum lexical magnitudes is not a general rewrite permission.
 
-The fold intentionally excludes strings, arithmetic, conversions, and dynamic
-values. A duplicated string literal may eventually carry construction/drop
-effects, while arithmetic and conversions need a typed MIR constant
-representation and their full trap contracts. Those families remain later
-shadow slices rather than assumptions hidden in this first editor client.
+The fold intentionally excludes strings, trapping integer arithmetic and
+conversions, and dynamic values. A duplicated string literal may carry
+construction/drop effects, while checked operations require proof that their
+failure behavior is unchanged. Those families remain later client-driven
+slices rather than assumptions hidden in this pass.
 
 `computeMirDominance` is the first bounded MIR analysis. It copies one body CFG
 into a private pointer-stable snapshot, runs LLVM's generic dominator
@@ -133,11 +137,9 @@ happens to optimize.
 
 General pass management, cached analysis storage, incremental dominator
 updates, loop analysis, and broader transform coverage remain plans rather than
-prerequisites for production MIR emission. The `scalar-leaf-v1`,
-`scalar-cfg-v1`, `scalar-direct-call-v1`, and `class-default-cleanup-v1`
-MIR-controlled body cutovers are complete; the broader failure-free
-construction/normal-cleanup closure remains active in
-[`docs/plans/implementation-sequence.md`](../plans/implementation-sequence.md).
+prerequisites for production MIR emission. The executable-body cutover is
+complete; future optimization work must add a verified MIR rewrite and extend
+source-to-optimized coherence before it can affect generated code.
 See [`docs/plans/optimization.md`](../plans/optimization.md) and
 [`docs/plans/performance-tooling.md`](../plans/performance-tooling.md) for the
 supporting transform and observability designs.

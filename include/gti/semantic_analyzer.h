@@ -716,7 +716,9 @@ enum class IntrinsicKind {
   StringViewEmpty,
   ExpectedValue,
   ExpectedError,
+  ExpectedValueOr,
   ArraySize,
+  ExpectedHasValue,
   Count,
 };
 
@@ -1929,6 +1931,11 @@ private:
 
   void record(const Call &call, ResolvedCallInfo info);
 
+  // Concrete instance analysis may replace a declaration-time call with a
+  // different expression kind. Keep that replacement from falling through
+  // to the superseded call record in the base model.
+  void suppressInheritedCall(const Call &call);
+
   void record(const PackFold &fold, ResolvedPackFoldInfo info);
 
   void recordLambdaCall(const Call &call, ResolvedLambdaCallInfo info);
@@ -2042,6 +2049,7 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_set<const Call *> suppressedInheritedCalls;
   std::unordered_map<const PackFold *, ResolvedPackFoldInfo> packFolds;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
   std::unordered_map<const Call *, DeferredCallableCallInfo>

@@ -161,6 +161,12 @@ struct HirPackFoldElement {
   std::vector<SemanticType> parameterTypes;
 };
 
+struct HirPackExpansionElement {
+  SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits;
+  HirCallInputKind kind = HirCallInputKind::Value;
+};
+
 struct HirValue {
   HirValueId id = 0;
   HirValueKind kind = HirValueKind::Literal;
@@ -191,6 +197,7 @@ struct HirValue {
   FunctionId packFoldFunction = 0;
   std::size_t packFoldArgument = 0;
   std::vector<HirPackFoldElement> packFoldElements;
+  std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirFunctionInstanceId> contextualBoolTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
@@ -352,6 +359,12 @@ struct HirClassInstance {
   bool cAbiRecord = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
   std::optional<UnionLayout> unionLayout;
+  SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus moveAssignment = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus destructorStatus = SpecialMemberStatus::Generated;
   std::vector<HirClassField> fields;
   HirBody fieldInitializers;
   std::vector<HirClassField> staticFields;

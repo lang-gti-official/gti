@@ -292,6 +292,10 @@ target_include_directories(
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
+if(WIN32)
+  # gti_rt_random_bytes calls BCryptGenRandom.
+  target_link_libraries("gti_runtime" PRIVATE "bcrypt")
+endif()
 
 add_library(
   "gti_driver" STATIC
@@ -502,11 +506,6 @@ if(BUILD_TESTING)
                         PRIVATE gti_cpp_backend)
   add_test(NAME cpp_backend_library_boundary
            COMMAND gti_cpp_backend_library_smoke)
-
-  add_executable("gti_mir_differential_helper"
-                 "tests/mir_differential_helper.cpp")
-  target_link_libraries("gti_mir_differential_helper"
-                        PRIVATE gti_cpp_backend gti_compiler)
 
   add_executable("gti_driver_library_smoke" "tests/driver_library_smoke.cpp")
   target_link_libraries("gti_driver_library_smoke" PRIVATE gti_driver)
@@ -724,6 +723,18 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_census_baseline.json"
     )
     add_test(
+      NAME mir_cutover_corpus_oracle
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_cutover_corpus_oracle_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_census_baseline.json"
+              "$<TARGET_FILE:gti_runtime>"
+              "--jobs=4"
+    )
+    set_tests_properties(mir_cutover_corpus_oracle
+                         PROPERTIES TIMEOUT 900 PROCESSORS 4)
+    add_test(
       NAME tree_sitter_queries
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/tree_sitter_query_test.py"
@@ -758,29 +769,6 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/56-sum-types.gti"
     )
-    file(GLOB GTI_DIFFERENTIAL_SOURCES
-         "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.gti")
-    # The oracle carries the optimization-level and standard coverage the
-    # retired per-family gates provided: MIR bodies must agree with the
-    # compatibility path under the optimizer, not only at -O0.
-    foreach(GTI_DIFFERENTIAL_OPT "O0" "O1" "O2" "O3")
-      foreach(GTI_DIFFERENTIAL_STD "c++20" "c++23")
-        string(REPLACE "c++" "cxx" GTI_DIFFERENTIAL_STD_NAME
-               "${GTI_DIFFERENTIAL_STD}")
-        add_test(
-          NAME "mir_differential_oracle_${GTI_DIFFERENTIAL_OPT}_${GTI_DIFFERENTIAL_STD_NAME}"
-          COMMAND "${Python3_EXECUTABLE}"
-                  "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_differential_test.py"
-                  "$<TARGET_FILE:gti_mir_differential_helper>"
-                  "${CMAKE_CXX_COMPILER}"
-                  "${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
-                  "$<TARGET_FILE:gti_runtime>"
-                  "--std=${GTI_DIFFERENTIAL_STD}"
-                  "--optimize=${GTI_DIFFERENTIAL_OPT}"
-                  ${GTI_DIFFERENTIAL_SOURCES}
-        )
-      endforeach()
-    endforeach()
     add_test(
       NAME mir_backend_first_family_runtime
       COMMAND "${Python3_EXECUTABLE}"
@@ -830,6 +818,13 @@ if(BUILD_TESTING)
     set_tests_properties(mir_backend_owned_lifecycle_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME mir_class_value_lifecycle_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_class_value_lifecycle_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(mir_class_value_lifecycle_runtime PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mir_backend_scalar_failure_callgraph_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_scalar_failure_callgraph_runtime_test.py"
@@ -852,6 +847,7 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_unsigned_addition_overflow.gti"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_unsigned_subtraction_overflow.gti"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_unsigned_multiplication_overflow.gti"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_array_user_near_miss.gti"
     )
     set_tests_properties(mir_backend_scalar_failure_callgraph_runtime
                          PROPERTIES TIMEOUT 300)
@@ -906,6 +902,14 @@ if(BUILD_TESTING)
                  ENVIRONMENT
                    "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
     )
+    add_test(
+      NAME random_engine_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/random_engine_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/random_engine.gti"
+    )
+
     if(GTI_RELEASE_BUILD)
       # Release binaries deliberately omit source-tree fallback paths so the
       # installed-toolchain checks exercise relocatable discovery. Build-tree
@@ -920,7 +924,9 @@ if(BUILD_TESTING)
         mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
         mir_backend_class_default_cleanup_runtime
         mir_backend_owned_lifecycle_runtime
+        mir_class_value_lifecycle_runtime
         mir_backend_scalar_failure_callgraph_runtime
+        random_engine_runtime
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )

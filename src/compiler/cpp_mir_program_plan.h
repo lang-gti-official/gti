@@ -29,20 +29,14 @@ enum class CppMirBodyRole {
   Count,
 };
 
-// Temporary inventory labels for the verified-MIR production families already
-// hosted by the transitional C++ representation. Every executable label,
-// including the named families below, remains UnsupportedSurface here: only
-// the sealed exhaustive snapshot builder plus a future generic body emitter
-// may derive Complete. `None` is reserved for bodies that do not execute.
+// `GeneralV1` is the sole production executable family and is derived only by
+// the sealed snapshot builder after complete generic-emitter preflight.
+// `Unsupported` is a fail-closed test/incoherence sentinel; `None` is reserved
+// for bodies that do not execute.
 enum class CppMirExecutionFamily {
   None,
   Unsupported,
-  ScalarLeafV1,
-  ScalarCfgV1,
-  ScalarDirectCallV1,
-  ClassDefaultCleanupV1,
-  OwnedLifecycleCallV1,
-  ScalarFailureCallgraphV1,
+  GeneralV1,
   Count,
 };
 

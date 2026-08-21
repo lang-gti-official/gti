@@ -1178,22 +1178,38 @@ int main() {
 
   bool loopConditionEndsBorrow = false;
   for (const lang::MirBlock &block : loopBorrow->blocks) {
-    if (block.terminator.kind != lang::MirTerminatorKind::Branch) {
-      continue;
-    }
     const auto producer = std::find_if(
         block.instructions.begin(), block.instructions.end(),
         [](const lang::MirInstruction &instruction) {
           return instruction.kind == lang::MirInstructionKind::Call &&
                  instruction.loan.has_value();
         });
-    const auto end = std::find_if(
-        block.instructions.begin(), block.instructions.end(),
-        [](const lang::MirInstruction &instruction) {
-          return instruction.kind == lang::MirInstructionKind::EndBorrow;
-        });
-    loopConditionEndsBorrow = producer != block.instructions.end() &&
-                              end != block.instructions.end() && producer < end;
+    if (producer == block.instructions.end() ||
+        block.terminator.kind != lang::MirTerminatorKind::Invoke ||
+        block.terminator.invokeInstruction != producer->id) {
+      continue;
+    }
+    const lang::MirBlock *success =
+        loopBorrow->findBlock(block.terminator.target);
+    const lang::MirBlock *failure =
+        loopBorrow->findBlock(block.terminator.elseTarget);
+    const auto endsProducedLoan = [&](const lang::MirBlock *candidate) {
+      return candidate != nullptr &&
+             std::any_of(candidate->instructions.begin(),
+                         candidate->instructions.end(),
+                         [&](const lang::MirInstruction &instruction) {
+                           return instruction.kind ==
+                                      lang::MirInstructionKind::EndBorrow &&
+                                  instruction.loan == producer->loan;
+                         });
+    };
+    loopConditionEndsBorrow =
+        success != nullptr &&
+        success->terminator.kind == lang::MirTerminatorKind::Branch &&
+        endsProducedLoan(success) && endsProducedLoan(failure);
+    if (loopConditionEndsBorrow) {
+      break;
+    }
   }
   expect(loopConditionEndsBorrow,
          "a non-retained receiver borrow should end after the loop condition "
@@ -3069,16 +3085,6 @@ void testMirEffectClassification() {
   expect(lang::effects(lang::MirInstructionKind::Call).maySynchronize,
          "instruction-kind summaries should expose possible synchronization");
 
-  const lang::MirEffectTraits packFold = lang::effects(
-      lang::MirInstruction{.kind = lang::MirInstructionKind::Compute,
-                           .operation = lang::MirOperation::PackFold});
-  expect(packFold.readsUnknownMemory && packFold.writesUnknownMemory &&
-             packFold.invokesUserCode && packFold.mayTrap &&
-             packFold.maySynchronize && !packFold.speculatable &&
-             !packFold.removableWhenUnused && !packFold.reorderable,
-         "a pack fold should retain conservative effects for its exact user "
-         "function specializations");
-
   const lang::MirEffectTraits callInput =
       lang::effects(lang::MirInstructionKind::CallInput);
   expect(!callInput.speculatable && !callInput.removableWhenUnused &&
@@ -3194,7 +3200,7 @@ void testDefinedFailureIdentityAndPropagation() {
       "defined-failure-metadata.gti", R"(
 class Box {
 public:
-  Box(int value) {}
+  Box(int value) { int checked = value + 1; }
   int operator()() { return 1; }
 };
 
@@ -3402,7 +3408,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v34\n") &&
+  expect(dump.starts_with("mir-body-v37\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -3521,6 +3527,16 @@ int32_t stable_leaf(int32_t value) { return value; }
 int32_t stable_middle(int32_t value) { return stable_leaf(value); }
 int32_t stable_top(int32_t value) { return stable_middle(value); }
 
+static int32_t stable_global_value = 7;
+int32_t stable_global_read() { return stable_global_value; }
+
+class StableStaticState {
+public:
+  static int32_t value = 9;
+  static int32_t stable_static_read() { return value; }
+  static int32_t checked_static_add(int32_t offset) { return value + offset; }
+};
+
 int32_t cycle_left(int32_t value) { return cycle_right(value); }
 int32_t cycle_right(int32_t value) { return cycle_left(value); }
 
@@ -3546,6 +3562,10 @@ int main() { return stable_top(0); }
   const lang::MirFunctionInstance *leaf = findMir("stable_leaf");
   const lang::MirFunctionInstance *middle = findMir("stable_middle");
   const lang::MirFunctionInstance *top = findMir("stable_top");
+  const lang::MirFunctionInstance *globalRead = findMir("stable_global_read");
+  const lang::MirFunctionInstance *staticRead = findMir("stable_static_read");
+  const lang::MirFunctionInstance *checkedStaticAdd =
+      findMir("checked_static_add");
   const lang::MirFunctionInstance *cycleLeft = findMir("cycle_left");
   const lang::MirFunctionInstance *cycleRight = findMir("cycle_right");
   expect(declaredVoid != nullptr && declaredScalar != nullptr &&
@@ -3568,6 +3588,15 @@ int main() { return stable_top(0); }
              !top->mayRaiseDefinedFailure,
          "a leaf-to-middle-to-top scalar/static call chain should be proved "
          "failure-free transitively");
+  expect(globalRead != nullptr && staticRead != nullptr &&
+             !globalRead->mayRaiseDefinedFailure &&
+             !staticRead->mayRaiseDefinedFailure,
+         "passive namespace-global and static-field reads should be proved "
+         "failure-free");
+  expect(checkedStaticAdd != nullptr &&
+             checkedStaticAdd->mayRaiseDefinedFailure,
+         "checked arithmetic in a static method must retain its defined-"
+         "failure effect");
   expect(cycleLeft != nullptr && cycleRight != nullptr &&
              cycleLeft->mayRaiseDefinedFailure &&
              cycleRight->mayRaiseDefinedFailure,
@@ -4295,34 +4324,86 @@ int switch_reactivation(mut int& parent) {
       callChild = &loan;
     }
   }
-  std::size_t instructionOrdinal = 0;
-  std::size_t callOrdinal = 0;
-  std::size_t transientEndOrdinal = 0;
-  std::size_t childBorrowOrdinal = 0;
-  for (const lang::MirBlock &block : retainedCallChild->blocks) {
-    for (const lang::MirInstruction &instruction : block.instructions) {
-      ++instructionOrdinal;
-      if (callTransient != nullptr && instruction.loan == callTransient->id) {
-        if (instruction.kind == lang::MirInstructionKind::Call) {
-          callOrdinal = instructionOrdinal;
-        } else if (instruction.kind == lang::MirInstructionKind::EndBorrow) {
-          transientEndOrdinal = instructionOrdinal;
-        }
+  const auto findLoanInstruction = [](const lang::MirBody &body,
+                                      lang::MirInstructionKind kind,
+                                      lang::MirLoanId loan)
+      -> std::pair<const lang::MirBlock *, const lang::MirInstruction *> {
+    for (const lang::MirBlock &block : body.blocks) {
+      const auto instruction = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &candidate) {
+            return candidate.kind == kind && candidate.loan == loan;
+          });
+      if (instruction != block.instructions.end()) {
+        return {&block, &*instruction};
       }
-      if (callChild != nullptr && instruction.loan == callChild->id &&
-          instruction.kind == lang::MirInstructionKind::Borrow) {
-        childBorrowOrdinal = instructionOrdinal;
+    }
+    return {nullptr, nullptr};
+  };
+  const auto endsLoan = [](const lang::MirBlock *block, lang::MirLoanId loan) {
+    return block != nullptr &&
+           std::any_of(block->instructions.begin(), block->instructions.end(),
+                       [&](const lang::MirInstruction &instruction) {
+                         return instruction.kind ==
+                                    lang::MirInstructionKind::EndBorrow &&
+                                instruction.loan == loan;
+                       });
+  };
+  const auto invokeSuccess = [](const lang::MirBody &body,
+                                const lang::MirBlock *block,
+                                const lang::MirInstruction *instruction) {
+    return block != nullptr && instruction != nullptr &&
+                   block->terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block->terminator.invokeInstruction == instruction->id
+               ? body.findBlock(block->terminator.target)
+               : nullptr;
+  };
+  const auto invokeFailure = [](const lang::MirBody &body,
+                                const lang::MirBlock *block,
+                                const lang::MirInstruction *instruction) {
+    return block != nullptr && instruction != nullptr &&
+                   block->terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block->terminator.invokeInstruction == instruction->id
+               ? body.findBlock(block->terminator.elseTarget)
+               : nullptr;
+  };
+
+  const auto [callBlock, callInstruction] =
+      callTransient == nullptr
+          ? std::pair<const lang::MirBlock *, const lang::MirInstruction *>{}
+          : findLoanInstruction(*retainedCallChild,
+                                lang::MirInstructionKind::Call,
+                                callTransient->id);
+  const lang::MirBlock *callSuccess =
+      invokeSuccess(*retainedCallChild, callBlock, callInstruction);
+  const lang::MirBlock *callFailure =
+      invokeFailure(*retainedCallChild, callBlock, callInstruction);
+  std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>
+      retainedChildEvents;
+  if (callSuccess != nullptr && callTransient != nullptr &&
+      callChild != nullptr) {
+    for (const lang::MirInstruction &instruction : callSuccess->instructions) {
+      if (instruction.loan == callTransient->id &&
+          instruction.kind == lang::MirInstructionKind::EndBorrow) {
+        retainedChildEvents.emplace_back(instruction.kind, *instruction.loan);
+      } else if (instruction.loan == callChild->id &&
+                 instruction.kind == lang::MirInstructionKind::Borrow) {
+        retainedChildEvents.emplace_back(instruction.kind, *instruction.loan);
       }
     }
   }
-  expect(callEntry != nullptr && callTransient != nullptr &&
-             callChild != nullptr && callChild->parent == callEntry->id &&
-             callTransient->carriers.empty() && !callTransient->escapes &&
-             callOrdinal != 0 && callOrdinal < transientEndOrdinal &&
-             transientEndOrdinal < childBorrowOrdinal &&
-             lang::verifyMirBody(*retainedCallChild).valid(),
-         "retaining a receiver-tied mutable call result should end its "
-         "unretained transient before producing the semantic child reborrow");
+  expect(
+      callEntry != nullptr && callTransient != nullptr &&
+          callChild != nullptr && callChild->parent == callEntry->id &&
+          callTransient->carriers.empty() && !callTransient->escapes &&
+          retainedChildEvents ==
+              std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>{
+                  {lang::MirInstructionKind::EndBorrow, callTransient->id},
+                  {lang::MirInstructionKind::Borrow, callChild->id}} &&
+          endsLoan(callFailure, callTransient->id) &&
+          lang::verifyMirBody(*retainedCallChild).valid(),
+      "retaining a receiver-tied mutable call result should end its "
+      "unretained transient before producing the semantic child reborrow");
 
   const lang::MirLoan *chainEntry = nullptr;
   const lang::MirLoan *chainChild = nullptr;
@@ -4340,35 +4421,62 @@ int switch_reactivation(mut int& parent) {
             [](const lang::MirLoan *left, const lang::MirLoan *right) {
               return left->id < right->id;
             });
+  const auto [firstChainCallBlock, firstChainCall] =
+      chainTransients.empty()
+          ? std::pair<const lang::MirBlock *, const lang::MirInstruction *>{}
+          : findLoanInstruction(*retainedCallChain,
+                                lang::MirInstructionKind::Call,
+                                chainTransients[0]->id);
+  const auto [secondChainCallBlock, secondChainCall] =
+      chainTransients.size() < 2
+          ? std::pair<const lang::MirBlock *, const lang::MirInstruction *>{}
+          : findLoanInstruction(*retainedCallChain,
+                                lang::MirInstructionKind::Call,
+                                chainTransients[1]->id);
+  const lang::MirBlock *firstChainSuccess =
+      invokeSuccess(*retainedCallChain, firstChainCallBlock, firstChainCall);
+  const lang::MirBlock *firstChainFailure =
+      invokeFailure(*retainedCallChain, firstChainCallBlock, firstChainCall);
+  const lang::MirBlock *secondChainSuccess =
+      invokeSuccess(*retainedCallChain, secondChainCallBlock, secondChainCall);
+  const lang::MirBlock *secondChainFailure =
+      invokeFailure(*retainedCallChain, secondChainCallBlock, secondChainCall);
   std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>
       chainLoanEvents;
-  for (const lang::MirBlock &block : retainedCallChain->blocks) {
-    for (const lang::MirInstruction &instruction : block.instructions) {
-      if (instruction.loan &&
-          (instruction.kind == lang::MirInstructionKind::Call ||
-           instruction.kind == lang::MirInstructionKind::EndBorrow ||
-           instruction.kind == lang::MirInstructionKind::Borrow)) {
+  if (secondChainSuccess != nullptr && chainEntry != nullptr &&
+      chainChild != nullptr && chainTransients.size() == 2) {
+    for (const lang::MirInstruction &instruction :
+         secondChainSuccess->instructions) {
+      if (!instruction.loan) {
+        continue;
+      }
+      if ((instruction.kind == lang::MirInstructionKind::EndBorrow &&
+           (*instruction.loan == chainTransients[0]->id ||
+            *instruction.loan == chainTransients[1]->id)) ||
+          (instruction.kind == lang::MirInstructionKind::Borrow &&
+           *instruction.loan == chainChild->id)) {
         chainLoanEvents.emplace_back(instruction.kind, *instruction.loan);
       }
     }
   }
   const bool orderedChainRetirement =
       chainEntry != nullptr && chainChild != nullptr &&
-      chainTransients.size() == 2 && chainLoanEvents.size() >= 5 &&
-      chainLoanEvents[0] ==
-          std::pair{lang::MirInstructionKind::Call, chainTransients[0]->id} &&
-      chainLoanEvents[1] ==
-          std::pair{lang::MirInstructionKind::Call, chainTransients[1]->id} &&
-      chainLoanEvents[2] == std::pair{lang::MirInstructionKind::EndBorrow,
+      chainTransients.size() == 2 &&
+      firstChainSuccess == secondChainCallBlock &&
+      chainLoanEvents.size() == 3 &&
+      chainLoanEvents[0] == std::pair{lang::MirInstructionKind::EndBorrow,
                                       chainTransients[1]->id} &&
-      chainLoanEvents[3] == std::pair{lang::MirInstructionKind::EndBorrow,
+      chainLoanEvents[1] == std::pair{lang::MirInstructionKind::EndBorrow,
                                       chainTransients[0]->id} &&
-      chainLoanEvents[4] ==
+      chainLoanEvents[2] ==
           std::pair{lang::MirInstructionKind::Borrow, chainChild->id};
   expect(orderedChainRetirement &&
              chainTransients[0]->parent == chainEntry->id &&
              chainTransients[1]->parent == chainTransients[0]->id &&
              chainChild->parent == chainEntry->id &&
+             endsLoan(firstChainFailure, chainTransients[0]->id) &&
+             endsLoan(secondChainFailure, chainTransients[1]->id) &&
+             endsLoan(secondChainFailure, chainTransients[0]->id) &&
              lang::verifyMirBody(*retainedCallChain).valid() &&
              lang::verifyMirBody(*nonretainedCallMember).valid(),
          "receiver-tied call-result chains should retain exact transient "
@@ -6202,6 +6310,10 @@ int main() {
       std::cerr << "Unexpected pack-fold MIR diagnostic: " << diagnostic.message
                 << '\n';
     }
+    for (const lang::MirVerificationError &error :
+         lang::verifyMirProgram(frontend.mir).errors) {
+      std::cerr << "Pack-fold MIR verification: " << error.message << '\n';
+    }
   }
   expect(frontend.canGenerateCode() &&
              lang::verifyMirProgram(frontend.mir).valid(),
@@ -6210,222 +6322,150 @@ int main() {
     return;
   }
 
-  const auto mutableFold = [](lang::MirProgram &program,
-                              bool empty) -> lang::MirInstruction * {
+  const auto mutableBodyForPack =
+      [](lang::MirProgram &program,
+         std::size_t elementCount) -> lang::MirBody * {
     auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
         program.functionInstances());
     for (lang::MirFunctionInstance &function : functions) {
-      for (lang::MirBlock &block : function.body.blocks) {
-        const auto found = std::find_if(
-            block.instructions.begin(), block.instructions.end(),
-            [&](const lang::MirInstruction &instruction) {
-              return instruction.operation == lang::MirOperation::PackFold &&
-                     instruction.packFoldElements.empty() == empty;
-            });
-        if (found != block.instructions.end()) {
-          return &*found;
-        }
+      const auto pack = std::find_if(
+          function.body.places.begin(), function.body.places.end(),
+          [&](const lang::MirPlace &place) {
+            return place.root == lang::MirPlaceRootKind::Binding &&
+                   place.projections.empty() &&
+                   place.type.kind == lang::SemanticType::TypePack &&
+                   place.type.concretePack &&
+                   place.type.arguments.size() == elementCount;
+          });
+      if (pack != function.body.places.end()) {
+        return &function.body;
       }
     }
     return nullptr;
   };
-  const auto firstOrdinaryInstruction =
-      [](lang::MirProgram &program) -> lang::MirInstruction * {
-    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-        program.functionInstances());
-    for (lang::MirFunctionInstance &function : functions) {
-      for (lang::MirBlock &block : function.body.blocks) {
-        const auto found = std::find_if(
-            block.instructions.begin(), block.instructions.end(),
-            [](const lang::MirInstruction &instruction) {
-              return instruction.operation != lang::MirOperation::PackFold;
-            });
-        if (found != block.instructions.end()) {
-          return &*found;
+  const auto mutablePackElementPlaces = [](lang::MirBody &body) {
+    std::vector<lang::MirPlace *> places;
+    for (lang::MirPlace &place : body.places) {
+      if (place.projections.size() == 1 &&
+          place.projections.front().kind ==
+              lang::MirProjectionKind::PackElement) {
+        places.push_back(&place);
+      }
+    }
+    std::sort(places.begin(), places.end(),
+              [](const lang::MirPlace *left, const lang::MirPlace *right) {
+                return left->projections.front().constantIndex <
+                       right->projections.front().constantIndex;
+              });
+    return places;
+  };
+  const auto mutablePackCalls = [](lang::MirBody &body) {
+    std::vector<lang::MirInstruction *> calls;
+    for (lang::MirBlock &block : body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            instruction.operands.empty()) {
+          continue;
+        }
+        const lang::MirPlace *argument =
+            body.findPlace(instruction.operands.back().place);
+        if (argument != nullptr && argument->projections.size() == 1 &&
+            argument->projections.front().kind ==
+                lang::MirProjectionKind::PackElement) {
+          calls.push_back(&instruction);
         }
       }
     }
-    return nullptr;
+    return calls;
   };
 
   lang::MirProgram baseline = frontend.mir;
-  const lang::MirInstruction *fold = mutableFold(baseline, false);
-  const lang::MirInstruction *emptyFold = mutableFold(baseline, true);
-  const bool orderedTypes =
-      fold != nullptr && fold->packFoldElements.size() == 3 &&
-      fold->packFoldElements[0].elementType == lang::SemanticType::Int8 &&
-      fold->packFoldElements[1].elementType == lang::SemanticType::UInt16 &&
-      fold->packFoldElements[2].elementType == lang::SemanticType::Int64;
-  expect(orderedTypes && fold->packFoldArgument == 2 &&
-             fold->packFoldFixedPlaces.size() == 2 && emptyFold != nullptr &&
-             emptyFold->packFoldElements.empty() &&
-             emptyFold->packFoldFixedPlaces.size() == 2,
-         "pack-fold MIR should retain fixed places and concrete elements in "
-         "source-pack order, including the empty-pack identity");
-  if (!orderedTypes || emptyFold == nullptr) {
+  lang::MirBody *foldBody = mutableBodyForPack(baseline, 3);
+  lang::MirBody *emptyFoldBody = mutableBodyForPack(baseline, 0);
+  if (foldBody == nullptr || emptyFoldBody == nullptr) {
+    expect(false, "pack-fold MIR should retain concrete pack entry places");
     return;
   }
-
-  lang::MirProgram missing = frontend.mir;
-  lang::MirInstruction *missingFold = mutableFold(missing, false);
-  if (missingFold != nullptr) {
-    missingFold->packFoldElements.erase(missingFold->packFoldElements.begin() +
-                                        1);
+  const std::vector<lang::MirPlace *> foldPlaces =
+      mutablePackElementPlaces(*foldBody);
+  const std::vector<lang::MirInstruction *> foldCalls =
+      mutablePackCalls(*foldBody);
+  const std::vector<lang::SemanticType> expectedTypes = {
+      lang::SemanticType::Int8, lang::SemanticType::UInt16,
+      lang::SemanticType::Int64};
+  bool orderedCalls = foldPlaces.size() == expectedTypes.size() &&
+                      foldCalls.size() == expectedTypes.size() &&
+                      mutablePackElementPlaces(*emptyFoldBody).empty() &&
+                      mutablePackCalls(*emptyFoldBody).empty();
+  for (std::size_t index = 0; orderedCalls && index < expectedTypes.size();
+       ++index) {
+    const lang::MirPlace &place = *foldPlaces[index];
+    const lang::MirInstruction &call = *foldCalls[index];
+    orderedCalls =
+        place.type == expectedTypes[index] &&
+        place.projections.front().constantIndex == index &&
+        call.operands.size() == 3 &&
+        call.operands.back().kind == lang::MirOperandKind::BorrowRead &&
+        call.operands.back().place == place.id &&
+        call.parameterTypes.size() == call.operands.size() &&
+        call.functionTarget != 0;
   }
-  expect(missingFold != nullptr && !lang::verifyMirProgram(missing).valid(),
-         "MIR verification should reject a missing pack-fold element");
+  expect(orderedCalls,
+         "pack-fold MIR should use ordered ordinary calls over exact concrete "
+         "pack-element places, while an empty pack emits no call");
 
-  lang::MirProgram duplicated = frontend.mir;
-  lang::MirInstruction *duplicatedFold = mutableFold(duplicated, false);
-  if (duplicatedFold != nullptr) {
-    duplicatedFold->packFoldElements.insert(
-        duplicatedFold->packFoldElements.begin() + 1,
-        duplicatedFold->packFoldElements.front());
+  lang::MirProgram wrongIndex = frontend.mir;
+  lang::MirBody *wrongIndexBody = mutableBodyForPack(wrongIndex, 3);
+  std::vector<lang::MirPlace *> wrongIndexPlaces =
+      wrongIndexBody == nullptr ? std::vector<lang::MirPlace *>{}
+                                : mutablePackElementPlaces(*wrongIndexBody);
+  if (wrongIndexPlaces.size() == 3) {
+    wrongIndexPlaces.back()->projections.front().constantIndex = 3;
   }
-  expect(duplicatedFold != nullptr &&
-             !lang::verifyMirProgram(duplicated).valid(),
-         "MIR verification should reject a duplicated pack-fold element");
+  expect(wrongIndexPlaces.size() == 3 &&
+             !lang::verifyMirProgram(wrongIndex).valid(),
+         "MIR verification should reject an out-of-range concrete pack "
+         "element projection");
 
-  lang::MirProgram reordered = frontend.mir;
-  lang::MirInstruction *reorderedFold = mutableFold(reordered, false);
-  if (reorderedFold != nullptr) {
-    std::swap(reorderedFold->packFoldElements[0],
-              reorderedFold->packFoldElements[1]);
+  lang::MirProgram wrongElementType = frontend.mir;
+  lang::MirBody *wrongTypeBody = mutableBodyForPack(wrongElementType, 3);
+  std::vector<lang::MirPlace *> wrongTypePlaces =
+      wrongTypeBody == nullptr ? std::vector<lang::MirPlace *>{}
+                               : mutablePackElementPlaces(*wrongTypeBody);
+  if (!wrongTypePlaces.empty()) {
+    wrongTypePlaces.front()->type = lang::SemanticType::Bool;
   }
-  expect(reorderedFold != nullptr && !lang::verifyMirProgram(reordered).valid(),
-         "MIR verification should reject reordered pack-fold elements");
+  expect(!wrongTypePlaces.empty() &&
+             !lang::verifyMirProgram(wrongElementType).valid(),
+         "MIR verification should reject a pack-element projection whose "
+         "type differs from its concrete pack entry");
 
-  lang::MirProgram wrongDeclaration = frontend.mir;
-  lang::MirInstruction *wrongDeclarationFold =
-      mutableFold(wrongDeclaration, false);
-  bool changedDeclaration = false;
-  if (wrongDeclarationFold != nullptr) {
-    const auto other =
-        std::find_if(wrongDeclaration.functionInstances().begin(),
-                     wrongDeclaration.functionInstances().end(),
-                     [&](const lang::MirFunctionInstance &candidate) {
-                       return candidate.declaration !=
-                                  wrongDeclarationFold->packFoldFunction &&
-                              candidate.parameterTypes ==
-                                  wrongDeclarationFold->packFoldElements.front()
-                                      .parameterTypes;
-                     });
-    if (other != wrongDeclaration.functionInstances().end()) {
-      wrongDeclarationFold->packFoldElements.front().functionTarget = other->id;
-      changedDeclaration = true;
-    }
+  lang::MirProgram wrongCallSignature = frontend.mir;
+  lang::MirBody *wrongCallBody = mutableBodyForPack(wrongCallSignature, 3);
+  std::vector<lang::MirInstruction *> wrongCalls =
+      wrongCallBody == nullptr ? std::vector<lang::MirInstruction *>{}
+                               : mutablePackCalls(*wrongCallBody);
+  if (!wrongCalls.empty()) {
+    wrongCalls.front()->parameterTypes.back() = lang::SemanticType::Bool;
   }
-  expect(changedDeclaration &&
-             !lang::verifyMirProgram(wrongDeclaration).valid(),
-         "MIR verification should reject a same-shaped specialization from "
-         "another generic declaration");
+  expect(!wrongCalls.empty() &&
+             !lang::verifyMirProgram(wrongCallSignature).valid(),
+         "MIR verification should reject an expanded call whose exact target "
+         "signature was forged");
 
-  lang::MirProgram mutableElement = frontend.mir;
-  lang::MirInstruction *mutableElementFold = mutableFold(mutableElement, false);
-  if (mutableElementFold != nullptr) {
-    mutableElementFold->packFoldElements.front()
-        .parameterTypes.back()
-        .referenceAccess = lang::AccessMode::Mutable;
+  lang::MirProgram wrongCallPlace = frontend.mir;
+  lang::MirBody *wrongPlaceBody = mutableBodyForPack(wrongCallPlace, 3);
+  std::vector<lang::MirInstruction *> wrongPlaceCalls =
+      wrongPlaceBody == nullptr ? std::vector<lang::MirInstruction *>{}
+                                : mutablePackCalls(*wrongPlaceBody);
+  if (wrongPlaceCalls.size() == 3) {
+    wrongPlaceCalls[1]->operands.back().place =
+        wrongPlaceCalls.front()->operands.back().place;
   }
-  expect(mutableElementFold != nullptr &&
-             !lang::verifyMirProgram(mutableElement).valid(),
-         "MIR verification should reject a consuming or mutable element "
-         "parameter shape");
-
-  lang::MirProgram wrongPackIdentity = frontend.mir;
-  lang::MirInstruction *wrongPackFold = mutableFold(wrongPackIdentity, false);
-  if (wrongPackFold != nullptr) {
-    ++wrongPackFold->packFoldParameter;
-  }
-  expect(wrongPackFold != nullptr &&
-             !lang::verifyMirProgram(wrongPackIdentity).valid(),
-         "MIR verification should retain the concrete source-pack identity");
-
-  lang::MirProgram forgedEmpty = frontend.mir;
-  lang::MirInstruction *forgedEmptyFold = mutableFold(forgedEmpty, true);
-  lang::MirInstruction *forgedSourceFold = mutableFold(forgedEmpty, false);
-  if (forgedEmptyFold != nullptr && forgedSourceFold != nullptr) {
-    forgedEmptyFold->packFoldElements.push_back(
-        forgedSourceFold->packFoldElements.front());
-  }
-  expect(forgedEmptyFold != nullptr && forgedSourceFold != nullptr &&
-             !lang::verifyMirProgram(forgedEmpty).valid(),
-         "MIR verification should preserve an empty fold as an empty ordered "
-         "element sequence");
-
-  lang::MirProgram invalidEmptyPlace = frontend.mir;
-  lang::MirInstruction *invalidEmptyFold = mutableFold(invalidEmptyPlace, true);
-  if (invalidEmptyFold != nullptr) {
-    invalidEmptyFold->packFoldFixedPlaces.front() =
-        std::numeric_limits<lang::MirPlaceId>::max();
-  }
-  expect(invalidEmptyFold != nullptr &&
-             !lang::verifyMirProgram(invalidEmptyPlace).valid(),
-         "MIR verification should require fixed places even when the source "
-         "pack is empty");
-
-  lang::MirProgram fixedDrift = frontend.mir;
-  lang::MirInstruction *fixedDriftFold = mutableFold(fixedDrift, false);
-  if (fixedDriftFold != nullptr) {
-    fixedDriftFold->packFoldFixedPlaces[0] =
-        fixedDriftFold->packFoldFixedPlaces[1];
-  }
-  expect(fixedDriftFold != nullptr &&
-             !lang::verifyMirProgram(fixedDrift).valid(),
-         "MIR verification should reject a fixed fold argument retargeted to "
-         "an incompatible place");
-
-  lang::MirProgram immutableFixed = frontend.mir;
-  bool weakenedFixedAccess = false;
-  auto &immutableFixedFunctions =
-      const_cast<std::vector<lang::MirFunctionInstance> &>(
-          immutableFixed.functionInstances());
-  for (lang::MirFunctionInstance &function : immutableFixedFunctions) {
-    for (lang::MirBlock &block : function.body.blocks) {
-      const auto candidate = std::find_if(
-          block.instructions.begin(), block.instructions.end(),
-          [](const lang::MirInstruction &instruction) {
-            return instruction.operation == lang::MirOperation::PackFold &&
-                   !instruction.packFoldElements.empty();
-          });
-      if (candidate == block.instructions.end() ||
-          candidate->packFoldFixedPlaces.empty()) {
-        continue;
-      }
-      const lang::MirPlaceId fixedPlace =
-          candidate->packFoldFixedPlaces.front();
-      if (fixedPlace != 0 && fixedPlace <= function.body.places.size()) {
-        function.body.places[fixedPlace - 1].access =
-            lang::AccessMode::ReadOnly;
-        weakenedFixedAccess = true;
-      }
-      break;
-    }
-    if (weakenedFixedAccess) {
-      break;
-    }
-  }
-  expect(weakenedFixedAccess && !lang::verifyMirProgram(immutableFixed).valid(),
-         "MIR verification should require mutable fixed places for mutable "
-         "reference parameters");
-
-  lang::MirProgram missingFixed = frontend.mir;
-  lang::MirInstruction *missingFixedFold = mutableFold(missingFixed, false);
-  if (missingFixedFold != nullptr) {
-    missingFixedFold->packFoldFixedPlaces.pop_back();
-  }
-  expect(missingFixedFold != nullptr &&
-             !lang::verifyMirProgram(missingFixed).valid(),
-         "MIR verification should reject a missing fixed pack-fold place");
-
-  lang::MirProgram leaked = frontend.mir;
-  lang::MirInstruction *ordinary = firstOrdinaryInstruction(leaked);
-  if (ordinary != nullptr) {
-    ordinary->packFoldFixedPlaces.push_back(fold->packFoldFixedPlaces.front());
-  }
-  expect(ordinary != nullptr && !lang::verifyMirProgram(leaked).valid(),
-         "MIR verification should reject pack-fold metadata on another "
-         "operation");
+  expect(wrongPlaceCalls.size() == 3 &&
+             !lang::verifyMirProgram(wrongCallPlace).valid(),
+         "MIR verification should reject an expanded call retargeted to a "
+         "different concrete pack element");
 }
 
 } // namespace
@@ -6494,6 +6534,39 @@ int main() { if (lt()) { return 0; } return 1; }
          "a forged compute-fold literal must fail the dominating replay");
 }
 
+void testBinaryFloatComputeFold() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "optimizer-binary-float-fold.gti",
+      "float folded() { return float(16777217) + 0.5; }\n");
+  expect(frontend.canGenerateCode(),
+         "the binary-float fold fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizationResult compatibility = pipeline.run(
+      frontend.hir, lang::OptimizationLevel::O1, lang::TargetInfo::host());
+  const lang::OptimizedProgram optimized = pipeline.run(
+      lang::OptimizationRequest{.hir = frontend.hir,
+                                .mir = frontend.mir,
+                                .level = lang::OptimizationLevel::O1,
+                                .compatibility = &compatibility});
+  const std::string printed = lang::MirPrinter().print(optimized.mir);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid() &&
+             lang::verifyMirOptimizationCoherence(optimized.sourceMir,
+                                                  optimized.mir)
+                 .valid() &&
+             printed.find("compute-fold:convert:") != std::string::npos &&
+             printed.find("compute-fold:add:") != std::string::npos,
+         "O1 should fold binary-float conversion and arithmetic with "
+         "replayable MIR provenance");
+  expect(!lang::verifyMirOptimizationCoherence(optimized.mir, optimized.mir)
+              .valid(),
+         "optimized compute-fold provenance must not be accepted as a "
+         "canonical source MIR snapshot");
+}
+
 // A branch whose condition folds to a literal bool rewrites to a Goto
 // carrying BranchFold provenance; reachability recomputes truthfully, O0
 // stays byte-identical, and a forged fold target fails verification.
@@ -6560,6 +6633,66 @@ int main() { if (pick() == 3) { return 0; } return 1; }
       redirected &&
           !lang::verifyMirOptimizationCoherence(o1.sourceMir, forged).valid(),
       "a forged branch-fold target must fail the coherence replay");
+  expect(!lang::verifyMirOptimizationCoherence(o1.mir, o1.mir).valid(),
+         "optimized branch-fold provenance must not be accepted as a "
+         "canonical source MIR snapshot");
+}
+
+void testBranchFoldRequiresDominatingCondition() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-branch-fold-dominance.gti", R"(
+int choose(bool flag) {
+  if (flag) {
+    if (1 < 2) { return 1; }
+  } else {
+    if (2 < 3) { return 2; }
+  }
+  return 3;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the branch-fold dominance fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizationResult compatibility = pipeline.run(
+      frontend.hir, lang::OptimizationLevel::O1, lang::TargetInfo::host());
+  const lang::OptimizedProgram optimized = pipeline.run(
+      lang::OptimizationRequest{.hir = frontend.hir,
+                                .mir = frontend.mir,
+                                .level = lang::OptimizationLevel::O1,
+                                .compatibility = &compatibility});
+  expect(optimized.valid(),
+         "the branch-fold dominance fixture should optimize coherently");
+  if (!optimized.valid()) {
+    return;
+  }
+
+  lang::MirProgram forged = optimized.mir;
+  bool retargeted = false;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forged.functionInstances());
+  for (lang::MirFunctionInstance &function : functions) {
+    std::vector<lang::MirBlock *> foldedBlocks;
+    for (lang::MirBlock &block :
+         const_cast<std::vector<lang::MirBlock> &>(function.body.blocks)) {
+      if (block.terminator.provenance.kind ==
+          lang::MirTerminatorProvenanceKind::BranchFold) {
+        foldedBlocks.push_back(&block);
+      }
+    }
+    if (foldedBlocks.size() >= 2) {
+      foldedBlocks[0]->terminator.provenance.foldSourceValue =
+          foldedBlocks[1]->terminator.provenance.foldSourceValue;
+      retargeted = true;
+      break;
+    }
+  }
+  expect(retargeted && !lang::verifyMirProgram(forged).valid(),
+         "a branch fold must reject a literal condition from a non-dominating "
+         "sibling branch");
 }
 
 void testCrossAnalysisDeterminism() {
@@ -6604,7 +6737,9 @@ int main() {
 int main() {
   lang::installCrashHandlers("gti_optimizer_tests");
   testComparisonComputeFold();
+  testBinaryFloatComputeFold();
   testBranchLiteralFold();
+  testBranchFoldRequiresDominatingCondition();
   testCrossAnalysisDeterminism();
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();

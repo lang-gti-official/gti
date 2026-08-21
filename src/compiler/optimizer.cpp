@@ -310,6 +310,11 @@ identityLiteral(const MirBody &body, const MirInstruction &identity) {
 
 [[nodiscard]] bool computeFoldableOperation(MirOperation operation) {
   switch (operation) {
+  case MirOperation::Convert:
+  case MirOperation::Add:
+  case MirOperation::Subtract:
+  case MirOperation::Multiply:
+  case MirOperation::Divide:
   case MirOperation::Equal:
   case MirOperation::NotEqual:
   case MirOperation::Less:

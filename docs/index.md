@@ -16,10 +16,10 @@ for the current implementation when a document is stale or ambiguous.
   values.
 - [MIR](architecture/mir.md) — control-flow graphs, values, places, ownership
   effects, cleanup, and verification.
-- [Optimization](architecture/optimization.md) — the current HIR compatibility
-  pass, controlled MIR editor, and first verified shadow transform.
-- [Backend](architecture/backend.md) — backend contract, transitional C++
-  emission, and native compilation handoff.
+- [Optimization](architecture/optimization.md) — HIR constant analysis,
+  controlled MIR editing, and source-to-optimized coherence.
+- [Backend](architecture/backend.md) — the verified-MIR body contract, sealed
+  C++ representation planning, and native compilation handoff.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
   fix-its, recovery, and test expectations.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)
@@ -115,6 +115,9 @@ description of the implementation.
   GLFW-shaped surface `S-FFI-02` F1/F2/F3 and `S-CALL-01` are built
   against; a design artifact, not implemented behavior
 - [Performance tooling](plans/performance-tooling.md)
+- [Conditional compilation and configuration flags](plans/conditional-compilation.md)
+  — proposed `#define`/`#ifdef` flag axis over the existing target conditional,
+  and the LSP inactive-region rendering it enables
 - [Language restriction ledger](plans/language-alignment.md) — current
   restrictions classified by reason, readiness role, owner, and evidence
 

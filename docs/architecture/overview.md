@@ -37,51 +37,36 @@ validity together, which keeps AST-address semantic side tables alive.
 
 ## Current Transition Points
 
-- HIR is the concrete instance authority; MIR is a validated structural
-  foundation with normal-exit temporary/drop authority, but it does not yet own
-  every D-EXEC ordered materialization schedule, program-initialization step,
-  partial-constructor rollback, layout, ABI, or failure cleanup rule.
-- MIR v20 introduced the first bounded function-level defined-failure
-  dimension. MIR v21 makes the canonical effect result cover functions,
-  constructors, and destructors and serializes definition provenance plus
-  `mayRaiseDefinedFailure` for all three. The function vector retains the exact
-  scalar/static-call proof and adds the bounded class-default-cleanup closure.
-  A separate closed passive-scalar-class proof covers exact source constructor
-  initializer stages, matching destructors, and free-function graphs. The
-  production `owned-lifecycle-call-v1` selector adds exact graph, source, and
-  lifecycle-schedule coherence before using that proof. The hosted
-  `scalar-failure-callgraph-v1` selector reuses only the exact class proof
-  inside its own closed no-argument entry graph, then emits checked records,
-  propagation, failure cleanup, and containment atomically. Generic
-  verification accepts conservative
-  `true` but requires every `false` to be independently proved from MIR. Exact
-  static calls use `None` only for proved-failure-free targets and otherwise
-  retain `DirectCall` propagation.
-- M-OWN-01 selected one value-owned place/relation and ownership-state
-  authority contract. M-OWN-02 implements its directly owned fixed-array
-  slice: semantics records shared constant-index keys/events, HIR carries a
-  body-qualified domain, and MIR verifies reachable available/moved/restored
-  state. Dynamic indexes and raw/opaque provenance remain conservative;
-  M-LIFE-01 separately supplies typed normal-exit drop obligations.
-- Optimization still has two paths: HIR constant replacements affect
-  compatibility C++ emission, while the MIR path verifies an owned snapshot
-  and at `-O1+` may apply its bounded literal-identity rewrite. That optimized
-  MIR is now the sole production body authority for the failure-free
-  `scalar-leaf-v1`, `scalar-cfg-v1`, and `scalar-direct-call-v1` families and
-  the bounded `class-default-cleanup-v1`, `owned-lifecycle-call-v1`, and hosted
-  `scalar-failure-callgraph-v1` families, but not yet for general bodies.
-- `BackendInput` carries AST, semantics, HIR, optimized MIR, and HIR
-  replacements. `CppBackend` re-verifies MIR, emits every eligible
-  `scalar-leaf-v1`, `scalar-cfg-v1`, `scalar-direct-call-v1`,
-  `class-default-cleanup-v1`, `owned-lifecycle-call-v1`, or
-  `scalar-failure-callgraph-v1` body from it, and sends each ineligible body
-  wholly through the named AST/semantic/HIR compatibility path. No body mixes
-  the two authorities.
+- HIR remains the concrete-instance and target-independent representation
+  authority. Verified optimized MIR is now the sole production authority for
+  executable source bodies. The C++ backend has no AST/HIR body fallback and
+  its AST statement visitor rejects executable statements that reach it.
+- `BackendInput` carries both source and optimized MIR. `CppBackend` verifies
+  their frontend identity and permits only optimizer changes accepted by the
+  MIR coherence contract before it constructs the private emitter.
+- A sealed C++ representation snapshot inventories every body, declaration,
+  data surface, and generated thunk before emission. The only production
+  whole-program route is `VerifiedMir`; missing or unsupported inventory fails
+  before output.
+- MIR owns source control flow, operations, failure edges, loans, moves, and
+  cleanup schedules. The C++ representation layer still derives part of the
+  shape of generated structural, callable, lifecycle, native, and concrete-
+  instance adapters from sealed AST/semantic/HIR facts. Completing a target-
+  independent generated-item inventory is the remaining backend-separation
+  boundary, not permission to restore executable HIR emission.
+- The post-cutover example corpus contains 2,487 reviewed MIR body identities
+  across 57 examples. An exact census and two native endpoint builds guard the
+  cutover; focused structural and runtime fixtures cover shapes outside that
+  corpus.
 - Substantial compiler algorithms compile behind public declarations.
   `gti_compiler` owns source loading through optimization and compiler support;
   the separate `gti_cpp_backend` archive owns C++ representation and emission.
   Headers retain data models, templates, abstract contracts, and small value
   operations.
+
+Internal compatibility with retired compiler routes is not a constraint.
+After authority moves to MIR, the previous executable path is removed rather
+than retained as fallback.
 
 Those are implemented limitations, not permission for later stages to invent
 semantics. Their future work is tracked under [`docs/plans/`](../plans/).

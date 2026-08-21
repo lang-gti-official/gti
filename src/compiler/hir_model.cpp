@@ -315,8 +315,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            !value.callPlan && value.packFoldSymbol == 0 &&
            value.packFoldParameter == 0 && value.packFoldFunction == 0 &&
            value.packFoldArgument == 0 && value.packFoldElements.empty() &&
-           !value.functionTarget && !value.contextualBoolTarget &&
-           !value.constructorTarget &&
+           value.packExpansionElements.empty() && !value.functionTarget &&
+           !value.contextualBoolTarget && !value.constructorTarget &&
            value.constructorKind == ConstructorKind::Ordinary &&
            !value.lambdaTarget && value.callableArguments.empty() &&
            !value.callableBoundary && !value.callableInvocation &&

@@ -164,6 +164,19 @@ private:
          .cAbiRecord = declaration->cAbiRecord,
          .cAbiLayout = declaration->cAbiLayout,
          .unionLayout = declaration->unionLayout,
+         .defaultConstructor = lifecycle == nullptr
+                                   ? SpecialMemberStatus::Deleted
+                                   : lifecycle->defaultConstructor,
+         .copyConstructor = lifecycle == nullptr ? SpecialMemberStatus::Deleted
+                                                 : lifecycle->copyConstructor,
+         .moveConstructor = lifecycle == nullptr ? SpecialMemberStatus::Deleted
+                                                 : lifecycle->moveConstructor,
+         .copyAssignment = lifecycle == nullptr ? SpecialMemberStatus::Deleted
+                                                : lifecycle->copyAssignment,
+         .moveAssignment = lifecycle == nullptr ? SpecialMemberStatus::Deleted
+                                                : lifecycle->moveAssignment,
+         .destructorStatus = lifecycle == nullptr ? SpecialMemberStatus::Deleted
+                                                  : lifecycle->destructor,
          .requiresActiveDropState =
              lifecycle != nullptr && lifecycle->requiresActiveDropState,
          .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
@@ -581,6 +594,7 @@ private:
       while (processedClasses < output.program.classes.size()) {
         processClass(processedClasses++);
       }
+      enqueueVirtualContractRoots();
       while (processedFunctions < output.program.functions.size()) {
         processFunction(processedFunctions++);
       }
@@ -589,6 +603,77 @@ private:
       }
       while (processedDestructors < output.program.destructors.size()) {
         processDestructor(processedDestructors++);
+      }
+    }
+  }
+
+  [[nodiscard]] const HirClassInstance *
+  findClassInHierarchy(HirClassInstanceId instance, ClassId declaration,
+                       std::unordered_set<HirClassInstanceId> &seen) const {
+    if (instance == 0 || instance > output.program.classes.size() ||
+        !seen.insert(instance).second) {
+      return nullptr;
+    }
+    const HirClassInstance &candidate = output.program.classes[instance - 1];
+    if (candidate.declaration == declaration) {
+      return &candidate;
+    }
+    const HirClassInstance *found = nullptr;
+    for (const HirBaseInstance &base : candidate.bases) {
+      const HirClassInstance *match =
+          findClassInHierarchy(base.instance, declaration, seen);
+      if (match == nullptr) {
+        continue;
+      }
+      if (found != nullptr && found->id != match->id) {
+        return nullptr;
+      }
+      found = match;
+    }
+    return found;
+  }
+
+  // A concrete override carries its pure virtual roots even when source only
+  // calls the override through a concrete value. Materialize those exact root
+  // instances now so MIR has one complete virtual failure contract instead of
+  // relying on a separate base-typed call to discover the interface member.
+  void enqueueVirtualContractRoots() {
+    const std::size_t functionCount = output.program.functions.size();
+    for (std::size_t index = 0; index < functionCount; ++index) {
+      const HirFunctionInstance override = output.program.functions[index];
+      if (!override.owner || !override.virtualMethod || override.pureVirtual ||
+          !override.overrideMethod || override.virtualRoots.empty()) {
+        continue;
+      }
+      for (const FunctionId rootId : override.virtualRoots) {
+        const FunctionInfo *root = baseModel->findFunction(rootId);
+        const ClassTypeInfo *rootOwner =
+            root == nullptr ? nullptr
+                            : baseModel->findClassType(root->ownerClass);
+        if (root == nullptr || rootOwner == nullptr || !root->virtualMethod ||
+            !root->pureVirtual || root->overrideMethod ||
+            !root->genericParameters.empty()) {
+          continue;
+        }
+        std::unordered_set<HirClassInstanceId> seen;
+        const HirClassInstance *owner =
+            findClassInHierarchy(*override.owner, root->ownerClass, seen);
+        if (owner == nullptr) {
+          continue;
+        }
+        const std::vector<SemanticType> ownerTypes = owner->typeArguments;
+        const std::vector<CompileTimeValue> ownerValues = owner->valueArguments;
+        const GenericSubstitution substitution =
+            classSubstitution(*rootOwner, ownerTypes, ownerValues);
+        std::vector<SemanticType> parameterTypes;
+        parameterTypes.reserve(root->parameterTypes.size());
+        for (const SemanticType &parameter : root->parameterTypes) {
+          parameterTypes.push_back(substitute(parameter, substitution));
+        }
+        (void)enqueueFunction(*root, ownerTypes, ownerValues, {}, {},
+                              substitute(root->returnType, substitution),
+                              std::move(parameterTypes),
+                              override.instantiationSite);
       }
     }
   }
@@ -626,6 +711,37 @@ private:
                        containsLambdaType);
   }
 
+  void enqueueVirtualMembers(
+      const StmtList &members, const GenericSubstitution &substitution,
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) {
+    for (const StmtPtr &member : members) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(member.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          enqueueVirtualMembers(*branch, substitution, classTypeArguments,
+                                classValueArguments);
+        }
+        continue;
+      }
+      const auto *function = dynamic_cast<const FunctionDecl *>(member.get());
+      const FunctionInfo *info =
+          function == nullptr ? nullptr : baseModel->findFunction(*function);
+      if (info == nullptr || !info->virtualMethod || info->ownerClass == 0 ||
+          !info->genericParameters.empty()) {
+        continue;
+      }
+      std::vector<SemanticType> parameterTypes;
+      parameterTypes.reserve(info->parameterTypes.size());
+      for (const SemanticType &parameter : info->parameterTypes) {
+        parameterTypes.push_back(substitute(parameter, substitution));
+      }
+      (void)enqueueFunction(*info, classTypeArguments, classValueArguments, {},
+                            {}, substitute(info->returnType, substitution),
+                            std::move(parameterTypes));
+    }
+  }
+
   void processClass(std::size_t index) {
     lambdaTargets.clear();
     const HirClassInstance snapshot = output.program.classes[index];
@@ -647,6 +763,8 @@ private:
                        .interface = base.interface});
     }
     output.program.classes[index].bases = std::move(bases);
+    enqueueVirtualMembers(declaration->declaration->members(), substitution,
+                          snapshot.typeArguments, snapshot.valueArguments);
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (!snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
@@ -802,9 +920,14 @@ private:
               : AccessMode::ReadOnly;
     }
 
+    // Generic declarations are only enqueued after selection. An empty type
+    // argument vector can therefore mean a concrete zero-element pack, not an
+    // unresolved declaration; reanalyze it so the pack binding retains that
+    // exact concrete-empty identity.
     const bool concreteInstance =
-        !classArguments.empty() || !classValueArguments.empty() ||
-        !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty();
+        !declaration->genericParameters.empty() || !classArguments.empty() ||
+        !classValueArguments.empty() || !snapshot.typeArguments.empty() ||
+        !snapshot.valueArguments.empty();
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (concreteInstance) {
@@ -1989,6 +2112,82 @@ private:
     };
   }
 
+  [[nodiscard]] ExpressionInfo
+  operatorResultInfo(const ResolvedOperatorInfo &resolved) const {
+    SemanticType type = resolved.returnType;
+    ValueCategory category = ValueCategory::Value;
+    AccessMode access = AccessMode::ReadOnly;
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+      access = type.referenceAccess;
+      type = type.arguments.front();
+      category = ValueCategory::Place;
+    }
+    return {.type = type,
+            .category = category,
+            .access = access,
+            .traits = analyzer->traitsFor(type)};
+  }
+
+  [[nodiscard]] HirValueId splitOverloadedArrowProjection(
+      HirValue value, const ResolvedOperatorInfo &resolved, HirBody &body) {
+    const HirValueId receiver = value.operands.front();
+    HirValue arrowCall{
+        .id = value.id,
+        .kind = HirValueKind::Call,
+        .source = value.source,
+        .info = operatorResultInfo(resolved),
+        .operands = {receiver},
+        .parameterTypes = value.parameterTypes,
+        .definedFailure = std::move(value.definedFailure),
+        .borrowOrigin = value.borrowOrigin,
+        .borrowArgument = value.borrowArgument,
+        .borrowAccess = value.borrowAccess,
+        .borrowPlace = value.borrowPlace,
+        .dispatch = value.dispatch,
+        .dispatchOwner = value.dispatchOwner,
+        .receiver = receiver,
+        .functionTarget = value.functionTarget,
+        .callableBoundary = value.callableBoundary,
+    };
+    if (const std::optional<HirCallReceiver> planned = orderedReceiver(
+            receiver, resolved.receiverMutability, true, body)) {
+      arrowCall.callPlan = HirCallPlan{.receiver = *planned, .arguments = {}};
+    } else {
+      lifecycleValid = false;
+    }
+    (void)enqueueClass(arrowCall.info.type);
+
+    const HirValueId arrowId = arrowCall.id;
+    value.id = nextValueId++;
+    value.operands.front() = arrowId;
+    value.operation = TokenKind::DOT;
+    value.parameterTypes.clear();
+    value.intrinsic = IntrinsicKind::None;
+    value.synchronization = {};
+    value.definedFailure = {};
+    value.borrowOrigin = BorrowOriginKind::None;
+    value.borrowArgument = 0;
+    value.borrowAccess = AccessMode::ReadOnly;
+    value.borrowPlace.reset();
+    value.dispatch = CallDispatch::Static;
+    value.dispatchOwner = SemanticType::Unknown;
+    value.receiver.reset();
+    value.callPlan.reset();
+    value.functionTarget.reset();
+    value.callableArguments.clear();
+    value.callableBoundary.reset();
+    value.callableInvocation.reset();
+
+    const HirValueId projectionId = value.id;
+    body.values.push_back(std::move(arrowCall));
+    body.values.push_back(std::move(value));
+    output.program.sourceValueIds[body.values[body.values.size() - 2].source]
+        .push_back(arrowId);
+    output.program.sourceValueIds[body.values.back().source].push_back(
+        projectionId);
+    return projectionId;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const ExprPtr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
@@ -2274,6 +2473,19 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
+    if (const auto *call = dynamic_cast<const Call *>(raw);
+        call != nullptr &&
+        dynamic_cast<const Get *>(call->callee().get()) != nullptr &&
+        !value.operands.empty()) {
+      const HirValue *callee = body.findValue(value.operands.front());
+      if (callee != nullptr && callee->kind == HirValueKind::MemberAccess &&
+          !callee->operands.empty()) {
+        value.receiver =
+            callee->unsafeOperation == UnsafeOperationKind::RawMember
+                ? std::optional<HirValueId>{callee->id}
+                : std::optional<HirValueId>{callee->operands.front()};
+      }
+    }
     if (const DefinedFailureOperation *failure =
             model.findDefinedFailure(*raw)) {
       value.definedFailure = *failure;
@@ -2281,6 +2493,31 @@ private:
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);
+    }
+    if (kind == HirValueKind::PackExpansion) {
+      if (value.info.type.kind != SemanticType::TypePack ||
+          !value.info.type.concretePack || value.symbol == 0) {
+        lifecycleValid = false;
+      } else {
+        value.packExpansionElements.reserve(value.info.type.arguments.size());
+        for (const SemanticType &element : value.info.type.arguments) {
+          const SemanticTypeTraits traits = analyzer->traitsFor(element);
+          HirCallInputKind inputKind = HirCallInputKind::Value;
+          if (orderedValueParameterType(element)) {
+            inputKind = HirCallInputKind::Value;
+          } else if (element.kind == SemanticType::Class &&
+                     !traits.containsBorrowedState && traits.copyable) {
+            inputKind = HirCallInputKind::CopyValue;
+          } else if (element.kind == SemanticType::Class &&
+                     !traits.containsBorrowedState && traits.movable) {
+            inputKind = HirCallInputKind::MoveValue;
+          } else {
+            lifecycleValid = false;
+          }
+          value.packExpansionElements.push_back(
+              {.type = element, .traits = traits, .kind = inputKind});
+        }
+      }
     }
     if (const PlaceKey *place = model.findPlace(*raw)) {
       value.place = qualifyPlace(*place, body.placeDomain);
@@ -2388,7 +2625,11 @@ private:
     }
     if (const ResolvedConstructionInfo *construction =
             model.findConstruction(*raw)) {
-      if (value.intrinsic != IntrinsicKind::StorageConstruct) {
+      const bool inPlaceStorageConstruction =
+          value.intrinsic == IntrinsicKind::StorageConstruct ||
+          value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+          value.intrinsic == IntrinsicKind::PrefixStorageInsert;
+      if (!inPlaceStorageConstruction) {
         value.parameterTypes = construction->parameterTypes;
       }
       value.borrowOrigin = construction->borrowOrigin;
@@ -2590,6 +2831,17 @@ private:
                                      .arguments = std::move(*plannedArguments)};
       }
     }
+    if ((value.kind == HirValueKind::MemberAccess ||
+         value.kind == HirValueKind::MemberSet) &&
+        value.operation == TokenKind::ARROW && value.functionTarget &&
+        !value.operands.empty()) {
+      if (const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
+          resolved != nullptr && resolved->kind == OverloadedOperator::Arrow) {
+        return splitOverloadedArrowProjection(std::move(value), *resolved,
+                                              body);
+      }
+    }
+
     const HirValueId id = value.id;
     body.values.push_back(std::move(value));
     output.program.sourceValueIds[raw].push_back(id);

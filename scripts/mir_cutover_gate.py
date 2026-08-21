@@ -33,12 +33,20 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 
-DEFAULT_TARGET = 2482
+DEFAULT_TARGET = 2487
 MARKER = "GTI verified-MIR body"
+MARKER_PATTERN = re.compile(
+    rf"{re.escape(MARKER)}:[^\n]* "
+    r"(module-instance|field-initializers-instance|"
+    r"static-field-initializers-instance|function-instance|"
+    r"constructor-instance|destructor-instance|lambda-instance|"
+    r"hosted-startup-instance) (\d+)"
+)
 SENTINEL = "mir-cutover-active"
 
 
@@ -72,7 +80,10 @@ def count_emitted(gti: Path, examples: list[Path], root: Path) -> int | None:
             if completed.returncode != 0 or not out.exists():
                 # One source failing to compile makes the census meaningless.
                 return None
-            total += out.read_text(encoding="utf-8", errors="replace").count(MARKER)
+            markers = MARKER_PATTERN.findall(
+                out.read_text(encoding="utf-8", errors="replace")
+            )
+            total += len(set(markers))
     return total
 
 
@@ -169,8 +180,8 @@ def main() -> int:
     return block(
         f"MIR emission is at {emitted}/{target} corpus bodies, so the "
         f"M-BACK-02 cutover is not complete. {target - emitted} remain. "
-        "Continue: pick the next pool, implement it, verify with the "
-        "differential oracle and ctest, commit, and update the M-BACK-02 row "
+        "Continue: fix the missing general-MIR ownership, verify with the "
+        "cutover corpus oracle and ctest, commit, and update the M-BACK-02 row "
         "in docs/plans/implementation-sequence.md with the measured count. "
         "This gate is arithmetic over generated C++ — a green suite, a "
         "completed phase, or a shipped release does not satisfy it, only the "

@@ -1,5 +1,4 @@
 #include "gti/cpp_backend.h"
-#include "gti/cpp_emitter.h"
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
 
@@ -182,14 +181,6 @@ void testExactDescriptorEmission(const std::filesystem::path &fixture) {
                             ")};") != std::string::npos,
          "the artifact descriptor should point at the exact site and byte "
          "tables");
-
-  const std::string compatibilityOnly =
-      lang::CppEmitter(frontend.semantics, frontend.hir).emit(frontend.program);
-  expect(compatibilityOnly.find("gti/runtime_failure.h") == std::string::npos &&
-             compatibilityOnly.find("__gti_failure_artifact_descriptor_v1") ==
-                 std::string::npos,
-         "the public compatibility-only emitter must not invent a failure "
-         "snapshot");
 
   const std::string_view baseline = descriptorRegion(generated);
   expect(!baseline.empty(),

@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 
-MARKER = "// GTI verified-MIR body: owned-lifecycle-call-v1"
+MARKER = "// GTI verified-MIR body: scalar-cfg"
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -32,30 +32,58 @@ def body_containing(generated: str, spelling: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    if generated.count(MARKER) != 4:
-        sys.stderr.write(
-            f"{optimization}/{standard} did not select exactly two free "
-            "functions, one constructor, and one destructor from the verified "
-            "owned-lifecycle MIR family\n"
-        )
-        return False
-    selected = ("_consume(", "_run_scopes(", "ScopeFlag::ScopeFlag(", "::~ScopeFlag(")
+    selected = ("_consume", "_run_scopes", "ScopeFlag::ScopeFlag")
     for spelling in selected:
         if MARKER not in body_containing(generated, spelling):
             sys.stderr.write(
-                f"{optimization}/{standard} did not select {spelling} from MIR\n"
+                f"{optimization}/{standard} did not emit {spelling} from "
+                "general MIR\n"
             )
             return False
-    compatibility = ("_compatibility_default_field(", "_compatibility_checked(")
-    for spelling in compatibility:
-        if MARKER in body_containing(generated, spelling):
+    if MARKER not in body_containing(
+        generated, "void ScopeFlag::__gti_lifecycle_cleanup_"
+    ):
+        sys.stderr.write(
+            f"{optimization}/{standard} did not emit ScopeFlag cleanup from "
+            "general MIR\n"
+        )
+        return False
+    remaining = ("_compatibility_default_field", "_compatibility_checked")
+    for spelling in remaining:
+        if MARKER not in body_containing(generated, spelling):
             sys.stderr.write(
-                f"{optimization}/{standard} selected ineligible {spelling}\n"
+                f"{optimization}/{standard} left {spelling} outside general "
+                "MIR emission\n"
             )
             return False
     if "std::move" not in body_containing(generated, "_run_scopes("):
         sys.stderr.write(
             f"{optimization}/{standard} lost the verified owning move stage\n"
+        )
+        return False
+    return True
+
+
+def validate_comma(generated: str, optimization: str, standard: str) -> bool:
+    selected = ("_use_plain", "_use_comma", "CommaFlag::CommaFlag")
+    for spelling in selected:
+        if MARKER not in body_containing(generated, spelling):
+            sys.stderr.write(
+                f"{optimization}/{standard} did not emit comma fixture "
+                f"body {spelling} from general MIR\n"
+            )
+            return False
+    if MARKER not in body_containing(
+        generated, "void CommaFlag::__gti_lifecycle_cleanup_"
+    ):
+        sys.stderr.write(
+            f"{optimization}/{standard} did not emit CommaFlag cleanup from "
+            "general MIR\n"
+        )
+        return False
+    if "owned-lifecycle-call-v1" in generated:
+        sys.stderr.write(
+            f"{optimization}/{standard} revived the retired lifecycle route\n"
         )
         return False
     return True
@@ -131,6 +159,7 @@ def main() -> int:
                 comma_executed = run([str(comma_executable)])
                 if comma_executed.returncode != 0:
                     return fail(comma_executed)
+
                 comma_emitted = root / f"comma-{optimization}-{standard}.cpp"
                 comma_emission = run(
                     [
@@ -146,12 +175,13 @@ def main() -> int:
                 )
                 if comma_emission.returncode != 0:
                     return fail(comma_emission)
-                if MARKER in comma_emitted.read_text(encoding="utf8"):
-                    sys.stderr.write(
-                        f"{optimization}/{standard} did not atomically demote "
-                        "the comma function/constructor/destructor component\n"
-                    )
+                if not validate_comma(
+                    comma_emitted.read_text(encoding="utf8"),
+                    optimization,
+                    standard,
+                ):
                     return 1
+
     return 0
 
 

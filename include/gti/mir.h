@@ -89,6 +89,7 @@ enum class MirProjectionKind {
   Dereference,
   RawIndex,
   RawDereference,
+  PackElement,
 };
 
 struct MirPlaceProjection {
@@ -264,8 +265,6 @@ enum class MirOperation {
   Convert,
   ExpectedHasValue,
   Closure,
-  PackFold,
-  PackExpansion,
   PayloadConstruct,
   PayloadExtract,
   Unexpected,
@@ -312,15 +311,6 @@ enum class MirOperation {
   Count,
 };
 
-struct MirPackFoldElement {
-  SemanticType elementType = SemanticType::Unknown;
-  HirFunctionInstanceId functionTarget = 0;
-  std::vector<SemanticType> parameterTypes;
-
-  friend bool operator==(const MirPackFoldElement &,
-                         const MirPackFoldElement &) = default;
-};
-
 enum class MirLiteralProvenanceKind {
   None,
   Source,
@@ -365,6 +355,10 @@ struct MirInstruction {
   HirCallInputKind callInputKind = HirCallInputKind::Value;
   std::optional<MirDropObligationId> preparedParameterDrop;
   std::optional<MirDropObligationId> successResultDrop;
+  // A failure-capable call or construction whose result directly initializes
+  // this binding publishes the value only on its Invoke success successor.
+  // The successor must contain the unique matching Initialize instruction.
+  std::optional<MirPlaceId> successResultDestination;
   UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None;
   bool rawMemoryAccess = false;
   std::optional<MirValueId> result;
@@ -374,12 +368,6 @@ struct MirInstruction {
   std::vector<SemanticType> parameterTypes;
   std::vector<SemanticType> closureCaptureTypes;
   std::vector<LambdaCaptureMode> closureCaptureModes;
-  SymbolId packFoldSymbol = 0;
-  GenericParameterId packFoldParameter = 0;
-  FunctionId packFoldFunction = 0;
-  std::size_t packFoldArgument = 0;
-  std::vector<MirPlaceId> packFoldFixedPlaces;
-  std::vector<MirPackFoldElement> packFoldElements;
   std::optional<MirLoanId> loan;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -656,6 +644,7 @@ struct MirClassInstance {
   HirClassInstanceId id = 0;
   ClassId declaration = 0;
   SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   std::vector<HirBaseInstance> structuralBases;
@@ -664,6 +653,12 @@ struct MirClassInstance {
   bool cAbiRecord = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
   std::optional<UnionLayout> unionLayout;
+  SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus moveAssignment = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus destructorStatus = SpecialMemberStatus::Generated;
   std::optional<HirDestructorInstanceId> destructor;
   bool requiresActiveDropState = false;
   bool requiresActiveCleanup = false;
@@ -1141,6 +1136,13 @@ struct MirDefinedFailureEffects {
 // MIR alone.
 [[nodiscard]] MirDefinedFailureEffects
 deriveMirDefinedFailureEffects(const MirProgram &program);
+
+// Proves that moving a value cannot execute a GTI defined-failure edge. For a
+// class this requires an exact concrete MIR instance, a generated move member,
+// and recursively failure-free structural state; declared move bodies remain
+// outside the proof.
+[[nodiscard]] bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
+                                                   const SemanticType &type);
 
 // Compatibility accessor for clients of MIR v20's function-only slice.
 [[nodiscard]] std::vector<bool>

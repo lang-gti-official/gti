@@ -7,6 +7,7 @@ import tempfile
 
 
 MARKER = "// GTI verified-MIR body: scalar-cfg-v1"
+FAILURE_MARKER = "// GTI verified-MIR body: scalar-cfg-failure-v1"
 SELECTED = (
     "direct_identity",
     "selected_forward",
@@ -52,36 +53,29 @@ SELECTED = (
     # String-view literals joined the vocabulary in 0.178.0.
     "println",
     "print_decimal_digit",
-    # Both print overloads carry markers; the second entry keeps the
-    # name-derived count honest for the char overload admitted once
-    # unchecked conversions joined the vocabulary (0.181.0).
-    "print",
-    # The char println joined once the plain shape proved its vestigial
-    # propagate block unreachable (0.246.0): its print-chain invokes are
-    # terminally contained, so the else edges are dead.
-    "println",
     # Callers the old whole-graph contract had to reject even though their
-    # own bodies are ordinary: their ineligible callees stay on the
-    # compatibility path while the calls emit from verified MIR.
+    # own bodies are ordinary now emit from verified MIR too.
+    "pass",
     "compatibility_static_member",
+    "compatibility_internal_target",
     "compatibility_internal_call",
     "constexpr_target",
     "compatibility_constexpr_target",
     "compatibility_constexpr_call",
     "compatibility_for_target",
     "compatibility_for_call",
-    # Per-site wrapper containment (0.275.0): plain calls with provably
-    # unused failure continuations take the terminating plain name.
+)
+FAILURE_SELECTED = (
+    "checked_target",
     "compatibility_checked_target",
     "compatibility_checked_call",
     "compatibility_recursive",
+    "checked_increment",
+    "release",
+    "print",
+    "println",
+    "entry",
 )
-COMPATIBILITY = (
-    "checked_target",
-    "compatibility_internal_target",
-)
-
-
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, check=False)
 
@@ -105,17 +99,18 @@ def function_definition(generated: str, source_name: str) -> str:
     return ""
 
 
+def failure_function_definition(generated: str, source_name: str) -> str:
+    return function_definition(generated, f"{source_name}__gti_mir_failure")
+
+
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    # The verified initializer bodies (the prelude's static marker, the
-    # fixture classes', the text_view capability pair) and the empty
-    # module body join the named function bodies.
+    # The verified initializer bodies and empty module remain structural
+    # invariants; function coverage is checked by exact source name below so
+    # unrelated prelude additions do not create count churn.
     if (
-        # The fixture's entry main emits under per-site wrapper
-        # containment (0.275.0) and joins the named selections.
-        generated.count(f"{MARKER} function-instance") != len(SELECTED) + 1
         # file_handle's computed negate(1) default joined the verified
         # initializer schedule as a terminally-contained expression.
-        or generated.count(f"{MARKER} field-initializers-instance") != 3
+        generated.count(f"{MARKER} field-initializers-instance") != 3
         or generated.count(f"{MARKER} static-field-initializers-instance") != 3
         or generated.count(f"{MARKER} module-instance") != 1
     ):
@@ -130,10 +125,19 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
                 f"{optimization}/{standard} did not select {name} from MIR\n"
             )
             return False
-    for name in COMPATIBILITY:
-        if MARKER in function_definition(generated, name):
+    for name in FAILURE_SELECTED:
+        if FAILURE_MARKER not in failure_function_definition(generated, name):
             sys.stderr.write(
-                f"{optimization}/{standard} selected ineligible {name}\n"
+                f"{optimization}/{standard} did not select {name} through "
+                "the explicit failure-form MIR ABI\n"
+            )
+            return False
+        if name not in ("entry", "print", "println") and function_definition(
+            generated, name
+        ):
+            sys.stderr.write(
+                f"{optimization}/{standard} retained an ordinary wrapper "
+                f"for failure-form function {name}\n"
             )
             return False
     if "::__gti_program::direct_support::" not in function_definition(

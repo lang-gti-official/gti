@@ -1,6 +1,7 @@
-#include "gti/cpp_emitter.h"
 #include "gti/frontend.h"
 #include "gti/optimization/effects.h"
+
+#include "cpp_backend_test_support.h"
 
 #include <algorithm>
 #include <array>
@@ -367,18 +368,16 @@ int main() {
          "defined integer arithmetic should produce valid MIR");
 
   if (result.canGenerateCode()) {
-    const std::string generated =
-        lang::CppEmitter(result.semantics, result.hir).emit(result.program);
+    const std::string generated = gti_test::emitCppText(result);
     for (const std::string_view helper :
          {"wrapping_add", "wrapping_sub", "wrapping_mul", "saturating_add",
           "saturating_sub", "saturating_mul", "checked_add", "checked_sub",
           "checked_mul"}) {
       const bool checked = helper.starts_with("checked_");
-      expect(generated.find(
-                 "return ::gti_internal::backend::" + std::string(helper) +
-                 (checked ? "<" : "(")) != std::string::npos,
-             "ordinary std wrapper should lower through the selected private "
-             "helper");
+      expect(generated.find("::gti_internal::backend::" + std::string(helper) +
+                            (checked ? "<" : "(")) != std::string::npos,
+             "production MIR emission should lower each ordinary std wrapper "
+             "through the selected private helper");
     }
   }
 }
@@ -428,9 +427,7 @@ void testHelpersRequireExpectedSurface() {
          "an unrelated program should remain valid without expected support");
   for (const lang::CppStandard standard :
        {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    const std::string generated =
-        lang::CppEmitter(result.semantics, result.hir, standard)
-            .emit(result.program);
+    const std::string generated = gti_test::emitCppText(result, standard);
     expect(generated.find("#include <expected>") == std::string::npos &&
                generated.find("#include <nonstd/expected.hpp>") ==
                    std::string::npos &&

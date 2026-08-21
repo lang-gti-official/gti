@@ -78,13 +78,7 @@ def main() -> int:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
                 if (
-                    # The char println joined once the plain shape proved
-                    # its vestigial propagate block unreachable (0.246.0).
-                    generated.count(f"{marker} function-instance") != 23
-                    # file_handle's computed negate(1) default joined the
-                    # verified initializer schedule as a terminally-contained
-                    # expression.
-                    or generated.count(f"{marker} field-initializers-instance")
+                    generated.count(f"{marker} field-initializers-instance")
                     != 2
                     or generated.count(
                         f"{marker} static-field-initializers-instance"
@@ -98,33 +92,42 @@ def main() -> int:
                     != 7
                 ):
                     sys.stderr.write(
-                        "generated C++ did not select exactly the twenty-seven "
-                        "verified scalar MIR markers (twelve fixture bodies "
-                        "plus eleven prelude bodies, counting both print and "
-                        "both println overloads, the prelude's verified-empty "
-                        "initializer bodies, the empty module body, and the "
-                        "seven native boundary declaration shells)\n"
+                        "generated C++ lost the verified prelude initializer, "
+                        "module, or native-boundary schedules\n"
                     )
                     return 1
-                checked = function_definition(generated, "compatibility_checked")
+                checked = function_definition(
+                    generated, "compatibility_checked__gti_mir_failure"
+                )
                 if (
-                    "__gti_mir_failure(" not in checked
-                    or "gti_rt_failure_terminate_v1" not in checked
-                    or generated.count(
-                        "// GTI verified-MIR body: scalar-cfg-failure-v1"
-                    )
-                    != 5
+                    "// GTI verified-MIR body: scalar-cfg-failure-v1" not in checked
+                    or function_definition(generated, "compatibility_checked")
                 ):
                     sys.stderr.write(
-                        "the five failure-form bodies should emit their "
-                        "transformed bodies plus boundary wrappers (ADR 017: "
-                        "compatibility_checked, checked_leaf, checked_caller, "
-                        "the prelude's file_handle release member, and the "
-                        "fixture's entry main; the char println overload "
-                        "moved to the plain family once the propagate-block "
-                        "unreachability proof landed in 0.246.0)\n"
+                        "compatibility_checked should emit only its explicit "
+                        "failure-form body, without an ordinary wrapper\n"
                     )
                     return 1
+                for failure_name in (
+                    "checked_leaf",
+                    "checked_caller",
+                    "entry",
+                    "release",
+                    "print",
+                    "println",
+                ):
+                    failure_body = function_definition(
+                        generated, f"{failure_name}__gti_mir_failure"
+                    )
+                    if (
+                        "// GTI verified-MIR body: scalar-cfg-failure-v1"
+                        not in failure_body
+                    ):
+                        sys.stderr.write(
+                            f"{failure_name} lost its explicit failure-form "
+                            "verified-MIR body\n"
+                        )
+                        return 1
                 if (
                     "checked_leaf__gti_mir_failure(" not in generated
                     or "__gti_mir_call_success_" not in generated
@@ -350,11 +353,30 @@ def main() -> int:
         built = run([str(compiler), str(source_path), "-o", str(executable)])
         if built.returncode != 0:
             return fail(built)
+        emitted = run(
+            [str(compiler), str(source_path), "--emit-cpp", "-o",
+             str(root / "generic-member.cpp")]
+        )
+        generated = (root / "generic-member.cpp").read_text(encoding="utf8")
+        if (
+            emitted.returncode != 0
+            or "mir_failure_constructor_tag_v1<" not in generated
+            or "scalar-cfg-constructor-failure-v1 constructor-instance"
+            not in generated
+            or "push_back__gti_mir_failure(" not in generated
+            or "erase__gti_mir_failure(" not in generated
+            or "// GTI MIR reparent into p" not in generated
+        ):
+            sys.stderr.write(
+                "the generic owner should publish its transformed "
+                "constructor and closed member-call component\n"
+            )
+            return 1
         executed = run([str(executable)])
-        # ADR 019: the generic vector owner's erase emits as an explicit
-        # transformed member specialization, so its storage detector
-        # reports the defined contract — the record cites the stdlib
-        # site, not a legacy storage abort.
+        # The generic vector owner's constructor and erase emit as explicit
+        # transformed specializations, so its storage detector reports the
+        # defined contract. The record cites the stdlib site, not a legacy
+        # storage abort, and successful construction engages the owner once.
         if (
             executed.returncode != 70
             or "GTI-R0007" not in executed.stderr
@@ -389,12 +411,13 @@ def main() -> int:
              str(root / "chain-print.cpp")]
         )
         generated = (root / "chain-print.cpp").read_text(encoding="utf8")
-        # The integer print chain publishes per instance: explicit
-        # specializations backed by verified MIR, with the array-walking
-        # digit printer in the transformed failure form.
+        # The integer print chain publishes concrete transformed siblings
+        # backed by verified MIR, with the array-walking digit printer in
+        # the transformed failure form.
         if (
             emitted.returncode != 0
-            or generated.count("template <> void") < 3
+            or generated.count(
+                "scalar-cfg-failure-v1 function-instance") < 3
             or "print_integral__gti_mir_failure(" not in generated
             or "mir_checked_array_read_v1(" not in generated
         ):

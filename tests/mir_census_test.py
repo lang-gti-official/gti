@@ -1,25 +1,17 @@
 #!/usr/bin/env python3
 
-"""Fail when a change reduces MIR emission for any example.
+"""Require the reviewed post-cutover MIR body census for every example.
 
-The differential oracle proves the two emission paths agree. It says nothing
-about how many bodies MIR actually emits, so a change can be completely
-correct, pass the whole suite and the oracle, and still lose coverage — a
-widening that flips one body's admission and drops its callers through the
-fixpoint is the recurring shape. Those losses were being found by diffing the
-census by hand, one window at a time, after the fact.
-
-This test makes the loss the failure. It recomputes the per-example census and
-compares it against a committed baseline, naming the exact examples that went
-backwards and by how much. Coverage gains are not failures; they print a
-reminder to refresh the baseline.
+The hard cutover has one executable backend route, so any body-count change is
+a reviewed corpus-contract change rather than an incremental coverage gain or
+loss. This test recomputes the per-example census and names every mismatch.
 
     python3 tests/mir_census_test.py <gti> <repo-root> <baseline.json>
     python3 tests/mir_census_test.py <gti> <repo-root> <baseline.json> --update
 
-Refresh the baseline with --update only from a clean tree, and only once the
-oracle and suite are green — the baseline is a claim that the count is
-legitimately higher, not a way to silence a regression.
+Refresh the baseline with --update only after the corpus oracle and suite are
+green. The baseline is a claim about the complete reviewed corpus, not a way to
+silence a change.
 """
 
 from __future__ import annotations
@@ -28,14 +20,32 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 
 MARKER = "GTI verified-MIR body"
+MARKER_PATTERN = re.compile(
+    rf"{re.escape(MARKER)}:[^\n]* "
+    r"(module-instance|field-initializers-instance|"
+    r"static-field-initializers-instance|function-instance|"
+    r"constructor-instance|destructor-instance|lambda-instance|"
+    r"hosted-startup-instance) (\d+)"
+)
 
 # Diagnostics from examples that failed to compile, for the FAIL report.
 FAILURES: dict[str, str] = {}
+
+
+def emitted_body_count(text: str) -> int:
+    """Count unique MIR body addresses, not marker occurrences.
+
+    One body may provide both an ordinary wrapper and a transformed failure
+    sibling. Both carry evidence markers, but they represent one MIR owner and
+    must advance the cutover census only once.
+    """
+    return len(set(MARKER_PATTERN.findall(text)))
 
 
 def census(gti: Path, root: Path) -> dict[str, int | None]:
@@ -65,9 +75,9 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
                     or completed.stdout.decode("utf-8", errors="replace").strip()
                 )
                 continue
-            counts[source.name] = out.read_text(
-                encoding="utf-8", errors="replace"
-            ).count(MARKER)
+            counts[source.name] = emitted_body_count(
+                out.read_text(encoding="utf-8", errors="replace")
+            )
     return counts
 
 
@@ -117,21 +127,13 @@ def main() -> int:
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))["examples"]
 
     broken = sorted(name for name, value in current.items() if value is None)
-    regressed = sorted(
+    changed = sorted(
         (name, baseline[name], current[name])
         for name in current
         if name in baseline
         and current[name] is not None
         and baseline[name] is not None
-        and current[name] < baseline[name]
-    )
-    gained = sorted(
-        (name, baseline[name], current[name])
-        for name in current
-        if name in baseline
-        and current[name] is not None
-        and baseline[name] is not None
-        and current[name] > baseline[name]
+        and current[name] != baseline[name]
     )
     added = sorted(name for name in current if name not in baseline)
     removed = sorted(name for name in baseline if name not in current)
@@ -149,18 +151,15 @@ def main() -> int:
                 print(f"    {line}", file=sys.stderr)
         return 1
 
-    if regressed:
-        lost = sum(before - after for _, before, after in regressed)
-        print(f"FAIL: MIR emission regressed by {lost} bodies across "
-              f"{len(regressed)} examples:", file=sys.stderr)
-        for name, before, after in regressed:
-            print(f"  {name}: {before} -> {after}  ({after - before})",
+    if changed:
+        print(f"FAIL: MIR body census changed across {len(changed)} examples:",
+              file=sys.stderr)
+        for name, before, after in changed:
+            print(f"  {name}: {before} -> {after}  ({after - before:+d})",
                   file=sys.stderr)
         print(
-            "A change that is correct can still lose coverage: admitting a body "
-            "through one form can remove it from another, and the fixpoint then "
-            "drops its callers. Find the body whose admission changed rather "
-            "than refreshing the baseline.",
+            "Review the changed body inventory and run the corpus oracle before "
+            "refreshing the baseline.",
             file=sys.stderr,
         )
         return 1
@@ -172,15 +171,14 @@ def main() -> int:
             print(f"  {name}", file=sys.stderr)
         return 1
 
-    if gained or added:
-        net = sum(after - before for _, before, after in gained)
-        print(f"ok: no regression; +{net} bodies across {len(gained)} examples"
-              + (f", {len(added)} new examples" if added else ""))
-        for name, before, after in gained:
-            print(f"  {name}: {before} -> {after}  (+{after - before})")
-        print("Refresh with --update so later changes are measured against this.")
-    else:
-        print("ok: census unchanged")
+    if added:
+        print(f"FAIL: {len(added)} corpus examples are absent from the reviewed "
+              "baseline:", file=sys.stderr)
+        for name in added:
+            print(f"  {name}", file=sys.stderr)
+        return 1
+
+    print("ok: census unchanged")
     return 0
 
 

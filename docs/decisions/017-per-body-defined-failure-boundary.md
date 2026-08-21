@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+Implementation note (2026-08-22): the transformed failure convention is now
+part of the general verified-MIR body route. The compatibility abort behavior
+described in the context is historical and is not a source-body fallback.
+
 ## Context
 
 Roughly 480 analysis-Ready function bodies cannot move to verified-MIR

@@ -25,6 +25,7 @@ enum class CppMirRepresentationSnapshotIssueKind {
   MissingMirBodyIdentity,
   InvalidHostedEntry,
   InvalidProgramInitialization,
+  UnsupportedMirEmission,
 };
 
 struct CppMirRepresentationSnapshotIssue {
@@ -58,7 +59,8 @@ cppMirFrontendSnapshotsMatch(const SemanticModel &semantics,
 buildCppMirRepresentationSnapshot(const Program &program,
                                   const SemanticModel &semantics,
                                   const HirProgram &hir, const MirProgram &mir,
-                                  const TargetInfo &target);
+                                  const TargetInfo &target,
+                                  CppStandard standard = CppStandard::Cpp23);
 
 // Builds the deterministic copied representation rows the generic MIR body
 // emitter consumes (ADR 016 phase 4). Spellings come only from the extracted
@@ -72,12 +74,30 @@ buildCppMirRepresentationSnapshot(const Program &program,
 buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
                                const MirProgram &mir, CppStandard standard);
 
+// Applies the declaration-level type spellings required when one concrete MIR
+// instance must be emitted through a source C++ template (most importantly an
+// unnameable closure type represented by its GTI generic parameter). The
+// returned count is zero when no overlay was needed; nullopt means the exact
+// semantic/HIR/MIR identities cannot produce an unambiguous overlay.
+[[nodiscard]] std::optional<std::size_t>
+cppMirApplyCallableTemplateTypeOverlays(CppMirBodyEmissionMapRows &rows,
+                                        const SemanticModel &semantics,
+                                        CppStandard standard,
+                                        const FunctionInfo &declaration,
+                                        const MirFunctionInstance &instance);
+
+[[nodiscard]] std::optional<std::size_t>
+cppMirApplyGenericOwnerConstructorTypeOverlays(
+    CppMirBodyEmissionMapRows &rows, const SemanticModel &semantics,
+    const HirProgram &hir, const MirProgram &mir,
+    const ConstructorDecl &declaration, const MirConstructorInstance &instance);
+
 enum class CppMirBackendProgramRoute {
-  Compatibility,
+  VerifiedMir,
 };
 
-// Selects exactly one route for the complete plan. Incoherent plans are never
-// executable. The compatibility route is whole-program during this tranche.
+// Selects the verified-MIR route only for a complete whole-program plan.
+// Incoherent or unsupported plans fail before any emitter is constructed.
 [[nodiscard]] CppMirBackendProgramRoute
 selectCppMirBackendProgramRoute(const CppMirProgramPlan &plan);
 

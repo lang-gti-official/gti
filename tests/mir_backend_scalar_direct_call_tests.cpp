@@ -51,6 +51,27 @@ std::string_view functionDefinition(std::string_view generated,
   return {};
 }
 
+std::string_view failureFunctionDefinition(std::string_view generated,
+                                           std::string_view sourceName) {
+  const std::string needle =
+      std::string{"_"} + std::string{sourceName} + "__gti_mir_failure(";
+  for (std::size_t name = generated.find(needle);
+       name != std::string_view::npos;
+       name = generated.find(needle, name + needle.size())) {
+    const std::size_t lineEnd = generated.find('\n', name);
+    const std::size_t brace = generated.find(" {\n", name);
+    if (brace == std::string_view::npos ||
+        (lineEnd != std::string_view::npos && brace > lineEnd)) {
+      continue;
+    }
+    const std::size_t end = generated.find("\n  }", brace);
+    return end == std::string_view::npos
+               ? std::string_view{}
+               : generated.substr(brace, end + 4 - brace);
+  }
+  return {};
+}
+
 const lang::HirFunctionInstance *
 findHirFunction(const lang::HirProgram &program, std::string_view name) {
   const auto found = std::find_if(
@@ -187,17 +208,12 @@ void expectSelectedDefinitions(std::string_view generated) {
       "constexpr_target",
       "compatibility_constexpr_target",
       "compatibility_constexpr_call",
+      "pass",
       "compatibility_static_member",
+      "compatibility_internal_target",
       "compatibility_internal_call",
       "compatibility_for_target",
       "compatibility_for_call",
-      // Per-site wrapper containment (0.275.0): a plain call whose failure
-      // continuation is provably unused takes the ff-admitted callee's
-      // terminating plain name, so these callers and the checked leaves
-      // they reach emit from verified MIR.
-      "compatibility_checked_target",
-      "compatibility_checked_call",
-      "compatibility_recursive",
   };
   expect(std::count(generated.begin(), generated.end(), '\n') != 0,
          "generated C++ should be non-empty");
@@ -207,14 +223,18 @@ void expectSelectedDefinitions(std::string_view generated) {
            std::string{"the exact static call body should be MIR-emitted: "} +
                std::string{name});
   }
-  constexpr std::string_view compatibility[] = {
-      "checked_target",
-      "compatibility_internal_target",
-  };
-  for (const std::string_view name : compatibility) {
-    expect(functionDefinition(generated, name).find(marker) ==
-               std::string_view::npos,
-           std::string{"the ineligible call graph must stay compatible: "} +
+  constexpr std::string_view failureSelected[] = {
+      "checked_target", "compatibility_checked_target",
+      "compatibility_checked_call", "compatibility_recursive",
+      "checked_increment"};
+  constexpr std::string_view failureMarker =
+      "// GTI verified-MIR body: scalar-cfg-failure-v1";
+  for (const std::string_view name : failureSelected) {
+    expect(failureFunctionDefinition(generated, name).find(failureMarker) !=
+                   std::string_view::npos &&
+               functionDefinition(generated, name).empty(),
+           std::string{"the failure component should emit only its explicit "
+                       "MIR sibling: "} +
                std::string{name});
   }
 }
@@ -269,6 +289,8 @@ void testFamilyAndSummary(const std::filesystem::path &fixture) {
       "compatibility_internal_call",
       "compatibility_for_target",
       "compatibility_for_call",
+      "pass",
+      "compatibility_static_member",
   };
   for (const std::string_view name : noFailure) {
     const lang::MirFunctionInstance *function =
@@ -296,6 +318,7 @@ void testFamilyAndSummary(const std::filesystem::path &fixture) {
       "compatibility_checked_target",
       "compatibility_checked_call",
       "compatibility_recursive",
+      "checked_increment",
   };
   for (const std::string_view name : mayRaise) {
     const lang::MirFunctionInstance *function =
@@ -324,10 +347,10 @@ void testFamilyAndSummary(const std::filesystem::path &fixture) {
          "assignment arguments should become ordered CallInputs before the "
          "direct Call");
   const std::string dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v34 ") &&
+  expect(dump.starts_with("mir-v37 ") &&
              dump.find("definition=source may-raise-defined-failure=0") !=
                  std::string::npos,
-         "mir-v34 should serialize declaration kind and failure effects");
+         "mir-v37 should serialize declaration kind and failure effects");
 
   const lang::OptimizationPipeline pipeline;
   for (const lang::OptimizationLevel level :
@@ -380,7 +403,7 @@ int main() { return 0; }
                  .print(frontend.mir)
                  .find("definition=runtime may-raise-defined-failure=1") !=
              std::string::npos,
-         "mir-v34 should serialize the runtime declaration category");
+         "mir-v37 should serialize the runtime declaration category");
 }
 
 void testMutations(const std::filesystem::path &fixture) {

@@ -665,7 +665,7 @@ Acceptance criteria:
 
 - the implemented primitive identity fold has matching MIR and near-miss
   coverage;
-- shadow mode does not control bodies that remain on the compatibility path;
+- shadow comparison does not itself authorize a MIR rewrite;
 - disagreements are visible in tests and reports;
 - MIR uses the same backend-neutral checked-integer evaluator as the legacy HIR
   pass: only value outcomes fold, while every failure outcome retains its
@@ -673,29 +673,23 @@ Acceptance criteria:
 
 ### Milestone 3: optimized MIR reaches the C++ backend
 
-Status: active and immediate; `scalar-leaf-v1`, `scalar-cfg-v1`, and
-`scalar-direct-call-v1` plus `class-default-cleanup-v1` and
-`owned-lifecycle-call-v1` complete; the failure-capable closure is active.
+Status: complete for source executable bodies.
 
-- Preserve the completed `scalar-leaf-v1`, `scalar-cfg-v1`, and
-  `scalar-direct-call-v1` plus `class-default-cleanup-v1` and
-  `owned-lifecycle-call-v1` optimized-MIR authority seams.
-- Expand those seams through the largest coherent failure-capable closed call
-  graph rather than separate operation migrations.
-- Expand MIR emission in broad failure-free, failure-capable, and final-cutover
-  phases, co-delivering missing executable facts rather than serializing every
-  MIR row ahead of backend work.
-- Retire the HIR source-expression replacement bridge when coverage is
-  complete.
+- Preserve the general verified-MIR body route and its sealed whole-program
+  preflight.
+- Add a new transform only with replayable proof and an extension to
+  `verifyMirOptimizationCoherence`.
+- Keep HIR constant analysis confined to representation surfaces and shadow
+  comparison; it is not executable body authority.
 
 Acceptance criteria:
 
 - `BackendInput::mir` is observably consumed;
 - one optimized MIR snapshot drives every executable-body backend;
 - no pass queries AST shape or C++ spelling;
-- migrated bodies have no AST/HIR execution fallback;
-- `-O0` and optimized differential tests pass with native optimization held
-  constant, with C++20/C++23 parity where representation differs.
+- bodies have no AST/HIR execution fallback;
+- the exact census and `-O0`/C++20 versus `-O3`/C++23 corpus oracle pass, with
+  focused wider matrices where representation or lifecycle risk warrants them.
 
 ### Milestone 4: local CFG and value optimization
 

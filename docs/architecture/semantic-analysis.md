@@ -122,9 +122,9 @@ enter `SemanticModel`.
 For a binary operator's bounded integer-literal context, semantics recognizes
 the complete literal expression, including one unary sign, checks its
 mathematical value against the selected concrete operand type, and records a
-signed operand fact when the sign expression itself adopts that type. HIR and
-the compatibility backend consume the recorded expression type/fact; they do
-not re-decide literal eligibility from native promotions.
+signed operand fact when the sign expression itself adopts that type. HIR,
+MIR lowering, and target representation consume the recorded expression
+type/fact; they do not re-decide literal eligibility from native promotions.
 
 `SemanticVisitor::visitLayoutQueryExpr` is the sole authority for source
 `sizeof(type)` and `alignof(type)`. It resolves aliases, recursively derives
@@ -315,8 +315,9 @@ After exact target selection, an explicit consuming invocation also queries
 the concrete receiver's recursive active-cleanup property. Cleanup-owning
 direct calls use the ordinary operator boundary; cleanup discovered while
 reanalyzing a concrete confined generic instance remains a confined-callable
-error. Both stop before HIR because the compatibility backend cannot yet own a
-moved receiver through the enclosing full-expression cleanup boundary.
+error. Both stop before HIR because the language has no accepted cleanup
+schedule for that moved receiver across the enclosing full expression; this is
+a semantic/lowering restriction, not a backend fallback.
 
 ## Concepts And Requirement Contracts
 

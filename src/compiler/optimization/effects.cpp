@@ -60,8 +60,6 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
     harmless(), // ExpectedHasValue
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
-    unknownEffects(), // PackFold executes exact user-function instances.
-    MirEffectTraits{.copiesValue = true}, // PackExpansion
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
     MirEffectTraits{.copiesValue = true}, // PayloadExtract
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
@@ -246,7 +244,11 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true},
     // ExpectedError
     MirEffectTraits{.mayTrap = true},
+    // ExpectedValueOr: observes state and copies the selected value.
+    MirEffectTraits{.copiesValue = true, .initializesValue = true},
     // ArraySize: a pure read of the fixed extent.
+    MirEffectTraits{},
+    // ExpectedHasValue: a pure state observer.
     MirEffectTraits{},
 });
 
@@ -318,8 +320,6 @@ constexpr auto operationNames = std::to_array<std::string_view>({
     "convert",
     "expected-value",
     "closure",
-    "pack-fold",
-    "pack-expansion",
     "payload-construct",
     "payload-extract",
     "unexpected",
@@ -407,7 +407,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "string-view-empty",
     "expected-value",
     "expected-error",
+    "expected-value-or",
     "array-size",
+    "expected-has-value",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

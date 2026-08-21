@@ -341,10 +341,17 @@ def main():
             emitted_extern_c = extern_c_cpp.read_text(encoding="utf-8")
             assert 'extern "C" {' in emitted_extern_c
             assert "std::int32_t socket(" in emitted_extern_c
-            assert "socket(2, 1, 0)" in emitted_extern_c
+            assert re.search(
+                r"gti_internal::runtime::socket\("
+                r"__gti_mir_v_\d+, __gti_mir_v_\d+, __gti_mir_v_\d+\)",
+                emitted_extern_c,
+            )
             assert "class socket" in emitted_extern_c
             assert "static std::expected<socket, errc>" in emitted_extern_c
-            assert "runtime::close((((*this)).handle)" in emitted_extern_c
+            assert re.search(
+                r"gti_internal::runtime::close\(__gti_mir_v_\d+\)",
+                emitted_extern_c,
+            )
             assert "socket(socket &&other)" in emitted_extern_c
 
             copied_socket_source = root / "copied-tcp-socket.gti"
@@ -1082,8 +1089,9 @@ def main():
             check=False,
         )
         assert string_view_bounds_failure.returncode != 0
+        assert "GTI-R0007" in string_view_bounds_failure.stderr
         assert (
-            "string view index out of bounds"
+            "index_out_of_bounds in string_view"
             in string_view_bounds_failure.stderr
         )
 
@@ -1430,10 +1438,10 @@ def main():
         )
         assert uninitialized_storage_failure.returncode != 0
         # P-STORAGE-01: public container indexing checks the identity-bound
-        # logical size, so an empty vector's subscript reports the logical
-        # bound rather than leaking the private storage invariant.
+        # logical size, so an empty vector's subscript reports the public
+        # vector contract rather than leaking the private storage invariant.
         assert (
-            "container index out of logical bounds"
+            "index_out_of_bounds in vector"
             in uninitialized_storage_failure.stderr
         )
 
@@ -1587,8 +1595,10 @@ def main():
             capture_output=True,
             check=False,
         )
-        assert conversion_failure.returncode != 0
-        assert "numeric conversion is out of range" in conversion_failure.stderr
+        assert conversion_failure.returncode == 70
+        assert "GTI-R0006" in conversion_failure.stderr
+        assert "numeric_conversion_out_of_range" in conversion_failure.stderr
+        assert "numeric_cast" in conversion_failure.stderr
 
         optimization_source = root / "optimization.gti"
         optimization_source.write_text(
@@ -2351,9 +2361,7 @@ def main():
             ),
         ]
         # Leaf checked bodies migrated to the per-body defined-failure
-        # boundary (ADR 017) report through the structured contract; the
-        # division and negation shapes stay on compatibility emission and
-        # keep the legacy report.
+        # boundary (ADR 017) report through the structured contract.
         constant_overflow_defined = {
             "constant-addition-overflow": (
                 "GTI-R0001",
@@ -2379,6 +2387,22 @@ def main():
                 37,
                 "multiplication",
             ),
+            "constant-division-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                1,
+                47,
+                48,
+                "division",
+            ),
+            "constant-negation-overflow": (
+                "GTI-R0001",
+                "integer_overflow",
+                1,
+                26,
+                27,
+                "negation",
+            ),
         }
         for name, overflow_function, expected_error in constant_overflow_failures:
             failure_path = root / f"{name}.gti"
@@ -2403,18 +2427,7 @@ def main():
                 capture_output=True,
                 check=False,
             )
-            if name == "constant-division-overflow":
-                # Migrated to the per-body defined-failure boundary by the
-                # 0.181.0 constant-operand detector rules. Fragment
-                # assertions hold across report-format revisions.
-                assert failure.returncode == 70
-                assert failure.stdout == ""
-                assert "GTI-R0001" in failure.stderr
-                assert "integer_overflow" in failure.stderr
-                assert "negation" in failure.stderr, (
-                    f"{name} produced unexpected report: {failure.stderr}"
-                )
-            elif name in constant_overflow_defined:
+            if name in constant_overflow_defined:
                 code, category, line, start, end, detail = (
                     constant_overflow_defined[name]
                 )

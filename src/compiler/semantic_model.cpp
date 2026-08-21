@@ -849,6 +849,9 @@ SemanticModel::findCall(const Call &call) const {
   if (found != calls.end()) {
     return &found->second;
   }
+  if (suppressedInheritedCalls.contains(&call)) {
+    return nullptr;
+  }
   return base == nullptr ? nullptr : base->findCall(call);
 }
 
@@ -1087,6 +1090,7 @@ void SemanticModel::clear() {
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
+  suppressedInheritedCalls.clear();
   packFolds.clear();
   lambdaCalls.clear();
   deferredCallableCalls.clear();
@@ -1511,7 +1515,13 @@ void SemanticModel::recordPayloadPattern(const Expr &expression,
 }
 
 void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
+  suppressedInheritedCalls.erase(&call);
   calls.insert_or_assign(&call, std::move(info));
+}
+
+void SemanticModel::suppressInheritedCall(const Call &call) {
+  calls.erase(&call);
+  suppressedInheritedCalls.insert(&call);
 }
 
 void SemanticModel::record(const PackFold &fold, ResolvedPackFoldInfo info) {

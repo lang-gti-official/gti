@@ -2,6 +2,11 @@
 
 Status: Accepted
 
+Implementation note (2026-08-22): the source-body portion of this decision is
+complete. The public no-MIR emitter and executable AST/HIR route are removed.
+The remaining work is a target-independent inventory for generated adapters;
+the migration-era compatibility references below are historical context.
+
 ## Context
 
 `BackendInput` currently carries six coupled representations: the AST

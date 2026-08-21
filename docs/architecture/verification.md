@@ -27,20 +27,21 @@ assertions.
 | `runtime_failure_subprocess` | exact ordinary/emergency escaped report bytes, status 70, observer once-only behavior, original-record firewalling, closed/broken-pipe write failure, and process-wide terminal arbitration |
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
 | `optimizer_foundation` | MIR verification/printing/effects; MIR v20 function provenance/effects retained in MIR v21's three-kind definition and defined-failure result; bounded closure and exact call propagation; dominance; controlled editor atomicity, repair, and invalidation; retained canonical source MIR; exact structural optimization-coherence replay; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
-| `mir_backend_first_family` | verified source/optimized MIR handoff, exact `scalar-leaf-v1` selection, complete compatibility fallback, optimized instruction control, missing/stale snapshot and unauthorized-metadata rejection, and the public direct-emitter compatibility boundary |
-| `mir_backend_first_family_runtime` | selected `scalar-leaf-v1` execution and explicit fallback at O0/O1/O3 under C++20/C++23, including emitted-family markers and optimized-MIR artifact differences |
+| `mir_backend_first_family` | verified source/optimized MIR handoff, ordinary and failure-form general emission, optimized instruction control, and missing, stale, duplicated, or unauthorized snapshot rejection |
+| `mir_backend_first_family_runtime` | general verified-MIR execution at O0/O1/O3 under C++20/C++23, including body-identity markers and optimized-MIR artifact differences |
 | `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
-| `mir_backend_scalar_cfg_runtime` | selected `scalar-cfg-v1` and explicit compatibility-sibling execution at O0/O1/O3 under C++20/C++23, including exact family markers and optimized-MIR artifact differences |
+| `mir_backend_scalar_cfg_runtime` | scalar CFG and defined-failure execution through the general route at O0/O1/O3 under C++20/C++23, including exact body markers and optimized-MIR artifact differences |
 | `mir_backend_scalar_direct_call` | exact `scalar-direct-call-v1` selection over closed acyclic scalar/static-call graphs; MIR v20 definition/failure summaries; ordered call-input, target, operation, branch, and IdentityFold coherence; checked, recursive, member, internal, `constexpr`, and HIR-`for` near-miss fallback; and fail-closed verifier/backend mutations |
-| `mir_backend_scalar_direct_call_runtime` | exact selected and compatibility direct-call families at O0/O1/O3 under C++20/C++23, including marker counts, optimized-literal evidence, and qualified cross-namespace target identity |
-| `mir_backend_class_default_cleanup` | exact `class-default-cleanup-v1` function/destructor selection; MIR v21 destructor provenance and failure effects; strict lifetime-slot construction/destruction; declared-constructor, field, nested-scope, branch, and checked-destructor compatibility near misses; and fail-closed literal, obligation, cleanup-timing, summary, missing-drop, and reordered-drop mutations |
+| `mir_backend_scalar_direct_call_runtime` | direct-call and failure-propagating bodies through the general route at O0/O1/O3 under C++20/C++23, including marker counts, optimized-literal evidence, and qualified cross-namespace target identity |
+| `mir_backend_class_default_cleanup` | function/destructor provenance and failure effects; strict lifetime-slot construction/destruction; declared constructors, fields, nested scopes, branches, and checked destructors through the general route; and fail-closed literal, obligation, cleanup-timing, summary, missing-drop, and reordered-drop mutations |
 | `mir_backend_class_default_cleanup_runtime` | selected class-default construction and reverse cleanup at O0/O1/O3 under C++20/C++23, including return-before-cleanup behavior, repeat-call state, exact function/destructor markers, explicit slot construction/destruction, and the engaged-slot guard |
-| `mir_backend_owned_lifecycle` | atomic `owned-lifecycle-call-v1` function/constructor/destructor selection; exact scalar-field initializer binding and destructor source coherence; constructed/moved/prepared/transferred/dropped schedule authority; reverse-caller closure; checked-cleanup compatibility; strict lifetime-slot emission; and fail-closed graph, stage, operation, literal, place, CFG, call, transfer, and drop mutations |
+| `mir_backend_owned_lifecycle` | exact function/constructor/destructor general emission; scalar-field initializer binding and destructor source coherence; constructed/moved/prepared/transferred/dropped schedule authority; checked cleanup; strict lifetime slots; and fail-closed graph, stage, operation, literal, place, CFG, call, transfer, and drop mutations |
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_differential_oracle_<opt>_<std>` | observable-behavior agreement between the MIR-preferring `CppBackend` path and the no-MIR public direct-emitter path over the example corpus at every native configuration the retired family gates covered — `O0`/`O1`/`O2`/`O3` under C++20 and C++23 — reporting per-source agreement, disagreement, and not-comparable sources |
-| `cpp_mir_body_emitter` | generic MIR body-emission gate classification, and a sweep of the shipped example corpus asserting that every example still reaches verified MIR, that no frontend-produced body is structurally incoherent, that no invalid-shape emission issue is raised, and that emitter readiness does not regress below its floor |
+| `mir_census_regression` | exact reviewed per-example MIR body ownership for all 2,487 identities across 57 examples |
+| `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
+| `cpp_mir_body_emitter` | generic MIR body-emission classification and a corpus sweep requiring every frontend-produced body to be coherent and text-ready |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `cpp_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |
@@ -208,10 +209,9 @@ conservative user-code barriers and keeps every checkpoint non-removable and
 non-reorderable. Later M-EXEC-01 slices still own borrowed-state class values,
 remaining call and construction forms, place/operator/initializer schedules,
 and cleanup composition.
-Matching M-BACK migrations own production authority, the full supported-mode
-matrix, and native-compiler runtime traces before any conservative semantic
-restriction is removed. A compatibility emitter trace is evidence for
-lifecycle composition, not proof that ordered MIR controls that family.
+Verified MIR and the general backend preflight own production authority. A
+conservative semantic restriction may be removed only after its MIR verifier
+contract and focused native runtime matrix cover the widened form.
 
 The bounded M-FAIL-01 control-flow gate is owned by `failure_metadata`. It
 independently derives the exact local outcome set for fixed-width-integer
@@ -270,19 +270,17 @@ and a forged-return-place verifier mutation. `lsp_protocol` owns publication
 and clearing of the shared `GTI-S2017` overlap diagnostic with its related
 origin and hint. No LSP-specific borrow inference is permitted.
 
-The first MIR optimizer/backend slice is split by authority.
+The MIR optimizer/backend boundary is split by authority.
 `optimizer_foundation` proves that primitive literal grouping identities
 produce the same constant by `HirValueId`, preserve instruction/result/
 provenance identity, rebuild removed uses, preserve CFG dominance, and are
 deterministic and idempotent. It also proves that stale, duplicate,
 out-of-range, or malformed editor batches commit nothing, while string,
-dynamic, and computed groupings remain untouched. The two
-`mir_backend_first_family` gates then prove that the optimized instruction
-controls complete eligible fixed-width-integer `scalar-leaf-v1` bodies while
-ineligible bodies stay wholly compatible. They reject invalid MIR, a different
-frontend snapshot, and a structurally valid unauthorized literal; preserve the
-public direct-emitter compatibility API; and compile/run the same boundary at
-O0/O1/O3 under C++20/C++23.
+dynamic, and computed groupings remain untouched. The
+`mir_backend_first_family` gates prove that the optimized instruction controls
+general emitted body text, reject invalid MIR, cross-frontend snapshots, and
+structurally valid unauthorized rewrites, and compile/run the boundary at
+O0/O1/O3 under C++20/C++23. There is no no-MIR emitter control path.
 
 The same optimizer gate owns the MIR v20 function-effect foundation retained
 by MIR v21's canonical three-kind effect result. It proves that source
@@ -300,71 +298,45 @@ storage publication, and CFG boundaries. Version 23 adds the pointer-free
 hosted-startup plan, exact source `main` anchor, generated operation and entity
 tags, `HostedStartup/<entry>` body inventory, and target/call schedule;
 verification and optimization coherence freeze that authority independently of
-backend lowering. Terminal failure containment, cleanup-failure handling,
-partial-construction rollback, and generic backend emission remain Stage-E
-work. The cleanup-family gate separately proves its bounded destructor
-component. MIR v21 also derives the exact passive-scalar-class constructor,
-destructor, and free-function effect closure consumed by the production
-`owned-lifecycle-call-v1` family.
+backend representation. The cleanup-family gates separately prove destructor
+and partial-construction behavior. MIR v21 also derives the exact constructor,
+destructor, and free-function effects consumed by general body admission and
+defined-failure emission.
 
-The `mir_backend_scalar_cfg` gates extend that evidence to complete
-`scalar-cfg-v1` bodies. They prove fixed-width-integer, `bool`, and `char`
-computations; scalar local initialization and assignment; branch, switch,
-short-circuit, and loop CFG; exact near-miss fallback for checked arithmetic,
-calls, and references. Same-domain operation substitution and branch-target
-swaps remain valid generic MIR in the adversarial fixtures but are rejected as
-unauthorized drift from the retained source schedule before emission. The
-runtime gate executes
-the selected and compatibility siblings at O0/O1/O3 under C++20/C++23 and
-proves the identity-fold artifact change remains under MIR authority.
+The retained `mir_backend_scalar_cfg` gates prove fixed-width-integer, `bool`,
+and `char` computations; scalar local initialization and assignment; branch,
+switch, short-circuit, and loop CFG; checked arithmetic; calls; and references
+through the general emitter. Same-domain operation substitution and branch-
+target swaps remain valid generic MIR in adversarial fixtures but are rejected
+as unauthorized drift from the retained source schedule. The runtime gate
+executes all fixture bodies at O0/O1/O3 under C++20/C++23 and proves the
+identity-fold artifact change remains under MIR authority.
 
-The `mir_backend_scalar_direct_call` gates establish the third bounded
-production MIR family. They prove exact scalar `CallInput` ordering and target
-identity across closed acyclic source-defined static-call graphs, including
-multi-level, nested, zero-argument, `void`, branch/loop, heterogeneous scalar,
-late-definition, and cross-namespace calls. Checked or otherwise unsupported
-targets, recursion, static members, internal linkage, `constexpr`, and a
-HIR-`for` target shape remain wholly compatible. An independently eligible
-graph with a conservative true summary is rejected as noncanonical rather than
-silently returned to compatibility. Mutations prove that forged false
-summaries, stale failure CFG, propagation drift, reordered call inputs, and
-HIR/MIR target, operation, branch, or definition-kind drift fail closed at
-their owning gate. The
-runtime gate executes the selected and compatibility families at O0/O1/O3
-under C++20/C++23 and checks exact markers, IdentityFold artifact evidence,
-and qualified target spelling.
+The `mir_backend_scalar_direct_call` gates prove exact `CallInput` ordering and
+target identity across static call graphs, including multi-level, nested,
+zero-argument, `void`, branch/loop, heterogeneous scalar, late-definition,
+cross-namespace, checked, recursive, static-member, internal-linkage,
+`constexpr`, and HIR-`for` fixtures. Mutations prove that forged failure
+summaries, stale failure CFG, propagation drift, reordered inputs, and target,
+operation, branch, or definition-kind drift fail closed. The runtime gate
+executes the general emitted forms at O0/O1/O3 under C++20/C++23.
 
-The `mir_backend_class_default_cleanup` gates establish the fourth bounded
-production MIR family and the first one with construction and normal cleanup.
-They prove exact generated-default construction of empty concrete class locals,
-return-value loading before cleanup, reverse lexical destruction, one normal
-cleanup boundary, and MIR-emitted source destructor bodies. Representation
-checks require raw lifetime slots with explicit construction and destruction so
-native RAII cannot hide a missing MIR `Drop`. Generic and backend mutations
-separately cover conservative and forged destructor summaries, destructor
-literal drift, HIR-obligation drift, cleanup timing, and missing or reordered
-drops. The runtime gate executes the family at O0/O1/O3 under C++20/C++23 and
-checks first and repeated calls preserve the return-before-cleanup and
-Late-before-Early behavior.
+The `mir_backend_class_default_cleanup` gates prove generated and declared
+construction, return-value loading before cleanup, reverse lexical
+destruction, and MIR-emitted destructor bodies. Representation checks require
+explicit lifetime slots where native RAII could hide a missing MIR `Drop`.
+Mutations cover failure summaries, destructor literals, HIR obligations,
+cleanup timing, and missing or reordered drops; the runtime gate checks first
+and repeated calls at O0/O1/O3 under C++20/C++23.
 
-The `mir_backend_owned_lifecycle` gates establish the fifth bounded production
-MIR family. They prove one atomic acyclic function/constructor/destructor graph
-over exact passive scalar-field classes, including reverse failure-free
-callers; ordered constructor argument-to-formal-to-field stages; destructor
-operation, literal, global, field, and CFG coherence; and the complete
-`Construct`/`Move`/`CallInput`/`Call`/`TransferOut`/`Drop` schedule. Mutations
-cover same-typed initializer swaps, duplicate or retargeted stages, summary and
-call-graph drift, forged destructor computation/place/control flow, missing
-transfer, and missing or retargeted drops. A valid checked destructor proves
-that source-ineligible cleanup falls back instead of selecting and failing.
-An otherwise valid owner function with a comma expression proves that an
-unsupported scalar operation atomically leaves its function, constructor, and
-destructor on compatibility emission. A scalar local in the selected runtime
-program separately proves that scalar `Initialize` does not take the class-slot
-move path.
-The runtime gate executes the `ScopeFlag` close-bit/first-close program at
-O0/O1/O3 under C++20/C++23 and requires the moved inner owner to close before
-the outer owner without an empty-slot or double-cleanup escape.
+The `mir_backend_owned_lifecycle` gates prove function, constructor, and
+destructor bodies over owned class values; ordered initializer stages; and the
+complete `Construct`/`Move`/`CallInput`/`Call`/`TransferOut`/`Drop` schedule.
+They include checked cleanup, passive comma expressions, and owning fixed-array
+parameters through the general route. Mutations cover initializer, graph,
+operation, place, control-flow, transfer, and drop drift. The runtime gate
+requires moved inner owners to close before outer owners without an empty-slot
+or double-cleanup escape across O0/O1/O3 and C++20/C++23.
 
 The `mir_backend_scalar_failure_callgraph` gates establish the sixth bounded
 production MIR family and first generated hosted failure component. The
@@ -400,69 +372,41 @@ grammar production, or formatting rule. The LSP receives their semantic
 diagnostics through the shared frontend and should not implement separate
 ownership or entry-signature inference.
 
-## MIR Emission Differential Oracle
+## Post-Cutover MIR Corpus Gates
 
-The `mir_differential_oracle_<opt>_<std>` matrix compiles each corpus
-source down both C++ representation paths and compares observable program
-behavior. Each of the eight registered configurations — `-O0`, `-O1`, `-O2`,
-and `-O3` under `-std=c++20` and `-std=c++23` — runs the full corpus, so MIR
-bodies must agree with the compatibility path under the optimizer and both
-supported standards, not only in the debug configuration. Both paths are
-existing public APIs, so the oracle adds no production surface: the
-MIR-preferring path is `CppBackend::generate`, and the compatibility path is
-the `CppEmitter` constructor that takes no `MirProgram`, which
-[`implementation-sequence.md`](../plans/implementation-sequence.md) retains as
-the explicit public direct-emitter API until the final cutover. With no MIR
-every family selector deselects, so that path emits the whole program from
-AST/semantics/HIR.
+The old differential oracle was retired with the AST/HIR executable emitter.
+Keeping a no-MIR `CppEmitter` callable solely as a test control would recreate
+the fallback that the hard cutover removed.
 
-Placing the control at the backend follows the authority table in
-[`overview.md`](overview.md): the Backend owns representation and artifact
-generation, so choosing between two backend representations of the same
-verified IR is a backend-layer decision. A driver or CLI switch would put a
-representation policy in a layer whose entry forbids it and would create the
-durable fallback surface that the migration rules prohibit; a build variant
-could not be exercised by a normal test run.
+Two complementary gates replace it:
 
-Generated C++ text is explicitly not a contract, so text is never compared for
-pass or fail. Comparison is on exit status, stdout, and stderr of the two built
-programs, following the deterministic-record principle of the `GTI-BENCH-1`
-protocol in [`benchmarks/README.md`](../../benchmarks/README.md). Both variants
-are compiled with the driver's own native flags so neither gains a toolchain
-advantage.
+- `tests/mir_census_test.py` recompiles every `examples/*.gti` source and
+  requires the exact per-example body-identity counts recorded in
+  `tests/mir_census_baseline.json`. Added, removed, failed, or changed examples
+  require review; a body-count increase is not accepted automatically.
+- `tests/mir_cutover_corpus_oracle_test.py` builds and runs every example at
+  the two boundary configurations `-O0`/C++20 and `-O3`/C++23. It requires the
+  reviewed marker count, rejects unknown or retired marker forms, requires
+  identical body ownership at both endpoints, and compares exit status,
+  stdout, and stderr.
 
-### Demonstrated coverage
+The reviewed corpus currently contains 2,487 MIR body identities across 57
+examples. The two-endpoint corpus matrix covers source and optimized MIR plus
+both supported C++ standards without retaining eight duplicate full-corpus
+jobs. Focused runtime matrices continue to exercise intermediate optimization
+levels where a feature's risk warrants them.
 
-The oracle detects a fault in the emission of a body that the MIR path actually
-emits, when that fault changes observable behavior. This was verified by
-swapping the scalar-CFG branch targets in `cpp_emitter.cpp`, which the oracle
-reported as a disagreement of exit status 4 against 0.
+Generated C++ is not a stable public text contract. Marker identities are a
+test-only ownership witness; behavior comparison remains on process status and
+output. A baseline update is valid only after the changed inventory is
+reviewed and the corpus oracle and relevant focused tests are green.
 
-### Demonstrated blind spots
-
-The oracle is not a general correctness gate. Its reach is bounded by how many
-bodies the MIR path emits, which is currently one across the whole corpus.
-Verified blind spots:
-
-- **MIR faults that do not reach emission.** Relaxing the loan exclusion in
-  `requiresMirFailureControlFlow` raises emitter readiness from 1953 to 2006
-  and leaves the enclosing scope to end a loan the failed operation never
-  produced, yet the oracle stays green: the change alters MIR routing without
-  changing which bodies are emitted from MIR.
-- **Emission code paths no emitted body exercises.** Changing the scalar-CFG
-  spelling of `Equal` to `!=` was not detected, because the single emitted body
-  performs no equality comparison.
-- **Faults with no observable effect**, including cleanup that is missing or
-  duplicated without changing exit status or output, and any difference
-  confined to memory the program never reports.
-- **Sources neither path can compare**, reported as not-comparable rather than
-  as agreement. Fifty-six of fifty-seven corpus sources are currently in this
-  class because they contain no MIR-emitted body.
-
-The oracle therefore reports what it compared rather than a pass rate, and
-fails when it would otherwise compare nothing. Readiness figures from
-`cpp_mir_body_emitter` measure MIR preconditions and must not be reported as
-oracle coverage.
+These gates do not prove all compiler semantics. The example corpus may omit a
+specific operation or malformed-MIR case, and behavior-only checks cannot see
+an unobserved cleanup error. Structural C++ backend tests, MIR verifier mutation
+tests, focused compile/run fixtures, and sanitizer/platform coverage remain
+necessary. Fixtures outside `examples/` deliberately supplement the corpus
+without changing its census.
 
 ## Platform Signal
 

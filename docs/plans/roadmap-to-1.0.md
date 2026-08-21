@@ -899,35 +899,23 @@ standard-library need, and tooling impact.
 
 The maintained sequence, blockers, parallel lanes, and current ready queue live
 in [`implementation-sequence.md`](implementation-sequence.md). At this
-checkpoint the major executable contracts and substantial bounded MIR families
-are already present. `M-BACK-01`/`scalar-leaf-v1`,
-`M-BACK-02`/`scalar-cfg-v1`, and `M-BACK-02`/`scalar-direct-call-v1` have
-been joined by `M-BACK-02`/`class-default-cleanup-v1`,
-`owned-lifecycle-call-v1`, and hosted `scalar-failure-callgraph-v1`,
-establishing six bounded production MIR families while every other family
-still uses the compatibility emitter.
-MIR v20 introduced function definition provenance plus the verifier-bounded
-`mayRaiseDefinedFailure` vector. MIR v21 makes the canonical result cover
-functions, constructors, and destructors; retains exact acyclic
-scalar/static-call closures; adds the bounded class-default-cleanup
-function/destructor proof; and derives a separate exact passive-scalar-class
-constructor/destructor/function closure. `owned-lifecycle-call-v1` consumes
-that proof after exact graph/source/lifecycle coherence, and the hosted failure
-component reuses its exact class facts inside a separately closed entry graph.
-Generic
-verification permits conservative true summaries but rejects unproved false
-claims and propagation drift.
-The immediate critical path is the final backend-authority cutover. It builds
-general MIR emission for the remaining body and program-initialization work,
-validated against the compatibility emitter by the differential oracle rather
-than by further narrow family contracts, then removes compatibility body
-emission, HIR replacement execution, and legacy native-failure helpers once
-their last users are gone. Broader
-M-FAIL lifecycle, double-failure, embedding, task, and callback containment
-remain explicit feature work rather than retroactive claims of the bounded
-hosted component. The whole `M-EXEC-01` row is not a barrier to each family
-cutover. New executable language work resumes after this campaign restores one
-production authority for all bodies.
+checkpoint the source executable-body cutover is complete. All 2,487 reviewed
+body identities across 57 examples use verified optimized MIR and the general
+C++ body emitter. The no-MIR emitter and executable AST statement route are
+gone; the exact census and two-endpoint corpus oracle guard that result.
+
+MIR failure effects cover functions, constructors, and destructors and permit
+conservative true summaries while rejecting unproved false claims and
+propagation drift. Broader double-failure, embedding, task, and callback
+containment remain explicit feature work rather than retroactive claims of the
+hosted boundary.
+
+The remaining backend architecture boundary is generated representation:
+hosted entry and program initialization have explicit planned thunks, while
+some structural, callable, lifecycle, native, and concrete-instance adapters
+still derive shape from sealed frontend facts. A future second-backend slice
+should make that inventory target-independent without restoring executable AST
+or HIR authority.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

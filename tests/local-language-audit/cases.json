@@ -125,7 +125,7 @@
       "id": "checked-numeric-range",
       "kind": "runtime_failure",
       "source": "runtime/checked-numeric-range.gti",
-      "contains": ["numeric conversion is out of range"],
+      "contains": ["GTI-R0006", "numeric_conversion_out_of_range", "numeric_cast"],
       "emit_contains": ["numeric_cast"]
     },
     {

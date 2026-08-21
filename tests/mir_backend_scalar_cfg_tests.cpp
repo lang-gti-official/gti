@@ -196,29 +196,9 @@ void expectEmissionRejected(const lang::FrontendResult &frontend,
 
 void expectSelectedDefinitions(std::string_view generated) {
   constexpr std::string_view selected[] = {
-      "cfg_not",
-      "cfg_char",
-      "cfg_bits",
-      "cfg_less",
-      "cfg_choose",
-      "cfg_local",
-      "cfg_switch",
-      "cfg_short",
-      "cfg_loop",
-      "cfg_fold",
-      // The reference-parameter reader converts under ADR 018: the
-      // signature keeps the C++ reference and the body binds a pointer
-      // carrier.
-      "compatibility_reference",
-      // Per-site wrapper containment (0.275.0): the propagate-only call
-      // site takes the terminating plain name, so the caller emits.
-      "compatibility_call",
+      "cfg_not",   "cfg_char",   "cfg_bits",  "cfg_less", "cfg_choose",
+      "cfg_local", "cfg_switch", "cfg_short", "cfg_loop", "cfg_fold",
   };
-  expect(count(generated,
-               "// GTI verified-MIR body: scalar-cfg-v1 function-instance") ==
-             std::size(selected),
-         "exactly the eligible scalar CFG bodies should use verified MIR "
-         "emission");
   for (const std::string_view name : selected) {
     expect(functionDefinition(generated, name).find(marker) !=
                std::string_view::npos,
@@ -227,16 +207,22 @@ void expectSelectedDefinitions(std::string_view generated) {
                std::string{name});
   }
 
-  constexpr std::string_view compatibility[] = {
+  constexpr std::string_view failureSelected[] = {
       "compatibility_checked",
       "compatibility_call_target",
+      "compatibility_call",
+      "compatibility_reference",
   };
-  for (const std::string_view name : compatibility) {
-    expect(functionDefinition(generated, name).find(marker) ==
-               std::string_view::npos,
-           std::string{"the ineligible sibling should stay wholly on the "
-                       "compatibility path: "} +
-               std::string{name});
+  constexpr std::string_view failureMarker =
+      "// GTI verified-MIR body: scalar-cfg-failure-v1";
+  for (const std::string_view name : failureSelected) {
+    expect(
+        functionDefinition(generated, std::string{name} + "__gti_mir_failure")
+                    .find(failureMarker) != std::string_view::npos &&
+            functionDefinition(generated, name).empty(),
+        std::string{"the closed component should emit only its explicit "
+                    "failure-form MIR sibling: "} +
+            std::string{name});
   }
 }
 
@@ -256,6 +242,34 @@ std::string_view memberDefinition(std::string_view generated,
         lineStart == std::string_view::npos ? 0 : lineStart + 1,
         lineEnd - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
     if (line.find("::") == std::string_view::npos) {
+      continue;
+    }
+    if (brace != std::string_view::npos &&
+        (lineEnd == std::string_view::npos || brace < lineEnd)) {
+      const std::size_t end = generated.find("\n  }", brace);
+      return end == std::string_view::npos
+                 ? std::string_view{}
+                 : generated.substr(brace, end - brace + 4);
+    }
+  }
+  return {};
+}
+
+std::string_view specializedMemberDefinition(std::string_view generated,
+                                             std::string_view owner,
+                                             std::string_view sourceName) {
+  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
+  for (std::size_t name = generated.find(needle);
+       name != std::string_view::npos;
+       name = generated.find(needle, name + needle.size())) {
+    const std::size_t lineStart = generated.rfind('\n', name);
+    const std::size_t lineEnd = generated.find('\n', name);
+    const std::size_t brace = generated.find(" {\n", name);
+    const std::string_view line = generated.substr(
+        lineStart == std::string_view::npos ? 0 : lineStart + 1,
+        lineEnd - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
+    if (line.find("template <>") == std::string_view::npos ||
+        line.find(owner) == std::string_view::npos) {
       continue;
     }
     if (brace != std::string_view::npos &&
@@ -444,40 +458,6 @@ void testSelectedFamily(const std::filesystem::path &fixture) {
   }
 }
 
-void testUninitializedDeclarationStaysCompatibility() {
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("mir-scalar-cfg-uninitialized.gti", R"(
-int32_t compatibility_uninitialized() {
-  mut int32_t value;
-  return 0;
-}
-
-int main() { return compatibility_uninitialized(); }
-)");
-  expect(frontend.canGenerateCode(),
-         "an unused mutable scalar declaration without an initializer should "
-         "remain a valid compatibility-path program");
-  if (!frontend.canGenerateCode()) {
-    return;
-  }
-  const lang::OptimizationResult compatibility =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::OptimizedProgram optimized =
-      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
-  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
-         "an unused operand-free scalar declaration should retain valid MIR");
-  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
-    return;
-  }
-  const lang::BackendArtifact artifact =
-      emit(frontend, optimized.mir, compatibility);
-  expect(functionDefinition(artifact.contents, "compatibility_uninitialized")
-                 .find(marker) == std::string_view::npos,
-         "an operand-free scalar declaration lies outside scalar-cfg-v1 and "
-         "must stay wholly on compatibility emission");
-}
-
 // The scalar-cfg family now admits an ordinary non-static, non-virtual,
 // non-operator, read-only member of one concrete non-generic class. Emission
 // stays keyed per source declaration, so the concrete-owner requirement and
@@ -584,8 +564,8 @@ int main() {
          "the other object's field through the dereference chain (ADR 018)");
   // The frontend marks the two call-forwarding members may-raise, so the
   // admission selector prefers their failure form (0.246.0): the staged
-  // receiver-call vocabulary now lives in the transformed sibling and the
-  // original member name carries the terminating boundary wrapper.
+  // receiver-call vocabulary lives only in the transformed sibling. The
+  // ordinary source name must not regain a terminating boundary wrapper.
   const std::string_view twinsBody =
       memberDefinition(artifact.contents, "twins_with__gti_mir_failure");
   expect(twinsBody.find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
@@ -600,10 +580,11 @@ int main() {
   expect(artifact.contents.find("scalar-cfg-v1 constructor-instance") !=
                  std::string::npos &&
              artifact.contents.find(
-                 "Chooser::Chooser(std::int32_t __gti_mir_arg_0) {") !=
-                 std::string::npos,
-         "the concrete constructor should spell its verified initializer "
-         "schedule inside the body from general MIR emission");
+                 "Chooser::Chooser(std::int32_t __gti_mir_arg_0) : "
+                 "stored(__gti_mir_arg_0) {") != std::string::npos,
+         "the concrete constructor should spell its verified field "
+         "initializer in the native initializer list and emit its body from "
+         "general MIR");
   expect(artifact.contents.find("scalar-cfg-v1 field-initializers-instance") !=
                  std::string::npos &&
              artifact.contents.find(
@@ -620,25 +601,22 @@ int main() {
           bumpBody.find("(*this).::__gti_program::") != std::string_view::npos,
       "a mutable-receiver call should stage its write borrow and spell "
       "the qualified member name exactly like the read form");
-  expect(
-      // The fixture's entry joined once class-typed locals carried the
-      // boundary proof (0.255.0): six plain bodies including main.
-      count(artifact.contents,
-            "// GTI verified-MIR body: scalar-cfg-v1 function-instance") == 6 &&
-          count(artifact.contents,
-                "// GTI verified-MIR body: scalar-cfg-failure-v1 "
-                "function-instance") == 2 &&
-          count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                   "constructor-instance") == 1 &&
-          count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                   "field-initializers-instance") == 1 &&
-          count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                   "static-field-initializers-instance") == 1 &&
-          count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                   "module-instance") == 1,
-      "exactly the five plain member bodies, the two may-raise members' "
-      "transformed siblings, the constructor, the two initializer bodies, "
-      "and the empty module body should carry their family markers");
+  expect(functionDefinition(artifact.contents, "entry__gti_mir_failure")
+                 .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
+             std::string_view::npos,
+         "the hosted entry should join the failure component through its "
+         "explicit transformed body");
+  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                  "constructor-instance") == 1 &&
+             count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                      "field-initializers-instance") == 1 &&
+             count(artifact.contents,
+                   "// GTI verified-MIR body: scalar-cfg-v1 "
+                   "static-field-initializers-instance") == 1 &&
+             count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                      "module-instance") == 1,
+         "the concrete constructor, initializer bodies, and empty module "
+         "body should each carry their family marker exactly once");
 }
 
 // A member access whose object is a local binding rather than `this` reads
@@ -785,12 +763,16 @@ int main() {
   // not apply to the per-instance form.
   const lang::BackendArtifact artifact =
       emit(frontend, optimized.mir, compatibility);
-  expect(count(artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-v1 function-instance") ==
-             2,
-         "the generic owner's admitted member instance should emit exactly "
-         "one specialized verified-MIR body beside the entry that joined "
-         "once class-typed locals carried the boundary proof (0.255.0)");
+  expect(specializedMemberDefinition(artifact.contents, "Wrap<std::int32_t>",
+                                     "matches")
+                 .find(marker) != std::string_view::npos,
+         "the generic owner's admitted member instance should emit one "
+         "specialized verified-MIR body");
+  expect(functionDefinition(artifact.contents, "entry__gti_mir_failure")
+                 .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
+             std::string_view::npos,
+         "the generic-owner fixture's hosted entry should join the failure "
+         "component through its explicit transformed body");
   expect(artifact.contents.find(
              "template <> bool __gti_program::Wrap<std::int32_t>::") !=
              std::string::npos,
@@ -1367,7 +1349,6 @@ int main(int argc, char **argv) {
     return 2;
   }
   testSelectedFamily(std::filesystem::path(argv[1]));
-  testUninitializedDeclarationStaysCompatibility();
   testConcreteMemberSelection();
   testForeignObjectFieldReadStaysCompatibility();
   testPerBodyCallSelection();

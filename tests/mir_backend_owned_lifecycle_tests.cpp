@@ -18,8 +18,9 @@
 
 namespace {
 
-constexpr std::string_view marker =
-    "// GTI verified-MIR body: owned-lifecycle-call-v1";
+constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1 ";
+constexpr std::string_view failureMarker =
+    "// GTI verified-MIR body: scalar-cfg-failure-v1 ";
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -33,6 +34,19 @@ std::string readFile(const std::filesystem::path &path) {
   std::ifstream input(path);
   return std::string(std::istreambuf_iterator<char>(input),
                      std::istreambuf_iterator<char>());
+}
+
+bool hasBodyMarker(std::string_view generated, std::string_view kind,
+                   std::uint64_t instance) {
+  return generated.find(std::string(marker) + std::string(kind) + "-instance " +
+                        std::to_string(instance)) != std::string_view::npos;
+}
+
+bool hasFailureBodyMarker(std::string_view generated, std::string_view kind,
+                          std::uint64_t instance) {
+  return generated.find(std::string(failureMarker) + std::string(kind) +
+                        "-instance " + std::to_string(instance)) !=
+         std::string_view::npos;
 }
 
 const lang::HirFunctionInstance *
@@ -287,7 +301,7 @@ void testFamily(const std::filesystem::path &fixture) {
          "proved constructors should use exact targets without failure edges");
 
   const std::string dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v34 ") &&
+  expect(dump.starts_with("mir-v37 ") &&
              dump.find("constructor-initializer=1") != std::string::npos,
          "MIR v24 should print the new initializer-stage authority");
 
@@ -296,14 +310,12 @@ void testFamily(const std::filesystem::path &fixture) {
                                        lang::OptimizationLevel::O0);
   const std::string generated =
       emit(frontend, frontend.mir, compatibility).contents;
-  std::size_t markers = 0;
-  for (std::size_t found = generated.find(marker); found != std::string::npos;
-       found = generated.find(marker, found + marker.size())) {
-    ++markers;
-  }
-  expect(markers == 4,
+  expect(hasBodyMarker(generated, "function", consume->id) &&
+             hasBodyMarker(generated, "function", run->id) &&
+             hasBodyMarker(generated, "constructor", constructor->id) &&
+             hasBodyMarker(generated, "destructor", destructor->id),
          "two free functions, one constructor, and one destructor should be "
-         "MIR-emitted");
+         "emitted by the general MIR route");
   expect(generated.find("mir_lifetime_slot<") != std::string::npos &&
              generated.find("__gti_mir_p_") != std::string::npos &&
              generated.find("__gti_mir_v_") != std::string::npos &&
@@ -585,12 +597,19 @@ void testSameTypedConstructorSwapAndCheckedFallback(
     return;
   }
   const auto *pair = findConstructor(frontend.hir, frontend.mir, "PairFlag");
+  const auto *pairDestructor =
+      findDestructor(frontend.hir, frontend.mir, "PairFlag");
+  const auto *usePair = findFunction(frontend.hir, frontend.mir, "use_pair");
+  const auto *wrapper =
+      findFunction(frontend.hir, frontend.mir, "pair_wrapper");
   const auto *checked =
       findDestructor(frontend.hir, frontend.mir, "CheckedCleanup");
   expect(pair != nullptr && !pair->mayRaiseDefinedFailure &&
-             checked != nullptr && checked->mayRaiseDefinedFailure,
+             pairDestructor != nullptr && usePair != nullptr &&
+             wrapper != nullptr && checked != nullptr &&
+             checked->mayRaiseDefinedFailure,
          "the exact PairFlag lifecycle should be failure-free while checked "
-         "cleanup remains outside the family");
+         "cleanup remains failure-capable");
 
   const lang::OptimizationResult compatibility =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -603,18 +622,16 @@ void testSameTypedConstructorSwapAndCheckedFallback(
               << error.what() << '\n';
   }
   expect(baseline.has_value(),
-         "a valid failure-capable destructor must fall back instead of "
-         "triggering the owned-lifecycle selector");
-  if (baseline) {
-    std::size_t markers = 0;
-    for (std::size_t found = baseline->contents.find(marker);
-         found != std::string::npos;
-         found = baseline->contents.find(marker, found + marker.size())) {
-      ++markers;
-    }
-    expect(markers == 4,
-           "PairFlag's function, reverse scalar caller, constructor, and "
-           "destructor should form one owned-lifecycle graph");
+         "a valid failure-capable destructor must emit through verified MIR");
+  if (baseline && pair != nullptr && pairDestructor != nullptr &&
+      usePair != nullptr && wrapper != nullptr) {
+    expect(
+        hasBodyMarker(baseline->contents, "function", usePair->id) &&
+            hasBodyMarker(baseline->contents, "function", wrapper->id) &&
+            hasBodyMarker(baseline->contents, "constructor", pair->id) &&
+            hasBodyMarker(baseline->contents, "destructor", pairDestructor->id),
+        "PairFlag's function, reverse scalar caller, constructor, and "
+        "destructor should all use the general MIR route");
   }
 
   expectRejected(
@@ -676,35 +693,57 @@ void testSameTypedConstructorSwapAndCheckedFallback(
       });
 }
 
-void testUnsupportedCommaFallsBack(const std::filesystem::path &fixture) {
+void testCommaUsesGeneralMir(const std::filesystem::path &fixture) {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       fixture.string(), readFile(fixture),
       {fixture.parent_path().parent_path().parent_path() / "stdlib" /
        "prelude.gti"});
   expect(frontend.canGenerateCode(),
-         "the unsupported comma near miss should remain a valid source "
-         "program");
+         "the lifecycle comma fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
     return;
   }
+
+  const auto *plain = findFunction(frontend.hir, frontend.mir, "use_plain");
+  const auto *comma = findFunction(frontend.hir, frontend.mir, "use_comma");
+  const auto *constructor =
+      findConstructor(frontend.hir, frontend.mir, "CommaFlag");
+  const auto *destructor =
+      findDestructor(frontend.hir, frontend.mir, "CommaFlag");
+  const bool hasCommaOperation =
+      comma != nullptr &&
+      std::any_of(comma->body.blocks.begin(), comma->body.blocks.end(),
+                  [](const lang::MirBlock &block) {
+                    return std::any_of(
+                        block.instructions.begin(), block.instructions.end(),
+                        [](const lang::MirInstruction &instruction) {
+                          return instruction.kind ==
+                                     lang::MirInstructionKind::Compute &&
+                                 instruction.operation ==
+                                     lang::MirOperation::Comma;
+                        });
+                  });
+  expect(plain != nullptr && comma != nullptr && constructor != nullptr &&
+             destructor != nullptr && hasCommaOperation,
+         "the comma fixture should retain its functions, lifecycle, and exact "
+         "MIR comma operation");
+  if (plain == nullptr || comma == nullptr || constructor == nullptr ||
+      destructor == nullptr) {
+    return;
+  }
+
   const lang::OptimizationResult compatibility =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
-  std::optional<lang::BackendArtifact> generated;
-  try {
-    generated = emit(frontend, frontend.mir, compatibility);
-  } catch (const std::logic_error &error) {
-    std::cerr << "comma near-miss fallback unexpectedly failed: "
-              << error.what() << '\n';
-  }
-  expect(generated.has_value(),
-         "an unsupported comma operation must demote the source function "
-         "instead of reaching the owned MIR emitter");
-  if (generated) {
-    expect(generated->contents.find(marker) == std::string::npos,
-           "the comma near miss must atomically keep its function, "
-           "constructor, and destructor on compatibility emission");
-  }
+  const std::string generated =
+      emit(frontend, frontend.mir, compatibility).contents;
+  expect(hasBodyMarker(generated, "function", plain->id) &&
+             hasFailureBodyMarker(generated, "function", comma->id) &&
+             hasBodyMarker(generated, "constructor", constructor->id) &&
+             hasBodyMarker(generated, "destructor", destructor->id) &&
+             generated.find("owned-lifecycle-call-v1") == std::string::npos,
+         "comma evaluation and its lifecycle must emit from general MIR "
+         "without reviving the retired family route");
 }
 
 } // namespace
@@ -718,9 +757,8 @@ int main(int argc, char **argv) {
   testSameTypedConstructorSwapAndCheckedFallback(
       std::filesystem::path(argv[1]).parent_path() /
       "mir_backend_owned_lifecycle_ctor_swap.gti");
-  testUnsupportedCommaFallsBack(
-      std::filesystem::path(argv[1]).parent_path() /
-      "mir_backend_owned_lifecycle_comma_near_miss.gti");
+  testCommaUsesGeneralMir(std::filesystem::path(argv[1]).parent_path() /
+                          "mir_backend_owned_lifecycle_comma_near_miss.gti");
   if (failures != 0) {
     std::cerr << failures << " owned lifecycle backend test(s) failed\n";
     return 1;

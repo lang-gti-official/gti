@@ -68,7 +68,8 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
 
   CppMirRepresentationSnapshotBuild snapshot =
       buildCppMirRepresentationSnapshot(input.program, input.semantics,
-                                        input.hir, input.mir, input.target);
+                                        input.hir, input.mir, input.target,
+                                        standard);
   if (!snapshot.valid()) {
     const std::string detail = snapshot.issues.empty()
                                    ? "unknown snapshot-builder failure"
@@ -79,7 +80,7 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
   CppMirProgramPlan plan =
       planCppMirProgram(input.mir, std::move(*snapshot.snapshot));
   const CppMirBackendProgramRoute route = selectCppMirBackendProgramRoute(plan);
-  if (route != CppMirBackendProgramRoute::Compatibility) {
+  if (route != CppMirBackendProgramRoute::VerifiedMir) {
     throw std::logic_error("C++ backend selected an unavailable whole-program "
                            "representation route");
   }
@@ -90,8 +91,8 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
   CppMirBodyEmissionMap generalRows(
       buildCppMirBodyEmissionMapRows(input.semantics, input.mir, standard));
 
-  // The plan above is complete before this one whole-program emitter is
-  // constructed. UnsupportedSurface never triggers per-body dispatch here.
+  // The complete plan above proves every executable body has generic MIR text
+  // coverage before this one whole-program representation emitter is built.
   return {.kind = BackendArtifactKind::Source,
           .contents = CppEmitter(input.semantics, input.hir, input.mir,
                                  std::move(generalRows), standard, input.target,

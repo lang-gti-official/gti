@@ -16,9 +16,11 @@
 namespace {
 
 constexpr std::string_view marker =
-    "// GTI verified-MIR body: scalar-failure-callgraph-v1";
+    "// GTI verified-MIR body: scalar-cfg-failure-v1";
 constexpr std::string_view lifecycleMarker =
-    "// GTI verified-MIR body: owned-lifecycle-call-v1";
+    "// GTI verified-MIR body: scalar-cfg-v1";
+constexpr std::string_view legacyMarker =
+    "// GTI verified-MIR body: scalar-failure-callgraph-v1";
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -266,6 +268,12 @@ std::string_view definitionForMarker(std::string_view generated,
   return {};
 }
 
+bool hasGeneralFunctionDefinition(std::string_view generated,
+                                  std::size_t instance) {
+  return !definitionForMarker(generated, marker, instance).empty() ||
+         !definitionForMarker(generated, lifecycleMarker, instance).empty();
+}
+
 std::string_view nativeMainDefinition(std::string_view generated) {
   constexpr std::string_view signature = "\nint main() {";
   const std::size_t start = generated.find(signature);
@@ -348,8 +356,7 @@ void expectFailureCleanupBeforeFalse(std::string_view definition,
             ? std::string_view{}
             : definition.substr(block, failure - block);
     expect(!failureBlock.empty() &&
-               failureBlock.find("// GTI MIR failure cleanup "
-                                 "drop-obligation ") !=
+               failureBlock.find("failure cleanup drop-obligation ") !=
                    std::string_view::npos &&
                failureBlock.find(".destroy();") != std::string_view::npos &&
                failureBlock.find("*__gti_mir_out_result") ==
@@ -393,11 +400,13 @@ void expectSelected(std::string_view generated,
           return block.terminator.kind == lang::MirTerminatorKind::Return;
         });
   };
-  expectHiddenFailureAbi(leafDefinition, "_overflowing_leaf(",
+  expectHiddenFailureAbi(leafDefinition, "_overflowing_leaf__gti_mir_failure(",
                          returnCount(leaf));
-  expectHiddenFailureAbi(callerDefinition, "_propagate_overflow(",
+  expectHiddenFailureAbi(callerDefinition,
+                         "_propagate_overflow__gti_mir_failure(",
                          returnCount(caller));
-  expectHiddenFailureAbi(entryDefinition, "__gti_entry(", returnCount(entry));
+  expectHiddenFailureAbi(entryDefinition, "__gti_entry__gti_mir_failure(",
+                         returnCount(entry));
   expectFailureCleanupBeforeFalse(leafDefinition, 1);
   expectFailureCleanupBeforeFalse(callerDefinition, 2);
   expectFailureCleanupBeforeFalse(entryDefinition, 1);
@@ -422,17 +431,18 @@ void expectSelected(std::string_view generated,
       "catch (...) {\n"
       "    std::_Exit(GTI_FAILURE_EXIT_STATUS);\n"
       "  }";
-  expect(!nativeMain.empty() &&
-             countSubstring(generated, "::gti_rt_failure_terminate_v1(") == 1 &&
-             nativeMain.find(firewall) != std::string_view::npos &&
-             nativeMain.find("::gti_failure_record_v1 "
-                             "__gti_failure_record{};") !=
-                 std::string_view::npos &&
-             nativeMain.find("::__gti_program::__gti_entry(") !=
-                 std::string_view::npos &&
-             nativeMain.find("&__gti_failure_record") != std::string_view::npos,
-         "the one hosted boundary should own the record, terminate once, and "
-         "immediately firewall an escaping native exception with status 70");
+  expect(
+      !nativeMain.empty() &&
+          countSubstring(generated, "::gti_rt_failure_terminate_v1(") == 1 &&
+          nativeMain.find(firewall) != std::string_view::npos &&
+          nativeMain.find("::gti_failure_record_v1 "
+                          "__gti_failure_record{};") !=
+              std::string_view::npos &&
+          nativeMain.find("::__gti_program::__gti_entry__gti_mir_failure(") !=
+              std::string_view::npos &&
+          nativeMain.find("&__gti_failure_record") != std::string_view::npos,
+      "the one hosted boundary should own the record, terminate once, and "
+      "immediately firewall an escaping native exception with status 70");
   const std::size_t catchAt = nativeMain.find("catch (...)");
   const std::size_t catchEnd = catchAt == std::string_view::npos
                                    ? std::string_view::npos
@@ -446,9 +456,10 @@ void expectSelected(std::string_view generated,
              catchBody.find("gti_rt_failure") == std::string_view::npos,
          "the native-exception firewall must not forge or report a GTI "
          "failure record");
-  expect(countSubstring(generated, lifecycleMarker) == 2 &&
-             generated.find("constructor-instance") != std::string_view::npos &&
-             generated.find("destructor-instance") != std::string_view::npos,
+  expect(countSubstring(generated, std::string(lifecycleMarker) +
+                                       " constructor-instance") == 1 &&
+             countSubstring(generated, std::string(lifecycleMarker) +
+                                           " destructor-instance") == 1,
          "the failure component should reuse verified MIR constructor and "
          "destructor bodies");
 }
@@ -583,7 +594,7 @@ void testFailureGraph(const std::filesystem::path &fixture) {
                               lang::DefinedFailureDetail::Subtraction, 26, 561,
                               562) == 1,
          "the hosted component should own two exact immutable failure sites");
-  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v34 "),
+  expect(lang::MirPrinter().print(frontend.mir).starts_with("mir-v37 "),
          "the failure-capable family should consume the verified v24 schema");
 
   const lang::OptimizationPipeline pipeline;
@@ -655,9 +666,11 @@ void testAtomicNearMiss(const std::filesystem::path &fixture) {
   const std::string name = fixture.filename().string();
   const lang::HirFunctionInstance *entry =
       findHirFunction(frontend.hir, "main");
-  expect(functionRaises(entry),
-         "each atomic near miss should retain an otherwise failure-capable "
-         "hosted entry");
+  const bool detectorFreeEntry =
+      name.find("no_detector_entry_near_miss") != std::string::npos;
+  expect(functionRaises(entry) != detectorFreeEntry,
+         "each atomic near miss except the detector-free fixture should "
+         "retain an otherwise failure-capable hosted entry");
   if (name.find("reverse_near_miss") != std::string::npos) {
     const lang::HirFunctionInstance *checked =
         findHirFunction(frontend.hir, "checked_increment");
@@ -744,9 +757,9 @@ void testAtomicNearMiss(const std::filesystem::path &fixture) {
                               !value.constructorTarget &&
                               value.intrinsic == lang::IntrinsicKind::None);
                     });
-    expect(functionRaises(entry) && !entryHasFailureSite,
-           "the no-detector entry near miss should retain a conservative "
-           "effect without a local detector or propagation edge");
+    expect(!functionRaises(entry) && !entryHasFailureSite,
+           "the no-detector entry near miss should prove failure-free when "
+           "it has neither a local detector nor a propagation edge");
   } else if (name.find("c_linkage_near_miss") != std::string::npos) {
     const lang::HirFunctionInstance *checked =
         findHirFunction(frontend.hir, "checked_increment");
@@ -782,8 +795,9 @@ void testAtomicNearMiss(const std::filesystem::path &fixture) {
                parameter->kind == lang::SemanticType::Array &&
                parameter->arguments.size() == 1 &&
                parameter->arguments.front() == selected->type && !directBodyUse,
-           "the array-user near miss should expose selected-class ownership "
-           "only through its nested array element type");
+           "the array-user fixture should retain selected-class ownership "
+           "only through its nested array element type while still using "
+           "general MIR emission");
   } else if (name.find("generic_owner_near_miss") != std::string::npos) {
     const lang::HirClassInstance *selected =
         findHirClass(frontend.hir, "FailureScope");
@@ -887,9 +901,13 @@ void testAtomicNearMiss(const std::filesystem::path &fixture) {
     if (optimized.valid()) {
       const std::string generated =
           emit(frontend, optimized.mir, compatibility).contents;
-      expect(generated.find(marker) == std::string::npos,
-             "an open or cyclic may-fail component must remain wholly on the "
-             "compatibility ABI");
+      const lang::MirFunctionInstance *optimizedEntry =
+          findFunction(frontend.hir, optimized.mir, "main");
+      expect(optimizedEntry != nullptr &&
+                 hasGeneralFunctionDefinition(generated, optimizedEntry->id) &&
+                 generated.find(legacyMarker) == std::string::npos,
+             "an open or cyclic graph must still emit its entry from the "
+             "general MIR route without reviving the legacy component ABI");
     }
   }
 }
@@ -940,9 +958,16 @@ void testNonOwningClassMention(const std::filesystem::path &fixture) {
     if (optimized.valid()) {
       const std::string generated =
           emit(frontend, optimized.mir, compatibility).contents;
-      expect(countSubstring(generated, marker) == 2,
-             "nonowning reference/raw-pointer mentions should not demote the "
-             "otherwise closed checked graph");
+      const lang::MirFunctionInstance *optimizedChecked =
+          findFunction(frontend.hir, optimized.mir, "checked_increment");
+      const lang::MirFunctionInstance *optimizedEntry =
+          findFunction(frontend.hir, optimized.mir, "main");
+      expect(
+          optimizedChecked != nullptr && optimizedEntry != nullptr &&
+              hasGeneralFunctionDefinition(generated, optimizedChecked->id) &&
+              hasGeneralFunctionDefinition(generated, optimizedEntry->id),
+          "nonowning reference/raw-pointer mentions should not demote the "
+          "otherwise closed checked graph");
     }
   }
 }

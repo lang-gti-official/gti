@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+Implementation note (2026-08-22): loan-carrying source bodies are included in
+the completed verified-MIR cutover. Corpus counts and "remaining pool" wording
+below record the migration checkpoint at which this decision was made.
+
 ## Context
 
 The largest remaining pool of function bodies outside verified-MIR emission

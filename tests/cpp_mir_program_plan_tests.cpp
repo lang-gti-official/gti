@@ -165,22 +165,7 @@ makeSnapshot(const lang::MirProgram &program) {
       break;
     case lang::CppMirBodyDefinitionKind::Source:
       body.role = lang::CppMirBodyRole::SourceExecutable;
-      switch (address.kind) {
-      case lang::MirBodyKind::Function:
-        body.family = lang::CppMirExecutionFamily::ScalarFailureCallgraphV1;
-        break;
-      case lang::MirBodyKind::Constructor:
-      case lang::MirBodyKind::Destructor:
-        body.family = lang::CppMirExecutionFamily::OwnedLifecycleCallV1;
-        break;
-      case lang::MirBodyKind::Lambda:
-      case lang::MirBodyKind::Module:
-      case lang::MirBodyKind::FieldInitializers:
-      case lang::MirBodyKind::StaticFieldInitializers:
-      case lang::MirBodyKind::HostedStartup:
-        body.family = lang::CppMirExecutionFamily::Unsupported;
-        break;
-      }
+      body.family = lang::CppMirExecutionFamily::Unsupported;
       break;
     case lang::CppMirBodyDefinitionKind::CompilerGenerated:
       body.role = lang::CppMirBodyRole::SourceExecutable;
@@ -688,7 +673,7 @@ void testDeclarationAndRuntimeCannotClaimExecution() {
          "the fixture should retain an ABI declaration body row");
   if (declarationRow != declaration.bodies.end()) {
     declarationRow->role = lang::CppMirBodyRole::SourceExecutable;
-    declarationRow->family = lang::CppMirExecutionFamily::ScalarLeafV1;
+    declarationRow->family = lang::CppMirExecutionFamily::GeneralV1;
   }
   const lang::CppMirProgramPlan declarationPlan =
       planSnapshotForTesting(declarationFrontend.mir, std::move(declaration));
@@ -802,7 +787,7 @@ int main() { return 0; }
          "the trusted fixture should retain a runtime declaration row");
   if (runtimeRow != runtime.bodies.end()) {
     runtimeRow->role = lang::CppMirBodyRole::SourceExecutable;
-    runtimeRow->family = lang::CppMirExecutionFamily::ScalarLeafV1;
+    runtimeRow->family = lang::CppMirExecutionFamily::GeneralV1;
   }
   const lang::CppMirProgramPlan runtimePlan =
       planSnapshotForTesting(runtimeFrontend.mir, std::move(runtime));
@@ -1137,45 +1122,6 @@ int main() { return state - 1; }
          "the independently derived contract");
 }
 
-void testTransitionalFamilyLabelsNeverAuthorizeComplete() {
-  const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "cpp-mir-plan-family-inventory.gti", "int helper() { return 0; }");
-  expect(frontend.canGenerateCode(),
-         "the family-inventory fixture should pass the frontend");
-  if (!frontend.canGenerateCode()) {
-    return;
-  }
-
-  const std::vector<lang::CppMirExecutionFamily> labels = {
-      lang::CppMirExecutionFamily::ScalarLeafV1,
-      lang::CppMirExecutionFamily::ScalarCfgV1,
-      lang::CppMirExecutionFamily::ScalarDirectCallV1,
-      lang::CppMirExecutionFamily::ClassDefaultCleanupV1,
-      lang::CppMirExecutionFamily::OwnedLifecycleCallV1,
-      lang::CppMirExecutionFamily::ScalarFailureCallgraphV1,
-  };
-  for (const lang::CppMirExecutionFamily label : labels) {
-    lang::CppMirRepresentationSnapshot snapshot = makeSnapshot(frontend.mir);
-    const lang::MirFunctionInstance *function =
-        findFirstNonEntrySourceFunction(frontend.mir);
-    if (function != nullptr) {
-      if (lang::CppMirBodyRepresentation *body =
-              findBody(snapshot, {.kind = lang::MirBodyKind::Function,
-                                  .owner = function->id})) {
-        body->family = label;
-      }
-    }
-    const lang::CppMirProgramPlan plan =
-        planSnapshotForTesting(frontend.mir, std::move(snapshot));
-    expect(plan.status == lang::CppMirProgramPlanStatus::UnsupportedSurface &&
-               plan.issues.empty() &&
-               unsupportedCount(plan,
-                                lang::CppMirUnsupportedSurfaceKind::Body) == 1,
-           "a hand-authored transitional family label must never prove "
-           "whole-program Complete");
-  }
-}
-
 void testOneUnsupportedBodyDemotesAtomically() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "cpp-mir-plan-atomic-unsupported.gti", "int helper() { return 0; }");
@@ -1224,7 +1170,6 @@ int main() {
   testDeclarationAndRuntimeCannotClaimExecution();
   testThunkIntegrityFailures();
   testExactContractedThunkProvenance();
-  testTransitionalFamilyLabelsNeverAuthorizeComplete();
   testOneUnsupportedBodyDemotesAtomically();
 
   if (failures != 0) {

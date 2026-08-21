@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,6 +40,11 @@ struct CppMirTypeRepresentation {
   SemanticType type = SemanticType::Unknown;
   CppMirTypeRepresentationKind kind = CppMirTypeRepresentationKind::Scalar;
   std::string spelling;
+  // A class template's qualified primary name, separate from its concrete
+  // argument spelling. MIR body emission uses this only when a semantic class
+  // contains an otherwise-unnameable closure type and composes the exact
+  // body-local closure alias into the template-id.
+  std::string templateNameSpelling;
   // A Class row's semantic lifecycle proves the prelude-declaration shape
   // compiles: a usable default constructor and move assignment let the
   // value declare value-initialized and receive its construction by
@@ -78,6 +84,11 @@ struct CppMirSymbolRepresentation {
   std::size_t ordinal = 0;
   SemanticType type = SemanticType::Unknown;
   std::string spelling;
+  // A Field row may also carry the source declaration's dependent type
+  // spelling. Concrete MIR instances still prove the exact field type; this
+  // copied representation is used only when their shared C++ template
+  // definition must spell a direct initializer in terms of T/N parameters.
+  std::string declarationTypeSpelling;
 
   friend bool operator==(const CppMirSymbolRepresentation &,
                          const CppMirSymbolRepresentation &) = default;
@@ -117,7 +128,6 @@ enum class CppMirEmissionCapabilityKind {
   Intrinsic,
   LifetimeStorage,
   NativeInterop,
-  PackFold,
   Payload,
   ProgramInitialization,
   RawMemory,
@@ -173,6 +183,14 @@ private:
   std::vector<CppMirEnumRepresentation> enums_;
   std::vector<CppMirEmissionCapabilityRepresentation> capabilities_;
 };
+
+// A concrete variadic instance retains one semantic TypePack parameter in
+// MIR, while the native ABI receives one parameter per concrete pack element.
+// Only a final, concrete pack has this representation; symbolic or misplaced
+// packs stay unavailable to per-instance MIR emission.
+[[nodiscard]] std::optional<std::vector<SemanticType>>
+cppMirFlattenConcreteParameterTypes(
+    std::span<const SemanticType> parameterTypes);
 
 // Exhaustive enum-level encoding classification. RepresentedByMir says the
 // core record has a complete backend-readable shape, not that every contextual
@@ -269,7 +287,6 @@ enum class CppMirBodyEmissionIssueKind {
   MissingSymbolRepresentation,
   MissingEnumRepresentation,
   MissingCapabilityRepresentation,
-  MissingPackExpansionMir,
   MissingOrderedCompoundMir,
   MissingCheckedFailureControlFlow,
   MissingAggregateRollbackMir,
@@ -279,6 +296,7 @@ enum class CppMirBodyEmissionIssueKind {
   MissingFailureCleanupMir,
   MissingProgramInitializationMir,
   MissingHostedStartupMir,
+  UnsupportedTextVocabulary,
   Count,
 };
 
@@ -306,6 +324,9 @@ struct CppMirProgramEmissionAnalysis {
   CppMirBodyEmissionReadiness readiness =
       CppMirBodyEmissionReadiness::Incoherent;
   std::vector<CppMirBodyEmissionAnalysis> bodies;
+  // Program/map validation issues only. Body-local representation and text
+  // issues remain attached to their exact entry in `bodies`, so one declined
+  // specialized surface cannot suppress admission of every unrelated body.
   std::vector<CppMirBodyEmissionIssue> issues;
 
   [[nodiscard]] bool ready() const {
@@ -333,12 +354,11 @@ struct CppMirFieldInitializerSpelling {
   std::string spelling;
 };
 
-// The extracted schedule of a passive FieldInitializers,
-// StaticFieldInitializers, or Module body: one straight-line block ending in
-// Exit whose only work is literal materialization and per-field Initialize
-// stages. `supported` is false for any other shape (checked detectors,
-// storage reads, cross-field references), which stays with the
-// compatibility route.
+// The extracted schedule of a FieldInitializers, StaticFieldInitializers, or
+// Module body: a straight-line schedule whose values can be spelled from MIR
+// literals, exact copied representation rows, and admitted construction
+// stages before their per-field Initialize operations. `supported` is false
+// for every shape the schedule cannot reproduce exactly.
 struct CppMirInitializerScheduleText {
   CppMirBodyEmissionAnalysis analysis;
   bool supported = false;
@@ -371,6 +391,13 @@ cppMirHostedStartupFailureFreeSchedule(const MirProgram &program);
 [[nodiscard]] bool
 cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program);
 
+// True when Module/0 can propagate a defined failure to HostedStartup. This
+// is derived from the verified module instructions and is shared by module
+// text selection and the hosted adapter; the backend must not infer it from
+// source initializers or emitted C++.
+[[nodiscard]] bool
+cppMirModuleMayRaiseDefinedFailure(const MirProgram &program);
+
 // Single naming authority for the transformed failure sibling (ADR 017),
 // shared by the compatibility signature/wrapper emission and the verified
 // caller spelling. A plain member name carries the __gti_mir_failure
@@ -380,6 +407,22 @@ cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program);
 // the body keeps the compatibility route.
 [[nodiscard]] std::string
 cppMirFailureSiblingSpelling(std::string_view memberSpelling);
+
+// Resolves a virtual function instance to the pure interface contract whose
+// transformed status ABI it must share. The bounded cutover surface accepts
+// only exact GTI interface overrides: return and parameter types, receiver
+// mutability, operator identity, and concrete base ancestry must all agree.
+// Non-virtual calls and virtual families without that exact contract return
+// nullptr and remain on the compatibility path.
+[[nodiscard]] const MirFunctionInstance *
+cppMirVirtualFailureContractRoot(const MirProgram &program,
+                                 const MirFunctionInstance &function);
+
+// Compiler-private tag used to select the explicit-data constructor failure
+// overload. Keeping the spelling in the shared backend authority prevents a
+// caller and declaration from drifting to different generated C++ types.
+[[nodiscard]] std::string
+cppMirFailureConstructorTagSpelling(HirConstructorInstanceId constructor);
 
 // The reference-field initializer schedule (ADR 018): each
 // stores-reference constructor initializer pairs bijectively with one
@@ -395,6 +438,80 @@ struct CppMirStoredReferenceBinding {
 [[nodiscard]] std::optional<std::vector<CppMirStoredReferenceBinding>>
 cppMirStoredReferenceBindings(const MirConstructorInstance &constructor);
 
+// True when a constructor and every constructor selected by its initializer
+// metadata can never report a recoverable failure to its caller. Terminal
+// failure inside a plain helper is permitted: it does not return and therefore
+// cannot take a caller's failure edge. Cycles and missing targets fail closed.
+[[nodiscard]] bool
+cppMirConstructorStatusCannotFail(const MirProgram &program,
+                                  HirConstructorInstanceId constructor);
+
+// True when the concrete class has a compiler-proven, observation-free empty
+// representation that the C++ backend may use while a failure-form
+// constructor publishes its MIR field schedule. This is representation-only:
+// it does not make a default constructor available to GTI source.
+[[nodiscard]] bool
+cppMirFailureConstructorEmptyStateEligible(const MirProgram &program,
+                                           HirClassInstanceId instance);
+
+// An explicit base initializer whose arguments are exact copy-loads of this
+// constructor's scalar parameters. The native C++ initializer list may spell
+// those parameters directly; all other base-expression shapes remain on the
+// compatibility path until MIR carries a general initializer expression
+// schedule.
+struct CppMirBaseParameterInitializerBinding {
+  std::size_t initializer = 0;
+  SemanticType baseType = SemanticType::Unknown;
+  HirClassInstanceId base = 0;
+  HirConstructorInstanceId constructor = 0;
+  std::vector<std::size_t> parameters;
+};
+[[nodiscard]]
+std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
+cppMirBaseParameterInitializerBindings(
+    const MirProgram &program, const MirConstructorInstance &constructor);
+
+// A scalar field initializer whose argument is one exact copy-load of a
+// constructor parameter. The native member-initializer list may spell the
+// parameter directly and erase only the named Load/Initialize pair; every
+// other expression shape remains in the MIR body schedule.
+struct CppMirCopyParameterFieldBinding {
+  std::size_t initializer = 0;
+  SymbolId field = 0;
+  std::size_t parameter = 0;
+  MirPlaceId sourcePlace = 0;
+  MirValueId loadedValue = 0;
+  MirInstructionId loadInstruction = 0;
+  MirInstructionId initializeInstruction = 0;
+  MirInstructionId boundaryInstruction = 0;
+};
+[[nodiscard]]
+std::optional<std::vector<CppMirCopyParameterFieldBinding>>
+cppMirCopyParameterFieldBindings(const MirProgram &program,
+                                 const MirConstructorInstance &constructor);
+
+// The owned-parameter initializer schedule: each `field(std::move(parameter))`
+// metadata row is tied bijectively to the exact parameter place, ownership
+// Move, optional explicit This.field publication, and lexical parameter Drop.
+// A backend may publish the field in its native member-initializer list and
+// erase only the records named by this proof. A malformed or partially
+// claimed schedule returns nullopt so constructor admission fails closed.
+struct CppMirOwnedParameterFieldBinding {
+  std::size_t initializer = 0;
+  SymbolId field = 0;
+  std::size_t parameter = 0;
+  MirPlaceId sourcePlace = 0;
+  MirValueId movedValue = 0;
+  MirInstructionId moveInstruction = 0;
+  MirInstructionId initializeInstruction = 0;
+  MirInstructionId dropInstruction = 0;
+  MirDropObligationId parameterDrop = 0;
+};
+[[nodiscard]]
+std::optional<std::vector<CppMirOwnedParameterFieldBinding>>
+cppMirOwnedParameterFieldBindings(const MirProgram &program,
+                                  const MirConstructorInstance &constructor);
+
 class CppMirBodyEmitter {
 public:
   CppMirBodyEmitter(const MirProgram &program,
@@ -403,11 +520,15 @@ public:
 
   [[nodiscard]] CppMirBodyEmissionAnalysis
   analyze(MirBodyAddress address) const;
+  // Verifies both MIR/representation coherence and complete text coverage for
+  // every core body. A Ready result is the backend preflight guarantee that no
+  // executable body needs an AST/HIR emission path.
   [[nodiscard]] CppMirProgramEmissionAnalysis analyzeProgram() const;
 
-  // General per-instance body text for the scalar vocabulary. `familyLabel`
-  // is the production verified-MIR marker label and `indentation` is the
-  // caller's two-space indentation depth at the body's opening brace.
+  // General per-instance body text for the scalar vocabulary, including the
+  // private Module/0 runtime-initialization function. `familyLabel` is the
+  // production verified-MIR marker label and `indentation` is the caller's
+  // two-space indentation depth at the body's opening brace.
   // Analysis runs first; a non-Ready body returns its issues and no text. A
   // Ready body whose construct falls outside the ported vocabulary is
   // emission drift and throws, matching the transitional emitter's
@@ -462,6 +583,14 @@ public:
   // in-class initializers (and verified-empty markers) from MIR.
   [[nodiscard]] CppMirInitializerScheduleText
   initializerSchedule(MirBodyAddress address) const;
+
+  // True only for the bounded ordinary-constructor composition where C++ may
+  // construct a state-bearing base directly: the derived fields and body are
+  // failure-free, every concrete base uses an exact zero-argument source
+  // constructor, and that base constructor plus its field schedule are both
+  // independently spellable from verified MIR.
+  [[nodiscard]] bool supportsNativeContainedBaseConstruction(
+      HirConstructorInstanceId constructor) const;
 
 private:
   [[nodiscard]] bool supportsBodyTextImpl(MirBodyAddress address,

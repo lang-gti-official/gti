@@ -149,9 +149,9 @@ void testExhaustiveSealedInventory() {
   for (const lang::CppMirBodyRepresentation &body : build.snapshot->bodies) {
     represented.push_back(body.identity.address);
     if (body.role == lang::CppMirBodyRole::SourceExecutable) {
-      expect(body.family == lang::CppMirExecutionFamily::Unsupported,
-             "the sealed builder must not promote a transitional family "
-             "label into generic-emitter support");
+      expect(body.family == lang::CppMirExecutionFamily::GeneralV1,
+             "the sealed builder should publish only bodies that passed the "
+             "complete generic-emitter preflight");
     } else {
       expect(body.family == lang::CppMirExecutionFamily::None,
              "non-executable body roles should not claim an execution "
@@ -198,10 +198,10 @@ void testExhaustiveSealedInventory() {
   expect(std::all_of(build.snapshot->data.begin(), build.snapshot->data.end(),
                      [](const lang::CppMirDataRepresentation &data) {
                        return data.support ==
-                              lang::CppMirSurfaceSupport::Unsupported;
+                              lang::CppMirSurfaceSupport::Supported;
                      }),
-         "copied declaration data should remain migration-unsupported until "
-         "the generic representation emitter consumes it");
+         "the sealed declaration inventory should be supported by the "
+         "whole-program representation emitter");
 
   expect(thunkCount(*build.snapshot, lang::CppMirThunkKind::HostedEntry) == 1 &&
              thunkCount(*build.snapshot,
@@ -225,10 +225,10 @@ void testExhaustiveSealedInventory() {
 
   const lang::CppMirProgramPlan plan =
       lang::planCppMirProgram(frontend.mir, std::move(*build.snapshot));
-  expect(plan.status == lang::CppMirProgramPlanStatus::UnsupportedSurface &&
-             plan.issues.empty() && !plan.unsupported.empty(),
-         "the rich sealed inventory should be coherent and atomically "
-         "unsupported for this migration tranche");
+  expect(plan.status == lang::CppMirProgramPlanStatus::Complete &&
+             plan.issues.empty() && plan.unsupported.empty(),
+         "the rich sealed inventory should prove complete verified-MIR "
+         "emission before backend construction");
 }
 
 void testUnusedSourceTemplatesRemainInventorySurface() {
@@ -328,16 +328,16 @@ int main() { return 0; }
                      [](const lang::CppMirDataRepresentation &data) {
                        return data.identity.declaration != 0 &&
                               data.support ==
-                                  lang::CppMirSurfaceSupport::Unsupported;
+                                  lang::CppMirSurfaceSupport::Supported;
                      }),
          "every copied declaration row should have a nonzero derived identity "
-         "and remain migration-unsupported");
+         "and complete representation support");
   const lang::CppMirProgramPlan plan =
       lang::planCppMirProgram(frontend.mir, *build.snapshot);
-  expect(plan.status == lang::CppMirProgramPlanStatus::UnsupportedSurface &&
+  expect(plan.status == lang::CppMirProgramPlanStatus::Complete &&
              plan.issues.empty(),
-         "passive and uninstantiated source declarations should atomically "
-         "select the whole-program compatibility route");
+         "passive and uninstantiated source declarations should remain on the "
+         "complete whole-program representation route");
 }
 
 void testExactProgramAndTargetAnalysisSeal() {
@@ -648,10 +648,60 @@ int main() { return seed - 7 + zeroed; }
 
   const lang::CppMirProgramPlan plan =
       lang::planCppMirProgram(frontend.mir, std::move(*build.snapshot));
-  expect(plan.status == lang::CppMirProgramPlanStatus::UnsupportedSurface &&
+  expect(plan.status == lang::CppMirProgramPlanStatus::Complete &&
              plan.issues.empty(),
-         "pure data-only storage should remain coherent on the atomic "
-         "compatibility route");
+         "pure data-only storage should remain complete without an executable "
+         "fallback route");
+}
+
+void testNamespacedProgramStorageRows() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cpp-mir-representation-namespaced-storage.gti", R"(
+int32_t initial_value() { return 1; }
+namespace outer {
+namespace values {
+constexpr char marker = 'G';
+mut int32_t dynamic = initial_value();
+}
+}
+int main() { return outer::values::dynamic - 1; }
+)");
+  expect(frontend.canGenerateCode(),
+         "namespaced program storage should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMapRows rows =
+      lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
+                                           lang::CppStandard::Cpp23);
+  const auto hasStorage = [&](std::string_view qualified,
+                              std::string_view spelling) {
+    const auto step = std::find_if(
+        frontend.mir.programInitializationPlan().steps.begin(),
+        frontend.mir.programInitializationPlan().steps.end(),
+        [&](const lang::MirProgramInitializationStep &candidate) {
+          const lang::SymbolRecord *record =
+              frontend.semantics.database().findSymbol(candidate.symbol);
+          return record != nullptr && record->qualifiedName == qualified;
+        });
+    return step != frontend.mir.programInitializationPlan().steps.end() &&
+           std::any_of(
+               rows.symbols.begin(), rows.symbols.end(),
+               [&](const lang::CppMirSymbolRepresentation &row) {
+                 return row.kind ==
+                            lang::CppMirSymbolRepresentationKind::Storage &&
+                        row.owner == 0 && row.symbol == step->symbol &&
+                        row.spelling == spelling;
+               });
+  };
+
+  expect(hasStorage("outer::values::marker",
+                    "::__gti_program::outer::values::marker") &&
+             hasStorage("outer::values::dynamic",
+                        "::__gti_program::outer::values::dynamic"),
+         "data-only and executable Module steps should carry exact nested "
+         "namespace storage spellings");
 }
 
 void testStaticOnlyProgramInitializationFact() {
@@ -712,10 +762,10 @@ int main() { return StaticOnly::value - 1; }
          "non-generic class-static body remains canonical data-only");
   const lang::CppMirProgramPlan plan =
       lang::planCppMirProgram(frontend.mir, std::move(*build.snapshot));
-  expect(plan.status == lang::CppMirProgramPlanStatus::UnsupportedSurface &&
+  expect(plan.status == lang::CppMirProgramPlanStatus::Complete &&
              plan.issues.empty(),
          "the static-only program-initialization marker should plan "
-         "coherently and remain migration-unsupported");
+         "coherently through verified MIR");
 
   lang::CppMirRepresentationSnapshotBuild wrongRoot = buildSnapshot(frontend);
   expect(wrongRoot.valid(), "the wrong-root mutation seed should build");
@@ -753,7 +803,7 @@ int main() { return StaticOnly::value - 1; }
       "initialization owner marker");
 }
 
-void testCheckedDynamicInitializationRemainsCoherentUnsupported() {
+void testCheckedDynamicInitializationIsComplete() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "cpp-mir-representation-checked-initialization.gti", R"(
 constexpr int32_t seed = 1;
@@ -811,10 +861,10 @@ int main() { return checked - 2; }
          "initialization");
   const lang::CppMirProgramPlan plan =
       lang::planCppMirProgram(frontend.mir, std::move(*build.snapshot));
-  expect(plan.status == lang::CppMirProgramPlanStatus::UnsupportedSurface &&
+  expect(plan.status == lang::CppMirProgramPlanStatus::Complete &&
              plan.issues.empty(),
-         "checked dynamic Module execution must be coherent atomic "
-         "UnsupportedSurface, never Complete or Incoherent");
+         "checked dynamic Module execution should pass complete failure-form "
+         "MIR text preflight");
 }
 
 void testMissingAndStaleFactsFailClosed() {
@@ -1125,6 +1175,95 @@ int main() { return 0; }
          "never executable MIR support");
 }
 
+void testDeducedCallableOverlayPreflight() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("snapshot-callable-overlay.gti", R"(
+int invoke<Operation>(Operation operation) { return operation(); }
+
+int main() {
+  auto answer = []() -> int { return 7; };
+  return invoke(answer) - 7;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the deduced-callable overlay fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirFunctionInstance *callable = nullptr;
+  const lang::FunctionInfo *declaration = nullptr;
+  for (const lang::MirFunctionInstance &instance :
+       frontend.mir.functionInstances()) {
+    if (std::any_of(instance.parameterTypes.begin(),
+                    instance.parameterTypes.end(),
+                    [](const lang::SemanticType &type) {
+                      return type.kind == lang::SemanticType::Lambda;
+                    })) {
+      callable = &instance;
+      declaration = frontend.semantics.findFunction(instance.declaration);
+      break;
+    }
+  }
+  expect(callable != nullptr && declaration != nullptr,
+         "the fixture should retain one concrete lambda-parameter instance");
+  if (callable == nullptr || declaration == nullptr) {
+    return;
+  }
+
+  lang::CppMirBodyEmissionMapRows rows = lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23);
+  const lang::CppMirBodyEmissionMap baseMap(rows);
+  const lang::CppMirProgramEmissionAnalysis base =
+      lang::CppMirBodyEmitter(frontend.mir, baseMap).analyzeProgram();
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = callable->id};
+  const auto body =
+      std::find_if(base.bodies.begin(), base.bodies.end(),
+                   [&](const lang::CppMirBodyEmissionAnalysis &candidate) {
+                     return candidate.body == address;
+                   });
+  expect(body != base.bodies.end() && !body->ready() &&
+             std::any_of(body->issues.begin(), body->issues.end(),
+                         [](const lang::CppMirBodyEmissionIssue &issue) {
+                           return issue.kind ==
+                                  lang::CppMirBodyEmissionIssueKind::
+                                      UnsupportedTextVocabulary;
+                         }),
+         "the base spelling map should identify the unnameable closure as a "
+         "specialized text surface");
+
+  const std::optional<std::size_t> overlays =
+      lang::cppMirApplyCallableTemplateTypeOverlays(rows, frontend.semantics,
+                                                    lang::CppStandard::Cpp23,
+                                                    *declaration, *callable);
+  expect(overlays && *overlays > 0,
+         "the callable instance should derive an exact declaration-level type "
+         "overlay");
+  if (!overlays || *overlays == 0) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap overlayMap(std::move(rows));
+  const lang::CppMirBodyEmitter overlayEmitter(frontend.mir, overlayMap);
+  expect(overlayEmitter.analyze(address).ready() &&
+             (overlayEmitter.supportsBodyText(address) ||
+              overlayEmitter.supportsFailureBodyText(address)),
+         "the exact overlay should prove complete MIR text for the callable "
+         "instance");
+
+  lang::CppMirRepresentationSnapshotBuild build = buildSnapshot(frontend);
+  expect(build.valid(),
+         "whole-program preflight should accept a callable body only after its "
+         "exact overlay proof");
+  if (!build.valid()) {
+    return;
+  }
+  const lang::CppMirProgramPlan plan =
+      lang::planCppMirProgram(frontend.mir, std::move(*build.snapshot));
+  expect(plan.status == lang::CppMirProgramPlanStatus::Complete,
+         "the overlay-proven callable program should produce a complete plan");
+}
+
 void testAtomicBackendRouteAndIncoherentRejection() {
   const lang::FrontendResult frontend = analyzeRichProgram();
   if (!frontend.canGenerateCode()) {
@@ -1138,11 +1277,10 @@ void testAtomicBackendRouteAndIncoherentRejection() {
   }
   const lang::CppMirProgramPlan plan =
       lang::planCppMirProgram(frontend.mir, std::move(*build.snapshot));
-  expect(plan.status == lang::CppMirProgramPlanStatus::UnsupportedSurface &&
+  expect(plan.status == lang::CppMirProgramPlanStatus::Complete &&
              lang::selectCppMirBackendProgramRoute(plan) ==
-                 lang::CppMirBackendProgramRoute::Compatibility,
-         "one unsupported row should select one whole-program compatibility "
-         "route");
+                 lang::CppMirBackendProgramRoute::VerifiedMir,
+         "a complete sealed plan should select the verified-MIR route");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -1158,8 +1296,8 @@ void testAtomicBackendRouteAndIncoherentRejection() {
              artifact.contents.find("native_identity") != std::string::npos &&
              artifact.contents.find("helper") != std::string::npos &&
              artifact.contents.find("int main()") != std::string::npos,
-         "atomic fallback should publish one complete program artifact, not a "
-         "partial body artifact");
+         "verified-MIR emission should publish one complete program artifact, "
+         "not a partial body artifact");
 
   lang::CppMirProgramPlan incoherent;
   incoherent.status = lang::CppMirProgramPlanStatus::Incoherent;
@@ -1175,6 +1313,22 @@ void testAtomicBackendRouteAndIncoherentRejection() {
   expect(rejected,
          "the backend route selector should always reject an incoherent "
          "whole-program plan");
+
+  lang::CppMirProgramPlan unsupported;
+  unsupported.status = lang::CppMirProgramPlanStatus::UnsupportedSurface;
+  unsupported.unsupported.push_back(
+      {.kind = lang::CppMirUnsupportedSurfaceKind::Body,
+       .body = lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                    .owner = 1}});
+  rejected = false;
+  try {
+    (void)lang::selectCppMirBackendProgramRoute(unsupported);
+  } catch (const std::logic_error &) {
+    rejected = true;
+  }
+  expect(rejected,
+         "the backend route selector should reject an unsupported plan rather "
+         "than selecting a fallback emitter");
 
   const lang::FrontendResult stale = analyzeRichProgram();
   expect(stale.canGenerateCode(),
@@ -1345,10 +1499,12 @@ int main() {
   testExactProgramAndTargetAnalysisSeal();
   testPrivateInventorySealAndContractedThunkClosure();
   testPureDataOnlyProgramInitializationPlan();
+  testNamespacedProgramStorageRows();
   testStaticOnlyProgramInitializationFact();
-  testCheckedDynamicInitializationRemainsCoherentUnsupported();
+  testCheckedDynamicInitializationIsComplete();
   testMissingAndStaleFactsFailClosed();
   testRuntimeBindingRole();
+  testDeducedCallableOverlayPreflight();
   testAtomicBackendRouteAndIncoherentRejection();
   testRepresentationSpellingAuthorities();
   testClosureAndCallableRows();

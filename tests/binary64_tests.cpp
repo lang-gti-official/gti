@@ -1,11 +1,12 @@
 #include "gti/ast_printer.h"
-#include "gti/cpp_emitter.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/rewrite.h"
 #include "gti/optimizer.h"
+
+#include "cpp_backend_test_support.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -260,8 +261,7 @@ void testLanguagePipeline() {
          "bits outside their declared representation");
 
   if (result.canGenerateCode()) {
-    const std::string generated =
-        lang::CppEmitter(result.semantics, result.hir).emit(result.program);
+    const std::string generated = gti_test::emitCppText(result);
     expect(generated.find("std::bit_cast<double>(std::uint64_t{"
                           "0x3fb999999999999aULL})") != std::string::npos &&
                generated.find("static_assert(__gti_strict_ieee754 == 1") !=

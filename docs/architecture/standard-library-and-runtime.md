@@ -151,13 +151,11 @@ from the exact verified MIR metadata snapshot. Internal constant tables retain
 the artifact identity, canonical descriptor bytes, one-based sites, counted
 logical-source bytes, unsigned-64 line and byte spans, and the canonical
 allowed outcomes for every site. Empty-site artifacts retain their canonical
-bytes and identity with a null site pointer. The selected
-`scalar-failure-callgraph-v1` component creates an exact record on a local MIR
-failure edge, forwards it through its hidden ABI, and calls the hosted terminal
-primitive after verified cleanup. Other generated compatibility bodies do not
-gain record or containment authority from descriptor emission alone. The
-public compatibility-only `CppEmitter` API has no MIR snapshot and does not
-emit these tables.
+bytes and identity with a null site pointer. A failure-capable MIR body creates
+an exact record on its local failure edge, forwards it through the transformed
+native ABI, and reaches the hosted terminal primitive only after its verified
+cleanup. Descriptor emission alone never grants failure or containment
+authority. There is no public no-MIR `CppEmitter` route.
 
 The runtime formats and writes ordinary and cleanup-failure reports without
 allocation, invokes the optional hosted observer over a protected record copy,
@@ -197,15 +195,12 @@ applications cannot forge its identity or choose an arbitrary category/detail.
 This keeps public `vector`/`string` origins in source/library policy without
 asking a backend to inspect names or call stacks.
 
-**Current gap:** `scalar-failure-callgraph-v1` is the first generated hosted
-consumer, not a general failure cutover. The C++ compatibility emitter still
-generates several English-message helpers that call `std::abort()`, while
-native expected observers can throw or assert. Those unselected paths do not
-complete compiler-managed failure cleanup, pass the fixed record to the
-runtime, or produce the specified status/report. They are removed only by
-their matching closed M-BACK-02 migrations; they are not alternate runtime
-policy. Double-failure cleanup and task/callback/embedding containment remain
-open.
+**Current gap:** The generated C++ support prelude still contains terminal
+integrity and low-level capability helpers that call `std::abort()`. These are
+representation guards and legacy terminal operations, not an alternate source-
+body emitter, and they must not be used to bypass a MIR-defined failure edge or
+cleanup schedule. Double-failure cleanup and task, callback, and embedding
+containment remain open.
 
 ## Source And Tooling Privacy
 

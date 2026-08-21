@@ -329,25 +329,20 @@ strict receiver when applicable, source-ordered arguments, then `Call` or
 values are moved there, and an exact active temporary obligation is transferred
 at that same checkpoint.
 
-The bounded `owned-lifecycle-call-v1` family now makes that schedule production
-authority for exact failure-free non-entry free-function graphs over eligible
-passive-scalar-field classes: its construction, move-by-value parameter,
-prepared call input, transfer, lexical cleanup, and drop stages emit from
-verified MIR. Outside that closed family, the transitional C++ emitter still
-emits calls and helper operands inline. Class-value parameter construction for
-borrowed-state carriers, generated/default and copy/move special construction,
-packs and other call forms, result and target places, compound expressions,
-and failure rollback remain incomplete. MIR now contains one verified merged
-program-initialization plan/body for non-generic namespace and static storage,
-including exact source-unit order, data-only stages, dynamic initializer roots,
-and program-constant substitutions. The compatibility backend does not yet
-execute that body inside the hosted containment boundary and may still use
-native static initialization; generic static storage remains outside the merged
+Verified MIR is the production authority for all source bodies. Construction,
+copy or move parameters, prepared call inputs, transfer, lexical cleanup,
+drops, and failure edges emit from the ordered body operations and obligations
+rather than recursive AST evaluation. Some operation families still have
+bounded rather than uniform verifier-visible materialization schedules;
+conservative semantic restrictions may be narrowed only after those schedules
+are explicit and verified.
+
+MIR also contains one verified merged program-initialization plan/body for
+non-generic namespace and static storage, including exact source-unit order,
+data-only stages, dynamic initializer roots, and program-constant
+substitutions. The hosted program-initialization thunk executes GTI-visible
+work inside containment. Generic static storage remains outside the merged
 plan.
-Later M-EXEC-01 slices,
-M-FAIL-01 for failure edges, and matching M-BACK closed-body migrations must
-make those families executable before they are conforming or the conservative
-borrow restriction is narrowed.
 
 Contextual fixed-array arguments preserve element order by emitting an explicit
 array value, but they do not by themselves close this broader surrounding
@@ -822,8 +817,8 @@ There are three containment policies:
   additional GTI cleanup mechanisms. GTI module/static initializers and their
   temporaries execute inside this boundary in the Section 4.2.4 order. Native
   pre-`main` initialization is not a containment boundary, and the current
-  compatibility emitter cannot claim conforming initializer failure behavior
-  until its matching ordered MIR/backend migration is complete.
+  backend does not use it as an alternate policy for dynamic GTI initializer
+  failure.
 - A future generated embedding boundary completes invocation-owned cleanup,
   invokes its observer, and returns the structured record to the host without
   the default report or host-process termination. This does not make the
@@ -949,32 +944,23 @@ it is either a local detector or an un-sited static direct-call propagation with
 no nested owning parameter or result state. That general argument shape remains
 a verified IR slice except where the narrower component below selects it.
 
-The bounded `scalar-failure-callgraph-v1` M-BACK-02 component is the first
-executable consumer of that contract. It accepts one no-argument `int32_t`
-entry and a closed acyclic `int32_t` free-function graph over the proved
-scalar/owned-lifecycle subset. Add, subtract, multiply, divide, remainder,
-left/right shift, negate, and dynamic integer conversion execute their exact
-MIR failure outcomes for the signedness and domains admitted by the verifier;
-negation remains signed-only. Local detection creates the original
-record once; direct propagation preserves it byte-for-byte; each failure edge
-runs its exact reverse live-owner cleanup before returning failure; and no
-failure path publishes a result. The one hosted adapter invokes the runtime
-terminal primitive only after cleanup, produces the exact report, exits 70,
-and immediately exits 70 if a native exception crosses the generated boundary
-without turning that exception into a GTI record. Programs with a dynamic
-module/static initializer are excluded atomically, so this slice never relies
-on native pre-`main` execution for selected GTI work.
+The general verified-MIR backend is the executable consumer of this contract.
+For every admitted local detector, lowering records the exact outcome and site;
+propagation preserves the original record byte-for-byte; failure edges run
+their reverse live-owner cleanup; and no failure path publishes a result.
+Checked arithmetic, conversion, bounds, allocation, storage, calls,
+constructors, destructors, and owning parameter/result forms use that same
+body authority when their MIR contract admits recoverable failure. The hosted
+adapter invokes the runtime terminal primitive only after cleanup, produces the
+exact report, exits 70, and immediately exits 70 if a native exception crosses
+the generated boundary without forging a GTI record. Program initialization
+executes through the verified `Module/0` schedule inside that containment.
 
-This is not full M-FAIL-01, callback/embedding containment, or final backend
-authority. The compatibility emitter still uses duplicated
-message-plus-`abort()` helpers for unselected checked families and native
-expected observers remain outside this contract. Other nested expressions,
-nested calls with owning parameter or result state, broader entry/parameter/
-result domains, nontrivial or borrowed results, checked constructors and
-destructors, partial initialization, double-failure control flow, generated
-callback/embedding adapters, and contained execution of general program
-initializers remain open. The frontend still rejects recursively
-cleanup-owning namespace globals and static fields.
+This is not full callback, embedding, or task containment. Double-failure
+control flow and operation families without an explicit MIR propagation and
+cleanup contract remain open. Generated C++ terminal integrity helpers are not
+an alternate source-body failure authority. The frontend still rejects
+recursively cleanup-owning namespace globals and static fields.
 
 ## 4.11 Temporary And Cleanup Implementation Gaps
 
