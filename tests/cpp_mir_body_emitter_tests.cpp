@@ -257,6 +257,47 @@ lang::CppMirBodyEmissionMapRows completeRows(
       addType(rows, initializer.targetType);
     }
   }
+  for (const lang::MirClassInstance &instance : program.classInstances()) {
+    const std::array<const lang::MirBody *, 2> initializerBodies{
+        &instance.fieldInitializers, &instance.staticFieldInitializers};
+    for (const lang::MirBody *body : initializerBodies) {
+      for (const lang::MirBlock &block : body->blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Construct ||
+              !instruction.constructorTarget ||
+              instruction.constructorKind != lang::ConstructorKind::Ordinary) {
+            continue;
+          }
+          const lang::MirConstructorInstance *constructor =
+              program.findConstructorInstance(*instruction.constructorTarget);
+          const lang::MirClassInstance *owner =
+              constructor == nullptr
+                  ? nullptr
+                  : program.findClassInstance(constructor->owner);
+          if (constructor == nullptr || owner == nullptr ||
+              constructor->definitionKind != lang::MirDefinitionKind::Source ||
+              !constructor->mayRaiseDefinedFailure ||
+              std::any_of(
+                  rows.containedConstructors.begin(),
+                  rows.containedConstructors.end(),
+                  [&](const lang::CppMirContainedConstructorRepresentation
+                          &row) {
+                    return row.constructor == constructor->id;
+                  })) {
+            continue;
+          }
+          rows.containedConstructors.push_back(
+              {.constructor = constructor->id,
+               .ownerType = owner->type,
+               .parameterTypes = constructor->parameterTypes,
+               .tagSpelling =
+                   lang::cppMirContainedConstructorTagSpelling(constructor->id),
+               .stateSpelling = "::gti_internal::backend::"
+                                "mir_contained_constructor_state_v1"});
+        }
+      }
+    }
+  }
   for (const lang::MirLambdaInstance &lambda : program.lambdaInstances()) {
     addType(rows, lambda.type);
     addType(rows, lambda.returnType);
@@ -1348,6 +1389,160 @@ int32_t main() {
          "boundary");
 }
 
+void testContainedOwningStringFieldConstructor() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-body-owning-string-field-constructor.gti", R"(
+#include <std/string>
+
+class StringHolder {
+public:
+  StringHolder() {}
+
+  std::size_t size() {
+    return text.size();
+  }
+
+private:
+  mut std::string text = std::string("");
+};
+
+int main() {
+  mut StringHolder value = StringHolder();
+  return value.size() == 0 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the owning string-field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirClassInstance *owner = nullptr;
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    const lang::ClassTypeInfo *info =
+        frontend.semantics.findClassType(instance.declaration);
+    if (info != nullptr && info->declaration != nullptr &&
+        info->declaration->name().lexeme == "StringHolder") {
+      owner = &instance;
+      break;
+    }
+  }
+  expect(owner != nullptr,
+         "the string-field fixture should retain its concrete MIR owner");
+  if (owner == nullptr) {
+    return;
+  }
+
+  const lang::MirInstruction *fieldConstruct = nullptr;
+  std::size_t fieldConstructs = 0;
+  for (const lang::MirBlock &block : owner->fieldInitializers.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::Construct ||
+          !instruction.constructorTarget) {
+        continue;
+      }
+      ++fieldConstructs;
+      if (fieldConstructs == 1) {
+        fieldConstruct = &instruction;
+      }
+    }
+  }
+  const lang::MirConstructorInstance *fieldConstructor =
+      fieldConstruct == nullptr ? nullptr
+                                : frontend.mir.findConstructorInstance(
+                                      *fieldConstruct->constructorTarget);
+  expect(fieldConstructs == 1 && fieldConstruct != nullptr &&
+             fieldConstructor != nullptr &&
+             fieldConstructor->mayRaiseDefinedFailure,
+         "std::string's field construction should retain its exact checked "
+         "constructor target");
+  if (fieldConstructs != 1 || fieldConstruct == nullptr ||
+      fieldConstructor == nullptr) {
+    return;
+  }
+
+  lang::CppMirBodyEmissionMapRows rows = lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23);
+  const auto contained = std::find_if(
+      rows.containedConstructors.begin(), rows.containedConstructors.end(),
+      [&](const lang::CppMirContainedConstructorRepresentation &row) {
+        return row.constructor == fieldConstructor->id;
+      });
+  expect(contained != rows.containedConstructors.end() &&
+             contained->ownerType == fieldConstruct->info.type &&
+             contained->parameterTypes == fieldConstructor->parameterTypes,
+         "the representation row builder should inventory the exact contained "
+         "std::string constructor representation");
+  if (contained == rows.containedConstructors.end()) {
+    return;
+  }
+  const std::string tagSpelling = contained->tagSpelling;
+  const std::string stateSpelling = contained->stateSpelling;
+
+  lang::CppMirBodyEmissionMapRows duplicateRows = rows;
+  duplicateRows.containedConstructors.push_back(*contained);
+  const lang::CppMirBodyEmissionMap duplicateMap(std::move(duplicateRows));
+  const lang::CppMirProgramEmissionAnalysis duplicateAnalysis =
+      lang::CppMirBodyEmitter(frontend.mir, duplicateMap).analyzeProgram();
+  expect(std::any_of(duplicateAnalysis.issues.begin(),
+                     duplicateAnalysis.issues.end(),
+                     [](const lang::CppMirBodyEmissionIssue &issue) {
+                       return issue.kind ==
+                              lang::CppMirBodyEmissionIssueKind::
+                                  DuplicateContainedConstructorRepresentation;
+                     }),
+         "a duplicate contained-constructor row should invalidate the copied "
+         "representation map");
+
+  const lang::CppMirBodyEmissionMap map(rows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::CppMirInitializerScheduleText schedule =
+      emitter.initializerSchedule(
+          {.kind = lang::MirBodyKind::FieldInitializers, .owner = owner->id});
+  expect(schedule.supported && schedule.fields.size() == 1 &&
+             schedule.fields.front().spelling.find(tagSpelling) !=
+                 std::string::npos &&
+             schedule.fields.front().spelling.find(stateSpelling) !=
+                 std::string::npos,
+         "the field schedule should select the exact terminal-containment "
+         "constructor overload");
+
+  std::erase_if(rows.containedConstructors,
+                [&](const lang::CppMirContainedConstructorRepresentation &row) {
+                  return row.constructor == fieldConstructor->id;
+                });
+  const lang::CppMirBodyEmissionMap missingRowMap(std::move(rows));
+  const lang::CppMirBodyEmitter missingRowEmitter(frontend.mir, missingRowMap);
+  expect(
+      !missingRowEmitter
+           .initializerSchedule({.kind = lang::MirBodyKind::FieldInitializers,
+                                 .owner = owner->id})
+           .supported,
+      "removing the exact contained-constructor row should fail closed");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .sourceMir = &frontend.mir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find(tagSpelling) != std::string::npos &&
+             artifact.contents.find(stateSpelling) != std::string::npos &&
+             artifact.contents.find(lang::cppMirFailureConstructorTagSpelling(
+                 fieldConstructor->id)) != std::string::npos &&
+             artifact.contents.find("&__gti_mir_contained_state.success, "
+                                    "&__gti_mir_contained_state.record)") !=
+                 std::string::npos &&
+             artifact.contents.find("gti_rt_failure_terminate_v1") !=
+                 std::string::npos,
+         "the C++ artifact should emit the contained overload, delegate to "
+         "the exact failure constructor, and terminate with its record");
+}
+
 void testContainedAbstractBaseConstructor() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-body-contained-abstract-base.gti", R"(
@@ -1564,6 +1759,8 @@ void testExampleCorpusEmissionReadiness() {
         case lang::CppMirBodyEmissionIssueKind::InvalidBodyAddress:
         case lang::CppMirBodyEmissionIssueKind::InvalidRepresentationEnum:
         case lang::CppMirBodyEmissionIssueKind::InvalidRepresentationRow:
+        case lang::CppMirBodyEmissionIssueKind::
+            DuplicateContainedConstructorRepresentation:
         case lang::CppMirBodyEmissionIssueKind::InvalidBodyKind:
         case lang::CppMirBodyEmissionIssueKind::InvalidInstructionKind:
         case lang::CppMirBodyEmissionIssueKind::InvalidOperation:
@@ -5528,6 +5725,7 @@ int main() {
   testRichFieldInitializerSchedule();
   testDependentFieldInitializerSchedule();
   testContainedOwningFieldConstructor();
+  testContainedOwningStringFieldConstructor();
   testContainedAbstractBaseConstructor();
   testExampleCorpusEmissionReadiness();
   testGeneralTextStepMatchesProductionEmission();

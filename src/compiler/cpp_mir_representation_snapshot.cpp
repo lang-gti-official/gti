@@ -3139,6 +3139,42 @@ struct RowsBuilder {
       }
     }
   }
+
+  void addContainedConstructors(const MirBody &body) {
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Construct ||
+            !instruction.constructorTarget ||
+            instruction.constructorKind != ConstructorKind::Ordinary) {
+          continue;
+        }
+        const MirConstructorInstance *constructor =
+            mir.findConstructorInstance(*instruction.constructorTarget);
+        const MirClassInstance *owner =
+            constructor == nullptr ? nullptr
+                                   : mir.findClassInstance(constructor->owner);
+        if (constructor == nullptr || owner == nullptr ||
+            constructor->definitionKind != MirDefinitionKind::Source ||
+            !constructor->mayRaiseDefinedFailure ||
+            std::any_of(
+                rows.containedConstructors.begin(),
+                rows.containedConstructors.end(),
+                [&](const CppMirContainedConstructorRepresentation &row) {
+                  return row.constructor == constructor->id;
+                })) {
+          continue;
+        }
+        rows.containedConstructors.push_back(
+            {.constructor = constructor->id,
+             .ownerType = owner->type,
+             .parameterTypes = constructor->parameterTypes,
+             .tagSpelling =
+                 cppMirContainedConstructorTagSpelling(constructor->id),
+             .stateSpelling = "::gti_internal::backend::"
+                              "mir_contained_constructor_state_v1"});
+      }
+    }
+  }
 };
 
 } // namespace
@@ -3150,6 +3186,10 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
   for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
     if (const MirBody *body = findMirBody(mir, address)) {
       builder.addBody(*body);
+      if (address.kind == MirBodyKind::FieldInitializers ||
+          address.kind == MirBodyKind::StaticFieldInitializers) {
+        builder.addContainedConstructors(*body);
+      }
     }
   }
 

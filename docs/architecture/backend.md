@@ -136,6 +136,15 @@ adapts:
 - target spellings for MIR-visible types, fields, calls, and enums; and
 - generated C++ thunks and their dependencies.
 
+The target spelling inventory also carries one exact contained-constructor
+row for each failure-capable source constructor selected by a class field or
+static-field initializer. The row names the concrete constructor, owner type,
+parameter types, and compiler-private C++ tag/state spellings. It does not
+authorize execution: the initializer schedule must still match the exact MIR
+`Construct`/`Invoke` pair, and the constructor's failure-form MIR body must be
+admitted. The generated overload delegates to that failure form and terminates
+with its unchanged failure record before a failed field can be observed.
+
 The private `CppMirProgramPlan` exact-compares the snapshot's copied MIR and
 inventory seal before sorting or moving rows. It rejects missing, duplicate,
 stale, wrongly classified, or dependency-incoherent entries. Valid plans are
@@ -174,6 +183,11 @@ initializer, module-initializer, and boundary-shell identities. It emits both
 ordinary and defined-failure forms. Constructor initializer lists and a small
 number of ABI-shaped wrappers are assembled by `CppEmitter`, but their body
 operations and schedules are read from verified MIR.
+
+Member-body symbol places resolve through the same exact field row used by the
+class declaration inventory when no independent storage row exists. This is a
+representation lookup only: the symbol, concrete owner, type, and field
+ordinal must still agree, and ambiguous or missing rows fail closed.
 
 The `CppEmitter` AST statement visitor no longer emits executable statements:
 blocks, expressions, loops, returns, and switches reaching that path are hard

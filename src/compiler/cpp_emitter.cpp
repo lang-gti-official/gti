@@ -1857,6 +1857,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << "explicit " << stmt.name().lexeme << '(';
         emitGeneralFailureConstructorParameters(*mirGeneralFailure);
         output << ");\n";
+        if (containedConstructorRepresentation(mirGeneralFailure->id) !=
+            nullptr) {
+          writeIndent();
+          output << "explicit " << stmt.name().lexeme << '(';
+          emitGeneralContainedConstructorParameters(*mirGeneralFailure);
+          output << ");\n";
+        }
       }
       if (!currentClass->genericParameters().empty() ||
           !stmt.genericParameters().empty()) {
@@ -6782,12 +6789,13 @@ private:
       if (instance->parameterTypes.size() != info->parameterTypes.size()) {
         return std::string();
       }
-      CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
-                                     .bodies = generalEmissionMap->bodies(),
-                                     .symbols = generalEmissionMap->symbols(),
-                                     .enums = generalEmissionMap->enums(),
-                                     .capabilities =
-                                         generalEmissionMap->capabilities()};
+      CppMirBodyEmissionMapRows rows{
+          .types = generalEmissionMap->types(),
+          .bodies = generalEmissionMap->bodies(),
+          .symbols = generalEmissionMap->symbols(),
+          .enums = generalEmissionMap->enums(),
+          .containedConstructors = generalEmissionMap->containedConstructors(),
+          .capabilities = generalEmissionMap->capabilities()};
       const std::optional<std::size_t> overlays =
           cppMirApplyCallableTemplateTypeOverlays(rows, semantics, standard,
                                                   *info, *instance);
@@ -6904,12 +6912,13 @@ private:
           !generalFailureBodyAdmitted(instance->id)) {
         return std::string();
       }
-      CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
-                                     .bodies = generalEmissionMap->bodies(),
-                                     .symbols = generalEmissionMap->symbols(),
-                                     .enums = generalEmissionMap->enums(),
-                                     .capabilities =
-                                         generalEmissionMap->capabilities()};
+      CppMirBodyEmissionMapRows rows{
+          .types = generalEmissionMap->types(),
+          .bodies = generalEmissionMap->bodies(),
+          .symbols = generalEmissionMap->symbols(),
+          .enums = generalEmissionMap->enums(),
+          .containedConstructors = generalEmissionMap->containedConstructors(),
+          .capabilities = generalEmissionMap->capabilities()};
       const std::optional<std::size_t> overlays =
           cppMirApplyCallableTemplateTypeOverlays(rows, semantics, standard,
                                                   *info, *instance);
@@ -7390,12 +7399,13 @@ private:
         !generalFailureConstructorSurfaceEligible(instance)) {
       return false;
     }
-    CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
-                                   .bodies = generalEmissionMap->bodies(),
-                                   .symbols = generalEmissionMap->symbols(),
-                                   .enums = generalEmissionMap->enums(),
-                                   .capabilities =
-                                       generalEmissionMap->capabilities()};
+    CppMirBodyEmissionMapRows rows{
+        .types = generalEmissionMap->types(),
+        .bodies = generalEmissionMap->bodies(),
+        .symbols = generalEmissionMap->symbols(),
+        .enums = generalEmissionMap->enums(),
+        .containedConstructors = generalEmissionMap->containedConstructors(),
+        .capabilities = generalEmissionMap->capabilities()};
     const std::optional<std::size_t> overlays =
         cppMirApplyGenericOwnerConstructorTypeOverlays(
             rows, semantics, hir, *mir, declaration, instance);
@@ -7570,12 +7580,13 @@ private:
         instance.parameterTypes.size() != info->parameterTypes.size()) {
       return false;
     }
-    CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
-                                   .bodies = generalEmissionMap->bodies(),
-                                   .symbols = generalEmissionMap->symbols(),
-                                   .enums = generalEmissionMap->enums(),
-                                   .capabilities =
-                                       generalEmissionMap->capabilities()};
+    CppMirBodyEmissionMapRows rows{
+        .types = generalEmissionMap->types(),
+        .bodies = generalEmissionMap->bodies(),
+        .symbols = generalEmissionMap->symbols(),
+        .enums = generalEmissionMap->enums(),
+        .containedConstructors = generalEmissionMap->containedConstructors(),
+        .capabilities = generalEmissionMap->capabilities()};
     const std::optional<std::size_t> overlays =
         cppMirApplyCallableTemplateTypeOverlays(rows, semantics, standard,
                                                 *info, instance);
@@ -8263,6 +8274,78 @@ private:
               "::gti_failure_record_v1 *__gti_mir_failure_record";
   }
 
+  void emitGeneralContainedConstructorParameters(
+      const MirConstructorInstance &instance) {
+    const CppMirContainedConstructorRepresentation *representation =
+        containedConstructorRepresentation(instance.id);
+    const MirClassInstance *owner =
+        mir == nullptr ? nullptr : mir->findClassInstance(instance.owner);
+    if (representation == nullptr || owner == nullptr ||
+        representation->ownerType != owner->type ||
+        representation->parameterTypes != instance.parameterTypes) {
+      throw std::logic_error(
+          "contained constructor lost its sealed representation row");
+    }
+    output << representation->tagSpelling << ", ";
+    const std::size_t parameterCount =
+        emitMirOwnedLifecycleParameters(instance.parameterTypes);
+    if (parameterCount != 0) {
+      output << ", ";
+    }
+    output << representation->stateSpelling << " __gti_mir_contained_state";
+  }
+
+  void
+  emitGeneralContainedConstructorBody(const MirConstructorInstance &instance) {
+    if (currentClass == nullptr || mir == nullptr ||
+        containedConstructorRepresentation(instance.id) == nullptr ||
+        !generalFailureConstructorBodyAdmitted(instance.id)) {
+      throw std::logic_error(
+          "contained constructor definition lost its admitted failure body");
+    }
+    const std::optional<std::vector<SemanticType>> parameters =
+        cppMirFlattenConcreteParameterTypes(instance.parameterTypes);
+    if (!parameters) {
+      throw std::logic_error(
+          "contained constructor has an unspellable parameter pack");
+    }
+    output << " : " << currentClass->name().lexeme << '('
+           << cppMirFailureConstructorTagSpelling(instance.id) << "{}";
+    for (std::size_t index = 0; index < parameters->size(); ++index) {
+      output << ", ";
+      if ((*parameters)[index].kind != SemanticType::Reference) {
+        output << "std::move(";
+      }
+      output << "__gti_mir_arg_" << index;
+      if ((*parameters)[index].kind != SemanticType::Reference) {
+        output << ')';
+      }
+    }
+    output << ", &__gti_mir_contained_state.success, "
+              "&__gti_mir_contained_state.record) {\n";
+    ++indentation;
+    writeIndent();
+    output << "if (!__gti_mir_contained_state.success) {\n";
+    ++indentation;
+    writeIndent();
+    output << "::gti_rt_failure_terminate_v1(\n";
+    ++indentation;
+    writeIndent();
+    output << "&__gti_mir_contained_state.record,\n";
+    writeIndent();
+    output << "&::gti_internal::backend::"
+              "__gti_failure_artifact_descriptor_v1,\n";
+    writeIndent();
+    output << "nullptr, nullptr);\n";
+    --indentation;
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
   void emitPrimaryTransformedConstructorDeclarations(
       const ConstructorDecl &declaration) {
     if (mir == nullptr || !generalEmissionMap) {
@@ -8290,6 +8373,16 @@ private:
       }
       output << "bool *__gti_mir_constructor_success, "
                 "::gti_failure_record_v1 *__gti_mir_failure_record);\n";
+      if (containedConstructorRepresentation(instance.id) != nullptr) {
+        writeIndent();
+        output << "explicit " << declaration.name().lexeme << '(';
+        if (genericPrimary && declaration.genericParameters().empty()) {
+          emitGenericOwnerContainedConstructorParameters(declaration, instance);
+        } else {
+          emitGeneralContainedConstructorParameters(instance);
+        }
+        output << ");\n";
+      }
     }
   }
 
@@ -8330,15 +8423,40 @@ private:
               "::gti_failure_record_v1 *__gti_mir_failure_record";
   }
 
+  void emitGenericOwnerContainedConstructorParameters(
+      const ConstructorDecl &declaration,
+      const MirConstructorInstance &instance) {
+    const CppMirContainedConstructorRepresentation *representation =
+        containedConstructorRepresentation(instance.id);
+    if (representation == nullptr) {
+      throw std::logic_error(
+          "generic contained constructor lost its representation row");
+    }
+    output << representation->tagSpelling << ", ";
+    for (std::size_t index = 0; index < declaration.parameters().size();
+         ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      emitParameter(declaration.parameters()[index],
+                    "__gti_mir_arg_" + std::to_string(index));
+    }
+    if (!declaration.parameters().empty()) {
+      output << ", ";
+    }
+    output << representation->stateSpelling << " __gti_mir_contained_state";
+  }
+
   void emitGenericOwnerFailureConstructorBodyText(
       const ConstructorDecl &declaration,
       const MirConstructorInstance &instance) {
-    CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
-                                   .bodies = generalEmissionMap->bodies(),
-                                   .symbols = generalEmissionMap->symbols(),
-                                   .enums = generalEmissionMap->enums(),
-                                   .capabilities =
-                                       generalEmissionMap->capabilities()};
+    CppMirBodyEmissionMapRows rows{
+        .types = generalEmissionMap->types(),
+        .bodies = generalEmissionMap->bodies(),
+        .symbols = generalEmissionMap->symbols(),
+        .enums = generalEmissionMap->enums(),
+        .containedConstructors = generalEmissionMap->containedConstructors(),
+        .capabilities = generalEmissionMap->capabilities()};
     const std::optional<std::size_t> overlays =
         cppMirApplyGenericOwnerConstructorTypeOverlays(
             rows, semantics, hir, *mir, declaration, instance);
@@ -8844,11 +8962,26 @@ private:
       output << ')';
       if (declarationsOnly) {
         output << ";\n";
-        continue;
+      } else {
+        emitGeneralMirConstructorInitializerList(instance, true);
+        output << ' ';
+        emitGeneralFailureConstructorBodyText(instance);
       }
-      emitGeneralMirConstructorInitializerList(instance, true);
-      output << ' ';
-      emitGeneralFailureConstructorBodyText(instance);
+      if (containedConstructorRepresentation(instance.id) != nullptr) {
+        writeIndent();
+        if (!ownerInstance->type.arguments.empty() ||
+            !ownerInstance->type.valueArguments.empty()) {
+          output << "template <> ";
+        }
+        output << owner << "::" << declaration.name().lexeme << '(';
+        emitGeneralContainedConstructorParameters(instance);
+        output << ')';
+        if (declarationsOnly) {
+          output << ";\n";
+        } else {
+          emitGeneralContainedConstructorBody(instance);
+        }
+      }
     }
   }
 
@@ -8873,6 +9006,15 @@ private:
       emitGeneralMirConstructorInitializerList(instance, true);
       output << ' ';
       emitGenericOwnerFailureConstructorBodyText(declaration, instance);
+      if (containedConstructorRepresentation(instance.id) != nullptr) {
+        emitTemplateDeclaration(currentClass->genericParameters());
+        writeIndent();
+        emitCurrentClassSpecialization();
+        output << "::" << currentClass->name().lexeme << '(';
+        emitGenericOwnerContainedConstructorParameters(declaration, instance);
+        output << ')';
+        emitGeneralContainedConstructorBody(instance);
+      }
     }
   }
 
@@ -9231,6 +9373,22 @@ private:
         for (const CppMirFieldInitializerSpelling &field : fields.fields) {
           instanceFields.emplace(field.field, field.spelling);
         }
+        const bool containedSurfacesAvailable = std::all_of(
+            generalEmissionMap->containedConstructors().begin(),
+            generalEmissionMap->containedConstructors().end(),
+            [&](const CppMirContainedConstructorRepresentation &row) {
+              const bool selected =
+                  std::any_of(fields.fields.begin(), fields.fields.end(),
+                              [&](const CppMirFieldInitializerSpelling &field) {
+                                return field.spelling.find(row.tagSpelling) !=
+                                       std::string::npos;
+                              });
+              return !selected ||
+                     generalFailureConstructorBodyAdmitted(row.constructor);
+            });
+        if (!containedSurfacesAvailable) {
+          result.fieldsSupported = false;
+        }
         if (firstInstance) {
           result.fields = std::move(instanceFields);
         } else if (instanceFields != result.fields) {
@@ -9543,6 +9701,14 @@ namespace gti_internal::backend {
 
 template <std::uint64_t Constructor>
 struct mir_failure_constructor_tag_v1 {};
+
+template <std::uint64_t Constructor>
+struct mir_contained_constructor_tag_v1 {};
+
+struct mir_contained_constructor_state_v1 {
+  bool success = false;
+  ::gti_failure_record_v1 record{};
+};
 
 struct mir_empty_state_constructor_tag_v1 {};
 
@@ -11029,6 +11195,23 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     return payload;
   }
 
+  [[nodiscard]] const CppMirContainedConstructorRepresentation *
+  containedConstructorRepresentation(
+      HirConstructorInstanceId constructor) const {
+    if (!generalEmissionMap) {
+      return nullptr;
+    }
+    const auto found = std::find_if(
+        generalEmissionMap->containedConstructors().begin(),
+        generalEmissionMap->containedConstructors().end(),
+        [constructor](
+            const CppMirContainedConstructorRepresentation &candidate) {
+          return candidate.constructor == constructor;
+        });
+    return found == generalEmissionMap->containedConstructors().end() ? nullptr
+                                                                      : &*found;
+  }
+
   void emitStructuralOperatorAdapter(const FunctionDecl &function) {
     const CppMirGeneratedThunk *thunk = declarationAdapter(
         function, CppMirThunkKind::StructuralOperatorAdapter);
@@ -12301,6 +12484,18 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
               output << ' ';
               emitGeneralFailureConstructorBodyText(
                   *mirGeneralFailureConstructor);
+              if (containedConstructorRepresentation(
+                      mirGeneralFailureConstructor->id) != nullptr) {
+                emitTemplateDeclaration(definition.owner->genericParameters());
+                writeIndent();
+                emitCurrentClassSpecialization();
+                output << "::" << definition.owner->name().lexeme << '(';
+                emitGeneralContainedConstructorParameters(
+                    *mirGeneralFailureConstructor);
+                output << ')';
+                emitGeneralContainedConstructorBody(
+                    *mirGeneralFailureConstructor);
+              }
             }
             emitGenericOwnerFailureConstructorDefinitions(
                 *definition.constructor);
