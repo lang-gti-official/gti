@@ -7,10 +7,12 @@ first production `LoweredProgram` boundary is implemented. The reusable driver
 constructs and verifies that immutable, pointer-free value after MIR
 optimization, and `MirBackend` is the first client that reads only this
 contract. It currently owns optimized MIR, target layout, an active declaration
-census, source/body identities, and the exact hosted-entry,
-program-initialization, and native-callback generated-item graph. Rich
-declaration/type/layout payloads and the C++ and native-header cutovers remain
-in progress; transitional `BackendInput` fields are therefore still present.
+tree with resolved declaration payloads, a complete semantic symbol vocabulary,
+concrete class/function/constructor/destructor/lambda instance metadata,
+source/body identities, and the exact hosted-entry, program-initialization, and
+native-callback generated-item graph. The C++ representation consumer,
+remaining generated-item families, and native-header cutover remain in
+progress; transitional `BackendInput` fields are therefore still present.
 
 ## Context
 

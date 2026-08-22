@@ -33,6 +33,15 @@ struct LoweredProgramTestAccess {
   generatedItems(LoweredProgram &program) {
     return program.generatedItems_;
   }
+
+  static std::vector<LoweredSymbol> &symbols(LoweredProgram &program) {
+    return program.symbols_;
+  }
+
+  static std::vector<LoweredFunctionInstance> &
+  functionInstances(LoweredProgram &program) {
+    return program.functionInstances_;
+  }
 };
 
 } // namespace lang
@@ -64,6 +73,20 @@ hasIssue(const std::vector<lang::LoweredProgramIssue> &issues,
       [kind](const lang::LoweredGeneratedItem &item) {
         return item.identity.kind == kind;
       }));
+}
+
+template <typename Payload>
+[[nodiscard]] const Payload *findPayload(const lang::LoweredProgram &program,
+                                         std::string_view name = {}) {
+  for (const lang::LoweredDeclaration &declaration : program.declarations()) {
+    if (!name.empty() && declaration.name != name) {
+      continue;
+    }
+    if (const auto *payload = std::get_if<Payload>(&declaration.payload)) {
+      return payload;
+    }
+  }
+  return nullptr;
 }
 
 [[nodiscard]] std::optional<lang::LoweredProgram>
@@ -98,12 +121,22 @@ extern "C" {
 
 int32_t add_one(int32_t value) { return value + 1; }
 
+T identity<T>(T value) { return value; }
+
+int32_t apply_offset(int32_t value) {
+  int32_t offset = 1;
+  auto add_offset = [offset](int32_t input) -> int32_t {
+    return input + offset;
+  };
+  return add_offset(value);
+}
+
 int main() {
   unsafe {
     [[discard]] install_callback(add_one);
   }
   Counter counter = Counter();
-  return counter.read() + process_seed - 1;
+  return identity<int32_t>(counter.read()) + process_seed + apply_offset(0) - 2;
 }
 )");
   if (!frontend.canGenerateCode()) {
@@ -195,6 +228,61 @@ void testDetachedDeterministicProgram() {
                            return declaration.id != 0;
                          }),
          "the active declaration census should use stable nonzero identities");
+
+  const lang::LoweredClassDeclaration *nativePair =
+      findPayload<lang::LoweredClassDeclaration>(*first, "NativePair");
+  const lang::LoweredClassDeclaration *bits =
+      findPayload<lang::LoweredClassDeclaration>(*first, "Bits");
+  const lang::LoweredEnumDeclaration *mode =
+      findPayload<lang::LoweredEnumDeclaration>(*first, "Mode");
+  const lang::LoweredFunctionDeclaration *addOne =
+      findPayload<lang::LoweredFunctionDeclaration>(*first, "add_one");
+  const lang::LoweredStorageDeclaration *processSeed =
+      findPayload<lang::LoweredStorageDeclaration>(*first, "process_seed");
+  expect(
+      nativePair != nullptr && nativePair->cAbiRecord &&
+          nativePair->cAbiLayout.has_value() &&
+          !nativePair->cAbiLayout->fields.empty() &&
+          first->findClassDeclaration(nativePair->id) == nativePair,
+      "class declarations should own resolved ABI layouts and stable lookup");
+  expect(bits != nullptr && bits->kind == lang::ClassKind::Union &&
+             bits->unionLayout.has_value() &&
+             !bits->unionLayout->fields.empty() &&
+             first->findClassDeclaration(bits->id) == bits,
+         "union declarations should own resolved value layouts");
+  expect(mode != nullptr && mode->enumerators.size() == 2 &&
+             first->findEnumDeclaration(mode->id) == mode,
+         "enum declarations should own resolved enumerator contracts");
+  expect(addOne != nullptr && addOne->returnType == lang::SemanticType::Int32 &&
+             addOne->parameters.size() == 1 &&
+             addOne->parameters.front().symbol != 0 &&
+             first->findFunctionDeclaration(addOne->id) == addOne,
+         "function declarations should own resolved signatures and bindings");
+  expect(processSeed != nullptr &&
+             processSeed->type == lang::SemanticType::Int32 &&
+             processSeed->hasInitializer &&
+             first->findStorageDeclaration(processSeed->symbol) == processSeed,
+         "storage declarations should own resolved type and initialization "
+         "contracts");
+  expect(!first->symbols().empty() &&
+             first->findSymbol(processSeed->symbol) != nullptr &&
+             first->findSymbol(processSeed->symbol)->name == "process_seed",
+         "the lowered symbol vocabulary should resolve MIR symbol names "
+         "without SemanticModel");
+  expect(first->classInstances().size() ==
+                 first->mir().classInstances().size() &&
+             first->functionInstances().size() ==
+                 first->mir().functionInstances().size() &&
+             first->constructorInstances().size() ==
+                 first->mir().constructorInstances().size() &&
+             first->destructorInstances().size() ==
+                 first->mir().destructorInstances().size() &&
+             first->lambdaInstances().size() ==
+                 first->mir().lambdaInstances().size() &&
+             !first->lambdaInstances().empty() &&
+             !first->lambdaInstances().front().captures.empty(),
+         "lowered concrete-instance tables should exactly cover MIR and own "
+         "lambda names");
 }
 
 void testMutationRejection() {
@@ -262,6 +350,84 @@ void testMutationRejection() {
                     lang::LoweredProgramIssueKind::InvalidConstructionSeal),
            "mutating pointer-free payload should invalidate the construction "
            "seal");
+  }
+
+  lang::LoweredProgram invalidPayload = original;
+  auto &invalidDeclarations =
+      lang::LoweredProgramTestAccess::declarations(invalidPayload);
+  const auto function = std::find_if(
+      invalidDeclarations.begin(), invalidDeclarations.end(),
+      [](const lang::LoweredDeclaration &declaration) {
+        return std::holds_alternative<lang::LoweredFunctionDeclaration>(
+            declaration.payload);
+      });
+  expect(function != invalidDeclarations.end(),
+         "the mutation fixture should contain a function payload");
+  if (function != invalidDeclarations.end()) {
+    std::get<lang::LoweredFunctionDeclaration>(function->payload).returnType =
+        lang::SemanticType::Unknown;
+    const std::vector<lang::LoweredProgramIssue> payloadIssues =
+        lang::verifyLoweredProgram(invalidPayload);
+    expect(hasIssue(payloadIssues,
+                    lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+           "an unresolved declaration payload should be rejected");
+    expect(hasIssue(payloadIssues,
+                    lang::LoweredProgramIssueKind::InvalidConstructionSeal),
+           "declaration payload mutation should invalidate the construction "
+           "seal");
+  }
+
+  lang::LoweredProgram duplicateIdentity = original;
+  auto &duplicateDeclarations =
+      lang::LoweredProgramTestAccess::declarations(duplicateIdentity);
+  lang::LoweredFunctionDeclaration *firstFunction = nullptr;
+  lang::LoweredDeclaration *secondFunctionRow = nullptr;
+  for (lang::LoweredDeclaration &declaration : duplicateDeclarations) {
+    auto *payload =
+        std::get_if<lang::LoweredFunctionDeclaration>(&declaration.payload);
+    if (payload == nullptr) {
+      continue;
+    }
+    if (firstFunction == nullptr) {
+      firstFunction = payload;
+    } else {
+      secondFunctionRow = &declaration;
+      break;
+    }
+  }
+  expect(firstFunction != nullptr && secondFunctionRow != nullptr,
+         "the mutation fixture should contain multiple function identities");
+  if (firstFunction != nullptr && secondFunctionRow != nullptr) {
+    auto &secondFunction =
+        std::get<lang::LoweredFunctionDeclaration>(secondFunctionRow->payload);
+    secondFunction.id = firstFunction->id;
+    secondFunctionRow->semanticIdentity = firstFunction->id;
+    expect(hasIssue(lang::verifyLoweredProgram(duplicateIdentity),
+                    lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+           "duplicate semantic declaration identities should be rejected");
+  }
+
+  lang::LoweredProgram missingInstance = original;
+  auto &functionInstances =
+      lang::LoweredProgramTestAccess::functionInstances(missingInstance);
+  expect(!functionInstances.empty(),
+         "the mutation fixture should contain concrete function instances");
+  if (!functionInstances.empty()) {
+    functionInstances.pop_back();
+    expect(hasIssue(lang::verifyLoweredProgram(missingInstance),
+                    lang::LoweredProgramIssueKind::InvalidInstanceInventory),
+           "deleting concrete-instance metadata should be rejected");
+  }
+
+  lang::LoweredProgram duplicateSymbol = original;
+  auto &symbols = lang::LoweredProgramTestAccess::symbols(duplicateSymbol);
+  expect(symbols.size() > 1,
+         "the mutation fixture should contain multiple lowered symbols");
+  if (symbols.size() > 1) {
+    symbols[1].id = symbols.front().id;
+    expect(hasIssue(lang::verifyLoweredProgram(duplicateSymbol),
+                    lang::LoweredProgramIssueKind::InvalidSymbolInventory),
+           "duplicate lowered symbol identities should be rejected");
   }
 }
 

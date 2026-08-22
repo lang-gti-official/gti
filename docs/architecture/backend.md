@@ -18,8 +18,9 @@ facts. It must not recover source-body behavior from the AST or HIR.
 
 `include/gti/backend.h` defines the backend interface. The reusable driver now
 constructs one immutable `LoweredProgram` after verified optimization. It owns
-optimized MIR and copied backend-neutral target, body, declaration-census, and
-generated-item facts, and it has no AST, semantic, or HIR pointers.
+optimized MIR and copied backend-neutral target, body, declaration, symbol,
+concrete-instance, and generated-item facts, and it has no AST, semantic, or
+HIR pointers.
 
 `MirBackend` is the first independent contract client: it verifies and reads
 only `LoweredProgram`. During the remaining migration, `BackendInput` also
@@ -61,11 +62,19 @@ reordering, missing roots, or cycles. `LoweredProgramPrinter` provides a
 versioned deterministic full serialization; process-local place snapshot
 guards are normalized in text while remaining intact in the owned MIR.
 
-The declaration inventory is currently a stable active-tree census rather
-than the final emission payload. The C++ cutover requires enriching those rows
-with copied signatures, type/class/enum/union/layout/storage facts and every
-remaining generated-item family. Until that work lands, C++ and native-header
-emission still use the transitional tuple above.
+The declaration inventory is a stable active tree with value-owned payloads
+for aliases, classes, enums, functions, constructors, destructors, storage,
+access, and language linkage. Those payloads include resolved signatures,
+generic and callable constraints, ownership and lifecycle traits, native
+linkage, borrow origins, enum variants, and C ABI/union layouts. Separate
+symbol and concrete-instance tables preserve resolved names, source identities,
+type and value substitutions, constructor declaration identity, instantiation
+sites, and lambda parameter/capture contracts. Verification exact-checks those
+tables against optimized MIR and rejects missing or duplicate identities.
+
+The remaining C++ cutover work is to consume these tables, finish every
+generated-item family, and remove the transitional tuple. C++ and native-header
+emission still use that tuple until their consumers migrate.
 
 ## C++ Backend Ingress
 
