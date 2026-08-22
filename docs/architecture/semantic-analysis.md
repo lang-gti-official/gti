@@ -51,7 +51,7 @@ does not rediscover endpoints from lowered statement kinds.
 Semantics additionally owns one immutable `ProgramInitializationPlan`. It
 visits configured prelude roots in their preserved order and then the entry
 unit, follows explicit include edges in lexical dependency-first order with
-first-visit deduplication, and excludes inactive target branches. Namespace
+first-visit deduplication, and excludes inactive compile-time branches. Namespace
 globals and non-generic static fields then enter the plan in source order. Each
 storage step has an explicit `DataOnly` or `Initializer` role: implicit zero
 initialization and exactly materializable `constexpr` data are data-only, while
@@ -110,7 +110,7 @@ the caller. Consumers do not recover defaults by recounting AST arguments.
 
 The `TargetInfo` supplied before analysis also carries the one GTI-owned scalar
 `TargetDataLayout`. `Frontend` rejects an unsupported value before constructing
-`SemanticVisitor`, so target condition selection, HIR lowering, optimization,
+`SemanticVisitor`, so compile-time branch selection, HIR lowering, optimization,
 and backend generation all observe the same normalized facts. The semantic
 model does not query native C++ or LLVM layout. Ordinary class layout remains
 absent; a valid `[[c_abi]] struct` is the one bounded aggregate category whose

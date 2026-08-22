@@ -278,6 +278,39 @@ def main():
             assert "symbolic-link" in unsafe_output.stderr
             assert not (external_build / "gti").exists()
 
+        configuration_project = root / "configuration-project"
+        configuration_source = configuration_project / "src/main.gti"
+        configuration_source.parent.mkdir(parents=True)
+        configuration_source.write_text(
+            "#if defined(MANIFEST_FLAG) && defined(CLI_FLAG)\n"
+            "int main() { return 0; }\n"
+            "#else\n"
+            "int main() { return 1; }\n"
+            "#endif\n",
+            encoding="utf-8",
+        )
+        (configuration_project / "gti.toml").write_text(
+            manifest(
+                "[targets.configuration]\n"
+                'kind = "executable"\n'
+                'root = "src/main.gti"\n'
+            )
+            + '\n[build]\ndefines = ["MANIFEST_FLAG"]\n',
+            encoding="utf-8",
+        )
+        run([gti, "build", "-D", "CLI_FLAG"], cwd=configuration_project)
+        configuration_executable = executable_named(
+            configuration_project / "build/gti/dev", "configuration"
+        )
+        run([str(configuration_executable)])
+        configuration_metadata = json.loads(
+            run([gti, "metadata"], cwd=configuration_project).stdout
+        )
+        assert configuration_metadata["schemaVersion"] == 9
+        assert configuration_metadata["targets"][0]["outputs"][0][
+            "defines"
+        ] == ["MANIFEST_FLAG"]
+
         project = root / "project"
         source = project / "src/main.gti"
         nested = project / "src/nested"
@@ -421,7 +454,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 8
+        assert metadata_document["schemaVersion"] == 9
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -494,7 +527,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 8
+        assert test_metadata["schemaVersion"] == 9
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -705,7 +738,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 8
+        assert native_document["schemaVersion"] == 9
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1029,7 +1062,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 8
+        assert workspace_metadata["schemaVersion"] == 9
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -2024,7 +2057,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 8
+        assert composed_metadata["schemaVersion"] == 9
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]

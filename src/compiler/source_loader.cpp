@@ -5,10 +5,142 @@
 #include <algorithm>
 #include <cctype>
 #include <iterator>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 
 namespace lang {
+namespace {
+
+class ConditionEvaluator final {
+public:
+  ConditionEvaluator(std::vector<Token> &tokens, std::size_t begin,
+                     std::size_t end, const TargetInfo &target,
+                     const std::unordered_set<std::string> &flags)
+      : tokens(tokens), current(begin), end(end), target(target), flags(flags) {
+  }
+
+  [[nodiscard]] std::optional<bool> evaluate() { return compileOr(); }
+
+private:
+  [[nodiscard]] std::optional<bool> compileOr() {
+    std::optional<bool> value = compileAnd();
+    if (!value) {
+      return std::nullopt;
+    }
+    while (matches(TokenKind::OR, "||")) {
+      const std::optional<bool> right = compileAnd();
+      if (!right) {
+        return std::nullopt;
+      }
+      *value = *value || *right;
+    }
+    return value;
+  }
+
+  [[nodiscard]] std::optional<bool> compileAnd() {
+    std::optional<bool> value = compileUnary();
+    if (!value) {
+      return std::nullopt;
+    }
+    while (matches(TokenKind::AND, "&&")) {
+      const std::optional<bool> right = compileUnary();
+      if (!right) {
+        return std::nullopt;
+      }
+      *value = *value && *right;
+    }
+    return value;
+  }
+
+  [[nodiscard]] std::optional<bool> compileUnary() {
+    if (matches(TokenKind::BANG)) {
+      const std::optional<bool> operand = compileUnary();
+      return operand ? std::optional<bool>(!*operand) : std::nullopt;
+    }
+    return compilePrimary();
+  }
+
+  [[nodiscard]] std::optional<bool> compilePrimary() {
+    if (matches(TokenKind::LEFT_PAREN)) {
+      const std::optional<bool> value = compileOr();
+      return value && matches(TokenKind::RIGHT_PAREN) ? value : std::nullopt;
+    }
+
+    if (current < end && tokens[current].kind == TokenKind::IDENTIFIER &&
+        tokens[current].lexeme == "defined") {
+      ++current;
+      if (!matches(TokenKind::LEFT_PAREN) || current >= end ||
+          tokens[current].kind != TokenKind::IDENTIFIER) {
+        return std::nullopt;
+      }
+      Token &flag = tokens[current++];
+      flag.configurationFlagReference = true;
+      const bool isDefined = flags.contains(flag.lexeme);
+      flag.configurationFlagDefined = isDefined;
+      return matches(TokenKind::RIGHT_PAREN) ? std::optional<bool>(isDefined)
+                                             : std::nullopt;
+    }
+
+    if (current + 4 >= end || tokens[current].kind != TokenKind::IDENTIFIER ||
+        tokens[current].lexeme != "target" ||
+        tokens[current + 1].kind != TokenKind::DOT ||
+        tokens[current + 2].kind != TokenKind::IDENTIFIER ||
+        (tokens[current + 3].kind != TokenKind::EQUAL_EQUAL &&
+         tokens[current + 3].kind != TokenKind::BANG_EQUAL) ||
+        tokens[current + 4].kind != TokenKind::STRING_LITERAL) {
+      return std::nullopt;
+    }
+    const std::optional<TargetProperty> property =
+        parseTargetProperty(tokens[current + 2].lexeme);
+    const auto *expected =
+        std::get_if<std::string>(&tokens[current + 4].literal);
+    if (!property || expected == nullptr) {
+      return std::nullopt;
+    }
+    const bool equal = target.value(*property) == *expected;
+    const bool result =
+        tokens[current + 3].kind == TokenKind::BANG_EQUAL ? !equal : equal;
+    current += 5;
+    return result;
+  }
+
+  [[nodiscard]] bool matches(TokenKind kind, std::string_view spelling = {}) {
+    if (current >= end || tokens[current].kind != kind ||
+        (!spelling.empty() && tokens[current].lexeme != spelling)) {
+      return false;
+    }
+    ++current;
+    return true;
+  }
+
+  std::vector<Token> &tokens;
+  std::size_t current;
+  std::size_t end;
+  const TargetInfo &target;
+  const std::unordered_set<std::string> &flags;
+};
+
+std::size_t directiveLineEnd(const std::vector<Token> &tokens,
+                             std::size_t directive) {
+  const int line = tokens[directive].line;
+  std::size_t end = directive + 1;
+  while (end < tokens.size() && tokens[end].kind != TokenKind::END_OF_FILE &&
+         tokens[end].line == line) {
+    ++end;
+  }
+  return end;
+}
+
+bool hasErrors(const std::vector<Diagnostic> &diagnostics) {
+  return std::any_of(diagnostics.begin(), diagnostics.end(),
+                     [](const Diagnostic &diagnostic) {
+                       return diagnostic.severity == DiagnosticSeverity::Error;
+                     });
+}
+
+} // namespace
 
 SourceGraph SourceLoader::load(
     const std::filesystem::path &entryPath,
@@ -17,13 +149,20 @@ SourceGraph SourceLoader::load(
     const std::unordered_map<std::string, std::string> &sourceOverrides,
     const std::vector<std::filesystem::path> &standardLibraryRoots,
     std::optional<std::size_t> completionOffset,
-    const std::vector<PackageSourceRoot> &packageSourceRoots) {
+    const std::vector<PackageSourceRoot> &packageSourceRoots, TargetInfo target,
+    ConfigurationFlags configurationFlags) {
   diagnostics.clear();
   states.clear();
   graph.clear();
   sourceManager.clear();
   this->entrySource = std::move(entrySource);
   this->completionOffset = completionOffset;
+  targetInfo = std::move(target);
+  normalizeConfigurationFlags(configurationFlags);
+  activeFlags.clear();
+  declaredFlags.clear();
+  activeFlags.insert(configurationFlags.begin(), configurationFlags.end());
+  declaredFlags.insert(configurationFlags.begin(), configurationFlags.end());
   this->sourceOverrides = &sourceOverrides;
   this->standardLibraryRoots.clear();
   this->standardLibraryRoots.reserve(standardLibraryRoots.size());
@@ -76,10 +215,29 @@ SourceGraph SourceLoader::load(
       entryUnit->entry = true;
     }
   }
+  for (SourceUnit &unit : graph.units) {
+    for (Token &token : unit.tokens) {
+      if (!token.configurationFlagReference) {
+        continue;
+      }
+      if (declaredFlags.contains(token.lexeme)) {
+        continue;
+      }
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2075", DiagnosticPhase::Semantics, token,
+          "Configuration flag '" + token.lexeme +
+              "' is referenced but defined nowhere in this compilation.");
+      diagnostic.severity = DiagnosticSeverity::Warning;
+      diagnostic.hints.emplace_back(
+          "Check the spelling or define the flag in source, with '-D " +
+          token.lexeme + "', or in '[build].defines'.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
   return std::move(graph);
 }
 
-bool SourceLoader::hadError() const { return !diagnostics.empty(); }
+bool SourceLoader::hadError() const { return hasErrors(diagnostics); }
 
 const std::vector<SourceDiagnostic> &SourceLoader::errors() const {
   return diagnostics;
@@ -293,10 +451,34 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   }
 
   std::vector<Token> output;
+  std::vector<SourceSpan> inactiveSpans;
   int braceDepth = 0;
-  int conditionalDepth = 0;
   std::size_t includeOccurrence = 0;
-  Token outerConditional;
+  struct ConditionalFrame {
+    Token opener;
+    bool parentActive = true;
+    bool branchTaken = false;
+    bool active = false;
+    bool sawElse = false;
+  };
+  std::vector<ConditionalFrame> conditionals;
+  const auto currentPathActive = [&]() {
+    return conditionals.empty() || conditionals.back().active;
+  };
+  const auto retainInactiveSpan = [&](const Token &inactive) {
+    if (inactive.kind != TokenKind::END_OF_FILE && !inactive.lexeme.empty()) {
+      inactiveSpans.push_back(tokenSpan(inactive));
+    }
+  };
+  const auto reportFlagName = [&](const Token &directive) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-L0012", DiagnosticPhase::Lexing, directive,
+        "'" + directive.lexeme +
+            "' must be followed by exactly one configuration flag name.");
+    diagnostic.hints.emplace_back(
+        "Configuration flag names use ordinary GTI identifier syntax.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  };
   for (std::size_t index = 0; index < fileTokens.size(); ++index) {
     Token &token = fileTokens[index];
     if (token.kind == TokenKind::END_OF_FILE) {
@@ -304,24 +486,117 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       continue;
     }
 
-    if (token.kind == TokenKind::HASH_IF) {
-      if (conditionalDepth == 0) {
-        outerConditional = token;
+    if (token.kind == TokenKind::HASH_IF ||
+        token.kind == TokenKind::HASH_IFDEF ||
+        token.kind == TokenKind::HASH_IFNDEF) {
+      const bool parentActive = currentPathActive();
+      bool selected = false;
+      if (token.kind == TokenKind::HASH_IF) {
+        selected = ConditionEvaluator(fileTokens, index + 1, fileTokens.size(),
+                                      targetInfo, activeFlags)
+                       .evaluate()
+                       .value_or(false);
+      } else {
+        const std::size_t end = directiveLineEnd(fileTokens, index);
+        if (index + 1 >= end ||
+            fileTokens[index + 1].kind != TokenKind::IDENTIFIER ||
+            index + 2 != end) {
+          reportFlagName(token);
+        } else {
+          Token &flag = fileTokens[index + 1];
+          flag.configurationFlagReference = true;
+          selected = activeFlags.contains(flag.lexeme);
+          flag.configurationFlagDefined = selected;
+          if (token.kind == TokenKind::HASH_IFNDEF) {
+            selected = !selected;
+          }
+        }
       }
-      ++conditionalDepth;
+      conditionals.push_back({.opener = token,
+                              .parentActive = parentActive,
+                              .branchTaken = selected,
+                              .active = parentActive && selected});
     } else if (token.kind == TokenKind::HASH_ENDIF) {
-      if (conditionalDepth == 0) {
+      if (conditionals.empty()) {
         report(token, "Unexpected '#endif' without a matching '#if'.",
                "GTI-I0002");
       } else {
-        --conditionalDepth;
+        conditionals.pop_back();
       }
-    } else if ((token.kind == TokenKind::HASH_ELIF ||
-                token.kind == TokenKind::HASH_ELSE) &&
-               conditionalDepth == 0) {
-      report(token,
-             "Unexpected '" + token.lexeme + "' without a matching '#if'.",
-             "GTI-I0002");
+    } else if (token.kind == TokenKind::HASH_ELIF) {
+      const bool selected =
+          ConditionEvaluator(fileTokens, index + 1, fileTokens.size(),
+                             targetInfo, activeFlags)
+              .evaluate()
+              .value_or(false);
+      if (conditionals.empty()) {
+        report(token, "Unexpected '#elif' without a matching '#if'.",
+               "GTI-I0002");
+      } else if (conditionals.back().sawElse) {
+        report(token, "Unexpected '#elif' after '#else'.", "GTI-I0002");
+      } else {
+        ConditionalFrame &frame = conditionals.back();
+        frame.active = frame.parentActive && !frame.branchTaken && selected;
+        frame.branchTaken = frame.branchTaken || selected;
+      }
+    } else if (token.kind == TokenKind::HASH_ELSE) {
+      if (conditionals.empty()) {
+        report(token, "Unexpected '#else' without a matching '#if'.",
+               "GTI-I0002");
+      } else if (conditionals.back().sawElse) {
+        report(token, "Duplicate '#else' in compile-time conditional.",
+               "GTI-I0002");
+      } else {
+        ConditionalFrame &frame = conditionals.back();
+        frame.active = frame.parentActive && !frame.branchTaken;
+        frame.branchTaken = true;
+        frame.sawElse = true;
+      }
+    }
+
+    if (token.kind == TokenKind::HASH_DEFINE ||
+        token.kind == TokenKind::HASH_UNDEF) {
+      const bool active = currentPathActive();
+      const std::size_t end = directiveLineEnd(fileTokens, index);
+      if (!active) {
+        for (std::size_t inactive = index; inactive < end; ++inactive) {
+          retainInactiveSpan(fileTokens[inactive]);
+        }
+      }
+      const bool hasName = index + 1 < end &&
+                           fileTokens[index + 1].kind == TokenKind::IDENTIFIER;
+      const bool hasExtra = hasName && index + 2 < end;
+      if (!hasName) {
+        reportFlagName(token);
+      } else if (hasExtra) {
+        if (token.kind == TokenKind::HASH_DEFINE) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-I0011", DiagnosticPhase::SourceLoading,
+              fileTokens[index + 2],
+              "Configuration flags carry no value; use a typed 'constexpr' "
+              "selected by '#ifdef'.");
+          diagnostic.hints.emplace_back(
+              "'#define' accepts exactly one flag name and no replacement "
+              "list.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        } else {
+          reportFlagName(token);
+        }
+      } else {
+        const std::string flag = fileTokens[index + 1].lexeme;
+        if (token.kind == TokenKind::HASH_DEFINE) {
+          declaredFlags.insert(flag);
+        }
+        if (active) {
+          if (token.kind == TokenKind::HASH_DEFINE) {
+            activeFlags.insert(flag);
+          } else {
+            activeFlags.erase(flag);
+          }
+        }
+      }
+      index = end - 1;
+      continue;
     }
 
     const bool startsLine =
@@ -341,7 +616,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     if (token.kind == TokenKind::HASH_INCLUDE) {
       const std::size_t occurrence = includeOccurrence++;
       const ResolvedInclude include =
-          resolveInclude(fileTokens, index, path, braceDepth, conditionalDepth);
+          resolveInclude(fileTokens, index, path, braceDepth,
+                         static_cast<int>(conditionals.size()));
       index = include.directiveEnd;
       if (include.dependency != 0) {
         graph.addDependency({.source = unitId,
@@ -354,6 +630,16 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       continue;
     }
 
+    const bool conditionalBoundary = token.kind == TokenKind::HASH_IF ||
+                                     token.kind == TokenKind::HASH_IFDEF ||
+                                     token.kind == TokenKind::HASH_IFNDEF ||
+                                     token.kind == TokenKind::HASH_ELIF ||
+                                     token.kind == TokenKind::HASH_ELSE ||
+                                     token.kind == TokenKind::HASH_ENDIF;
+    if (!currentPathActive() && !conditionalBoundary) {
+      retainInactiveSpan(token);
+    }
+
     if (token.kind == TokenKind::LEFT_BRACE) {
       ++braceDepth;
     } else if (token.kind == TokenKind::RIGHT_BRACE && braceDepth > 0) {
@@ -362,8 +648,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     output.push_back(std::move(token));
   }
 
-  if (conditionalDepth != 0) {
-    report(outerConditional,
+  if (!conditionals.empty()) {
+    report(conditionals.front().opener,
            "Unterminated compile-time conditional. Expect '#endif'.",
            "GTI-I0003");
   }
@@ -372,7 +658,9 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     output.emplace_back(TokenKind::END_OF_FILE, "", std::monostate{}, 0, 1,
                         key);
   }
-  graph.findUnit(unitId)->tokens = std::move(output);
+  SourceUnit *loadedUnit = graph.findUnit(unitId);
+  loadedUnit->tokens = std::move(output);
+  loadedUnit->inactiveSpans = std::move(inactiveSpans);
   states[key].state = LoadState::Loaded;
   return unitId;
 }

@@ -134,6 +134,52 @@ def main():
         assert direct_default_output.is_file()
         run([str(direct_default_output)])
 
+        configuration_source = root / "configuration.gti"
+        configuration_executable = root / "configuration"
+        configuration_source.write_text(
+            "#ifdef CLI_SELECTED\n"
+            "int main() { return 0; }\n"
+            "#else\n"
+            "int main() { return 1; }\n"
+            "#endif\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(configuration_source),
+                "-D",
+                "CLI_SELECTED",
+                "-o",
+                str(configuration_executable),
+            ]
+        )
+        run([str(configuration_executable)])
+        missing_define = run(
+            [gti, str(configuration_source), "-D"], expected=64
+        )
+        assert "missing configuration flag name" in missing_define.stderr
+        invalid_define = run(
+            [gti, str(configuration_source), "-D", "not-valid!"], expected=64
+        )
+        assert "not an ordinary GTI identifier" in invalid_define.stderr
+        unknown_configuration = root / "unknown-configuration.gti"
+        unknown_configuration.write_text(
+            "#ifdef DEBGU\nint unused() { return 1; }\n#endif\n"
+            "int main() { return 0; }\n",
+            encoding="utf-8",
+        )
+        unknown_result = run(
+            [
+                gti,
+                str(unknown_configuration),
+                "--emit-cpp",
+                "-o",
+                str(root / "unknown.cpp"),
+            ]
+        )
+        assert "warning[GTI-S2075]" in unknown_result.stderr
+
         long_output = root / "long-output"
         run([gti, str(direct_source), "--output", str(long_output)])
         run([str(long_output)])

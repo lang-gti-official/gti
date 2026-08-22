@@ -393,6 +393,57 @@ void testManifestDiagnostics() {
 #endif
 }
 
+void testConfigurationFlagManifest() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path source = temporary.root() / "src/main.gti";
+  const std::filesystem::path manifest = temporary.root() / "gti.toml";
+  expect(writeFile(source, "#ifdef DEBUG\nint main() { return 0; }\n"
+                           "#else\nint main() { return 1; }\n#endif\n"),
+         "the configuration project source should be writable");
+  expect(
+      writeFile(manifest, validManifest() +
+                              "\n[build]\ndefines = [\"FEATURE_X\", \"DEBUG\", "
+                              "\"DEBUG\"]\n"),
+      "the configuration manifest should be writable");
+
+  const lang::driver::ManifestLoadResult loaded =
+      lang::driver::loadProjectManifest(manifest);
+  expect(loaded.succeeded() && loaded.manifest &&
+             loaded.manifest->build().defines ==
+                 lang::ConfigurationFlags({"DEBUG", "FEATURE_X"}) &&
+             loaded.manifest->build().defineDeclarations.size() == 2 &&
+             loaded.manifest->build().defineDeclarations[0].start >
+                 loaded.manifest->build().defineDeclarations[1].start,
+         "[build].defines should validate, deduplicate, and normalize "
+         "valueless flags without losing their declaration spans");
+
+  lang::driver::ProjectBuildOverrides overrides;
+  overrides.configurationFlags = {"CLI_FLAG", "DEBUG"};
+  const lang::driver::ProjectResolutionResult resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          temporary.root(), std::nullopt, "dev", lang::TargetInfo::host(),
+          std::move(overrides)));
+  expect(resolution.succeeded() && resolution.plan &&
+             resolution.plan->configurationFlags() ==
+                 lang::ConfigurationFlags({"CLI_FLAG", "DEBUG", "FEATURE_X"}) &&
+             resolution.plan->projectModelIdentity().find(
+                 "configuration-flag:CLI_FLAG") != std::string::npos,
+         "project plans should merge CLI and manifest defines into their "
+         "compilation and model identity");
+
+  expect(
+      writeFile(manifest, validManifest() +
+                              "\n[build]\ndefines = [\"GOOD\", \"not-valid!\", "
+                              "\"class\"]\n"),
+      "the invalid configuration manifest should be writable");
+  const lang::driver::ManifestLoadResult invalid =
+      lang::driver::loadProjectManifest(manifest);
+  expect(!invalid.succeeded() &&
+             findDiagnostic(invalid.diagnostics, "GTI-B1005") != nullptr,
+         "manifest defines should reject names that are not ordinary GTI "
+         "identifiers");
+}
+
 void testTargetSelectionDiagnostics() {
   TemporaryDirectory temporary;
   expect(writeFile(temporary.root() / "src/alpha.gti",
@@ -1856,6 +1907,7 @@ int main() {
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
+  testConfigurationFlagManifest();
   testTargetSelectionDiagnostics();
   testTestTargetResolution();
   testNativeManifestResolution();

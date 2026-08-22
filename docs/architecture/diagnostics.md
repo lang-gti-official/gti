@@ -34,6 +34,13 @@ fix-it because inserting `*/` at an inferred location could silently comment
 out intended code. Source loading stops later phases so parser diagnostics do
 not cascade from the discarded comment body.
 
+`GTI-L0012` owns a configuration directive that lacks exactly one ordinary
+identifier name. It points at `#define`, `#undef`, `#ifdef`, or `#ifndef` and
+does not guess a flag. `GTI-I0011` separately points at the first replacement
+token after a valid `#define NAME`: flags are valueless, and the diagnostic
+directs value-bearing configuration to a typed `constexpr` selected by a
+conditional.
+
 `GTI-Rnnnn` identities are the distinct defined-runtime-failure vocabulary
 specified by [execution semantics](../language/execution.md#410-defined-runtime-failure).
 They are not frontend diagnostics: only a language-required constant context
@@ -118,6 +125,16 @@ diagnostics or letting a backend message choose either identity.
 - `GTI-S2074` owns a written second raw-pointer level outside an exact
   `[[c_array(count)]] extern "C"` return. Point at the outer `*`, explain the
   bounded exception, and do not suggest general nested-pointer syntax.
+- `GTI-P0003` owns malformed boolean compile-condition syntax, including a
+  missing operand or delimiter. `GTI-P0004` owns `defined(...)` used as an
+  ordinary GTI expression. Both keep the condition language confined to
+  compile-time directives and preserve parsing of every conditional branch.
+- `GTI-S2075` is a warning for a configuration flag referenced by a valid
+  condition but declared nowhere in the loaded program, including its initial
+  CLI/manifest set. Point at the flag name, suggest checking its spelling or
+  adding one of the supported definition sources, and continue compilation
+  with the flag false. A later or inactive source declaration counts as known;
+  `#undef` of an absent flag remains a silent no-op.
 - `GTI-S2076` owns the named native callback boundary. Point at the anonymous
   type spelling, invalid ABI component, missing initializer, inexact function
   item, or concurrent-profile conversion that the user can change. State that

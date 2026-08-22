@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -74,6 +75,10 @@ enum class TokenKind : std::uint8_t {
   HASH_ENDIF,
   HASH_ERROR,
   HASH_INCLUDE,
+  HASH_DEFINE,
+  HASH_UNDEF,
+  HASH_IFDEF,
+  HASH_IFNDEF,
 
   // Literals.
   IDENTIFIER,
@@ -203,7 +208,7 @@ inline constexpr bool isOperatorToken(TokenKind kind) {
 }
 
 inline constexpr bool isDirectiveToken(TokenKind kind) {
-  return kind >= TokenKind::HASH_IF && kind <= TokenKind::HASH_INCLUDE;
+  return kind >= TokenKind::HASH_IF && kind <= TokenKind::HASH_IFNDEF;
 }
 
 inline constexpr bool isKeywordToken(TokenKind kind) {
@@ -247,6 +252,10 @@ struct Token {
   std::string source;
   bool completion = false;
   bool generated = false;
+  // The loader resolves each flag reference in source order before parsing.
+  // Target comparisons and boolean composition remain semantic authority.
+  std::optional<bool> configurationFlagDefined;
+  bool configurationFlagReference = false;
 };
 
 extern const std::unordered_map<std::string_view, TokenKind> keywords;
@@ -391,6 +400,14 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "HASH_ERROR";
   case TokenKind::HASH_INCLUDE:
     return "HASH_INCLUDE";
+  case TokenKind::HASH_DEFINE:
+    return "HASH_DEFINE";
+  case TokenKind::HASH_UNDEF:
+    return "HASH_UNDEF";
+  case TokenKind::HASH_IFDEF:
+    return "HASH_IFDEF";
+  case TokenKind::HASH_IFNDEF:
+    return "HASH_IFNDEF";
 
   case TokenKind::IDENTIFIER:
     return "IDENTIFIER";

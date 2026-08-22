@@ -460,6 +460,11 @@ ProjectBuildPlan makeBuildPlan(const ProjectWorkspace &workspace,
   resolvedTarget.executionProfile =
       overrides.executionProfile.value_or(selectedProfile.executionProfile);
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
+  ConfigurationFlags configurationFlags = manifest.build().defines;
+  configurationFlags.insert(configurationFlags.end(),
+                            overrides.configurationFlags.begin(),
+                            overrides.configurationFlags.end());
+  normalizeConfigurationFlags(configurationFlags);
   std::filesystem::path outputDirectory = workspace.root() / "build" / "gti";
   if (workspace.declared()) {
     outputDirectory /= "packages";
@@ -475,13 +480,17 @@ ProjectBuildPlan makeBuildPlan(const ProjectWorkspace &workspace,
   const std::filesystem::path generatedSource =
       outputDirectory / ".gti-intermediate" /
       (selectedTarget.name + ".gti.cpp");
+  std::string modelIdentity = workspace.modelIdentity();
+  for (const std::string &flag : configurationFlags) {
+    modelIdentity += "\nconfiguration-flag:" + flag;
+  }
   return ProjectBuildPlan(
       manifest.path(), manifest.packageRoot(), workspace.root(),
       manifest.package().name, manifest.package().version, selectedTarget.name,
       selectedTarget.kind, selectedProfile.name, selectedTarget.root, output,
       generatedSource, std::move(resolvedTarget), optimization, cppStandard,
       keepCpp, std::move(nativeInputs), workspace.packageSourceRoots(),
-      workspace.modelIdentity());
+      std::move(configurationFlags), std::move(modelIdentity));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -612,7 +621,7 @@ ProjectBuildPlan::ProjectBuildPlan(
     OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
     NativeInputs nativeInputs,
     std::vector<PackageSourceRoot> packageSourceRoots,
-    std::string projectModelIdentity)
+    ConfigurationFlags configurationFlags, std::string projectModelIdentity)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -626,6 +635,7 @@ ProjectBuildPlan::ProjectBuildPlan(
       backendStandard(cppStandard), retainGeneratedSource(keepCpp),
       resolvedNativeInputs(std::move(nativeInputs)),
       resolvedPackageSources(std::move(packageSourceRoots)),
+      resolvedConfigurationFlags(std::move(configurationFlags)),
       resolvedProjectModelIdentity(std::move(projectModelIdentity)) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
@@ -688,6 +698,10 @@ const NativeInputs &ProjectBuildPlan::nativeInputs() const {
 
 const std::vector<PackageSourceRoot> &ProjectBuildPlan::packageSources() const {
   return resolvedPackageSources;
+}
+
+const ConfigurationFlags &ProjectBuildPlan::configurationFlags() const {
+  return resolvedConfigurationFlags;
 }
 
 const std::string &ProjectBuildPlan::projectModelIdentity() const {

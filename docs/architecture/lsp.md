@@ -29,6 +29,13 @@ tokens with UTF-16 lengths; delimiters inside literals are excluded. The
 protocol layer must not repeat name lookup, overload selection, type rendering,
 or declaration parsing.
 
+Compile-time conditions retain loader-resolved inactive token spans in each
+`SourceUnit`. Semantic tokens apply the `inactiveCode` modifier to those spans;
+unresolved identifiers there receive lexical variable classification only, so
+an inactive branch can fade without being semantically analysed or fabricating
+hover/definition results. Clients that do not consume semantic-token modifiers
+remain unaffected.
+
 The `sizeof` and `alignof` reserved words use the compiler's operator token
 classification, while invalid operands publish the shared `GTI-S2063`
 diagnostic. The LSP does not evaluate layout or maintain a second supported-type
@@ -92,7 +99,8 @@ Document symbols walk the recovered AST for the requested source unit —
 namespaces, types, members, enums and enumerators, functions, globals,
 aliases, and concepts — using the parser-recorded statement extents for
 enclosing ranges and exact name tokens for selection ranges.
-Compile-time-conditional declarations contribute the target-selected branch.
+Compile-time-conditional declarations contribute the semantically selected
+branch.
 Each node's detail reuses the hover signature query, so the outline and hover
 always present identical compiler-owned renderings.
 
@@ -167,6 +175,9 @@ sets, and semantic-token caches.
   pending work, and reanalyzes dependants whose view changes.
 - Completed analysis is published only if the document and dependency
   generations still match. Stale semantic requests are rejected.
+- The dynamic file watcher covers both `**/*.gti` and `**/gti.toml`. A manifest
+  change invalidates semantic-token caches and reanalyses every open document,
+  so changing `[build].defines` flips the selected/inactive branches.
 
 Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
@@ -175,7 +186,10 @@ requests without adopting clangd's per-translation-unit scheduler complexity.
 Editor analysis requests `FrontendOptions::stopAfter = Semantics`: no LSP
 feature reads HIR or MIR, so those phases are not lowered per change. The
 validity flags of skipped phases stay false and code generation remains
-disabled, which is already the LSP contract. Analysis work additionally runs
+disabled, which is already the LSP contract. Before analysis, the LSP uses the
+driver's canonical nearest-manifest discovery and parser to seed
+`FrontendOptions::configurationFlags` from `[build].defines`; it does not
+reimplement TOML or manifest validation. Analysis work additionally runs
 inside `lang::runGuarded`, and that boundary is deliberately narrow. Only
 compiler work runs under the guard: `runIsolatedAnalysis` builds an isolated
 `DocumentAnalysis` and its immutable frontend snapshot, and `publishAnalysis`
@@ -266,12 +280,13 @@ meaning from punctuation.
 - `SymbolId` is snapshot-local. There is no durable cross-analysis identity.
 - Document/scheduling state is not yet extracted from the protocol class.
 - `Frontend`/`LanguageQueries` can consume the same explicit
-  `PackageSourceRoot` graph as compilation, but the LSP does not yet obtain
-  driver-owned workspace facts. Consequently, package angle includes are not
-  resolved in editor snapshots yet, and editor analysis currently uses the default
-  single-threaded execution profile; project-selected concurrent-global
-  diagnostics remain a project CLI/build check until that configuration is
-  shared.
+  `PackageSourceRoot` graph as compilation. The LSP now consumes the nearest
+  manifest's configuration flags, but does not yet resolve its workspace graph,
+  selected package/profile, command-line overrides, or execution profile.
+  Consequently, package angle includes are not resolved in editor snapshots
+  yet, and editor analysis currently uses the default single-threaded execution
+  profile; project-selected concurrent-global diagnostics remain a project
+  CLI/build check until that configuration is shared.
 - Crash containment is in-process. It keeps the worker and shared state
   usable after a contained fault, but it is not a process-isolation
   guarantee: heap damage done before a fault is not undone.

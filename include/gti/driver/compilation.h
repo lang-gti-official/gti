@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/backend.h"
+#include "gti/configuration_flags.h"
 #include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
 #include "gti/mir.h"
@@ -20,7 +21,8 @@ public:
   CompilationRequest(std::filesystem::path entry,
                      StandardLibraryLayout standardLibrary, TargetInfo target,
                      OptimizationLevel optimization, CppStandard cppStandard,
-                     std::vector<PackageSourceRoot> packageSourceRoots = {});
+                     std::vector<PackageSourceRoot> packageSourceRoots = {},
+                     ConfigurationFlags configurationFlags = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -28,6 +30,7 @@ public:
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
+  [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
 
 private:
   std::filesystem::path entryPath;
@@ -36,6 +39,7 @@ private:
   OptimizationLevel optimizationLevel;
   CppStandard backendStandard;
   std::vector<PackageSourceRoot> packageSourceRootSet;
+  ConfigurationFlags configuredFlags;
 };
 
 enum class CompilationStatus {

@@ -35,6 +35,7 @@ struct Options {
   std::optional<std::string> cxx;
   std::optional<std::filesystem::path> timeTrace;
   std::vector<std::string> compilerArguments;
+  lang::ConfigurationFlags configurationFlags;
   lang::CppStandard standard = lang::CppStandard::Cpp23;
   lang::OptimizationLevel optimization = lang::OptimizationLevel::O0;
   lang::ExecutionProfile executionProfile =
@@ -70,6 +71,7 @@ struct ProjectOptions {
   bool buildAll = false;
   std::optional<int> jobs;
   std::vector<std::string> programArguments;
+  lang::ConfigurationFlags configurationFlags;
   bool verbose = false;
   bool useCache = true;
   bool offline = false;
@@ -141,6 +143,7 @@ void printUsage(std::ostream &stream) {
          "                       Select single-threaded (default) or "
          "concurrent semantics.\n"
          "  -O0, -O1, -O2, -O3  Select the optimization level (default: -O0).\n"
+         "  -D <name>            Define a valueless configuration flag.\n"
          "      --time-trace <path>  Write a compile-time profile as Chrome "
          "Trace JSON.\n"
          "  -v, --verbose        Print the native compiler command and "
@@ -160,6 +163,7 @@ void printUsage(std::ostream &stream) {
          "                       Override single-threaded or concurrent "
          "semantics.\n"
          "  -O0, -O1, -O2, -O3  Override the profile optimization level.\n"
+         "  -D <name>            Add a valueless project configuration flag.\n"
          "      --emit-mir       Emit the deterministic verified-MIR "
          "serialization instead of building.\n"
          "      --keep-cpp       Retain generated C++ in the intermediate "
@@ -322,6 +326,19 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
         return ArgumentResult::ExitFailure;
       }
       options.executionProfileSelected = true;
+      continue;
+    }
+    if (argument == "-D") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing configuration flag name after -D\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (!lang::isConfigurationFlagName(argv[index])) {
+        std::cerr << "gti: configuration flag '" << argv[index]
+                  << "' is not an ordinary GTI identifier\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.configurationFlags.emplace_back(argv[index]);
       continue;
     }
     if (argument == "--emit-mir") {
@@ -587,6 +604,19 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
         return ArgumentResult::ExitFailure;
       }
       options.executionProfile = profile;
+      continue;
+    }
+    if (argument == "-D") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing configuration flag name after -D\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (!lang::isConfigurationFlagName(argv[index])) {
+        std::cerr << "gti: configuration flag '" << argv[index]
+                  << "' is not an ordinary GTI identifier\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.configurationFlags.emplace_back(argv[index]);
       continue;
     }
     if (argument == "-O0" || argument == "-O1" || argument == "-O2" ||
@@ -982,6 +1012,11 @@ int reportCompilationFailure(
 
 int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
                       bool verbose) {
+  if (result.compilation.succeeded() &&
+      !result.compilation.diagnostics.empty()) {
+    reportDiagnostics(result.compilation.diagnostics,
+                      result.compilation.sources);
+  }
   if (result.cache.warning) {
     std::cerr << *result.cache.warning << '\n';
   }
@@ -1132,7 +1167,7 @@ int runDirect(const Options &options, const char *driver) {
   if (options.emitCpp || options.emitNativeHeader || options.emitMir) {
     const lang::driver::CompilationRequest request(
         options.input, toolchain.standardLibrary, target, options.optimization,
-        options.standard);
+        options.standard, {}, options.configurationFlags);
     const lang::driver::CompilationResult compilation =
         options.emitNativeHeader
             ? lang::driver::compileToNativeHeader(request)
@@ -1141,6 +1176,7 @@ int runDirect(const Options &options, const char *driver) {
     if (!compilation.succeeded()) {
       return reportCompilationFailure(compilation);
     }
+    reportDiagnostics(compilation.diagnostics, compilation.sources);
     const lang::BackendArtifact &artifact = *compilation.artifact;
     if (const std::optional<std::filesystem::path> collision =
             lang::driver::findLoadedSourceCollision(options.output,
@@ -1170,7 +1206,8 @@ int runDirect(const Options &options, const char *driver) {
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
           lang::driver::CompilationRequest(
               options.input, toolchain.standardLibrary, target,
-              options.optimization, options.standard),
+              options.optimization, options.standard, {},
+              options.configurationFlags),
           toolchain, generatedSource, options.output,
           lang::driver::discoverNativeCompiler(options.cxx),
           std::move(nativeInputs), options.keepCpp, false, options.verbose));
@@ -1210,6 +1247,13 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
             << ", execution-profile="
             << lang::executionProfileName(plan.target().executionProfile)
             << ", keep-cpp=" << (plan.keepCpp() ? "true" : "false") << '\n';
+  if (!plan.configurationFlags().empty()) {
+    std::cerr << "gti: defines";
+    for (const std::string &flag : plan.configurationFlags()) {
+      std::cerr << ' ' << flag;
+    }
+    std::cerr << '\n';
+  }
   if (command == ProjectCommand::Check) {
     std::cerr << "gti: source " << plan.entry().string() << '\n';
   } else {
@@ -1253,7 +1297,8 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
           lang::driver::CompilationRequest(
               plan.entry(), toolchain.standardLibrary, plan.target(),
-              plan.optimization(), plan.cppStandard(), plan.packageSources()),
+              plan.optimization(), plan.cppStandard(), plan.packageSources(),
+              plan.configurationFlags()),
           toolchain, plan.generatedSource(), plan.output(),
           lang::driver::discoverNativeCompiler(options.cxx),
           plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
@@ -1281,6 +1326,7 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
+  overrides.configurationFlags = options.configurationFlags;
   const lang::driver::ProjectTargetSetResolutionResult resolution =
       lang::driver::resolveAllProjectTargets(lang::driver::ProjectBuildRequest(
           *currentDirectory, std::nullopt, options.profile,
@@ -1331,6 +1377,10 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     }
     if (options.keepCpp) {
       command.emplace_back(*options.keepCpp ? "--keep-cpp" : "--no-keep-cpp");
+    }
+    for (const std::string &flag : options.configurationFlags) {
+      command.emplace_back("-D");
+      command.push_back(flag);
     }
     if (!options.useCache) {
       command.emplace_back("--no-cache");
@@ -1397,6 +1447,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
+  overrides.configurationFlags = options.configurationFlags;
   lang::driver::ProjectResolutionResult resolution =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
           *currentDirectory, options.target, options.profile,
@@ -1426,10 +1477,12 @@ int runProject(const ProjectOptions &options, const char *driver) {
     const lang::driver::CompilationResult compilation =
         lang::driver::compileToMir(lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
-            plan.optimization(), plan.cppStandard(), plan.packageSources()));
+            plan.optimization(), plan.cppStandard(), plan.packageSources(),
+            plan.configurationFlags()));
     if (!compilation.succeeded()) {
       return reportCompilationFailure(compilation);
     }
+    reportDiagnostics(compilation.diagnostics, compilation.sources);
     std::filesystem::path output = plan.output();
     output += ".mir";
     if (const std::optional<std::filesystem::path> collision =
@@ -1456,11 +1509,13 @@ int runProject(const ProjectOptions &options, const char *driver) {
     const lang::driver::CheckResult result =
         lang::driver::checkCompilation(lang::driver::CompilationRequest(
             plan.entry(), toolchain.standardLibrary, plan.target(),
-            plan.optimization(), plan.cppStandard(), plan.packageSources()));
+            plan.optimization(), plan.cppStandard(), plan.packageSources(),
+            plan.configurationFlags()));
     if (!result.succeeded()) {
       reportDiagnostics(result.diagnostics, result.sources);
       return exitCode(ExitStatus::Compilation);
     }
+    reportDiagnostics(result.diagnostics, result.sources);
     std::cout << "Checked " << plan.targetName() << " [" << plan.profileName()
               << ", " << lang::driver::targetTriple(plan.target()) << "] -> "
               << plan.entry().string() << '\n';
@@ -1508,6 +1563,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   overrides.cppStandard = options.standard;
   overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
+  overrides.configurationFlags = options.configurationFlags;
   lang::driver::ProjectTestResolutionResult resolution =
       lang::driver::resolveProjectTests(lang::driver::ProjectBuildRequest(
           *currentDirectory, options.target, options.profile,

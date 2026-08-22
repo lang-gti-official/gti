@@ -1,3 +1,4 @@
+#include "gti/driver/manifest.h"
 #include "gti/format_config.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
@@ -93,6 +94,7 @@ enum SemanticTokenModifier : std::uint32_t {
   DefaultLibrary = 1U << 3U,
   FunctionScope = 1U << 4U,
   Static = 1U << 5U,
+  InactiveCode = 1U << 6U,
 };
 
 struct SemanticClassification {
@@ -1083,6 +1085,24 @@ collectSemanticTokens(std::string_view source,
   lang::Lexer lexer;
   const std::vector<lang::Token> tokens = lexer.scan(std::string(source));
   std::vector<std::optional<SemanticClassification>> classifications;
+  std::vector<bool> inactive(tokens.size(), false);
+  if (snapshot != nullptr && sourceUnit != 0) {
+    if (const lang::SourceUnit *unit =
+            snapshot->sourceGraph.findUnit(sourceUnit)) {
+      std::size_t inactiveIndex = 0;
+      for (std::size_t index = 0; index < tokens.size(); ++index) {
+        const std::size_t start = tokens[index].position;
+        const std::size_t end = start + tokens[index].lexeme.size();
+        while (inactiveIndex < unit->inactiveSpans.size() &&
+               unit->inactiveSpans[inactiveIndex].end <= start) {
+          ++inactiveIndex;
+        }
+        inactive[index] = inactiveIndex < unit->inactiveSpans.size() &&
+                          start < unit->inactiveSpans[inactiveIndex].end &&
+                          end > unit->inactiveSpans[inactiveIndex].start;
+      }
+    }
+  }
   classifications.reserve(tokens.size());
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     classifications.push_back(basicSemanticType(tokens, index));
@@ -1096,11 +1116,20 @@ collectSemanticTokens(std::string_view source,
           (!classifications[index] ||
            (classifications[index]->type != String &&
             classifications[index]->type != Decorator))) {
-        classifications[index].reset();
+        if (inactive[index]) {
+          classifications[index] = SemanticClassification{Variable, 0};
+        } else {
+          classifications[index].reset();
+        }
       }
     }
     applyResolvedSymbolClassifications(tokens, classifications, *snapshot,
                                        sourceUnit);
+  }
+  for (std::size_t index = 0; index < classifications.size(); ++index) {
+    if (inactive[index] && classifications[index]) {
+      classifications[index]->modifiers |= InactiveCode;
+    }
   }
 
   std::vector<SemanticToken> result;
@@ -1492,8 +1521,9 @@ private:
       tokenTypes.push_back(type);
     }
     JsonArray tokenModifiers;
-    for (const char *modifier : {"declaration", "definition", "readonly",
-                                 "defaultLibrary", "functionScope", "static"}) {
+    for (const char *modifier :
+         {"declaration", "definition", "readonly", "defaultLibrary",
+          "functionScope", "static", "inactiveCode"}) {
       tokenModifiers.push_back(modifier);
     }
     JsonObject legend{{"tokenTypes", std::move(tokenTypes)},
@@ -1673,18 +1703,41 @@ private:
     {
       const std::lock_guard lock(stateMutex);
       std::unordered_set<std::string> affected;
+      bool manifestChanged = false;
       for (const JsonValue &change : *changedFiles) {
         const std::string clientUri = stringMember(&change, "uri");
         if (clientUri.empty()) {
           continue;
         }
         const std::string uri = documentKeyFromUri(clientUri);
+        const std::optional<std::filesystem::path> changedPath =
+            filePathFromUri(clientUri);
+        if (changedPath && changedPath->filename() == "gti.toml") {
+          manifestChanged = true;
+          continue;
+        }
         // Dirty open buffers remain authoritative over filesystem events.
         if (documents.contains(uri)) {
           continue;
         }
         affected.insert(uri);
         invalidateDependentsLocked(uri, affected, requests);
+      }
+      if (manifestChanged) {
+        requests.clear();
+        for (const auto &[documentUri, documentSource] : documents) {
+          (void)documentSource;
+          affected.insert(documentUri);
+          semanticTokenCache.erase(documentUri);
+          analysisSnapshots.erase(documentUri);
+          const auto version = documentVersions.find(documentUri);
+          requests.push_back(makeAnalysisRequestLocked(
+              documentUri,
+              version == documentVersions.end()
+                  ? std::nullopt
+                  : std::optional<std::int64_t>(version->second),
+              ++analysisGenerations[documentUri]));
+        }
       }
       publications = publicationsForLocked(affected);
     }
@@ -1700,6 +1753,7 @@ private:
 
     JsonArray watchers;
     watchers.push_back(JsonObject{{"globPattern", "**/*.gti"}});
+    watchers.push_back(JsonObject{{"globPattern", "**/gti.toml"}});
     JsonArray registrations;
     registrations.push_back(JsonObject{
         {"id", "gti-source-watcher"},
@@ -2449,6 +2503,15 @@ private:
     // Editor features read only the recovered program, semantic model, and
     // diagnostics; HIR/MIR lowering is codegen-path work the LSP never uses.
     frontendOptions.stopAfter = lang::FrontendPhase::Semantics;
+    const lang::driver::ManifestDiscoveryResult discovery =
+        lang::driver::discoverProjectManifest(filePath->parent_path());
+    if (discovery.succeeded()) {
+      const lang::driver::ManifestLoadResult manifest =
+          lang::driver::loadProjectManifest(*discovery.path);
+      if (manifest.succeeded()) {
+        frontendOptions.configurationFlags = manifest.manifest->build().defines;
+      }
+    }
     result.frontend = std::make_shared<const lang::FrontendResult>(
         lang::Frontend(frontendOptions)
             .analyze(*filePath, source, {standardLibrary.prelude},

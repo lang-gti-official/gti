@@ -908,9 +908,10 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable/test targets with their kinds, and each
-target/profile output and generated-C++ path. Metadata schema version 8 reports
-every declared execution profile plus every effective native category, C
-source, C++ source, C standard, C argument, and ordered link operand, the
+target/profile output and generated-C++ path. Metadata schema version 9 reports
+every declared execution profile and effective GTI configuration flag set plus
+every effective native category, C source, C++ source, C standard, C argument,
+and ordered link operand, the
 composed per-dependency native groups (`dependencyNative`), and the
 resolved workspace/package/dependency graph. It is
 deterministic, works for multi-target manifests without selecting one target,
@@ -1115,7 +1116,7 @@ Status: complete
 - Compile each selected source to an atomically published managed intermediate
   object, then place C objects followed by C++ objects before runtime and
   manifest libraries in the existing final C++ link.
-- Report the resolved C and C++ inputs through metadata schema version 8 while
+- Report the resolved C and C++ inputs through metadata schema version 9 while
   keeping `check` compiler-free and output-free.
 
 Acceptance criteria:
@@ -1368,12 +1369,13 @@ need them.
    root. If resolution fails, it retains the recovery path for a broken
    manifest and validates/removes only the nearest literal
    `<package>/build/gti`. Both paths refuse symbolic-link boundaries.
-6. Metadata JSON schema version 8 is a read-only enumeration of every current
+6. Metadata JSON schema version 9 is a read-only enumeration of every current
    target/profile plan, including target kinds, declared execution profiles,
-   resolved native C and C++ sources, C policy, other native inputs, ordered
-   link operands, and composed per-dependency native groups. It also publishes
-   the selected workspace and sorted source-package graph. Platform selection
-   and precedence use the resolved target.
+   effective GTI configuration flags, resolved native C and C++ sources, C
+   policy, other native inputs, ordered link operands, and composed
+   per-dependency native groups. It also publishes the selected workspace and
+   sorted source-package graph. Platform selection and precedence use the
+   resolved target.
 
 ## Recommended First Pull Requests
 

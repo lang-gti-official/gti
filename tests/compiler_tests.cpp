@@ -24974,6 +24974,169 @@ int main() {
   return value;
 }
 )";
+
+  {
+    lang::Lexer lexer;
+    const std::vector<lang::Token> directiveTokens = lexer.scan(
+        "#define DEBUG\n#undef DEBUG\n#ifdef DEBUG\n#endif\n#ifndef DEBUG\n"
+        "#endif\n");
+    expect(!lexer.hadError() && directiveTokens.size() >= 8 &&
+               directiveTokens[0].kind == lang::TokenKind::HASH_DEFINE &&
+               directiveTokens[2].kind == lang::TokenKind::HASH_UNDEF &&
+               directiveTokens[4].kind == lang::TokenKind::HASH_IFDEF,
+           "configuration directives should have dedicated lexer tokens");
+
+    const std::string selectionSource = R"(
+#define LOCAL
+#define LOCAL
+#if target.os == "never"
+#define LEAKED
+#define ALTERNATE
+#define EXTERNAL
+#endif
+
+#if defined(EXTERNAL) &&
+    (target.os != "never" || defined(ALTERNATE))
+int selected_value() { return 11; }
+#else
+int selected_value() { return 22; }
+#endif
+
+#undef EXTERNAL
+#ifdef EXTERNAL
+#error "a source undef did not remove an externally seeded flag"
+#endif
+
+#ifdef LEAKED
+#error "an inactive definition leaked"
+#endif
+
+#undef LOCAL
+#ifndef LOCAL
+int local_state() { return 7; }
+#else
+int local_state() { return 9; }
+#endif
+
+int main() { return selected_value() + local_state(); }
+)";
+    lang::FrontendOptions configuredOptions;
+    configuredOptions.configurationFlags = {"EXTERNAL"};
+    const lang::FrontendResult configured =
+        lang::Frontend(configuredOptions)
+            .analyze("configuration-selection.gti", selectionSource);
+    expect(configured.canGenerateCode() && configured.diagnostics.empty(),
+           "boolean target/flag conditions and source-order define changes "
+           "should compile without diagnostics");
+    const std::string configuredCpp = gti_test::emitCppText(configured);
+    expect(configuredCpp.find("static_cast<std::int32_t>(11)") !=
+                   std::string::npos &&
+               configuredCpp.find("static_cast<std::int32_t>(7)") !=
+                   std::string::npos &&
+               configuredCpp.find("static_cast<std::int32_t>(22)") ==
+                   std::string::npos &&
+               configuredCpp.find("inactive definition leaked") ==
+                   std::string::npos &&
+               configuredCpp.find("#define LOCAL") == std::string::npos &&
+               configuredCpp.find("#define EXTERNAL") == std::string::npos,
+           "only selected configuration branches should reach the backend");
+
+    const lang::FrontendResult unconfigured = lang::Frontend().analyze(
+        "configuration-selection.gti", selectionSource);
+    expect(unconfigured.canGenerateCode() && unconfigured.diagnostics.empty(),
+           "the same source should compile under an empty external define set");
+    const std::string unconfiguredCpp = gti_test::emitCppText(unconfigured);
+    expect(unconfiguredCpp.find("static_cast<std::int32_t>(22)") !=
+                   std::string::npos &&
+               unconfiguredCpp.find("static_cast<std::int32_t>(11)") ==
+                   std::string::npos,
+           "external define sets should deterministically change selection");
+
+    const lang::FrontendResult invalidInactiveBranch = lang::Frontend().analyze(
+        "configuration-inactive-syntax.gti",
+        "#define KNOWN\n#undef KNOWN\n#if defined(KNOWN)\n"
+        "int broken( { return 0; }\n#endif\n"
+        "int main() { return 0; }\n");
+    expect(!invalidInactiveBranch.syntaxValid,
+           "inactive configuration branches should remain syntactically valid "
+           "GTI rather than being skipped as text");
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "gti-configuration-includes";
+    const std::filesystem::path entry = root / "main.gti";
+    const std::filesystem::path dependency = root / "flags.gti";
+    const std::string dependencyKey =
+        std::filesystem::weakly_canonical(dependency).string();
+    const lang::FrontendResult includeOrdered = lang::Frontend().analyze(
+        entry,
+        "#define BEFORE_INCLUDE\n"
+        "#include \"flags.gti\"\n"
+        "#ifdef FROM_INCLUDE\n"
+        "int main() { return included_value(); }\n"
+        "#else\n#error \"include flags were not visible\"\n#endif\n",
+        {},
+        {{dependencyKey, "#ifdef BEFORE_INCLUDE\n#define FROM_INCLUDE\n#endif\n"
+                         "int included_value() { return 0; }\n"}});
+    expect(includeOrdered.canGenerateCode() &&
+               includeOrdered.diagnostics.empty(),
+           "defines before an include should enter it and active definitions "
+           "from the included unit should remain visible afterwards");
+
+    const lang::FrontendResult replacement = lang::Frontend().analyze(
+        "configuration-replacement.gti",
+        "#define BUFFER_SIZE 4096\nint main() { return 0; }\n");
+    expect(!replacement.sourceValid &&
+               hasDiagnosticCode(replacement.diagnostics, "GTI-I0011") &&
+               hasDiagnostic(replacement.diagnostics, "constexpr"),
+           "replacement-list macros should be rejected with the typed-constant "
+           "alternative");
+
+    const lang::FrontendResult missingName =
+        lang::Frontend().analyze("configuration-missing-name.gti",
+                                 "#define\nint main() { return 0; }\n");
+    expect(!missingName.sourceValid &&
+               hasDiagnosticCode(missingName.diagnostics, "GTI-L0012"),
+           "configuration directives should require an ordinary identifier");
+
+    const lang::FrontendResult malformedCondition = lang::Frontend().analyze(
+        "configuration-malformed.gti",
+        "#if defined(DEBUG) &&\nint main() { return 0; }\n#endif\n");
+    expect(!malformedCondition.syntaxValid &&
+               hasDiagnosticCode(malformedCondition.diagnostics, "GTI-P0003"),
+           "malformed boolean compile conditions should use the focused parser "
+           "diagnostic");
+
+    const lang::FrontendResult definedExpression = lang::Frontend().analyze(
+        "configuration-defined-expression.gti",
+        "bool enabled = defined(DEBUG);\nint main() { return 0; }\n");
+    expect(!definedExpression.syntaxValid &&
+               hasDiagnosticCode(definedExpression.diagnostics, "GTI-P0004"),
+           "defined(...) should remain confined to compile-time conditions");
+
+    const lang::FrontendResult unknownFlag = lang::Frontend().analyze(
+        "configuration-unknown.gti",
+        "#ifdef DEBGU\nint unused() { return 1; }\n#endif\n"
+        "#undef NOT_DEFINED\nint main() { return 0; }\n");
+    const auto warning = std::find_if(
+        unknownFlag.diagnostics.begin(), unknownFlag.diagnostics.end(),
+        [](const lang::Diagnostic &diagnostic) {
+          return diagnostic.code == "GTI-S2075" &&
+                 diagnostic.severity == lang::DiagnosticSeverity::Warning;
+        });
+    expect(unknownFlag.canGenerateCode() &&
+               warning != unknownFlag.diagnostics.end() &&
+               countDiagnosticCode(unknownFlag.diagnostics, "GTI-S2075") == 1,
+           "unknown flag references should warn without failing compilation, "
+           "while undefining an absent flag remains a no-op");
+
+    const std::string formatted = lang::Formatter().format(
+        "#define DEBUG\n#if defined(DEBUG)&&!(target.os==\"never\")\n"
+        "int value=1;\n#undef DEBUG\n#endif");
+    expect(formatted == "#define DEBUG\n#if defined(DEBUG) && !(target.os == "
+                        "\"never\")\nint value = 1;\n#undef DEBUG\n#endif\n",
+           "the formatter should preserve and normalize configuration "
+           "directives and boolean conditions");
+  }
   auto tokens = lexer.scan(source);
   expect(!lexer.hadError(), "compile-time directives should lex");
 

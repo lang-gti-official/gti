@@ -124,12 +124,16 @@ CompilationResult compileWithBackendInputs(const CompilationRequest &request,
 CompilationRequest::CompilationRequest(
     std::filesystem::path entry, StandardLibraryLayout standardLibrary,
     TargetInfo target, OptimizationLevel optimization, CppStandard cppStandard,
-    std::vector<PackageSourceRoot> packageSourceRoots)
+    std::vector<PackageSourceRoot> packageSourceRoots,
+    ConfigurationFlags configurationFlags)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
       backendStandard(cppStandard),
-      packageSourceRootSet(std::move(packageSourceRoots)) {}
+      packageSourceRootSet(std::move(packageSourceRoots)),
+      configuredFlags(std::move(configurationFlags)) {
+  normalizeConfigurationFlags(configuredFlags);
+}
 
 const std::filesystem::path &CompilationRequest::entry() const {
   return entryPath;
@@ -152,6 +156,10 @@ CompilationRequest::packageSources() const {
   return packageSourceRootSet;
 }
 
+const ConfigurationFlags &CompilationRequest::configurationFlags() const {
+  return configuredFlags;
+}
+
 CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
   SourceLoader sourceLoader;
   CompilationInputs inputs;
@@ -160,7 +168,8 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
     inputs.sourceGraph = sourceLoader.load(
         request.entry(), std::nullopt, {request.standardLibrary().prelude}, {},
         {request.standardLibrary().root}, std::nullopt,
-        request.packageSources());
+        request.packageSources(), request.target(),
+        request.configurationFlags());
   }
   inputs.sources = sourceLoader.sources();
   inputs.diagnostics = sourceLoader.errors();

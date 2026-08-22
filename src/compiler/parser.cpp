@@ -93,7 +93,8 @@ private:
   }
 
   StmtPtr declarationWithoutExtent() {
-    if (match({TokenKind::HASH_IF})) {
+    if (match({TokenKind::HASH_IF, TokenKind::HASH_IFDEF,
+               TokenKind::HASH_IFNDEF})) {
       return conditionalCompilation(ItemContext::Declaration);
     }
     if (match({TokenKind::HASH_ERROR})) {
@@ -1143,7 +1144,8 @@ private:
     if (context == ItemContext::Declaration) {
       return declarationWithoutExtent();
     }
-    if (match({TokenKind::HASH_IF})) {
+    if (match({TokenKind::HASH_IF, TokenKind::HASH_IFDEF,
+               TokenKind::HASH_IFNDEF})) {
       return conditionalCompilation(context);
     }
     if (match({TokenKind::HASH_ERROR})) {
@@ -1259,10 +1261,13 @@ private:
   StmtPtr conditionalCompilation(ItemContext context) {
     Token directive = previous();
     std::vector<ConditionalBranch> branches;
-    branches.push_back({compileCondition(), conditionalItems(context)});
+    branches.push_back(
+        {compileCondition(directive), conditionalItems(context)});
 
     while (match({TokenKind::HASH_ELIF})) {
-      branches.push_back({compileCondition(), conditionalItems(context)});
+      Token branchDirective = previous();
+      branches.push_back(
+          {compileCondition(branchDirective), conditionalItems(context)});
     }
     if (match({TokenKind::HASH_ELSE})) {
       branches.push_back({std::nullopt, conditionalItems(context)});
@@ -1298,37 +1303,124 @@ private:
     return statements;
   }
 
-  CompileCondition compileCondition() {
-    Token target = consume(TokenKind::IDENTIFIER,
-                           "Expect 'target' after compile-time directive.");
-    if (target.lexeme != "target") {
-      throw error(target, "Compile-time conditions must begin with 'target'.");
+  CompileCondition compileCondition(const Token &directive) {
+    CompileCondition condition;
+    if (directive.kind == TokenKind::HASH_IFDEF ||
+        directive.kind == TokenKind::HASH_IFNDEF) {
+      Token flag = consumeConditionIdentifier(
+          "Expect a configuration flag name after '" + directive.lexeme + "'.");
+      condition = CompileCondition::defined(std::move(flag));
+      if (directive.kind == TokenKind::HASH_IFNDEF) {
+        condition = CompileCondition::unary(CompileCondition::Kind::Not,
+                                            directive, std::move(condition));
+      }
+    } else {
+      condition = compileOrCondition();
     }
-    consume(TokenKind::DOT, "Expect '.' after 'target'.");
+    return condition;
+  }
+
+  CompileCondition compileOrCondition() {
+    CompileCondition condition = compileAndCondition();
+    while (check(TokenKind::OR) && peek().lexeme == "||") {
+      Token oper = advance();
+      condition = CompileCondition::binary(
+          CompileCondition::Kind::Or, std::move(condition), std::move(oper),
+          compileAndCondition());
+    }
+    return condition;
+  }
+
+  CompileCondition compileAndCondition() {
+    CompileCondition condition = compileUnaryCondition();
+    while (check(TokenKind::AND) && peek().lexeme == "&&") {
+      Token oper = advance();
+      condition = CompileCondition::binary(
+          CompileCondition::Kind::And, std::move(condition), std::move(oper),
+          compileUnaryCondition());
+    }
+    return condition;
+  }
+
+  CompileCondition compileUnaryCondition() {
+    if (match({TokenKind::BANG})) {
+      Token oper = previous();
+      return CompileCondition::unary(CompileCondition::Kind::Not,
+                                     std::move(oper), compileUnaryCondition());
+    }
+    return compilePrimaryCondition();
+  }
+
+  CompileCondition compilePrimaryCondition() {
+    if (match({TokenKind::LEFT_PAREN})) {
+      CompileCondition condition = compileOrCondition();
+      consumeCondition(TokenKind::RIGHT_PAREN,
+                       "Expect ')' after compile-time condition.");
+      return condition;
+    }
+
+    if (check(TokenKind::IDENTIFIER) && peek().lexeme == "defined") {
+      advance();
+      consumeCondition(TokenKind::LEFT_PAREN, "Expect '(' after 'defined'.");
+      Token flag = consumeConditionIdentifier(
+          "Expect a configuration flag name inside 'defined(...)'.");
+      consumeCondition(TokenKind::RIGHT_PAREN,
+                       "Expect ')' after configuration flag name.");
+      return CompileCondition::defined(std::move(flag));
+    }
+
+    Token target = consumeCondition(
+        TokenKind::IDENTIFIER,
+        "Expect a compile-time condition after the directive.");
+    if (target.lexeme != "target") {
+      throw conditionError(
+          target, "Compile-time conditions must use 'defined(NAME)', a target "
+                  "comparison, or a parenthesized condition.");
+    }
+    consumeCondition(TokenKind::DOT, "Expect '.' after 'target'.");
     Token property =
-        consume(TokenKind::IDENTIFIER,
-                "Expect 'os', 'vendor', or 'arch' after 'target.'.");
+        consumeCondition(TokenKind::IDENTIFIER,
+                         "Expect 'os', 'vendor', or 'arch' after 'target.'.");
 
     const std::optional<TargetProperty> targetProperty =
         parseTargetProperty(property.lexeme);
     if (!targetProperty) {
-      throw error(property, "Unknown target property '" + property.lexeme +
-                                "'. Expected os, vendor, or arch.");
+      throw conditionError(property, "Unknown target property '" +
+                                         property.lexeme +
+                                         "'. Expected os, vendor, or arch.");
     }
 
     Token oper = consumeComparisonOperator();
-    Token value = consume(TokenKind::STRING_LITERAL,
-                          "Expect a string target value after comparison.");
+    Token value =
+        consumeCondition(TokenKind::STRING_LITERAL,
+                         "Expect a string target value after comparison.");
     const auto *text = std::get_if<std::string>(&value.literal);
-    return CompileCondition{property, *targetProperty, oper, value,
-                            text == nullptr ? std::string{} : *text};
+    std::string expected = text == nullptr ? std::string{} : *text;
+    return CompileCondition::targetComparison(
+        std::move(property), *targetProperty, std::move(oper), std::move(value),
+        std::move(expected));
   }
 
   Token consumeComparisonOperator() {
     if (match({TokenKind::EQUAL_EQUAL, TokenKind::BANG_EQUAL})) {
       return previous();
     }
-    throw error(peek(), "Expect '==' or '!=' in compile-time condition.");
+    throw conditionError(peek(),
+                         "Expect '==' or '!=' in compile-time condition.");
+  }
+
+  Token consumeCondition(TokenKind kind, std::string_view message) {
+    if (check(kind)) {
+      return advance();
+    }
+    throw conditionError(peek(), message);
+  }
+
+  Token consumeConditionIdentifier(std::string_view message) {
+    if (check(TokenKind::IDENTIFIER)) {
+      return advance();
+    }
+    throw conditionError(peek(), message);
   }
 
   void rejectStrayConditionalDirective() {
@@ -1942,6 +2034,12 @@ private:
     }
     if (match({TokenKind::IDENTIFIER})) {
       Token first = previous();
+      if (first.lexeme == "defined") {
+        diagnostics.push_back(makeDiagnostic(
+            "GTI-P0004", DiagnosticPhase::Parsing, first,
+            "'defined' is available only inside a compile-time condition."));
+        throw ParseError{};
+      }
       if (check(TokenKind::SCOPE)) {
         return std::make_unique<QualifiedName>(parseNamePath(std::move(first)));
       }
@@ -2355,6 +2453,13 @@ private:
     return ParseError{};
   }
 
+  ParseError conditionError(const Token &token, std::string_view message) {
+    missingTokenError = false;
+    diagnostics.push_back(makeDiagnostic("GTI-P0003", DiagnosticPhase::Parsing,
+                                         token, std::string(message)));
+    return ParseError{};
+  }
+
   bool reservedIdentifierError(const Token &token) {
     std::string message;
     if (token.kind == TokenKind::CPP_RESERVED) {
@@ -2467,7 +2572,8 @@ private:
         }
 
         if (allowClasses &&
-            (check(TokenKind::HASH_IF) || check(TokenKind::HASH_ERROR) ||
+            (check(TokenKind::HASH_IF) || check(TokenKind::HASH_IFDEF) ||
+             check(TokenKind::HASH_IFNDEF) || check(TokenKind::HASH_ERROR) ||
              check(TokenKind::AT) || check(TokenKind::CLASS) ||
              check(TokenKind::CONCEPT) || check(TokenKind::ENUM) ||
              check(TokenKind::EXTERN) || check(TokenKind::STRUCT) ||
@@ -2476,7 +2582,8 @@ private:
           return;
         }
         if (allowStatements &&
-            (check(TokenKind::HASH_IF) || check(TokenKind::HASH_ERROR) ||
+            (check(TokenKind::HASH_IF) || check(TokenKind::HASH_IFDEF) ||
+             check(TokenKind::HASH_IFNDEF) || check(TokenKind::HASH_ERROR) ||
              check(TokenKind::LEFT_BRACKET) || check(TokenKind::BREAK) ||
              check(TokenKind::CONTINUE) || check(TokenKind::FOR) ||
              check(TokenKind::DO) || check(TokenKind::IF) ||

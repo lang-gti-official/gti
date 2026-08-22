@@ -1476,6 +1476,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             "defaultLibrary",
             "functionScope",
             "static",
+            "inactiveCode",
         ]
 
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
@@ -4014,7 +4015,10 @@ def test_watched_dependency_reanalysis(executable, root):
         watchers = registration["params"]["registrations"][0]["registerOptions"][
             "watchers"
         ]
-        assert watchers == [{"globPattern": "**/*.gti"}]
+        assert watchers == [
+            {"globPattern": "**/*.gti"},
+            {"globPattern": "**/gti.toml"},
+        ]
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -5094,6 +5098,147 @@ def test_rename_tooling(executable, root):
         session.close()
 
 
+def test_configuration_flag_inactive_tokens(executable, root):
+    project = root / "configuration-lsp"
+    source_path = project / "src/main.gti"
+    source_path.parent.mkdir(parents=True)
+    source = (
+        "#ifdef ACTIVE\n"
+        "int active_branch() { return 0; }\n"
+        "#ifdef NESTED\n"
+        "int nested_active_branch() { return 2; }\n"
+        "#endif\n"
+        "#else\n"
+        "int inactive_branch() { return 1; }\n"
+        "#endif\n"
+        "int main() { return 0; }\n"
+    )
+    source_path.write_text(source, encoding="utf-8")
+    manifest_path = project / "gti.toml"
+
+    def write_manifest(defines):
+        rendered = ", ".join(json.dumps(value) for value in defines)
+        manifest_path.write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "configuration_lsp"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.configuration_lsp]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[build]\n"
+            f"defines = [{rendered}]\n",
+            encoding="utf-8",
+        )
+
+    write_manifest(["ACTIVE", "NESTED"])
+    uri = source_path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "semanticTokens": {"refreshSupport": True}
+                        }
+                    }
+                },
+            }
+        )
+        initialized = session.receive_until(lambda message: message.get("id") == 1)
+        modifiers = initialized["result"]["capabilities"][
+            "semanticTokensProvider"
+        ]["legend"]["tokenModifiers"]
+        inactive_mask = 1 << modifiers.index("inactiveCode")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+
+        def tokens(request_id):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/semanticTokens/full",
+                    "params": {"textDocument": {"uri": uri}},
+                }
+            )
+            return semantic_tokens_by_position(
+                session.receive_until(
+                    lambda message: message.get("id") == request_id
+                )["result"]["data"]
+            )
+
+        active_position = lsp_position(source, source.index("active_branch"))
+        nested_position = lsp_position(
+            source, source.index("nested_active_branch")
+        )
+        inactive_position = lsp_position(source, source.index("inactive_branch"))
+        initial = tokens(2)
+        assert not initial[(active_position["line"], active_position["character"])][
+            "modifiers"
+        ] & inactive_mask
+        assert not initial[(nested_position["line"], nested_position["character"])][
+            "modifiers"
+        ] & inactive_mask
+        assert initial[
+            (inactive_position["line"], inactive_position["character"])
+        ]["modifiers"] & inactive_mask
+
+        write_manifest([])
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {
+                    "changes": [
+                        {"uri": manifest_path.resolve().as_uri(), "type": 2}
+                    ]
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        toggled = tokens(3)
+        assert toggled[(active_position["line"], active_position["character"])][
+            "modifiers"
+        ] & inactive_mask
+        assert toggled[(nested_position["line"], nested_position["character"])][
+            "modifiers"
+        ] & inactive_mask
+        assert not toggled[
+            (inactive_position["line"], inactive_position["character"])
+        ]["modifiers"] & inactive_mask
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -5144,6 +5289,7 @@ def main():
     test_flat_document_symbols(sys.argv[1], root)
     test_rename_tooling(sys.argv[1], root)
     test_signature_help_tooling(sys.argv[1], root)
+    test_configuration_flag_inactive_tokens(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
         'int dependency_value = "bad";\n'
@@ -5389,6 +5535,7 @@ def main():
         "defaultLibrary",
         "functionScope",
         "static",
+        "inactiveCode",
     ]
 
     publications = [

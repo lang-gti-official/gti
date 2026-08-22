@@ -96,7 +96,8 @@ int main() {
   including inferred array extents on functions, methods, and constructors;
   these are owned arrays rather than C++ `std::initializer_list` values.
 - Independent source units, load-once `#include`, namespaces, aliases, and
-  target conditionals without textual preprocessing.
+  target/configuration conditionals with valueless source, CLI, and manifest
+  flags but no textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
   integer and floating scalars, layout-stable `[[c_abi]]` records by value,
   nominal pointer-only `[[c_opaque]]` handles, one-level
@@ -195,6 +196,9 @@ Direct compilation remains the simplest workflow:
 ```sh
 gti main.gti -O2 -o main
 ./main
+
+# Seed a valueless flag used by #ifdef FEATURE or #if defined(FEATURE).
+gti main.gti -D FEATURE -o main-with-feature
 ```
 
 GTI defaults to single-threaded execution semantics. Use
@@ -217,7 +221,9 @@ bounded low-level surface is specified in
 
 Manifest-driven executable and test targets use `gti.toml`; `gti build` builds
 one selected target and `gti test` runs all declared test targets or one named
-test. The [Build System and
+test. A project can seed configuration flags with
+`defines = ["FEATURE"]` under `[build]`, and a repeatable `-D NAME` on
+`build`/`check`/`run`/`test` adds invocation-specific flags. The [Build System and
 CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI) manual page
 documents direct options, project profiles, outputs, and current project-mode
 boundaries.

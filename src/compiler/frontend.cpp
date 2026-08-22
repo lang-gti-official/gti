@@ -33,7 +33,8 @@ FrontendResult Frontend::analyze(
     const PhaseTimeScope timeScope("gti-source-load");
     result.sourceGraph = sourceLoader.load(
         entryPath, std::move(entrySource), preludePaths, sourceOverrides,
-        standardLibraryRoots, options.completionOffset, packageSourceRoots);
+        standardLibraryRoots, options.completionOffset, packageSourceRoots,
+        options.target, options.configurationFlags);
   }
   result.sources = sourceLoader.sources();
   append(result.diagnostics, sourceLoader.errors());

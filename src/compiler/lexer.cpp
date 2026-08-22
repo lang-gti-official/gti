@@ -297,6 +297,14 @@ void Lexer::directive() {
     addToken(TokenKind::HASH_ERROR);
   } else if (text == "#include") {
     addToken(TokenKind::HASH_INCLUDE);
+  } else if (text == "#define") {
+    addToken(TokenKind::HASH_DEFINE);
+  } else if (text == "#undef") {
+    addToken(TokenKind::HASH_UNDEF);
+  } else if (text == "#ifdef") {
+    addToken(TokenKind::HASH_IFDEF);
+  } else if (text == "#ifndef") {
+    addToken(TokenKind::HASH_IFNDEF);
   } else {
     report("GTI-L0003", "Unknown compile-time directive '" + text + "'.");
   }
