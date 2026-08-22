@@ -25025,6 +25025,35 @@ int main() { return selected_value() + local_state(); }
     const lang::FrontendResult configured =
         lang::Frontend(configuredOptions)
             .analyze("configuration-selection.gti", selectionSource);
+    const lang::SourceUnit *configurationUnit =
+        configured.sourceGraph.findUnit(configured.sourceGraph.entryUnit());
+    const auto hasConfigurationRoleAt = [&](std::size_t position,
+                                            lang::ConfigurationTokenKind kind) {
+      return configurationUnit != nullptr &&
+             std::any_of(configurationUnit->configurationTokens.begin(),
+                         configurationUnit->configurationTokens.end(),
+                         [&](const lang::ConfigurationToken &configuration) {
+                           return configuration.kind == kind &&
+                                  configuration.span.start == position;
+                         });
+    };
+    const std::size_t defineLocal =
+        selectionSource.find("LOCAL", selectionSource.find("#define LOCAL"));
+    const std::size_t definedOperator = selectionSource.find("defined");
+    const std::size_t definedExternal =
+        selectionSource.find("EXTERNAL", definedOperator);
+    const std::size_t undefExternal =
+        selectionSource.find("EXTERNAL", selectionSource.find("#undef"));
+    expect(hasConfigurationRoleAt(defineLocal,
+                                  lang::ConfigurationTokenKind::Flag) &&
+               hasConfigurationRoleAt(definedOperator,
+                                      lang::ConfigurationTokenKind::Operator) &&
+               hasConfigurationRoleAt(definedExternal,
+                                      lang::ConfigurationTokenKind::Flag) &&
+               hasConfigurationRoleAt(undefExternal,
+                                      lang::ConfigurationTokenKind::Flag),
+           "the source graph should retain exact configuration operator and "
+           "flag-name roles for tooling");
     expect(configured.canGenerateCode() && configured.diagnostics.empty(),
            "boolean target/flag conditions and source-order define changes "
            "should compile without diagnostics");

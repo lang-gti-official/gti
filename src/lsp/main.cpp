@@ -807,10 +807,11 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   const lang::Token &token = tokens[index];
 
   // Tree-sitter has more precise captures for these syntax-owned tokens than
-  // the LSP semantic-token vocabulary. Emitting them as keywords would
-  // override @boolean, @constant.builtin, and @variable.builtin.
+  // the LSP semantic-token vocabulary. Emitting them would override captures
+  // such as @keyword.directive.define, @function.macro, @boolean,
+  // @constant.builtin, and @variable.builtin.
   if (token.kind == TRUE || token.kind == FALSE || token.kind == NULLPTR ||
-      token.kind == THIS) {
+      token.kind == THIS || token.kind == HASH_DEFINE) {
     return std::nullopt;
   }
   if (lang::isDirectiveToken(token.kind)) {
@@ -1077,6 +1078,31 @@ void applyResolvedSymbolClassifications(
   }
 }
 
+std::vector<std::optional<lang::ConfigurationTokenKind>>
+configurationTokenRoles(const std::vector<lang::Token> &tokens,
+                        const lang::SourceUnit *unit) {
+  std::vector<std::optional<lang::ConfigurationTokenKind>> roles(tokens.size());
+  if (unit == nullptr) {
+    return roles;
+  }
+
+  std::unordered_map<std::size_t, std::size_t> tokenAt;
+  for (std::size_t index = 0; index < tokens.size(); ++index) {
+    tokenAt.emplace(tokens[index].position, index);
+  }
+  for (const lang::ConfigurationToken &configuration :
+       unit->configurationTokens) {
+    const auto token = tokenAt.find(configuration.span.start);
+    if (token == tokenAt.end() ||
+        tokens[token->second].position + tokens[token->second].lexeme.size() !=
+            configuration.span.end) {
+      continue;
+    }
+    roles[token->second] = configuration.kind;
+  }
+  return roles;
+}
+
 std::vector<SemanticToken>
 collectSemanticTokens(std::string_view source,
                       const lang::FrontendResult *snapshot = nullptr,
@@ -1086,9 +1112,10 @@ collectSemanticTokens(std::string_view source,
   const std::vector<lang::Token> tokens = lexer.scan(std::string(source));
   std::vector<std::optional<SemanticClassification>> classifications;
   std::vector<bool> inactive(tokens.size(), false);
+  const lang::SourceUnit *unit = nullptr;
   if (snapshot != nullptr && sourceUnit != 0) {
-    if (const lang::SourceUnit *unit =
-            snapshot->sourceGraph.findUnit(sourceUnit)) {
+    unit = snapshot->sourceGraph.findUnit(sourceUnit);
+    if (unit != nullptr) {
       std::size_t inactiveIndex = 0;
       for (std::size_t index = 0; index < tokens.size(); ++index) {
         const std::size_t start = tokens[index].position;
@@ -1103,6 +1130,8 @@ collectSemanticTokens(std::string_view source,
       }
     }
   }
+  const std::vector<std::optional<lang::ConfigurationTokenKind>>
+      configurationRoles = configurationTokenRoles(tokens, unit);
   classifications.reserve(tokens.size());
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     classifications.push_back(basicSemanticType(tokens, index));
@@ -1111,7 +1140,7 @@ collectSemanticTokens(std::string_view source,
   if (snapshot != nullptr && sourceUnit != 0) {
     for (std::size_t index = 0; index < tokens.size(); ++index) {
       if (tokens[index].kind == lang::TokenKind::IDENTIFIER &&
-          tokens[index].lexeme != "discard" &&
+          !configurationRoles[index] && tokens[index].lexeme != "discard" &&
           tokens[index].lexeme != "target" &&
           (!classifications[index] ||
            (classifications[index]->type != String &&
@@ -1125,6 +1154,18 @@ collectSemanticTokens(std::string_view source,
     }
     applyResolvedSymbolClassifications(tokens, classifications, *snapshot,
                                        sourceUnit);
+  }
+  for (std::size_t index = 0; index < configurationRoles.size(); ++index) {
+    if (!configurationRoles[index]) {
+      continue;
+    }
+    if (*configurationRoles[index] == lang::ConfigurationTokenKind::Flag) {
+      classifications[index] = SemanticClassification{Macro, 0};
+    } else {
+      // The syntax query distinguishes defined(...) as @function.macro; an
+      // LSP token would be less precise and take precedence in Neovim.
+      classifications[index].reset();
+    }
   }
   for (std::size_t index = 0; index < classifications.size(); ++index) {
     if (inactive[index] && classifications[index]) {

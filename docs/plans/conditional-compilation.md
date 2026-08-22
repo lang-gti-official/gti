@@ -247,10 +247,14 @@ no greying and must not be broken by its absence. The
 
 ### Delivered work
 
-1. `SourceUnit` retains loader-resolved inactive token spans and the semantic
-   token adapter applies the modifier without widening semantic analysis.
-2. Inactive identifiers use lexical classification only; semantic queries
-   degrade cleanly when no resolved occurrence exists.
+1. `SourceUnit` retains loader-resolved inactive token spans plus exact
+   configuration operator/flag-name roles. The semantic token adapter applies
+   `inactiveCode` and classifies flag names as macros without widening semantic
+   analysis or reconstructing directive syntax.
+2. `#define` and `defined` use precise Tree-sitter captures; other directive
+   keywords retain their LSP macro classification. Other inactive identifiers
+   use lexical variable classification only; semantic queries degrade cleanly
+   when no resolved occurrence exists.
 3. The LSP watches `gti.toml`, reloads `[build].defines`, and invalidates every
    open document's analysis and token cache when the manifest changes. A source
    edit already follows the ordinary document-generation invalidation path.

@@ -234,15 +234,15 @@
   "#ifndef"
   "#elif"
   "#error"
-  "#define"
   "#undef"
 ] @keyword.directive
+"#define" @keyword.directive.define
 (else_directive) @keyword.directive
 (endif_directive) @keyword.directive
 (defined_condition "defined" @function.macro)
-(defined_condition flag: (identifier) @constant)
-(if_directive flag: (identifier) @constant)
-(configuration_directive flag: (identifier) @constant)
+(defined_condition flag: (identifier) @constant.macro)
+(if_directive flag: (identifier) @constant.macro)
+(configuration_directive flag: (identifier) @constant.macro)
 
 "discard" @attribute
 

@@ -5103,7 +5103,8 @@ def test_configuration_flag_inactive_tokens(executable, root):
     source_path = project / "src/main.gti"
     source_path.parent.mkdir(parents=True)
     source = (
-        "#ifdef ACTIVE\n"
+        "#define SOURCE_FLAG\n"
+        "#if defined(ACTIVE)\n"
         "int active_branch() { return 0; }\n"
         "#ifdef NESTED\n"
         "int nested_active_branch() { return 2; }\n"
@@ -5111,6 +5112,7 @@ def test_configuration_flag_inactive_tokens(executable, root):
         "#else\n"
         "int inactive_branch() { return 1; }\n"
         "#endif\n"
+        "#undef SOURCE_FLAG\n"
         "int main() { return 0; }\n"
     )
     source_path.write_text(source, encoding="utf-8")
@@ -5150,10 +5152,12 @@ def test_configuration_flag_inactive_tokens(executable, root):
             }
         )
         initialized = session.receive_until(lambda message: message.get("id") == 1)
-        modifiers = initialized["result"]["capabilities"][
+        legend = initialized["result"]["capabilities"][
             "semanticTokensProvider"
-        ]["legend"]["tokenModifiers"]
+        ]["legend"]
+        modifiers = legend["tokenModifiers"]
         inactive_mask = 1 << modifiers.index("inactiveCode")
+        macro_type = legend["tokenTypes"].index("macro")
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         session.send(
             {
@@ -5196,7 +5200,43 @@ def test_configuration_flag_inactive_tokens(executable, root):
             source, source.index("nested_active_branch")
         )
         inactive_position = lsp_position(source, source.index("inactive_branch"))
+        define_directive_position = lsp_position(source, source.index("#define"))
+        defined_operator_offset = source.index("defined")
+        defined_operator_position = lsp_position(source, defined_operator_offset)
+        active_flag_position = lsp_position(
+            source, source.index("ACTIVE", defined_operator_offset)
+        )
+        nested_flag_position = lsp_position(source, source.index("NESTED"))
+        source_flag_definition_position = lsp_position(
+            source, source.index("SOURCE_FLAG")
+        )
+        source_flag_undef_position = lsp_position(
+            source, source.rindex("SOURCE_FLAG")
+        )
+
+        def semantic_token_at(result, position):
+            return result[(position["line"], position["character"])]
+
+        def assert_macro(result, position, inactive_code):
+            token = semantic_token_at(result, position)
+            assert token["type"] == macro_type, token
+            assert (
+                bool(token["modifiers"] & inactive_mask) is inactive_code
+            ), token
+
         initial = tokens(2)
+        assert (
+            define_directive_position["line"],
+            define_directive_position["character"],
+        ) not in initial
+        assert (
+            defined_operator_position["line"],
+            defined_operator_position["character"],
+        ) not in initial
+        assert_macro(initial, source_flag_definition_position, False)
+        assert_macro(initial, source_flag_undef_position, False)
+        assert_macro(initial, active_flag_position, False)
+        assert_macro(initial, nested_flag_position, False)
         assert not initial[(active_position["line"], active_position["character"])][
             "modifiers"
         ] & inactive_mask
@@ -5226,6 +5266,14 @@ def test_configuration_flag_inactive_tokens(executable, root):
             and message["params"].get("version") == 1
         )
         toggled = tokens(3)
+        assert (
+            defined_operator_position["line"],
+            defined_operator_position["character"],
+        ) not in toggled
+        assert_macro(toggled, source_flag_definition_position, False)
+        assert_macro(toggled, source_flag_undef_position, False)
+        assert_macro(toggled, active_flag_position, True)
+        assert_macro(toggled, nested_flag_position, True)
         assert toggled[(active_position["line"], active_position["character"])][
             "modifiers"
         ] & inactive_mask
