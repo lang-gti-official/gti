@@ -49,10 +49,11 @@ validity together, which keeps AST-address semantic side tables alive.
   whole-program route is `VerifiedMir`; missing or unsupported inventory fails
   before output.
 - MIR owns source control flow, operations, failure edges, loans, moves, and
-  cleanup schedules. The C++ representation layer still derives part of the
-  shape of generated structural, callable, lifecycle, native, and concrete-
-  instance adapters from sealed AST/semantic/HIR facts. Completing a target-
-  independent generated-item inventory is the remaining backend-separation
+  cleanup schedules. `LoweredProgram` now owns the exhaustive generated-item
+  inventory for hosted entry, program initialization, structural/callable
+  adapters, lifecycle cleanup, native callbacks, and concrete generic
+  functions/constructors. C++ declaration/template spelling still consults
+  sealed AST/semantic/HIR facts; that is the remaining backend-separation
   boundary, not permission to restore executable HIR emission.
 - The post-cutover example corpus contains 2,601 reviewed MIR body identities
   across 57 examples. An exact census and two native endpoint builds guard the

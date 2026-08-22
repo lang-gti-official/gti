@@ -1845,6 +1845,115 @@ int main() {
          "lifecycle cleanup should be a contracted production family");
 }
 
+void testConcreteInstanceGeneratedItemRows() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cpp-mir-representation-concrete-instances.gti", R"(
+class Box<T> {
+  T value;
+public:
+  Box(T initial) : value(initial) {}
+  T read() { return this.value; }
+};
+
+T identity<T>(T value) { return value; }
+
+int main() {
+  Box<int32_t> box = Box<int32_t>(1);
+  return identity<int32_t>(box.read()) - 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the concrete-instance fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  expectLoweredRowsMatch(frontend, "the concrete-instance fixture");
+
+  lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O1,
+                                        .target = lang::TargetInfo::host()});
+  lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, lang::TargetInfo::host());
+  expect(optimized.valid() && lowered.valid(),
+         "the concrete-instance fixture should produce LoweredProgram");
+  if (!optimized.valid() || !lowered.valid()) {
+    return;
+  }
+  lang::CppMirRepresentationSnapshotBuild build =
+      lang::buildCppMirRepresentationSnapshot(*lowered.program);
+  expect(build.valid() &&
+             thunkCount(*build.snapshot,
+                        lang::CppMirThunkKind::ConcreteInstanceAdapter) == 3,
+         "the generic class constructor/member and free function should each "
+         "own one concrete-instance row");
+  if (!build.valid()) {
+    return;
+  }
+
+  std::size_t functions = 0;
+  std::size_t constructors = 0;
+  bool exact = true;
+  for (const lang::CppMirGeneratedThunk &thunk : build.snapshot->thunks) {
+    if (thunk.identity.kind != lang::CppMirThunkKind::ConcreteInstanceAdapter) {
+      continue;
+    }
+    const auto *payload =
+        std::get_if<lang::CppMirConcreteInstanceThunk>(&thunk.payload);
+    const auto roots =
+        std::find_if(build.snapshot->declarationRoots.begin(),
+                     build.snapshot->declarationRoots.end(),
+                     [&](const lang::CppMirDeclarationThunkRoots &row) {
+                       return row.declaration == thunk.sourceDeclaration;
+                     });
+    exact =
+        exact && payload != nullptr &&
+        thunk.sourceKind == lang::CppMirGeneratedThunkSourceKind::Declaration &&
+        thunk.sourceDeclaration != 0 &&
+        roots != build.snapshot->declarationRoots.end() &&
+        std::find(roots->requiredThunks.begin(), roots->requiredThunks.end(),
+                  thunk.identity) != roots->requiredThunks.end() &&
+        payload->body.owner == thunk.identity.owner;
+    if (payload == nullptr) {
+      continue;
+    }
+    if (payload->kind == lang::CppMirConcreteInstanceAdapterKind::Function) {
+      const lang::MirFunctionInstance *instance =
+          optimized.mir.findFunctionInstance(payload->body.owner);
+      exact =
+          exact && instance != nullptr &&
+          payload->body.kind == lang::MirBodyKind::Function &&
+          payload->declaration == instance->declaration &&
+          payload->ownerClassInstance == instance->owner.value_or(0) &&
+          payload->mayRaiseDefinedFailure == instance->mayRaiseDefinedFailure;
+      ++functions;
+    } else if (payload->kind ==
+               lang::CppMirConcreteInstanceAdapterKind::Constructor) {
+      const lang::MirConstructorInstance *instance =
+          optimized.mir.findConstructorInstance(payload->body.owner);
+      exact =
+          exact && instance != nullptr &&
+          payload->body.kind == lang::MirBodyKind::Constructor &&
+          payload->declaration != 0 &&
+          payload->ownerClassInstance == instance->owner &&
+          payload->mayRaiseDefinedFailure == instance->mayRaiseDefinedFailure;
+      ++constructors;
+    } else {
+      exact = false;
+    }
+  }
+  expect(exact && functions == 2 && constructors == 1,
+         "concrete-instance rows should preserve exact generic declaration, "
+         "owner, MIR body, roots, and failure effects");
+
+  const lang::CppMirProgramPlan plan =
+      lang::planCppMirProgram(optimized.mir, std::move(*build.snapshot));
+  expect(plan.complete() && plan.issues.empty() && plan.unsupported.empty(),
+         "concrete instances should be a contracted production family");
+}
+
 int main() {
   testExhaustiveSealedInventory();
   testNativeCallbackGeneratedItemRows();
@@ -1863,6 +1972,7 @@ int main() {
   testClosureAndCallableRows();
   testDeclarationAdapterGeneratedItemRows();
   testLifecycleCleanupGeneratedItemRows();
+  testConcreteInstanceGeneratedItemRows();
 
   if (failures != 0) {
     std::cerr << failures

@@ -515,10 +515,32 @@ struct LoweredLifecycleCleanupItem {
                          const LoweredLifecycleCleanupItem &) = default;
 };
 
+enum class LoweredConcreteInstanceAdapterKind {
+  Function,
+  Constructor,
+  Count,
+};
+
+// A concrete executable instance whose source declaration is generic either
+// itself or through its owning class. Backends choose monomorphization or
+// specialization mechanics; the lowered program owns the exact body and
+// declaration relationship that must be represented.
+struct LoweredConcreteInstanceAdapterItem {
+  LoweredConcreteInstanceAdapterKind kind =
+      LoweredConcreteInstanceAdapterKind::Function;
+  MirBodyAddress body;
+  std::size_t declaration = 0;
+  HirClassInstanceId ownerClassInstance = 0;
+  bool mayRaiseDefinedFailure = true;
+
+  friend bool operator==(const LoweredConcreteInstanceAdapterItem &,
+                         const LoweredConcreteInstanceAdapterItem &) = default;
+};
+
 using LoweredGeneratedItemPayload =
     std::variant<std::monostate, LoweredStructuralOperatorAdapterItem,
                  LoweredCallableAdapterItem, LoweredLifecycleCleanupItem,
-                 LoweredNativeCallbackItem>;
+                 LoweredConcreteInstanceAdapterItem, LoweredNativeCallbackItem>;
 
 enum class LoweredGeneratedItemSourceKind {
   Body,

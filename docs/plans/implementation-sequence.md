@@ -215,12 +215,14 @@ removed, or changed body count must be reviewed and the corpus oracle rerun
 before its baseline is refreshed. Generated C++ text is not a public contract;
 marker rows are only an ownership witness.
 
-The active backend architecture work is the generated-item boundary. Hosted
-entry, program initialization, and same-thread native callbacks are explicitly
-planned today, while structural, callable, lifecycle, remaining native, and
-concrete-instance adapter shapes still originate in sealed frontend
-representation facts. Moving those shapes to a target-independent inventory
-must not restore source-body execution from AST or HIR.
+The generated-item boundary is complete. Hosted entry, program initialization,
+structural operators, callable invocation, lifecycle cleanup, same-thread native
+callbacks, and concrete generic function/constructor instances all have exact
+target-independent identities, payloads, dependencies, and roots. Ordinary
+C/runtime boundaries remain ABI declaration/body rows rather than generated
+wrappers. The active backend architecture work is the AST-free C++ declaration
+emitter and final `BackendInput` cutover; it must not restore source-body
+execution from AST or HIR.
 
 ## Systems-Readiness Outcome Lanes
 
@@ -986,9 +988,11 @@ analysis, HIR, MIR, and the backend.
   emitter and executable AST statement route are gone. Program initialization
   executes through its verified `Module/0` schedule and planned hosted adapter.
 - **Current follow-up boundary:** Generated structural, callable, lifecycle,
-  native, and concrete-instance adapters still derive some representation
-  shape from sealed frontend facts. A future row may make that inventory
-  target-independent; it may not restore executable HIR emission.
+  native-callback, and concrete-instance families now have exhaustive lowered
+  contracts. C++ declaration spelling still derives from sealed frontend facts;
+  it must move to the lowered declaration/symbol/instance tables before the
+  transitional backend tuple is deleted, without restoring executable HIR
+  emission.
 - **Historical migration ledger:** The checkpoints below explain how the
   general route was reached. Counts and compatibility references describe the
   state at each named release and are not current architecture.
@@ -2779,40 +2783,42 @@ then stop. Reviewable commits are encouraged; an IR-only checkpoint is not a
 phase exit when the matching production cutover is in scope.
 ```
 
-`M-BACK-02` is complete for source executable bodies. A future backend task
-should start from the exact post-cutover census and sealed whole-program plan.
-The nearest architectural follow-up is a target-independent generated-item
-inventory for adapters that still derive representation shape from sealed
-frontend facts. It must preserve MIR body authority and must not recreate the
-retired no-MIR emitter as a comparison, fallback, or legacy mode.
+`M-BACK-02` is complete for source executable bodies, and the generated-item
+campaign below is complete. A future backend task should start from the exact
+post-cutover census, exhaustive lowered generated graph, and sealed
+whole-program plan. The nearest architectural follow-up is C++ declaration and
+template assembly from `LoweredProgram`, followed by deletion of the
+transitional frontend tuple. It must preserve MIR body authority and must not
+recreate the retired no-MIR emitter as a comparison, fallback, or legacy mode.
 
-### Next migration campaign: generated-item inventory
+### Completed migration campaign: generated-item inventory
 
-Native-callback, structural-operator, callable, and lifecycle-cleanup adapters
-are completed migration clients. Native callback semantic selection, exact HIR-to-MIR
-identity, verified failure policy, and per-body MIR roots are copied into
+Native-callback, structural-operator, callable, lifecycle-cleanup, and concrete-
+instance adapters are completed migration clients. Native callback semantic
+selection, exact HIR-to-MIR identity, verified failure policy, and per-body MIR roots are copied into
 sealed generated-item rows. Structural and callable adapters instead carry
 exact function/operator or function/capability payloads and active-declaration
 roots. Lifecycle cleanup carries the exact concrete class and destructor
 instances, ordinary-versus-specialization form, failure mode, and destructor
 declaration root. The planner verifies each census, source, payload, closure,
 and order, and `CppEmitter` uses the sealed plan as the sole adapter-existence
-authority; C++ spelling remains backend-only. The remaining families should
-follow the same contract one at a time.
+authority. Concrete rows name each generic function/constructor declaration,
+owner, optimized MIR body, and failure effect. Ordinary C/runtime declarations
+already use ABI declaration/body rows, so native callbacks exhaust generated
+native wrappers. C++ spelling remains backend-only.
 
-1. Give every remaining native-boundary and concrete-instance
-   adapter a stable generated-item identity in the sealed whole-program plan.
-   Record an exact census before moving any family.
-2. Move one adapter family at a time into immutable, target-independent
-   representation rows whose inputs are semantic identities, concrete HIR
+1. Every generated adapter has a stable identity in the sealed whole-program
+   plan and an exact census.
+2. Each family uses immutable, target-independent representation rows whose
+   inputs are semantic identities, concrete HIR
    instances, and verified MIR schedules. Keep C++ spelling and ABI policy in
    the backend representation layer.
-3. Make each migrated row structurally verifiable, switch its sole production
-   consumer, and delete the corresponding AST/HIR query immediately. GTI has
-   no compatibility obligation during this pre-1.0 migration, so no fallback
-   or dual-route comparison remains after a family lands.
-4. Exit when the generated-item census is complete, mutation tests reject
-   missing, duplicate, stale, and reordered rows, and native O0/O3 C++20/C++23
-   plus installed-toolchain oracles preserve program behavior. That sealed
-   inventory becomes the shared input seam for the current C++ backend and a
-   future LLVM backend.
+3. Each row is structurally verifiable, its sole production consumer reads the
+   sealed plan, and the corresponding AST/HIR eligibility query is deleted. GTI
+   has no compatibility obligation during this pre-1.0 migration, so no
+   fallback or dual-route comparison remains after a family lands.
+4. **Exit gate met.** The generated-item census is complete, mutation tests
+   reject missing, duplicate, stale, and reordered rows, and native O0/O3
+   C++20/C++23 plus installed-toolchain oracles preserve program behavior. That
+   sealed inventory becomes the shared input seam for the current C++ backend
+   and a future LLVM backend.

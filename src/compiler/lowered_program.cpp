@@ -845,9 +845,10 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
                      concreteLifecycleType);
 }
 
-[[nodiscard]] DerivedGeneratedGraph
-deriveGeneratedGraph(const MirProgram &program,
-                     const std::vector<LoweredDeclaration> &declarations) {
+[[nodiscard]] DerivedGeneratedGraph deriveGeneratedGraph(
+    const MirProgram &program,
+    const std::vector<LoweredDeclaration> &declarations,
+    const std::vector<LoweredConstructorInstance> &constructorInstances) {
   DerivedGeneratedGraph graph;
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     graph.bodyRoots.emplace_back(address,
@@ -1045,6 +1046,119 @@ deriveGeneratedGraph(const MirProgram &program,
              .form = form,
              .mayRaiseDefinedFailure = destructor.mayRaiseDefinedFailure}});
     rootDeclaration(destructorRow->id, identity);
+  }
+
+  for (const MirFunctionInstance &instance : program.functionInstances()) {
+    if (instance.definitionKind != MirDefinitionKind::Source) {
+      continue;
+    }
+    const LoweredDeclaration *sourceRow = nullptr;
+    const LoweredFunctionDeclaration *source = nullptr;
+    for (const LoweredDeclaration &declaration : declarations) {
+      const auto *function =
+          std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
+      if (function != nullptr && function->id == instance.declaration) {
+        sourceRow = &declaration;
+        source = function;
+        break;
+      }
+    }
+    const LoweredClassDeclaration *owner =
+        source == nullptr || source->ownerClass == 0
+            ? nullptr
+            : [&]() -> const LoweredClassDeclaration * {
+      for (const LoweredDeclaration &declaration : declarations) {
+        const auto *candidate =
+            std::get_if<LoweredClassDeclaration>(&declaration.payload);
+        if (candidate != nullptr && candidate->id == source->ownerClass) {
+          return candidate;
+        }
+      }
+      return nullptr;
+    }();
+    const bool generic =
+        source != nullptr &&
+        (!source->genericParameters.empty() ||
+         (owner != nullptr && !owner->genericParameters.empty()));
+    if (sourceRow == nullptr || !generic) {
+      continue;
+    }
+    const LoweredGeneratedItemIdentity identity{
+        .kind = LoweredGeneratedItemKind::ConcreteInstanceAdapter,
+        .owner = instance.id,
+        .ordinal = ordinal(LoweredConcreteInstanceAdapterKind::Function) + 1};
+    graph.items.push_back(
+        {.identity = identity,
+         .sourceKind = LoweredGeneratedItemSourceKind::Declaration,
+         .sourceDeclaration = sourceRow->id,
+         .payload = LoweredConcreteInstanceAdapterItem{
+             .kind = LoweredConcreteInstanceAdapterKind::Function,
+             .body = {.kind = MirBodyKind::Function, .owner = instance.id},
+             .declaration = instance.declaration,
+             .ownerClassInstance = instance.owner.value_or(0),
+             .mayRaiseDefinedFailure = instance.mayRaiseDefinedFailure}});
+    rootDeclaration(sourceRow->id, identity);
+  }
+
+  for (const MirConstructorInstance &instance :
+       program.constructorInstances()) {
+    const LoweredConstructorInstance *concrete =
+        instance.id == 0 || instance.id > constructorInstances.size()
+            ? nullptr
+            : &constructorInstances[instance.id - 1];
+    if (concrete == nullptr || concrete->id != instance.id ||
+        concrete->declaration == 0 ||
+        instance.definitionKind != MirDefinitionKind::Source) {
+      continue;
+    }
+    const LoweredDeclaration *sourceRow = nullptr;
+    const LoweredConstructorDeclaration *source = nullptr;
+    for (const LoweredDeclaration &declaration : declarations) {
+      const auto *constructor =
+          std::get_if<LoweredConstructorDeclaration>(&declaration.payload);
+      if (constructor != nullptr && constructor->id == concrete->declaration) {
+        sourceRow = &declaration;
+        source = constructor;
+        break;
+      }
+    }
+    const MirClassInstance *ownerInstance =
+        program.findClassInstance(instance.owner);
+    const LoweredClassDeclaration *owner = nullptr;
+    if (ownerInstance != nullptr) {
+      for (const LoweredDeclaration &declaration : declarations) {
+        const auto *candidate =
+            std::get_if<LoweredClassDeclaration>(&declaration.payload);
+        if (candidate != nullptr &&
+            candidate->id == ownerInstance->declaration) {
+          owner = candidate;
+          break;
+        }
+      }
+    }
+    const bool generic =
+        source != nullptr &&
+        (!source->genericParameters.empty() ||
+         (owner != nullptr && !owner->genericParameters.empty()));
+    if (sourceRow == nullptr || !generic) {
+      continue;
+    }
+    const LoweredGeneratedItemIdentity identity{
+        .kind = LoweredGeneratedItemKind::ConcreteInstanceAdapter,
+        .owner = instance.id,
+        .ordinal =
+            ordinal(LoweredConcreteInstanceAdapterKind::Constructor) + 1};
+    graph.items.push_back(
+        {.identity = identity,
+         .sourceKind = LoweredGeneratedItemSourceKind::Declaration,
+         .sourceDeclaration = sourceRow->id,
+         .payload = LoweredConcreteInstanceAdapterItem{
+             .kind = LoweredConcreteInstanceAdapterKind::Constructor,
+             .body = {.kind = MirBodyKind::Constructor, .owner = instance.id},
+             .declaration = concrete->declaration,
+             .ownerClassInstance = instance.owner,
+             .mayRaiseDefinedFailure = instance.mayRaiseDefinedFailure}});
+    rootDeclaration(sourceRow->id, identity);
   }
 
   for (auto &[address, roots] : graph.bodyRoots) {
@@ -1913,8 +2027,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         {.identity = *identity, .role = bodyRole(optimizedMir, *identity)});
   }
 
-  DerivedGeneratedGraph graph =
-      deriveGeneratedGraph(optimizedMir, lowered.declarations_);
+  DerivedGeneratedGraph graph = deriveGeneratedGraph(
+      optimizedMir, lowered.declarations_, lowered.constructorInstances_);
   lowered.generatedItems_ = std::move(graph.items);
   for (auto &[address, roots] : graph.bodyRoots) {
     if (LoweredBody *body = findBody(lowered.bodies_, address)) {
@@ -2254,8 +2368,8 @@ verifyLoweredProgram(const LoweredProgram &program) {
     }
   }
 
-  const DerivedGeneratedGraph expected =
-      deriveGeneratedGraph(program.mir_, program.declarations_);
+  const DerivedGeneratedGraph expected = deriveGeneratedGraph(
+      program.mir_, program.declarations_, program.constructorInstances_);
   if (program.generatedItems_ != expected.items) {
     addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
              "generated-item inventory differs from exact MIR-derived "
@@ -2304,7 +2418,8 @@ verifyLoweredProgram(const LoweredProgram &program) {
         item.identity.kind ==
             LoweredGeneratedItemKind::StructuralOperatorAdapter ||
         item.identity.kind == LoweredGeneratedItemKind::CallableAdapter ||
-        item.identity.kind == LoweredGeneratedItemKind::LifecycleCleanup;
+        item.identity.kind == LoweredGeneratedItemKind::LifecycleCleanup ||
+        item.identity.kind == LoweredGeneratedItemKind::ConcreteInstanceAdapter;
     std::optional<MirBodyAddress> sourceBody;
     bool sourceValid = ordinal(item.sourceKind) <
                        ordinal(LoweredGeneratedItemSourceKind::Count);
@@ -2418,6 +2533,55 @@ verifyLoweredProgram(const LoweredProgram &program) {
         addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
                  "lifecycle cleanup payload differs from its exact class and "
                  "destructor instances",
+                 std::nullopt, item.sourceDeclaration, item.identity);
+      }
+    } else if (item.identity.kind ==
+               LoweredGeneratedItemKind::ConcreteInstanceAdapter) {
+      const auto *payload =
+          std::get_if<LoweredConcreteInstanceAdapterItem>(&item.payload);
+      const LoweredDeclaration *source =
+          findDeclaration(program.declarations_, item.sourceDeclaration);
+      bool valid = payload != nullptr && source != nullptr &&
+                   ordinal(payload->kind) <
+                       ordinal(LoweredConcreteInstanceAdapterKind::Count) &&
+                   item.identity.owner == payload->body.owner &&
+                   item.identity.ordinal == ordinal(payload->kind) + 1;
+      if (valid &&
+          payload->kind == LoweredConcreteInstanceAdapterKind::Function) {
+        const auto *declaration =
+            std::get_if<LoweredFunctionDeclaration>(&source->payload);
+        const MirFunctionInstance *instance =
+            program.mir_.findFunctionInstance(payload->body.owner);
+        valid =
+            declaration != nullptr && instance != nullptr &&
+            payload->body.kind == MirBodyKind::Function &&
+            declaration->id == payload->declaration &&
+            instance->declaration == payload->declaration &&
+            instance->owner.value_or(0) == payload->ownerClassInstance &&
+            instance->definitionKind == MirDefinitionKind::Source &&
+            instance->mayRaiseDefinedFailure == payload->mayRaiseDefinedFailure;
+      } else if (valid && payload->kind ==
+                              LoweredConcreteInstanceAdapterKind::Constructor) {
+        const auto *declaration =
+            std::get_if<LoweredConstructorDeclaration>(&source->payload);
+        const MirConstructorInstance *instance =
+            program.mir_.findConstructorInstance(payload->body.owner);
+        const LoweredConstructorInstance *concrete =
+            program.findConstructorInstance(payload->body.owner);
+        valid =
+            declaration != nullptr && instance != nullptr &&
+            concrete != nullptr &&
+            payload->body.kind == MirBodyKind::Constructor &&
+            declaration->id == payload->declaration &&
+            concrete->declaration == payload->declaration &&
+            instance->owner == payload->ownerClassInstance &&
+            instance->definitionKind == MirDefinitionKind::Source &&
+            instance->mayRaiseDefinedFailure == payload->mayRaiseDefinedFailure;
+      }
+      if (!valid) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
+                 "concrete-instance adapter payload differs from its exact "
+                 "generic declaration and MIR body",
                  std::nullopt, item.sourceDeclaration, item.identity);
       }
     }

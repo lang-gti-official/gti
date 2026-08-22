@@ -11,16 +11,20 @@ tree with resolved declaration payloads, a complete semantic symbol vocabulary,
 concrete class/function/constructor/destructor/lambda instance metadata,
 source/body identities, and the exact hosted-entry, program-initialization,
 structural-operator, callable, lifecycle-cleanup, and native-callback
-generated-item graph. The
-production C++ generic-MIR row builder and whole-program planner consume this
+generated-item graph. It also owns one exact declaration-rooted requirement for
+every concrete generic function and constructor instance. Ordinary C/runtime
+boundaries are resolved ABI declaration/body rows rather than a second hidden
+native-wrapper family, so the callback inventory exhausts generated native
+interoperability. The production C++ generic-MIR row builder and whole-program
+planner consume this
 contract; structural and callable adapter eligibility is now read only from
-its declaration-rooted rows, while adapter spelling remains in the
-transitional declaration emitter. The
-frontend-vs-lowered exact inventory and plan comparisons remain as migration
+its declaration-rooted rows, and generic specialization eligibility is read
+from the concrete-instance rows, while spelling remains in the transitional
+declaration emitter. The frontend-vs-lowered exact inventory and plan
+comparisons remain as migration
 evidence. `NativeHeaderBackend` also consumes only this contract. C++
-declaration assembly, remaining native interoperability, and concrete-instance
-generated families remain in progress, so transitional
-`BackendInput` fields are still present.
+declaration assembly and the final production API cutover remain in progress,
+so transitional `BackendInput` fields are still present.
 
 ## Context
 

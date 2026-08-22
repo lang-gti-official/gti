@@ -54,10 +54,11 @@ failure metadata, source-to-optimized coherence, and concrete HIR/MIR instance
 identity before publishing a value. The value exposes const access only and
 owns all of its payloads.
 
-The current generated-item contract is complete for hosted entry, executable
-program initialization, and native callback adapters. Items have stable
-identities, exact source bodies, dependency edges, and executable-body roots.
-Construction and independent verification reject omissions, duplicates,
+The generated-item contract is complete for hosted entry, executable program
+initialization, structural operators, callable invocation, lifecycle cleanup,
+native callbacks, and concrete generic function/constructor instances. Items
+have stable identities, exact body or declaration sources, dependency edges,
+and body or declaration roots. Construction and independent verification reject omissions, duplicates,
 reordering, missing roots, or cycles. `LoweredProgramPrinter` provides a
 versioned deterministic full serialization; process-local place snapshot
 guards are normalized in text while remaining intact in the owned MIR.
@@ -73,9 +74,9 @@ sites, and lambda parameter/capture contracts. Verification exact-checks those
 tables against optimized MIR and rejects missing or duplicate identities.
 
 The C++ row builder and whole-program planner now consume these tables in
-production. The remaining C++ cutover work is declaration/source assembly,
-the unfinished generated-item families, and removal of the transitional tuple.
-Native-header emission no longer uses that tuple.
+production. The remaining C++ cutover work is declaration/source assembly and
+removal of the transitional tuple. Native-header emission no longer uses that
+tuple.
 
 `NativeHeaderBackend` derives public C/C++ records, opaque handles, callback
 aliases, external function signatures, namespace scopes, field names, and
@@ -141,11 +142,10 @@ stale, wrongly classified, or dependency-incoherent entries. Valid plans are
 either complete or explicitly unsupported; neither state can silently select
 an older emitter.
 
-`HostedEntry`, `ProgramInitialization`, and lifecycle cleanup are currently
-contracted generated thunks. The hosted entry is rooted in its exact entry body. Program
-initialization exists only when the verified merged MIR initialization plan
-contains executable initializer work, and it is rooted in `Module/0`.
-Constant and implicit-zero initialization remain data-only.
+Every generated-thunk kind is contracted. The hosted entry is rooted in its
+exact entry body. Program initialization exists only when the verified merged
+MIR initialization plan contains executable initializer work, and it is rooted
+in `Module/0`. Constant and implicit-zero initialization remain data-only.
 
 Each concrete source destructor that requires active-drop containment owns one
 declaration-rooted lifecycle item. Its target-independent payload identifies
@@ -153,6 +153,14 @@ the class declaration, concrete class and destructor instances,
 ordinary-class versus concrete-template-specialization form, and defined-
 failure mode. The C++ backend chooses helper names and failure ABI spelling;
 the lowered row decides which containment helper exists.
+
+Each source function or constructor instantiated from a generic declaration or
+generic owning class owns one declaration-rooted concrete-instance item. Its
+payload names the exact declaration, concrete owner, optimized MIR body, and
+defined-failure effect. A backend may realize that requirement through
+monomorphization, native template specialization, or another target mechanism;
+the C++ backend cannot silently omit an instance by rediscovering generic use
+from AST or HIR.
 
 ## Executable Body Emission
 
@@ -227,13 +235,13 @@ route.
 
 ## Remaining Boundary
 
-The source-body cutover is complete, but the backend is not yet independent of
-AST/HIR representation planning. In particular, MIR does not yet provide a
-complete inventory and semantic description for every generated adapter.
-`HostedEntry`, `ProgramInitialization`, structural-operator, callable,
-lifecycle-cleanup, and same-thread native-callback adapters have explicit plan
-contracts. Other native-interop and concrete-instance adapters still derive
-part of their shape from sealed frontend representation facts.
+The source-body and generated-item inventory cutovers are complete, but the
+backend is not yet independent of AST/HIR representation planning. Active C++
+declaration and source assembly still walks the frontend declaration objects
+and consults semantic/HIR records for target spelling. The lowered declaration,
+symbol, instance, layout, ABI, and generated-item tables already own the
+backend-neutral facts; the next boundary is to make the C++ declaration emitter
+consume those tables directly and then delete the transitional inputs.
 
 Native callbacks are the first migrated generated-adapter family. The sealed
 snapshot copies each verified MIR adapter into a target-independent generated-
@@ -252,6 +260,13 @@ sealed plan to decide whether an adapter exists. Its current spelling still
 uses the transitional declaration emitter, so this completes adapter
 eligibility authority but not the broader AST-free declaration cutover.
 
+Native interoperability has two distinct lowered forms. Ordinary C/runtime
+declarations and boundary shells are represented by resolved linkage and ABI
+declaration/body rows; they are not generated wrappers and do not need a
+duplicate generated-item family. Converting a GTI function to a native callback
+is the one generated native wrapper: its exact callback item, MIR-operation
+roots, order, signature, target, and containment policy exhaust that family.
+
 The current generated-item family census is:
 
 | Family | Sealed contract | Production state |
@@ -261,13 +276,14 @@ The current generated-item family census is:
 | Structural operator adapter | Exact function/operator payload and declaration root | Contracted; C++ spelling awaits declaration-emitter cutover |
 | Callable adapter | Exact function/capability payload and declaration root | Contracted; C++ spelling awaits declaration-emitter cutover |
 | Lifecycle cleanup | Exact class/destructor instance, specialization form, failure mode, and destructor declaration root | Contracted; C++ names remain backend policy |
-| Native interop adapter | Exact payload, source function, MIR-operation roots, and order for native callbacks | Native callbacks contracted; other native adapters pending |
-| Concrete-instance adapter | Identity kind reserved | Not yet exhaustively inventoried |
+| Native interop adapter | Exact payload, source function, MIR-operation roots, and order for native callbacks | Contracted and exhaustive; other C/runtime boundaries are ABI declaration/body rows |
+| Concrete-instance adapter | Exact generic declaration, concrete function/constructor body and owner, failure effect, and declaration root | Contracted; C++ specialization spelling awaits declaration-emitter cutover |
 
-That boundary is the next architectural target if GTI needs a second native
-backend. It should be addressed by adding explicit target-independent
-generated-item contracts, not by putting C++ spellings into MIR and not by
-restoring an executable AST/HIR path.
+The remaining declaration-emission boundary is the next architectural target
+for a second native backend. It should be addressed by consuming the existing
+target-independent declarations and adding only demonstrably missing neutral
+facts, not by putting C++ spellings into `LoweredProgram` and not by restoring
+an executable AST/HIR path.
 
 Compatibility with pre-cutover internal compiler routes is not a project
 constraint. Once an executable family is represented by verified MIR, its old

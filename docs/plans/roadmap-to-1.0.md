@@ -915,11 +915,12 @@ propagation drift. Broader double-failure, embedding, task, and callback
 containment remain explicit feature work rather than retroactive claims of the
 hosted boundary.
 
-The remaining backend architecture boundary is generated representation:
-hosted entry and program initialization have explicit planned thunks, while
-some structural, callable, lifecycle, native, and concrete-instance adapters
-still derive shape from sealed frontend facts. A future second-backend slice
-should make that inventory target-independent without restoring executable AST
+The generated-item inventory is now target-independent and exhaustive for
+hosted entry, program initialization, structural/callable adapters, lifecycle
+cleanup, native callbacks, and concrete generic functions/constructors. The
+remaining second-backend boundary is C++ declaration/template assembly over the
+lowered declaration, symbol, instance, layout, and ABI tables, followed by
+removal of the transitional frontend tuple. It must not restore executable AST
 or HIR authority.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the

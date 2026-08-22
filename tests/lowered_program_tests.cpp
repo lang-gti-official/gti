@@ -244,18 +244,23 @@ void testDetachedDeterministicProgram() {
               lang::LoweredGeneratedItemKind::StructuralOperatorAdapter) == 3 &&
           generatedCount(
               *first, lang::LoweredGeneratedItemKind::CallableAdapter) == 1 &&
-          generatedCount(*first,
-                         lang::LoweredGeneratedItemKind::LifecycleCleanup) == 1,
+          generatedCount(
+              *first, lang::LoweredGeneratedItemKind::LifecycleCleanup) == 1 &&
+          generatedCount(
+              *first,
+              lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter) == 1,
       "the lowered program should own startup, initialization, and native "
-      "callback/declaration/lifecycle adapter contracts without frontend "
-      "pointers");
+      "callback/declaration/lifecycle/concrete-instance adapter contracts "
+      "without frontend pointers");
   const bool declarationAdaptersRooted = std::all_of(
       first->generatedItems().begin(), first->generatedItems().end(),
       [&](const lang::LoweredGeneratedItem &item) {
         if (item.identity.kind !=
                 lang::LoweredGeneratedItemKind::StructuralOperatorAdapter &&
             item.identity.kind !=
-                lang::LoweredGeneratedItemKind::CallableAdapter) {
+                lang::LoweredGeneratedItemKind::CallableAdapter &&
+            item.identity.kind !=
+                lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter) {
           return true;
         }
         const lang::LoweredDeclaration *source =
@@ -268,8 +273,8 @@ void testDetachedDeterministicProgram() {
                          item.identity) != source->requiredGeneratedItems.end();
       });
   expect(declarationAdaptersRooted,
-         "structural and callable adapters should be rooted by their exact "
-         "lowered function declarations");
+         "structural, callable, and concrete-instance adapters should be "
+         "rooted by their exact lowered declarations");
   const auto lifecycle = std::find_if(
       first->generatedItems().begin(), first->generatedItems().end(),
       [](const lang::LoweredGeneratedItem &item) {
@@ -295,6 +300,38 @@ void testDetachedDeterministicProgram() {
                  lang::LoweredLifecycleCleanupForm::OrdinaryClass,
          "lifecycle cleanup should retain one exact destructor-rooted "
          "ordinary-class payload");
+  const auto concrete = std::find_if(
+      first->generatedItems().begin(), first->generatedItems().end(),
+      [](const lang::LoweredGeneratedItem &item) {
+        return item.identity.kind ==
+               lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter;
+      });
+  const auto *concretePayload =
+      concrete == first->generatedItems().end()
+          ? nullptr
+          : std::get_if<lang::LoweredConcreteInstanceAdapterItem>(
+                &concrete->payload);
+  const lang::LoweredDeclaration *concreteSource =
+      concrete == first->generatedItems().end()
+          ? nullptr
+          : first->findDeclaration(concrete->sourceDeclaration);
+  const lang::MirFunctionInstance *concreteMir =
+      concretePayload == nullptr
+          ? nullptr
+          : first->mir().findFunctionInstance(concretePayload->body.owner);
+  expect(concretePayload != nullptr && concreteSource != nullptr &&
+             concreteMir != nullptr && concreteSource->name == "identity" &&
+             concreteSource->generic &&
+             concrete->sourceKind ==
+                 lang::LoweredGeneratedItemSourceKind::Declaration &&
+             concretePayload->kind ==
+                 lang::LoweredConcreteInstanceAdapterKind::Function &&
+             concretePayload->body.kind == lang::MirBodyKind::Function &&
+             concretePayload->declaration == concreteMir->declaration &&
+             concretePayload->mayRaiseDefinedFailure ==
+                 concreteMir->mayRaiseDefinedFailure,
+         "the concrete generic function row should preserve its exact "
+         "declaration, MIR body, and failure effect");
   expect(!first->declarations().empty() &&
              std::all_of(first->declarations().begin(),
                          first->declarations().end(),
@@ -448,6 +485,28 @@ void testMutationRejection() {
         hasIssue(lang::verifyLoweredProgram(invalidLifecycle),
                  lang::LoweredProgramIssueKind::InvalidGeneratedItemInventory),
         "forging a lifecycle class instance should invalidate its exact "
+        "generated-item contract");
+  }
+
+  lang::LoweredProgram invalidConcrete = original;
+  auto &concreteItems =
+      lang::LoweredProgramTestAccess::generatedItems(invalidConcrete);
+  const auto concrete = std::find_if(
+      concreteItems.begin(), concreteItems.end(),
+      [](const lang::LoweredGeneratedItem &item) {
+        return item.identity.kind ==
+               lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter;
+      });
+  expect(concrete != concreteItems.end(),
+         "the mutation fixture should contain a concrete-instance adapter");
+  if (concrete != concreteItems.end()) {
+    auto &payload =
+        std::get<lang::LoweredConcreteInstanceAdapterItem>(concrete->payload);
+    ++payload.declaration;
+    expect(
+        hasIssue(lang::verifyLoweredProgram(invalidConcrete),
+                 lang::LoweredProgramIssueKind::InvalidGeneratedItemInventory),
+        "forging a concrete-instance declaration should invalidate its exact "
         "generated-item contract");
   }
 

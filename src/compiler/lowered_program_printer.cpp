@@ -881,6 +881,15 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
              << cleanup->classInstance << ':' << cleanup->destructorInstance
              << ':' << static_cast<std::size_t>(cleanup->form) << ':'
              << (cleanup->mayRaiseDefinedFailure ? "raise" : "no-raise");
+    } else if (const auto *concrete =
+                   std::get_if<LoweredConcreteInstanceAdapterItem>(
+                       &item.payload)) {
+      output << " payload=concrete-instance:"
+             << static_cast<std::size_t>(concrete->kind) << ':'
+             << bodyKindName(concrete->body.kind) << '/' << concrete->body.owner
+             << ':' << concrete->declaration << ':'
+             << concrete->ownerClassInstance << ':'
+             << (concrete->mayRaiseDefinedFailure ? "raise" : "no-raise");
     } else if (const auto *callback =
                    std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
       output << " payload=native-callback:" << callback->adapter.id << ':'

@@ -191,10 +191,28 @@ struct CppMirLifecycleCleanupThunk {
                          const CppMirLifecycleCleanupThunk &) = default;
 };
 
+enum class CppMirConcreteInstanceAdapterKind {
+  Function,
+  Constructor,
+  Count,
+};
+
+struct CppMirConcreteInstanceThunk {
+  CppMirConcreteInstanceAdapterKind kind =
+      CppMirConcreteInstanceAdapterKind::Function;
+  MirBodyAddress body;
+  std::size_t declaration = 0;
+  HirClassInstanceId ownerClassInstance = 0;
+  bool mayRaiseDefinedFailure = true;
+
+  friend bool operator==(const CppMirConcreteInstanceThunk &,
+                         const CppMirConcreteInstanceThunk &) = default;
+};
+
 using CppMirGeneratedThunkPayload =
     std::variant<std::monostate, CppMirStructuralOperatorThunk,
                  CppMirCallableThunk, CppMirLifecycleCleanupThunk,
-                 CppMirNativeCallbackThunk>;
+                 CppMirConcreteInstanceThunk, CppMirNativeCallbackThunk>;
 
 enum class CppMirGeneratedThunkSourceKind {
   Body,

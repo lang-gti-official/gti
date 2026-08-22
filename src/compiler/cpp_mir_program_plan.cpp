@@ -153,7 +153,8 @@ nativeCallbackRequirements(const MirBody &body) {
          kind == CppMirThunkKind::StructuralOperatorAdapter ||
          kind == CppMirThunkKind::CallableAdapter ||
          kind == CppMirThunkKind::LifecycleCleanup ||
-         kind == CppMirThunkKind::NativeInteropAdapter;
+         kind == CppMirThunkKind::NativeInteropAdapter ||
+         kind == CppMirThunkKind::ConcreteInstanceAdapter;
 }
 
 [[nodiscard]] bool familySupportsBody(CppMirExecutionFamily family) {
@@ -635,6 +636,8 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
         std::get_if<CppMirCallableThunk>(&thunk.payload);
     const CppMirLifecycleCleanupThunk *lifecycle =
         std::get_if<CppMirLifecycleCleanupThunk>(&thunk.payload);
+    const CppMirConcreteInstanceThunk *concrete =
+        std::get_if<CppMirConcreteInstanceThunk>(&thunk.payload);
     if (thunk.identity.kind == CppMirThunkKind::StructuralOperatorAdapter) {
       const bool validOperation =
           structural != nullptr &&
@@ -686,6 +689,42 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
                  "destructor payload",
                  std::nullopt, std::nullopt, thunk.identity);
       }
+    } else if (thunk.identity.kind ==
+               CppMirThunkKind::ConcreteInstanceAdapter) {
+      bool valid = concrete != nullptr &&
+                   ordinal(concrete->kind) <
+                       ordinal(CppMirConcreteInstanceAdapterKind::Count) &&
+                   thunk.identity.owner == concrete->body.owner &&
+                   thunk.identity.ordinal == ordinal(concrete->kind) + 1;
+      if (valid &&
+          concrete->kind == CppMirConcreteInstanceAdapterKind::Function) {
+        const MirFunctionInstance *instance =
+            program.findFunctionInstance(concrete->body.owner);
+        valid = instance != nullptr &&
+                concrete->body.kind == MirBodyKind::Function &&
+                instance->declaration == concrete->declaration &&
+                instance->owner.value_or(0) == concrete->ownerClassInstance &&
+                instance->definitionKind == MirDefinitionKind::Source &&
+                instance->mayRaiseDefinedFailure ==
+                    concrete->mayRaiseDefinedFailure;
+      } else if (valid && concrete->kind ==
+                              CppMirConcreteInstanceAdapterKind::Constructor) {
+        const MirConstructorInstance *instance =
+            program.findConstructorInstance(concrete->body.owner);
+        valid = instance != nullptr &&
+                concrete->body.kind == MirBodyKind::Constructor &&
+                concrete->declaration != 0 &&
+                instance->owner == concrete->ownerClassInstance &&
+                instance->definitionKind == MirDefinitionKind::Source &&
+                instance->mayRaiseDefinedFailure ==
+                    concrete->mayRaiseDefinedFailure;
+      }
+      if (!valid) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+                 "concrete-instance thunk has no exact generic declaration "
+                 "and MIR body payload",
+                 std::nullopt, std::nullopt, thunk.identity);
+      }
     } else if (thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
       if (nativeCallback == nullptr) {
         addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
@@ -702,7 +741,8 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
     const bool declarationAdapter =
         thunk.identity.kind == CppMirThunkKind::StructuralOperatorAdapter ||
         thunk.identity.kind == CppMirThunkKind::CallableAdapter ||
-        thunk.identity.kind == CppMirThunkKind::LifecycleCleanup;
+        thunk.identity.kind == CppMirThunkKind::LifecycleCleanup ||
+        thunk.identity.kind == CppMirThunkKind::ConcreteInstanceAdapter;
     bool validSource = ordinal(thunk.sourceKind) <
                        ordinal(CppMirGeneratedThunkSourceKind::Count);
     if (thunk.sourceKind == CppMirGeneratedThunkSourceKind::Declaration) {
@@ -1081,7 +1121,8 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
   for (const CppMirGeneratedThunk &thunk : plan.thunks) {
     if (thunk.identity.kind != CppMirThunkKind::StructuralOperatorAdapter &&
         thunk.identity.kind != CppMirThunkKind::CallableAdapter &&
-        thunk.identity.kind != CppMirThunkKind::LifecycleCleanup) {
+        thunk.identity.kind != CppMirThunkKind::LifecycleCleanup &&
+        thunk.identity.kind != CppMirThunkKind::ConcreteInstanceAdapter) {
       continue;
     }
     if (thunk.sourceKind != CppMirGeneratedThunkSourceKind::Declaration ||

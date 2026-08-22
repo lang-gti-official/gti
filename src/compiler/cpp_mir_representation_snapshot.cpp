@@ -2200,7 +2200,9 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
           if (required.kind ==
                   LoweredGeneratedItemKind::StructuralOperatorAdapter ||
               required.kind == LoweredGeneratedItemKind::CallableAdapter ||
-              required.kind == LoweredGeneratedItemKind::LifecycleCleanup) {
+              required.kind == LoweredGeneratedItemKind::LifecycleCleanup ||
+              required.kind ==
+                  LoweredGeneratedItemKind::ConcreteInstanceAdapter) {
             CppMirThunkKind kind = CppMirThunkKind::LifecycleCleanup;
             if (required.kind ==
                 LoweredGeneratedItemKind::StructuralOperatorAdapter) {
@@ -2208,6 +2210,9 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
             } else if (required.kind ==
                        LoweredGeneratedItemKind::CallableAdapter) {
               kind = CppMirThunkKind::CallableAdapter;
+            } else if (required.kind ==
+                       LoweredGeneratedItemKind::ConcreteInstanceAdapter) {
+              kind = CppMirThunkKind::ConcreteInstanceAdapter;
             }
             roots.requiredThunks.push_back({.kind = kind,
                                             .owner = required.owner,
@@ -2223,7 +2228,9 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
         if (item.identity.kind !=
                 LoweredGeneratedItemKind::StructuralOperatorAdapter &&
             item.identity.kind != LoweredGeneratedItemKind::CallableAdapter &&
-            item.identity.kind != LoweredGeneratedItemKind::LifecycleCleanup) {
+            item.identity.kind != LoweredGeneratedItemKind::LifecycleCleanup &&
+            item.identity.kind !=
+                LoweredGeneratedItemKind::ConcreteInstanceAdapter) {
           continue;
         }
         CppMirThunkKind kind = CppMirThunkKind::LifecycleCleanup;
@@ -2233,6 +2240,9 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
         } else if (item.identity.kind ==
                    LoweredGeneratedItemKind::CallableAdapter) {
           kind = CppMirThunkKind::CallableAdapter;
+        } else if (item.identity.kind ==
+                   LoweredGeneratedItemKind::ConcreteInstanceAdapter) {
+          kind = CppMirThunkKind::ConcreteInstanceAdapter;
         }
         CppMirGeneratedThunk thunk{
             .identity = {.kind = kind,
@@ -2264,6 +2274,19 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
               .destructorInstance = cleanup->destructorInstance,
               .form = form,
               .mayRaiseDefinedFailure = cleanup->mayRaiseDefinedFailure};
+        } else if (const auto *concrete =
+                       std::get_if<LoweredConcreteInstanceAdapterItem>(
+                           &item.payload)) {
+          const CppMirConcreteInstanceAdapterKind concreteKind =
+              concrete->kind == LoweredConcreteInstanceAdapterKind::Constructor
+                  ? CppMirConcreteInstanceAdapterKind::Constructor
+                  : CppMirConcreteInstanceAdapterKind::Function;
+          thunk.payload = CppMirConcreteInstanceThunk{
+              .kind = concreteKind,
+              .body = concrete->body,
+              .declaration = concrete->declaration,
+              .ownerClassInstance = concrete->ownerClassInstance,
+              .mayRaiseDefinedFailure = concrete->mayRaiseDefinedFailure};
         }
         snapshot.thunks.push_back(std::move(thunk));
       }
@@ -2407,6 +2430,19 @@ cppLifecycleCleanupForm(LoweredLifecycleCleanupForm form) {
     return CppMirLifecycleCleanupForm::Count;
   }
   return CppMirLifecycleCleanupForm::Count;
+}
+
+[[nodiscard]] CppMirConcreteInstanceAdapterKind
+cppConcreteInstanceKind(LoweredConcreteInstanceAdapterKind kind) {
+  switch (kind) {
+  case LoweredConcreteInstanceAdapterKind::Function:
+    return CppMirConcreteInstanceAdapterKind::Function;
+  case LoweredConcreteInstanceAdapterKind::Constructor:
+    return CppMirConcreteInstanceAdapterKind::Constructor;
+  case LoweredConcreteInstanceAdapterKind::Count:
+    return CppMirConcreteInstanceAdapterKind::Count;
+  }
+  return CppMirConcreteInstanceAdapterKind::Count;
 }
 
 [[nodiscard]] std::optional<CppMirDataKind>
@@ -2635,6 +2671,15 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
           .destructorInstance = cleanup->destructorInstance,
           .form = cppLifecycleCleanupForm(cleanup->form),
           .mayRaiseDefinedFailure = cleanup->mayRaiseDefinedFailure};
+    } else if (const auto *concrete =
+                   std::get_if<LoweredConcreteInstanceAdapterItem>(
+                       &item.payload)) {
+      thunk.payload = CppMirConcreteInstanceThunk{
+          .kind = cppConcreteInstanceKind(concrete->kind),
+          .body = concrete->body,
+          .declaration = concrete->declaration,
+          .ownerClassInstance = concrete->ownerClassInstance,
+          .mayRaiseDefinedFailure = concrete->mayRaiseDefinedFailure};
     } else if (const auto *callback =
                    std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
       thunk.payload = CppMirNativeCallbackThunk{.adapter = callback->adapter};

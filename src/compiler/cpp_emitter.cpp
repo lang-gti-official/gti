@@ -6771,6 +6771,14 @@ private:
     std::vector<std::string> banners;
     std::string canonical;
     for (const MirFunctionInstance *instance : instances) {
+      const CppMirConcreteInstanceThunk *concrete =
+          concreteFunctionAdapter(instance->id);
+      if (concrete == nullptr || concrete->declaration != info->id ||
+          concrete->ownerClassInstance != 0 ||
+          concrete->mayRaiseDefinedFailure !=
+              instance->mayRaiseDefinedFailure) {
+        return std::string();
+      }
       if (instance->parameterTypes.size() != info->parameterTypes.size()) {
         return std::string();
       }
@@ -6873,6 +6881,14 @@ private:
     std::vector<std::string> banners;
     std::string canonical;
     for (const MirFunctionInstance *instance : instances) {
+      const CppMirConcreteInstanceThunk *concrete =
+          concreteFunctionAdapter(instance->id);
+      if (concrete == nullptr || concrete->declaration != info->id ||
+          concrete->ownerClassInstance != 0 ||
+          concrete->mayRaiseDefinedFailure !=
+              instance->mayRaiseDefinedFailure) {
+        return std::string();
+      }
       if (!genericLambdaTransportInstance(*instance)) {
         // Nameable instantiations keep their concrete specialization. The
         // source template route is needed only for an unnameable lambda type
@@ -7366,7 +7382,11 @@ private:
   [[nodiscard]] bool genericOwnerFailureConstructorPrimaryEligible(
       const ConstructorDecl &declaration,
       const MirConstructorInstance &instance) const {
-    if (mir == nullptr || !generalEmissionMap ||
+    const CppMirConcreteInstanceThunk *concrete =
+        concreteConstructorAdapter(instance.id);
+    if (mir == nullptr || !generalEmissionMap || concrete == nullptr ||
+        concrete->ownerClassInstance != instance.owner ||
+        concrete->mayRaiseDefinedFailure != instance.mayRaiseDefinedFailure ||
         !generalFailureConstructorSurfaceEligible(instance)) {
       return false;
     }
@@ -7487,6 +7507,12 @@ private:
   [[nodiscard]] bool generalFailureConstructorSpecializationEligible(
       const ConstructorDecl &declaration,
       const MirConstructorInstance &instance) const {
+    const CppMirConcreteInstanceThunk *concrete =
+        concreteConstructorAdapter(instance.id);
+    if (concrete == nullptr || concrete->ownerClassInstance != instance.owner ||
+        concrete->mayRaiseDefinedFailure != instance.mayRaiseDefinedFailure) {
+      return false;
+    }
     if (genericOwnerFailureConstructorPrimaryEligible(declaration, instance)) {
       return false;
     }
@@ -8492,7 +8518,12 @@ private:
     const bool genericOwner = ownerInstance != nullptr &&
                               (!ownerInstance->type.arguments.empty() ||
                                !ownerInstance->type.valueArguments.empty());
-    if (hirInstance == nullptr || hirInstance->source != &function ||
+    const CppMirConcreteInstanceThunk *concrete =
+        concreteFunctionAdapter(instance.id);
+    if (concrete == nullptr || concrete->declaration != instance.declaration ||
+        concrete->ownerClassInstance != instance.owner.value_or(0) ||
+        concrete->mayRaiseDefinedFailure != instance.mayRaiseDefinedFailure ||
+        hirInstance == nullptr || hirInstance->source != &function ||
         ownerInstance == nullptr || !typeIsConcrete(ownerInstance->type) ||
         (!genericOwner && function.genericParameters().empty()) ||
         hirInstance->body.placeDomain != instance.body.placeDomain) {
@@ -8638,7 +8669,13 @@ private:
           hir.findFunctionInstance(instance.id);
       const MirClassInstance *ownerInstance =
           mir->findClassInstance(*instance.owner);
-      if (hirInstance == nullptr || hirInstance->source != &function ||
+      const CppMirConcreteInstanceThunk *concrete =
+          concreteFunctionAdapter(instance.id);
+      if (concrete == nullptr ||
+          concrete->declaration != instance.declaration ||
+          concrete->ownerClassInstance != instance.owner.value_or(0) ||
+          concrete->mayRaiseDefinedFailure != instance.mayRaiseDefinedFailure ||
+          hirInstance == nullptr || hirInstance->source != &function ||
           ownerInstance == nullptr || !typeIsConcrete(ownerInstance->type) ||
           (ownerInstance->type.arguments.empty() &&
            ownerInstance->type.valueArguments.empty()) ||
@@ -8739,7 +8776,14 @@ private:
         }
         const HirConstructorInstance *hirInstance =
             hir.findConstructorInstance(instance.id);
-        if (hirInstance == nullptr || hirInstance->source != &declaration ||
+        const CppMirConcreteInstanceThunk *concrete =
+            concreteConstructorAdapter(instance.id);
+        if (hirInstance == nullptr || concrete == nullptr ||
+            concrete->declaration != hirInstance->declaration ||
+            concrete->ownerClassInstance != instance.owner ||
+            concrete->mayRaiseDefinedFailure !=
+                instance.mayRaiseDefinedFailure ||
+            hirInstance->source != &declaration ||
             hirInstance->body.placeDomain != instance.body.placeDomain) {
           continue;
         }
@@ -8895,7 +8939,13 @@ private:
                                 const MirFunctionInstance &instance) const {
     const HirFunctionInstance *hirInstance =
         hir.findFunctionInstance(instance.id);
-    return hirInstance != nullptr && hirInstance->source == &function &&
+    const CppMirConcreteInstanceThunk *concrete =
+        concreteFunctionAdapter(instance.id);
+    return concrete != nullptr && concrete->declaration == info.id &&
+           concrete->ownerClassInstance == 0 &&
+           concrete->mayRaiseDefinedFailure ==
+               instance.mayRaiseDefinedFailure &&
+           hirInstance != nullptr && hirInstance->source == &function &&
            instance.declaration == info.id &&
            instance.entryKind == ProgramEntryKind::None &&
            !instance.staticMember && !instance.owner.has_value() &&
@@ -10919,6 +10969,62 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     if (payload == nullptr || payload->destructorInstance != destructor) {
       throw std::logic_error(
           "lifecycle cleanup adapter lost its sealed destructor payload");
+    }
+    return payload;
+  }
+
+  [[nodiscard]] const CppMirConcreteInstanceThunk *
+  concreteFunctionAdapter(HirFunctionInstanceId instance) const {
+    const auto found = std::find_if(
+        programPlan.thunks.begin(), programPlan.thunks.end(),
+        [&](const CppMirGeneratedThunk &thunk) {
+          return thunk.identity.kind ==
+                     CppMirThunkKind::ConcreteInstanceAdapter &&
+                 thunk.identity.owner == instance &&
+                 thunk.identity.ordinal ==
+                     static_cast<std::size_t>(
+                         CppMirConcreteInstanceAdapterKind::Function) +
+                         1;
+        });
+    if (found == programPlan.thunks.end()) {
+      return nullptr;
+    }
+    const auto *payload =
+        std::get_if<CppMirConcreteInstanceThunk>(&found->payload);
+    if (payload == nullptr ||
+        payload->kind != CppMirConcreteInstanceAdapterKind::Function ||
+        payload->body !=
+            MirBodyAddress{.kind = MirBodyKind::Function, .owner = instance}) {
+      throw std::logic_error(
+          "concrete function adapter lost its sealed MIR payload");
+    }
+    return payload;
+  }
+
+  [[nodiscard]] const CppMirConcreteInstanceThunk *
+  concreteConstructorAdapter(HirConstructorInstanceId instance) const {
+    const auto found = std::find_if(
+        programPlan.thunks.begin(), programPlan.thunks.end(),
+        [&](const CppMirGeneratedThunk &thunk) {
+          return thunk.identity.kind ==
+                     CppMirThunkKind::ConcreteInstanceAdapter &&
+                 thunk.identity.owner == instance &&
+                 thunk.identity.ordinal ==
+                     static_cast<std::size_t>(
+                         CppMirConcreteInstanceAdapterKind::Constructor) +
+                         1;
+        });
+    if (found == programPlan.thunks.end()) {
+      return nullptr;
+    }
+    const auto *payload =
+        std::get_if<CppMirConcreteInstanceThunk>(&found->payload);
+    if (payload == nullptr ||
+        payload->kind != CppMirConcreteInstanceAdapterKind::Constructor ||
+        payload->body != MirBodyAddress{.kind = MirBodyKind::Constructor,
+                                        .owner = instance}) {
+      throw std::logic_error(
+          "concrete constructor adapter lost its sealed MIR payload");
     }
     return payload;
   }

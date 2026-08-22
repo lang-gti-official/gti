@@ -309,47 +309,50 @@ int main() { return identity(0); }
 )");
 }
 
+lang::FrontendResult analyzeClosedThunkProgram() {
+  return lang::Frontend().analyze("cpp-mir-plan-closed-thunks.gti", R"(
+int32_t identity(int32_t value) { return value; }
+int32_t initialize_state() { return 1; }
+mut int32_t state = initialize_state();
+
+int main() { return identity(state - 1); }
+)");
+}
+
 void addClosedThunkGraph(lang::CppMirRepresentationSnapshot &snapshot,
                          const lang::MirProgram &program) {
   const lang::MirFunctionInstance *entry = findEntry(program);
-  const lang::MirFunctionInstance *helper =
-      findFirstNonEntrySourceFunction(program);
-  expect(entry != nullptr && helper != nullptr,
-         "the simple fixture should have entry and helper functions");
-  if (entry == nullptr || helper == nullptr) {
+  expect(entry != nullptr, "the simple fixture should have an entry function");
+  if (entry == nullptr) {
     return;
   }
 
-  const lang::CppMirThunkIdentity prerequisite{
-      .kind = lang::CppMirThunkKind::ConcreteInstanceAdapter,
-      .owner = helper->id,
-      .ordinal = 1};
-  const lang::CppMirThunkIdentity concrete{
-      .kind = lang::CppMirThunkKind::ConcreteInstanceAdapter,
-      .owner = helper->id,
-      .ordinal = 2};
+  const lang::CppMirThunkIdentity initialization{
+      .kind = lang::CppMirThunkKind::ProgramInitialization};
   const lang::CppMirThunkIdentity hosted{
       .kind = lang::CppMirThunkKind::HostedEntry, .owner = entry->id};
-  snapshot.thunks = {
-      {.identity = hosted,
-       .sourceBody = {.kind = lang::MirBodyKind::HostedStartup,
-                      .owner = entry->id}},
-      {.identity = concrete,
-       .sourceBody = {.kind = lang::MirBodyKind::Function, .owner = helper->id},
-       .dependencies = {prerequisite}},
-      {.identity = prerequisite,
-       .sourceBody = {.kind = lang::MirBodyKind::Function,
-                      .owner = helper->id}}};
-  if (lang::CppMirBodyRepresentation *body =
-          findBody(snapshot, {.kind = lang::MirBodyKind::Function,
-                              .owner = helper->id})) {
-    body->requiredThunks = {concrete};
-  }
-  if (lang::CppMirBodyRepresentation *body =
-          findBody(snapshot, {.kind = lang::MirBodyKind::HostedStartup,
-                              .owner = entry->id})) {
-    body->requiredThunks = {hosted};
-  }
+  const lang::CppMirGeneratedThunk *initializationThunk =
+      findThunk(snapshot, lang::CppMirThunkKind::ProgramInitialization);
+  const lang::CppMirGeneratedThunk *hostedThunk =
+      findThunk(snapshot, lang::CppMirThunkKind::HostedEntry);
+  const lang::CppMirBodyRepresentation *module =
+      findBody(snapshot, {.kind = lang::MirBodyKind::Module, .owner = 0});
+  const lang::CppMirBodyRepresentation *startup = findBody(
+      snapshot, {.kind = lang::MirBodyKind::HostedStartup, .owner = entry->id});
+  expect(initializationThunk != nullptr && hostedThunk != nullptr &&
+             initializationThunk->identity == initialization &&
+             initializationThunk->sourceBody ==
+                 lang::MirBodyAddress{.kind = lang::MirBodyKind::Module,
+                                      .owner = 0} &&
+             hostedThunk->identity == hosted &&
+             hostedThunk->dependencies ==
+                 std::vector<lang::CppMirThunkIdentity>{initialization} &&
+             module != nullptr &&
+             module->requiredThunks == std::vector{initialization} &&
+             startup != nullptr &&
+             startup->requiredThunks == std::vector{hosted},
+         "the simple fixture should derive a closed hosted-entry and "
+         "program-initialization graph");
 }
 
 void testExactInventoryAndBodyRoles() {
@@ -437,7 +440,7 @@ int main() {
 }
 
 void testCoherentInventoryAndThunkClosure() {
-  const lang::FrontendResult frontend = analyzeSimpleProgram();
+  const lang::FrontendResult frontend = analyzeClosedThunkProgram();
   expect(frontend.canGenerateCode(),
          "the complete-plan fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -453,20 +456,15 @@ void testCoherentInventoryAndThunkClosure() {
   expect(plan.status == lang::CppMirProgramPlanStatus::UnsupportedSurface &&
              plan.issues.empty() &&
              unsupportedCount(plan, lang::CppMirUnsupportedSurfaceKind::Body) ==
-                 3 &&
+                 5 &&
              unsupportedCount(plan,
-                              lang::CppMirUnsupportedSurfaceKind::Thunk) == 2,
-         "transitional family labels and uncontracted thunk kinds should "
-         "remain inventory-only unsupported surface");
-  expect(plan.thunks.size() == 3 &&
+                              lang::CppMirUnsupportedSurfaceKind::Thunk) == 0,
+         "transitional body family labels should remain inventory-only "
+         "unsupported surface while contracted thunks remain complete");
+  expect(plan.thunks.size() == 2 &&
              plan.thunks[0].identity.kind ==
-                 lang::CppMirThunkKind::HostedEntry &&
-             plan.thunks[1].identity.kind ==
-                 lang::CppMirThunkKind::ConcreteInstanceAdapter &&
-             plan.thunks[1].identity.ordinal == 1 &&
-             plan.thunks[2].identity.kind ==
-                 lang::CppMirThunkKind::ConcreteInstanceAdapter &&
-             plan.thunks[2].identity.ordinal == 2,
+                 lang::CppMirThunkKind::ProgramInitialization &&
+             plan.thunks[1].identity.kind == lang::CppMirThunkKind::HostedEntry,
          "generated thunks should be canonicalized dependency before user");
 }
 
@@ -860,7 +858,7 @@ int main() { return 0; }
 }
 
 void testThunkIntegrityFailures() {
-  const lang::FrontendResult frontend = analyzeSimpleProgram();
+  const lang::FrontendResult frontend = analyzeClosedThunkProgram();
   expect(frontend.canGenerateCode(),
          "the thunk-integrity fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -882,15 +880,13 @@ void testThunkIntegrityFailures() {
   lang::CppMirRepresentationSnapshot duplicateDependency =
       makeSnapshot(frontend.mir);
   addClosedThunkGraph(duplicateDependency, frontend.mir);
-  lang::CppMirGeneratedThunk *duplicateCallable = findThunk(
-      duplicateDependency, lang::CppMirThunkKind::ConcreteInstanceAdapter);
-  expect(duplicateCallable != nullptr &&
-             !duplicateCallable->dependencies.empty(),
-         "the closed thunk fixture should retain a callable dependency");
-  if (duplicateCallable != nullptr &&
-      !duplicateCallable->dependencies.empty()) {
-    duplicateCallable->dependencies.push_back(
-        duplicateCallable->dependencies.front());
+  lang::CppMirGeneratedThunk *duplicateHosted =
+      findThunk(duplicateDependency, lang::CppMirThunkKind::HostedEntry);
+  expect(duplicateHosted != nullptr && !duplicateHosted->dependencies.empty(),
+         "the closed thunk fixture should retain an initialization dependency");
+  if (duplicateHosted != nullptr && !duplicateHosted->dependencies.empty()) {
+    duplicateHosted->dependencies.push_back(
+        duplicateHosted->dependencies.front());
   }
   const lang::CppMirProgramPlan duplicateDependencyPlan =
       planSnapshotForTesting(frontend.mir, std::move(duplicateDependency));
@@ -903,9 +899,9 @@ void testThunkIntegrityFailures() {
   lang::CppMirRepresentationSnapshot missingDependency =
       makeSnapshot(frontend.mir);
   addClosedThunkGraph(missingDependency, frontend.mir);
-  if (lang::CppMirGeneratedThunk *callable = findThunk(
-          missingDependency, lang::CppMirThunkKind::ConcreteInstanceAdapter)) {
-    callable->dependencies = {
+  if (lang::CppMirGeneratedThunk *hosted =
+          findThunk(missingDependency, lang::CppMirThunkKind::HostedEntry)) {
+    hosted->dependencies = {
         {.kind = lang::CppMirThunkKind::NativeInteropAdapter, .owner = 999}};
   }
   const lang::CppMirProgramPlan missingDependencyPlan =
@@ -918,11 +914,14 @@ void testThunkIntegrityFailures() {
 
   lang::CppMirRepresentationSnapshot cyclic = makeSnapshot(frontend.mir);
   addClosedThunkGraph(cyclic, frontend.mir);
-  expect(cyclic.thunks.size() == 3,
-         "the closed thunk fixture should contain three thunks");
-  if (lang::CppMirGeneratedThunk *structural =
-          findThunk(cyclic, lang::CppMirThunkKind::ConcreteInstanceAdapter)) {
-    structural->dependencies = {structural->identity};
+  expect(cyclic.thunks.size() == 2,
+         "the closed thunk fixture should contain two thunks");
+  const lang::MirFunctionInstance *entry = findEntry(frontend.mir);
+  if (lang::CppMirGeneratedThunk *initialization =
+          findThunk(cyclic, lang::CppMirThunkKind::ProgramInitialization);
+      initialization != nullptr && entry != nullptr) {
+    initialization->dependencies = {
+        {.kind = lang::CppMirThunkKind::HostedEntry, .owner = entry->id}};
   }
   const lang::CppMirProgramPlan cyclicPlan =
       planSnapshotForTesting(frontend.mir, std::move(cyclic));
@@ -950,7 +949,6 @@ void testExactContractedThunkProvenance() {
 
   lang::CppMirRepresentationSnapshot badHostedOrdinal =
       makeSnapshot(frontend.mir);
-  addClosedThunkGraph(badHostedOrdinal, frontend.mir);
   for (lang::CppMirGeneratedThunk &thunk : badHostedOrdinal.thunks) {
     if (thunk.identity.kind == lang::CppMirThunkKind::HostedEntry) {
       thunk.identity.ordinal = 1;
@@ -973,7 +971,6 @@ void testExactContractedThunkProvenance() {
 
   lang::CppMirRepresentationSnapshot wrongHostedOwner =
       makeSnapshot(frontend.mir);
-  addClosedThunkGraph(wrongHostedOwner, frontend.mir);
   for (lang::CppMirGeneratedThunk &thunk : wrongHostedOwner.thunks) {
     if (thunk.identity.kind == lang::CppMirThunkKind::HostedEntry) {
       thunk.sourceBody = {.kind = lang::MirBodyKind::Function,
@@ -991,7 +988,6 @@ void testExactContractedThunkProvenance() {
 
   lang::CppMirRepresentationSnapshot nonEntryHosted =
       makeSnapshot(frontend.mir);
-  addClosedThunkGraph(nonEntryHosted, frontend.mir);
   for (lang::CppMirGeneratedThunk &thunk : nonEntryHosted.thunks) {
     if (thunk.identity.kind == lang::CppMirThunkKind::HostedEntry) {
       thunk.identity.owner = helper->id;
