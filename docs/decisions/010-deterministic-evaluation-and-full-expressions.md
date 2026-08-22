@@ -31,11 +31,13 @@ is selected.
 ## Decision
 
 GTI evaluates runtime subexpressions strictly left to right. A callable or
-member receiver is evaluated first, arguments initialize parameters left to
-right, and invocation follows. Unary, binary, member, index, conversion,
-initializer, capture, and concrete pack constituents use the same order.
-Logical and conditional expressions retain short-circuiting and evaluate only
-the selected operands.
+member receiver is evaluated first, written arguments initialize parameters
+left to right, omitted trailing default expressions run next in parameter
+order, and invocation follows. Each omitted default is reevaluated for that
+call and belongs to the same enclosing full-expression. Unary, binary, member,
+index, conversion, initializer, capture, and concrete pack constituents use the
+same order. Logical and conditional expressions retain short-circuiting and
+evaluate only the selected operands.
 
 Assignment is target-first. Its place, including receiver and projections, is
 formed once before the right operand. Compound assignment additionally
@@ -79,7 +81,7 @@ implementation migration has these directional owners:
 | --- | --- | --- |
 | Written child order and source boundary syntax | Parser/AST | Snapshot-owned syntax consumed by semantics. |
 | Active target branches, resolved operations, ordered borrow validity, full-expression endpoints, and the source-graph-derived program-initialization plan | Semantics | Immutable `SemanticModel` facts for one frontend snapshot; HIR consumes them and must not rediscover them. |
-| Concrete receiver/argument/operand roles, destination-materialization intent, and full-expression identity | HIR | Concrete-program facts consumed by MIR; generic reanalysis produces the same roles after substitution. |
+| Concrete receiver/argument/operand roles, explicit/default argument provenance, destination-materialization intent, and full-expression identity | HIR | Concrete-program facts consumed by MIR; generic reanalysis produces the same roles after substitution. |
 | Temporary identity, lifetime start, active-drop/loan obligations, transfer/reparenting, and reverse cleanup | M-LIFE-01 MIR authority | Body-local facts verified on every normal edge; M-FAIL-01 later adds equivalent failure edges. |
 | Instruction/CFG order, one-time target-place formation, short-circuit selection, invocation after parameter setup, ordered hosted setup, and one merged program-initialization body | M-EXEC-01 MIR authority | Body-local executable schedule consumed by optimization and a MIR backend. |
 | Native sequencing and representation | Matching M-BACK closed-body migration | May choose statements, result slots, or helper calls only when they realize verified MIR exactly. |

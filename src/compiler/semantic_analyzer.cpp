@@ -22,6 +22,8 @@ public:
     Initializer,
     Function,
     Constructor,
+    FunctionDefaultArgument,
+    ConstructorDefaultArgument,
     Destructor,
     FieldInitializers,
     Lambda,
@@ -104,6 +106,9 @@ public:
     functionGenericParameters.clear();
     constructorGenericParameters.clear();
     constexprDefinitionsAnalyzed.clear();
+    defaultArgumentSyntax.clear();
+    defaultArgumentDependencies.clear();
+    reportedDefaultArgumentCycles.clear();
     externCSymbols.clear();
     rootNativeStorageSymbols.clear();
     globalBorrowStorage.clear();
@@ -120,6 +125,7 @@ public:
     nextFunctionId = 1;
     nextLambdaId = 1;
     nextConstructorId = 1;
+    nextDefaultArgumentEffectOwner = 1;
     nextSemanticLoanId = 1;
     nextPlaceSelectionId = 1;
     currentNamespace.clear();
@@ -135,6 +141,9 @@ public:
     currentClass.reset();
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
+    analyzingDefaultArgument = false;
+    currentDefaultArgumentRoot = nullptr;
+    currentDefaultParameterNames.clear();
     analyzingCallCallee = false;
     analyzingPackFoldElement = false;
     allowPayloadEnumeratorReference = false;
@@ -189,6 +198,7 @@ public:
     recordClassLifecycles();
     beginScope();
     analyze(program.declarations());
+    validateDefaultArgumentCycles();
     endScope();
     discoverOwnedCallableContracts();
     semanticModel.finalizeCallableForwardings();
@@ -230,6 +240,9 @@ public:
     functionGenericParameters.clear();
     constructorGenericParameters.clear();
     constexprDefinitionsAnalyzed.clear();
+    defaultArgumentSyntax.clear();
+    defaultArgumentDependencies.clear();
+    reportedDefaultArgumentCycles.clear();
     externCSymbols.clear();
     rootNativeStorageSymbols.clear();
     globalBorrowStorage.clear();
@@ -246,6 +259,7 @@ public:
     nextFunctionId = 1;
     nextLambdaId = 1;
     nextConstructorId = 1;
+    nextDefaultArgumentEffectOwner = 1;
     nextSemanticLoanId = 1;
     nextPlaceSelectionId = 1;
     currentNamespace.clear();
@@ -260,6 +274,9 @@ public:
     currentClass.reset();
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
+    analyzingDefaultArgument = false;
+    currentDefaultArgumentRoot = nullptr;
+    currentDefaultParameterNames.clear();
     analyzingCallCallee = false;
     analyzingPackFoldElement = false;
     allowPayloadEnumeratorReference = false;
@@ -390,6 +407,7 @@ public:
       return scope.finish();
     }
     function->declaration->accept(*this);
+    validateDefaultArgumentCycles();
     semanticModel.finalizeCallableArguments();
     finishInstanceContext(*function);
     return scope.finish();
@@ -444,6 +462,7 @@ public:
       }
     }
     constructor->declaration->accept(*this);
+    validateDefaultArgumentCycles();
     finishClassInstanceContext();
     return scope.finish();
   }
@@ -537,6 +556,15 @@ public:
       for (std::size_t payloadIndex = 0;
            payloadIndex < enumerator.payload.size(); ++payloadIndex) {
         const Parameter &parameter = enumerator.payload[payloadIndex];
+        if (parameter.defaultArgument) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2077", DiagnosticPhase::Semantics,
+              parameter.defaultArgument->equal,
+              "Default arguments are not supported on payload-enum fields.");
+          diagnostic.hints.emplace_back(
+              "Construct each payload variant with every field explicitly.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
         if (parameter.name.lexeme.empty()) {
           continue;
         }
@@ -704,6 +732,27 @@ public:
                "Constructor parameters cannot have type void.");
       }
     }
+
+    std::vector<SemanticType> parameterTypes;
+    parameterTypes.reserve(stmt.parameters().size());
+    for (const Parameter &parameter : stmt.parameters()) {
+      parameterTypes.push_back(typeOf(parameter));
+    }
+    const bool ordinary = constructorInfo != nullptr &&
+                          constructorInfo->kind == ConstructorKind::Ordinary;
+    const bool hasPack = std::any_of(
+        stmt.parameters().begin(), stmt.parameters().end(),
+        [](const Parameter &parameter) { return parameter.pack.has_value(); });
+    analyzeParameterDefaults(
+        stmt.parameters(), parameterTypes,
+        constructorInfo == nullptr
+            ? std::span<const std::size_t>{}
+            : std::span<const std::size_t>(
+                  constructorInfo->defaultArgumentEffectOwners),
+        DefaultArgumentOwnerKind::Constructor, ordinary,
+        ordinary ? "this constructor declaration"
+                 : "copy or move constructor policies",
+        hasPack, !instanceClassContextActive);
 
     if (constructorInfo == nullptr ||
         constructorInfo->kind != ConstructorKind::Ordinary || !stmt.body()) {
@@ -937,7 +986,27 @@ public:
     }
 
     if (base != nullptr && !initializedBase) {
-      if (!baseHasAccessibleDefaultConstructor(*base, owner.id)) {
+      const ClassInfo *baseOwner = classInfo(base->type);
+      if (baseOwner != nullptr &&
+          defaultConstructorCandidateCount(*baseOwner) > 1) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2013", DiagnosticPhase::Semantics, stmt.name(),
+            "Implicit construction of base '" + typeSpelling(base->type) +
+                "' is ambiguous; multiple constructors accept zero explicit "
+                "arguments.");
+        for (const ConstructorInfo &candidate : baseOwner->constructors) {
+          if (candidate.requiredParameterCount == 0 &&
+              candidate.declaration != nullptr) {
+            diagnostic.related.push_back(
+                {tokenSpan(candidate.declaration->name()),
+                 "Candidate: " + constructorSignatureSpelling(candidate)});
+          }
+        }
+        diagnostic.hints.emplace_back(
+            "Write an explicit base initializer with arguments that select "
+            "one constructor.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      } else if (!baseHasAccessibleDefaultConstructor(*base, owner.id)) {
         report(stmt.name(),
                "Constructor must explicitly initialize base '" +
                    typeSpelling(base->type) +
@@ -1362,6 +1431,45 @@ public:
                "Function parameters cannot have type void.");
       }
     }
+    const bool polymorphic =
+        methodDeclaration &&
+        (stmt.isVirtual() || stmt.isPure() || stmt.isOverride() ||
+         (currentClass &&
+          classInfo(*currentClass).kind == ClassKind::Interface));
+    const bool defaultsPermitted =
+        !stmt.operatorName() && !stmt.runtimeBinding() && !stmt.hasCLinkage() &&
+        !polymorphic && !isEntryPoint && !intrinsicDeclaration;
+    std::string_view unsupportedContext = "this declaration";
+    if (stmt.operatorName()) {
+      unsupportedContext = "operator declarations";
+    } else if (stmt.runtimeBinding() || intrinsicDeclaration) {
+      unsupportedContext = "runtime or intrinsic declarations";
+    } else if (stmt.hasCLinkage()) {
+      unsupportedContext = "extern \"C\" declarations";
+    } else if (polymorphic) {
+      unsupportedContext = "virtual, override, or interface methods";
+    } else if (isEntryPoint) {
+      unsupportedContext = "the main entry point";
+    }
+    std::vector<SemanticType> concreteParameterTypes;
+    concreteParameterTypes.reserve(stmt.parameters().size());
+    for (const Parameter &parameter : stmt.parameters()) {
+      const SemanticType declared = typeOf(parameter);
+      concreteParameterTypes.push_back(
+          parameter.pack && declared.kind == SemanticType::TypeParameter
+              ? SemanticType::typePack(declared.genericParameterId)
+              : declared);
+    }
+    analyzeParameterDefaults(
+        stmt.parameters(), concreteParameterTypes,
+        functionInfo == nullptr
+            ? std::span<const std::size_t>{}
+            : std::span<const std::size_t>(
+                  functionInfo->defaultArgumentEffectOwners),
+        DefaultArgumentOwnerKind::Function, defaultsPermitted,
+        unsupportedContext,
+        functionInfo != nullptr && functionInfo->parameterPack,
+        !instanceAnalysisActive);
     const bool constexprDeclarationValid =
         validateConstexprFunction(stmt, methodDeclaration, intrinsicDeclaration,
                                   declaredReturnType, isEntryPoint);
@@ -3274,16 +3382,31 @@ public:
         valid = false;
       }
 
+      const bool instantiatedPackForwardingShape =
+          candidate.parameterPack && !resolved.parameterPack &&
+          hasPackExpansion(argumentTypes) &&
+          argumentTypes.size() == resolved.parameterTypes.size();
       if (resolved.parameterPack) {
         valid = false;
-      } else if (argumentTypes.size() != resolved.parameterTypes.size()) {
-        report(
-            expr.paren(),
-            "Function expects " +
-                std::to_string(resolved.parameterTypes.size()) + " argument" +
-                (resolved.parameterTypes.size() == 1 ? "" : "s") +
-                " but received " + std::to_string(argumentTypes.size()) + ".",
-            "GTI-S2005");
+      } else if (!instantiatedPackForwardingShape &&
+                 !acceptsArgumentShape(resolved, argumentTypes)) {
+        const bool exactArity =
+            resolved.requiredParameterCount == resolved.parameterTypes.size();
+        report(expr.paren(),
+               exactArity
+                   ? "Function expects " +
+                         std::to_string(resolved.parameterTypes.size()) +
+                         " argument" +
+                         (resolved.parameterTypes.size() == 1 ? "" : "s") +
+                         " but received " +
+                         std::to_string(argumentTypes.size()) + "."
+                   : "Function expects between " +
+                         std::to_string(resolved.requiredParameterCount) +
+                         " and " +
+                         std::to_string(resolved.parameterTypes.size()) +
+                         " arguments but received " +
+                         std::to_string(argumentTypes.size()) + ".",
+               "GTI-S2005");
         valid = false;
       } else {
         for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
@@ -4285,6 +4408,11 @@ public:
       }
       parameterTypes.push_back(parameterType);
     }
+
+    analyzeParameterDefaults(
+        expr.parameters(), parameterTypes, std::span<const std::size_t>{},
+        DefaultArgumentOwnerKind::Function, false, "lambda parameters", false,
+        !instanceAnalysisActive);
 
     std::unordered_set<std::string> capturedNames;
     std::vector<LambdaCaptureInfo> captures;
@@ -5295,6 +5423,14 @@ public:
   }
 
   void visitThisExpr(const This &expr) override {
+    if (analyzingDefaultArgument) {
+      report(expr.keyword(),
+             "A default argument is declaration-scoped and cannot use "
+             "'this'.",
+             "GTI-S2077");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (analyzingConstructorInitializer) {
       report(expr.keyword(),
              "Cannot use 'this' in a constructor initializer expression.");
@@ -5664,6 +5800,19 @@ public:
     }
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
+      if (analyzingDefaultArgument &&
+          currentDefaultParameterNames.contains(expr.name().lexeme)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2077", DiagnosticPhase::Semantics, expr.name(),
+            "A default argument cannot reference a parameter from its "
+            "declaration.");
+        diagnostic.hints.emplace_back(
+            "Move parameter-dependent computation into the function body or "
+            "supply the value explicitly at the call site.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        currentType = SemanticType::Unknown;
+        return;
+      }
       if (resolveValueParameter(expr.name())) {
         currentType = SemanticType::UInt64;
         return;
@@ -5723,9 +5872,12 @@ public:
     if (currentStaticMemberFunction && symbol->ownerClass != 0 &&
         !symbol->staticMember) {
       report(expr.name(),
-             "Static methods cannot access instance member '" +
-                 expr.name().lexeme + "' without an object.",
-             "GTI-S2039");
+             analyzingDefaultArgument
+                 ? "A default argument cannot access instance member '" +
+                       expr.name().lexeme + "'."
+                 : "Static methods cannot access instance member '" +
+                       expr.name().lexeme + "' without an object.",
+             analyzingDefaultArgument ? "GTI-S2077" : "GTI-S2039");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -5752,6 +5904,8 @@ private:
     const FunctionDecl *declaration = nullptr;
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
+    std::size_t requiredParameterCount = 0;
+    std::vector<std::size_t> defaultArgumentEffectOwners;
     std::vector<GenericParameterInfo> genericParameters;
     std::vector<AppliedConceptRequirement> requirements;
     bool parameterPack = false;
@@ -5772,6 +5926,260 @@ private:
     SemanticType dispatchOwner = SemanticType::Unknown;
     bool compilerPrivate = false;
   };
+
+  [[nodiscard]] static std::size_t
+  requiredParameterCount(std::span<const Parameter> parameters) {
+    const auto firstDefault = std::find_if(
+        parameters.begin(), parameters.end(),
+        [](const Parameter &parameter) { return parameter.hasDefault(); });
+    return static_cast<std::size_t>(
+        std::distance(parameters.begin(), firstDefault));
+  }
+
+  [[nodiscard]] static std::vector<const Expr *>
+  omittedDefaultArguments(std::span<const Parameter> parameters,
+                          std::size_t suppliedArguments) {
+    std::vector<const Expr *> result;
+    if (suppliedArguments >= parameters.size()) {
+      return result;
+    }
+    result.reserve(parameters.size() - suppliedArguments);
+    for (std::size_t index = suppliedArguments; index < parameters.size();
+         ++index) {
+      const Parameter &parameter = parameters[index];
+      if (!parameter.defaultArgument ||
+          !parameter.defaultArgument->expression) {
+        return {};
+      }
+      result.push_back(parameter.defaultArgument->expression.get());
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<std::size_t>
+  allocateDefaultArgumentEffectOwners(std::span<const Parameter> parameters) {
+    std::vector<std::size_t> result(parameters.size(), 0);
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (parameters[index].hasDefault()) {
+        result[index] = nextDefaultArgumentEffectOwner++;
+      }
+    }
+    return result;
+  }
+
+  enum class DefaultArgumentOwnerKind {
+    Function,
+    Constructor,
+  };
+
+  void
+  recordDefaultArgumentDependencies(std::span<const Expr *const> defaults) {
+    if (currentDefaultArgumentRoot == nullptr) {
+      return;
+    }
+    std::vector<const Expr *> &dependencies =
+        defaultArgumentDependencies[currentDefaultArgumentRoot];
+    for (const Expr *dependency : defaults) {
+      if (dependency != nullptr &&
+          std::find(dependencies.begin(), dependencies.end(), dependency) ==
+              dependencies.end()) {
+        dependencies.push_back(dependency);
+      }
+    }
+  }
+
+  void validateDefaultArgumentCycles() {
+    enum class VisitState { Unvisited, Active, Complete };
+    std::unordered_map<const Expr *, VisitState> states;
+    std::vector<const Expr *> stack;
+    const auto visit = [&](const Expr *root, const auto &self) -> void {
+      states[root] = VisitState::Active;
+      stack.push_back(root);
+      const auto dependencies = defaultArgumentDependencies.find(root);
+      if (dependencies != defaultArgumentDependencies.end()) {
+        for (const Expr *dependency : dependencies->second) {
+          if (!defaultArgumentSyntax.contains(dependency)) {
+            continue;
+          }
+          const VisitState state = states[dependency];
+          if (state == VisitState::Unvisited) {
+            self(dependency, self);
+            continue;
+          }
+          if (state != VisitState::Active) {
+            continue;
+          }
+          const auto first = std::find(stack.begin(), stack.end(), dependency);
+          if (first == stack.end() ||
+              std::any_of(first, stack.end(), [&](const Expr *node) {
+                return reportedDefaultArgumentCycles.contains(node);
+              })) {
+            continue;
+          }
+          std::vector<const Expr *> cycle(first, stack.end());
+          for (const Expr *node : cycle) {
+            reportedDefaultArgumentCycles.insert(node);
+          }
+          const ParameterDefault *primary =
+              defaultArgumentSyntax.at(cycle.front());
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2077", DiagnosticPhase::Semantics, primary->equal,
+              "Default arguments form a recursive expansion cycle.");
+          for (std::size_t index = 1; index < cycle.size(); ++index) {
+            const ParameterDefault *syntax =
+                defaultArgumentSyntax.at(cycle[index]);
+            diagnostic.related.push_back(
+                {tokenSpan(syntax->equal),
+                 "This default argument participates in the cycle."});
+          }
+          diagnostic.hints.emplace_back(
+              "Break the cycle by supplying an argument in the nested call "
+              "or by moving the shared computation into a non-defaulted "
+              "helper.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+      }
+      stack.pop_back();
+      states[root] = VisitState::Complete;
+    };
+    for (const auto &[root, _] : defaultArgumentSyntax) {
+      if (states[root] == VisitState::Unvisited) {
+        visit(root, visit);
+      }
+    }
+  }
+
+  void analyzeParameterDefaults(std::span<const Parameter> parameters,
+                                std::span<const SemanticType> parameterTypes,
+                                std::span<const std::size_t> effectOwners,
+                                DefaultArgumentOwnerKind ownerKind,
+                                bool defaultsPermitted,
+                                std::string_view unsupportedContext,
+                                bool hasParameterPack,
+                                bool validateDeclarationRules) {
+    const std::size_t firstDefault = requiredParameterCount(parameters);
+    const Parameter *firstDefaultParameter =
+        firstDefault < parameters.size() ? &parameters[firstDefault] : nullptr;
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      const Parameter &parameter = parameters[index];
+      if (!parameter.hasDefault()) {
+        if (validateDeclarationRules && firstDefaultParameter != nullptr &&
+            index > firstDefault) {
+          const Token &location = parameter.name.lexeme.empty()
+                                      ? parameter.type.name.last()
+                                      : parameter.name;
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2077", DiagnosticPhase::Semantics, location,
+              "A required parameter cannot follow a parameter with a "
+              "default argument.");
+          diagnostic.related.push_back(
+              {tokenSpan(firstDefaultParameter->defaultArgument->equal),
+               "The default-argument suffix begins here."});
+          diagnostic.hints.emplace_back(
+              "Move required parameters before every defaulted parameter or "
+              "give this parameter a default argument.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+        continue;
+      }
+
+      const ParameterDefault &syntax = *parameter.defaultArgument;
+      if (validateDeclarationRules) {
+        defaultArgumentSyntax.insert_or_assign(syntax.expression.get(),
+                                               &syntax);
+      }
+      if (validateDeclarationRules && !defaultsPermitted) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2077", DiagnosticPhase::Semantics, syntax.equal,
+            "Default arguments are not supported on " +
+                std::string(unsupportedContext) + ".");
+        diagnostic.hints.emplace_back(
+            "Use an ordinary GTI function, non-polymorphic method, or "
+            "ordinary constructor and supply any boundary arguments "
+            "explicitly.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+      if (validateDeclarationRules && (hasParameterPack || parameter.pack)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2077", DiagnosticPhase::Semantics, syntax.equal,
+            "Default arguments cannot be combined with a parameter pack.");
+        diagnostic.hints.emplace_back(
+            "Keep the variadic declaration explicit, or use a fixed trailing "
+            "parameter list for defaults.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+
+      const SemanticType parameterType = index < parameterTypes.size()
+                                             ? parameterTypes[index]
+                                             : SemanticType::Unknown;
+      if (parameterType.kind == SemanticType::Reference ||
+          parameterType.kind == SemanticType::RawPointer ||
+          parameterType == SemanticType::CString ||
+          (parameterType != SemanticType::Unknown &&
+           parameterType.kind != SemanticType::TypeParameter &&
+           typeTraits(parameterType).containsBorrowedState)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2077", DiagnosticPhase::Semantics, syntax.equal,
+            "A default argument must initialize an owned or plain value; "
+            "reference, raw-pointer, C-string, and borrowed-state parameters "
+            "remain explicit.");
+        diagnostic.hints.emplace_back(
+            "Pass the borrowed boundary explicitly so its origin and lifetime "
+            "remain visible at the call site.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+
+      const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
+      if (validateDeclarationRules && index < effectOwners.size() &&
+          effectOwners[index] != 0) {
+        currentProgramEffectOwner = {
+            .kind = ownerKind == DefaultArgumentOwnerKind::Function
+                        ? ProgramEffectOwnerKind::FunctionDefaultArgument
+                        : ProgramEffectOwnerKind::ConstructorDefaultArgument,
+            .id = effectOwners[index]};
+      }
+      const bool enclosingDefaultArgument = analyzingDefaultArgument;
+      const Expr *enclosingDefaultArgumentRoot = currentDefaultArgumentRoot;
+      std::unordered_set<std::string> enclosingDefaultParameterNames =
+          std::move(currentDefaultParameterNames);
+      const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
+      analyzingDefaultArgument = true;
+      currentDefaultArgumentRoot = syntax.expression.get();
+      currentDefaultParameterNames.clear();
+      for (const Parameter &candidate : parameters) {
+        if (!candidate.name.lexeme.empty()) {
+          currentDefaultParameterNames.insert(candidate.name.lexeme);
+        }
+      }
+      // Defaults resolve in declaration scope and never receive an implicit
+      // object. Static members remain available through the class scope.
+      currentStaticMemberFunction = true;
+      const SemanticType actual =
+          analyzeInitializer(syntax.expression, parameterType);
+      currentStaticMemberFunction = enclosingStaticMemberFunction;
+      currentDefaultParameterNames = std::move(enclosingDefaultParameterNames);
+      currentDefaultArgumentRoot = enclosingDefaultArgumentRoot;
+      analyzingDefaultArgument = enclosingDefaultArgument;
+      currentProgramEffectOwner = enclosingEffectOwner;
+
+      if (parameterType != SemanticType::Unknown &&
+          parameterType.kind != SemanticType::TypeParameter &&
+          parameterType.kind != SemanticType::TypePack &&
+          actual != SemanticType::Unknown &&
+          !callArgumentMatches(parameterType, actual, syntax.expression)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2077", DiagnosticPhase::Semantics,
+            expressionToken(syntax.expression),
+            "Default argument for parameter " + std::to_string(index + 1) +
+                " has type '" + typeSpelling(actual) +
+                "' but the parameter requires '" + typeSpelling(parameterType) +
+                "'.");
+        diagnostic.related.push_back({tokenSpan(parameter.type.name.last()),
+                                      "The parameter type is declared here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+  }
 
   struct FunctionReturnBorrowSummary {
     BorrowOriginKind origin = BorrowOriginKind::None;
@@ -6472,12 +6880,17 @@ private:
       return constexprFailure({},
                               ConstantEvaluationFailure::UnsupportedExpression);
     }
+    return evaluateConstexprExpression(*expression, context);
+  }
+
+  [[nodiscard]] ConstexprEvaluation
+  evaluateConstexprExpression(const Expr &source,
+                              ConstexprExecutionContext &context) {
     if (context.steps++ >= constexprExpressionStepLimit) {
-      return constexprFailure(expressionToken(expression),
+      return constexprFailure(expressionToken(source),
                               ConstantEvaluationFailure::ResourceLimit);
     }
 
-    const Expr &source = *expression;
     const SemanticType sourceType = semanticModel.typeOf(source);
     if (dynamic_cast<const LayoutQuery *>(&source) != nullptr) {
       if (const std::optional<ConstantValue> value =
@@ -6833,24 +7246,38 @@ private:
             "The constexpr definition of '" + declaration->name().lexeme +
                 "' must be available before this constant-evaluated call.");
       }
-      if (call->arguments().size() != resolved->parameterTypes.size()) {
+      if (call->arguments().size() + resolved->defaultArguments.size() !=
+          resolved->parameterTypes.size()) {
         return constexprFailure(
             call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
             "The resolved constexpr call has an invalid argument count.");
       }
 
+      std::vector<const Expr *> argumentExpressions;
+      argumentExpressions.reserve(resolved->parameterTypes.size());
+      for (const ExprPtr &argument : call->arguments()) {
+        argumentExpressions.push_back(argument.get());
+      }
+      argumentExpressions.insert(argumentExpressions.end(),
+                                 resolved->defaultArguments.begin(),
+                                 resolved->defaultArguments.end());
       std::vector<ConstantValue> arguments;
-      arguments.reserve(call->arguments().size());
-      for (std::size_t index = 0; index < call->arguments().size(); ++index) {
+      arguments.reserve(argumentExpressions.size());
+      for (std::size_t index = 0; index < argumentExpressions.size(); ++index) {
+        if (argumentExpressions[index] == nullptr) {
+          return constexprFailure(
+              call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
+              "The resolved constexpr call has a missing default argument.");
+        }
         ConstexprEvaluation argument =
-            evaluateConstexprExpression(call->arguments()[index], context);
+            evaluateConstexprExpression(*argumentExpressions[index], context);
         if (!argument) {
           return argument;
         }
         const ConstantEvaluation converted = convertConstantToType(
             *argument.value, resolved->parameterTypes[index]);
         if (!converted) {
-          return constexprFailure(expressionToken(call->arguments()[index]),
+          return constexprFailure(expressionToken(*argumentExpressions[index]),
                                   converted.failure);
         }
         arguments.push_back(*converted.value);
@@ -12475,7 +12902,8 @@ private:
                        const std::vector<SemanticType> &arguments) {
     if (!function.parameterPack) {
       return !hasPackExpansion(arguments) &&
-             arguments.size() == function.parameterTypes.size();
+             arguments.size() >= function.requiredParameterCount &&
+             arguments.size() <= function.parameterTypes.size();
     }
     const std::size_t fixed = fixedParameterCount(function);
     if (hasPackExpansion(arguments)) {
@@ -13348,6 +13776,12 @@ private:
         *constraintFailure = *failure;
       }
       return false;
+    }
+    // A concrete pack expansion replaces the symbolic final parameter with
+    // zero or more ordinary parameters. Defaults and packs cannot coexist, so
+    // every concrete parameter remains required after this substitution.
+    if (candidate.parameterPack) {
+      resolved.requiredParameterCount = resolved.parameterTypes.size();
     }
     resolved.parameterPack = false;
     return true;
@@ -14332,6 +14766,9 @@ private:
       if (declaration.parameters()[index].pack) {
         result += "...";
       }
+      if (declaration.parameters()[index].hasDefault()) {
+        result += " = <default>";
+      }
     }
     result += ')';
     if (declaration.receiverMutability() == ReceiverMutability::Mutable) {
@@ -14360,6 +14797,9 @@ private:
         result += "mut ";
       }
       result += typeRefSpelling(parameter.type);
+      if (parameter.hasDefault()) {
+        result += " = <default>";
+      }
     }
     result += ')';
     return result;
@@ -15182,6 +15622,26 @@ private:
     recordSelectedCallOccurrence(call, std::move(resolved));
   }
 
+  void recordDefaultArgumentEffects(const Call &call,
+                                    const FunctionCandidate &function) {
+    if (function.declaration == nullptr ||
+        call.arguments().size() >= function.parameterTypes.size()) {
+      return;
+    }
+    const SourceSpan callSite = tokenSpan(call.paren());
+    for (std::size_t index = call.arguments().size();
+         index < function.parameterTypes.size(); ++index) {
+      if (index >= function.defaultArgumentEffectOwners.size() ||
+          function.defaultArgumentEffectOwners[index] == 0) {
+        continue;
+      }
+      addProgramEffectEdge(
+          {.kind = ProgramEffectOwnerKind::FunctionDefaultArgument,
+           .id = function.defaultArgumentEffectOwners[index]},
+          callSite);
+    }
+  }
+
   [[nodiscard]] bool
   containsCAbiRawPointer(const SemanticType &type,
                          std::unordered_set<ClassId> &visiting) const {
@@ -15239,6 +15699,7 @@ private:
       }
     }
     recordCallableForwardings(call, function);
+    recordDefaultArgumentEffects(call, function);
     const FunctionInfo *declarationInfo =
         semanticModel.findFunction(function.id);
     if (declarationInfo == nullptr && instanceBaseModel != nullptr) {
@@ -15256,11 +15717,18 @@ private:
     const std::optional<BorrowOriginPlace> returnBorrowPlace =
         declarationInfo == nullptr ? function.returnBorrowPlace
                                    : declarationInfo->returnBorrowPlace;
+    std::vector<const Expr *> defaultArguments =
+        function.declaration == nullptr
+            ? std::vector<const Expr *>{}
+            : omittedDefaultArguments(function.declaration->parameters(),
+                                      call.arguments().size());
+    recordDefaultArgumentDependencies(defaultArguments);
     ResolvedCallInfo resolved{
         .function = function.id,
         .declaration = function.declaration,
         .returnType = function.returnType,
         .parameterTypes = function.parameterTypes,
+        .defaultArguments = std::move(defaultArguments),
         .typeArguments = std::move(typeArguments),
         .valueArguments = std::move(valueArguments),
         .requirements = function.requirements,
@@ -15584,7 +16052,7 @@ private:
       const std::vector<SemanticType> &parameterTypes,
       const ExprList &arguments, ContextualCallArguments &analysis,
       const Token &location, std::string_view callable) {
-    if (parameterTypes.size() != arguments.size() ||
+    if (parameterTypes.size() < arguments.size() ||
         analysis.types.size() != arguments.size() ||
         analysis.deferred.size() != arguments.size()) {
       return false;
@@ -15948,7 +16416,8 @@ private:
     std::vector<ViableConstructor> viable;
     std::vector<const ConstructorInfo *> privateViable;
     for (const ConstructorInfo &constructor : owner.constructors) {
-      if (constructor.parameterTypes.size() != arguments.size()) {
+      if (arguments.size() < constructor.requiredParameterCount ||
+          arguments.size() > constructor.parameterTypes.size()) {
         continue;
       }
       GenericSubstitution constructorSubstitution = substitution;
@@ -15988,10 +16457,14 @@ private:
       std::vector<SemanticType> parameterTypes;
       parameterTypes.reserve(constructor.parameterTypes.size());
       bool exact = true;
-      for (std::size_t index = 0; index < arguments.size(); ++index) {
+      for (std::size_t index = 0; index < constructor.parameterTypes.size();
+           ++index) {
         const SemanticType parameterType = substituteType(
             constructor.parameterTypes[index], constructorSubstitution);
         parameterTypes.emplace_back(parameterType);
+        if (index >= arguments.size()) {
+          continue;
+        }
         const AnalyzedCallArgument &argument = arguments[index];
         const bool matches =
             requireExactNullParameter
@@ -16278,6 +16751,14 @@ private:
     }
     validateCallPlaceExclusivityImpl(concreteParameterTypes, concreteArguments,
                                      paren);
+    std::vector<const Expr *> defaultArguments =
+        selected.constructor == nullptr ||
+                selected.constructor->declaration == nullptr
+            ? std::vector<const Expr *>{}
+            : omittedDefaultArguments(
+                  selected.constructor->declaration->parameters(),
+                  arguments.size());
+    recordDefaultArgumentDependencies(defaultArguments);
     semanticModel.record(
         construction,
         ResolvedConstructionInfo{
@@ -16290,6 +16771,7 @@ private:
             .typeArguments = selected.typeArguments,
             .valueArguments = selected.valueArguments,
             .parameterTypes = selected.parameterTypes,
+            .defaultArguments = std::move(defaultArguments),
             .borrowOrigin =
                 selected.constructor != nullptr &&
                         selected.constructor->borrowParameter
@@ -18150,6 +18632,9 @@ private:
     currentFunctionDeclaration = nullptr;
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
+    analyzingDefaultArgument = false;
+    currentDefaultArgumentRoot = nullptr;
+    currentDefaultParameterNames.clear();
     analyzingCallCallee = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
@@ -18378,6 +18863,7 @@ private:
         .declaration = &function,
         .returnType =
             typeOf(function.returnType(), function.returnMutability(), scope),
+        .requiredParameterCount = requiredParameterCount(function.parameters()),
         .genericParameters = genericParameters,
         .requirements = resolveFunctionRequirements(function, scope),
         .parameterPack = !function.parameters().empty() &&
@@ -18385,6 +18871,8 @@ private:
         .receiverMutability = function.receiverMutability()};
     if (registered != nullptr) {
       candidate.id = registered->id;
+      candidate.defaultArgumentEffectOwners =
+          registered->defaultArgumentEffectOwners;
       candidate.staticMember = registered->staticMember;
       candidate.internalLinkage = registered->internalLinkage;
       candidate.intrinsic = registered->intrinsic;
@@ -20895,6 +21383,10 @@ private:
                 .sourceUnit = currentSourceUnit,
                 .declaration = function,
                 .qualifiedName = qualifiedName(scope, function->name().lexeme),
+                .requiredParameterCount =
+                    requiredParameterCount(function->parameters()),
+                .defaultArgumentEffectOwners =
+                    allocateDefaultArgumentEffectOwners(function->parameters()),
                 .entryPoint = !classMember && scope.empty() &&
                               function->name().lexeme == "main" &&
                               (sourceGraph == nullptr ||
@@ -21283,18 +21775,35 @@ private:
 
   [[nodiscard]] static const ConstructorInfo *
   defaultConstructor(const ClassInfo &owner) {
-    const auto found =
-        std::find_if(owner.constructors.begin(), owner.constructors.end(),
-                     [](const ConstructorInfo &constructor) {
-                       return constructor.parameterTypes.empty();
-                     });
-    return found == owner.constructors.end() ? nullptr : &*found;
+    const ConstructorInfo *result = nullptr;
+    for (const ConstructorInfo &constructor : owner.constructors) {
+      if (constructor.requiredParameterCount != 0) {
+        continue;
+      }
+      if (result != nullptr) {
+        return nullptr;
+      }
+      result = &constructor;
+    }
+    return result;
+  }
+
+  [[nodiscard]] static std::size_t
+  defaultConstructorCandidateCount(const ClassInfo &owner) {
+    return static_cast<std::size_t>(
+        std::count_if(owner.constructors.begin(), owner.constructors.end(),
+                      [](const ConstructorInfo &constructor) {
+                        return constructor.requiredParameterCount == 0;
+                      }));
   }
 
   [[nodiscard]] bool classCanGenerateDefaultConstructor(
       const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const {
     if (owner.kind == ClassKind::Union) {
       return owner.unionLayout.has_value();
+    }
+    if (defaultConstructorCandidateCount(owner) != 0) {
+      return false;
     }
     if (!fieldsHaveDeclarationInitializers(owner)) {
       return false;
@@ -21368,15 +21877,21 @@ private:
           constructor.compilerPrivate) {
         continue;
       }
-      if (constructor.parameterTypes.size() != argumentTypes.size()) {
+      if (argumentTypes.size() < constructor.requiredParameterCount ||
+          argumentTypes.size() > constructor.parameterTypes.size()) {
         continue;
       }
       std::vector<SemanticType> parameterTypes;
+      parameterTypes.reserve(constructor.parameterTypes.size());
       bool exact = true;
-      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      for (std::size_t index = 0; index < constructor.parameterTypes.size();
+           ++index) {
         const SemanticType parameter =
             substituteType(constructor.parameterTypes[index], substitution);
         parameterTypes.emplace_back(parameter);
+        if (index >= argumentTypes.size()) {
+          continue;
+        }
         if (!callArgumentMatches(parameter, argumentTypes[index],
                                  initializer.arguments[index])) {
           exact = false;
@@ -21455,10 +21970,19 @@ private:
                                ? nullptr
                                : selected.constructor->declaration,
             .parameterTypes = selected.parameterTypes,
+            .defaultArguments =
+                selected.constructor == nullptr ||
+                        selected.constructor->declaration == nullptr
+                    ? std::vector<const Expr *>{}
+                    : omittedDefaultArguments(
+                          selected.constructor->declaration->parameters(),
+                          initializer.arguments.size()),
             .generatedDefault = selected.generatedDefault});
     recordProgramArgumentBoundaryEffects(selected.parameterTypes,
                                          initializer.arguments);
     const SourceSpan span = tokenSpan(location);
+    recordProgramConstructorDefaultArgumentEffects(
+        selected.constructor, initializer.arguments.size(), span);
     if (selected.generatedDefault) {
       recordProgramDefaultConstructionEffects(baseType, span);
     } else {
@@ -22823,6 +23347,10 @@ private:
                              .owner = owner.id,
                              .declaration = constructor,
                              .access = access};
+        info.requiredParameterCount =
+            requiredParameterCount(constructor->parameters());
+        info.defaultArgumentEffectOwners =
+            allocateDefaultArgumentEffectOwners(constructor->parameters());
         for (const GenericParameter &constructorParameter :
              constructor->genericParameters()) {
           for (const GenericParameterInfo &classParameter :
@@ -23238,6 +23766,9 @@ private:
                      .namespaceScope = namespaceScope,
                      .returnType = candidate.returnType,
                      .parameterTypes = candidate.parameterTypes,
+                     .requiredParameterCount = candidate.requiredParameterCount,
+                     .defaultArgumentEffectOwners =
+                         candidate.defaultArgumentEffectOwners,
                      .genericParameters = candidate.genericParameters,
                      .requirements = candidate.requirements,
                      .parameterPack = candidate.parameterPack,
@@ -23548,6 +24079,26 @@ private:
     return nullptr;
   }
 
+  void recordProgramConstructorDefaultArgumentEffects(
+      const ConstructorInfo *constructor, std::size_t suppliedArguments,
+      const SourceSpan &span) {
+    if (constructor == nullptr ||
+        suppliedArguments >= constructor->parameterTypes.size()) {
+      return;
+    }
+    for (std::size_t index = suppliedArguments;
+         index < constructor->parameterTypes.size(); ++index) {
+      if (index >= constructor->defaultArgumentEffectOwners.size() ||
+          constructor->defaultArgumentEffectOwners[index] == 0) {
+        continue;
+      }
+      addProgramEffectEdge(
+          {.kind = ProgramEffectOwnerKind::ConstructorDefaultArgument,
+           .id = constructor->defaultArgumentEffectOwners[index]},
+          span);
+    }
+  }
+
   void recordProgramDefaultConstructionEffects(
       const SemanticType &type, const SourceSpan &span,
       std::unordered_set<ClassId> &visiting) {
@@ -23584,6 +24135,7 @@ private:
       recordProgramDefaultConstructionEffects(baseType, span, visiting);
     };
     if (const ConstructorInfo *declared = defaultConstructor(owner)) {
+      recordProgramConstructorDefaultArgumentEffects(declared, 0, span);
       if (declared->declaration != nullptr &&
           declared->declaration->body() != nullptr) {
         addProgramEffectEdge(
@@ -23766,14 +24318,20 @@ private:
     }
     if (const ResolvedConstructionInfo *construction =
             semanticModel.findConstruction(expression)) {
+      std::size_t suppliedArguments = 0;
       if (const auto *call = dynamic_cast<const Call *>(&expression)) {
+        suppliedArguments = call->arguments().size();
         recordProgramArgumentBoundaryEffects(construction->parameterTypes,
                                              call->arguments());
       } else if (const auto *initializer =
                      dynamic_cast<const DirectInitializer *>(&expression)) {
+        suppliedArguments = initializer->arguments().size();
         recordProgramArgumentBoundaryEffects(construction->parameterTypes,
                                              initializer->arguments());
       }
+      recordProgramConstructorDefaultArgumentEffects(
+          programConstructor(construction->constructor), suppliedArguments,
+          tokenSpan(expressionToken(expression)));
       if (construction->constructedType.kind == SemanticType::Class &&
           construction->constructedType.classId != 0) {
         if (hasOpenProgramCleanupShape(construction->constructedType)) {
@@ -29524,6 +30082,11 @@ private:
   std::unordered_map<const ConstructorDecl *, std::vector<GenericParameterInfo>>
       constructorGenericParameters;
   std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
+  std::unordered_map<const Expr *, const ParameterDefault *>
+      defaultArgumentSyntax;
+  std::unordered_map<const Expr *, std::vector<const Expr *>>
+      defaultArgumentDependencies;
+  std::unordered_set<const Expr *> reportedDefaultArgumentCycles;
   std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
   std::unordered_map<std::string, const VariableDecl *>
       rootNativeStorageSymbols;
@@ -29561,6 +30124,9 @@ private:
   std::optional<ClassId> currentClass;
   bool analyzingFieldInitializer = false;
   bool analyzingConstructorInitializer = false;
+  bool analyzingDefaultArgument = false;
+  const Expr *currentDefaultArgumentRoot = nullptr;
+  std::unordered_set<std::string> currentDefaultParameterNames;
   bool analyzingCallCallee = false;
   bool analyzingPackFoldElement = false;
   bool allowPayloadEnumeratorReference = false;
@@ -29593,6 +30159,7 @@ private:
   std::size_t programStoragePlaceUseDepth = 0;
   GenericParameterId nextGenericParameterId = 1;
   ConstructorId nextConstructorId = 1;
+  std::size_t nextDefaultArgumentEffectOwner = 1;
   FunctionId nextFunctionId = 1;
   LambdaId nextLambdaId = 1;
   SemanticLoanId nextSemanticLoanId = 1;

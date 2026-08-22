@@ -3408,7 +3408,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v37\n") &&
+  expect(dump.starts_with("mir-body-v38\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&

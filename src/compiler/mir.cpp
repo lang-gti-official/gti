@@ -4059,6 +4059,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (!callable && !instruction.parameterTypes.empty()) ||
         (callInput != instruction.callInputRole.has_value()) ||
         (callInput && instruction.callSite == 0) ||
+        (!callInput && instruction.defaultArgument) ||
+        (instruction.defaultArgument &&
+         instruction.callInputRole != MirCallInputRole::Argument) ||
         (!callInput && instruction.preparedParameterDrop) ||
         (instruction.kind != MirInstructionKind::Call &&
          instruction.kind != MirInstructionKind::Construct &&
@@ -6371,6 +6374,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }
         inputs.push_back(receiver);
       }
+      bool defaultArgumentSuffix = false;
       for (std::size_t index = 0; index < invocation.operands.size(); ++index) {
         const MirInstruction *argument =
             callInputFor(invocation.operands[index]);
@@ -6403,6 +6407,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                          "ordered invocation argument is not prepared by its "
                          "exact "
                          "indexed input",
+                         block.id, invocation.id);
+        }
+        if (argument->defaultArgument) {
+          defaultArgumentSuffix = true;
+        } else if (defaultArgumentSuffix) {
+          return failure(body, owner,
+                         "ordered invocation default arguments must form a "
+                         "trailing parameter suffix",
                          block.id, invocation.id);
         }
         inputs.push_back(argument);
@@ -13945,6 +13957,9 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
          initializerIndex < instance.initializers.size(); ++initializerIndex) {
       const MirConstructorInitializer &initializer =
           instance.initializers[initializerIndex];
+      if (initializer.explicitArgumentCount > initializer.arguments.size()) {
+        exactInitializerStages = false;
+      }
       const auto field =
           constructorOwner == nullptr
               ? std::vector<MirClassFieldInfo>::const_iterator{}

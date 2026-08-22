@@ -775,6 +775,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/56-sum-types.gti"
     )
     add_test(
+      NAME default_parameters_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/default_parameter_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/default_parameters.gti"
+    )
+    add_test(
       NAME mir_backend_first_family_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_runtime_test.py"
@@ -939,7 +946,7 @@ if(BUILD_TESTING)
         mir_backend_owned_lifecycle_runtime
         mir_class_value_lifecycle_runtime
         mir_backend_scalar_failure_callgraph_runtime
-        random_engine_runtime
+        random_engine_runtime default_parameters_runtime
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )

@@ -223,19 +223,6 @@ struct BaseSpecifier {
   TypeRef type;
 };
 
-struct Parameter {
-  Parameter(TypeRef type, Token name,
-            Mutability mutability = Mutability::Immutable,
-            std::optional<Token> pack = std::nullopt)
-      : type(std::move(type)), name(std::move(name)), mutability(mutability),
-        pack(std::move(pack)) {}
-
-  TypeRef type;
-  Token name;
-  Mutability mutability;
-  std::optional<Token> pack;
-};
-
 struct GenericParameter {
   Token name;
   std::optional<Token> pack;
@@ -389,6 +376,39 @@ public:
 
 using ExprPtr = std::unique_ptr<Expr>;
 using ExprList = std::vector<ExprPtr>;
+
+struct ParameterDefault {
+  ParameterDefault(Token equal, ExprPtr expression)
+      : equal(std::move(equal)), expression(std::move(expression)) {}
+  ParameterDefault(ParameterDefault &&) = default;
+  ParameterDefault(const ParameterDefault &) = delete;
+  ParameterDefault &operator=(ParameterDefault &&) = default;
+  ParameterDefault &operator=(const ParameterDefault &) = delete;
+
+  Token equal;
+  ExprPtr expression;
+};
+
+struct Parameter {
+  Parameter(TypeRef type, Token name,
+            Mutability mutability = Mutability::Immutable,
+            std::optional<Token> pack = std::nullopt,
+            std::optional<ParameterDefault> defaultArgument = std::nullopt)
+      : type(std::move(type)), name(std::move(name)), mutability(mutability),
+        pack(std::move(pack)), defaultArgument(std::move(defaultArgument)) {}
+  Parameter(Parameter &&) = default;
+  Parameter(const Parameter &) = delete;
+  Parameter &operator=(Parameter &&) = default;
+  Parameter &operator=(const Parameter &) = delete;
+
+  [[nodiscard]] bool hasDefault() const { return defaultArgument.has_value(); }
+
+  TypeRef type;
+  Token name;
+  Mutability mutability;
+  std::optional<Token> pack;
+  std::optional<ParameterDefault> defaultArgument;
+};
 
 class StmtVisitor {
 public:

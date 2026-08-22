@@ -150,6 +150,7 @@ struct HirCallArgument {
   HirValueId value = 0;
   SemanticType parameterType = SemanticType::Unknown;
   HirCallInputKind kind = HirCallInputKind::Value;
+  bool defaultArgument = false;
 };
 
 struct HirCallPlan {
@@ -451,6 +452,7 @@ struct HirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
+  std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;

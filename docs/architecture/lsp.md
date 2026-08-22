@@ -105,6 +105,11 @@ and derives the active parameter from the recorded separators. Synthesized
 calls carry no geometry and offer no help; a call whose occurrence cannot
 be presented in loaded source is skipped fail-closed.
 
+Signature rendering appends ` = <default>` to parameters whose declarations
+contain a default expression. The placeholder deliberately avoids reprinting
+source expressions while exposing optionality consistently in hover, outline,
+and signature help; the protocol layer does not infer defaults from arity.
+
 The checked integer functions are ordinary `<std/numeric>` declarations.
 Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer

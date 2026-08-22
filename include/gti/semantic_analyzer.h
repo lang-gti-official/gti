@@ -876,6 +876,8 @@ struct FunctionInfo {
   std::vector<std::string> namespaceScope;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::size_t requiredParameterCount = 0;
+  std::vector<std::size_t> defaultArgumentEffectOwners;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<AppliedConceptRequirement> requirements;
   bool parameterPack = false;
@@ -1110,6 +1112,8 @@ struct ConstructorInfo {
   AccessModifier access = AccessModifier::Public;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<SemanticType> parameterTypes;
+  std::size_t requiredParameterCount = 0;
+  std::vector<std::size_t> defaultArgumentEffectOwners;
   std::optional<std::size_t> borrowParameter;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool compilerPrivate = false;
@@ -1146,6 +1150,7 @@ struct ResolvedConstructionInfo {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
+  std::vector<const Expr *> defaultArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -1166,6 +1171,7 @@ struct ResolvedConstructorInitializerInfo {
   ConstructorId constructor = 0;
   const ConstructorDecl *declaration = nullptr;
   std::vector<SemanticType> parameterTypes;
+  std::vector<const Expr *> defaultArguments;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
@@ -1188,6 +1194,7 @@ struct ResolvedCallInfo {
   const FunctionDecl *declaration = nullptr;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<const Expr *> defaultArguments;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<AppliedConceptRequirement> requirements;

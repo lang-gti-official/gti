@@ -100,6 +100,14 @@ compiler IDs. Important facts include:
 - the semantic analysis seal, exact program-initialization plan, exact
   program-constant substitutions, and the selected hosted-entry plan.
 
+`FunctionInfo` and `ConstructorInfo` retain the required parameter count and a
+separate program-effect owner for each declared default expression. Selected
+`ResolvedCallInfo`, `ResolvedConstructionInfo`, and constructor-initializer
+records carry the exact omitted default-expression suffix. The analyzer checks
+that suffix in declaration scope, validates its type and supported ownership
+shape, rejects recursive expansion, and closes each used default's effects into
+the caller. Consumers do not recover defaults by recounting AST arguments.
+
 The `TargetInfo` supplied before analysis also carries the one GTI-owned scalar
 `TargetDataLayout`. `Frontend` rejects an unsupported value before constructing
 `SemanticVisitor`, so target condition selection, HIR lowering, optimization,
@@ -193,6 +201,12 @@ instances. Concrete substitutions revalidate ownership, value parameters,
 packs, selected construction, capabilities, callables, and borrowed-return
 origins. HIR is not a second type checker; it asks semantics for the concrete
 facts it needs.
+
+Default expressions do not supply missing generic inference evidence. Once
+written arguments select a concrete instance, instance analysis rechecks the
+selected declaration's defaults under that exact substitution. HIR keeps the
+resulting instance model alive while lowering caller-side default values; it
+does not type-check a symbolic expression itself.
 
 For an ordinary named call or construction, semantic analysis may defer a
 brace argument and every following argument until candidate parameter shapes

@@ -547,12 +547,16 @@ module.exports = grammar({
     parameter_clause: ($) => seq("(", optional(commaSep1($.parameter)), ")"),
 
     parameter: ($) =>
-      seq(
-        optional(field("mutable", "mut")),
-        field("type", $.type),
-        optional(field("pack", "...")),
-        optional(field("name", $.identifier)),
-        repeat(field("extent", $.array_extent)),
+      prec(
+        1,
+        seq(
+          optional(field("mutable", "mut")),
+          field("type", $.type),
+          optional(field("pack", "...")),
+          optional(field("name", $.identifier)),
+          repeat(field("extent", $.array_extent)),
+          optional(seq("=", field("default", $._expression_not_comma))),
+        ),
       ),
 
     variable_declaration: ($) =>

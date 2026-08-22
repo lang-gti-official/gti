@@ -26,6 +26,7 @@
 #include <memory>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 
 namespace {
@@ -1174,7 +1175,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v37\n") &&
+  expect(dump.starts_with("mir-body-v38\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5903,7 +5904,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v37\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v38\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7921,7 +7922,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v37 ") &&
+  expect(mirDump.starts_with("mir-v38 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -24501,7 +24502,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v37 ") &&
+             mirDump.starts_with("mir-v38 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -25587,6 +25588,456 @@ int main() {
          "formatter should produce stable C++-style scoped enum layout");
   expect(lang::Formatter().format(formatted) == formatted,
          "scoped enum formatting should be idempotent");
+}
+
+void testDefaultParameters() {
+  {
+    lang::Lexer lexer;
+    lang::Parser parser(lexer.scan(
+        "int choose(int required, int fallback = 2) { return required; }"));
+    const lang::Program parsed = parser.parse();
+    const auto *function = parsed.declarations().empty()
+                               ? nullptr
+                               : dynamic_cast<const lang::FunctionDecl *>(
+                                     parsed.declarations().front().get());
+    expect(!parser.hadError() && function != nullptr &&
+               function->parameters().size() == 2 &&
+               !function->parameters()[0].hasDefault() &&
+               function->parameters()[1].hasDefault(),
+           "the parser should retain a trailing default expression on its "
+           "parameter");
+  }
+
+  const std::string source = R"(
+mut int side_effects = 0;
+
+int advance() {
+  side_effects += 1;
+  return side_effects;
+}
+
+int ordinary(int first, int second = advance(), int third = advance()) {
+  return first + second + third;
+}
+
+class Token {
+public:
+  Token() {}
+  int method(int value = advance()) { return value; }
+  static int static_method(int value = advance()) { return value; }
+};
+
+int consume(Token token = Token()) { return 11; }
+
+class Base {
+public:
+  Base(int value = 8) {}
+};
+
+class Derived : public Base {
+public:
+  Derived() {}
+};
+
+T generic_default<T>(T value = 7) { return value; }
+
+constexpr int constant_default(int value = 6) { return value; }
+constexpr int folded = constant_default();
+
+int main() {
+  int omitted = ordinary(1);
+  int explicit_values = ordinary(1, 8, 9);
+  Token token = Token();
+  int method_value = token.method();
+  int static_value = Token::static_method();
+  int owned_value = consume();
+  Derived derived = Derived();
+  int generic_value = generic_default<int>();
+  return omitted + explicit_values + method_value + static_value +
+         owned_value + generic_value + folded;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("default-parameters.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected default-parameter diagnostic ["
+                << diagnostic.code << "]: " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.hir.valid() &&
+             frontend.mirValid && frontend.mir.valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "free-function, method, constructor, base-constructor, owned, "
+         "generic, and constexpr defaults should lower through verified MIR");
+
+  const lang::FunctionDecl *ordinary =
+      findTopLevelFunction(frontend.program, "ordinary");
+  const lang::FunctionInfo *ordinaryInfo =
+      ordinary == nullptr ? nullptr
+                          : frontend.semantics.findFunction(*ordinary);
+  if (ordinaryInfo != nullptr) {
+    const lang::SignaturePrinter signatures(frontend.semantics);
+    expect(
+        signatures.function(*ordinaryInfo) ==
+                "int32_t ordinary(int32_t first, int32_t second = <default>, "
+                "int32_t third = <default>)" &&
+            signatures.parameterLabels(ordinaryInfo->parameterTypes,
+                                       &ordinary->parameters(), false) ==
+                std::vector<std::string>{"int32_t first",
+                                         "int32_t second = <default>",
+                                         "int32_t third = <default>"},
+        "compiler-owned signatures should expose which trailing "
+        "parameters have defaults");
+  } else {
+    expect(false, "the default-parameter fixture should retain ordinary()");
+  }
+
+  const std::size_t omittedCall = source.rfind("ordinary(1)");
+  const std::optional<lang::SignatureHelpInfo> signatureHelp =
+      lang::LanguageQueries().signatureHelp(
+          frontend, frontend.sourceGraph.entryUnit(),
+          omittedCall + std::string("ordinary(").size());
+  expect(signatureHelp &&
+             signatureHelp->label ==
+                 "int32_t ordinary(int32_t first, int32_t second = <default>, "
+                 "int32_t third = <default>)" &&
+             signatureHelp->parameterLabels.size() == 3 &&
+             signatureHelp->parameterLabels[1] == "int32_t second = <default>",
+         "signature help should retain omitted parameters and their default "
+         "markers");
+
+  const lang::VariableDecl *folded = nullptr;
+  for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
+    const auto *variable =
+        dynamic_cast<const lang::VariableDecl *>(declaration.get());
+    if (variable != nullptr && variable->name().lexeme == "folded") {
+      folded = variable;
+      break;
+    }
+  }
+  const lang::BindingInfo *foldedBinding =
+      folded == nullptr ? nullptr : frontend.semantics.findBinding(*folded);
+  expect(foldedBinding != nullptr && foldedBinding->constant.has_value(),
+         "constexpr evaluation should evaluate an omitted default at its "
+         "call site");
+
+  std::size_t hirDefaultInputs = 0;
+  bool omittedOrdinaryHasTwoDefaults = false;
+  bool explicitOrdinaryHasNoDefaults = false;
+  const auto inspectHirBody = [&](const lang::HirBody &body) {
+    for (const lang::HirValue &value : body.values) {
+      if (!value.callPlan) {
+        continue;
+      }
+      const std::size_t defaults = std::count_if(
+          value.callPlan->arguments.begin(), value.callPlan->arguments.end(),
+          [](const lang::HirCallArgument &argument) {
+            return argument.defaultArgument;
+          });
+      hirDefaultInputs += defaults;
+      const lang::HirFunctionInstance *target =
+          value.functionTarget
+              ? frontend.hir.findFunctionInstance(*value.functionTarget)
+              : nullptr;
+      const auto *call = dynamic_cast<const lang::Call *>(value.source);
+      if (target == nullptr || target->source == nullptr || call == nullptr ||
+          target->source->name().lexeme != "ordinary") {
+        continue;
+      }
+      if (call->arguments().size() == 1) {
+        omittedOrdinaryHasTwoDefaults = defaults == 2;
+      } else if (call->arguments().size() == 3) {
+        explicitOrdinaryHasNoDefaults = defaults == 0;
+      }
+    }
+  };
+  inspectHirBody(frontend.hir.module());
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    inspectHirBody(function.body);
+  }
+  for (const lang::HirConstructorInstance &constructor :
+       frontend.hir.constructorInstances()) {
+    inspectHirBody(constructor.body);
+  }
+  if (!(hirDefaultInputs >= 6 && omittedOrdinaryHasTwoDefaults &&
+        explicitOrdinaryHasNoDefaults)) {
+    std::cerr << "Default-parameter HIR evidence: inputs=" << hirDefaultInputs
+              << " omitted-ordinary=" << omittedOrdinaryHasTwoDefaults
+              << " explicit-ordinary=" << explicitOrdinaryHasNoDefaults << '\n';
+  }
+  expect(hirDefaultInputs >= 6 && omittedOrdinaryHasTwoDefaults &&
+             explicitOrdinaryHasNoDefaults,
+         "HIR call plans should append omitted defaults in parameter order "
+         "without marking explicit arguments");
+
+  bool hirImplicitBaseDefault = false;
+  for (const lang::HirConstructorInstance &constructor :
+       frontend.hir.constructorInstances()) {
+    hirImplicitBaseDefault =
+        hirImplicitBaseDefault ||
+        std::any_of(constructor.initializers.begin(),
+                    constructor.initializers.end(),
+                    [](const lang::HirConstructorInitializer &initializer) {
+                      return initializer.kind ==
+                                 lang::ConstructorInitializerTargetKind::Base &&
+                             initializer.explicitArgumentCount == 0 &&
+                             initializer.arguments.size() == 1;
+                    });
+  }
+  bool mirImplicitBaseDefault = false;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    mirImplicitBaseDefault =
+        mirImplicitBaseDefault ||
+        std::any_of(constructor.initializers.begin(),
+                    constructor.initializers.end(),
+                    [](const lang::MirConstructorInitializer &initializer) {
+                      return initializer.kind ==
+                                 lang::ConstructorInitializerTargetKind::Base &&
+                             initializer.explicitArgumentCount == 0 &&
+                             initializer.arguments.size() == 1;
+                    });
+  }
+  expect(hirImplicitBaseDefault && mirImplicitBaseDefault,
+         "implicit base construction should retain its expanded default and "
+         "zero explicit arguments in HIR and MIR");
+
+  std::size_t mirDefaultInputs = 0;
+  const auto inspectMirBody = [&](const lang::MirBody &body) {
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Argument &&
+            instruction.defaultArgument) {
+          ++mirDefaultInputs;
+        }
+      }
+    }
+  };
+  inspectMirBody(frontend.mir.module());
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    inspectMirBody(function.body);
+  }
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    inspectMirBody(constructor.body);
+  }
+  if (mirDefaultInputs < 6) {
+    std::cerr << "Default-parameter MIR inputs=" << mirDefaultInputs << '\n';
+  }
+  expect(mirDefaultInputs >= 6,
+         "verified MIR should preserve caller-expanded default-argument "
+         "provenance on prepared call inputs");
+
+  lang::MirProgram forgedDefaultSuffix = frontend.mir;
+  bool forged = false;
+  auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      forgedDefaultSuffix.functionInstances());
+  for (lang::MirFunctionInstance &function : forgedFunctions) {
+    std::unordered_map<lang::HirValueId, std::vector<lang::MirInstruction *>>
+        callInputs;
+    for (lang::MirBlock &block : function.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Argument) {
+          callInputs[instruction.callSite].push_back(&instruction);
+        }
+      }
+    }
+    for (auto &[_, inputs] : callInputs) {
+      std::ranges::sort(inputs, {}, [](const lang::MirInstruction *input) {
+        return input->callInputIndex;
+      });
+      if (inputs.size() >= 2 &&
+          std::none_of(inputs.begin(), inputs.end(),
+                       [](const lang::MirInstruction *input) {
+                         return input->defaultArgument;
+                       })) {
+        inputs.front()->defaultArgument = true;
+        forged = true;
+        break;
+      }
+    }
+    if (forged) {
+      break;
+    }
+  }
+  const lang::MirVerificationResult forgedVerification =
+      lang::verifyMirProgram(forgedDefaultSuffix);
+  expect(forged && !forgedVerification.valid() &&
+             std::any_of(forgedVerification.errors.begin(),
+                         forgedVerification.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find(
+                                      "trailing parameter suffix") !=
+                                  std::string::npos;
+                         }),
+         "the MIR verifier should reject forged non-trailing default-input "
+         "provenance");
+
+  const std::string nonTrailingSource =
+      "int invalid(int optional = 1, int required) { return required; }";
+  const lang::FrontendResult nonTrailing =
+      lang::Frontend().analyze("default-non-trailing.gti", nonTrailingSource);
+  const lang::Diagnostic *nonTrailingDiagnostic =
+      findDiagnosticByCode(nonTrailing.diagnostics, "GTI-S2077");
+  const std::size_t required = nonTrailingSource.find("required");
+  const bool nonTrailingRejected =
+      !nonTrailing.canGenerateCode() && nonTrailingDiagnostic != nullptr &&
+      std::filesystem::path(nonTrailingDiagnostic->primary.source).filename() ==
+          "default-non-trailing.gti" &&
+      nonTrailingDiagnostic->primary.start == required &&
+      nonTrailingDiagnostic->primary.end ==
+          required + std::string("required").size() &&
+      hasRelatedDiagnostic(nonTrailing.diagnostics,
+                           "default-argument suffix") &&
+      hasDiagnosticHint(nonTrailing.diagnostics, "Move required parameters");
+  if (!nonTrailingRejected && nonTrailingDiagnostic != nullptr) {
+    std::cerr << "Non-trailing diagnostic span="
+              << nonTrailingDiagnostic->primary.start << ".."
+              << nonTrailingDiagnostic->primary.end
+              << " source=" << nonTrailingDiagnostic->primary.source << '\n';
+  }
+  expect(nonTrailingRejected,
+         "GTI-S2077 should point at a required parameter after the default "
+         "suffix and explain the repair");
+
+  const lang::FrontendResult parameterReference = lang::Frontend().analyze(
+      "default-parameter-reference.gti",
+      "int dependent(int first, int second = first) { return second; }");
+  expect(!parameterReference.canGenerateCode() &&
+             hasDiagnosticCode(parameterReference.diagnostics, "GTI-S2077") &&
+             hasDiagnostic(parameterReference.diagnostics,
+                           "cannot reference a parameter") &&
+             hasDiagnosticHint(parameterReference.diagnostics, "function body"),
+         "defaults should resolve in declaration scope without parameter "
+         "bindings");
+
+  const lang::FrontendResult receiverReference = lang::Frontend().analyze(
+      "default-receiver-reference.gti",
+      "class Item { public: int read(int value = this.read()) { return "
+      "value; } };");
+  expect(!receiverReference.canGenerateCode() &&
+             hasDiagnosticCode(receiverReference.diagnostics, "GTI-S2077") &&
+             hasDiagnostic(receiverReference.diagnostics, "cannot use 'this'"),
+         "method defaults should not acquire an implicit receiver");
+
+  const lang::FrontendResult wrongType = lang::Frontend().analyze(
+      "default-type.gti", "int invalid(int value = true) { return value; }");
+  expect(
+      !wrongType.canGenerateCode() &&
+          hasDiagnosticCode(wrongType.diagnostics, "GTI-S2077") &&
+          hasDiagnostic(wrongType.diagnostics, "parameter requires 'int32_t'"),
+      "a default expression should be checked against its concrete "
+      "parameter type");
+
+  const lang::FrontendResult recursive = lang::Frontend().analyze(
+      "default-cycle.gti",
+      "int recurse(int value = recurse()) { return value; }");
+  expect(!recursive.canGenerateCode() &&
+             hasDiagnosticCode(recursive.diagnostics, "GTI-S2077") &&
+             hasDiagnostic(recursive.diagnostics, "recursive expansion") &&
+             hasDiagnosticHint(recursive.diagnostics, "Break the cycle"),
+         "recursive default expansion should be rejected before HIR "
+         "lowering");
+
+  const lang::FrontendResult ambiguous = lang::Frontend().analyze(
+      "default-overload.gti",
+      "int choose(int value) { return value; }\n"
+      "int choose(int value, int fallback = 1) { return value + fallback; }\n"
+      "int main() { return choose(1); }\n");
+  expect(!ambiguous.canGenerateCode() &&
+             hasDiagnosticCode(ambiguous.diagnostics, "GTI-S2013") &&
+             hasDiagnostic(ambiguous.diagnostics, "2 overloads exactly match"),
+         "defaults should affect viability without silently changing exact "
+         "overload ranking");
+
+  const lang::FrontendResult ambiguousImplicitBase = lang::Frontend().analyze(
+      "default-base-ambiguity.gti",
+      "class Base { public: Base(int value = 1) {} Base(bool value = true) "
+      "{} };\n"
+      "class Derived : public Base { public: Derived() {} };\n"
+      "int main() { return 0; }\n");
+  expect(
+      !ambiguousImplicitBase.canGenerateCode() &&
+          hasDiagnosticCode(ambiguousImplicitBase.diagnostics, "GTI-S2013") &&
+          hasDiagnostic(ambiguousImplicitBase.diagnostics,
+                        "Implicit construction of base") &&
+          hasDiagnosticHint(ambiguousImplicitBase.diagnostics,
+                            "explicit base initializer") &&
+          hasRelatedDiagnostic(ambiguousImplicitBase.diagnostics,
+                               "Candidate: Base(int") &&
+          hasRelatedDiagnostic(ambiguousImplicitBase.diagnostics,
+                               "Candidate: Base(bool"),
+      "implicit base construction should reject multiple constructors "
+      "that accept zero explicit arguments");
+
+  const lang::FrontendResult uninferred =
+      lang::Frontend().analyze("default-generic-inference.gti",
+                               "T make<T>(T value = 1) { return value; }\n"
+                               "int main() { return make(); }\n");
+  expect(!uninferred.canGenerateCode() &&
+             hasDiagnosticCode(uninferred.diagnostics, "GTI-S2023") &&
+             hasDiagnostic(uninferred.diagnostics,
+                           "provide explicit type arguments"),
+         "an omitted default should not infer a generic argument");
+
+  struct UnsupportedDefaultCase {
+    std::string name;
+    std::string source;
+    std::string message;
+  };
+  const std::array<UnsupportedDefaultCase, 7> unsupported{{
+      {"default-extern-c.gti", "extern \"C\" { int native(int value = 1); }",
+       "extern \"C\" declarations"},
+      {"default-operator.gti",
+       "class Number { public: int operator[](uint64_t value = 1) { return "
+       "int(value); "
+       "} };",
+       "operator declarations"},
+      {"default-virtual.gti",
+       "class Base { public: virtual int inspect(int value = 1) { return "
+       "value; } };",
+       "virtual, override, or interface methods"},
+      {"default-lambda.gti",
+       "int main() { auto fn = [](int value = 1) -> int { return value; }; "
+       "return 0; }",
+       "lambda parameters"},
+      {"default-pack.gti", "void relay<Args...>(Args... values = 1) {}",
+       "parameter pack"},
+      {"default-reference.gti", "int inspect(int& value = 1) { return value; }",
+       "owned or plain value"},
+      {"default-main.gti", "int main(int value = 0) { return value; }",
+       "the main entry point"},
+  }};
+  for (const UnsupportedDefaultCase &test : unsupported) {
+    const lang::FrontendResult result =
+        lang::Frontend().analyze(test.name, test.source);
+    const bool rejected = !result.canGenerateCode() &&
+                          hasDiagnosticCode(result.diagnostics, "GTI-S2077") &&
+                          hasDiagnostic(result.diagnostics, test.message);
+    if (!rejected) {
+      for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+        std::cerr << test.name << " [" << diagnostic.code
+                  << "]: " << diagnostic.message << '\n';
+      }
+    }
+    expect(rejected,
+           "GTI-S2077 should reject the unsupported default context in " +
+               test.name);
+  }
+
+  const std::string formatted = lang::Formatter().format(
+      "int choose(int required,int fallback=2){return required+fallback;}");
+  expect(formatted == R"(int choose(int required, int fallback = 2) {
+  return required + fallback;
+}
+)" && lang::Formatter().format(formatted) == formatted,
+         "the formatter should space default parameters and remain "
+         "idempotent");
 }
 
 void testFormatting() {
@@ -26890,6 +27341,10 @@ int main(int argc, char **argv) {
     testInheritanceAndInterfaces();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "defaults") {
+    testDefaultParameters();
+    return failures == 0 ? 0 : 1;
+  }
   testConstructorPartialRollbackRepresentation();
   testOwnedParameterStageArmsRollback();
   testFieldInitializerRollbackAndFailureEdges();
@@ -26990,6 +27445,7 @@ int main(int argc, char **argv) {
   testCompileTimeConditionals();
   testExternCInterop();
   testScopedEnums();
+  testDefaultParameters();
   testFormatting();
   testLanguageQueries();
 
