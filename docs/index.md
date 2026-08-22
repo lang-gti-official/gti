@@ -110,6 +110,9 @@ description of the implementation.
 - [Optimization architecture](plans/optimization.md)
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
+- [Static assertions](plans/static-assertions.md) — proposes frontend-owned
+  exact-`bool` `static_assert`, erased before HIR, with a non-dependent first
+  slice and per-concrete-instance generic evaluation as a follow-on
 - [LSP evolution](plans/lsp-evolution.md)
 - [C interop target surface](plans/c-interop-target-surface.md) — the
   completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
