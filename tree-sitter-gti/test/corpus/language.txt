@@ -1357,6 +1357,56 @@ using Nested = (Factory, c_string) -> (int32_t) -> void;
             (type)))))))
 
 ==================
+Default parameter expressions
+==================
+
+int seed() { return 2; }
+int choose(int value = 1, int fallback = seed()) { return value + fallback; }
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)
+        (primary_expression
+          (literal
+            (integer_literal))))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)
+        (call_expression
+          (primary_expression
+            (identifier))
+          (argument_list))))
+    (block
+      (return_statement
+        (initializer_expression
+          (binary_expression
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (identifier))))))))
+
+==================
 Compound assignments
 ==================
 

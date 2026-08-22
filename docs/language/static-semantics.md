@@ -233,15 +233,42 @@ names, and by-value parameter mutability do not distinguish overloads. GTI does
 not otherwise perform conversion ranking, return-type overloading, ADL, or a
 concrete-over-generic preference.
 
+An ordinary free function, non-polymorphic ordinary or static method, or
+ordinary constructor may give a trailing suffix of parameters default
+arguments. A candidate is arity-viable when the supplied argument count is
+between its required and total parameter counts. Exact matching examines only
+the supplied arguments. A default does not change overload identity and does
+not rank one viable exact candidate over another; multiple viable exact
+candidates are ambiguous.
+
+Each default expression is analyzed in the declaration's surrounding scope,
+not the function body scope. It cannot reference any ordinary callable
+parameter, `this`, or an instance member. Defaulted parameters must be owned or
+plain by-value values; references, raw pointers, C strings, and types
+containing tracked borrowed state remain explicit. Operators, lambdas,
+payload-enum fields, parameter
+packs, runtime/intrinsic and `extern "C"` declarations, virtual/override/
+interface methods, copy/move constructor policies, and `main` do not admit
+defaults. The expression must exactly initialize the declared parameter type,
+subject only to the ordinary bounded assignment compatibility. Recursive
+omitted-default expansion is ill-formed.
+
 An immutable `uint64_t` function, method, or constructor value parameter may be
 inferred when it is the complete extent of a by-value fixed-array parameter.
 A named array contributes its exact extent; a contextual brace argument
 contributes its written count. Other type parameters must be inferred from
 ordinary typed arguments. The inferred value is part of concrete HIR instance
 identity, but it does not distinguish alpha-equivalent overload declarations.
-Explicit function/constructor value arguments, arbitrary value expressions,
-defaults, and packs are not implemented. A constructor-local value parameter
-cannot shadow an enclosing class or struct generic parameter.
+Explicit function/constructor value arguments, arbitrary value-generic
+expressions, value-parameter defaults, and value packs are not implemented. A
+constructor-local value parameter cannot shadow an enclosing class or struct
+generic parameter.
+
+Omitted default arguments do not participate in generic inference. A generic
+call must infer or explicitly supply its generic arguments from the written
+arguments and context already admitted by GTI. After selection, semantic
+analysis substitutes the concrete generic arguments and rechecks every used
+default expression for the selected instance.
 
 Contextual braces participate only after candidate parameter shapes are known.
 Fixed extents may remove candidates with a different element count; if more

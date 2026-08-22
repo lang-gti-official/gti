@@ -393,7 +393,18 @@ parameter-clause       = "(" [ parameter-list ] ")" ;
 parameter-list         = parameter { "," parameter } ;
 
 parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
-                         { array-extent } ;
+                         { array-extent }
+                         [ "=" assignment-expression ] ;
+
+(* Default arguments form one trailing parameter suffix. They are admitted on
+   ordinary free functions, non-polymorphic ordinary/static methods, and
+   ordinary constructors. Operators, lambdas, payload-enum fields, packs,
+   runtime/intrinsic and extern-C declarations, virtual/interface surfaces,
+   and the main entry point do not admit them. A default expression is resolved
+   in its declaration scope and cannot name an ordinary callable parameter,
+   `this`, or an instance member. Reference, raw-pointer, C-string, and
+   borrowed-state parameters stay explicit; defaulted parameters are owned or
+   plain values. *)
 
 (* A constructor name must match its owning class or struct. Constructor calls
    use `Type(arguments)` and are never implicit conversions. Constructors form
@@ -401,12 +412,13 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    do not distinguish signatures. A constructor initializer names either the
    one state-bearing base or an immediate field. The base initializer comes
    first and uses exact constructor matching; field initializers then appear in
-   field declaration order. Omitted bases require an accessible zero-argument
-   constructor. A field initializer supplies a default when a constructor omits
-   that field. All initialization runs before a body that cannot return.
-   When no zero-argument overload is declared, the compiler generates `Type()`
-   if every field has a declaration initializer, even when other constructor
-   overloads exist.
+   field declaration order. Omitted bases require an accessible constructor
+   callable with zero explicit arguments. A field initializer supplies a
+   default when a constructor omits that field. All initialization runs before
+   a body that cannot return.
+   When no declared constructor is callable with zero explicit arguments, the
+   compiler generates `Type()` if every field has a declaration initializer,
+   even when other constructor overloads exist.
 
    Copy/move construction and assignment are derived independently from
    lifecycle traits rather than C++ special-member suppression. A class or
@@ -501,8 +513,12 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    parameter match after generic substitution, apart from the bounded raw-
    pointer `nullptr` and added-pointee-`const` compatibility. GTI performs no
    other implicit argument conversions and has no general conversion-ranking
-   or best-match rules. Runtime bindings and the main entry point are not
-   overloadable.
+   or best-match rules. A declaration with trailing defaults is viable when the
+   supplied argument count is between its required and total parameter counts;
+   only supplied arguments participate in exact matching. Defaults do not
+   distinguish overload identities or rank otherwise-exact candidates, so two
+   viable exact candidates remain ambiguous. Runtime bindings and the main
+   entry point are not overloadable.
 
    Every reachable path through a non-void function, method, operator, or
    lambda must return a value. Active target-condition branches participate in
@@ -973,10 +989,14 @@ call-argument          = assignment-expression | array-initializer ;
 
 pack-expansion         = IDENTIFIER "..." ;
 
-(* A call evaluates its callable/receiver once, then initializes parameters
-   from left to right. A concrete final pack contributes elements at its
-   written position in pack order. Invocation begins only after every
-   parameter is live.
+(* A call evaluates its callable/receiver once, then evaluates written
+   arguments from left to right. Any omitted trailing default expressions are
+   evaluated next in parameter order, once for that call. Parameters are
+   initialized from those values from left to right. A concrete final pack
+   contributes elements at its written position in pack order. Invocation
+   begins only after every parameter is live. Defaults belong to the call's
+   enclosing full-expression and are lowered at the caller; a backend cannot
+   delegate their evaluation to native default-argument syntax.
 
    A brace argument is not a general expression or `std::initializer_list`.
    It requires one selected exact by-value fixed-array parameter `T[N]` and
@@ -1053,12 +1073,13 @@ pack-expansion         = IDENTIFIER "..." ;
    inferred form `uint64_t N` only when `N` is the complete extent of one
    by-value fixed-array parameter. A named fixed array supplies its exact
    extent and a contextual brace argument supplies its written element count.
-   Type parameters must be inferred from ordinary typed arguments; braces do
-   not synthesize a common type. Constructor-local parameters appear after the
-   constructor name. Inferred values participate in concrete function or
-   constructor instance identity. Explicit function/constructor value
-   arguments, other value types, arbitrary expressions, defaults, value packs,
-   and value-generic virtual/operator call surfaces are not implemented.
+   Type parameters must be inferred from ordinary typed arguments; braces and
+   omitted default expressions do not synthesize or infer a type argument.
+   Constructor-local parameters appear after the constructor name. Inferred
+   values participate in concrete function or constructor instance identity.
+   Explicit function/constructor value arguments, other value types, arbitrary
+   value-generic expressions, value-parameter defaults, value packs, and
+   value-generic virtual/operator call surfaces are not implemented.
 
    A function or method
    may declare one final type pack with `Args...`, bound by one final named,

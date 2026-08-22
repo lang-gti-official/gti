@@ -17,6 +17,13 @@ compatibilities. Selection requires one unique candidate. Return types do not
 distinguish overloads; no ADL, conversion ranking, SFINAE, or
 concrete-over-generic preference participates.
 
+A declaration with trailing default arguments is arity-viable when the caller
+supplies at least its required parameter count and no more than its total
+parameter count. Only supplied arguments participate in exact type matching.
+Defaults do not distinguish overload identities and do not rank viable
+candidates; two otherwise-exact candidates remain ambiguous. Omitted defaults
+also do not contribute to generic inference.
+
 ## Alternatives
 
 - Delegate overloads to C++: rejected because the result would depend on

@@ -5143,6 +5143,7 @@ def main():
     test_document_symbols(sys.argv[1], root)
     test_flat_document_symbols(sys.argv[1], root)
     test_rename_tooling(sys.argv[1], root)
+    test_signature_help_tooling(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
         'int dependency_value = "bad";\n'
@@ -5994,22 +5995,19 @@ def main():
     test_inheritance_tooling(sys.argv[1], root)
 
 
-if __name__ == "__main__":
-    main()
-
-
 def test_signature_help_tooling(executable, root):
     source = (
         "class Box {\n"
         "public:\n"
-        "  Box(int width, int height) {}\n"
+        "  Box(int width, int height = 4) {}\n"
         "};\n"
         "int inner(int value) { return value; }\n"
-        "int combine(int left, int right) { return left + right; }\n"
+        "int combine(int left, int right = 2) { return left + right; }\n"
         "int main() {\n"
-        '  std::print("\U0001F642"); int total = combine(1, inner(2));\n'
-        "  Box box = Box(3, 4);\n"
-        "  return total;\n"
+        '  std::print("\U0001F642"); int total = combine(1);\n'
+        "  int nested_total = combine(1, inner(2));\n"
+        "  Box box = Box(3);\n"
+        "  return total + nested_total;\n"
         "}\n"
     )
     path = root / "signature-help.gti"
@@ -6078,10 +6076,13 @@ def test_signature_help_tooling(executable, root):
         assert first_argument == {
             "signatures": [
                 {
-                    "label": "int32_t combine(int32_t left, int32_t right)",
+                    "label": (
+                        "int32_t combine(int32_t left, "
+                        "int32_t right = <default>)"
+                    ),
                     "parameters": [
                         {"label": "int32_t left"},
-                        {"label": "int32_t right"},
+                        {"label": "int32_t right = <default>"},
                     ],
                 }
             ],
@@ -6099,14 +6100,17 @@ def test_signature_help_tooling(executable, root):
         # Constructor calls use the compiler-selected constructor.
         construction = help_at(5, source.index("Box(3") + len("Box("))
         assert construction["signatures"][0]["label"] == (
-            "Box(int32_t width, int32_t height)"
+            "Box(int32_t width, int32_t height = <default>)"
         )
-        assert (
-            help_at(6, source.index("Box(3") + len("Box(3, "))["activeParameter"]
-            == 1
-        )
+        assert construction["signatures"][0]["parameters"][1] == {
+            "label": "int32_t height = <default>"
+        }
 
         # Outside any argument list there is no signature to offer.
         assert help_at(7, source.index("int main")) is None
     finally:
         session.close()
+
+
+if __name__ == "__main__":
+    main()

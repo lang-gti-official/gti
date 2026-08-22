@@ -874,9 +874,14 @@ private:
           parameterName = advance();
         }
         parseArrayDeclaratorSuffix(parameterType);
+        std::optional<ParameterDefault> defaultArgument;
+        if (match({TokenKind::EQUAL})) {
+          Token equal = previous();
+          defaultArgument.emplace(std::move(equal), assignment());
+        }
         parameters.emplace_back(std::move(parameterType),
                                 std::move(parameterName), mutability,
-                                std::move(pack));
+                                std::move(pack), std::move(defaultArgument));
       } while (match({TokenKind::COMMA}));
     }
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after parameters.");

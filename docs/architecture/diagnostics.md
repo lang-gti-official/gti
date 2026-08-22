@@ -128,6 +128,15 @@ diagnostics or letting a backend message choose either identity.
   those choices require intent. Foreign callback values remain valid in the
   concurrent profile, so this code applies there only when GTI code is exposed
   through an adapter.
+- `GTI-S2077` owns a syntactically valid but semantically invalid parameter
+  default. Point at the `=` for an unsupported declaration/type or recursive
+  expansion, at the first following required parameter for a non-trailing
+  default suffix, and at the offending expression for an invalid reference or
+  type. Relate the start of a non-trailing suffix or the other defaults in a
+  cycle, and give a correction-oriented hint. Do not attach a fix-it: moving
+  parameters, choosing an explicit boundary value, or replacing an expression
+  is not mechanically safe. Preserve ordinary lookup/type diagnostics when
+  they are more specific and avoid cascades after an unknown expression.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

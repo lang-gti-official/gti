@@ -1,0 +1,66 @@
+mut int sequence = 0;
+mut int drops = 0;
+
+int advance() {
+  sequence += 1;
+  return sequence;
+}
+
+int set_sequence(int value) {
+  sequence = value;
+  return value;
+}
+
+int observe(int explicit_value, int first = advance(),
+            int second = advance()) {
+  return explicit_value * 100 + first * 10 + second;
+}
+
+class Probe {
+public:
+  Probe(int ignored = advance()) {}
+  int method(int value = advance()) { return value; }
+  static int static_method(int value = advance()) { return value; }
+};
+
+class Token {
+public:
+  Token() {}
+  ~Token() { drops += 1; }
+};
+
+int consume(Token token = Token()) { return 11; }
+
+T generic_default<T>(T value = 7) { return value; }
+
+int nested_leaf(int value = 12) { return value; }
+int nested_default(int value = nested_leaf()) { return value; }
+
+constexpr int constant_default(int value = 6) { return value; }
+constexpr int folded = constant_default();
+
+int main() {
+  sequence = 0;
+  int ordered = observe(set_sequence(4));
+  int repeated = observe(set_sequence(1));
+  int explicit_values = observe(1, 9, 8);
+
+  Probe explicit_probe = Probe(20);
+  Probe probe = Probe();
+  int method_value = probe.method();
+  int explicit_method = probe.method(77);
+  int static_value = Probe::static_method();
+  int explicit_static = Probe::static_method(88);
+
+  int owned_value = consume();
+  int generic_value = generic_default<int>();
+  int nested_value = nested_default();
+
+  if (ordered != 456 or repeated != 123 or explicit_values != 198 or
+      method_value != 5 or explicit_method != 77 or static_value != 6 or
+      explicit_static != 88 or owned_value != 11 or generic_value != 7 or
+      nested_value != 12 or folded != 6 or sequence != 6 or drops != 1) {
+    return 1;
+  }
+  return 0;
+}

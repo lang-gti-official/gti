@@ -157,6 +157,16 @@ not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
+For a selected call or construction with omitted arguments, HIR lowers the
+semantic model's exact default-expression suffix at the caller after every
+written operand. The expressions use the selected target instance's concrete
+semantic model and become ordinary typed `HirValue`s in the call's
+full-expression. `HirCallArgument::defaultArgument` preserves provenance in the
+ordered call plan. Constructor-initializer records retain both the complete
+lowered argument vector and `explicitArgumentCount`, including implicit base
+construction through a constructor callable with zero explicit arguments.
+Neither HIR nor a backend relies on native C++ defaults.
+
 A class binding initialized from an exact `nullptr_t` constructor remains one
 ordinary construction in HIR. The source literal owns the constructed value;
 lowering adds one source-less `nullptr_t` operand so MIR retains the selected
@@ -167,8 +177,9 @@ argument. Neither form is inferred from a public standard-library type name.
 The bounded M-EXEC-01 invocation slices give an eligible ordinary call,
 resolved class `operator()` call, or ordinary constructor a `HirCallPlan`.
 Eligibility is deliberately narrow: the
-target is concrete and non-intrinsic; source argument cardinality exactly
-matches the selected parameters; no pack expansion is present; and every
+target is concrete and non-intrinsic; argument cardinality exactly matches the
+selected parameters after caller-side default expansion; no pack expansion is
+present; and every
 parameter is either a supported scalar/reference form or an exact class value
 without borrowed state. The ordinary function family excludes operators other
 than `operator()`, lambdas, unresolved deferred callables, and construction. A

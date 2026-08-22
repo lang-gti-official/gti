@@ -247,7 +247,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v37 valid=" << program.valid() << '\n';
+    output << "mir-v38 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -560,7 +560,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v37\n";
+    output << "mir-body-v38\n";
     body(value, 0);
     return output.str();
   }
@@ -1004,6 +1004,7 @@ private:
     }
     output << " call-input-index=" << value.callInputIndex
            << " call-input-kind=" << callInputKindName(value.callInputKind)
+           << " default-argument=" << value.defaultArgument
            << " prepared-parameter-drop=";
     optional(value.preparedParameterDrop);
     output << " success-result-drop=";
@@ -1335,7 +1336,8 @@ private:
     optional(value.constructorTarget);
     output << ";arguments=[";
     list(value.arguments);
-    output << "];stores-reference=" << value.storesReference
+    output << "];explicit-arguments=" << value.explicitArgumentCount
+           << ";stores-reference=" << value.storesReference
            << ";borrow-access=" << number(value.borrowAccess)
            << ";generated=" << value.generatedDefault << ";owned-parameter=";
     optional(value.ownedParameter);

@@ -136,6 +136,11 @@ an inline initializer (`make({1, 2}, {3, 4})`) rather than being formatted as a
 statement block. This is syntax formatting only; the formatter does not infer
 the selected fixed-array context.
 
+Parameter defaults use ordinary assignment spacing, for example
+`int choose(int value = fallback())`. The formatter preserves the complete
+expression and remains idempotent; semantic analysis decides whether the
+parameter position, declaration kind, and expression are valid.
+
 The same token distinction applies inside concept declarations and trailing
 `requires` clauses. Concept applications retain compact generic angles while
 their conjunction remains an ordinary spaced logical operator; formatting does

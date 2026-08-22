@@ -103,8 +103,10 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v37`/`mir-body-v37`
-(v31 added the prefix-initialized storage type kind and its intrinsic
+The deterministic serialization is currently `mir-v38`/`mir-body-v38`
+(v38 added caller-expanded default-argument provenance to ordered call inputs
+and explicit-argument counts to constructor initializers; v31 added the
+prefix-initialized storage type kind and its intrinsic
 family alongside the logical-size bounds check; v32 added the
 `ComputeFold` literal provenance; v33 added the `BranchFold` terminator
 provenance; v34 added lambda parameter bindings).
@@ -310,7 +312,10 @@ A `MirBody` owns:
   non-reorderable `CallInput` checkpoint per receiver and argument. Each
   checkpoint retains the source HIR value, call-site identity, receiver or
   exact argument-index role, selected parameter type, and value/class-copy/
-  class-move/read-borrow/mutable-borrow mode. For an ordinary `Call`, a
+  class-move/read-borrow/mutable-borrow mode. Argument checkpoints additionally
+  retain whether the value came from an omitted source default; verification
+  requires those markers to form one trailing parameter suffix. For an
+  ordinary `Call`, a
   class-copy checkpoint initializes one exact caller-owned prepared-parameter
   place and a class-move checkpoint reparents the exact materialized source
   obligation into such a place, or initializes it when the type has trivial
@@ -426,6 +431,14 @@ For each body, MIR lowering creates an entry block and root scope, seeds
 parameter cleanup, lowers prologue/construction values, lowers statements,
 synthesizes a legal terminal edge, rebuilds reachability and value uses, then
 verifies structure.
+
+Default expressions arrive as ordinary caller-side HIR values. MIR schedules
+their `CallInput` checkpoints after written arguments, preserves the default
+provenance bit, and verifies the trailing-suffix invariant against the complete
+selected parameter list. Constructor initializers preserve their explicit
+argument count alongside all expanded inputs. The production C++ emitter
+therefore emits only verified MIR values and never emits a C++ default
+parameter expression.
 
 A valid HIR layout query lowers to an ordinary unsigned-64
 `MirOperation::Literal` containing the retained frontend value. MIR has no

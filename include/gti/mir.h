@@ -355,6 +355,7 @@ struct MirInstruction {
   std::optional<MirCallInputRole> callInputRole;
   std::size_t callInputIndex = 0;
   HirCallInputKind callInputKind = HirCallInputKind::Value;
+  bool defaultArgument = false;
   std::optional<MirDropObligationId> preparedParameterDrop;
   std::optional<MirDropObligationId> successResultDrop;
   // A failure-capable call or construction whose result directly initializes
@@ -782,6 +783,7 @@ struct MirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
+  std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;

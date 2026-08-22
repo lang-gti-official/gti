@@ -90,6 +90,9 @@ std::vector<std::string> SignaturePrinter::parameterLabels(
     if (parameter != nullptr && !parameter->name.lexeme.empty()) {
       label += " " + parameter->name.lexeme;
     }
+    if (parameter != nullptr && parameter->hasDefault()) {
+      label += " = <default>";
+    }
     labels.push_back(std::move(label));
   }
   return labels;
@@ -391,6 +394,9 @@ void SignaturePrinter::appendParameters(
     }
     if (parameter != nullptr && !parameter->name.lexeme.empty()) {
       result += " " + parameter->name.lexeme;
+    }
+    if (parameter != nullptr && parameter->hasDefault()) {
+      result += " = <default>";
     }
   }
 }

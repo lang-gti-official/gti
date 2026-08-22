@@ -2406,6 +2406,14 @@ private:
       // succeeds.
       return {value.operands[1]};
     }
+    if (value.callPlan) {
+      std::vector<HirValueId> result;
+      result.reserve(value.callPlan->arguments.size());
+      for (const HirCallArgument &argument : value.callPlan->arguments) {
+        result.push_back(argument.value);
+      }
+      return result;
+    }
     std::size_t argumentCount = value.parameterTypes.size();
     if (value.kind == HirValueKind::Call) {
       if (const auto *call = dynamic_cast<const Call *>(value.source)) {
@@ -2855,7 +2863,7 @@ private:
   prepareCallInput(HirValueId callSite, HirValueId sourceValue,
                    const SemanticType &type, HirCallInputKind inputKind,
                    MirCallInputRole role, std::size_t index, MirOperand operand,
-                   bool stageOwningParameter) {
+                   bool stageOwningParameter, bool defaultArgument = false) {
     ExpressionInfo info{.type = type,
                         .category = ValueCategory::Value,
                         .access = AccessMode::ReadOnly,
@@ -2871,6 +2879,7 @@ private:
                          .callInputRole = role,
                          .callInputIndex = index,
                          .callInputKind = inputKind,
+                         .defaultArgument = defaultArgument,
                          .result = result,
                          .operands = {std::move(operand)},
                          .info = info};
@@ -3070,7 +3079,7 @@ private:
         PreparedCallInput prepared = prepareCallInput(
             value.id, argument.value, argument.parameterType, argument.kind,
             MirCallInputRole::Argument, argument.parameterIndex,
-            sourceArguments.back(), true);
+            sourceArguments.back(), true, argument.defaultArgument);
         call.operands.push_back(std::move(prepared.operand));
         if (prepared.parameterDrop != 0) {
           preparedParameterDrops.push_back(prepared.parameterDrop);
@@ -3518,7 +3527,7 @@ private:
             prepareCallInput(value.id, argument.value, argument.parameterType,
                              argument.kind, MirCallInputRole::Argument,
                              argument.parameterIndex, sourceArguments.back(),
-                             false)
+                             false, argument.defaultArgument)
                 .operand);
       }
     } else {
@@ -6428,6 +6437,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
            .base = initializer.base,
            .constructorTarget = initializer.constructorTarget,
            .arguments = initializer.arguments,
+           .explicitArgumentCount = initializer.explicitArgumentCount,
            .storesReference = initializer.storesReference,
            .borrowAccess = initializer.borrowAccess,
            .generatedDefault = initializer.generatedDefault,

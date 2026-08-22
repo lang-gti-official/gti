@@ -59,10 +59,16 @@ Compile-time name lookup and target selection are not runtime evaluations.
 For a call, evaluation proceeds as follows:
 
 1. evaluate the callable expression or member receiver once;
-2. evaluate and stabilize every explicit argument from left to right; and
-3. invoke the already selected function, method, constructor, operator, or
+2. evaluate and stabilize every explicit argument from left to right;
+3. evaluate each omitted trailing default expression in parameter order; and
+4. invoke the already selected function, method, constructor, operator, or
    callable only after every required argument/parameter initialization has
    completed.
+
+A default expression is evaluated anew at each call that omits its argument.
+An explicit argument bypasses that parameter's default. Default evaluation is
+caller-side language behavior, remains in the enclosing call full-expression,
+and cannot be delegated to a backend language's default-argument mechanism.
 
 Stabilizing an argument includes binding its reference or directly
 initializing its by-value parameter. Parameters are initialized from left to
