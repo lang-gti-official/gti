@@ -25,6 +25,7 @@ enum class CppMirRepresentationSnapshotIssueKind {
   MissingMirBodyIdentity,
   InvalidHostedEntry,
   InvalidProgramInitialization,
+  InvalidNativeCallbackAdapter,
   UnsupportedMirEmission,
 };
 

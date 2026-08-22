@@ -27,12 +27,17 @@ namespace lang {
 class CppEmitter::Impl final : public ExprVisitor, public StmtVisitor {
 public:
   explicit Impl(const SemanticModel &semantics, const HirProgram &hir,
-                const MirProgram &verifiedMir,
+                const MirProgram &verifiedMir, CppMirProgramPlan programPlan,
                 CppMirBodyEmissionMap generalRows, CppStandard standard,
                 TargetInfo target, const OptimizationResult *optimizations)
       : standard(standard), target(std::move(target)),
         optimizations(optimizations), semantics(semantics), hir(hir),
-        mir(&verifiedMir), generalEmissionMap(std::move(generalRows)) {
+        mir(&verifiedMir), programPlan(std::move(programPlan)),
+        generalEmissionMap(std::move(generalRows)) {
+    if (!this->programPlan.complete()) {
+      throw std::logic_error(
+          "C++ emitter requires a complete generated-item program plan");
+    }
     indexUnsafeOperations();
   }
 
@@ -4435,18 +4440,27 @@ private:
     }
   }
 
+  [[nodiscard]] const CppMirNativeCallbackThunk &
+  nativeCallbackPayload(const CppMirGeneratedThunk &thunk) const {
+    const auto *callback =
+        std::get_if<CppMirNativeCallbackThunk>(&thunk.payload);
+    if (thunk.identity.kind != CppMirThunkKind::NativeInteropAdapter ||
+        callback == nullptr || callback->adapter.id != thunk.identity.owner) {
+      throw std::logic_error(
+          "planned native callback lost its exact generated-item payload");
+    }
+    return *callback;
+  }
+
   [[nodiscard]] const MirFunctionInstance &
-  nativeCallbackTarget(const MirNativeCallbackAdapter &adapter) const {
+  nativeCallbackTarget(const CppMirNativeCallbackThunk &callback) const {
+    const MirNativeCallbackAdapter &adapter = callback.adapter;
     const MirFunctionInstance *target =
         mir == nullptr ? nullptr : mir->findFunctionInstance(adapter.target);
-    const HirFunctionInstance *hirTarget =
-        hir.findFunctionInstance(adapter.target);
     const FunctionInfo *declaration =
         target == nullptr ? nullptr
                           : semantics.findFunction(target->declaration);
-    if (target == nullptr || hirTarget == nullptr || declaration == nullptr ||
-        hirTarget->source == nullptr ||
-        declaration->declaration != hirTarget->source || target->owner ||
+    if (target == nullptr || declaration == nullptr || target->owner ||
         target->linkage != LanguageLinkage::Gti ||
         target->definitionKind != MirDefinitionKind::Source ||
         adapter.targetMayRaiseDefinedFailure !=
@@ -4458,8 +4472,9 @@ private:
   }
 
   void
-  emitNativeCallbackAdapterSignature(const MirNativeCallbackAdapter &adapter,
+  emitNativeCallbackAdapterSignature(const CppMirNativeCallbackThunk &callback,
                                      bool parameterNames) {
+    const MirNativeCallbackAdapter &adapter = callback.adapter;
     const SemanticType *returnType = adapter.type.nativeFunctionReturnType();
     if (returnType == nullptr) {
       throw std::logic_error(
@@ -4482,9 +4497,9 @@ private:
     output << ") noexcept";
   }
 
-  void emitNativeCallbackTargetName(const MirNativeCallbackAdapter &adapter,
+  void emitNativeCallbackTargetName(const CppMirNativeCallbackThunk &callback,
                                     bool failureForm = false) {
-    const MirFunctionInstance &target = nativeCallbackTarget(adapter);
+    const MirFunctionInstance &target = nativeCallbackTarget(callback);
     const FunctionInfo *declaration =
         semantics.findFunction(target.declaration);
     output << "::__gti_program::";
@@ -4501,7 +4516,8 @@ private:
     }
   }
 
-  void emitNativeCallbackArguments(const MirNativeCallbackAdapter &adapter) {
+  void emitNativeCallbackArguments(const CppMirNativeCallbackThunk &callback) {
+    const MirNativeCallbackAdapter &adapter = callback.adapter;
     const std::size_t count =
         adapter.type.nativeFunctionParameterTypes().size();
     for (std::size_t index = 0; index < count; ++index) {
@@ -4513,26 +4529,31 @@ private:
   }
 
   void emitNativeCallbackAdapterDeclarations() {
-    if (mir == nullptr || mir->nativeCallbackAdapters().empty()) {
-      return;
-    }
-    for (const MirNativeCallbackAdapter &adapter :
-         mir->nativeCallbackAdapters()) {
-      (void)nativeCallbackTarget(adapter);
+    bool emitted = false;
+    for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
+      if (thunk.identity.kind != CppMirThunkKind::NativeInteropAdapter) {
+        continue;
+      }
+      const CppMirNativeCallbackThunk &callback = nativeCallbackPayload(thunk);
+      (void)nativeCallbackTarget(callback);
       writeIndent();
-      emitNativeCallbackAdapterSignature(adapter, false);
+      emitNativeCallbackAdapterSignature(callback, false);
       output << ";\n";
+      emitted = true;
     }
-    output << '\n';
+    if (emitted) {
+      output << '\n';
+    }
   }
 
   void emitNativeCallbackAdapterDefinitions() {
-    if (mir == nullptr || mir->nativeCallbackAdapters().empty()) {
-      return;
-    }
-    for (const MirNativeCallbackAdapter &adapter :
-         mir->nativeCallbackAdapters()) {
-      const MirFunctionInstance &target = nativeCallbackTarget(adapter);
+    for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
+      if (thunk.identity.kind != CppMirThunkKind::NativeInteropAdapter) {
+        continue;
+      }
+      const CppMirNativeCallbackThunk &callback = nativeCallbackPayload(thunk);
+      const MirNativeCallbackAdapter &adapter = callback.adapter;
+      const MirFunctionInstance &target = nativeCallbackTarget(callback);
       const SemanticType &returnType = *adapter.type.nativeFunctionReturnType();
       if (adapter.failurePolicy !=
               MirNativeCallbackFailurePolicy::TerminateInvocation ||
@@ -4545,7 +4566,7 @@ private:
       }
 
       writeIndent();
-      emitNativeCallbackAdapterSignature(adapter, true);
+      emitNativeCallbackAdapterSignature(callback, true);
       output << " {\n";
       ++indentation;
       writeIndent();
@@ -4561,9 +4582,9 @@ private:
         }
         writeIndent();
         output << "if (!";
-        emitNativeCallbackTargetName(adapter, true);
+        emitNativeCallbackTargetName(callback, true);
         output << '(';
-        emitNativeCallbackArguments(adapter);
+        emitNativeCallbackArguments(callback);
         if (!adapter.type.nativeFunctionParameterTypes().empty()) {
           output << ", ";
         }
@@ -4595,9 +4616,9 @@ private:
         if (returnType != SemanticType::Void) {
           output << "return ";
         }
-        emitNativeCallbackTargetName(adapter);
+        emitNativeCallbackTargetName(callback);
         output << '(';
-        emitNativeCallbackArguments(adapter);
+        emitNativeCallbackArguments(callback);
         output << ");\n";
         if (returnType == SemanticType::Void) {
           writeIndent();
@@ -12784,6 +12805,7 @@ namespace gti_internal::backend {
   const SemanticModel &semantics;
   const HirProgram &hir;
   const MirProgram *mir = nullptr;
+  CppMirProgramPlan programPlan;
   std::unordered_map<const Expr *, UnsafeOperationKind> hirUnsafeOperations;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
   std::unordered_set<const TypeAliasDecl *> forwardedTypeAliases;
@@ -12840,12 +12862,14 @@ namespace gti_internal::backend {
 
 CppEmitter::CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
                        const MirProgram &verifiedMir,
+                       CppMirProgramPlan programPlan,
                        CppMirBodyEmissionMap generalRows, CppStandard standard,
                        TargetInfo target,
                        const OptimizationResult *optimizations)
-    : impl(std::make_unique<Impl>(semantics, hir, verifiedMir,
-                                  std::move(generalRows), standard,
-                                  std::move(target), optimizations)) {}
+    : impl(std::make_unique<Impl>(
+          semantics, hir, verifiedMir, std::move(programPlan),
+          std::move(generalRows), standard, std::move(target), optimizations)) {
+}
 
 CppEmitter::~CppEmitter() = default;
 CppEmitter::CppEmitter(CppEmitter &&) noexcept = default;

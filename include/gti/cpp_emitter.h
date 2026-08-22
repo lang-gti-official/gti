@@ -9,6 +9,7 @@
 namespace lang {
 
 class CppMirBodyEmissionMap;
+struct CppMirProgramPlan;
 class HirProgram;
 class MirProgram;
 class OptimizationResult;
@@ -34,9 +35,9 @@ private:
   // representation rows are mandatory, so executable emission cannot fall
   // back to the former AST/HIR-only route.
   CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
-             const MirProgram &verifiedMir, CppMirBodyEmissionMap generalRows,
-             CppStandard standard, TargetInfo target,
-             const OptimizationResult *optimizations);
+             const MirProgram &verifiedMir, CppMirProgramPlan programPlan,
+             CppMirBodyEmissionMap generalRows, CppStandard standard,
+             TargetInfo target, const OptimizationResult *optimizations);
 
   class Impl;
   std::unique_ptr<Impl> impl;

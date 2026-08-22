@@ -216,6 +216,40 @@ makeSnapshot(const lang::MirProgram &program) {
     }
     snapshot.thunks.push_back(std::move(thunk));
   }
+  for (const lang::MirNativeCallbackAdapter &adapter :
+       program.nativeCallbackAdapters()) {
+    const lang::CppMirThunkIdentity identity{
+        .kind = lang::CppMirThunkKind::NativeInteropAdapter,
+        .owner = adapter.id};
+    lang::CppMirGeneratedThunk thunk{
+        .identity = identity,
+        .sourceBody = {.kind = lang::MirBodyKind::Function,
+                       .owner = adapter.target}};
+    thunk.payload = lang::CppMirNativeCallbackThunk{.adapter = adapter};
+    snapshot.thunks.push_back(std::move(thunk));
+
+    for (lang::CppMirBodyRepresentation &body : snapshot.bodies) {
+      const lang::MirBody *mirBody =
+          lang::findMirBody(program, body.identity.address);
+      if (mirBody == nullptr) {
+        continue;
+      }
+      const bool used = std::any_of(
+          mirBody->blocks.begin(), mirBody->blocks.end(),
+          [&](const lang::MirBlock &block) {
+            return std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const lang::MirInstruction &instruction) {
+                  return instruction.operation ==
+                             lang::MirOperation::NativeCallback &&
+                         instruction.nativeCallbackAdapter == adapter.id;
+                });
+          });
+      if (used) {
+        body.requiredThunks.push_back(identity);
+      }
+    }
+  }
   return snapshot;
 }
 
@@ -1122,6 +1156,129 @@ int main() { return state - 1; }
          "the independently derived contract");
 }
 
+void testNativeCallbackGeneratedItemInventory() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("cpp-mir-plan-native-callback.gti", R"(
+using Callback = (int32_t) -> int32_t;
+int32_t increment(int32_t value) { return value + 1; }
+int32_t decrement(int32_t value) { return value - 1; }
+int main() {
+  Callback up = increment;
+  Callback down = decrement;
+  return up == nullptr || down == nullptr ? 1 : 0;
+}
+)");
+  expect(frontend.canGenerateCode() &&
+             frontend.mir.nativeCallbackAdapters().size() == 2,
+         "the native callback inventory fixture should retain two exact MIR "
+         "adapters");
+  if (!frontend.canGenerateCode() ||
+      frontend.mir.nativeCallbackAdapters().size() != 2) {
+    return;
+  }
+
+  const auto makeCallbackSnapshot = [&] { return makeSnapshot(frontend.mir); };
+  const lang::CppMirProgramPlan exactPlan =
+      planSnapshotForTesting(frontend.mir, makeCallbackSnapshot());
+  const std::size_t callbackRows = static_cast<std::size_t>(
+      std::count_if(exactPlan.thunks.begin(), exactPlan.thunks.end(),
+                    [](const lang::CppMirGeneratedThunk &thunk) {
+                      return thunk.identity.kind ==
+                             lang::CppMirThunkKind::NativeInteropAdapter;
+                    }));
+  const bool exactPayloads = std::all_of(
+      frontend.mir.nativeCallbackAdapters().begin(),
+      frontend.mir.nativeCallbackAdapters().end(),
+      [&](const lang::MirNativeCallbackAdapter &adapter) {
+        const auto found = std::find_if(
+            exactPlan.thunks.begin(), exactPlan.thunks.end(),
+            [&](const lang::CppMirGeneratedThunk &thunk) {
+              return thunk.identity ==
+                     lang::CppMirThunkIdentity{
+                         .kind = lang::CppMirThunkKind::NativeInteropAdapter,
+                         .owner = adapter.id};
+            });
+        const auto *payload =
+            found == exactPlan.thunks.end()
+                ? nullptr
+                : std::get_if<lang::CppMirNativeCallbackThunk>(&found->payload);
+        return payload != nullptr && payload->adapter == adapter &&
+               found->sourceBody ==
+                   lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                        .owner = adapter.target};
+      });
+  expect(exactPlan.coherent() && exactPlan.issues.empty() &&
+             callbackRows == 2 && exactPayloads &&
+             unsupportedCount(exactPlan,
+                              lang::CppMirUnsupportedSurfaceKind::Thunk) == 0,
+         "native callback rows should be exact contracted generated items, "
+         "not unsupported backend surface");
+
+  lang::CppMirRepresentationSnapshot omitted = makeCallbackSnapshot();
+  const lang::CppMirThunkIdentity omittedIdentity{
+      .kind = lang::CppMirThunkKind::NativeInteropAdapter, .owner = 1};
+  omitted.thunks.erase(
+      std::remove_if(omitted.thunks.begin(), omitted.thunks.end(),
+                     [&](const lang::CppMirGeneratedThunk &thunk) {
+                       return thunk.identity == omittedIdentity;
+                     }),
+      omitted.thunks.end());
+  for (lang::CppMirBodyRepresentation &body : omitted.bodies) {
+    body.requiredThunks.erase(std::remove(body.requiredThunks.begin(),
+                                          body.requiredThunks.end(),
+                                          omittedIdentity),
+                              body.requiredThunks.end());
+  }
+  const lang::CppMirProgramPlan omittedPlan =
+      planSnapshotForTesting(frontend.mir, std::move(omitted));
+  expect(omittedPlan.status == lang::CppMirProgramPlanStatus::Incoherent &&
+             hasIssue(omittedPlan,
+                      lang::CppMirPlanIssueKind::MissingContractedThunk) &&
+             hasIssue(omittedPlan,
+                      lang::CppMirPlanIssueKind::InvalidContractedThunkGraph),
+         "coordinated callback row/root omission should fail the independently "
+         "derived MIR census");
+
+  lang::CppMirRepresentationSnapshot stalePayload = makeCallbackSnapshot();
+  const auto stale =
+      std::find_if(stalePayload.thunks.begin(), stalePayload.thunks.end(),
+                   [](const lang::CppMirGeneratedThunk &thunk) {
+                     return thunk.identity.kind ==
+                            lang::CppMirThunkKind::NativeInteropAdapter;
+                   });
+  if (stale != stalePayload.thunks.end()) {
+    if (auto *payload =
+            std::get_if<lang::CppMirNativeCallbackThunk>(&stale->payload)) {
+      payload->adapter = frontend.mir.nativeCallbackAdapters().back();
+    }
+  }
+  const lang::CppMirProgramPlan stalePayloadPlan =
+      planSnapshotForTesting(frontend.mir, std::move(stalePayload));
+  expect(stalePayloadPlan.status == lang::CppMirProgramPlanStatus::Incoherent &&
+             hasIssue(stalePayloadPlan,
+                      lang::CppMirPlanIssueKind::InvalidThunkPayload),
+         "a callback row with stale target or policy facts should fail closed");
+
+  lang::CppMirRepresentationSnapshot reordered = makeCallbackSnapshot();
+  std::vector<std::size_t> callbackIndices;
+  for (std::size_t index = 0; index < reordered.thunks.size(); ++index) {
+    if (reordered.thunks[index].identity.kind ==
+        lang::CppMirThunkKind::NativeInteropAdapter) {
+      callbackIndices.push_back(index);
+    }
+  }
+  if (callbackIndices.size() == 2) {
+    std::swap(reordered.thunks[callbackIndices[0]],
+              reordered.thunks[callbackIndices[1]]);
+  }
+  const lang::CppMirProgramPlan reorderedPlan =
+      planSnapshotForTesting(frontend.mir, std::move(reordered));
+  expect(reorderedPlan.status == lang::CppMirProgramPlanStatus::Incoherent &&
+             hasIssue(reorderedPlan,
+                      lang::CppMirPlanIssueKind::InvalidContractedThunkOrder),
+         "reordered callback inventory rows should fail the sealed MIR order");
+}
+
 void testOneUnsupportedBodyDemotesAtomically() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "cpp-mir-plan-atomic-unsupported.gti", "int helper() { return 0; }");
@@ -1170,6 +1327,7 @@ int main() {
   testDeclarationAndRuntimeCannotClaimExecution();
   testThunkIntegrityFailures();
   testExactContractedThunkProvenance();
+  testNativeCallbackGeneratedItemInventory();
   testOneUnsupportedBodyDemotesAtomically();
 
   if (failures != 0) {

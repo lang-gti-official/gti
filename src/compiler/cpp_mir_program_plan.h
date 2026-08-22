@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace lang {
@@ -147,6 +148,19 @@ struct CppMirDataRepresentation {
                          const CppMirDataRepresentation &) = default;
 };
 
+// Target-independent native-callback facts copied from verified MIR. The
+// backend chooses the adapter spelling and ABI representation; this row only
+// identifies the exact source function and its no-unwind containment policy.
+struct CppMirNativeCallbackThunk {
+  MirNativeCallbackAdapter adapter;
+
+  friend bool operator==(const CppMirNativeCallbackThunk &,
+                         const CppMirNativeCallbackThunk &) = default;
+};
+
+using CppMirGeneratedThunkPayload =
+    std::variant<std::monostate, CppMirNativeCallbackThunk>;
+
 struct CppMirGeneratedThunk {
   CppMirThunkIdentity identity;
   MirBodyAddress sourceBody;
@@ -157,6 +171,7 @@ struct CppMirGeneratedThunk {
   // its verified merged plan contains an Initializer step. Legacy executable
   // generic static-initializer bodies do not infer this thunk.
   std::vector<CppMirThunkIdentity> dependencies;
+  CppMirGeneratedThunkPayload payload;
 
   friend bool operator==(const CppMirGeneratedThunk &,
                          const CppMirGeneratedThunk &) = default;
@@ -216,12 +231,14 @@ enum class CppMirPlanIssueKind {
   DuplicateThunkIdentity,
   InvalidThunkSupport,
   InvalidThunkSource,
+  InvalidThunkPayload,
   DuplicateBodyThunkDependency,
   DuplicateThunkDependency,
   MissingThunkDependency,
   MissingContractedThunk,
   UnexpectedContractedThunk,
   InvalidContractedThunkGraph,
+  InvalidContractedThunkOrder,
   OrphanThunk,
   CyclicThunkDependency,
 };

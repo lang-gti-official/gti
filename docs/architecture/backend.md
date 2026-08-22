@@ -162,15 +162,30 @@ route.
 The source-body cutover is complete, but the backend is not yet independent of
 AST/HIR representation planning. In particular, MIR does not yet provide a
 complete inventory and semantic description for every generated adapter.
-`HostedEntry` and `ProgramInitialization` have explicit plan contracts;
-structural-operator, callable, lifecycle-cleanup, native-interop, and
-concrete-instance adapters still derive part of their shape from sealed
-frontend representation facts.
+`HostedEntry`, `ProgramInitialization`, and same-thread native-callback
+adapters have explicit plan contracts. Structural-operator, callable,
+lifecycle-cleanup, other native-interop, and concrete-instance adapters still
+derive part of their shape from sealed frontend representation facts.
 
-Native callbacks are the first generated-adapter family with explicit
-semantic, HIR, and MIR rows, but they are not yet part of one uniform generated-
-item inventory shared by all adapters. They are therefore evidence for the
-next campaign, not a reason to put C++ ABI spelling into MIR.
+Native callbacks are the first migrated generated-adapter family. The sealed
+snapshot copies each verified MIR adapter into a target-independent generated-
+item payload, roots it from every MIR body containing its callback operation,
+and the whole-program planner independently rejects missing, duplicate, stale,
+or reordered rows. `CppEmitter` consumes that completed inventory for adapter
+declarations and definitions; it does not query the HIR callback table. C++
+names and ABI spelling remain backend policy rather than MIR facts.
+
+The current generated-item family census is:
+
+| Family | Sealed contract | Production state |
+| --- | --- | --- |
+| Hosted entry | Exact owner, startup body, initialization dependency, and body root | Contracted |
+| Program initialization | Exact `Module/0` owner and root | Contracted |
+| Structural operator adapter | Identity kind reserved | Not yet exhaustively inventoried |
+| Callable adapter | Identity kind reserved | Not yet exhaustively inventoried |
+| Lifecycle cleanup | Identity kind reserved | Not yet exhaustively inventoried |
+| Native interop adapter | Exact payload, source function, MIR-operation roots, and order for native callbacks | Native callbacks contracted; other native adapters pending |
+| Concrete-instance adapter | Identity kind reserved | Not yet exhaustively inventoried |
 
 That boundary is the next architectural target if GTI needs a second native
 backend. It should be addressed by adding explicit target-independent

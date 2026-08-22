@@ -215,12 +215,12 @@ removed, or changed body count must be reviewed and the corpus oracle rerun
 before its baseline is refreshed. Generated C++ text is not a public contract;
 marker rows are only an ownership witness.
 
-The next backend architecture work is the generated-item boundary. Hosted
-entry and program initialization are explicitly planned today, while several
-structural, callable, lifecycle, native, and concrete-instance adapter shapes
-still originate in sealed frontend representation facts. Moving those shapes
-to a target-independent inventory must not restore source-body execution from
-AST or HIR.
+The active backend architecture work is the generated-item boundary. Hosted
+entry, program initialization, and same-thread native callbacks are explicitly
+planned today, while structural, callable, lifecycle, remaining native, and
+concrete-instance adapter shapes still originate in sealed frontend
+representation facts. Moving those shapes to a target-independent inventory
+must not restore source-body execution from AST or HIR.
 
 ## Systems-Readiness Outcome Lanes
 
@@ -2788,10 +2788,12 @@ retired no-MIR emitter as a comparison, fallback, or legacy mode.
 
 ### Next migration campaign: generated-item inventory
 
-The completed native-callback adapter is the first concrete audit client: it
-already has semantic selection, concrete HIR identity, verified MIR policy,
-and backend-only C++ spelling, but it still needs an inventory row shared with
-the other generated adapters.
+The native-callback adapter is the first completed migration client. Its
+semantic selection, exact HIR-to-MIR identity, verified failure policy, and
+per-body MIR roots are copied into sealed generated-item rows. The planner
+independently verifies their census and ordering, and `CppEmitter` is now the
+sole production consumer; C++ spelling remains backend-only. The remaining
+families should follow the same contract one at a time.
 
 1. Give every hosted-entry, program-initialization, native-boundary,
    lifecycle, and concrete-instance adapter a stable generated-item identity

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <string_view>
 #include <tuple>
@@ -43,6 +44,9 @@ template <typename Enum>
   }
   if (identity.kind == CppMirThunkKind::ProgramInitialization) {
     return identity.owner == 0 && identity.ordinal == 0;
+  }
+  if (identity.kind == CppMirThunkKind::NativeInteropAdapter) {
+    return identity.owner != 0 && identity.ordinal == 0;
   }
   return identity.owner != 0;
 }
@@ -115,9 +119,35 @@ programInitializationBodyCallCount(const MirProgram &program) {
   return result;
 }
 
+[[nodiscard]] CppMirThunkIdentity
+nativeCallbackThunkIdentity(MirNativeCallbackAdapterId adapter) {
+  return {.kind = CppMirThunkKind::NativeInteropAdapter,
+          .owner = adapter,
+          .ordinal = 0};
+}
+
+[[nodiscard]] std::vector<CppMirThunkIdentity>
+nativeCallbackRequirements(const MirBody &body) {
+  std::vector<CppMirThunkIdentity> result;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.operation != MirOperation::NativeCallback ||
+          !instruction.nativeCallbackAdapter) {
+        continue;
+      }
+      result.push_back(
+          nativeCallbackThunkIdentity(*instruction.nativeCallbackAdapter));
+    }
+  }
+  std::sort(result.begin(), result.end(), thunkLess);
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
+
 [[nodiscard]] bool isContractedThunkKind(CppMirThunkKind kind) {
   return kind == CppMirThunkKind::HostedEntry ||
-         kind == CppMirThunkKind::ProgramInitialization;
+         kind == CppMirThunkKind::ProgramInitialization ||
+         kind == CppMirThunkKind::NativeInteropAdapter;
 }
 
 [[nodiscard]] bool familySupportsBody(CppMirExecutionFamily family) {
@@ -489,6 +519,29 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
     }
   }
 
+  std::vector<CppMirThunkIdentity> expectedNativeCallbacks;
+  expectedNativeCallbacks.reserve(program.nativeCallbackAdapters().size());
+  for (const MirNativeCallbackAdapter &adapter :
+       program.nativeCallbackAdapters()) {
+    expectedNativeCallbacks.push_back(nativeCallbackThunkIdentity(adapter.id));
+  }
+  std::vector<CppMirThunkIdentity> suppliedNativeCallbacks;
+  for (const CppMirGeneratedThunk &thunk : plan.thunks) {
+    if (thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
+      suppliedNativeCallbacks.push_back(thunk.identity);
+    }
+  }
+  std::vector<CppMirThunkIdentity> sortedSuppliedNativeCallbacks =
+      suppliedNativeCallbacks;
+  std::sort(sortedSuppliedNativeCallbacks.begin(),
+            sortedSuppliedNativeCallbacks.end(), thunkLess);
+  if (sortedSuppliedNativeCallbacks == expectedNativeCallbacks &&
+      suppliedNativeCallbacks != expectedNativeCallbacks) {
+    addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkOrder,
+             "native callback thunk rows do not preserve verified MIR adapter "
+             "order");
+  }
+
   std::sort(
       plan.thunks.begin(), plan.thunks.end(),
       [](const CppMirGeneratedThunk &left, const CppMirGeneratedThunk &right) {
@@ -519,6 +572,21 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
       // provenance and generic-emitter contracts are sealed.
       addUnsupported(plan, CppMirUnsupportedSurfaceKind::Thunk, std::nullopt,
                      std::nullopt, thunk.identity);
+    }
+
+    const CppMirNativeCallbackThunk *nativeCallback =
+        std::get_if<CppMirNativeCallbackThunk>(&thunk.payload);
+    if (thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
+      if (nativeCallback == nullptr) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+                 "native callback thunk has no target-independent callback "
+                 "payload",
+                 std::nullopt, std::nullopt, thunk.identity);
+      }
+    } else if (!std::holds_alternative<std::monostate>(thunk.payload)) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+               "non-callback thunk carries a native callback payload",
+               std::nullopt, std::nullopt, thunk.identity);
     }
 
     const auto source =
@@ -558,6 +626,20 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
               MirBodyAddress{.kind = MirBodyKind::Module, .owner = 0} &&
           source->role == CppMirBodyRole::SourceExecutable &&
           hasExecutableProgramInitialization(program);
+    } else if (validSource &&
+               thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
+      const CppMirNativeCallbackThunk *callback =
+          std::get_if<CppMirNativeCallbackThunk>(&thunk.payload);
+      const MirFunctionInstance *target =
+          callback == nullptr
+              ? nullptr
+              : program.findFunctionInstance(callback->adapter.target);
+      validSource = callback != nullptr && target != nullptr &&
+                    thunk.sourceBody ==
+                        MirBodyAddress{.kind = MirBodyKind::Function,
+                                       .owner = callback->adapter.target} &&
+                    source->role == CppMirBodyRole::SourceExecutable &&
+                    target->definitionKind == MirDefinitionKind::Source;
     } else if (validSource) {
       validSource = source->role == CppMirBodyRole::SourceExecutable;
     }
@@ -754,6 +836,70 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
                         : "only the exact generated startup body may root a "
                           "hosted-entry thunk",
                body.identity.address, std::nullopt, expected);
+    }
+  }
+
+  for (const CppMirThunkIdentity &expected : expectedNativeCallbacks) {
+    const std::size_t count = static_cast<std::size_t>(
+        std::count_if(plan.thunks.begin(), plan.thunks.end(),
+                      [&](const CppMirGeneratedThunk &thunk) {
+                        return thunk.identity == expected;
+                      }));
+    if (count == 0) {
+      addIssue(plan, CppMirPlanIssueKind::MissingContractedThunk,
+               "verified MIR native callback adapter requires its exact "
+               "generated thunk",
+               std::nullopt, std::nullopt, expected);
+    }
+  }
+  for (const CppMirGeneratedThunk &thunk : plan.thunks) {
+    if (thunk.identity.kind != CppMirThunkKind::NativeInteropAdapter) {
+      continue;
+    }
+    const MirNativeCallbackAdapter *expected =
+        program.findNativeCallbackAdapter(thunk.identity.owner);
+    const CppMirNativeCallbackThunk *callback =
+        std::get_if<CppMirNativeCallbackThunk>(&thunk.payload);
+    if (expected == nullptr ||
+        !containsThunk(expectedNativeCallbacks, thunk.identity)) {
+      addIssue(plan, CppMirPlanIssueKind::UnexpectedContractedThunk,
+               "native callback thunk has no exact verified MIR adapter",
+               thunk.sourceBody, std::nullopt, thunk.identity);
+      continue;
+    }
+    if (callback == nullptr || callback->adapter != *expected) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+               "native callback thunk payload differs from its exact verified "
+               "MIR adapter",
+               thunk.sourceBody, std::nullopt, thunk.identity);
+    }
+    if (thunk.sourceBody != MirBodyAddress{.kind = MirBodyKind::Function,
+                                           .owner = expected->target} ||
+        thunk.support != CppMirSurfaceSupport::Supported ||
+        !thunk.dependencies.empty()) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
+               "native callback thunk must name its exact source function, "
+               "supported state, and empty dependency set",
+               thunk.sourceBody, std::nullopt, thunk.identity);
+    }
+  }
+
+  for (const CppMirBodyRepresentation &body : plan.bodies) {
+    const MirBody *mirBody = findMirBody(program, body.identity.address);
+    const std::vector<CppMirThunkIdentity> expected =
+        mirBody == nullptr ? std::vector<CppMirThunkIdentity>{}
+                           : nativeCallbackRequirements(*mirBody);
+    std::vector<CppMirThunkIdentity> supplied;
+    std::copy_if(
+        body.requiredThunks.begin(), body.requiredThunks.end(),
+        std::back_inserter(supplied), [](const CppMirThunkIdentity &identity) {
+          return identity.kind == CppMirThunkKind::NativeInteropAdapter;
+        });
+    if (supplied != expected) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
+               "body native callback roots differ from its exact verified MIR "
+               "callback operations",
+               body.identity.address);
     }
   }
 

@@ -1138,6 +1138,8 @@ bool cppMirFrontendSnapshotsMatch(const SemanticModel &semantics,
       hir.module().placeDomain != mir.module().placeDomain ||
       hir.classInstances().size() != mir.classInstances().size() ||
       hir.functionInstances().size() != mir.functionInstances().size() ||
+      hir.nativeCallbackAdapters().size() !=
+          mir.nativeCallbackAdapters().size() ||
       hir.constructorInstances().size() != mir.constructorInstances().size() ||
       hir.destructorInstances().size() != mir.destructorInstances().size() ||
       hir.lambdaInstances().size() != mir.lambdaInstances().size()) {
@@ -1230,6 +1232,25 @@ bool cppMirFrontendSnapshotsMatch(const SemanticModel &semantics,
         info->declaration != source.source ||
         info->sourceUnit != source.sourceUnit) {
       return reject("function instance " + std::to_string(index + 1) +
+                    " differs");
+    }
+  }
+  for (std::size_t index = 0; index < hir.nativeCallbackAdapters().size();
+       ++index) {
+    const HirNativeCallbackAdapter &source =
+        hir.nativeCallbackAdapters()[index];
+    const MirNativeCallbackAdapter &lowered =
+        mir.nativeCallbackAdapters()[index];
+    const MirFunctionInstance *target =
+        mir.findFunctionInstance(lowered.target);
+    if (source.id != lowered.id || source.target != lowered.target ||
+        source.type != lowered.type || target == nullptr ||
+        lowered.targetMayRaiseDefinedFailure !=
+            target->mayRaiseDefinedFailure ||
+        lowered.failurePolicy !=
+            MirNativeCallbackFailurePolicy::TerminateInvocation ||
+        !lowered.catchesNativeExceptions) {
+      return reject("native callback adapter " + std::to_string(index + 1) +
                     " differs");
     }
   }
@@ -1817,6 +1838,96 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
   if (hostedEntries > 1) {
     addIssue(build, CppMirRepresentationSnapshotIssueKind::InvalidHostedEntry,
              "representation snapshot contains more than one hosted entry");
+  }
+
+  std::vector<std::vector<MirBodyAddress>> nativeCallbackRoots(
+      mir.nativeCallbackAdapters().size() + 1);
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
+    const MirBody *body = findMirBody(mir, address);
+    if (body == nullptr) {
+      continue;
+    }
+    std::vector<MirNativeCallbackAdapterId> adapters;
+    for (const MirBlock &block : body->blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.operation == MirOperation::NativeCallback &&
+            instruction.nativeCallbackAdapter) {
+          adapters.push_back(*instruction.nativeCallbackAdapter);
+        }
+      }
+    }
+    std::sort(adapters.begin(), adapters.end());
+    adapters.erase(std::unique(adapters.begin(), adapters.end()),
+                   adapters.end());
+    for (const MirNativeCallbackAdapterId adapter : adapters) {
+      if (adapter < nativeCallbackRoots.size()) {
+        nativeCallbackRoots[adapter].push_back(address);
+      }
+    }
+  }
+
+  for (const MirNativeCallbackAdapter &adapter : mir.nativeCallbackAdapters()) {
+    const HirNativeCallbackAdapter *source =
+        hir.findNativeCallbackAdapter(adapter.id);
+    const HirFunctionInstance *hirTarget =
+        hir.findFunctionInstance(adapter.target);
+    const MirFunctionInstance *target =
+        mir.findFunctionInstance(adapter.target);
+    const FunctionInfo *declaration =
+        target == nullptr ? nullptr
+                          : semantics.findFunction(target->declaration);
+    CppMirBodyRepresentation *sourceBody = findBody(
+        snapshot, {.kind = MirBodyKind::Function, .owner = adapter.target});
+    if (source == nullptr || source->id != adapter.id ||
+        source->target != adapter.target || source->type != adapter.type ||
+        hirTarget == nullptr || target == nullptr || declaration == nullptr ||
+        hirTarget->source == nullptr ||
+        declaration->declaration != hirTarget->source || target->owner ||
+        target->linkage != LanguageLinkage::Gti ||
+        target->definitionKind != MirDefinitionKind::Source ||
+        adapter.targetMayRaiseDefinedFailure !=
+            target->mayRaiseDefinedFailure ||
+        sourceBody == nullptr ||
+        sourceBody->role != CppMirBodyRole::SourceExecutable) {
+      addIssue(
+          build,
+          CppMirRepresentationSnapshotIssueKind::InvalidNativeCallbackAdapter,
+          "native callback adapter lacks its exact semantic, HIR, and MIR "
+          "source function");
+      continue;
+    }
+
+    const CppMirThunkIdentity identity{
+        .kind = CppMirThunkKind::NativeInteropAdapter,
+        .owner = adapter.id,
+        .ordinal = 0};
+    CppMirGeneratedThunk thunk{
+        .identity = identity,
+        .sourceBody = {.kind = MirBodyKind::Function, .owner = adapter.target},
+        .support = CppMirSurfaceSupport::Supported};
+    thunk.payload = CppMirNativeCallbackThunk{.adapter = adapter};
+    snapshot.thunks.push_back(std::move(thunk));
+
+    bool rooted = false;
+    for (const MirBodyAddress address : nativeCallbackRoots[adapter.id]) {
+      CppMirBodyRepresentation *consumer = findBody(snapshot, address);
+      if (consumer == nullptr ||
+          consumer->role != CppMirBodyRole::SourceExecutable) {
+        addIssue(
+            build,
+            CppMirRepresentationSnapshotIssueKind::InvalidNativeCallbackAdapter,
+            "native callback use lacks its exact executable MIR body root");
+        continue;
+      }
+      consumer->requiredThunks.push_back(identity);
+      rooted = true;
+    }
+    if (!rooted) {
+      addIssue(
+          build,
+          CppMirRepresentationSnapshotIssueKind::InvalidNativeCallbackAdapter,
+          "native callback adapter is not rooted by a MIR callback operation");
+    }
   }
 
   if (module == nullptr) {

@@ -231,6 +231,91 @@ void testExhaustiveSealedInventory() {
          "emission before backend construction");
 }
 
+void testNativeCallbackGeneratedItemRows() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("cpp-mir-representation-native-callback.gti", R"(
+using Callback = (int32_t) -> int32_t;
+int32_t increment(int32_t value) { return value + 1; }
+int32_t decrement(int32_t value) { return value - 1; }
+int main() {
+  Callback up = increment;
+  Callback down = decrement;
+  return up == nullptr || down == nullptr ? 1 : 0;
+}
+)");
+  expect(frontend.canGenerateCode() &&
+             frontend.mir.nativeCallbackAdapters().size() == 2,
+         "the callback snapshot fixture should retain two MIR adapters");
+  if (!frontend.canGenerateCode() ||
+      frontend.mir.nativeCallbackAdapters().size() != 2) {
+    return;
+  }
+
+  lang::CppMirRepresentationSnapshotBuild build = buildSnapshot(frontend);
+  expect(build.valid() &&
+             thunkCount(*build.snapshot,
+                        lang::CppMirThunkKind::NativeInteropAdapter) == 2,
+         "the sealed builder should produce one native generated-item row per "
+         "verified callback adapter");
+  if (!build.valid()) {
+    return;
+  }
+  for (const lang::MirNativeCallbackAdapter &adapter :
+       frontend.mir.nativeCallbackAdapters()) {
+    const lang::CppMirThunkIdentity identity{
+        .kind = lang::CppMirThunkKind::NativeInteropAdapter,
+        .owner = adapter.id};
+    const auto thunk = std::find_if(
+        build.snapshot->thunks.begin(), build.snapshot->thunks.end(),
+        [&](const lang::CppMirGeneratedThunk &candidate) {
+          return candidate.identity == identity;
+        });
+    const auto *payload =
+        thunk == build.snapshot->thunks.end()
+            ? nullptr
+            : std::get_if<lang::CppMirNativeCallbackThunk>(&thunk->payload);
+    const std::size_t roots = static_cast<std::size_t>(std::count_if(
+        build.snapshot->bodies.begin(), build.snapshot->bodies.end(),
+        [&](const lang::CppMirBodyRepresentation &body) {
+          return std::find(body.requiredThunks.begin(),
+                           body.requiredThunks.end(),
+                           identity) != body.requiredThunks.end();
+        }));
+    expect(payload != nullptr && payload->adapter == adapter &&
+               thunk->sourceBody ==
+                   lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                        .owner = adapter.target} &&
+               roots == 1,
+           "each callback generated item should retain its exact payload, "
+           "source function, and MIR-operation body root");
+  }
+
+  lang::MirProgram drifted = frontend.mir;
+  auto &adapters = const_cast<std::vector<lang::MirNativeCallbackAdapter> &>(
+      drifted.nativeCallbackAdapters());
+  std::swap(adapters[0].target, adapters[1].target);
+  for (lang::MirNativeCallbackAdapter &adapter : adapters) {
+    const lang::MirFunctionInstance *target =
+        drifted.findFunctionInstance(adapter.target);
+    adapter.targetMayRaiseDefinedFailure =
+        target == nullptr ? adapter.targetMayRaiseDefinedFailure
+                          : target->mayRaiseDefinedFailure;
+  }
+  expect(lang::verifyMirProgram(drifted).valid(),
+         "the callback drift mutation should remain independently valid MIR");
+  const lang::CppMirRepresentationSnapshotBuild driftedBuild =
+      lang::buildCppMirRepresentationSnapshot(
+          frontend.program, frontend.semantics, frontend.hir, drifted,
+          lang::TargetInfo::host());
+  expect(
+      !driftedBuild.valid() &&
+          hasBuildIssue(
+              driftedBuild,
+              lang::CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch),
+      "the snapshot boundary should reject valid MIR callback rows that "
+      "drift from their exact HIR adapter identities");
+}
+
 void testUnusedSourceTemplatesRemainInventorySurface() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "cpp-mir-representation-unused-templates.gti", R"(
@@ -1495,6 +1580,7 @@ int main() {
 
 int main() {
   testExhaustiveSealedInventory();
+  testNativeCallbackGeneratedItemRows();
   testUnusedSourceTemplatesRemainInventorySurface();
   testExactProgramAndTargetAnalysisSeal();
   testPrivateInventorySealAndContractedThunkClosure();

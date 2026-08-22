@@ -95,8 +95,8 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
   // coverage before this one whole-program representation emitter is built.
   return {.kind = BackendArtifactKind::Source,
           .contents = CppEmitter(input.semantics, input.hir, input.mir,
-                                 std::move(generalRows), standard, input.target,
-                                 &input.optimizations)
+                                 std::move(plan), std::move(generalRows),
+                                 standard, input.target, &input.optimizations)
                           .emit(input.program),
           .extension = ".cpp"};
 }
