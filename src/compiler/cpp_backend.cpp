@@ -103,10 +103,11 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
   // The complete plan above proves every executable body has generic MIR text
   // coverage before this one whole-program representation emitter is built.
   return {.kind = BackendArtifactKind::Source,
-          .contents = CppEmitter(input.semantics, input.hir, input.mir,
-                                 std::move(plan), std::move(generalRows),
-                                 standard, input.target, &input.optimizations)
-                          .emit(input.program),
+          .contents =
+              CppEmitter(input.semantics, input.hir, input.mir, std::move(plan),
+                         std::move(generalRows), standard, input.target,
+                         &input.optimizations, input.loweredProgram)
+                  .emit(input.program),
           .extension = ".cpp"};
 }
 

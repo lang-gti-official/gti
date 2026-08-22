@@ -4,6 +4,7 @@
 #include "cpp_mir_representation_snapshot.h"
 #include "cpp_representation.h"
 #include "gti/ast.h"
+#include "gti/lowered_program.h"
 #include "gti/mir.h"
 #include "gti/optimizer.h"
 
@@ -29,11 +30,13 @@ public:
   explicit Impl(const SemanticModel &semantics, const HirProgram &hir,
                 const MirProgram &verifiedMir, CppMirProgramPlan programPlan,
                 CppMirBodyEmissionMap generalRows, CppStandard standard,
-                TargetInfo target, const OptimizationResult *optimizations)
+                TargetInfo target, const OptimizationResult *optimizations,
+                const LoweredProgram *loweredProgram)
       : standard(standard), target(std::move(target)),
         optimizations(optimizations), semantics(semantics), hir(hir),
         mir(&verifiedMir), programPlan(std::move(programPlan)),
-        generalEmissionMap(std::move(generalRows)) {
+        generalEmissionMap(std::move(generalRows)),
+        loweredProgram(loweredProgram) {
     if (!this->programPlan.complete()) {
       throw std::logic_error(
           "C++ emitter requires a complete generated-item program plan");
@@ -42,6 +45,11 @@ public:
   }
 
   std::string emit(const Program &program) {
+    if (loweredProgram != nullptr && &loweredProgram->mir() != mir &&
+        loweredProgram->mir() != *mir) {
+      throw std::logic_error(
+          "C++ emitter received a lowered program for different MIR");
+    }
     output.str("");
     output.clear();
     indentation = 0;
@@ -97,7 +105,10 @@ public:
               "#include <type_traits>\n"
               "#include <utility>\n"
               "#include <variant>\n";
-    const bool usesExpected = containsExpectedType(program.declarations());
+    const bool usesExpected =
+        loweredProgram != nullptr
+            ? loweredProgramContainsTypeKind(SemanticType::Expected)
+            : containsExpectedType(program.declarations());
     if (usesExpected) {
       if (standard == CppStandard::Cpp23) {
         output << "#include <expected>\n";
@@ -105,11 +116,16 @@ public:
         output << "#include <nonstd/expected.hpp>\n";
       }
     }
-    if (containsRuntimeBinding(program.declarations())) {
+    if (loweredProgram != nullptr
+            ? loweredProgramContainsRuntimeBinding()
+            : containsRuntimeBinding(program.declarations())) {
       output << "#include <gti/runtime.hpp>\n";
     }
     output << "#include <gti/runtime_failure.h>\n";
-    const bool usesCAbiTextView = containsCAbiTextView(program.declarations());
+    const bool usesCAbiTextView =
+        loweredProgram != nullptr
+            ? loweredProgramContainsCAbiTextView()
+            : containsCAbiTextView(program.declarations());
     if (usesCAbiTextView) {
       output << "#include <gti/c_abi.h>\n";
     }
@@ -1537,7 +1553,7 @@ inline Target post_decrement(Target &target) {
 
 )";
 
-    if (anyGeneralFailureBodyAdmitted()) {
+    if (loweredProgram != nullptr || anyGeneralFailureBodyAdmitted()) {
       emitMirScalarFailureHelpers();
     }
 
@@ -1557,7 +1573,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
     emitFailureArtifactDescriptor(mir->failureMetadata());
 
-    emitUserMacroIsolation();
+    if (loweredProgram != nullptr) {
+      emitLoweredUserMacroIsolation();
+    } else {
+      emitUserMacroIsolation();
+    }
+    if (loweredProgram != nullptr) {
+      return emitLoweredProgramTail();
+    }
     emitPublicOpaqueHandleForwardDeclarations(program.declarations());
     // A passive verified Module schedule authors native static initializer
     // text. A Module with control flow or propagated failure instead emits one
@@ -1645,6 +1668,3068 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     --indentation;
     output << "} // namespace __gti_program\n";
     emitProgramEntryAdapter();
+    return output.str();
+  }
+
+  struct LoweredClassInitializerSelection {
+    std::vector<HirClassInstanceId> instances;
+    std::unordered_map<SymbolId, std::string> fields;
+    bool fieldsSupported = false;
+    bool staticsVerifiedEmpty = false;
+  };
+
+  [[nodiscard]] const std::vector<const LoweredDeclaration *> &
+  loweredChildren(LoweredDeclarationId parent) const {
+    static const std::vector<const LoweredDeclaration *> empty;
+    return parent < loweredDeclarationChildren.size()
+               ? loweredDeclarationChildren[parent]
+               : empty;
+  }
+
+  void indexLoweredDeclarations() {
+    if (loweredProgram == nullptr) {
+      throw std::logic_error(
+          "lowered declaration emission requires a LoweredProgram");
+    }
+    loweredDeclarationChildren.assign(loweredProgram->declarations().size() + 1,
+                                      {});
+    for (const LoweredDeclaration &declaration :
+         loweredProgram->declarations()) {
+      if (declaration.parent >= loweredDeclarationChildren.size()) {
+        throw std::logic_error(
+            "lowered declaration parent is outside the declaration tree");
+      }
+      loweredDeclarationChildren[declaration.parent].push_back(&declaration);
+    }
+  }
+
+  [[nodiscard]] static bool loweredTypeContainsKind(const SemanticType &type,
+                                                    SemanticType::Kind kind) {
+    if (type.kind == kind) {
+      return true;
+    }
+    const auto contains = [&](const std::vector<SemanticType> &arguments) {
+      return std::any_of(arguments.begin(), arguments.end(),
+                         [&](const SemanticType &argument) {
+                           return loweredTypeContainsKind(argument, kind);
+                         });
+    };
+    return contains(type.arguments) ||
+           contains(type.lambdaEnclosingClassTypes) ||
+           contains(type.lambdaEnclosingFunctionTypes);
+  }
+
+  [[nodiscard]] bool
+  loweredProgramContainsTypeKind(SemanticType::Kind kind) const {
+    if (loweredProgram == nullptr) {
+      return false;
+    }
+    if (std::any_of(loweredProgram->symbols().begin(),
+                    loweredProgram->symbols().end(),
+                    [&](const LoweredSymbol &symbol) {
+                      return loweredTypeContainsKind(symbol.type, kind);
+                    })) {
+      return true;
+    }
+    for (const LoweredDeclaration &row : loweredProgram->declarations()) {
+      if (const auto *alias =
+              std::get_if<LoweredTypeAliasDeclaration>(&row.payload);
+          alias != nullptr && loweredTypeContainsKind(alias->type, kind)) {
+        return true;
+      }
+      if (const auto *enumeration =
+              std::get_if<LoweredEnumDeclaration>(&row.payload)) {
+        if (loweredTypeContainsKind(enumeration->underlyingType, kind) ||
+            std::any_of(enumeration->enumerators.begin(),
+                        enumeration->enumerators.end(),
+                        [&](const LoweredEnumerator &enumerator) {
+                          return std::any_of(enumerator.payloadTypes.begin(),
+                                             enumerator.payloadTypes.end(),
+                                             [&](const SemanticType &type) {
+                                               return loweredTypeContainsKind(
+                                                   type, kind);
+                                             });
+                        })) {
+          return true;
+        }
+      }
+      if (const auto *function =
+              std::get_if<LoweredFunctionDeclaration>(&row.payload)) {
+        if (loweredTypeContainsKind(function->returnType, kind) ||
+            std::any_of(function->parameters.begin(),
+                        function->parameters.end(),
+                        [&](const LoweredParameter &parameter) {
+                          return loweredTypeContainsKind(parameter.type, kind);
+                        })) {
+          return true;
+        }
+      }
+      if (const auto *constructor =
+              std::get_if<LoweredConstructorDeclaration>(&row.payload);
+          constructor != nullptr &&
+          std::any_of(constructor->parameters.begin(),
+                      constructor->parameters.end(),
+                      [&](const LoweredParameter &parameter) {
+                        return loweredTypeContainsKind(parameter.type, kind);
+                      })) {
+        return true;
+      }
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&row.payload);
+          storage != nullptr && loweredTypeContainsKind(storage->type, kind)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool loweredProgramContainsRuntimeBinding() const {
+    return loweredProgram != nullptr &&
+           std::any_of(loweredProgram->declarations().begin(),
+                       loweredProgram->declarations().end(),
+                       [](const LoweredDeclaration &row) {
+                         const auto *function =
+                             std::get_if<LoweredFunctionDeclaration>(
+                                 &row.payload);
+                         return function != nullptr &&
+                                function->definitionKind ==
+                                    MirDefinitionKind::RuntimeBinding;
+                       });
+  }
+
+  [[nodiscard]] bool loweredProgramContainsCAbiTextView() const {
+    return loweredProgram != nullptr &&
+           std::any_of(
+               loweredProgram->declarations().begin(),
+               loweredProgram->declarations().end(),
+               [&](const LoweredDeclaration &row) {
+                 const auto *function =
+                     std::get_if<LoweredFunctionDeclaration>(&row.payload);
+                 return function != nullptr &&
+                        function->linkage == LanguageLinkage::C &&
+                        (loweredTypeContainsKind(function->returnType,
+                                                 SemanticType::StringView) ||
+                         std::any_of(function->parameters.begin(),
+                                     function->parameters.end(),
+                                     [&](const LoweredParameter &parameter) {
+                                       return loweredTypeContainsKind(
+                                           parameter.type,
+                                           SemanticType::StringView);
+                                     }));
+               });
+  }
+
+  void emitLoweredUserMacroIsolation() {
+    std::vector<std::string> names;
+    names.reserve(loweredProgram->symbols().size());
+    for (const LoweredSymbol &symbol : loweredProgram->symbols()) {
+      if (validMacroName(symbol.name) &&
+          !std::string_view(symbol.name).starts_with("__gti_")) {
+        names.push_back(symbol.name);
+      }
+    }
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    if (names.empty()) {
+      return;
+    }
+    output << "\n// Host headers must not rewrite valid GTI identifiers.\n";
+    for (const std::string &name : names) {
+      output << "#undef " << name << '\n';
+    }
+    output << '\n';
+  }
+
+  [[nodiscard]] static std::string_view
+  loweredNamespaceSpelling(std::string_view name, bool topLevel) {
+    return topLevel && name == "std" ? cppEmittedStandardNamespace : name;
+  }
+
+  void emitLoweredTemplateDeclaration(
+      const std::vector<LoweredGenericParameter> &parameters) {
+    if (parameters.empty()) {
+      return;
+    }
+    writeIndent();
+    output << "template <";
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      const LoweredGenericParameter &parameter = parameters[index];
+      if (parameter.value) {
+        output << "std::size_t " << parameter.name;
+      } else {
+        output << "typename" << (parameter.pack ? "... " : " ")
+               << parameter.name;
+      }
+    }
+    output << ">\n";
+  }
+
+  void emitLoweredParameter(const LoweredParameter &parameter,
+                            std::string_view name) {
+    const bool reference = parameter.type.kind == SemanticType::Reference;
+    const bool rawPointer = parameter.type.kind == SemanticType::RawPointer;
+    const LoweredSymbol *symbol =
+        parameter.symbol == 0 ? nullptr
+                              : loweredProgram->findSymbol(parameter.symbol);
+    const bool moveOnly =
+        (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
+        parameter.type.kind == SemanticType::UniqueOwner ||
+        parameter.type.kind == SemanticType::Storage ||
+        parameter.type.kind == SemanticType::PrefixStorage ||
+        parameter.type.kind == SemanticType::TypeParameter ||
+        parameter.type.kind == SemanticType::TypePack;
+    if (!reference && parameter.mutability == Mutability::Immutable &&
+        !parameter.pack && !moveOnly && !rawPointer &&
+        !parameter.explicitlyMoved) {
+      output << "const ";
+    }
+    emitSemanticType(parameter.type);
+    if (parameter.pack) {
+      output << "...";
+    }
+    if (!name.empty()) {
+      output << ' ' << name;
+    }
+  }
+
+  void emitLoweredExactCallValueType(const SemanticType &type) {
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+      emitSemanticType(type.arguments.front());
+      return;
+    }
+    emitSemanticType(type);
+  }
+
+  void emitLoweredExactCallParameter(const SemanticType &type) {
+    output << "::gti_internal::backend::call_parameter<"
+              "::gti_internal::backend::callable_binding::";
+    if (type.kind != SemanticType::Reference) {
+      output << "value";
+    } else if (type.referenceAccess == AccessMode::Mutable) {
+      output << "mutable_reference";
+    } else {
+      output << "read_reference";
+    }
+    output << ", ";
+    emitLoweredExactCallValueType(type);
+    output << '>';
+  }
+
+  void emitLoweredParameters(const std::vector<LoweredParameter> &parameters,
+                             bool mirArgumentNames = false) {
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      emitLoweredParameter(parameters[index],
+                           mirArgumentNames
+                               ? "__gti_mir_arg_" + std::to_string(index)
+                               : parameters[index].name);
+    }
+  }
+
+  std::size_t
+  emitLoweredMirParameters(std::span<const SemanticType> parameterTypes) {
+    const std::optional<std::vector<SemanticType>> flattened =
+        cppMirFlattenConcreteParameterTypes(parameterTypes);
+    if (!flattened) {
+      throw std::logic_error(
+          "lowered C++ signature contains a symbolic or misplaced type pack");
+    }
+    for (std::size_t index = 0; index < flattened->size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      emitSemanticType((*flattened)[index]);
+      output << " __gti_mir_arg_" << index;
+    }
+    return flattened->size();
+  }
+
+  [[nodiscard]] const LoweredDeclaration *loweredClassRow(ClassId id) const {
+    if (loweredProgram == nullptr || id == 0) {
+      return nullptr;
+    }
+    const auto found =
+        std::find_if(loweredProgram->declarations().begin(),
+                     loweredProgram->declarations().end(),
+                     [id](const LoweredDeclaration &declaration) {
+                       const auto *value = std::get_if<LoweredClassDeclaration>(
+                           &declaration.payload);
+                       return value != nullptr && value->id == id;
+                     });
+    return found == loweredProgram->declarations().end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] const LoweredDeclaration *
+  loweredFunctionRow(FunctionId id) const {
+    if (loweredProgram == nullptr || id == 0) {
+      return nullptr;
+    }
+    const auto found = std::find_if(
+        loweredProgram->declarations().begin(),
+        loweredProgram->declarations().end(),
+        [id](const LoweredDeclaration &declaration) {
+          const auto *value =
+              std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
+          return value != nullptr && value->id == id;
+        });
+    return found == loweredProgram->declarations().end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] std::vector<const MirFunctionInstance *>
+  loweredFunctionInstances(FunctionId declaration) const {
+    std::vector<const MirFunctionInstance *> result;
+    for (const MirFunctionInstance &instance : mir->functionInstances()) {
+      if (instance.declaration == declaration) {
+        result.push_back(&instance);
+      }
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<const MirConstructorInstance *>
+  loweredConstructorInstances(ConstructorId declaration) const {
+    std::vector<const MirConstructorInstance *> result;
+    if (loweredProgram == nullptr) {
+      return result;
+    }
+    for (const LoweredConstructorInstance &instance :
+         loweredProgram->constructorInstances()) {
+      if (instance.declaration != declaration) {
+        continue;
+      }
+      const MirConstructorInstance *mirInstance =
+          mir->findConstructorInstance(instance.id);
+      if (mirInstance != nullptr) {
+        result.push_back(mirInstance);
+      }
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::optional<LoweredClassInitializerSelection>
+  loweredClassInitializers(const LoweredClassDeclaration &declaration) const {
+    if (loweredProgram == nullptr) {
+      return std::nullopt;
+    }
+    std::vector<const MirClassInstance *> instances;
+    for (const MirClassInstance &candidate : mir->classInstances()) {
+      if (candidate.declaration == declaration.id) {
+        instances.push_back(&candidate);
+      }
+    }
+    if (instances.empty()) {
+      return std::nullopt;
+    }
+
+    const bool fixedRepresentation =
+        declaration.kind == ClassKind::Union || declaration.cAbiRecord;
+    LoweredClassInitializerSelection result;
+    result.fieldsSupported = true;
+    result.staticsVerifiedEmpty = true;
+    bool first = true;
+    for (const MirClassInstance *instance : instances) {
+      result.instances.push_back(instance->id);
+      const CppMirInitializerScheduleText fields =
+          generalMirBodyEmitter().initializerSchedule(
+              {.kind = MirBodyKind::FieldInitializers, .owner = instance->id});
+      std::unordered_map<SymbolId, std::string> current;
+      if (fields.supported) {
+        for (const CppMirFieldInitializerSpelling &field : fields.fields) {
+          current.emplace(field.field, field.spelling);
+        }
+        if (first) {
+          result.fields = std::move(current);
+        } else if (current != result.fields) {
+          result.fieldsSupported = false;
+        }
+      } else {
+        result.fieldsSupported = false;
+      }
+      const CppMirInitializerScheduleText statics =
+          generalMirBodyEmitter().initializerSchedule(
+              {.kind = MirBodyKind::StaticFieldInitializers,
+               .owner = instance->id});
+      if (!statics.supported || !statics.fields.empty()) {
+        result.staticsVerifiedEmpty = false;
+      }
+      first = false;
+    }
+    if (fixedRepresentation && result.fieldsSupported &&
+        !std::all_of(result.fields.begin(), result.fields.end(),
+                     [](const auto &field) { return field.second.empty(); })) {
+      result.fieldsSupported = false;
+    }
+    if (!result.fieldsSupported) {
+      result.fields.clear();
+    }
+    return result;
+  }
+
+  void prepareLoweredModuleInitialization() {
+    moduleGeneralInitializers.clear();
+    moduleGeneralSupported = false;
+    moduleRuntimeInitializedSymbols.clear();
+    moduleRuntimeEmission = false;
+    const MirBodyAddress moduleAddress{.kind = MirBodyKind::Module, .owner = 0};
+    const bool hasExecutableProgramInitialization = std::any_of(
+        mir->programInitializationPlan().steps.begin(),
+        mir->programInitializationPlan().steps.end(), [](const auto &step) {
+          return step.role == ProgramInitializationStepRole::Initializer;
+        });
+    moduleRuntimeMayRaise = cppMirModuleMayRaiseDefinedFailure(*mir);
+    const CppMirInitializerScheduleText schedule =
+        generalMirBodyEmitter().initializerSchedule(moduleAddress);
+    if (!moduleRuntimeMayRaise && schedule.supported) {
+      moduleGeneralSupported = true;
+      for (const CppMirFieldInitializerSpelling &field : schedule.fields) {
+        moduleGeneralInitializers.emplace(field.field, field.spelling);
+      }
+      return;
+    }
+    if (!hasExecutableProgramInitialization) {
+      if (!schedule.supported) {
+        throw std::logic_error(
+            "lowered C++ emission has no MIR module initializer schedule");
+      }
+      return;
+    }
+    const CppMirBodyEmissionAnalysis analysis =
+        generalMirBodyEmitter().analyze(moduleAddress);
+    const bool supported =
+        moduleRuntimeMayRaise
+            ? generalMirBodyEmitter().supportsFailureBodyText(moduleAddress)
+            : generalMirBodyEmitter().supportsBodyText(moduleAddress);
+    if (!analysis.ready() || !supported) {
+      throw std::logic_error(
+          "lowered C++ emission has no MIR runtime module body");
+    }
+    moduleRuntimeEmission = true;
+    for (const MirProgramInitializationStep &step :
+         mir->programInitializationPlan().steps) {
+      if (step.role == ProgramInitializationStepRole::Initializer) {
+        moduleRuntimeInitializedSymbols.insert(step.symbol);
+      }
+    }
+  }
+
+  [[nodiscard]] std::string
+  loweredNativeQualifiedName(const LoweredDeclaration &declaration) const {
+    std::string result = "::";
+    for (std::size_t index = 0; index < declaration.namespaceScope.size();
+         ++index) {
+      result += std::string(loweredNamespaceSpelling(
+          declaration.namespaceScope[index], index == 0));
+      result += "::";
+    }
+    result += declaration.name;
+    return result;
+  }
+
+  void emitLoweredNamePath(const std::vector<std::string> &path) {
+    for (std::size_t index = 0; index < path.size(); ++index) {
+      if (index != 0) {
+        output << "::";
+      }
+      output << loweredNamespaceSpelling(path[index], index == 0);
+    }
+  }
+
+  [[nodiscard]] bool loweredClassHasConsumingCallOperator(
+      const LoweredDeclaration &classRow) const {
+    return std::any_of(
+        loweredChildren(classRow.id).begin(),
+        loweredChildren(classRow.id).end(),
+        [](const LoweredDeclaration *member) {
+          const auto *function =
+              member == nullptr
+                  ? nullptr
+                  : std::get_if<LoweredFunctionDeclaration>(&member->payload);
+          return function != nullptr && function->overloadedOperator &&
+                 *function->overloadedOperator == OverloadedOperator::Call &&
+                 function->receiverMutability == ReceiverMutability::Consuming;
+        });
+  }
+
+  void emitLoweredFailureResultParameter(const SemanticType &returnType) {
+    if (returnType.kind == SemanticType::Reference &&
+        returnType.arguments.size() == 1) {
+      if (returnType.referenceAccess == AccessMode::ReadOnly) {
+        output << "const ";
+      }
+      emitSemanticType(returnType.arguments.front());
+      output << " **__gti_mir_out_result, ";
+    } else if (returnType != SemanticType::Void) {
+      emitSemanticType(returnType);
+      output << " *__gti_mir_out_result, ";
+    }
+  }
+
+  void emitLoweredFunctionSignature(const LoweredDeclaration &row,
+                                    const LoweredFunctionDeclaration &function,
+                                    const MirFunctionInstance *instance,
+                                    bool failure, bool insideClass = false,
+                                    std::string_view owner = {},
+                                    bool sourceParameterTypes = false) {
+    if (insideClass && function.staticMember) {
+      output << "static ";
+    }
+    if (insideClass && function.virtualMethod && !function.overrideMethod &&
+        !function.staticMember) {
+      output << "virtual ";
+    }
+    if (failure) {
+      output << "bool ";
+    } else {
+      emitSemanticType(instance == nullptr ? function.returnType
+                                           : instance->returnType);
+      output << ' ';
+    }
+    if (!owner.empty()) {
+      output << owner << "::";
+    }
+    const std::string name = cppFunctionSpelling(function, row.name);
+    output << (failure ? cppMirFailureSiblingSpelling(name) : name) << '(';
+    std::size_t parameterCount = 0;
+    if (instance != nullptr && !sourceParameterTypes) {
+      parameterCount = emitLoweredMirParameters(instance->parameterTypes);
+    } else {
+      emitLoweredParameters(function.parameters, sourceParameterTypes);
+      parameterCount = function.parameters.size();
+    }
+    if (failure) {
+      if (parameterCount != 0) {
+        output << ", ";
+      }
+      emitLoweredFailureResultParameter(
+          instance == nullptr ? function.returnType : instance->returnType);
+      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+    }
+    output << ')';
+    const ReceiverMutability receiver = instance == nullptr
+                                            ? function.receiverMutability
+                                            : instance->receiverMutability;
+    if ((insideClass || !owner.empty()) && !function.staticMember) {
+      const LoweredDeclaration *classRow = loweredClassRow(function.ownerClass);
+      const bool refQualified =
+          function.overloadedOperator &&
+          *function.overloadedOperator == OverloadedOperator::Call &&
+          classRow != nullptr &&
+          loweredClassHasConsumingCallOperator(*classRow);
+      if (receiver == ReceiverMutability::ReadOnly) {
+        output << " const";
+        if (refQualified) {
+          output << " &";
+        }
+      } else if (receiver == ReceiverMutability::Mutable && refQualified) {
+        output << " &";
+      } else if (receiver == ReceiverMutability::Consuming) {
+        output << " &&";
+      }
+    }
+    if (insideClass && function.overrideMethod) {
+      output << " override";
+    }
+  }
+
+  void emitLoweredCAbiType(const SemanticType &type) {
+    if (type == SemanticType::StringView) {
+      output << "::gti_c_string_view";
+    } else {
+      emitSemanticType(type);
+    }
+  }
+
+  void emitLoweredCAbiSignature(const LoweredDeclaration &row,
+                                const LoweredFunctionDeclaration &function) {
+    emitLoweredCAbiType(function.returnType);
+    output << ' '
+           << (function.externalSymbol.empty() ? row.name
+                                               : function.externalSymbol)
+           << '(';
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      emitLoweredCAbiType(function.parameters[index].type);
+      if (!function.parameters[index].name.empty()) {
+        output << ' ' << function.parameters[index].name;
+      }
+    }
+    output << ')';
+  }
+
+  [[nodiscard]] bool
+  loweredNormalBodySupported(const MirFunctionInstance &instance) const {
+    return instance.definitionKind == MirDefinitionKind::Source &&
+           generalMirBodyEmitter().supportsBodyText(
+               {.kind = MirBodyKind::Function, .owner = instance.id});
+  }
+
+  [[nodiscard]] bool
+  loweredFailureBodySupported(const MirFunctionInstance &instance) const {
+    return instance.definitionKind == MirDefinitionKind::Source &&
+           instance.mayRaiseDefinedFailure &&
+           generalMirBodyEmitter().supportsFailureBodyText(
+               {.kind = MirBodyKind::Function, .owner = instance.id});
+  }
+
+  [[nodiscard]] bool
+  loweredVirtualFailureContractRetained(FunctionId declaration) const {
+    for (const MirFunctionInstance &candidate : mir->functionInstances()) {
+      if (candidate.declaration != declaration ||
+          cppMirVirtualFailureContractRoot(*mir, candidate) != &candidate) {
+        continue;
+      }
+      bool implementation = !candidate.pureVirtual;
+      if (!candidate.pureVirtual && !loweredFailureBodySupported(candidate)) {
+        continue;
+      }
+      bool complete = true;
+      for (const MirFunctionInstance &override : mir->functionInstances()) {
+        if (override.id == candidate.id ||
+            cppMirVirtualFailureContractRoot(*mir, override) != &candidate) {
+          continue;
+        }
+        implementation = true;
+        if (!loweredFailureBodySupported(override)) {
+          complete = false;
+          break;
+        }
+      }
+      if (implementation && complete) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void emitLoweredPublicOpaqueHandleForwardDeclarations(
+      LoweredDeclarationId parent = 0) {
+    bool emitted = false;
+    for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
+      if (declaration->kind == LoweredDeclarationKind::Namespace) {
+        const bool contains = std::any_of(
+            loweredChildren(declaration->id).begin(),
+            loweredChildren(declaration->id).end(),
+            [&](const LoweredDeclaration *child) {
+              const auto *type =
+                  std::get_if<LoweredClassDeclaration>(&child->payload);
+              return child->kind == LoweredDeclarationKind::Namespace ||
+                     (type != nullptr && type->cOpaqueHandle &&
+                      !type->compilerPrivate);
+            });
+        if (!contains) {
+          continue;
+        }
+        writeIndent();
+        output << "namespace "
+               << loweredNamespaceSpelling(declaration->name, parent == 0)
+               << " {\n";
+        ++indentation;
+        emitLoweredPublicOpaqueHandleForwardDeclarations(declaration->id);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        emitted = true;
+        continue;
+      }
+      const auto *type =
+          std::get_if<LoweredClassDeclaration>(&declaration->payload);
+      if (type == nullptr || !type->cOpaqueHandle || type->compilerPrivate) {
+        continue;
+      }
+      writeIndent();
+      output << "struct " << declaration->name << ";\n";
+      emitted = true;
+    }
+    if (parent == 0 && emitted) {
+      output << '\n';
+    }
+  }
+
+  void emitLoweredTypeForwardDeclarations(LoweredDeclarationId parent) {
+    for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
+      if (declaration->kind == LoweredDeclarationKind::Namespace) {
+        writeIndent();
+        output << "namespace "
+               << loweredNamespaceSpelling(declaration->name, parent == 0)
+               << " {\n";
+        ++indentation;
+        emitLoweredTypeForwardDeclarations(declaration->id);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        continue;
+      }
+      if (const auto *type =
+              std::get_if<LoweredClassDeclaration>(&declaration->payload)) {
+        if (type->compilerCapability != CompilerCapabilityTypeKind::None) {
+          continue;
+        }
+        if (type->cOpaqueHandle) {
+          writeIndent();
+          output << "using " << declaration->name << " = "
+                 << loweredNativeQualifiedName(*declaration) << ";\n";
+          continue;
+        }
+        if (!type->genericParameters.empty()) {
+          emitLoweredTemplateDeclaration(type->genericParameters);
+        }
+        writeIndent();
+        output << (type->kind == ClassKind::Struct  ? "struct "
+                   : type->kind == ClassKind::Union ? "union "
+                                                    : "class ")
+               << declaration->name << ";\n";
+        continue;
+      }
+      if (const auto *enumeration =
+              std::get_if<LoweredEnumDeclaration>(&declaration->payload)) {
+        writeIndent();
+        if (enumeration->payload) {
+          output << "struct " << declaration->name << ";\n";
+        } else {
+          output << "enum class " << declaration->name << " : ";
+          emitSemanticType(enumeration->underlyingType);
+          output << ";\n";
+        }
+      }
+    }
+  }
+
+  void emitLoweredAliasForwardDeclarations(LoweredDeclarationId parent) {
+    for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
+      if (declaration->kind == LoweredDeclarationKind::Namespace) {
+        writeIndent();
+        output << "namespace "
+               << loweredNamespaceSpelling(declaration->name, parent == 0)
+               << " {\n";
+        ++indentation;
+        emitLoweredAliasForwardDeclarations(declaration->id);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        continue;
+      }
+      if (const auto *alias = std::get_if<LoweredNamespaceAliasDeclaration>(
+              &declaration->payload)) {
+        writeIndent();
+        output << "namespace " << declaration->name << " = ";
+        emitLoweredNamePath(alias->target);
+        output << ";\n";
+      } else if (const auto *alias = std::get_if<LoweredTypeAliasDeclaration>(
+                     &declaration->payload)) {
+        writeIndent();
+        output << "using " << declaration->name << " = ";
+        emitSemanticType(alias->type);
+        output << ";\n";
+      }
+    }
+  }
+
+  void emitLoweredBoundaryMarkers(const LoweredDeclaration &row,
+                                  const LoweredFunctionDeclaration &function) {
+    for (const MirFunctionInstance *instance :
+         loweredFunctionInstances(function.id)) {
+      if (instance->definitionKind == MirDefinitionKind::Source) {
+        continue;
+      }
+      const MirBodyAddress address{.kind = MirBodyKind::Function,
+                                   .owner = instance->id};
+      if (!generalMirBodyEmitter().boundaryDeclarationBody(address)) {
+        throw std::logic_error(
+            "lowered C++ emission has no boundary shell for function '" +
+            row.name + "'");
+      }
+      writeIndent();
+      output << "// GTI verified-MIR body: native-boundary-v1 "
+                "function-instance "
+             << instance->id << "\n";
+    }
+  }
+
+  [[nodiscard]] const LoweredFunctionInstance *
+  loweredFunctionInstance(HirFunctionInstanceId id) const {
+    return loweredProgram == nullptr ? nullptr
+                                     : loweredProgram->findFunctionInstance(id);
+  }
+
+  [[nodiscard]] bool loweredTypeIsNameable(const SemanticType &type) const {
+    if (type == SemanticType::Unknown ||
+        type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::TypePack ||
+        type.kind == SemanticType::Lambda) {
+      return false;
+    }
+    return std::all_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return loweredTypeIsNameable(argument);
+                       });
+  }
+
+  void emitLoweredExplicitArguments(const LoweredFunctionInstance &instance) {
+    output << '<';
+    bool separator = false;
+    for (const SemanticType &argument : instance.typeArguments) {
+      if (separator) {
+        output << ", ";
+      }
+      emitSemanticType(argument);
+      separator = true;
+    }
+    for (const CompileTimeValue &argument : instance.valueArguments) {
+      if (separator) {
+        output << ", ";
+      }
+      if (argument.kind == CompileTimeValue::UInt64) {
+        output << argument.value;
+      } else {
+        const LoweredGenericParameter *parameter =
+            loweredProgram->findGenericParameter(argument.parameterId);
+        output << (parameter == nullptr ? "0" : parameter->name);
+      }
+      separator = true;
+    }
+    output << '>';
+  }
+
+  void emitLoweredFreeFunctionSpecializationSignature(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const MirFunctionInstance &instance, bool failure) {
+    const LoweredFunctionInstance *lowered =
+        loweredFunctionInstance(instance.id);
+    if (lowered == nullptr) {
+      throw std::logic_error(
+          "lowered C++ specialization lost its concrete instance");
+    }
+    if (failure) {
+      output << "bool ";
+    } else {
+      output << "template <> ";
+      emitSemanticType(instance.returnType);
+      output << ' ';
+    }
+    const std::string name = cppFunctionSpelling(function, row.name);
+    output << (failure ? cppMirFailureSiblingSpelling(name) : name);
+    if (!failure) {
+      emitLoweredExplicitArguments(*lowered);
+    }
+    output << '(';
+    const std::size_t parameterCount =
+        emitLoweredMirParameters(instance.parameterTypes);
+    if (failure) {
+      if (parameterCount != 0) {
+        output << ", ";
+      }
+      emitLoweredFailureResultParameter(instance.returnType);
+      output << "::gti_failure_record_v1 *__gti_mir_failure_record";
+    }
+    output << ')';
+  }
+
+  void emitLoweredExternCBlock(const LoweredDeclaration &linkage) {
+    writeIndent();
+    output << "extern \"C\" {\n";
+    ++indentation;
+    for (const LoweredDeclaration *declaration : loweredChildren(linkage.id)) {
+      const auto *function =
+          std::get_if<LoweredFunctionDeclaration>(&declaration->payload);
+      if (function == nullptr) {
+        continue;
+      }
+      writeIndent();
+      emitLoweredCAbiSignature(*declaration, *function);
+      output << ";\n";
+      emitLoweredBoundaryMarkers(*declaration, *function);
+    }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  void emitLoweredFunctionForwardDeclarations(LoweredDeclarationId parent) {
+    for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
+      if (declaration->kind == LoweredDeclarationKind::Namespace) {
+        writeIndent();
+        output << "namespace "
+               << loweredNamespaceSpelling(declaration->name, parent == 0)
+               << " {\n";
+        ++indentation;
+        emitLoweredFunctionForwardDeclarations(declaration->id);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        continue;
+      }
+      if (declaration->kind == LoweredDeclarationKind::LanguageLinkage) {
+        emitLoweredExternCBlock(*declaration);
+        loweredForwardedLinkage.insert(declaration->id);
+        continue;
+      }
+      const auto *function =
+          std::get_if<LoweredFunctionDeclaration>(&declaration->payload);
+      if (function == nullptr || function->ownerClass != 0 ||
+          function->linkage == LanguageLinkage::C) {
+        continue;
+      }
+      emitLoweredBoundaryMarkers(*declaration, *function);
+      if (function->definitionKind == MirDefinitionKind::RuntimeBinding ||
+          function->intrinsic != IntrinsicKind::None) {
+        continue;
+      }
+      const std::vector<const MirFunctionInstance *> instances =
+          loweredFunctionInstances(function->id);
+      const bool generic = !function->genericParameters.empty();
+      if (generic) {
+        emitLoweredTemplateDeclaration(function->genericParameters);
+      }
+      writeIndent();
+      emitLoweredFunctionSignature(*declaration, *function, nullptr, false,
+                                   false, {}, generic);
+      output << ";\n";
+      bool hasFailure = std::any_of(
+          instances.begin(), instances.end(), [&](const auto *instance) {
+            return loweredFailureBodySupported(*instance);
+          });
+      if (generic && !hasFailure) {
+        hasFailure =
+            !loweredCallableTemplateBody(*function, instances, true).empty();
+      }
+      if (generic && hasFailure) {
+        emitLoweredTemplateDeclaration(function->genericParameters);
+        writeIndent();
+        emitLoweredFunctionSignature(*declaration, *function, nullptr, true,
+                                     false, {}, true);
+        output << ";\n";
+      } else if (!generic && !instances.empty() && hasFailure) {
+        writeIndent();
+        emitLoweredFunctionSignature(*declaration, *function, instances.front(),
+                                     true);
+        output << ";\n";
+      }
+      if (!generic) {
+        continue;
+      }
+      for (const MirFunctionInstance *instance : instances) {
+        const LoweredFunctionInstance *concrete =
+            loweredFunctionInstance(instance->id);
+        if (concrete == nullptr ||
+            !std::all_of(concrete->typeArguments.begin(),
+                         concrete->typeArguments.end(),
+                         [&](const SemanticType &type) {
+                           return loweredTypeIsNameable(type);
+                         })) {
+          continue;
+        }
+        if (loweredNormalBodySupported(*instance)) {
+          writeIndent();
+          emitLoweredFreeFunctionSpecializationSignature(
+              *declaration, *function, *instance, false);
+          output << ";\n";
+        }
+        if (loweredFailureBodySupported(*instance)) {
+          writeIndent();
+          emitLoweredFreeFunctionSpecializationSignature(
+              *declaration, *function, *instance, true);
+          output << ";\n";
+        }
+      }
+    }
+  }
+
+  [[nodiscard]] bool
+  loweredRuntimeProgramStorage(const LoweredStorageDeclaration &storage) const {
+    return moduleRuntimeEmission && storage.symbol != 0 &&
+           moduleRuntimeInitializedSymbols.contains(storage.symbol);
+  }
+
+  void emitLoweredStorageType(const LoweredStorageDeclaration &storage,
+                              bool declarationOnly) {
+    const bool runtime = loweredRuntimeProgramStorage(storage);
+    const bool rawPointer = storage.type.kind == SemanticType::RawPointer;
+    const bool moveOnly =
+        isMoveOnlyOwner(storage.traits) || containsTypeParameter(storage.type);
+    const bool representationConstexpr =
+        storage.constexprStorage &&
+        !(standard == CppStandard::Cpp20 &&
+          storage.type.kind == SemanticType::Expected);
+    if (representationConstexpr && !runtime) {
+      output << (declarationOnly ? "const " : "constexpr ");
+    } else if (!runtime && (storage.constexprStorage ||
+                            (storage.mutability == Mutability::Immutable &&
+                             !moveOnly && !rawPointer))) {
+      output << "const ";
+    }
+    emitSemanticType(storage.type);
+  }
+
+  void
+  emitLoweredGlobalStorageForwardDeclarations(LoweredDeclarationId parent) {
+    bool emitted = false;
+    for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
+      if (declaration->kind == LoweredDeclarationKind::Namespace) {
+        writeIndent();
+        output << "namespace "
+               << loweredNamespaceSpelling(declaration->name, parent == 0)
+               << " {\n";
+        ++indentation;
+        emitLoweredGlobalStorageForwardDeclarations(declaration->id);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        continue;
+      }
+      const auto *storage =
+          std::get_if<LoweredStorageDeclaration>(&declaration->payload);
+      if (storage == nullptr || storage->ownerClass != 0) {
+        continue;
+      }
+      writeIndent();
+      if (storage->internalLinkage) {
+        output << "struct "
+               << cppStaticStorageBaseSpelling(storage->symbol,
+                                               declaration->name)
+               << " { static ";
+        emitLoweredStorageType(*storage, true);
+        output << " value; };\n";
+        loweredNamespaceStaticSymbols.insert(storage->symbol);
+      } else {
+        output << "extern ";
+        emitLoweredStorageType(*storage, true);
+        output << ' ' << declaration->name << ";\n";
+      }
+      emitted = true;
+    }
+    if (parent == 0 && emitted) {
+      output << '\n';
+    }
+  }
+
+  void emitLoweredEnumDefinition(const LoweredDeclaration &row,
+                                 const LoweredEnumDeclaration &enumeration) {
+    writeIndent();
+    if (enumeration.payload) {
+      output << "struct " << row.name << " {\n";
+      ++indentation;
+      for (const LoweredEnumerator &variant : enumeration.enumerators) {
+        writeIndent();
+        output << "struct __gti_variant_" << variant.variantIndex << " {\n";
+        ++indentation;
+        for (std::size_t index = 0; index < variant.payloadTypes.size();
+             ++index) {
+          writeIndent();
+          emitSemanticType(variant.payloadTypes[index]);
+          output << " __gti_field_" << index << ";\n";
+        }
+        writeIndent();
+        output << "friend bool operator==(const __gti_variant_"
+               << variant.variantIndex << " &, const __gti_variant_"
+               << variant.variantIndex << " &) = default;\n";
+        --indentation;
+        writeIndent();
+        output << "};\n";
+      }
+      writeIndent();
+      output << "std::variant<";
+      for (std::size_t index = 0; index < enumeration.enumerators.size();
+           ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        output << "__gti_variant_"
+               << enumeration.enumerators[index].variantIndex;
+      }
+      output << "> __gti_value;\n";
+      writeIndent();
+      output << "friend bool operator==(const " << row.name << " &, const "
+             << row.name << " &) = default;\n";
+      --indentation;
+      writeIndent();
+      output << "};\n";
+      return;
+    }
+
+    output << "enum class " << row.name << " : ";
+    emitSemanticType(enumeration.underlyingType);
+    output << " {\n";
+    ++indentation;
+    for (std::size_t index = 0; index < enumeration.enumerators.size();
+         ++index) {
+      const LoweredEnumerator &enumerator = enumeration.enumerators[index];
+      writeIndent();
+      output << enumerator.name << " = ";
+      emitSwitchInteger(enumerator.value, enumeration.underlyingType);
+      output << (index + 1 == enumeration.enumerators.size() ? "\n" : ",\n");
+    }
+    --indentation;
+    writeIndent();
+    output << "};\n";
+  }
+
+  void emitLoweredStorageInitializer(
+      const LoweredStorageDeclaration &storage,
+      const LoweredClassInitializerSelection *classInitializers = nullptr) {
+    if (loweredRuntimeProgramStorage(storage)) {
+      return;
+    }
+    if (moduleGeneralSupported && !storage.constexprStorage) {
+      const auto found = moduleGeneralInitializers.find(storage.symbol);
+      if (found != moduleGeneralInitializers.end()) {
+        if (!found->second.empty()) {
+          output << " = " << found->second;
+        }
+        return;
+      }
+    }
+    if (classInitializers != nullptr && !storage.staticStorage &&
+        !storage.constexprStorage && classInitializers->fieldsSupported) {
+      const auto found = classInitializers->fields.find(storage.symbol);
+      if (found != classInitializers->fields.end() && !found->second.empty()) {
+        output << " = " << found->second;
+      }
+      return;
+    }
+    if (storage.constexprStorage && storage.constant) {
+      output << " = ";
+      emitConstant(*storage.constant, &storage.type);
+      return;
+    }
+    if (storage.constant) {
+      output << " = ";
+      emitConstant(*storage.constant, &storage.type);
+    }
+  }
+
+  void emitLoweredCAbiFieldType(const SemanticType &type,
+                                std::string_view name) {
+    const SemanticType *element = &type;
+    std::vector<std::uint64_t> extents;
+    while (element->kind == SemanticType::Array &&
+           element->arguments.size() == 1) {
+      extents.push_back(element->arrayLength);
+      element = &element->arguments.front();
+    }
+    emitSemanticType(*element);
+    output << ' ' << name;
+    for (const std::uint64_t extent : extents) {
+      output << '[' << extent << ']';
+    }
+  }
+
+  void emitLoweredStorageDeclaration(
+      const LoweredDeclaration &row, const LoweredStorageDeclaration &storage,
+      bool insideClass, const LoweredClassDeclaration *owner = nullptr,
+      const LoweredClassInitializerSelection *classInitializers = nullptr) {
+    const bool runtime = loweredRuntimeProgramStorage(storage);
+    const bool rawPointer = storage.type.kind == SemanticType::RawPointer;
+    const bool moveOnly =
+        isMoveOnlyOwner(storage.traits) || containsTypeParameter(storage.type);
+    const bool representationConstexpr =
+        storage.constexprStorage &&
+        !(standard == CppStandard::Cpp20 &&
+          storage.type.kind == SemanticType::Expected);
+
+    writeIndent();
+    if (!insideClass && storage.internalLinkage) {
+      output << "inline ";
+    } else if (storage.staticStorage) {
+      if (!representationConstexpr && storage.constexprStorage && insideClass) {
+        output << "inline ";
+      }
+      output << "static ";
+    }
+    if (representationConstexpr && !runtime) {
+      output << "constexpr ";
+    } else if (!runtime &&
+               (storage.constexprStorage ||
+                (storage.mutability == Mutability::Immutable && !moveOnly &&
+                 !rawPointer && (!insideClass || storage.staticStorage)))) {
+      output << "const ";
+    }
+
+    const std::string name =
+        !insideClass && storage.internalLinkage
+            ? cppStaticStorageValueSpelling(storage.symbol, row.name)
+            : row.name;
+    if (insideClass && owner != nullptr && owner->cAbiRecord &&
+        storage.type.kind == SemanticType::Array) {
+      emitLoweredCAbiFieldType(storage.type, name);
+    } else {
+      emitSemanticType(storage.type);
+      output << ' ' << name;
+    }
+    if (insideClass && storage.staticStorage && !storage.constexprStorage) {
+      loweredDeferredStaticFields.push_back(&row);
+      output << ";\n";
+      return;
+    }
+    emitLoweredStorageInitializer(storage, classInitializers);
+    output << ";\n";
+  }
+
+  void emitLoweredStructuralOperatorAdapter(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const LoweredDeclaration &classRow) {
+    const auto found =
+        std::find_if(programPlan.thunks.begin(), programPlan.thunks.end(),
+                     [&](const CppMirGeneratedThunk &thunk) {
+                       return thunk.identity.kind ==
+                                  CppMirThunkKind::StructuralOperatorAdapter &&
+                              thunk.identity.owner == function.id;
+                     });
+    if (found == programPlan.thunks.end()) {
+      return;
+    }
+    const auto *adapter =
+        std::get_if<CppMirStructuralOperatorThunk>(&found->payload);
+    if (adapter == nullptr) {
+      throw std::logic_error(
+          "lowered structural adapter lost its sealed payload");
+    }
+    writeIndent();
+    output << "friend ";
+    emitSemanticType(function.returnType);
+    output << ' ' << operatorFunctionName(adapter->operation) << '(';
+    if (function.receiverMutability == ReceiverMutability::ReadOnly) {
+      output << "const ";
+    }
+    output << classRow.name << " &__gti_receiver";
+    if (adapter->operation == OverloadedOperator::NotEqual &&
+        !function.parameters.empty()) {
+      output << ", ::gti_internal::backend::exact_type<";
+      emitSemanticType(function.parameters.front().type);
+      output << ">";
+    }
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      output << ", ";
+      emitLoweredParameter(function.parameters[index],
+                           "__gti_argument_" + std::to_string(index));
+    }
+    output << ") { ";
+    if (function.returnType != SemanticType::Void) {
+      output << "return ";
+    }
+    output << "__gti_receiver." << cppFunctionSpelling(function, row.name)
+           << '(';
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      if (function.parameters[index].type.kind != SemanticType::Reference) {
+        output << "std::move(";
+      }
+      output << "__gti_argument_" << index;
+      if (function.parameters[index].type.kind != SemanticType::Reference) {
+        output << ')';
+      }
+    }
+    output << "); }\n";
+  }
+
+  void emitLoweredCallableAdapter(const LoweredDeclaration &row,
+                                  const LoweredFunctionDeclaration &function,
+                                  const LoweredDeclaration &classRow) {
+    const auto found = std::find_if(
+        programPlan.thunks.begin(), programPlan.thunks.end(),
+        [&](const CppMirGeneratedThunk &thunk) {
+          return thunk.identity.kind == CppMirThunkKind::CallableAdapter &&
+                 thunk.identity.owner == function.id;
+        });
+    if (found == programPlan.thunks.end()) {
+      return;
+    }
+    const auto *adapter = std::get_if<CppMirCallableThunk>(&found->payload);
+    if (adapter == nullptr) {
+      throw std::logic_error(
+          "lowered callable adapter lost its sealed payload");
+    }
+    writeIndent();
+    output << "friend ";
+    emitSemanticType(function.returnType);
+    output << " __gti_invoke(";
+    if (function.receiverMutability == ReceiverMutability::ReadOnly) {
+      output << "const ";
+    }
+    output << classRow.name
+           << (function.receiverMutability == ReceiverMutability::Consuming
+                   ? " &&__gti_callable"
+                   : " &__gti_callable")
+           << ", ::gti_internal::backend::exact_call<";
+    switch (adapter->capability) {
+    case CallableInvocationCapability::Read:
+      output << "::gti_internal::backend::callable_capability::read_call";
+      break;
+    case CallableInvocationCapability::Mutable:
+      output << "::gti_internal::backend::callable_capability::mutable_call";
+      break;
+    case CallableInvocationCapability::Once:
+      output << "::gti_internal::backend::callable_capability::once_call";
+      break;
+    }
+    for (const LoweredParameter &parameter : function.parameters) {
+      output << ", ";
+      emitLoweredExactCallParameter(parameter.type);
+    }
+    output << ">";
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      output << ", ";
+      emitLoweredParameter(function.parameters[index],
+                           "__gti_arg_" + std::to_string(index));
+    }
+    output << ") { ";
+    if (function.returnType != SemanticType::Void) {
+      output << "return ";
+    }
+    if (function.receiverMutability == ReceiverMutability::Consuming) {
+      output << "std::move(__gti_callable).";
+    } else {
+      output << "__gti_callable.";
+    }
+    output << cppFunctionSpelling(function, row.name) << '(';
+    for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      if (function.parameters[index].type.kind != SemanticType::Reference) {
+        output << "std::move(";
+      }
+      output << "__gti_arg_" << index;
+      if (function.parameters[index].type.kind != SemanticType::Reference) {
+        output << ')';
+      }
+    }
+    output << "); }\n";
+  }
+
+  void emitLoweredMemberFunctionDeclaration(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const LoweredDeclaration &classRow) {
+    emitLoweredBoundaryMarkers(row, function);
+    if (function.definitionKind == MirDefinitionKind::RuntimeBinding ||
+        function.intrinsic != IntrinsicKind::None) {
+      return;
+    }
+    const std::vector<const MirFunctionInstance *> instances =
+        loweredFunctionInstances(function.id);
+    const bool generic = !function.genericParameters.empty();
+    if (generic) {
+      emitLoweredTemplateDeclaration(function.genericParameters);
+    }
+    writeIndent();
+    emitLoweredFunctionSignature(row, function, nullptr, false, true, {},
+                                 generic);
+    const auto *owner = std::get_if<LoweredClassDeclaration>(&classRow.payload);
+    if (function.pureVirtual ||
+        (owner != nullptr && owner->kind == ClassKind::Interface)) {
+      output << " = 0;\n";
+    } else {
+      output << ";\n";
+      loweredDeferredMembers.push_back(&row);
+    }
+
+    const bool hasFailure =
+        loweredVirtualFailureContractRetained(function.id) ||
+        std::any_of(instances.begin(), instances.end(),
+                    [&](const auto *instance) {
+                      return loweredFailureBodySupported(*instance);
+                    });
+    if (hasFailure) {
+      if (!generic) {
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, instances.front(), true,
+                                     true);
+        output << (function.pureVirtual ? " = 0;\n" : ";\n");
+      } else {
+        std::vector<std::pair<std::vector<SemanticType>, SemanticType>> emitted;
+        for (const MirFunctionInstance *instance : instances) {
+          if (!loweredFailureBodySupported(*instance) || !instance->owner) {
+            continue;
+          }
+          const MirClassInstance *ownerInstance =
+              mir->findClassInstance(*instance->owner);
+          const std::optional<std::vector<SemanticType>> parameters =
+              cppMirFlattenConcreteParameterTypes(instance->parameterTypes);
+          if (ownerInstance == nullptr ||
+              !loweredTypeIsNameable(ownerInstance->type) || !parameters ||
+              !loweredTypeIsNameable(instance->returnType) ||
+              !std::all_of(parameters->begin(), parameters->end(),
+                           [&](const SemanticType &type) {
+                             return loweredTypeIsNameable(type);
+                           })) {
+            continue;
+          }
+          const auto signature =
+              std::make_pair(*parameters, instance->returnType);
+          if (std::find(emitted.begin(), emitted.end(), signature) !=
+              emitted.end()) {
+            continue;
+          }
+          emitted.push_back(signature);
+          writeIndent();
+          emitLoweredFunctionSignature(row, function, instance, true, true);
+          output << ";\n";
+        }
+      }
+    }
+    emitLoweredStructuralOperatorAdapter(row, function, classRow);
+    emitLoweredCallableAdapter(row, function, classRow);
+  }
+
+  [[nodiscard]] std::optional<std::string>
+  loweredGenericOwnerConstructorBodyText(
+      const LoweredConstructorDeclaration &constructor,
+      const MirConstructorInstance &instance, bool failure) const {
+    if (loweredProgram == nullptr || !generalEmissionMap ||
+        instance.definitionKind != MirDefinitionKind::Source) {
+      return std::nullopt;
+    }
+    const MirClassInstance *owner = mir->findClassInstance(instance.owner);
+    const LoweredDeclaration *ownerRow = loweredClassRow(constructor.owner);
+    if (owner == nullptr || ownerRow == nullptr ||
+        !loweredOwnerIsGeneric(*ownerRow) ||
+        loweredTypeIsNameable(owner->type)) {
+      return std::nullopt;
+    }
+    CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
+                                   .bodies = generalEmissionMap->bodies(),
+                                   .symbols = generalEmissionMap->symbols(),
+                                   .enums = generalEmissionMap->enums(),
+                                   .capabilities =
+                                       generalEmissionMap->capabilities()};
+    const std::optional<std::size_t> overlays =
+        cppMirApplyGenericOwnerConstructorTypeOverlays(rows, *loweredProgram,
+                                                       constructor, instance);
+    if (!overlays || *overlays == 0) {
+      return std::nullopt;
+    }
+    const CppMirBodyEmissionMap overlay(std::move(rows));
+    const CppMirBodyEmitter emitter(*mir, overlay);
+    const MirBodyAddress address{.kind = MirBodyKind::Constructor,
+                                 .owner = instance.id};
+    const bool supported = failure ? emitter.supportsFailureBodyText(address)
+                                   : emitter.supportsBodyText(address);
+    if (!supported) {
+      return std::nullopt;
+    }
+    const CppMirBodyEmissionText emission =
+        failure
+            ? emitter.emitFailureBodyText(
+                  address, "generic-owner-constructor-failure-v1", indentation)
+            : emitter.emitBodyText(address, "scalar-cfg-v1", indentation);
+    if (!emission.emitted()) {
+      throw std::logic_error(
+          "lowered generic-owner constructor lost its overlay body");
+    }
+    return emission.text;
+  }
+
+  void emitLoweredConstructorDeclaration(
+      const LoweredDeclaration &row,
+      const LoweredConstructorDeclaration &constructor,
+      const LoweredDeclaration &classRow) {
+    if (constructor.specifier) {
+      return;
+    }
+    if (!constructor.genericParameters.empty()) {
+      emitLoweredTemplateDeclaration(constructor.genericParameters);
+    }
+    writeIndent();
+    output << "explicit " << classRow.name << '(';
+    emitLoweredParameters(constructor.parameters);
+    output << ");\n";
+    loweredDeferredMembers.push_back(&row);
+    for (const MirConstructorInstance *instance :
+         loweredConstructorInstances(constructor.id)) {
+      const bool genericOwnerPrimary =
+          loweredGenericOwnerConstructorBodyText(constructor, *instance, true)
+              .has_value();
+      const bool concreteFailure =
+          generalMirBodyEmitter().supportsFailureBodyText(
+              {.kind = MirBodyKind::Constructor, .owner = instance->id});
+      if (!instance->mayRaiseDefinedFailure ||
+          (!concreteFailure && !genericOwnerPrimary)) {
+        continue;
+      }
+      writeIndent();
+      output << "explicit " << classRow.name << '('
+             << cppMirFailureConstructorTagSpelling(instance->id);
+      const std::size_t count = genericOwnerPrimary
+                                    ? constructor.parameters.size()
+                                    : instance->parameterTypes.size();
+      if (count != 0) {
+        output << ", ";
+      }
+      if (genericOwnerPrimary) {
+        emitLoweredParameters(constructor.parameters, true);
+      } else {
+        emitLoweredMirParameters(instance->parameterTypes);
+      }
+      output << ", ";
+      output << "bool *__gti_mir_constructor_success, "
+                "::gti_failure_record_v1 *__gti_mir_failure_record);\n";
+    }
+  }
+
+  void emitLoweredDestructorDeclaration(
+      const LoweredDeclaration &row,
+      const LoweredDestructorDeclaration &destructor,
+      const LoweredDeclaration &classRow,
+      const LoweredClassDeclaration &classDeclaration) {
+    static_cast<void>(destructor);
+    writeIndent();
+    if (classDeclaration.polymorphic) {
+      output << "virtual ";
+    }
+    output << '~' << classRow.name << "() noexcept;\n";
+    loweredDeferredMembers.push_back(&row);
+  }
+
+  [[nodiscard]] std::vector<const MirDestructorInstance *>
+  loweredClassDestructorInstances(ClassId declaration) const {
+    std::vector<const MirDestructorInstance *> result;
+    for (const MirClassInstance &instance : mir->classInstances()) {
+      if (instance.declaration != declaration || !instance.destructor) {
+        continue;
+      }
+      if (const MirDestructorInstance *destructor =
+              mir->findDestructorInstance(*instance.destructor)) {
+        result.push_back(destructor);
+      }
+    }
+    return result;
+  }
+
+  [[nodiscard]] static std::string loweredLifecycleActiveName(ClassId id) {
+    return "__gti_lifecycle_active_" + std::to_string(id);
+  }
+
+  [[nodiscard]] static std::string loweredLifecycleCleanupName(ClassId id) {
+    return "__gti_lifecycle_cleanup_" + std::to_string(id);
+  }
+
+  [[nodiscard]] std::vector<const LoweredDeclaration *>
+  loweredClassFields(const LoweredDeclaration &classRow) const {
+    std::vector<const LoweredDeclaration *> result;
+    for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
+      const auto *storage =
+          std::get_if<LoweredStorageDeclaration>(&member->payload);
+      if (storage != nullptr && !storage->staticStorage) {
+        result.push_back(member);
+      }
+    }
+    return result;
+  }
+
+  [[nodiscard]] bool loweredClassNeedsEmptyState(
+      const LoweredClassDeclaration &declaration) const {
+    return std::any_of(
+        mir->classInstances().begin(), mir->classInstances().end(),
+        [&](const MirClassInstance &instance) {
+          return instance.declaration == declaration.id &&
+                 cppMirFailureConstructorEmptyStateEligible(*mir, instance.id);
+        });
+  }
+
+  void emitLoweredEmptyStateConstructor(
+      const LoweredDeclaration &classRow,
+      const std::vector<const LoweredDeclaration *> &fields) {
+    writeIndent();
+    output << "explicit " << classRow.name
+           << "(::gti_internal::backend::mir_empty_state_constructor_tag_v1) "
+              "noexcept";
+    if (!fields.empty()) {
+      output << " : ";
+      for (std::size_t index = 0; index < fields.size(); ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        const auto *storage =
+            std::get_if<LoweredStorageDeclaration>(&fields[index]->payload);
+        if (storage == nullptr) {
+          throw std::logic_error(
+              "lowered empty-state constructor lost a field payload");
+        }
+        output << fields[index]->name;
+        if (storage->type.kind == SemanticType::Array) {
+          output << "{}";
+        } else {
+          output << "(::gti_internal::backend::mir_empty_state_v1<"
+                    "std::remove_cv_t<decltype("
+                 << fields[index]->name << ")>>())";
+        }
+      }
+    }
+    output << " {}\n";
+  }
+
+  void emitLoweredMoveConstructor(
+      const LoweredDeclaration &classRow,
+      const LoweredClassDeclaration &declaration,
+      const std::vector<const LoweredDeclaration *> &fields) {
+    writeIndent();
+    output << classRow.name << '(' << classRow.name << " &&other) noexcept : ";
+    bool separator = false;
+    const auto base = std::find_if(
+        declaration.bases.begin(), declaration.bases.end(),
+        [](const LoweredClassBase &candidate) { return !candidate.interface; });
+    if (base != declaration.bases.end()) {
+      emitSemanticType(base->type);
+      output << "(std::move(other))";
+      separator = true;
+    }
+    for (const LoweredDeclaration *field : fields) {
+      if (separator) {
+        output << ", ";
+      }
+      output << field->name << "(std::move(other." << field->name << "))";
+      separator = true;
+    }
+    if (separator) {
+      output << ", ";
+    }
+    output << loweredLifecycleActiveName(declaration.id) << "(true) {\n";
+    ++indentation;
+    writeIndent();
+    output << "other." << loweredLifecycleActiveName(declaration.id)
+           << " = false;\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  void emitLoweredMoveAssignment(
+      const LoweredDeclaration &classRow,
+      const LoweredClassDeclaration &declaration,
+      const std::vector<const LoweredDeclaration *> &fields) {
+    writeIndent();
+    output << classRow.name << " &operator=(" << classRow.name
+           << " &&other) noexcept {\n";
+    ++indentation;
+    writeIndent();
+    output << "if (this != &other) {\n";
+    ++indentation;
+    writeIndent();
+    output << loweredLifecycleCleanupName(declaration.id) << "();\n";
+    const auto base = std::find_if(
+        declaration.bases.begin(), declaration.bases.end(),
+        [](const LoweredClassBase &candidate) { return !candidate.interface; });
+    if (base != declaration.bases.end()) {
+      writeIndent();
+      emitSemanticType(base->type);
+      output << "::operator=(std::move(other));\n";
+    }
+    for (const LoweredDeclaration *field : fields) {
+      writeIndent();
+      output << field->name << " = std::move(other." << field->name << ");\n";
+    }
+    writeIndent();
+    output << loweredLifecycleActiveName(declaration.id) << " = true;\n";
+    writeIndent();
+    output << "other." << loweredLifecycleActiveName(declaration.id)
+           << " = false;\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    writeIndent();
+    output << "return *this;\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  void emitLoweredClassLifecycle(const LoweredDeclaration &classRow,
+                                 const LoweredClassDeclaration &declaration) {
+    const std::vector<const LoweredDeclaration *> fields =
+        loweredClassFields(classRow);
+    const std::vector<const MirDestructorInstance *> destructors =
+        loweredClassDestructorInstances(declaration.id);
+    if (declaration.requiresActiveDropState) {
+      if (indentation > 0) {
+        --indentation;
+      }
+      writeIndent();
+      output << "private:\n";
+      ++indentation;
+      writeIndent();
+      output << "bool " << loweredLifecycleActiveName(declaration.id)
+             << " = true;\n";
+      writeIndent();
+      output << "void " << loweredLifecycleCleanupName(declaration.id)
+             << "() noexcept;\n";
+      const bool failure = std::any_of(
+          destructors.begin(), destructors.end(), [&](const auto *instance) {
+            return instance->mayRaiseDefinedFailure &&
+                   generalMirBodyEmitter().supportsFailureBodyText(
+                       {.kind = MirBodyKind::Destructor,
+                        .owner = instance->id});
+          });
+      if (failure) {
+        writeIndent();
+        output << "template <typename, bool> friend class "
+                  "::gti_internal::backend::mir_lifetime_slot;\n";
+        writeIndent();
+        output << "bool " << lifecycleFailureDispatchName()
+               << "(::gti_failure_record_v1 *);\n";
+        writeIndent();
+        output << "bool " << lifecycleFailureBodyName()
+               << "(::gti_failure_record_v1 *);\n";
+      }
+      loweredDeferredLifecycleClasses.push_back(&classRow);
+    }
+
+    if (indentation > 0) {
+      --indentation;
+    }
+    writeIndent();
+    output << "public:\n";
+    ++indentation;
+    const auto emitStatus = [&](SpecialMemberStatus status) {
+      output << (status == SpecialMemberStatus::Generated ? " = default;\n"
+                                                          : " = delete;\n");
+    };
+    if (declaration.defaultConstructor != SpecialMemberStatus::Declared) {
+      writeIndent();
+      output << classRow.name << "()";
+      emitStatus(declaration.defaultConstructor);
+    }
+    if (loweredClassNeedsEmptyState(declaration)) {
+      emitLoweredEmptyStateConstructor(classRow, fields);
+    }
+    writeIndent();
+    output << classRow.name << "(const " << classRow.name << " &)";
+    emitStatus(declaration.copyConstructor);
+    if (declaration.requiresActiveDropState &&
+        declaration.moveConstructor == SpecialMemberStatus::Generated) {
+      emitLoweredMoveConstructor(classRow, declaration, fields);
+    } else {
+      writeIndent();
+      output << classRow.name << '(' << classRow.name << " &&)";
+      emitStatus(declaration.moveConstructor);
+    }
+    writeIndent();
+    output << classRow.name << " &operator=(const " << classRow.name << " &)";
+    emitStatus(declaration.copyAssignment);
+    if (declaration.requiresActiveDropState &&
+        declaration.moveAssignment == SpecialMemberStatus::Generated) {
+      emitLoweredMoveAssignment(classRow, declaration, fields);
+    } else {
+      writeIndent();
+      output << classRow.name << " &operator=(" << classRow.name << " &&)";
+      emitStatus(declaration.moveAssignment);
+    }
+    if (declaration.destructor != SpecialMemberStatus::Declared) {
+      writeIndent();
+      if (declaration.polymorphic) {
+        output << "virtual ";
+      }
+      output << '~' << classRow.name << "() noexcept";
+      emitStatus(declaration.destructor);
+    }
+  }
+
+  void emitLoweredClassAssertions(const LoweredDeclaration &classRow,
+                                  const LoweredClassDeclaration &declaration) {
+    if (declaration.cAbiRecord && declaration.cAbiLayout) {
+      const MirCAbiRecordLayout &layout = *declaration.cAbiLayout;
+      writeIndent();
+      output << "static_assert(std::is_standard_layout_v<" << classRow.name
+             << "> && std::is_trivially_copyable_v<" << classRow.name
+             << ">, \"GTI [[c_abi]] records must remain passive C-compatible "
+                "values\");\n";
+      writeIndent();
+      output << "static_assert(sizeof(" << classRow.name
+             << ") == " << layout.sizeBytes
+             << ", \"native compiler disagrees with GTI record size\");\n";
+      writeIndent();
+      output << "static_assert(alignof(" << classRow.name
+             << ") == " << layout.abiAlignmentBytes
+             << ", \"native compiler disagrees with GTI record alignment\");\n";
+      for (const MirCAbiRecordFieldLayout &field : layout.fields) {
+        const LoweredSymbol *symbol = loweredProgram->findSymbol(field.field);
+        if (symbol == nullptr) {
+          throw std::logic_error("lowered C ABI layout lost a field symbol");
+        }
+        writeIndent();
+        output << "static_assert(__builtin_offsetof(" << classRow.name << ", "
+               << symbol->name << ") == " << field.offsetBytes
+               << ", \"native compiler disagrees with GTI field offset\");\n";
+      }
+    }
+    if (declaration.kind == ClassKind::Union && declaration.unionLayout) {
+      writeIndent();
+      output << "static_assert(std::is_union_v<" << classRow.name
+             << "> && std::is_trivially_copyable_v<" << classRow.name
+             << ">, \"GTI unions must remain passive native unions\");\n";
+      writeIndent();
+      output << "static_assert(sizeof(" << classRow.name
+             << ") == " << declaration.unionLayout->sizeBytes
+             << ", \"native compiler disagrees with GTI union size\");\n";
+      writeIndent();
+      output << "static_assert(alignof(" << classRow.name
+             << ") == " << declaration.unionLayout->abiAlignmentBytes
+             << ", \"native compiler disagrees with GTI union alignment\");\n";
+    }
+  }
+
+  void emitLoweredClassDefinition(const LoweredDeclaration &classRow,
+                                  const LoweredClassDeclaration &declaration) {
+    loweredEmittedTypes.insert(classRow.id);
+    const std::optional<LoweredClassInitializerSelection> initializers =
+        loweredClassInitializers(declaration);
+    const bool hasInstance =
+        std::any_of(mir->classInstances().begin(), mir->classInstances().end(),
+                    [&](const MirClassInstance &instance) {
+                      return instance.declaration == declaration.id;
+                    });
+    if (hasInstance && (!initializers || !initializers->fieldsSupported ||
+                        !initializers->staticsVerifiedEmpty)) {
+      throw std::logic_error(
+          "lowered C++ emission has no complete class initializer schedule "
+          "for '" +
+          classRow.name + "'");
+    }
+    if (declaration.compilerCapability != CompilerCapabilityTypeKind::None ||
+        declaration.cOpaqueHandle) {
+      if (initializers) {
+        for (const HirClassInstanceId instance : initializers->instances) {
+          if (initializers->fieldsSupported &&
+              std::all_of(
+                  initializers->fields.begin(), initializers->fields.end(),
+                  [](const auto &field) { return field.second.empty(); })) {
+            writeIndent();
+            output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                      "field-initializers-instance "
+                   << instance << "\n";
+          }
+          if (initializers->staticsVerifiedEmpty) {
+            writeIndent();
+            output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                      "static-field-initializers-instance "
+                   << instance << "\n";
+          }
+        }
+      }
+      return;
+    }
+    if (declaration.forwardDeclaration) {
+      return;
+    }
+
+    emitLoweredTemplateDeclaration(declaration.genericParameters);
+    writeIndent();
+    output << (declaration.kind == ClassKind::Struct  ? "struct "
+               : declaration.kind == ClassKind::Union ? "union "
+                                                      : "class ")
+           << classRow.name;
+    if (!declaration.bases.empty()) {
+      output << " : ";
+      for (std::size_t index = 0; index < declaration.bases.size(); ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        output << (declaration.bases[index].access == AccessModifier::Private
+                       ? "private "
+                       : "public ");
+        emitSemanticType(declaration.bases[index].type);
+      }
+    }
+    output << " {\n";
+    ++indentation;
+    AccessModifier access = declaration.kind == ClassKind::Class
+                                ? AccessModifier::Private
+                                : AccessModifier::Public;
+    if (declaration.kind == ClassKind::Interface) {
+      writeIndent();
+      output << "public:\n";
+      access = AccessModifier::Public;
+    }
+    for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
+      if (const auto *value =
+              std::get_if<LoweredAccessDeclaration>(&member->payload)) {
+        access = value->access;
+        if (indentation > 0) {
+          --indentation;
+        }
+        writeIndent();
+        output << (access == AccessModifier::Private ? "private:\n"
+                                                     : "public:\n");
+        ++indentation;
+        continue;
+      }
+      static_cast<void>(access);
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&member->payload)) {
+        emitLoweredStorageDeclaration(*member, *storage, true, &declaration,
+                                      initializers ? &*initializers : nullptr);
+      } else if (const auto *function = std::get_if<LoweredFunctionDeclaration>(
+                     &member->payload)) {
+        emitLoweredMemberFunctionDeclaration(*member, *function, classRow);
+      } else if (const auto *constructor =
+                     std::get_if<LoweredConstructorDeclaration>(
+                         &member->payload)) {
+        emitLoweredConstructorDeclaration(*member, *constructor, classRow);
+      } else if (const auto *destructor =
+                     std::get_if<LoweredDestructorDeclaration>(
+                         &member->payload)) {
+        emitLoweredDestructorDeclaration(*member, *destructor, classRow,
+                                         declaration);
+      } else if (const auto *enumeration =
+                     std::get_if<LoweredEnumDeclaration>(&member->payload)) {
+        emitLoweredEnumDefinition(*member, *enumeration);
+        loweredEmittedTypes.insert(member->id);
+      } else if (const auto *nested =
+                     std::get_if<LoweredClassDeclaration>(&member->payload)) {
+        emitLoweredClassDefinition(*member, *nested);
+      } else if (const auto *alias = std::get_if<LoweredTypeAliasDeclaration>(
+                     &member->payload)) {
+        writeIndent();
+        output << "using " << member->name << " = ";
+        emitSemanticType(alias->type);
+        output << ";\n";
+      } else if (member->kind == LoweredDeclarationKind::Empty) {
+        writeIndent();
+        output << ";\n";
+      }
+    }
+    if (!declaration.cAbiRecord && declaration.kind != ClassKind::Union) {
+      emitLoweredClassLifecycle(classRow, declaration);
+    }
+    --indentation;
+    writeIndent();
+    output << "};\n";
+    if (initializers) {
+      for (const HirClassInstanceId instance : initializers->instances) {
+        if (initializers->fieldsSupported) {
+          writeIndent();
+          output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                    "field-initializers-instance "
+                 << instance << "\n";
+        }
+        if (initializers->staticsVerifiedEmpty) {
+          writeIndent();
+          output << "// GTI verified-MIR body: scalar-cfg-v1 "
+                    "static-field-initializers-instance "
+                 << instance << "\n";
+        }
+      }
+    }
+    emitLoweredClassAssertions(classRow, declaration);
+  }
+
+  void emitLoweredTypeDefinitions(LoweredDeclarationId parent) {
+    for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
+      if (declaration->kind == LoweredDeclarationKind::Namespace) {
+        writeIndent();
+        output << "namespace "
+               << loweredNamespaceSpelling(declaration->name, parent == 0)
+               << " {\n";
+        ++indentation;
+        emitLoweredTypeDefinitions(declaration->id);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        continue;
+      }
+      if (const auto *enumeration =
+              std::get_if<LoweredEnumDeclaration>(&declaration->payload)) {
+        emitLoweredEnumDefinition(*declaration, *enumeration);
+        loweredEmittedTypes.insert(declaration->id);
+        output << '\n';
+      } else if (const auto *type = std::get_if<LoweredClassDeclaration>(
+                     &declaration->payload)) {
+        emitLoweredClassDefinition(*declaration, *type);
+        output << '\n';
+      }
+    }
+  }
+
+  void emitLoweredNormalFunctionBody(
+      const MirFunctionInstance &instance,
+      std::string_view familyLabel = "scalar-cfg-v1") {
+    const CppMirBodyEmissionText emission =
+        generalMirBodyEmitter().emitBodyText(
+            {.kind = MirBodyKind::Function, .owner = instance.id}, familyLabel,
+            indentation);
+    if (!emission.emitted()) {
+      throw std::logic_error(
+          "selected lowered function body is not emit-ready (instance " +
+          std::to_string(instance.id) + ")");
+    }
+    output << emission.text;
+  }
+
+  void emitLoweredFailureFunctionBody(
+      const MirFunctionInstance &instance,
+      std::string_view familyLabel = "scalar-cfg-failure-v1") {
+    const CppMirBodyEmissionText emission =
+        generalMirBodyEmitter().emitFailureBodyText(
+            {.kind = MirBodyKind::Function, .owner = instance.id}, familyLabel,
+            indentation);
+    if (!emission.emitted()) {
+      throw std::logic_error(
+          "selected lowered failure function body is not emit-ready "
+          "(instance " +
+          std::to_string(instance.id) + ")");
+    }
+    output << emission.text;
+  }
+
+  [[nodiscard]] static bool
+  loweredContainsUnnameableType(const SemanticType &type) {
+    if (type.kind == SemanticType::Lambda ||
+        type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::TypePack) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       loweredContainsUnnameableType);
+  }
+
+  [[nodiscard]] static bool
+  loweredContainsLambdaType(const SemanticType &type) {
+    if (type.kind == SemanticType::Lambda) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       loweredContainsLambdaType);
+  }
+
+  [[nodiscard]] bool loweredFunctionInstanceIsNameable(
+      const LoweredFunctionInstance &instance,
+      const MirFunctionInstance &mirInstance) const {
+    static_cast<void>(instance);
+    const std::optional<std::vector<SemanticType>> flattened =
+        cppMirFlattenConcreteParameterTypes(mirInstance.parameterTypes);
+    return flattened &&
+           std::none_of(flattened->begin(), flattened->end(),
+                        loweredContainsUnnameableType) &&
+           !loweredContainsUnnameableType(mirInstance.returnType);
+  }
+
+  [[nodiscard]] std::string loweredCallableTemplateBody(
+      const LoweredFunctionDeclaration &function,
+      const std::vector<const MirFunctionInstance *> &instances,
+      bool failure) const {
+    if (!generalEmissionMap) {
+      throw std::logic_error(
+          "lowered callable template emission has no representation rows");
+    }
+    const std::string_view familyLabel =
+        failure ? "deduced-callable-failure-v1" : "deduced-callable-v1";
+    std::vector<std::string> banners;
+    std::string canonical;
+    for (const MirFunctionInstance *instance : instances) {
+      const LoweredFunctionInstance *concrete =
+          loweredFunctionInstance(instance->id);
+      const bool lambdaTransport =
+          std::any_of(instance->typeArguments.begin(),
+                      instance->typeArguments.end(),
+                      loweredContainsLambdaType) ||
+          std::any_of(instance->parameterTypes.begin(),
+                      instance->parameterTypes.end(),
+                      loweredContainsLambdaType) ||
+          loweredContainsLambdaType(instance->returnType);
+      if (concrete == nullptr || !lambdaTransport ||
+          loweredFunctionInstanceIsNameable(*concrete, *instance)) {
+        continue;
+      }
+      CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types(),
+                                     .bodies = generalEmissionMap->bodies(),
+                                     .symbols = generalEmissionMap->symbols(),
+                                     .enums = generalEmissionMap->enums(),
+                                     .capabilities =
+                                         generalEmissionMap->capabilities()};
+      const std::optional<std::size_t> overlays =
+          cppMirApplyCallableTemplateTypeOverlays(
+              rows, *loweredProgram, standard, function, *instance);
+      if (!overlays || *overlays == 0) {
+        throw std::logic_error(
+            "lowered unnameable callable instance has no template type "
+            "overlay");
+      }
+      const CppMirBodyEmissionMap overlay{std::move(rows)};
+      const CppMirBodyEmitter emitter(*mir, overlay);
+      const MirBodyAddress address{.kind = MirBodyKind::Function,
+                                   .owner = instance->id};
+      const bool supported = failure ? emitter.supportsFailureBodyText(address)
+                                     : emitter.supportsBodyText(address);
+      if (!supported) {
+        continue;
+      }
+      const CppMirBodyEmissionText emission =
+          failure
+              ? emitter.emitFailureBodyText(address, familyLabel, indentation)
+              : emitter.emitBodyText(address, familyLabel, indentation);
+      if (!emission.emitted()) {
+        throw std::logic_error(
+            "lowered callable template body emission failed closed");
+      }
+      const std::string marker =
+          std::string("// GTI verified-MIR body: ") + std::string(familyLabel) +
+          " function-instance " + std::to_string(instance->id) + "\n";
+      const std::size_t markerAt = emission.text.find(marker);
+      if (markerAt == std::string::npos) {
+        throw std::logic_error(
+            "lowered callable template body lost its instance marker");
+      }
+      std::size_t lineStart = markerAt;
+      while (lineStart > 0 && emission.text[lineStart - 1] != '\n') {
+        --lineStart;
+      }
+      banners.push_back(emission.text.substr(lineStart, markerAt - lineStart +
+                                                            marker.size()));
+      std::string body = emission.text;
+      body.erase(lineStart, markerAt - lineStart + marker.size());
+      if (canonical.empty()) {
+        canonical = std::move(body);
+      } else if (canonical != body) {
+        throw std::logic_error(
+            "lowered callable instances do not share one source template "
+            "representation");
+      }
+    }
+    if (canonical.empty()) {
+      return {};
+    }
+    const std::size_t brace = canonical.find("{\n");
+    if (brace == std::string::npos) {
+      throw std::logic_error(
+          "lowered callable template body has no opening brace");
+    }
+    std::string assembled = canonical.substr(0, brace + 2);
+    for (const std::string &banner : banners) {
+      assembled += banner;
+    }
+    assembled += canonical.substr(brace + 2);
+    return assembled;
+  }
+
+  void emitLoweredFreeFunctionDefinition(
+      const LoweredDeclaration &row,
+      const LoweredFunctionDeclaration &function) {
+    if (function.ownerClass != 0 ||
+        function.definitionKind != MirDefinitionKind::Source ||
+        function.linkage == LanguageLinkage::C ||
+        function.intrinsic != IntrinsicKind::None) {
+      return;
+    }
+    const std::vector<const MirFunctionInstance *> instances =
+        loweredFunctionInstances(function.id);
+    if (instances.empty()) {
+      return;
+    }
+    const bool generic = !function.genericParameters.empty();
+    if (!generic) {
+      if (instances.size() != 1) {
+        throw std::logic_error(
+            "non-generic lowered function has multiple MIR instances");
+      }
+      const MirFunctionInstance &instance = *instances.front();
+      bool emitted = false;
+      if (loweredFailureBodySupported(instance)) {
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, &instance, true);
+        output << ' ';
+        emitLoweredFailureFunctionBody(instance);
+        emitted = true;
+      }
+      if (loweredNormalBodySupported(instance)) {
+        writeIndent();
+        emitLoweredFunctionSignature(row, function, &instance, false);
+        output << ' ';
+        emitLoweredNormalFunctionBody(instance);
+        emitted = true;
+      }
+      if (!emitted) {
+        throw std::logic_error(
+            "source lowered function has no admitted MIR body");
+      }
+      return;
+    }
+
+    const std::string callableFailure =
+        loweredCallableTemplateBody(function, instances, true);
+    const std::string callableNormal =
+        loweredCallableTemplateBody(function, instances, false);
+    if (!callableFailure.empty()) {
+      emitLoweredTemplateDeclaration(function.genericParameters);
+      writeIndent();
+      emitLoweredFunctionSignature(row, function, nullptr, true, false, {},
+                                   true);
+      output << ' ' << callableFailure;
+    }
+    if (!callableNormal.empty()) {
+      emitLoweredTemplateDeclaration(function.genericParameters);
+      writeIndent();
+      emitLoweredFunctionSignature(row, function, nullptr, false, false, {},
+                                   true);
+      output << ' ' << callableNormal;
+    }
+    for (const MirFunctionInstance *instance : instances) {
+      const LoweredFunctionInstance *concrete =
+          loweredFunctionInstance(instance->id);
+      if (concrete == nullptr ||
+          !loweredFunctionInstanceIsNameable(*concrete, *instance)) {
+        continue;
+      }
+      if (loweredFailureBodySupported(*instance)) {
+        writeIndent();
+        emitLoweredFreeFunctionSpecializationSignature(row, function, *instance,
+                                                       true);
+        output << ' ';
+        emitLoweredFailureFunctionBody(*instance);
+      }
+      if (loweredNormalBodySupported(*instance)) {
+        writeIndent();
+        emitLoweredFreeFunctionSpecializationSignature(row, function, *instance,
+                                                       false);
+        output << ' ';
+        emitLoweredNormalFunctionBody(*instance);
+      }
+    }
+  }
+
+  void emitLoweredSourceDeclarations(LoweredDeclarationId parent) {
+    for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
+      if (declaration->kind == LoweredDeclarationKind::Namespace) {
+        writeIndent();
+        output << "namespace "
+               << loweredNamespaceSpelling(declaration->name, parent == 0)
+               << " {\n";
+        ++indentation;
+        emitLoweredSourceDeclarations(declaration->id);
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        continue;
+      }
+      if (declaration->kind == LoweredDeclarationKind::LanguageLinkage) {
+        if (!loweredForwardedLinkage.contains(declaration->id)) {
+          emitLoweredExternCBlock(*declaration);
+        }
+        continue;
+      }
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&declaration->payload)) {
+        if (storage->ownerClass == 0) {
+          emitLoweredStorageDeclaration(*declaration, *storage, false);
+        }
+        continue;
+      }
+      if (const auto *function =
+              std::get_if<LoweredFunctionDeclaration>(&declaration->payload)) {
+        emitLoweredFreeFunctionDefinition(*declaration, *function);
+        continue;
+      }
+      if (declaration->kind == LoweredDeclarationKind::Empty) {
+        writeIndent();
+        output << ";\n";
+      }
+    }
+  }
+
+  std::size_t emitLoweredNamespaceOpen(const std::vector<std::string> &scope) {
+    for (std::size_t index = 0; index < scope.size(); ++index) {
+      writeIndent();
+      output << "namespace "
+             << loweredNamespaceSpelling(scope[index], index == 0) << " {\n";
+      ++indentation;
+    }
+    return scope.size();
+  }
+
+  void emitLoweredNamespaceClose(std::size_t count) {
+    while (count != 0) {
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      --count;
+    }
+  }
+
+  void emitLoweredPrimaryClassName(const LoweredDeclaration &classRow) {
+    const auto *declaration =
+        std::get_if<LoweredClassDeclaration>(&classRow.payload);
+    if (declaration == nullptr) {
+      throw std::logic_error("lowered class name lost its declaration");
+    }
+    const LoweredDeclaration *parent =
+        loweredProgram->findDeclaration(classRow.parent);
+    if (parent != nullptr &&
+        std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
+      emitLoweredPrimaryClassName(*parent);
+      output << "::";
+    }
+    output << classRow.name;
+    if (declaration->genericParameters.empty()) {
+      return;
+    }
+    output << '<';
+    for (std::size_t index = 0; index < declaration->genericParameters.size();
+         ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      const LoweredGenericParameter &parameter =
+          declaration->genericParameters[index];
+      output << parameter.name;
+      if (parameter.pack) {
+        output << "...";
+      }
+    }
+    output << '>';
+  }
+
+  void emitLoweredClassTemplateHeaders(const LoweredDeclaration &classRow) {
+    const LoweredDeclaration *parent =
+        loweredProgram->findDeclaration(classRow.parent);
+    if (parent != nullptr &&
+        std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
+      emitLoweredClassTemplateHeaders(*parent);
+    }
+    const auto *declaration =
+        std::get_if<LoweredClassDeclaration>(&classRow.payload);
+    if (declaration != nullptr) {
+      emitLoweredTemplateDeclaration(declaration->genericParameters);
+    }
+  }
+
+  [[nodiscard]] std::string
+  loweredConcreteClassName(HirClassInstanceId instance) const {
+    const MirClassInstance *owner = mir->findClassInstance(instance);
+    if (owner == nullptr) {
+      throw std::logic_error(
+          "lowered member definition lost its concrete class instance");
+    }
+    std::string spelling =
+        cppSemanticTypeSpelling(*loweredProgram, standard, owner->type);
+    if (spelling.rfind("::", 0) == 0) {
+      spelling.erase(0, 2);
+    }
+    return spelling;
+  }
+
+  void emitLoweredStaticFieldDefinitions() {
+    for (const LoweredDeclaration *row : loweredDeferredStaticFields) {
+      const auto *storage =
+          std::get_if<LoweredStorageDeclaration>(&row->payload);
+      const LoweredDeclaration *owner =
+          storage == nullptr ? nullptr : loweredClassRow(storage->ownerClass);
+      if (storage == nullptr || owner == nullptr) {
+        throw std::logic_error(
+            "lowered static field definition lost its owner");
+      }
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(row->namespaceScope);
+      emitLoweredClassTemplateHeaders(*owner);
+      writeIndent();
+      output << "inline ";
+      emitLoweredStorageType(*storage, false);
+      output << ' ';
+      emitLoweredPrimaryClassName(*owner);
+      output << "::" << row->name;
+      emitLoweredStorageInitializer(*storage);
+      output << ";\n";
+      emitLoweredNamespaceClose(namespaceCount);
+      output << '\n';
+    }
+    loweredDeferredStaticFields.clear();
+  }
+
+  void emitLoweredMemberSpecializationDeclarations() {
+    for (const LoweredDeclaration *row : loweredDeferredMembers) {
+      const LoweredDeclaration *owner = loweredClassRow(row->ownerClass);
+      if (owner == nullptr ||
+          (!loweredOwnerIsGeneric(*owner) && !row->generic)) {
+        continue;
+      }
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(row->namespaceScope);
+      if (const auto *function =
+              std::get_if<LoweredFunctionDeclaration>(&row->payload)) {
+        if (function->pureVirtual ||
+            function->definitionKind != MirDefinitionKind::Source) {
+          emitLoweredNamespaceClose(namespaceCount);
+          continue;
+        }
+        for (const MirFunctionInstance *instance :
+             loweredFunctionInstances(function->id)) {
+          if (!instance->owner) {
+            continue;
+          }
+          const MirClassInstance *ownerInstance =
+              mir->findClassInstance(*instance->owner);
+          if (ownerInstance == nullptr ||
+              !loweredTypeIsNameable(ownerInstance->type)) {
+            continue;
+          }
+          const std::string ownerSpelling =
+              loweredConcreteClassName(*instance->owner);
+          if (loweredFailureBodySupported(*instance)) {
+            writeIndent();
+            if (loweredOwnerIsGeneric(*owner)) {
+              output << "template <> ";
+            }
+            emitLoweredFunctionSignature(*row, *function, instance, true, false,
+                                         ownerSpelling);
+            output << ";\n";
+          }
+          if (loweredNormalBodySupported(*instance)) {
+            writeIndent();
+            output << "template <> ";
+            emitLoweredFunctionSignature(*row, *function, instance, false,
+                                         false, ownerSpelling);
+            output << ";\n";
+          }
+        }
+      } else if (const auto *constructor =
+                     std::get_if<LoweredConstructorDeclaration>(
+                         &row->payload)) {
+        for (const MirConstructorInstance *instance :
+             loweredConstructorInstances(constructor->id)) {
+          if (instance->definitionKind != MirDefinitionKind::Source) {
+            continue;
+          }
+          const MirClassInstance *ownerInstance =
+              mir->findClassInstance(instance->owner);
+          if (ownerInstance == nullptr ||
+              !loweredTypeIsNameable(ownerInstance->type)) {
+            continue;
+          }
+          const std::string ownerSpelling =
+              loweredConcreteClassName(instance->owner);
+          const bool genericOwner = loweredOwnerIsGeneric(*owner);
+          const MirBodyAddress address{.kind = MirBodyKind::Constructor,
+                                       .owner = instance->id};
+          if (instance->mayRaiseDefinedFailure &&
+              generalMirBodyEmitter().supportsFailureBodyText(address) &&
+              genericOwner) {
+            writeIndent();
+            output << "template <> " << ownerSpelling << "::" << owner->name
+                   << '(';
+            emitLoweredConstructorParameters(*instance, true);
+            output << ");\n";
+          }
+          if (generalMirBodyEmitter().supportsBodyText(address)) {
+            writeIndent();
+            output << "template <> " << ownerSpelling << "::" << owner->name
+                   << '(';
+            emitLoweredConstructorParameters(*instance, false);
+            output << ");\n";
+          }
+        }
+      } else if (std::holds_alternative<LoweredDestructorDeclaration>(
+                     row->payload)) {
+        for (const MirClassInstance &instance : mir->classInstances()) {
+          if (instance.declaration != row->ownerClass || !instance.destructor ||
+              !loweredTypeIsNameable(instance.type)) {
+            continue;
+          }
+          writeIndent();
+          output << "template <> " << loweredConcreteClassName(instance.id)
+                 << "::~" << owner->name << "() noexcept;\n";
+        }
+      }
+      emitLoweredNamespaceClose(namespaceCount);
+    }
+
+    for (const LoweredDeclaration *classRow : loweredDeferredLifecycleClasses) {
+      const auto *declaration =
+          std::get_if<LoweredClassDeclaration>(&classRow->payload);
+      if (declaration == nullptr || !loweredOwnerIsGeneric(*classRow)) {
+        continue;
+      }
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(classRow->namespaceScope);
+      for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
+        const auto *cleanup =
+            thunk.identity.kind == CppMirThunkKind::LifecycleCleanup
+                ? std::get_if<CppMirLifecycleCleanupThunk>(&thunk.payload)
+                : nullptr;
+        if (cleanup == nullptr || cleanup->ownerClass != declaration->id ||
+            cleanup->form !=
+                CppMirLifecycleCleanupForm::ConcreteSpecialization) {
+          continue;
+        }
+        const std::string ownerSpelling =
+            loweredConcreteClassName(cleanup->classInstance);
+        writeIndent();
+        output << "template <> void " << ownerSpelling
+               << "::" << loweredLifecycleCleanupName(declaration->id)
+               << "() noexcept;\n";
+        if (cleanup->mayRaiseDefinedFailure) {
+          writeIndent();
+          output << "template <> bool " << ownerSpelling
+                 << "::" << lifecycleFailureDispatchName()
+                 << "(::gti_failure_record_v1 *);\n";
+          writeIndent();
+          output << "template <> bool " << ownerSpelling
+                 << "::" << lifecycleFailureBodyName()
+                 << "(::gti_failure_record_v1 *);\n";
+        }
+      }
+      emitLoweredNamespaceClose(namespaceCount);
+    }
+    output << '\n';
+  }
+
+  [[nodiscard]] std::string
+  loweredPrimaryClassSpelling(const LoweredDeclaration &classRow) const {
+    std::string result;
+    const auto append = [&](const auto &self,
+                            const LoweredDeclaration &row) -> void {
+      const LoweredDeclaration *parent =
+          loweredProgram->findDeclaration(row.parent);
+      if (parent != nullptr &&
+          std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
+        self(self, *parent);
+        result += "::";
+      }
+      result += row.name;
+      const auto *declaration =
+          std::get_if<LoweredClassDeclaration>(&row.payload);
+      if (declaration == nullptr || declaration->genericParameters.empty()) {
+        return;
+      }
+      result += '<';
+      for (std::size_t index = 0; index < declaration->genericParameters.size();
+           ++index) {
+        if (index != 0) {
+          result += ", ";
+        }
+        result += declaration->genericParameters[index].name;
+        if (declaration->genericParameters[index].pack) {
+          result += "...";
+        }
+      }
+      result += '>';
+    };
+    append(append, classRow);
+    return result;
+  }
+
+  [[nodiscard]] bool
+  loweredOwnerIsGeneric(const LoweredDeclaration &classRow) const {
+    const LoweredDeclaration *current = &classRow;
+    while (current != nullptr) {
+      const auto *declaration =
+          std::get_if<LoweredClassDeclaration>(&current->payload);
+      if (declaration != nullptr && !declaration->genericParameters.empty()) {
+        return true;
+      }
+      current = loweredProgram->findDeclaration(current->parent);
+      if (current != nullptr &&
+          !std::holds_alternative<LoweredClassDeclaration>(current->payload)) {
+        current = nullptr;
+      }
+    }
+    return false;
+  }
+
+  void emitLoweredVirtualFailureBoundaryWrapper(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const MirFunctionInstance &instance, std::string_view ownerSpelling,
+      bool explicitSpecialization) {
+    const MirFunctionInstance *root =
+        cppMirVirtualFailureContractRoot(*mir, instance);
+    if (root == nullptr ||
+        !loweredVirtualFailureContractRetained(root->declaration)) {
+      throw std::logic_error(
+          "lowered virtual failure body lost its contract root");
+    }
+    writeIndent();
+    if (explicitSpecialization) {
+      output << "template <> ";
+    }
+    emitLoweredFunctionSignature(row, function, &instance, false, false,
+                                 ownerSpelling);
+    output << " {\n";
+    ++indentation;
+    writeIndent();
+    output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+    if (instance.returnType.kind == SemanticType::Reference) {
+      writeIndent();
+      if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
+        output << "const ";
+      }
+      emitSemanticType(instance.returnType.arguments.front());
+      output << " *__gti_result = nullptr;\n";
+    } else if (instance.returnType != SemanticType::Void) {
+      writeIndent();
+      emitSemanticType(instance.returnType);
+      output << " __gti_result{};\n";
+    }
+    writeIndent();
+    output << "if (!"
+           << cppMirFailureSiblingSpelling(
+                  cppFunctionSpelling(function, row.name))
+           << '(';
+    for (std::size_t index = 0; index < instance.parameterTypes.size();
+         ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << "__gti_mir_arg_" << index;
+    }
+    if (!instance.parameterTypes.empty()) {
+      output << ", ";
+    }
+    if (instance.returnType != SemanticType::Void) {
+      output << "&__gti_result, ";
+    }
+    output << "&__gti_failure_record)) {\n";
+    ++indentation;
+    emitHostedFailureTermination();
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    if (instance.returnType.kind == SemanticType::Reference) {
+      writeIndent();
+      output << "return *__gti_result;\n";
+    } else if (instance.returnType != SemanticType::Void) {
+      writeIndent();
+      output << "return __gti_result;\n";
+    }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  void emitLoweredMemberFunctionDefinition(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const LoweredDeclaration &owner) {
+    if (function.definitionKind != MirDefinitionKind::Source ||
+        function.intrinsic != IntrinsicKind::None || function.pureVirtual) {
+      return;
+    }
+    const std::vector<const MirFunctionInstance *> instances =
+        loweredFunctionInstances(function.id);
+    const bool genericOwner = loweredOwnerIsGeneric(owner);
+    const bool generic = genericOwner || !function.genericParameters.empty();
+    for (const MirFunctionInstance *instance : instances) {
+      if (!loweredNormalBodySupported(*instance) &&
+          !loweredFailureBodySupported(*instance)) {
+        continue;
+      }
+      std::string ownerSpelling = loweredPrimaryClassSpelling(owner);
+      if (generic) {
+        if (!instance->owner) {
+          throw std::logic_error(
+              "generic lowered member function lost its owner instance");
+        }
+        ownerSpelling = loweredConcreteClassName(*instance->owner);
+      }
+      const auto emitPrefix = [&](bool failureForm) {
+        writeIndent();
+        if (genericOwner ||
+            (!failureForm && !function.genericParameters.empty())) {
+          output << "template <> ";
+        }
+      };
+      if (loweredFailureBodySupported(*instance)) {
+        emitPrefix(true);
+        emitLoweredFunctionSignature(row, function, instance, true, false,
+                                     ownerSpelling);
+        output << ' ';
+        emitLoweredFailureFunctionBody(*instance);
+        if (instance->virtualMethod) {
+          emitLoweredVirtualFailureBoundaryWrapper(row, function, *instance,
+                                                   ownerSpelling, generic);
+        }
+      }
+      if (loweredNormalBodySupported(*instance) &&
+          !(instance->virtualMethod &&
+            loweredFailureBodySupported(*instance))) {
+        emitPrefix(false);
+        emitLoweredFunctionSignature(row, function, instance, false, false,
+                                     ownerSpelling);
+        output << ' ';
+        emitLoweredNormalFunctionBody(*instance);
+      }
+    }
+  }
+
+  void emitLoweredConstructorParameters(const MirConstructorInstance &instance,
+                                        bool failure) {
+    if (failure) {
+      output << cppMirFailureConstructorTagSpelling(instance.id);
+      output << ", ";
+    }
+    const std::size_t count = emitLoweredMirParameters(instance.parameterTypes);
+    if (!failure) {
+      return;
+    }
+    if (count != 0) {
+      output << ", ";
+    }
+    output << "bool *__gti_mir_constructor_success, "
+              "::gti_failure_record_v1 *__gti_mir_failure_record";
+  }
+
+  void emitLoweredGenericOwnerConstructorParameters(
+      const LoweredConstructorDeclaration &constructor,
+      const MirConstructorInstance &instance, bool failure) {
+    bool separator = false;
+    if (failure) {
+      output << cppMirFailureConstructorTagSpelling(instance.id);
+      separator = true;
+    }
+    if (!constructor.parameters.empty()) {
+      if (separator) {
+        output << ", ";
+      }
+      emitLoweredParameters(constructor.parameters, true);
+      separator = true;
+    }
+    if (!failure) {
+      return;
+    }
+    if (separator) {
+      output << ", ";
+    }
+    output << "bool *__gti_mir_constructor_success, "
+              "::gti_failure_record_v1 *__gti_mir_failure_record";
+  }
+
+  [[nodiscard]] static std::string
+  loweredBodyWithoutInstanceMarker(std::string body) {
+    const std::size_t marker = body.find("// GTI verified-MIR body:");
+    if (marker == std::string::npos) {
+      return body;
+    }
+    std::size_t lineStart = marker;
+    while (lineStart != 0 && body[lineStart - 1] != '\n') {
+      --lineStart;
+    }
+    const std::size_t lineEnd = body.find('\n', marker);
+    body.erase(lineStart, lineEnd == std::string::npos
+                              ? std::string::npos
+                              : lineEnd - lineStart + 1);
+    return body;
+  }
+
+  void emitLoweredConstructorDefinition(
+      const LoweredDeclaration &row,
+      const LoweredConstructorDeclaration &constructor,
+      const LoweredDeclaration &owner) {
+    const std::vector<const MirConstructorInstance *> instances =
+        loweredConstructorInstances(constructor.id);
+    const bool generic =
+        loweredOwnerIsGeneric(owner) || !constructor.genericParameters.empty();
+    const bool genericOwner = loweredOwnerIsGeneric(owner);
+    std::optional<std::string> genericNormalBody;
+    for (const MirConstructorInstance *instance : instances) {
+      if (instance->definitionKind != MirDefinitionKind::Source) {
+        continue;
+      }
+      const MirBodyAddress address{.kind = MirBodyKind::Constructor,
+                                   .owner = instance->id};
+      const std::optional<std::string> genericNormal =
+          loweredGenericOwnerConstructorBodyText(constructor, *instance, false);
+      const std::optional<std::string> genericFailure =
+          instance->mayRaiseDefinedFailure
+              ? loweredGenericOwnerConstructorBodyText(constructor, *instance,
+                                                       true)
+              : std::nullopt;
+      const MirClassInstance *ownerInstance =
+          mir->findClassInstance(instance->owner);
+      const bool unnameableOwner = ownerInstance != nullptr &&
+                                   !loweredTypeIsNameable(ownerInstance->type);
+      if (unnameableOwner) {
+        if (!genericNormal && !genericFailure) {
+          throw std::logic_error(
+              "unnameable generic-owner constructor has no source-template "
+              "MIR representation");
+        }
+        if (genericFailure) {
+          emitLoweredClassTemplateHeaders(owner);
+          emitLoweredTemplateDeclaration(constructor.genericParameters);
+          writeIndent();
+          output << loweredPrimaryClassSpelling(owner) << "::" << owner.name
+                 << '(';
+          emitLoweredGenericOwnerConstructorParameters(constructor, *instance,
+                                                       true);
+          output << ')';
+          emitGeneralMirConstructorInitializerList(*instance, true);
+          output << ' ' << *genericFailure;
+        }
+        if (genericNormal) {
+          const std::string normalized =
+              loweredBodyWithoutInstanceMarker(*genericNormal);
+          if (genericNormalBody && *genericNormalBody != normalized) {
+            throw std::logic_error(
+                "generic-owner constructor instances do not share one "
+                "source-template MIR representation");
+          }
+          if (!genericNormalBody) {
+            genericNormalBody = normalized;
+            emitLoweredClassTemplateHeaders(owner);
+            emitLoweredTemplateDeclaration(constructor.genericParameters);
+            writeIndent();
+            output << loweredPrimaryClassSpelling(owner) << "::" << owner.name
+                   << '(';
+            emitLoweredGenericOwnerConstructorParameters(constructor, *instance,
+                                                         false);
+            output << ')';
+            emitGeneralMirConstructorInitializerList(*instance);
+            output << ' ' << *genericNormal;
+          }
+        }
+        continue;
+      }
+      const bool normal = generalMirBodyEmitter().supportsBodyText(address);
+      const bool failure =
+          instance->mayRaiseDefinedFailure &&
+          generalMirBodyEmitter().supportsFailureBodyText(address);
+      if (!normal && !failure) {
+        throw std::logic_error(
+            "source lowered constructor has no admitted MIR body");
+      }
+      const std::string ownerSpelling =
+          generic ? loweredConcreteClassName(instance->owner)
+                  : loweredPrimaryClassSpelling(owner);
+      const auto emitSignature = [&](bool failureForm) {
+        writeIndent();
+        if (genericOwner || (generic && !failureForm)) {
+          output << "template <> ";
+        }
+        output << ownerSpelling << "::" << owner.name << '(';
+        emitLoweredConstructorParameters(*instance, failureForm);
+        output << ')';
+      };
+      if (failure) {
+        emitSignature(true);
+        emitGeneralMirConstructorInitializerList(*instance, true);
+        output << ' ';
+        emitGeneralFailureConstructorBodyText(*instance);
+      }
+      if (normal) {
+        emitSignature(false);
+        emitGeneralMirConstructorInitializerList(*instance);
+        output << ' ';
+        emitGeneralMirConstructorBodyText(*instance);
+      }
+    }
+    static_cast<void>(row);
+  }
+
+  void emitLoweredDestructorDefinition(
+      const LoweredDeclaration &row,
+      const LoweredDestructorDeclaration &destructor,
+      const LoweredDeclaration &owner) {
+    const auto *classDeclaration =
+        std::get_if<LoweredClassDeclaration>(&owner.payload);
+    if (classDeclaration == nullptr) {
+      throw std::logic_error(
+          "lowered destructor definition lost its class declaration");
+    }
+    const bool generic = loweredOwnerIsGeneric(owner);
+    bool emitted = false;
+    for (const MirClassInstance &classInstance : mir->classInstances()) {
+      if (classInstance.declaration != destructor.owner ||
+          !classInstance.destructor) {
+        continue;
+      }
+      const std::string ownerSpelling =
+          generic ? loweredConcreteClassName(classInstance.id)
+                  : loweredPrimaryClassSpelling(owner);
+      writeIndent();
+      if (generic) {
+        output << "template <> ";
+      }
+      output << ownerSpelling << "::~" << owner.name << "() noexcept ";
+      if (!classDeclaration->requiresActiveDropState) {
+        throw std::logic_error(
+            "declared lowered destructor has no lifecycle cleanup adapter");
+      }
+      output << "{ " << loweredLifecycleCleanupName(classDeclaration->id)
+             << "(); }\n";
+      emitted = true;
+      if (!generic) {
+        break;
+      }
+    }
+    if (!emitted) {
+      throw std::logic_error(
+          "lowered destructor declaration has no concrete MIR instance");
+    }
+    static_cast<void>(row);
+  }
+
+  void emitLoweredLifecycleDefinitions() {
+    for (const LoweredDeclaration *classRow : loweredDeferredLifecycleClasses) {
+      const auto *classDeclaration =
+          std::get_if<LoweredClassDeclaration>(&classRow->payload);
+      if (classDeclaration == nullptr) {
+        throw std::logic_error(
+            "lowered lifecycle cleanup lost its class declaration");
+      }
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(classRow->namespaceScope);
+      bool emitted = false;
+      for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
+        if (thunk.identity.kind != CppMirThunkKind::LifecycleCleanup) {
+          continue;
+        }
+        const auto *cleanup =
+            std::get_if<CppMirLifecycleCleanupThunk>(&thunk.payload);
+        if (cleanup == nullptr || cleanup->ownerClass != classDeclaration->id) {
+          continue;
+        }
+        const MirDestructorInstance *destructor =
+            mir->findDestructorInstance(cleanup->destructorInstance);
+        if (destructor == nullptr ||
+            destructor->owner != cleanup->classInstance ||
+            destructor->mayRaiseDefinedFailure !=
+                cleanup->mayRaiseDefinedFailure) {
+          throw std::logic_error(
+              "lowered lifecycle cleanup lost its exact destructor body");
+        }
+        const bool concrete =
+            cleanup->form == CppMirLifecycleCleanupForm::ConcreteSpecialization;
+        const std::string ownerSpelling =
+            concrete ? loweredConcreteClassName(cleanup->classInstance)
+                     : loweredPrimaryClassSpelling(*classRow);
+        const auto emitPrefix = [&] {
+          writeIndent();
+          if (concrete) {
+            output << "template <> ";
+          }
+        };
+        const MirBodyAddress address{.kind = MirBodyKind::Destructor,
+                                     .owner = destructor->id};
+        const bool failure =
+            destructor->mayRaiseDefinedFailure &&
+            generalMirBodyEmitter().supportsFailureBodyText(address);
+        if (failure) {
+          emitPrefix();
+          output << "bool " << ownerSpelling
+                 << "::" << lifecycleFailureBodyName()
+                 << "(::gti_failure_record_v1 "
+                    "*__gti_mir_failure_record) ";
+          emitGeneralFailureDestructorBodyText(*destructor);
+
+          emitPrefix();
+          output << "bool " << ownerSpelling
+                 << "::" << lifecycleFailureDispatchName()
+                 << "(::gti_failure_record_v1 "
+                    "*__gti_mir_failure_record) {\n";
+          ++indentation;
+          writeIndent();
+          output << "if (!" << loweredLifecycleActiveName(classDeclaration->id)
+                 << ") { return true; }\n";
+          writeIndent();
+          output << loweredLifecycleActiveName(classDeclaration->id)
+                 << " = false;\n";
+          writeIndent();
+          output << "return " << lifecycleFailureBodyName()
+                 << "(__gti_mir_failure_record);\n";
+          --indentation;
+          writeIndent();
+          output << "}\n";
+        }
+
+        emitPrefix();
+        output << "void " << ownerSpelling
+               << "::" << loweredLifecycleCleanupName(classDeclaration->id)
+               << "() noexcept {\n";
+        ++indentation;
+        if (failure) {
+          writeIndent();
+          output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+          writeIndent();
+          output << "if (!" << lifecycleFailureDispatchName()
+                 << "(&__gti_failure_record)) {\n";
+          ++indentation;
+          emitHostedFailureTermination();
+          --indentation;
+          writeIndent();
+          output << "}\n";
+        } else {
+          if (!generalMirBodyEmitter().supportsBodyText(address)) {
+            throw std::logic_error(
+                "lowered lifecycle cleanup has no admitted destructor "
+                "body");
+          }
+          writeIndent();
+          output << "if (!" << loweredLifecycleActiveName(classDeclaration->id)
+                 << ") { return; }\n";
+          writeIndent();
+          output << loweredLifecycleActiveName(classDeclaration->id)
+                 << " = false;\n";
+          emitGeneralMirDestructorBodyText(*destructor, "scalar-cfg-v1");
+        }
+        --indentation;
+        writeIndent();
+        output << "}\n\n";
+        emitted = true;
+      }
+      if (!emitted) {
+        throw std::logic_error(
+            "lowered active-drop class has no lifecycle generated item");
+      }
+      emitLoweredNamespaceClose(namespaceCount);
+    }
+    loweredDeferredLifecycleClasses.clear();
+  }
+
+  void emitLoweredMemberDefinitions() {
+    for (const LoweredDeclaration *row : loweredDeferredMembers) {
+      const LoweredDeclaration *owner = loweredClassRow(row->ownerClass);
+      if (owner == nullptr) {
+        throw std::logic_error(
+            "lowered deferred member definition lost its class owner");
+      }
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(row->namespaceScope);
+      if (const auto *function =
+              std::get_if<LoweredFunctionDeclaration>(&row->payload)) {
+        emitLoweredMemberFunctionDefinition(*row, *function, *owner);
+      } else if (const auto *constructor =
+                     std::get_if<LoweredConstructorDeclaration>(
+                         &row->payload)) {
+        emitLoweredConstructorDefinition(*row, *constructor, *owner);
+      } else if (const auto *destructor =
+                     std::get_if<LoweredDestructorDeclaration>(&row->payload)) {
+        emitLoweredDestructorDefinition(*row, *destructor, *owner);
+      }
+      emitLoweredNamespaceClose(namespaceCount);
+      output << '\n';
+    }
+    loweredDeferredMembers.clear();
+    emitLoweredLifecycleDefinitions();
+  }
+
+  std::string emitLoweredProgramTail() {
+    indexLoweredDeclarations();
+    emitLoweredPublicOpaqueHandleForwardDeclarations();
+    prepareLoweredModuleInitialization();
+
+    output << "namespace __gti_program {\n";
+    ++indentation;
+    emitLoweredTypeForwardDeclarations(0);
+    emitLoweredAliasForwardDeclarations(0);
+    emitLoweredFunctionForwardDeclarations(0);
+    emitNativeCallbackAdapterDeclarations();
+    emitLoweredGlobalStorageForwardDeclarations(0);
+    emitLoweredTypeDefinitions(0);
+    emitLoweredMemberSpecializationDeclarations();
+    emitLoweredSourceDeclarations(0);
+    emitLoweredStaticFieldDefinitions();
+    emitLoweredMemberDefinitions();
+    emitNativeCallbackAdapterDefinitions();
+    emitRuntimeModuleInitializer();
+    if (!moduleRuntimeEmission) {
+      writeIndent();
+      output << "// GTI verified-MIR body: scalar-cfg-v1 module-instance 0\n";
+    }
+    --indentation;
+    output << "} // namespace __gti_program\n";
+    emitLoweredProgramEntryAdapter();
     return output.str();
   }
 
@@ -4457,11 +7542,14 @@ private:
     const MirNativeCallbackAdapter &adapter = callback.adapter;
     const MirFunctionInstance *target =
         mir == nullptr ? nullptr : mir->findFunctionInstance(adapter.target);
-    const FunctionInfo *declaration =
-        target == nullptr ? nullptr
-                          : semantics.findFunction(target->declaration);
-    if (target == nullptr || declaration == nullptr || target->owner ||
-        target->linkage != LanguageLinkage::Gti ||
+    const LoweredFunctionDeclaration *declaration =
+        target == nullptr || loweredProgram == nullptr
+            ? nullptr
+            : loweredProgram->findFunctionDeclaration(target->declaration);
+    const LoweredDeclaration *row =
+        declaration == nullptr ? nullptr : loweredFunctionRow(declaration->id);
+    if (target == nullptr || declaration == nullptr || row == nullptr ||
+        target->owner || target->linkage != LanguageLinkage::Gti ||
         target->definitionKind != MirDefinitionKind::Source ||
         adapter.targetMayRaiseDefinedFailure !=
             target->mayRaiseDefinedFailure) {
@@ -4500,15 +7588,21 @@ private:
   void emitNativeCallbackTargetName(const CppMirNativeCallbackThunk &callback,
                                     bool failureForm = false) {
     const MirFunctionInstance &target = nativeCallbackTarget(callback);
-    const FunctionInfo *declaration =
-        semantics.findFunction(target.declaration);
+    const LoweredFunctionDeclaration *declaration =
+        loweredProgram->findFunctionDeclaration(target.declaration);
+    const LoweredDeclaration *row = loweredFunctionRow(target.declaration);
+    if (declaration == nullptr || row == nullptr) {
+      throw std::logic_error(
+          "lowered native callback target lost its declaration row");
+    }
     output << "::__gti_program::";
-    for (const std::string &scope : declaration->namespaceScope) {
+    for (std::size_t index = 0; index < row->namespaceScope.size(); ++index) {
+      const std::string &scope = row->namespaceScope[index];
       output << (scope == "std" ? emittedStandardNamespace
                                 : std::string_view(scope))
              << "::";
     }
-    const std::string name = emittedFunctionName(*declaration->declaration);
+    const std::string name = cppFunctionSpelling(*declaration, row->name);
     output << (failureForm ? cppMirFailureSiblingSpelling(name) : name);
     if (target.typeArguments.size() != 0) {
       throw std::logic_error(
@@ -4559,7 +7653,7 @@ private:
               MirNativeCallbackFailurePolicy::TerminateInvocation ||
           !adapter.catchesNativeExceptions ||
           (target.mayRaiseDefinedFailure &&
-           !generalFailureBodyAdmitted(target.id))) {
+           !loweredFailureBodySupported(target))) {
         throw std::logic_error(
             "verified native callback adapter has no admitted containment "
             "path");
@@ -10608,24 +13702,34 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
         output << ')';
         continue;
       }
+      const LoweredSymbol *loweredSymbol =
+          loweredProgram == nullptr
+              ? nullptr
+              : loweredProgram->findSymbol(initializer.field);
       const SymbolRecord *record =
-          semantics.database().findSymbol(initializer.field);
-      if (record == nullptr || record->name.empty()) {
+          loweredSymbol == nullptr
+              ? semantics.database().findSymbol(initializer.field)
+              : nullptr;
+      const std::string_view fieldName =
+          loweredSymbol != nullptr ? std::string_view(loweredSymbol->name)
+          : record != nullptr      ? std::string_view(record->name)
+                                   : std::string_view{};
+      if (fieldName.empty()) {
         throw std::logic_error(
             "verified MIR field initializer lost its field name");
       }
       if (initializer.kind == BindingKind::EmptyField) {
-        output << record->name;
+        output << fieldName;
         if (initializer.fieldType.kind == SemanticType::Array) {
           output << "{}";
         } else {
           output << "(::gti_internal::backend::mir_empty_state_v1<"
                     "std::remove_cv_t<decltype("
-                 << record->name << ")>>())";
+                 << fieldName << ")>>())";
         }
         continue;
       }
-      output << record->name << '(';
+      output << fieldName << '(';
       if (initializer.moved) {
         output << "std::move(";
       }
@@ -11320,7 +14424,283 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     output << "::__gti_program::__gti_program_initialize();\n";
   }
 
+  void
+  emitLoweredQualifiedFunctionName(const LoweredDeclaration &row,
+                                   const LoweredFunctionDeclaration &function,
+                                   bool failure = false) {
+    output << "::__gti_program::";
+    for (std::size_t index = 0; index < row.namespaceScope.size(); ++index) {
+      output << loweredNamespaceSpelling(row.namespaceScope[index], index == 0)
+             << "::";
+    }
+    const std::string name = cppFunctionSpelling(function, row.name);
+    output << (failure ? cppMirFailureSiblingSpelling(name) : name);
+  }
+
+  void emitLoweredProgramEntryAdapter() {
+    emitHostedStartupMarker();
+    const std::optional<MirHostedStartupPlan> &hosted =
+        mir->hostedStartupPlan();
+    if (!hosted || hosted->kind == ProgramEntryKind::None) {
+      return;
+    }
+    const MirFunctionInstance *entry = mir->findFunctionInstance(hosted->entry);
+    const LoweredFunctionDeclaration *entryDeclaration =
+        entry == nullptr
+            ? nullptr
+            : loweredProgram->findFunctionDeclaration(entry->declaration);
+    const LoweredDeclaration *entryRow =
+        entryDeclaration == nullptr ? nullptr
+                                    : loweredFunctionRow(entryDeclaration->id);
+    if (entry == nullptr || entryDeclaration == nullptr ||
+        entryRow == nullptr || entry->entryKind != hosted->kind ||
+        entryDeclaration->entryKind != hosted->kind) {
+      throw std::logic_error(
+          "lowered hosted startup lost its exact entry declaration");
+    }
+    const bool failure = entry->mayRaiseDefinedFailure;
+    const MirBodyAddress entryAddress{.kind = MirBodyKind::Function,
+                                      .owner = entry->id};
+    if (failure ? !generalMirBodyEmitter().supportsFailureBodyText(entryAddress)
+                : !generalMirBodyEmitter().supportsBodyText(entryAddress)) {
+      throw std::logic_error("lowered hosted entry has no admitted MIR body");
+    }
+
+    if (hosted->kind == ProgramEntryKind::NoArguments) {
+      if (failure) {
+        if (!cppMirHostedStartupNoArgumentsSchedule(*mir)) {
+          throw std::logic_error(
+              "lowered no-argument hosted entry has no verified schedule");
+        }
+        output << "\nint main() {\n";
+        ++indentation;
+        writeIndent();
+        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        writeIndent();
+        output << "std::int32_t __gti_result{};\n";
+        writeIndent();
+        output << "try {\n";
+        ++indentation;
+        emitRuntimeModuleInitializationCall();
+        writeIndent();
+        output << "if (";
+        emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration, true);
+        output << "(&__gti_result, &__gti_failure_record)) {\n";
+        ++indentation;
+        writeIndent();
+        output << "return __gti_result;\n";
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        --indentation;
+        writeIndent();
+        output << "} catch (...) {\n";
+        ++indentation;
+        writeIndent();
+        output << "std::_Exit(GTI_FAILURE_EXIT_STATUS);\n";
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        emitHostedFailureTermination();
+        --indentation;
+        output << "}\n";
+        return;
+      }
+
+      if (!cppMirHostedStartupFailureFreeSchedule(*mir)) {
+        throw std::logic_error(
+            "lowered no-argument entry has no failure-free startup schedule");
+      }
+      if (!moduleRuntimeEmission) {
+        output << "\nint main() { return ";
+        emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
+        output << "(); }\n";
+        return;
+      }
+      output << "\nint main() {\n";
+      ++indentation;
+      if (moduleRuntimeMayRaise) {
+        writeIndent();
+        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        writeIndent();
+        output << "try {\n";
+        ++indentation;
+        emitRuntimeModuleInitializationCall();
+        --indentation;
+        writeIndent();
+        output << "} catch (...) {\n";
+        ++indentation;
+        writeIndent();
+        output << "std::_Exit(GTI_FAILURE_EXIT_STATUS);\n";
+        --indentation;
+        writeIndent();
+        output << "}\n";
+      } else {
+        emitRuntimeModuleInitializationCall();
+      }
+      writeIndent();
+      output << "return ";
+      emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
+      output << "();\n";
+      --indentation;
+      output << "}\n";
+      return;
+    }
+
+    if (hosted->kind != ProgramEntryKind::OwnedArguments ||
+        entry->parameterTypes.size() != 2 ||
+        entry->parameterTypes[1].kind != SemanticType::Class ||
+        entry->parameterTypes[1].arguments.size() != 1 ||
+        !cppMirHostedStartupOwnedArgumentsSchedule(*mir)) {
+      throw std::logic_error(
+          "lowered owned-arguments entry has no verified startup schedule");
+    }
+    const MirFunctionInstance *append =
+        mir->findFunctionInstance(hosted->appendFunction);
+    const LoweredFunctionDeclaration *appendDeclaration =
+        append == nullptr
+            ? nullptr
+            : loweredProgram->findFunctionDeclaration(append->declaration);
+    const LoweredDeclaration *appendRow =
+        appendDeclaration == nullptr
+            ? nullptr
+            : loweredFunctionRow(appendDeclaration->id);
+    const MirConstructorInstance *vectorConstructor =
+        mir->findConstructorInstance(hosted->vectorConstructor);
+    const MirConstructorInstance *stringConstructor =
+        mir->findConstructorInstance(hosted->stringConstructor);
+    if (append == nullptr || appendDeclaration == nullptr ||
+        appendRow == nullptr || vectorConstructor == nullptr ||
+        stringConstructor == nullptr) {
+      throw std::logic_error(
+          "lowered owned-arguments startup lost an exact target");
+    }
+
+    output << "\nint main(int __gti_native_argc, "
+              "char **__gti_native_argv) {\n";
+    ++indentation;
+    if (failure || moduleRuntimeMayRaise) {
+      writeIndent();
+      output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+    }
+    if (failure) {
+      writeIndent();
+      output << "std::int32_t __gti_result{};\n";
+      writeIndent();
+      output << "try {\n";
+      ++indentation;
+    }
+    writeIndent();
+    output << "if (__gti_native_argc < 0) {\n";
+    ++indentation;
+    writeIndent();
+    output << "::gti_internal::backend::integer_domain_error("
+              "\"negative program argument count\");\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    writeIndent();
+    output << "const std::int32_t __gti_stabilized_argc = "
+              "::gti_internal::backend::numeric_cast<std::int32_t>("
+              "__gti_native_argc);\n";
+    emitRuntimeModuleInitializationCall();
+
+    if (failure) {
+      writeIndent();
+      output << "bool __gti_arguments_success = false;\n";
+      writeIndent();
+      emitSemanticType(entry->parameterTypes[1]);
+      output << " __gti_arguments("
+             << cppMirFailureConstructorTagSpelling(vectorConstructor->id)
+             << "{}, &__gti_arguments_success, &__gti_failure_record);\n";
+      writeIndent();
+      output << "if (!__gti_arguments_success) {\n";
+      ++indentation;
+      emitHostedFailureTermination();
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    } else {
+      writeIndent();
+      emitSemanticType(entry->parameterTypes[1]);
+      output << " __gti_arguments{};\n";
+    }
+    writeIndent();
+    output << "for (int __gti_index = 0; __gti_index < "
+              "__gti_native_argc; ++__gti_index) {\n";
+    ++indentation;
+    if (failure) {
+      writeIndent();
+      output << "bool __gti_argument_success = false;\n";
+      writeIndent();
+      emitSemanticType(entry->parameterTypes[1].arguments.front());
+      output << " __gti_argument("
+             << cppMirFailureConstructorTagSpelling(stringConstructor->id)
+             << "{}, std::string_view(__gti_native_argv[__gti_index]), "
+                "&__gti_argument_success, &__gti_failure_record);\n";
+      writeIndent();
+      output << "if (!__gti_argument_success) {\n";
+      ++indentation;
+      emitHostedFailureTermination();
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      writeIndent();
+      output << "if (!__gti_arguments."
+             << cppMirFailureSiblingSpelling(
+                    cppFunctionSpelling(*appendDeclaration, appendRow->name))
+             << "(std::move(__gti_argument), &__gti_failure_record)) {\n";
+      ++indentation;
+      emitHostedFailureTermination();
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    } else {
+      writeIndent();
+      output << "__gti_arguments."
+             << cppFunctionSpelling(*appendDeclaration, appendRow->name) << '(';
+      emitSemanticType(entry->parameterTypes[1].arguments.front());
+      output << "(std::string_view(__gti_native_argv[__gti_index])));\n";
+    }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    writeIndent();
+    if (failure) {
+      output << "if (";
+      emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration, true);
+      output << "(__gti_stabilized_argc, std::move(__gti_arguments), "
+                "&__gti_result, &__gti_failure_record)) {\n";
+      ++indentation;
+      writeIndent();
+      output << "return __gti_result;\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      emitHostedFailureTermination();
+      --indentation;
+      writeIndent();
+      output << "} catch (...) {\n";
+      ++indentation;
+      writeIndent();
+      output << "std::_Exit(GTI_FAILURE_EXIT_STATUS);\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    } else {
+      output << "return ";
+      emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
+      output << "(__gti_stabilized_argc, std::move(__gti_arguments));\n";
+    }
+    --indentation;
+    output << "}\n";
+  }
+
   void emitProgramEntryAdapter() {
+    if (loweredProgram != nullptr) {
+      emitLoweredProgramEntryAdapter();
+      return;
+    }
     emitHostedStartupMarker();
     const FunctionInfo *selectedEntry =
         ownedArgumentsEntry == nullptr
@@ -11686,7 +15066,9 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
   }
 
   void emitSemanticType(const SemanticType &type) {
-    output << cppSemanticTypeSpelling(semantics, standard, type);
+    output << (loweredProgram != nullptr
+                   ? cppSemanticTypeSpelling(*loweredProgram, standard, type)
+                   : cppSemanticTypeSpelling(semantics, standard, type));
   }
 
   void emitArrayType(const TypeRef &type, std::size_t extentIndex) {
@@ -12937,6 +16319,15 @@ namespace gti_internal::backend {
   // Copied representation rows for the generic MIR body emitter, built and
   // owned at the backend boundary (ADR 016 phase 4).
   std::optional<CppMirBodyEmissionMap> generalEmissionMap;
+  const LoweredProgram *loweredProgram = nullptr;
+  std::vector<std::vector<const LoweredDeclaration *>>
+      loweredDeclarationChildren;
+  std::unordered_set<LoweredDeclarationId> loweredForwardedLinkage;
+  std::unordered_set<SymbolId> loweredNamespaceStaticSymbols;
+  std::vector<const LoweredDeclaration *> loweredDeferredStaticFields;
+  std::vector<const LoweredDeclaration *> loweredDeferredMembers;
+  std::vector<const LoweredDeclaration *> loweredDeferredLifecycleClasses;
+  std::unordered_set<LoweredDeclarationId> loweredEmittedTypes;
   mutable std::optional<CppMirBodyEmitter> generalBodyEmitter;
   // Function and destructor instances the general emitter admits: Ready
   // under its fail-closed analysis and inside its text vocabulary. Computed
@@ -12965,11 +16356,12 @@ CppEmitter::CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
                        CppMirProgramPlan programPlan,
                        CppMirBodyEmissionMap generalRows, CppStandard standard,
                        TargetInfo target,
-                       const OptimizationResult *optimizations)
+                       const OptimizationResult *optimizations,
+                       const LoweredProgram *loweredProgram)
     : impl(std::make_unique<Impl>(
           semantics, hir, verifiedMir, std::move(programPlan),
-          std::move(generalRows), standard, std::move(target), optimizations)) {
-}
+          std::move(generalRows), standard, std::move(target), optimizations,
+          loweredProgram)) {}
 
 CppEmitter::~CppEmitter() = default;
 CppEmitter::CppEmitter(CppEmitter &&) noexcept = default;

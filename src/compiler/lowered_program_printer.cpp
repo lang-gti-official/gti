@@ -344,7 +344,7 @@ private:
     output << ";access=" << number(value.access)
            << ";mutability=" << number(value.mutability)
            << ";pack=" << value.pack << ";default=" << value.hasDefault
-           << ";source=";
+           << ";explicitly-moved=" << value.explicitlyMoved << ";source=";
     span(value.source);
     output << ')';
   }

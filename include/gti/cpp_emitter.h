@@ -11,6 +11,7 @@ namespace lang {
 class CppMirBodyEmissionMap;
 struct CppMirProgramPlan;
 class HirProgram;
+class LoweredProgram;
 class MirProgram;
 class OptimizationResult;
 class Program;
@@ -37,7 +38,8 @@ private:
   CppEmitter(const SemanticModel &semantics, const HirProgram &hir,
              const MirProgram &verifiedMir, CppMirProgramPlan programPlan,
              CppMirBodyEmissionMap generalRows, CppStandard standard,
-             TargetInfo target, const OptimizationResult *optimizations);
+             TargetInfo target, const OptimizationResult *optimizations,
+             const LoweredProgram *loweredProgram);
 
   class Impl;
   std::unique_ptr<Impl> impl;

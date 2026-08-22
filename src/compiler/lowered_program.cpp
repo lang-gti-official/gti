@@ -393,6 +393,7 @@ lowerParameters(const std::vector<Parameter> &parameters,
          .mutability = parameter.mutability,
          .pack = parameter.pack.has_value(),
          .hasDefault = parameter.hasDefault(),
+         .explicitlyMoved = binding != nullptr && binding->explicitlyMoved,
          .source = tokenSpan(parameter.name)});
   }
   return result;

@@ -124,6 +124,7 @@ struct LoweredParameter {
   Mutability mutability = Mutability::Immutable;
   bool pack = false;
   bool hasDefault = false;
+  bool explicitlyMoved = false;
   SourceSpan source;
 
   friend bool operator==(const LoweredParameter &,
