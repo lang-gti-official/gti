@@ -129,6 +129,55 @@ MirBody *findMirBody(MirProgram &program, MirBodyAddress address) {
   return const_cast<MirBody *>(findMirBody(std::as_const(program), address));
 }
 
+MirTemporaryMaterialization
+findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
+                                HirValueId sourceValue) {
+  if (sourceValue == 0 || place.sourceValue != sourceValue ||
+      !place.projections.empty() ||
+      (place.root != MirPlaceRootKind::Value &&
+       place.root != MirPlaceRootKind::Temporary)) {
+    return {};
+  }
+  if (place.root == MirPlaceRootKind::Value &&
+      (place.value == 0 || place.temporary != 0)) {
+    return {};
+  }
+  if (place.root == MirPlaceRootKind::Temporary &&
+      (place.temporary == 0 || place.value != 0)) {
+    return {};
+  }
+
+  MirTemporaryMaterialization result;
+  for (const MirValue &candidate : body.values) {
+    if (candidate.sourceValue != sourceValue ||
+        (place.root == MirPlaceRootKind::Value &&
+         candidate.id != place.value)) {
+      continue;
+    }
+    const MirBlock *block = body.findBlock(candidate.definitionBlock);
+    if (block == nullptr) {
+      continue;
+    }
+    const auto definition = std::find_if(
+        block->instructions.begin(), block->instructions.end(),
+        [&](const MirInstruction &instruction) {
+          return instruction.id == candidate.definition &&
+                 instruction.result == candidate.id &&
+                 instruction.hirValue == sourceValue &&
+                 (instruction.kind == MirInstructionKind::Call ||
+                  instruction.kind == MirInstructionKind::Construct);
+        });
+    if (definition == block->instructions.end()) {
+      continue;
+    }
+    if (result) {
+      return {};
+    }
+    result = {.value = &candidate, .producer = &*definition};
+  }
+  return result;
+}
+
 namespace {
 
 [[nodiscard]] MirVerificationResult
@@ -4279,6 +4328,83 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              input.lifecycle.front().target == 0 &&
              !input.lifecycle.front().conditional;
     };
+    const auto validTemporaryReceiverInput =
+        [&](const MirInstruction &input, const MirOperand &operand,
+            MirOperandKind expectedOperand) {
+          if (!input.callInputRole ||
+              *input.callInputRole != MirCallInputRole::Receiver ||
+              input.preparedParameterDrop || input.destination ||
+              !input.lifecycle.empty() ||
+              input.info.type.kind != SemanticType::Class ||
+              input.info.category != ValueCategory::Value ||
+              input.info.traits.containsBorrowedState ||
+              operand.kind != expectedOperand) {
+            return false;
+          }
+          const MirPlace *place = body.findPlace(operand.place);
+          const MirTemporaryMaterialization materialization =
+              place == nullptr ? MirTemporaryMaterialization{}
+                               : findMirTemporaryMaterialization(
+                                     body, *place, input.hirValue);
+          const MirValue *source = materialization.value;
+          const MirInstruction *producer = materialization.producer;
+          const bool ordinaryConstruction =
+              producer != nullptr &&
+              producer->kind == MirInstructionKind::Construct &&
+              producer->constructorKind == ConstructorKind::Ordinary &&
+              producer->constructorTarget && !producer->functionTarget &&
+              !producer->lambdaTarget &&
+              producer->intrinsic == IntrinsicKind::None;
+          const bool ordinaryCall =
+              producer != nullptr &&
+              producer->kind == MirInstructionKind::Call &&
+              producer->functionTarget && !producer->constructorTarget &&
+              !producer->lambdaTarget &&
+              producer->intrinsic == IntrinsicKind::None;
+          if (place == nullptr || source == nullptr || producer == nullptr ||
+              place->access != AccessMode::Mutable ||
+              place->sourceValue != input.hirValue ||
+              place->type != input.info.type ||
+              !sameCallInputTraits(place->traits, input.info.traits) ||
+              source->sourceValue != input.hirValue ||
+              source->info.type != input.info.type ||
+              source->info.category != ValueCategory::Value ||
+              !sameCallInputTraits(source->info.traits, input.info.traits) ||
+              !producer->result || *producer->result != source->id ||
+              producer->hirValue != input.hirValue ||
+              producer->info.type != input.info.type ||
+              producer->info.category != ValueCategory::Value ||
+              !sameCallInputTraits(producer->info.traits, input.info.traits) ||
+              (!ordinaryConstruction && !ordinaryCall)) {
+            return false;
+          }
+
+          std::vector<const MirDropObligation *> obligations;
+          for (const MirDropObligation &obligation : body.dropObligations) {
+            if (obligation.kind == MirDropObligationKind::Value &&
+                obligation.value == input.hirValue) {
+              obligations.push_back(&obligation);
+            }
+          }
+          if (obligations.size() != 1 ||
+              obligations.front()->place != operand.place ||
+              obligations.front()->dropType.type != input.info.type ||
+              obligations.front()->hirFullExpression == 0 ||
+              obligations.front()->fullExpression == 0) {
+            return false;
+          }
+          const MirDropObligationId obligation = obligations.front()->id;
+          return producer->successResultDrop == obligation ||
+                 std::any_of(
+                     producer->lifecycle.begin(), producer->lifecycle.end(),
+                     [&](const MirLifecycleEvent &event) {
+                       return event.target == obligation &&
+                              (event.kind ==
+                                   MirLifecycleEventKind::Initialize ||
+                               event.kind == MirLifecycleEventKind::Reparent ||
+                               event.kind == MirLifecycleEventKind::Move);
+                     });
+        };
     switch (instruction.kind) {
     case MirInstructionKind::Compute:
       return !instruction.receiver && !instruction.loan &&
@@ -4385,7 +4511,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                instruction.lifecycle.empty() &&
                (operand.kind == MirOperandKind::BorrowRead ||
                 operand.kind == MirOperandKind::Loan);
-      case HirCallInputKind::MutableBorrow:
+      case HirCallInputKind::MutableBorrow: {
         if (instruction.preparedParameterDrop ||
             !instruction.lifecycle.empty()) {
           return false;
@@ -4398,6 +4524,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }
         const MirLoan *loan = body.findLoan(operand.loan);
         return loan != nullptr && loan->access == AccessMode::Mutable;
+      }
+      case HirCallInputKind::ReadTemporaryBorrow:
+        return validTemporaryReceiverInput(instruction, operand,
+                                           MirOperandKind::BorrowRead);
+      case HirCallInputKind::MutableTemporaryBorrow:
+        return validTemporaryReceiverInput(instruction, operand,
+                                           MirOperandKind::BorrowWrite);
       }
       return false;
     }
@@ -6368,7 +6501,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (!invocation.callableInvocation) {
       return receiver.callInputKind == HirCallInputKind::Value ||
              receiver.callInputKind == HirCallInputKind::ReadBorrow ||
-             receiver.callInputKind == HirCallInputKind::MutableBorrow;
+             receiver.callInputKind == HirCallInputKind::MutableBorrow ||
+             receiver.callInputKind == HirCallInputKind::ReadTemporaryBorrow ||
+             receiver.callInputKind == HirCallInputKind::MutableTemporaryBorrow;
     }
     const bool exactMovedReceiver =
         receiver.callInputKind == HirCallInputKind::MoveValue &&
@@ -6380,10 +6515,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case CallableInvocationCapability::Read:
       return receiver.callInputKind == HirCallInputKind::Value ||
              receiver.callInputKind == HirCallInputKind::ReadBorrow ||
+             receiver.callInputKind == HirCallInputKind::ReadTemporaryBorrow ||
              exactMovedReceiver;
     case CallableInvocationCapability::Mutable:
       return receiver.callInputKind == HirCallInputKind::Value ||
              receiver.callInputKind == HirCallInputKind::MutableBorrow ||
+             receiver.callInputKind ==
+                 HirCallInputKind::MutableTemporaryBorrow ||
              exactMovedReceiver;
     case CallableInvocationCapability::Once:
       return exactMovedReceiver;
@@ -6459,6 +6597,21 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const MirInstruction *previous = nullptr;
       std::unordered_set<MirDropObligationId> preparedDrops;
       for (const MirInstruction *input : inputs) {
+        if (input->callInputKind == HirCallInputKind::ReadTemporaryBorrow ||
+            input->callInputKind == HirCallInputKind::MutableTemporaryBorrow) {
+          const MirPlace *place = body.findPlace(input->operands.front().place);
+          const MirTemporaryMaterialization materialization =
+              place == nullptr ? MirTemporaryMaterialization{}
+                               : findMirTemporaryMaterialization(
+                                     body, *place, input->hirValue);
+          const MirInstruction *producer = materialization.producer;
+          if (producer == nullptr || !strictlyPrecedes(*producer, *input)) {
+            return failure(body, owner,
+                           "temporary receiver producer must strictly precede "
+                           "its ordered receiver input",
+                           block.id, invocation.id);
+          }
+        }
         if ((previous != nullptr && !strictlyPrecedes(*previous, *input)) ||
             !strictlyPrecedes(*input, invocation)) {
           return failure(body, owner,
@@ -7558,6 +7711,93 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
           instruction.lambdaTarget
               ? program.findLambda(*instruction.lambdaTarget)
               : nullptr;
+      const MirInstruction *receiverInput =
+          instruction.receiver &&
+                  instruction.receiver->kind == MirOperandKind::Value
+              ? definitionFor(body, instruction.receiver->value)
+              : nullptr;
+      const bool temporaryReceiver =
+          receiverInput != nullptr &&
+          (receiverInput->callInputKind ==
+               HirCallInputKind::ReadTemporaryBorrow ||
+           receiverInput->callInputKind ==
+               HirCallInputKind::MutableTemporaryBorrow);
+      if (temporaryReceiver) {
+        const MirPlace *receiverPlace =
+            receiverInput->operands.empty()
+                ? nullptr
+                : body.findPlace(receiverInput->operands.front().place);
+        const MirTemporaryMaterialization materialization =
+            receiverPlace == nullptr
+                ? MirTemporaryMaterialization{}
+                : findMirTemporaryMaterialization(body, *receiverPlace,
+                                                  receiverInput->hirValue);
+        const MirInstruction *producer = materialization.producer;
+        const MirClassInstance *ownerClass =
+            functionTarget != nullptr && functionTarget->owner
+                ? program.findClassInstance(*functionTarget->owner)
+                : nullptr;
+        const bool mutableInput = receiverInput->callInputKind ==
+                                  HirCallInputKind::MutableTemporaryBorrow;
+        const bool exactReceiverQualifier =
+            functionTarget != nullptr &&
+            ((mutableInput && functionTarget->receiverMutability ==
+                                  ReceiverMutability::Mutable) ||
+             (!mutableInput && functionTarget->receiverMutability ==
+                                   ReceiverMutability::ReadOnly));
+        const std::size_t receiverObligations =
+            receiverPlace == nullptr
+                ? 0
+                : static_cast<std::size_t>(std::count_if(
+                      body.dropObligations.begin(), body.dropObligations.end(),
+                      [&](const MirDropObligation &obligation) {
+                        return obligation.kind ==
+                                   MirDropObligationKind::Value &&
+                               obligation.value == receiverInput->hirValue &&
+                               obligation.place == receiverPlace->id;
+                      }));
+        bool exactProducer = false;
+        if (producer != nullptr &&
+            producer->kind == MirInstructionKind::Construct) {
+          const MirConstructorInstance *target =
+              producer->constructorTarget ? program.findConstructorInstance(
+                                                *producer->constructorTarget)
+                                          : nullptr;
+          const MirClassInstance *producerOwner =
+              target == nullptr ? nullptr
+                                : program.findClassInstance(target->owner);
+          exactProducer =
+              target != nullptr && producerOwner != nullptr &&
+              producerOwner->type == receiverPlace->type &&
+              producer->constructorKind == ConstructorKind::Ordinary;
+        } else if (producer != nullptr &&
+                   producer->kind == MirInstructionKind::Call) {
+          const MirFunctionInstance *target =
+              producer->functionTarget
+                  ? program.findFunctionInstance(*producer->functionTarget)
+                  : nullptr;
+          exactProducer = target != nullptr &&
+                          target->linkage == LanguageLinkage::Gti &&
+                          target->returnType == receiverPlace->type &&
+                          target->returnBorrowOrigin == BorrowOriginKind::None;
+        }
+        if (functionTarget == nullptr || receiverPlace == nullptr ||
+            ownerClass == nullptr || functionTarget->staticMember ||
+            functionTarget->virtualMethod ||
+            functionTarget->linkage != LanguageLinkage::Gti ||
+            instruction.dispatch != CallDispatch::Static ||
+            ownerClass->type != receiverPlace->type ||
+            !exactReceiverQualifier || !exactProducer ||
+            receiverObligations != 1 ||
+            functionTarget->returnType.kind == SemanticType::Reference ||
+            functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
+            instruction.info.traits.containsBorrowedState) {
+          return failure(body, owner,
+                         "temporary receiver input does not match its exact "
+                         "ordinary target and producer contract",
+                         block.id, instruction.id);
+        }
+      }
       const bool exactFunctionCallable =
           isCallOperatorTarget(functionTarget) && !instruction.lambdaTarget;
       const bool exactLambdaCallable =

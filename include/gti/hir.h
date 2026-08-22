@@ -137,6 +137,8 @@ enum class HirCallInputKind {
   MoveValue,
   ReadBorrow,
   MutableBorrow,
+  ReadTemporaryBorrow,
+  MutableTemporaryBorrow,
 };
 
 struct HirCallReceiver {
@@ -203,7 +205,6 @@ struct HirValue {
   std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
-  std::optional<HirFunctionInstanceId> contextualBoolTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;

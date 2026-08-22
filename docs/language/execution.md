@@ -86,6 +86,15 @@ or receiver remains live through the invocation and until its enclosing
 full-expression ends unless ownership is transferred to a longer-lived
 destination.
 
+For an admitted fresh class-value receiver, successful production activates
+one full-expression-owned temporary before any written argument begins. The
+selected read-only or mutable receiver borrow is then formed from that place,
+arguments are evaluated in the ordinary order, and invocation follows. The
+borrow ends after invocation; the temporary is destroyed once at the enclosing
+full-expression boundary. Defined failure before production activates no
+obligation, while failure during a later argument or the method discharges the
+active receiver obligation exactly once before propagation.
+
 A bounded comma-pack fold invokes its already selected call once for each
 concrete element in source-pack order. For each element, its fixed named-place
 arguments are evaluated and bound in written order, then the element is

@@ -1668,9 +1668,9 @@ private:
     roots.reserve(expression.roots.size());
     for (const Expr *source : expression.roots) {
       const auto found = std::find_if(
-          body.values.begin(), body.values.end(),
+          body.values.rbegin(), body.values.rend(),
           [source](const HirValue &value) { return value.source == source; });
-      if (found == body.values.end()) {
+      if (found == body.values.rend()) {
         lifecycleValid = false;
         continue;
       }
@@ -1757,8 +1757,21 @@ private:
       }
     }
 
+    std::unordered_set<HirValueId> temporaryReceiverValues;
+    for (const HirValue &call : body.values) {
+      if (!call.callPlan || !call.callPlan->receiver) {
+        continue;
+      }
+      const HirCallReceiver &receiver = *call.callPlan->receiver;
+      if (receiver.kind == HirCallInputKind::ReadTemporaryBorrow ||
+          receiver.kind == HirCallInputKind::MutableTemporaryBorrow) {
+        temporaryReceiverValues.insert(receiver.value);
+      }
+    }
     for (HirValue &value : body.values) {
-      if (value.fullExpression == 0 || !materializesDropValue(value)) {
+      if (value.fullExpression == 0 ||
+          (!materializesDropValue(value) &&
+           !temporaryReceiverValues.contains(value.id))) {
         continue;
       }
       const HirDropObligationId id = body.dropObligations.size() + 1;
@@ -2322,16 +2335,34 @@ private:
 
   [[nodiscard]] std::optional<HirCallReceiver>
   orderedReceiver(HirValueId receiver, ReceiverMutability mutability,
-                  bool preserveExplicitMove, const HirBody &body) const {
-    const HirValue *input = body.findValue(receiver);
+                  CallReceiverMode receiverMode, const HirBody &body) const {
+    HirValueId source = receiver;
+    const HirValue *input = body.findValue(source);
     if (input == nullptr) {
       return std::nullopt;
     }
 
     HirCallInputKind kind = HirCallInputKind::Value;
-    const bool consumesReceiver =
-        mutability == ReceiverMutability::Consuming ||
-        (preserveExplicitMove && input->kind == HirValueKind::Move);
+    const bool temporaryReceiver =
+        receiverMode == CallReceiverMode::FreshTemporaryRead ||
+        receiverMode == CallReceiverMode::FreshTemporaryMutable;
+    if (temporaryReceiver) {
+      while (input != nullptr && input->kind == HirValueKind::Grouping &&
+             input->operands.size() == 1) {
+        source = input->operands.front();
+        input = body.findValue(source);
+      }
+      if (input == nullptr || input->info.type.kind != SemanticType::Class ||
+          input->info.category != ValueCategory::Value ||
+          input->info.traits.containsBorrowedState) {
+        return std::nullopt;
+      }
+      kind = receiverMode == CallReceiverMode::FreshTemporaryMutable
+                 ? HirCallInputKind::MutableTemporaryBorrow
+                 : HirCallInputKind::ReadTemporaryBorrow;
+    }
+    const bool consumesReceiver = receiverMode == CallReceiverMode::Consuming ||
+                                  mutability == ReceiverMutability::Consuming;
     if (consumesReceiver) {
       if (input->info.type.kind != SemanticType::Class ||
           input->info.category != ValueCategory::Value ||
@@ -2340,14 +2371,17 @@ private:
         return std::nullopt;
       }
       kind = HirCallInputKind::MoveValue;
-    } else if (input->info.category == ValueCategory::Place) {
-      kind = mutability == ReceiverMutability::Mutable
+    } else if (!temporaryReceiver &&
+               input->info.category == ValueCategory::Place) {
+      kind = receiverMode == CallReceiverMode::MutablePlace
                  ? HirCallInputKind::MutableBorrow
                  : HirCallInputKind::ReadBorrow;
+    } else if (!temporaryReceiver && receiverMode != CallReceiverMode::Value) {
+      return std::nullopt;
     }
 
     return HirCallReceiver{
-        .value = receiver,
+        .value = source,
         .kind = kind,
         .type = input->info.type,
     };
@@ -2390,8 +2424,9 @@ private:
         .functionTarget = value.functionTarget,
         .callableBoundary = value.callableBoundary,
     };
-    if (const std::optional<HirCallReceiver> planned = orderedReceiver(
-            receiver, resolved.receiverMutability, true, body)) {
+    if (const std::optional<HirCallReceiver> planned =
+            orderedReceiver(receiver, resolved.receiverMutability,
+                            resolved.receiverMode, body)) {
       arrowCall.callPlan = HirCallPlan{.receiver = *planned, .arguments = {}};
     } else {
       lifecycleValid = false;
@@ -2473,6 +2508,7 @@ private:
     std::optional<HirValueId> receiver;
     std::optional<HirLambdaId> lambdaTarget;
     std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
+    std::optional<HirFunctionInstanceId> contextualBoolTarget;
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
     std::optional<std::size_t> enumVariant;
@@ -3081,7 +3117,7 @@ private:
             receiverType.kind == SemanticType::Class
                 ? receiverType.valueArguments
                 : classValueArguments;
-        value.contextualBoolTarget =
+        contextualBoolTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
                             {}, resolved->returnType, resolved->parameterTypes);
       }
@@ -3117,10 +3153,12 @@ private:
               : baseModel->findFunction(resolved->function);
       std::optional<HirValueId> callReceiver;
       ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+      CallReceiverMode receiverMode = CallReceiverMode::None;
       bool supportedReceiver = true;
       if (resolvedOperator != nullptr) {
         callReceiver = value.receiver;
         receiverMutability = resolvedOperator->receiverMutability;
+        receiverMode = resolvedOperator->receiverMode;
         supportedReceiver = callReceiver.has_value() &&
                             body.findValue(*callReceiver) != nullptr;
       } else if (resolved != nullptr && resolved->declaration != nullptr &&
@@ -3140,12 +3178,13 @@ private:
         supportedReceiver = supportedReceiver && callReceiver.has_value() &&
                             body.findValue(*callReceiver) != nullptr;
         receiverMutability = resolved->declaration->receiverMutability();
+        receiverMode = resolved->receiverMode;
       }
       if (plannedArguments && supportedReceiver) {
         HirCallPlan plan;
         if (callReceiver) {
           plan.receiver = orderedReceiver(*callReceiver, receiverMutability,
-                                          resolvedOperator != nullptr, body);
+                                          receiverMode, body);
           if (!plan.receiver) {
             supportedReceiver = false;
           }
@@ -3178,6 +3217,33 @@ private:
                                      .arguments = std::move(*plannedArguments)};
       }
     }
+    if (!value.callPlan && value.functionTarget && !value.operands.empty()) {
+      const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
+      const bool freshReceiver =
+          resolved != nullptr &&
+          (resolved->receiverMode == CallReceiverMode::FreshTemporaryRead ||
+           resolved->receiverMode == CallReceiverMode::FreshTemporaryMutable);
+      if (freshReceiver &&
+          value.operands.size() >= value.parameterTypes.size() + 1) {
+        const HirValueId receiverValue = value.operands.front();
+        std::vector<HirValueId> arguments(
+            value.operands.end() -
+                static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
+            value.operands.end());
+        const std::optional<HirCallReceiver> plannedReceiver =
+            orderedReceiver(receiverValue, resolved->receiverMutability,
+                            resolved->receiverMode, body);
+        const std::optional<std::vector<HirCallArgument>> plannedArguments =
+            orderedArguments(arguments, value.parameterTypes, body);
+        if (plannedReceiver && plannedArguments) {
+          value.receiver = receiverValue;
+          value.callPlan = HirCallPlan{.receiver = *plannedReceiver,
+                                       .arguments = *plannedArguments};
+        } else {
+          lifecycleValid = false;
+        }
+      }
+    }
     if ((value.kind == HirValueKind::MemberAccess ||
          value.kind == HirValueKind::MemberSet) &&
         value.operation == TokenKind::ARROW && value.functionTarget &&
@@ -3187,6 +3253,48 @@ private:
         return splitOverloadedArrowProjection(std::move(value), *resolved,
                                               body);
       }
+    }
+
+    if (const ResolvedOperatorInfo *resolved =
+            model.findContextualConversion(*raw);
+        resolved != nullptr && contextualBoolTarget) {
+      const HirValueId receiverValue = value.id;
+      const HirFunctionInstanceId target = *contextualBoolTarget;
+      body.values.push_back(std::move(value));
+      output.program.sourceValueIds[raw].push_back(receiverValue);
+
+      HirValue conversion{
+          .id = nextValueId++,
+          .kind = HirValueKind::Call,
+          .source = raw,
+          .info = {.type = SemanticType::Bool,
+                   .category = ValueCategory::Value,
+                   .access = AccessMode::ReadOnly,
+                   .traits = semanticTraits(SemanticType::Bool)},
+          .operands = {receiverValue},
+          .definedFailure = {.propagation =
+                                 resolved->dispatch == CallDispatch::Virtual
+                                     ? FailurePropagationKind::VirtualCall
+                                     : FailurePropagationKind::DirectCall},
+          .dispatch = resolved->dispatch,
+          .dispatchOwner = resolved->dispatchOwner,
+          .receiver = receiverValue,
+          .functionTarget = target,
+          .callableBoundary = resolved->boundary,
+      };
+      if (const std::optional<HirCallReceiver> planned =
+              orderedReceiver(receiverValue, resolved->receiverMutability,
+                              resolved->receiverMode, body)) {
+        conversion.callPlan =
+            HirCallPlan{.receiver = *planned, .arguments = {}};
+      } else {
+        lifecycleValid = false;
+      }
+
+      const HirValueId conversionId = conversion.id;
+      body.values.push_back(std::move(conversion));
+      output.program.sourceValueIds[raw].push_back(conversionId);
+      return conversionId;
     }
 
     const HirValueId id = value.id;

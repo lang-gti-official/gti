@@ -3545,16 +3545,18 @@ public:
                 valid;
       }
 
+      const CallReceiverMode receiverMode =
+          callReceiverMode(expr.callee(), resolved);
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
-                                       expr.arguments()) &&
+                                       expr.arguments(), receiverMode) &&
               valid;
       valid = validateConfinedCallableArguments(
                   candidate, resolved, argumentTypes, expr.arguments()) &&
               valid;
       if (valid) {
-        recordResolvedCall(expr, resolved, resolvedTypeArguments,
-                           resolvedValueArguments,
-                           lambdaArgumentBoundaries(argumentTypes));
+        recordResolvedCall(
+            expr, resolved, resolvedTypeArguments, resolvedValueArguments,
+            lambdaArgumentBoundaries(argumentTypes), receiverMode);
       }
       currentType = valid ? callExpressionType(resolved.returnType)
                           : SemanticType::Unknown;
@@ -3566,11 +3568,12 @@ public:
       FunctionCandidate function;
       std::vector<SemanticType> typeArguments;
       std::vector<CompileTimeValue> valueArguments;
+      CallReceiverMode receiverMode = CallReceiverMode::None;
     };
     std::vector<ViableOverload> viable;
     std::vector<ConstraintFailure> constraintFailures;
-    const bool mutableReceiver = callReceiverIsMutable(expr.callee());
     bool rejectedMutableReceiver = false;
+    std::optional<FunctionCandidate> rejectedMutableFunction;
     bool rejectedCompilerPrivate = false;
     for (const FunctionCandidate &candidate : callee->overloads) {
       if (!acceptsArgumentShape(candidate, argumentTypes)) {
@@ -3601,10 +3604,15 @@ public:
       if (!exact) {
         continue;
       }
+      const CallReceiverMode receiverMode =
+          callReceiverMode(expr.callee(), resolved);
       if (resolved.ownerClass != 0 && !resolved.staticMember &&
           resolved.receiverMutability == ReceiverMutability::Mutable &&
-          !mutableReceiver) {
+          !receiverModeAllowsMutation(receiverMode)) {
         rejectedMutableReceiver = true;
+        if (!rejectedMutableFunction) {
+          rejectedMutableFunction = resolved;
+        }
         continue;
       }
       if (!isCompilerTrustedRequester(expr.paren()) &&
@@ -3614,16 +3622,16 @@ public:
       }
       viable.push_back({&candidate, std::move(resolved),
                         std::move(resolvedTypeArguments),
-                        std::move(resolvedValueArguments)});
+                        std::move(resolvedValueArguments), receiverMode});
     }
 
-    if (mutableReceiver &&
-        std::any_of(viable.begin(), viable.end(),
+    if (std::any_of(viable.begin(), viable.end(),
                     [](const ViableOverload &candidate) {
                       return candidate.function.ownerClass != 0 &&
                              !candidate.function.staticMember &&
                              candidate.function.receiverMutability ==
-                                 ReceiverMutability::Mutable;
+                                 ReceiverMutability::Mutable &&
+                             receiverModeAllowsMutation(candidate.receiverMode);
                     })) {
       std::erase_if(viable, [](const ViableOverload &candidate) {
         return candidate.function.ownerClass != 0 &&
@@ -3650,7 +3658,14 @@ public:
           return;
         }
         if (viable.empty() && rejectedMutableReceiver) {
-          report(expr.paren(), "Mutable method requires a mutable receiver.");
+          const auto *member = dynamic_cast<const Get *>(expr.callee().get());
+          if (member != nullptr && rejectedMutableFunction) {
+            reportMutableReceiverFailure(member->object(), expr.paren(),
+                                         *rejectedMutableFunction,
+                                         "Mutable method");
+          } else {
+            report(expr.paren(), "Mutable method requires a mutable receiver.");
+          }
           currentType = SemanticType::Unknown;
           return;
         }
@@ -3680,7 +3695,8 @@ public:
     }
 
     if (!validateSelectedFunction(viable.front().function, expr.callee(),
-                                  expr.paren(), expr.arguments())) {
+                                  expr.paren(), expr.arguments(),
+                                  viable.front().receiverMode)) {
       currentType = SemanticType::Unknown;
       return;
     }
@@ -3692,7 +3708,8 @@ public:
     }
     recordResolvedCall(
         expr, viable.front().function, viable.front().typeArguments,
-        viable.front().valueArguments, lambdaArgumentBoundaries(argumentTypes));
+        viable.front().valueArguments, lambdaArgumentBoundaries(argumentTypes),
+        viable.front().receiverMode);
     currentType = callExpressionType(viable.front().function.returnType);
   }
 
@@ -5302,8 +5319,9 @@ public:
           }
         }
         if (!argumentsMatch ||
-            !validateSelectedFunction(resolved, call->callee(), call->paren(),
-                                      call->arguments()) ||
+            !validateSelectedFunction(
+                resolved, call->callee(), call->paren(), call->arguments(),
+                callReceiverMode(call->callee(), resolved)) ||
             !validateConfinedCallableArguments(
                 candidate, resolved, concreteArguments, call->arguments())) {
           valid = false;
@@ -14969,7 +14987,8 @@ private:
   [[nodiscard]] bool
   validateSelectedFunction(const FunctionCandidate &function,
                            const ExprPtr &callee, const Token &paren,
-                           std::span<const ExprPtr> arguments) {
+                           std::span<const ExprPtr> arguments,
+                           CallReceiverMode receiverMode) {
     if (!isCompilerTrustedRequester(paren) && function.compilerPrivate) {
       reportCompilerPrivateAccess(paren,
                                   function.declaration == nullptr
@@ -14999,7 +15018,10 @@ private:
     std::optional<SemanticLoanPlace> receiverPlace;
     SemanticLoanId receiverLoan = 0;
     bool transientReceiver = false;
-    if (member != nullptr && !function.staticMember) {
+    const bool temporaryReceiver =
+        receiverMode == CallReceiverMode::FreshTemporaryRead ||
+        receiverMode == CallReceiverMode::FreshTemporaryMutable;
+    if (member != nullptr && !function.staticMember && !temporaryReceiver) {
       std::optional<TransientBorrowProduction> production =
           transientBorrowProduction(member->object());
       if (production) {
@@ -15012,7 +15034,8 @@ private:
         receiverPlace = loanPlace(member->object());
       }
       receiverLoan = accessLoan(member->object());
-    } else if (function.ownerClass != 0 && !function.staticMember) {
+    } else if (member == nullptr && function.ownerClass != 0 &&
+               !function.staticMember) {
       receiverPlace = loanPlace(
           SemanticPlace{.root = receiverStateSymbol(), .receiver = true});
     }
@@ -15025,13 +15048,23 @@ private:
       return true;
     }
 
-    bool mutableReceiver = receiverAllowsMutation(currentReceiverMutability);
-    if (member != nullptr) {
-      mutableReceiver = memberReceiverIsMutable(*member);
+    if (member != nullptr &&
+        function.receiverMutability == ReceiverMutability::Mutable &&
+        receiverMode == CallReceiverMode::Value &&
+        freshTemporaryReceiver(member->object()).eligible &&
+        !freshTemporaryMethodSupported(function)) {
+      reportMutableReceiverFailure(member->object(), paren, function, "Method");
+      return false;
     }
     if (function.receiverMutability == ReceiverMutability::Mutable &&
-        !mutableReceiver) {
-      report(paren, "Mutable method requires a mutable receiver.");
+        !receiverModeAllowsMutation(receiverMode)) {
+      if (member != nullptr) {
+        reportMutableReceiverFailure(member->object(), paren, function,
+                                     "Mutable method");
+      } else {
+        report(paren, "Mutable method requires a mutable receiver.");
+      }
+      return false;
     }
     if (receiverPlace) {
       SemanticType receiverType = SemanticType::Unknown;
@@ -15344,6 +15377,10 @@ private:
     ResolvedOperatorInfo resolved{
         .kind = kind,
         .receiverMutability = selected.receiverMutability,
+        .receiverMode =
+            selected.receiverMutability == ReceiverMutability::Mutable
+                ? CallReceiverMode::MutablePlace
+                : CallReceiverMode::ReadOnlyPlace,
         .returnType = selected.returnType,
         .parameterTypes = selected.parameterTypes,
         .borrowOrigin = selected.returnBorrowOrigin,
@@ -15412,14 +15449,18 @@ private:
 
     const Symbol overloadSet =
         substituteSymbol(found->second.symbol, receiverType);
-    const bool mutableReceiver = isMutableObject(receiver);
     const bool consumingReceiver =
         kind == OverloadedOperator::Call && isExplicitMoveReceiver(receiver);
     bool rejectedMutableReceiver = false;
+    std::optional<FunctionCandidate> rejectedMutableFunction;
     bool rejectedConsumingReceiver = false;
     bool rejectedCompilerPrivate = false;
     bool rejectedRequirements = false;
-    std::vector<FunctionCandidate> viable;
+    struct ViableOperator {
+      FunctionCandidate function;
+      CallReceiverMode receiverMode = CallReceiverMode::None;
+    };
+    std::vector<ViableOperator> viable;
     for (const FunctionCandidate &candidate : overloadSet.overloads) {
       if (candidate.parameterTypes.size() != argumentTypes.size() ||
           arguments.size() != argumentTypes.size()) {
@@ -15447,42 +15488,55 @@ private:
         rejectedConsumingReceiver = true;
         continue;
       }
+      const bool allowFreshTemporary =
+          kind == OverloadedOperator::Call ||
+          candidate.receiverMutability == ReceiverMutability::ReadOnly;
+      const CallReceiverMode receiverMode = receiverModeForObject(
+          receiver, candidate, allowFreshTemporary, consumingReceiver);
       if (candidate.receiverMutability == ReceiverMutability::Mutable &&
-          !mutableReceiver && !consumingReceiver) {
+          !receiverModeAllowsMutation(receiverMode) && !consumingReceiver) {
         rejectedMutableReceiver = true;
+        if (!rejectedMutableFunction) {
+          rejectedMutableFunction = candidate;
+        }
         continue;
       }
       if (!isCompilerTrustedRequester(token) && candidate.compilerPrivate) {
         rejectedCompilerPrivate = true;
         continue;
       }
-      viable.emplace_back(candidate);
+      viable.push_back({.function = candidate, .receiverMode = receiverMode});
     }
 
     if (consumingReceiver &&
         std::any_of(viable.begin(), viable.end(),
-                    [](const FunctionCandidate &candidate) {
-                      return candidate.receiverMutability ==
+                    [](const ViableOperator &candidate) {
+                      return candidate.function.receiverMutability ==
                              ReceiverMutability::Consuming;
                     })) {
-      std::erase_if(viable, [](const FunctionCandidate &candidate) {
-        return candidate.receiverMutability != ReceiverMutability::Consuming;
+      std::erase_if(viable, [](const ViableOperator &candidate) {
+        return candidate.function.receiverMutability !=
+               ReceiverMutability::Consuming;
       });
-    } else if ((mutableReceiver || consumingReceiver) &&
-               std::any_of(viable.begin(), viable.end(),
-                           [](const FunctionCandidate &candidate) {
-                             return candidate.receiverMutability ==
-                                    ReceiverMutability::Mutable;
+    } else if (std::any_of(viable.begin(), viable.end(),
+                           [](const ViableOperator &candidate) {
+                             return candidate.function.receiverMutability ==
+                                        ReceiverMutability::Mutable &&
+                                    (receiverModeAllowsMutation(
+                                         candidate.receiverMode) ||
+                                     candidate.receiverMode ==
+                                         CallReceiverMode::Consuming);
                            })) {
-      std::erase_if(viable, [](const FunctionCandidate &candidate) {
-        return candidate.receiverMutability == ReceiverMutability::ReadOnly;
+      std::erase_if(viable, [](const ViableOperator &candidate) {
+        return candidate.function.receiverMutability ==
+               ReceiverMutability::ReadOnly;
       });
     }
 
     retainBestCallConversionMatches(viable, argumentTypes,
-                                    [](const FunctionCandidate &candidate)
+                                    [](const ViableOperator &candidate)
                                         -> const std::vector<SemanticType> & {
-                                      return candidate.parameterTypes;
+                                      return candidate.function.parameterTypes;
                                     });
 
     if (viable.size() != 1) {
@@ -15512,6 +15566,10 @@ private:
         if (call != nullptr && boundary) {
           (void)validateCallableCapability(
               *call, CallableInvocationCapability::Mutable);
+        } else if (rejectedMutableFunction) {
+          reportMutableReceiverFailure(
+              receiver, token, *rejectedMutableFunction,
+              std::string(operatorSourceSpelling(kind)));
         } else {
           report(token,
                  std::string(operatorSourceSpelling(kind)) +
@@ -15558,7 +15616,8 @@ private:
       return std::nullopt;
     }
 
-    const FunctionCandidate &selected = viable.front();
+    const FunctionCandidate &selected = viable.front().function;
+    const CallReceiverMode selectedReceiverMode = viable.front().receiverMode;
     if (consumingReceiver &&
         rejectConsumingActiveCleanup(token, receiverType, boundary)) {
       return std::nullopt;
@@ -15578,26 +15637,35 @@ private:
         receiverAllowsMutation(selected.receiverMutability)
             ? AccessMode::Mutable
             : AccessMode::ReadOnly;
-    std::optional<TransientBorrowProduction> receiverProduction =
-        transientBorrowProduction(receiver);
-    const SemanticLoanPlace receiverPlace =
-        receiverProduction ? std::move(receiverProduction->place)
-                           : loanPlace(receiver);
+    const bool temporaryReceiver =
+        selectedReceiverMode == CallReceiverMode::FreshTemporaryRead ||
+        selectedReceiverMode == CallReceiverMode::FreshTemporaryMutable;
+    std::optional<TransientBorrowProduction> receiverProduction;
+    std::optional<SemanticLoanPlace> receiverPlace;
+    if (!temporaryReceiver) {
+      receiverProduction = transientBorrowProduction(receiver);
+      receiverPlace = receiverProduction
+                          ? std::optional<SemanticLoanPlace>{std::move(
+                                receiverProduction->place)}
+                          : loanPlace(receiver);
+    }
     const AccessMode callReceiverAccess =
         receiverProduction && receiverProduction->access == AccessMode::Mutable
             ? AccessMode::Mutable
             : selectedReceiverAccess;
-    reportLoanPlaceConflict(
-        token, receiverPlace, selectedReceiverAccess,
-        receiverAllowsMutation(selected.receiverMutability)
-            ? (selected.receiverMutability == ReceiverMutability::Consuming
-                   ? "Consuming operator receiver overlaps a borrow that may "
-                     "still be live."
-                   : "Mutable operator receiver overlaps a borrow that may "
-                     "still be live.")
-            : "Read-only operator receiver overlaps a mutable borrow or "
-              "child reborrow that may still be live.",
-        accessLoan(receiver));
+    if (receiverPlace) {
+      reportLoanPlaceConflict(
+          token, *receiverPlace, selectedReceiverAccess,
+          receiverAllowsMutation(selected.receiverMutability)
+              ? (selected.receiverMutability == ReceiverMutability::Consuming
+                     ? "Consuming operator receiver overlaps a borrow that "
+                       "may still be live."
+                     : "Mutable operator receiver overlaps a borrow that may "
+                       "still be live.")
+              : "Read-only operator receiver overlaps a mutable borrow or "
+                "child reborrow that may still be live.",
+          accessLoan(receiver));
+    }
     validateMutableCallArgumentLoans(selected.parameterTypes, arguments, token);
     validateCallPlaceExclusivity(selected.parameterTypes, arguments, token,
                                  receiverPlace, callReceiverAccess,
@@ -15611,6 +15679,7 @@ private:
         .dispatchOwner = selected.dispatchOwner,
         .kind = kind,
         .receiverMutability = selected.receiverMutability,
+        .receiverMode = selectedReceiverMode,
         .returnType = selected.returnType,
         .parameterTypes = selected.parameterTypes,
         .borrowOrigin = selected.returnBorrowOrigin,
@@ -15835,11 +15904,12 @@ private:
     return containsCAbiRawPointer(type, visiting);
   }
 
-  void recordResolvedCall(
-      const Call &call, const FunctionCandidate &function,
-      std::vector<SemanticType> typeArguments,
-      std::vector<CompileTimeValue> valueArguments,
-      std::vector<CallableArgumentBoundary> callableArguments = {}) {
+  void
+  recordResolvedCall(const Call &call, const FunctionCandidate &function,
+                     std::vector<SemanticType> typeArguments,
+                     std::vector<CompileTimeValue> valueArguments,
+                     std::vector<CallableArgumentBoundary> callableArguments,
+                     CallReceiverMode receiverMode) {
     const bool pointerBearingCFunction =
         function.declaration != nullptr &&
         function.declaration->hasCLinkage() &&
@@ -15900,6 +15970,7 @@ private:
         .dispatch = function.virtualMethod ? CallDispatch::Virtual
                                            : CallDispatch::Static,
         .dispatchOwner = function.dispatchOwner,
+        .receiverMode = receiverMode,
         .callableArguments = std::move(callableArguments)};
     semanticModel.record(call, resolved);
     recordSelectedCallOccurrence(call, std::move(resolved));
@@ -28820,11 +28891,232 @@ private:
     return isMutableObject(member.object());
   }
 
-  [[nodiscard]] bool callReceiverIsMutable(const ExprPtr &callee) const {
-    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
-      return memberReceiverIsMutable(*member);
+  enum class FreshTemporaryReceiverFailure {
+    None,
+    NotClassValue,
+    ExplicitMove,
+    NonConcreteRecord,
+    BorrowedState,
+    UnsupportedProducer,
+  };
+
+  struct FreshTemporaryReceiverAssessment {
+    bool eligible = false;
+    FreshTemporaryReceiverFailure failure =
+        FreshTemporaryReceiverFailure::NotClassValue;
+    SemanticType type = SemanticType::Unknown;
+  };
+
+  [[nodiscard]] static const Expr *
+  transparentReceiverProducer(const ExprPtr &expression) {
+    const Expr *producer = expression.get();
+    while (const auto *grouping = dynamic_cast<const Grouping *>(producer)) {
+      producer = grouping->expression().get();
     }
-    return receiverAllowsMutation(currentReceiverMutability);
+    return producer;
+  }
+
+  [[nodiscard]] FreshTemporaryReceiverAssessment
+  freshTemporaryReceiver(const ExprPtr &expression) const {
+    FreshTemporaryReceiverAssessment result;
+    if (!expression) {
+      return result;
+    }
+    const ExpressionInfo *info = semanticModel.findExpression(*expression);
+    if (info == nullptr || info->category != ValueCategory::Value ||
+        info->type.kind != SemanticType::Class) {
+      return result;
+    }
+    result.type = info->type;
+    if (isExplicitMoveReceiver(expression)) {
+      result.failure = FreshTemporaryReceiverFailure::ExplicitMove;
+      return result;
+    }
+    const ClassInfo *record = classInfo(info->type);
+    if (record == nullptr || (record->kind != ClassKind::Class &&
+                              record->kind != ClassKind::Struct)) {
+      result.failure = FreshTemporaryReceiverFailure::NonConcreteRecord;
+      return result;
+    }
+    if (info->traits.containsBorrowedState) {
+      result.failure = FreshTemporaryReceiverFailure::BorrowedState;
+      return result;
+    }
+
+    const Expr *producer = transparentReceiverProducer(expression);
+    if (producer == nullptr) {
+      result.failure = FreshTemporaryReceiverFailure::UnsupportedProducer;
+      return result;
+    }
+    if (const ResolvedConstructionInfo *construction =
+            semanticModel.findConstruction(*producer)) {
+      if (construction->kind == ConstructorKind::Ordinary &&
+          construction->constructedType == info->type &&
+          construction->borrowOrigin == BorrowOriginKind::None) {
+        result.eligible = true;
+        result.failure = FreshTemporaryReceiverFailure::None;
+        return result;
+      }
+    }
+    if (const auto *call = dynamic_cast<const Call *>(producer)) {
+      const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      const FunctionInfo *target =
+          resolved == nullptr || resolved->function == 0
+              ? nullptr
+              : semanticModel.findFunction(resolved->function);
+      if (target == nullptr && instanceBaseModel != nullptr &&
+          resolved != nullptr && resolved->function != 0) {
+        target = instanceBaseModel->findFunction(resolved->function);
+      }
+      if (resolved != nullptr && target != nullptr &&
+          resolved->declaration != nullptr &&
+          resolved->intrinsic == IntrinsicKind::None &&
+          resolved->returnType == info->type &&
+          resolved->borrowOrigin == BorrowOriginKind::None &&
+          target->linkage == LanguageLinkage::Gti) {
+        result.eligible = true;
+        result.failure = FreshTemporaryReceiverFailure::None;
+        return result;
+      }
+    }
+    result.failure = FreshTemporaryReceiverFailure::UnsupportedProducer;
+    return result;
+  }
+
+  [[nodiscard]] bool
+  freshTemporaryMethodSupported(const FunctionCandidate &function) const {
+    return function.ownerClass != 0 && !function.staticMember &&
+           !function.virtualMethod && function.declaration != nullptr &&
+           function.returnType.kind != SemanticType::Reference &&
+           function.returnBorrowOrigin == BorrowOriginKind::None &&
+           !typeTraits(function.returnType).containsBorrowedState;
+  }
+
+  [[nodiscard]] CallReceiverMode receiverModeForObject(
+      const ExprPtr &receiver, const FunctionCandidate &function,
+      bool allowFreshTemporary, bool consumingReceiver = false) const {
+    if (function.staticMember) {
+      return CallReceiverMode::None;
+    }
+    if (consumingReceiver) {
+      return CallReceiverMode::Consuming;
+    }
+    const ExpressionInfo *info =
+        receiver ? semanticModel.findExpression(*receiver) : nullptr;
+    if (info != nullptr && info->category == ValueCategory::Place) {
+      if (function.receiverMutability == ReceiverMutability::Mutable &&
+          isMutableObject(receiver)) {
+        return CallReceiverMode::MutablePlace;
+      }
+      return CallReceiverMode::ReadOnlyPlace;
+    }
+    // Some operator sites reconstruct an already-resolved named receiver.
+    // Preserve its symbol-backed mutability without treating arbitrary values
+    // as places; fresh temporaries still require the model-backed checks below.
+    if (function.receiverMutability == ReceiverMutability::Mutable &&
+        isMutableObject(receiver)) {
+      return CallReceiverMode::MutablePlace;
+    }
+    if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
+        freshTemporaryReceiver(receiver).eligible) {
+      return function.receiverMutability == ReceiverMutability::Mutable
+                 ? CallReceiverMode::FreshTemporaryMutable
+                 : CallReceiverMode::FreshTemporaryRead;
+    }
+    return CallReceiverMode::Value;
+  }
+
+  [[nodiscard]] CallReceiverMode
+  callReceiverMode(const ExprPtr &callee,
+                   const FunctionCandidate &function) const {
+    if (function.ownerClass == 0 || function.staticMember) {
+      return CallReceiverMode::None;
+    }
+    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+      if (member->access().kind == TokenKind::ARROW) {
+        return function.receiverMutability == ReceiverMutability::Mutable &&
+                       memberReceiverIsMutable(*member)
+                   ? CallReceiverMode::MutablePlace
+                   : CallReceiverMode::ReadOnlyPlace;
+      }
+      return receiverModeForObject(member->object(), function, true);
+    }
+    return function.receiverMutability == ReceiverMutability::Mutable &&
+                   receiverAllowsMutation(currentReceiverMutability)
+               ? CallReceiverMode::MutablePlace
+               : CallReceiverMode::ReadOnlyPlace;
+  }
+
+  [[nodiscard]] static bool receiverModeAllowsMutation(CallReceiverMode mode) {
+    return mode == CallReceiverMode::MutablePlace ||
+           mode == CallReceiverMode::FreshTemporaryMutable;
+  }
+
+  void reportMutableReceiverFailure(const ExprPtr &receiver,
+                                    const Token &location,
+                                    const FunctionCandidate &function,
+                                    std::string_view operation) {
+    const FreshTemporaryReceiverAssessment assessment =
+        freshTemporaryReceiver(receiver);
+    const bool valueShaped = assessment.type.kind == SemanticType::Class;
+    if (!valueShaped) {
+      report(location,
+             std::string(operation) + " requires a mutable receiver.");
+      return;
+    }
+
+    std::string reason;
+    if (function.virtualMethod) {
+      reason = "Virtual dispatch on a temporary receiver is not "
+               "supported by the bounded temporary materialization model.";
+    } else if (function.returnType.kind == SemanticType::Reference ||
+               function.returnBorrowOrigin != BorrowOriginKind::None ||
+               typeTraits(function.returnType).containsBorrowedState) {
+      reason = "A temporary receiver cannot produce a reference or value "
+               "containing tracked borrowed state.";
+    } else {
+      switch (assessment.failure) {
+      case FreshTemporaryReceiverFailure::ExplicitMove:
+        reason = "An explicit move from existing storage is not a fresh "
+                 "mutable temporary receiver.";
+        break;
+      case FreshTemporaryReceiverFailure::NonConcreteRecord:
+        reason = "Only a concrete class or struct value can be a mutable "
+                 "temporary receiver.";
+        break;
+      case FreshTemporaryReceiverFailure::BorrowedState:
+        reason = "A temporary containing tracked borrowed state cannot be "
+                 "borrowed as a mutable receiver.";
+        break;
+      case FreshTemporaryReceiverFailure::UnsupportedProducer:
+        reason = "This value is not produced directly by an ordinary "
+                 "constructor or GTI function call.";
+        break;
+      case FreshTemporaryReceiverFailure::None:
+      case FreshTemporaryReceiverFailure::NotClassValue:
+        reason = std::string(operation) + " requires a mutable receiver.";
+        break;
+      }
+    }
+
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2081", DiagnosticPhase::Semantics, location, std::move(reason));
+    if (function.declaration != nullptr) {
+      const Token *declarationToken = &function.declaration->name();
+      if (function.declaration->operatorName()) {
+        declarationToken = &function.declaration->operatorName()->keyword;
+      }
+      diagnostic.related.push_back(
+          {tokenSpan(*declarationToken),
+           std::string(operation) +
+               (function.receiverMutability == ReceiverMutability::Mutable
+                    ? " is declared mutable here."
+                    : " is declared here.")});
+    }
+    diagnostic.hints.emplace_back(
+        "Bind the value to a 'mut' local before calling this operation when "
+        "the object must come from existing or unsupported storage.");
+    diagnostics.emplace_back(std::move(diagnostic));
   }
 
   [[nodiscard]] const ClassInfo *classInfo(const SemanticType &type) const {

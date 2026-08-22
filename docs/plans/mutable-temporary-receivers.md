@@ -1,10 +1,10 @@
 # Mutable Temporary Receivers
 
-Status: Proposal; not implemented or accepted as current GTI semantics.
+Status: Implemented in GTI 0.294.0 (Slice A).
 
 ## Summary
 
-GTI should allow a fresh, self-contained class-value temporary to serve as the
+GTI allows a fresh, self-contained class-value temporary to serve as the
 receiver of an ordinary method with a trailing `mut` receiver:
 
 ```gti
@@ -22,6 +22,19 @@ that expression's existing cleanup boundary.
 This is an ephemeral receiver capability. It does not make a temporary a
 general mutable place, allow a reference to escape it, or treat
 `std::move(named_value)` as a fresh temporary.
+
+## Implementation Result
+
+Slice A is implemented across semantic receiver selection, HIR temporary
+borrow roles, verified ordered MIR materialization/drop, C++ MIR emission,
+compiler diagnostics, LSP queries, and the C++20/C++23 O0/O3 runtime matrix.
+Existing read-only operator calls on the same fresh producer and contextual
+`operator bool` conversions now use that explicit HIR/MIR receiver schedule as
+well, without broadening mutable operator permission.
+Defined-failure coverage distinguishes pre-production failure from failure in
+arguments or the selected method after the receiver obligation is active.
+Compound producers, virtual dispatch, borrowed-state carriers/results, and
+additional overloaded operators remain outside this bounded capability.
 
 ## User-Facing Outcome
 
@@ -45,19 +58,18 @@ builder.append(header);
 The explicit local remains required when the object must survive the full
 expression, be mutated again, be borrowed, or be observed after mutation.
 
-This proposal is classified as **systems-ready** breadth over the existing
+This implementation is classified as **systems-ready** breadth over the existing
 temporary, ordered-call, and cleanup model. It has a demonstrated filesystem
 and fluent-API client and does not require a new syntax or ownership subsystem.
 
-## Current Baseline
+## Former Baseline
 
 Semantic analysis records each expression's type, value category, access, and
 lifecycle traits. A named `mut` binding is a mutable place. A constructor or
 ordinary class-returning call is a value expression whose access is read-only.
 
-`memberReceiverIsMutable` and `callReceiverIsMutable` in
-`src/compiler/semantic_analyzer.cpp` currently admit a trailing-`mut` method
-only when its receiver is a mutable place. Consequently this is rejected:
+Before GTI 0.294.0, receiver validation admitted a trailing-`mut` method only
+when its receiver was a mutable place. Consequently this was rejected:
 
 ```gti
 Widget().initialize(); // initialize() has a trailing mut receiver
@@ -72,7 +84,8 @@ Mutable method requires a mutable receiver.
 The LSP publishes that compiler-owned diagnostic unchanged. There is no
 LSP-specific receiver rule.
 
-Downstream support is close but not yet an authority for this source meaning.
+At that baseline, downstream support was close but not yet an authority for
+this source meaning.
 HIR can retain reusable value receivers, MIR already gives cleanup-owning
 temporaries explicit mutable lifetime slots and full-expression drop
 obligations, and the C++ MIR emitter recognizes direct construction and
@@ -81,9 +94,9 @@ classifies that reconstructed temporary receiver as read-only. It must not be
 changed alone: receiver permission belongs in semantics and must be carried
 explicitly through HIR and verified MIR.
 
-## Proposed Semantic Capability
+## Implemented Semantic Capability
 
-Semantic analysis should classify a direct call receiver into one of these
+Semantic analysis classifies a direct call receiver into one of these
 conceptual modes:
 
 1. **read-only place borrow** — existing access through an immutable place;
@@ -336,8 +349,7 @@ hint may suggest binding the value to a `mut` local. No fix-it should introduce
 a binding automatically because choosing its name, scope, and ownership use is
 not mechanical.
 
-Stable diagnostic codes should be allocated during implementation rather than
-reserved in this proposal.
+`GTI-S2081` owns these bounded temporary-receiver failures.
 
 ## Generics And Concrete Reanalysis
 
@@ -411,7 +423,7 @@ already has exclusive access and needs none of that machinery.
 
 ## Staged Implementation
 
-### Slice A: direct fresh temporary receivers
+### Slice A: direct fresh temporary receivers (complete in 0.294.0)
 
 - Admit direct ordinary construction and ordinary by-value GTI call results of
   concrete self-contained class types.
@@ -479,7 +491,7 @@ change is expected because syntax is unchanged.
 
 ## Documentation And Release
 
-When Slice A ships:
+Slice A completion updated:
 
 - update `docs/language/static-semantics.md` receiver selection;
 - update `docs/language/ownership-and-lifetimes.md` with the ephemeral borrow
@@ -487,15 +499,12 @@ When Slice A ships:
 - update semantic, HIR, MIR, backend, LSP, and verification architecture where
   their concrete representation changes;
 - update `M-EXEC-01` and the restriction/readiness ledgers;
-- replace this proposal status with the implementation result or merge its
-  durable rules into canonical language documentation; and
-- advance the minor version because previously rejected source becomes valid.
-
-This proposal alone does not change `VERSION`.
+- this plan status and the canonical language documentation; and
+- the minor version because previously rejected source became valid.
 
 ## Acceptance Criteria
 
-The proposal is ready to implement when maintainers agree that:
+Slice A was accepted and implemented with these criteria:
 
 1. freshness is a frontend-owned receiver capability, not a C++ rvalue rule;
 2. the first slice covers direct construction and ordinary by-value GTI call

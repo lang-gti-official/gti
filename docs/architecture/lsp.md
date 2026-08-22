@@ -186,6 +186,12 @@ overlapping retained-borrow diagnostics and related origin ranges from the
 shared semantic model; it does not infer storage duration or temporary-loan
 boundaries from call syntax.
 
+Fresh temporary receiver diagnostics and selected read/mutable overloads use
+the same compiler records. The LSP publishes `GTI-S2081` unchanged and clears
+it only after a newer compiler snapshot accepts the receiver. Hover and
+signature help render the exact selected trailing-`mut` overload; the protocol
+layer does not infer freshness from constructor-like punctuation.
+
 ## Document State
 
 `LanguageServer` currently owns protocol handling and document lifecycle in one

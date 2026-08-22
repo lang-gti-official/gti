@@ -355,6 +355,21 @@ error. Both stop before HIR because the language has no accepted cleanup
 schedule for that moved receiver across the enclosing full expression; this is
 a semantic/lowering restriction, not a backend fallback.
 
+## Temporary Receiver Capability
+
+Resolved ordinary method calls and class `operator()` calls retain a
+`CallReceiverMode` alongside the exact selected target. The mode distinguishes
+read-only and mutable source places, reusable values, consuming receivers, and
+read-only or mutable borrows of a fresh temporary. Semantics alone classifies
+freshness: it requires a direct ordinary construction or by-value GTI call, a
+concrete class/struct value without tracked borrowed state, and a supported
+non-static, non-virtual target whose result cannot carry borrowed state.
+Transparent grouping is ignored, while an explicit move from named storage is
+not fresh. Concrete generic reanalysis repeats these checks using substituted
+type and lifecycle traits. Expression value category and access remain
+unchanged, preventing the receiver-only capability from authorizing general
+mutable-place operations.
+
 ## Concepts And Requirement Contracts
 
 Concept resolution keeps two related representations because unary facts and

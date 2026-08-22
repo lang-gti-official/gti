@@ -89,6 +89,10 @@ callInputKindName(HirCallInputKind kind) {
     return "read-borrow";
   case HirCallInputKind::MutableBorrow:
     return "mutable-borrow";
+  case HirCallInputKind::ReadTemporaryBorrow:
+    return "read-temporary-borrow";
+  case HirCallInputKind::MutableTemporaryBorrow:
+    return "mutable-temporary-borrow";
   }
   return "invalid";
 }

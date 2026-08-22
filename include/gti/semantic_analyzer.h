@@ -1195,6 +1195,16 @@ enum class CallDispatch {
   Virtual,
 };
 
+enum class CallReceiverMode {
+  None,
+  Value,
+  ReadOnlyPlace,
+  MutablePlace,
+  FreshTemporaryRead,
+  FreshTemporaryMutable,
+  Consuming,
+};
+
 struct ResolvedCallInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
@@ -1211,6 +1221,7 @@ struct ResolvedCallInfo {
   std::optional<BorrowOriginPlace> borrowPlace;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
+  CallReceiverMode receiverMode = CallReceiverMode::None;
   std::vector<CallableArgumentBoundary> callableArguments;
 };
 
@@ -1264,6 +1275,7 @@ struct ResolvedOperatorInfo {
   SemanticType dispatchOwner = SemanticType::Unknown;
   OverloadedOperator kind = OverloadedOperator::Dereference;
   ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+  CallReceiverMode receiverMode = CallReceiverMode::None;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;

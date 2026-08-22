@@ -583,6 +583,23 @@ struct MirBody {
   friend bool operator==(const MirBody &, const MirBody &) = default;
 };
 
+// A source temporary is either still rooted directly in its SSA value or has
+// been promoted into one hidden slot so it remains nameable across a CFG
+// merge. This query accepts only those two exact forms and returns the unique
+// MIR producer that materializes the source identity.
+struct MirTemporaryMaterialization {
+  const MirValue *value = nullptr;
+  const MirInstruction *producer = nullptr;
+
+  [[nodiscard]] explicit operator bool() const {
+    return value != nullptr && producer != nullptr;
+  }
+};
+
+[[nodiscard]] MirTemporaryMaterialization
+findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
+                                HirValueId sourceValue);
+
 struct MirVerificationError {
   MirBodyKind bodyKind = MirBodyKind::Function;
   std::size_t owner = 0;

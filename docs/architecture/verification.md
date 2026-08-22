@@ -243,6 +243,19 @@ Verified MIR and the general backend preflight own production authority. A
 conservative semantic restriction may be removed only after its MIR verifier
 contract and focused native runtime matrix cover the widened form.
 
+`temporary-receivers` extends that gate with direct construction, by-value GTI
+call, transparent-parenthesis, nested-argument, concrete-generic, read-only,
+mutable-only, paired-overload, and reusable `operator()` cases. It asserts the
+semantic receiver mode, HIR temporary-borrow role, exact MIR producer/place,
+`BorrowRead`/`BorrowWrite` stage, target qualifier, and single full-expression
+drop, then forges read-only storage, a mismatched qualifier, and a missing drop
+marker. `mutable_temporary_receiver_runtime` runs C++20/C++23 at O0/O3 and
+proves overload selection plus exactly-once destruction for constructor and
+class-return producers. It also proves that method/argument failure begins
+receiver cleanup and that producer failure does not activate a receiver drop.
+The LSP smoke matrix owns `GTI-S2081` publication and clearing plus
+hover/signature selection.
+
 The bounded M-FAIL-01 control-flow gate is owned by `failure_metadata`. It
 independently derives the exact local outcome set for fixed-width-integer
 `Add`, `Subtract`, `Multiply`, `Divide`, `Remainder`, `ShiftLeft`, `ShiftRight`,

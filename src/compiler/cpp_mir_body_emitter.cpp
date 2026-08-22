@@ -2321,48 +2321,65 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
 
 struct DirectTemporaryReceiver {
   const MirInstruction *producer = nullptr;
+  const MirInstruction *stage = nullptr;
   const MirInstruction *call = nullptr;
   const MirPlace *slot = nullptr;
   const MirDropObligation *drop = nullptr;
 
   [[nodiscard]] explicit operator bool() const {
-    return producer != nullptr && call != nullptr && slot != nullptr &&
-           drop != nullptr;
+    return producer != nullptr && stage != nullptr && call != nullptr &&
+           slot != nullptr && drop != nullptr;
   }
 };
 
-// A source temporary used only as a read-only member receiver already owns
-// explicit MIR storage and cleanup. Keep it in that slot rather than
-// materializing an SSA object or relying on a C++ temporary destructor. Both
-// ordinary construction and a class-returning call may be the producer; the
-// exact activation and later MIR Drop remain the sole lifetime authority.
+// Verified MIR gives a direct source temporary one exact value-rooted slot and
+// stages an explicit read or mutable borrow from it. Keep the value in that
+// slot rather than relying on C++ rvalue rules. Its exact value obligation
+// remains the sole cleanup authority through the enclosing full expression.
 [[nodiscard]] DirectTemporaryReceiver
 directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
-  if (call.kind != MirInstructionKind::Call || call.callSite != 0 ||
+  if (call.kind != MirInstructionKind::Call || call.callSite == 0 ||
       !call.functionTarget || call.intrinsic != IntrinsicKind::None ||
       !call.receiver || call.receiver->kind != MirOperandKind::Value ||
       call.receiver->value == 0 ||
-      call.receiver->type.kind != SemanticType::Class ||
-      !call.localFailureSites.empty() || !call.lifecycle.empty()) {
+      call.receiver->type.kind != SemanticType::Class) {
     return {};
   }
 
-  const MirValue *value = body.findValue(call.receiver->value);
-  const MirInstruction *producer =
-      value == nullptr ? nullptr : findInstruction(body, value->definition);
-  const MirDropObligation *resultDrop =
-      producer != nullptr && producer->successResultDrop
-          ? body.findDropObligation(*producer->successResultDrop)
-          : nullptr;
-  const MirPlace *slot =
-      producer != nullptr && producer->destination
-          ? body.findPlace(*producer->destination)
-          : (resultDrop != nullptr ? body.findPlace(resultDrop->place)
-                                   : nullptr);
+  const MirValue *stageValue = body.findValue(call.receiver->value);
+  const MirInstruction *stage =
+      stageValue == nullptr ? nullptr
+                            : findInstruction(body, stageValue->definition);
+  const bool readStage =
+      stage != nullptr &&
+      stage->callInputKind == HirCallInputKind::ReadTemporaryBorrow;
+  const bool mutableStage =
+      stage != nullptr &&
+      stage->callInputKind == HirCallInputKind::MutableTemporaryBorrow;
+  if (stage == nullptr || stage->kind != MirInstructionKind::CallInput ||
+      stage->callSite != call.callSite || !stage->callInputRole ||
+      *stage->callInputRole != MirCallInputRole::Receiver ||
+      stage->callInputIndex != 0 || stage->hirValue == 0 || !stage->result ||
+      *stage->result != call.receiver->value || stage->operands.size() != 1 ||
+      (!readStage && !mutableStage) ||
+      stage->operands.front().kind != (mutableStage
+                                           ? MirOperandKind::BorrowWrite
+                                           : MirOperandKind::BorrowRead)) {
+    return {};
+  }
+
+  const MirPlace *slot = body.findPlace(stage->operands.front().place);
+  const MirTemporaryMaterialization materialization =
+      slot == nullptr
+          ? MirTemporaryMaterialization{}
+          : findMirTemporaryMaterialization(body, *slot, stage->hirValue);
+  const MirValue *value = materialization.value;
+  const MirInstruction *producer = materialization.producer;
   const bool ordinaryConstruction =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
       producer->constructorKind == ConstructorKind::Ordinary &&
-      !producer->receiver && producer->intrinsic == IntrinsicKind::None;
+      producer->constructorTarget && !producer->receiver &&
+      producer->intrinsic == IntrinsicKind::None;
   const bool functionCall =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
       producer->functionTarget && !producer->constructorTarget &&
@@ -2371,55 +2388,55 @@ directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
       producer->intrinsic == IntrinsicKind::None;
   if (value == nullptr || producer == nullptr || slot == nullptr ||
       (!ordinaryConstruction && !functionCall) ||
+      value->sourceValue != stage->hirValue ||
       value->info.type != call.receiver->type || !producer->result ||
-      *producer->result != value->id ||
+      *producer->result != value->id || producer->hirValue != stage->hirValue ||
       producer->info.type != value->info.type ||
       !producer->localFailureSites.empty() ||
       (producer->successResultDestination &&
        *producer->successResultDestination != slot->id) ||
-      (slot->root != MirPlaceRootKind::Temporary &&
-       (slot->root != MirPlaceRootKind::Value || slot->value != value->id)) ||
-      !slot->projections.empty() || slot->type != value->info.type ||
-      slot->access != AccessMode::Mutable) {
+      (producer->destination && *producer->destination != slot->id) ||
+      slot->type != value->info.type || slot->access != AccessMode::Mutable ||
+      slot->sourceValue != stage->hirValue) {
     return {};
   }
 
-  std::size_t receiverUses = 0;
   for (const MirValueUse &use : body.usesOf(value->id)) {
-    if (use.kind == MirValueUseKind::PlaceRoot && use.place == slot->id) {
+    if (slot->root == MirPlaceRootKind::Value &&
+        use.kind == MirValueUseKind::PlaceRoot && use.place == slot->id) {
       continue;
     }
-    if (use.kind != MirValueUseKind::InstructionReceiver ||
-        use.instruction != call.id || ++receiverUses != 1) {
-      return {};
-    }
-  }
-  if (receiverUses != 1) {
     return {};
   }
 
-  MirDropObligationId activatedDrop = 0;
-  for (const MirLifecycleEvent &event : producer->lifecycle) {
-    if (event.kind != MirLifecycleEventKind::Initialize || event.source != 0 ||
-        event.target == 0 || event.conditional || event.failureCleanup ||
-        activatedDrop != 0) {
+  const MirDropObligation *drop = nullptr;
+  for (const MirDropObligation &candidate : body.dropObligations) {
+    if (candidate.kind != MirDropObligationKind::Value ||
+        candidate.value != stage->hirValue) {
+      continue;
+    }
+    if (drop != nullptr || candidate.place != slot->id ||
+        candidate.dropType.type != slot->type || candidate.initiallyActive) {
       return {};
     }
-    activatedDrop = event.target;
+    drop = &candidate;
   }
-  if (producer->successResultDrop) {
-    if (activatedDrop != 0 ||
-        !invokeSuccessActivates(body, *producer,
-                                *producer->successResultDrop)) {
-      return {};
-    }
-    activatedDrop = *producer->successResultDrop;
+  if (drop == nullptr) {
+    return {};
   }
-  const MirDropObligation *drop =
-      activatedDrop == 0 ? nullptr : body.findDropObligation(activatedDrop);
-  if (drop == nullptr || (resultDrop != nullptr && resultDrop != drop) ||
-      drop->kind != MirDropObligationKind::Value || drop->place != slot->id ||
-      drop->dropType.type != slot->type || drop->initiallyActive) {
+  const bool activatesDirectly =
+      std::any_of(producer->lifecycle.begin(), producer->lifecycle.end(),
+                  [&](const MirLifecycleEvent &event) {
+                    return event.target == drop->id && !event.conditional &&
+                           !event.failureCleanup &&
+                           (event.kind == MirLifecycleEventKind::Initialize ||
+                            event.kind == MirLifecycleEventKind::Reparent ||
+                            event.kind == MirLifecycleEventKind::Move);
+                  });
+  const bool activatesOnSuccess =
+      producer->successResultDrop == drop->id &&
+      invokeSuccessActivates(body, *producer, drop->id);
+  if (activatesDirectly == activatesOnSuccess) {
     return {};
   }
 
@@ -2427,39 +2444,33 @@ directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
       for (const MirLifecycleEvent &event : instruction.lifecycle) {
-        if (event.source != drop->id && event.target != drop->id) {
-          continue;
+        if (event.kind == MirLifecycleEventKind::Drop &&
+            event.source == drop->id && event.target == 0 &&
+            instruction.kind == MirInstructionKind::Drop &&
+            instruction.destination == slot->id) {
+          ++scheduledDrops;
         }
-        if (&instruction == producer &&
-            event.kind == MirLifecycleEventKind::Initialize &&
-            event.source == 0 && event.target == drop->id) {
-          continue;
-        }
-        if (instruction.kind != MirInstructionKind::Drop ||
-            instruction.destination != slot->id ||
-            event.kind != MirLifecycleEventKind::Drop ||
-            event.source != drop->id || event.target != 0) {
-          return {};
-        }
-        ++scheduledDrops;
       }
     }
   }
-  return scheduledDrops != 0 ? DirectTemporaryReceiver{.producer = producer,
-                                                       .call = &call,
-                                                       .slot = slot,
-                                                       .drop = drop}
-                             : DirectTemporaryReceiver{};
+  if (scheduledDrops == 0) {
+    return {};
+  }
+  return {.producer = producer,
+          .stage = stage,
+          .call = &call,
+          .slot = slot,
+          .drop = drop};
 }
 
 [[nodiscard]] DirectTemporaryReceiver
 directTemporaryReceiverForValue(const MirBody &body, MirValueId valueId) {
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.receiver &&
-          instruction.receiver->kind == MirOperandKind::Value &&
-          instruction.receiver->value == valueId) {
-        return directTemporaryReceiver(body, instruction);
+      const DirectTemporaryReceiver receiver =
+          directTemporaryReceiver(body, instruction);
+      if (receiver && receiver.producer->result == valueId) {
+        return receiver;
       }
     }
   }
@@ -2496,8 +2507,7 @@ constructDestinationSlot(const MirBody &body, const MirInstruction &construct) {
   }
   const DirectTemporaryReceiver temporary =
       directTemporaryReceiverForValue(body, *construct.result);
-  if (temporary.producer == &construct && temporary.slot != nullptr &&
-      construct.destination == temporary.slot->id) {
+  if (temporary.producer == &construct && temporary.slot != nullptr) {
     return temporary.slot->id;
   }
   MirPlaceId selected = 0;
@@ -14340,6 +14350,48 @@ private:
         output << ");\n";
         return;
       }
+      const DirectTemporaryReceiver temporary =
+          directTemporaryReceiverForValue(facts.body, *instruction.result);
+      if (temporary.producer == &instruction && temporary.slot != nullptr &&
+          (!failureForm || transformedConstructor(instruction) == nullptr)) {
+        writeIndent();
+        output << "__gti_mir_p_"
+               << canonicalSlotPlaceId(facts.body, *temporary.slot)
+               << ".construct(";
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          if (index != 0) {
+            output << ", ";
+          }
+          if (const MirPlace *chainSource =
+                  instruction.operands[index].kind == MirOperandKind::Value
+                      ? movedPlaceChainSource(facts.body,
+                                              instruction.operands[index].value,
+                                              instruction)
+                      : nullptr) {
+            output << "std::move(";
+            emitStoragePlaceValue(facts, *chainSource);
+            output << ')';
+            continue;
+          }
+          const bool consumed =
+              instruction.operands[index].type.kind == SemanticType::Class ||
+              instruction.operands[index].type.kind ==
+                  SemanticType::UniqueOwner ||
+              instruction.operands[index].type.kind == SemanticType::Storage ||
+              instruction.operands[index].type.kind ==
+                  SemanticType::PrefixStorage;
+          if (consumed) {
+            output << "std::move(";
+          }
+          emitOperand(instruction.operands[index]);
+          if (consumed) {
+            output << ')';
+          }
+        }
+        output << ");\n";
+        return;
+      }
     }
     if (failureForm && instruction.kind == MirInstructionKind::Construct) {
       if (const MirConstructorInstance *target =
@@ -21232,8 +21284,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const ReceiverMutability stagedMutability =
               movedSource.place != nullptr && movedSource.moved
                   ? ReceiverMutability::Consuming
-                  : (temporaryReceiver ? ReceiverMutability::ReadOnly
-                     : receiverBorrow.kind == MirOperandKind::BorrowWrite
+                  : (receiverBorrow.kind == MirOperandKind::BorrowWrite
                          ? ReceiverMutability::Mutable
                          : ReceiverMutability::ReadOnly);
           const bool virtualFailureTarget =

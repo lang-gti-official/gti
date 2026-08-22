@@ -289,6 +289,19 @@ overload with trailing `&&`. It is available only through an explicitly moved
 receiver, and an otherwise exact consuming overload is preferred for that
 form. Read-only, mutable, and consuming call-operator overloads may coexist.
 
+A concrete self-contained class or struct value produced directly by an
+ordinary constructor or by-value GTI function call is a fresh temporary
+receiver. For one direct ordinary non-static, non-virtual method call, including
+reusable `operator()`, it may be borrowed read-only or mutably; transparent
+parentheses do not change that classification. A fresh receiver prefers an
+otherwise exact trailing-`mut` overload. This permission is receiver-only: the
+value does not become a general mutable place, and cannot bind a mutable
+reference, have its address taken, or be assigned through as storage.
+`std::move(named)` is existing storage rather than a fresh receiver. The
+selected method must return `void`, an ordinary scalar, or an owned value with
+no tracked borrowed state; receiver-tied references and borrowed-state results
+remain ill-formed.
+
 A consuming call operator is non-virtual, has a body, and cannot implement an
 interface contract. Its result cannot be a reference or contain tracked
 borrowed state. Invocation consumes the exact source place under the ordinary

@@ -800,8 +800,10 @@ analysis, HIR, MIR, and the backend.
   non-intrinsic ordinary calls, concrete ordinary constructors, and concretely
   resolved class `operator()` calls with scalar/reference parameters and
   eligible non-borrowed class-value parameters now retain exact HIR input roles
-  and verified MIR receiver/argument/invocation order; the remaining families
-  are systems-readiness implementation.
+  and verified MIR receiver/argument/invocation order. Direct self-contained
+  class-value construction/call results now also have verified read/mutable
+  temporary receiver materialization and full-expression cleanup; the
+  remaining families are systems-readiness implementation.
 - **Scope:** Decompose one complete expression family into ordered MIR values
   and temporaries, including receivers, arguments, transient loans, and cleanup.
   During backend recovery, co-deliver the largest coherent set required by the
@@ -823,7 +825,11 @@ analysis, HIR, MIR, and the backend.
   receiver for an explicit move or trailing-`&&` target, including once-callable
   fallback to an exact read/mutable overload. These use exact selected
   parameter types and value/class-copy/class-move/read-borrow/mutable-borrow
-  roles. MIR emits
+  roles. Direct ordinary constructor and by-value GTI call results of concrete
+  self-contained class/struct type may additionally use exact read/mutable
+  temporary-borrow receiver roles for non-virtual ordinary methods and reusable
+  `operator()`, with one producer-matched mutable place and full-expression
+  drop obligation. MIR emits
   one-use `CallInput` checkpoints and verifies call-site, role, index, type,
   dominance, and strict receiver-when-applicable, arguments, then `Call` or
   `Construct` order. For ordinary calls, each eligible class copy or move

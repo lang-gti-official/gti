@@ -2506,6 +2506,58 @@ private:
                                 : AccessMode::ReadOnly;
   }
 
+  [[nodiscard]] MirOperand temporaryReceiverOperand(HirValueId id,
+                                                    AccessMode access) {
+    const HirValue *receiver = findValue(id);
+    if (receiver == nullptr ||
+        receiver->info.type.kind != SemanticType::Class ||
+        receiver->info.category != ValueCategory::Value ||
+        receiver->info.traits.containsBorrowedState) {
+      valid = false;
+      return {};
+    }
+
+    const MirOperand produced = valueOperand(id);
+    if (produced.kind != MirOperandKind::Value || produced.value == 0) {
+      valid = false;
+      return {};
+    }
+
+    MirPlaceId place = 0;
+    const MirDropObligationId obligation = dropObligationForValue(id);
+    if (obligation != 0) {
+      const MirDropObligation *drop = output.findDropObligation(obligation);
+      if (drop == nullptr || !temporaryIsActive(obligation) ||
+          drop->kind != MirDropObligationKind::Value || drop->value != id) {
+        valid = false;
+        return {};
+      }
+      place = drop->place;
+    } else {
+      place = appendPlace({.root = MirPlaceRootKind::Value,
+                           .value = produced.value,
+                           .type = receiver->info.type,
+                           .access = AccessMode::Mutable,
+                           .traits = receiver->info.traits,
+                           .sourceValue = receiver->id});
+    }
+    const MirPlace *materialized = output.findPlace(place);
+    if (materialized == nullptr ||
+        materialized->root != MirPlaceRootKind::Value ||
+        materialized->value != produced.value ||
+        materialized->type != receiver->info.type ||
+        materialized->access != AccessMode::Mutable ||
+        materialized->sourceValue != receiver->id ||
+        !materialized->projections.empty()) {
+      valid = false;
+      return {};
+    }
+    return {.kind = access == AccessMode::Mutable ? MirOperandKind::BorrowWrite
+                                                  : MirOperandKind::BorrowRead,
+            .place = place,
+            .type = receiver->info.type};
+  }
+
   [[nodiscard]] MirOperand receiverOperand(HirValueId id, AccessMode access) {
     const HirValue *receiver = findValue(id);
     if (receiver == nullptr) {
@@ -3059,13 +3111,19 @@ private:
       if (value.callPlan->receiver) {
         const HirCallReceiver &receiver = *value.callPlan->receiver;
         const AccessMode access =
-            receiver.kind == HirCallInputKind::MutableBorrow
+            receiver.kind == HirCallInputKind::MutableBorrow ||
+                    receiver.kind == HirCallInputKind::MutableTemporaryBorrow
                 ? AccessMode::Mutable
                 : AccessMode::ReadOnly;
-        sourceReceiver = receiverOperand(receiver.value, access);
+        const bool temporaryReceiver =
+            receiver.kind == HirCallInputKind::ReadTemporaryBorrow ||
+            receiver.kind == HirCallInputKind::MutableTemporaryBorrow;
+        sourceReceiver = temporaryReceiver
+                             ? temporaryReceiverOperand(receiver.value, access)
+                             : receiverOperand(receiver.value, access);
         PreparedCallInput prepared = prepareCallInput(
             value.id, receiver.value, receiver.type, receiver.kind,
-            MirCallInputRole::Receiver, 0, *sourceReceiver, true);
+            MirCallInputRole::Receiver, 0, *sourceReceiver, !temporaryReceiver);
         call.receiver = std::move(prepared.operand);
         if (prepared.parameterDrop != 0) {
           preparedParameterDrops.push_back(prepared.parameterDrop);
@@ -3731,22 +3789,6 @@ private:
                                .result = result,
                                .operands = {valueOperand(id)},
                                .operation = MirOperation::ExpectedHasValue,
-                               .info = info});
-    } else if (value->contextualBoolTarget) {
-      const AccessMode access = receiverAccess(*value->contextualBoolTarget);
-      const FailurePropagationKind propagation = normalizedCallPropagation(
-          value->dispatch == CallDispatch::Virtual
-              ? FailurePropagationKind::VirtualCall
-              : FailurePropagationKind::DirectCall,
-          value->dispatch, value->contextualBoolTarget);
-      (void)appendInstruction({.kind = MirInstructionKind::Call,
-                               .hirValue = id,
-                               .result = result,
-                               .receiver = receiverOperand(id, access),
-                               .definedFailure = {.propagation = propagation},
-                               .dispatch = value->dispatch,
-                               .dispatchOwner = value->dispatchOwner,
-                               .functionTarget = value->contextualBoolTarget,
                                .info = info});
     } else {
       valid = false;

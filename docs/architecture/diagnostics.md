@@ -174,6 +174,15 @@ diagnostics or letting a backend message choose either identity.
   integer truthiness or contextual conversion. Unsupported constant execution
   remains `GTI-S2057`, with the assertion declaration attached as related
   information; the LSP must not reinterpret either family.
+- `GTI-S2081` owns a class-value receiver that cannot use the bounded fresh
+  temporary receiver capability. Point at the call/operator token and
+  distinguish an explicit move from existing storage, an unsupported producer,
+  borrowed-state storage or result, non-concrete record, and virtual dispatch.
+  Relate the selected method/operator declaration and suggest an explicit
+  mutable local. Do not offer a fix-it because binding name, scope, and
+  ownership use require intent. Immutable named-place failures retain the
+  existing mutable-receiver diagnostic rather than being reclassified as a
+  temporary.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

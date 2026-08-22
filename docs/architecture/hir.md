@@ -186,18 +186,25 @@ as an ordinary call with an explicit named-place receiver and exact right-hand
 argument. Neither form is inferred from a public standard-library type name.
 
 The bounded M-EXEC-01 invocation slices give an eligible ordinary call,
-resolved class `operator()` call, or ordinary constructor a `HirCallPlan`.
+resolved class operator call, or ordinary constructor a `HirCallPlan`.
 Eligibility is deliberately narrow: the
 target is concrete and non-intrinsic; argument cardinality exactly matches the
 selected parameters after caller-side default expansion; no pack expansion is
 present; and every
 parameter is either a supported scalar/reference form or an exact class value
-without borrowed state. The ordinary function family excludes operators other
-than `operator()`, lambdas, unresolved deferred callables, and construction. A
-concretely selected `operator()` uses the same exact target even when its
+without borrowed state. Mutable temporary permission remains confined to
+ordinary methods and reusable `operator()`; existing non-borrowing read-only
+operators selected on an admitted fresh temporary also receive a plan so MIR
+does not reconstruct their receiver. Lambdas, unresolved deferred callables,
+and unsupported construction remain outside the slice. A concretely selected
+`operator()` uses the same exact target even when its
 generic source call still has a deferred-callable base record. Its receiver is
 a read or mutable borrow for a place, a value for a reusable value receiver, or
 a `MoveValue` for an explicitly moved receiver or exact trailing-`&&` target.
+An admitted direct class-value temporary instead uses
+`ReadTemporaryBorrow` or `MutableTemporaryBorrow`; the input names the
+unwrapped producer value and copies semantic access rather than rediscovering
+freshness from `HirValueKind`.
 This preserves a once-callable requirement even when exact overload selection
 legitimately falls back to a read or mutable target. Ordinary constructors
 require an exact constructor target and at least one parameter;
@@ -206,10 +213,19 @@ remain unscheduled. The plan
 names a function receiver, when present, once and records each argument in
 source order with its exact concrete parameter type. Constructors have no
 receiver. An input role is value, class-copy value, class-move value, read
-borrow, or mutable borrow. A class place is eligible only when it can be copied;
-a class value is eligible only when it can be moved. The legacy operand vector
-remains source provenance and compatibility-backend input; MIR consumes the
-plan as schedule authority for these slices.
+borrow, mutable borrow, read temporary borrow, or mutable temporary borrow. A
+class place is eligible only when it can be copied;
+a class value is eligible only when it can be moved. The operand vector remains
+source provenance; MIR consumes the plan as schedule authority for these
+slices.
+
+A contextual `operator bool` is an explicit synthetic HIR call whose receiver
+operand is the already lowered source expression. It has its own target,
+dispatch, failure, receiver, and call-plan identity. When one source expression
+therefore produces both a value and an outer conversion call, full-expression
+root mapping selects the outermost lowered value and reaches the producer
+through its operand. MIR never synthesizes a contextual call from side
+metadata.
 
 `HirValueKind::PackFold` is a separate bounded schedule, not a request for HIR
 to interpret a general fold expression. Semantics has already selected one

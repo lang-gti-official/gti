@@ -729,6 +729,21 @@ older direct checkpoint transfer until their partial-construction model lands.
 Borrow-source, callable-source, ownership, and loan-flow checks trace through
 the checkpoint's one underlying operand.
 
+A `ReadTemporaryBorrow` or `MutableTemporaryBorrow` receiver input names one
+mutable materialization place produced by the exact ordinary construction or
+GTI call. A linear value uses its value-rooted place; a branch-only value uses
+the one hidden temporary slot already required to carry its conditional drop
+through a CFG merge. The shared MIR materialization query accepts only those
+two exact forms and resolves one producer/source identity for verification and
+backend consumption. The producer strictly precedes the input; the input
+strictly precedes all arguments and invocation. Exactly one matching value-drop
+obligation is activated by successful production and remains attached to the
+enclosing full expression. Verification also requires the selected non-static,
+non-virtual GTI target, concrete owner type, receiver qualifier, result
+non-escape traits, producer type, place type/access/source identity, and drop
+descriptor to agree. This is an explicit MIR borrow schedule, not a native
+rvalue convention.
+
 Other calls and expression families still rely on ordered MIR produced by
 recursive lowering rather than a dedicated verifier-visible materialization
 schedule. Their emitted execution still comes from MIR, but the verifier has

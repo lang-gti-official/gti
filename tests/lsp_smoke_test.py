@@ -5722,6 +5722,7 @@ def main():
     test_flat_document_symbols(sys.argv[1], root)
     test_rename_tooling(sys.argv[1], root)
     test_signature_help_tooling(sys.argv[1], root)
+    test_mutable_temporary_receiver_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
@@ -6573,6 +6574,131 @@ def main():
     test_direct_dependency_visibility(sys.argv[1], root)
     test_missing_include_and_format_config(sys.argv[1], root)
     test_inheritance_tooling(sys.argv[1], root)
+
+
+def test_mutable_temporary_receiver_tooling(executable, root):
+    invalid_source = (
+        "class Probe {\n"
+        "public:\n"
+        "  Probe() {}\n"
+        "  void reset() mut {}\n"
+        "  int inspect() { return 1; }\n"
+        "  int inspect() mut { return 2; }\n"
+        "};\n"
+        "int main() {\n"
+        "  mut Probe probe = Probe();\n"
+        "  std::move(probe).reset();\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    valid_source = (
+        "class Probe {\n"
+        "public:\n"
+        "  Probe() {}\n"
+        "  void reset() mut {}\n"
+        "  int inspect() { return 1; }\n"
+        "  int inspect() mut { return 2; }\n"
+        "};\n"
+        "int main() {\n"
+        "  Probe().reset();\n"
+        "  return Probe().inspect();\n"
+        "}\n"
+    )
+    path = root / "mutable-temporary-receiver.gti"
+    path.write_text(invalid_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": invalid_source,
+                    }
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        diagnostics = invalid["params"]["diagnostics"]
+        assert any(item.get("code") == "GTI-S2081" for item in diagnostics), diagnostics
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and not message["params"]["diagnostics"]
+        )
+
+        inspect = valid_source.index("inspect", valid_source.index("int main"))
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(valid_source, inspect + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert hover and "inspect() mut" in json.dumps(hover), hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/signatureHelp",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(
+                        valid_source, inspect + len("inspect(")
+                    ),
+                },
+            }
+        )
+        signature = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        assert signature and signature["signatures"][0]["label"].endswith(
+            "inspect() mut"
+        ), signature
+    finally:
+        session.close()
 
 
 def test_signature_help_tooling(executable, root):

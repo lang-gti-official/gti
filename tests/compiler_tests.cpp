@@ -28232,6 +28232,385 @@ int main() {
          "rejected");
 }
 
+void testMutableTemporaryReceivers() {
+  const std::string source = R"(
+class Probe {
+public:
+  Probe(int initial) : value(initial) {}
+
+  int update(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+
+  int inspect() { return 1; }
+  int inspect() mut { return 2; }
+
+private:
+  mut int value;
+};
+
+class Observer {
+public:
+  Observer() {}
+  int read() { return 3; }
+};
+
+class Invoker {
+public:
+  Invoker() {}
+  int operator()() { return 4; }
+  int operator()() mut { return 5; }
+};
+
+class GenericProbe<T> {
+public:
+  GenericProbe(T initial) : value(initial) {}
+
+  T replace(T replacement) mut {
+    this.value = replacement;
+    return this.value;
+  }
+
+private:
+  mut T value;
+};
+
+Probe make_probe() {
+  return Probe(0);
+}
+
+int consume(int value) {
+  return value;
+}
+
+int main() {
+  int updated = Probe(4).update(3);
+  int inspected = make_probe().inspect();
+  int observed = Observer().read();
+  int invoked = Invoker()();
+  int generic = GenericProbe<int>(6).replace(7);
+  int nested = consume((Probe(8)).update(1));
+  return updated + inspected + observed + invoked + generic + nested;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mutable-temporary-receivers.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected mutable-temporary diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "direct constructor and GTI-call temporaries should lower to "
+         "verified receiver borrows");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto hirFunction =
+      [&](std::string_view name) -> const lang::HirFunctionInstance * {
+    const auto found =
+        std::find_if(frontend.hir.functionInstances().begin(),
+                     frontend.hir.functionInstances().end(),
+                     [&](const lang::HirFunctionInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->name().lexeme == name;
+                     });
+    return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
+  };
+  const lang::HirFunctionInstance *main = hirFunction("main");
+  expect(main != nullptr,
+         "the mutable-temporary fixture should retain its main instance");
+  if (main == nullptr) {
+    return;
+  }
+
+  std::vector<const lang::HirValue *> temporaryCalls;
+  for (const lang::HirValue &value : main->body.values) {
+    if (value.kind == lang::HirValueKind::Call && value.callPlan &&
+        value.callPlan->receiver &&
+        (value.callPlan->receiver->kind ==
+             lang::HirCallInputKind::ReadTemporaryBorrow ||
+         value.callPlan->receiver->kind ==
+             lang::HirCallInputKind::MutableTemporaryBorrow)) {
+      temporaryCalls.push_back(&value);
+    }
+  }
+  expect(temporaryCalls.size() == 6,
+         "HIR should preserve direct, parenthesized, nested, and concrete "
+         "generic temporary receiver calls");
+  std::size_t mutableHirCalls = 0;
+  std::size_t readHirCalls = 0;
+  for (const lang::HirValue *call : temporaryCalls) {
+    const lang::HirCallInputKind kind = call->callPlan->receiver->kind;
+    mutableHirCalls +=
+        kind == lang::HirCallInputKind::MutableTemporaryBorrow ? 1 : 0;
+    readHirCalls += kind == lang::HirCallInputKind::ReadTemporaryBorrow ? 1 : 0;
+    const auto *sourceCall = dynamic_cast<const lang::Call *>(call->source);
+    const lang::ResolvedCallInfo *resolved =
+        sourceCall == nullptr ? nullptr
+                              : frontend.semantics.findCall(*sourceCall);
+    const lang::ResolvedOperatorInfo *resolvedOperator =
+        sourceCall == nullptr ? nullptr
+                              : frontend.semantics.findOperator(*sourceCall);
+    const lang::CallReceiverMode mode =
+        resolvedOperator != nullptr ? resolvedOperator->receiverMode
+        : resolved != nullptr       ? resolved->receiverMode
+                                    : lang::CallReceiverMode::None;
+    expect((kind == lang::HirCallInputKind::MutableTemporaryBorrow &&
+            mode == lang::CallReceiverMode::FreshTemporaryMutable) ||
+               (kind == lang::HirCallInputKind::ReadTemporaryBorrow &&
+                mode == lang::CallReceiverMode::FreshTemporaryRead),
+           "HIR temporary receiver access should copy the selected semantic "
+           "mode exactly");
+  }
+  expect(mutableHirCalls == 5 && readHirCalls == 1,
+         "fresh receivers should prefer mutable method/operator overloads "
+         "while retaining read-only-only calls");
+
+  const lang::MirFunctionInstance *mirMain =
+      frontend.mir.findFunctionInstance(main->id);
+  expect(mirMain != nullptr,
+         "the mutable-temporary fixture should retain its MIR main body");
+  if (mirMain == nullptr) {
+    return;
+  }
+  const auto definitionFor =
+      [&](const lang::MirBody &body,
+          const lang::MirOperand &operand) -> const lang::MirInstruction * {
+    if (operand.kind != lang::MirOperandKind::Value) {
+      return nullptr;
+    }
+    const lang::MirValue *value = body.findValue(operand.value);
+    const lang::MirBlock *block =
+        value == nullptr ? nullptr : body.findBlock(value->definitionBlock);
+    if (value == nullptr || block == nullptr) {
+      return nullptr;
+    }
+    const auto found =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const lang::MirInstruction &instruction) {
+                       return instruction.id == value->definition;
+                     });
+    return found == block->instructions.end() ? nullptr : &*found;
+  };
+
+  std::size_t temporaryStages = 0;
+  const lang::MirInstruction *ordinaryMutableCall = nullptr;
+  for (const lang::MirBlock &block : mirMain->body.blocks) {
+    for (const lang::MirInstruction &call : block.instructions) {
+      if (call.kind != lang::MirInstructionKind::Call || !call.receiver) {
+        continue;
+      }
+      const lang::MirInstruction *stage =
+          definitionFor(mirMain->body, *call.receiver);
+      if (stage == nullptr ||
+          (stage->callInputKind !=
+               lang::HirCallInputKind::ReadTemporaryBorrow &&
+           stage->callInputKind !=
+               lang::HirCallInputKind::MutableTemporaryBorrow)) {
+        continue;
+      }
+      ++temporaryStages;
+      const bool mutableStage = stage->callInputKind ==
+                                lang::HirCallInputKind::MutableTemporaryBorrow;
+      const lang::MirOperandKind expectedOperand =
+          mutableStage ? lang::MirOperandKind::BorrowWrite
+                       : lang::MirOperandKind::BorrowRead;
+      const lang::MirPlace *place =
+          stage->operands.empty()
+              ? nullptr
+              : mirMain->body.findPlace(stage->operands.front().place);
+      const std::size_t drops =
+          place == nullptr
+              ? 0
+              : static_cast<std::size_t>(std::count_if(
+                    mirMain->body.dropObligations.begin(),
+                    mirMain->body.dropObligations.end(),
+                    [&](const lang::MirDropObligation &drop) {
+                      return drop.kind == lang::MirDropObligationKind::Value &&
+                             drop.value == stage->hirValue &&
+                             drop.place == place->id;
+                    }));
+      expect(stage->callInputRole == lang::MirCallInputRole::Receiver &&
+                 stage->operands.size() == 1 &&
+                 stage->operands.front().kind == expectedOperand &&
+                 place != nullptr &&
+                 place->root == lang::MirPlaceRootKind::Value &&
+                 place->access == lang::AccessMode::Mutable &&
+                 place->sourceValue == stage->hirValue && drops == 1,
+             "MIR should borrow one exact mutable temporary place with one "
+             "full-expression drop obligation");
+      if (mutableStage && !call.callableInvocation) {
+        ordinaryMutableCall = &call;
+      }
+    }
+  }
+  expect(temporaryStages == 6 && ordinaryMutableCall != nullptr,
+         "MIR should retain every temporary stage and an ordinary mutable "
+         "target for verifier mutation coverage");
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "the C++ backend should consume verified temporary receiver stages");
+
+  if (ordinaryMutableCall != nullptr) {
+    lang::MirProgram wrongAccess = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        wrongAccess.functionInstances());
+    lang::MirFunctionInstance *forgedMain =
+        main->id == 0 || main->id > functions.size() ? nullptr
+                                                     : &functions[main->id - 1];
+    lang::MirInstruction *forgedStage = nullptr;
+    if (forgedMain != nullptr) {
+      for (lang::MirBlock &block :
+           const_cast<std::vector<lang::MirBlock> &>(forgedMain->body.blocks)) {
+        for (lang::MirInstruction &instruction :
+             const_cast<std::vector<lang::MirInstruction> &>(
+                 block.instructions)) {
+          if (instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callInputKind ==
+                  lang::HirCallInputKind::MutableTemporaryBorrow) {
+            forgedStage = &instruction;
+            break;
+          }
+        }
+        if (forgedStage != nullptr) {
+          break;
+        }
+      }
+    }
+    if (forgedMain != nullptr && forgedStage != nullptr &&
+        !forgedStage->operands.empty()) {
+      auto &places =
+          const_cast<std::vector<lang::MirPlace> &>(forgedMain->body.places);
+      places[forgedStage->operands.front().place - 1].access =
+          lang::AccessMode::ReadOnly;
+    }
+    expect(!lang::verifyMirProgram(wrongAccess).valid(),
+           "the MIR verifier should reject a mutable temporary borrow from "
+           "read-only storage");
+
+    lang::MirProgram wrongQualifier = frontend.mir;
+    auto &qualifierFunctions =
+        const_cast<std::vector<lang::MirFunctionInstance> &>(
+            wrongQualifier.functionInstances());
+    lang::MirFunctionInstance *qualifierMain =
+        main->id == 0 || main->id > qualifierFunctions.size()
+            ? nullptr
+            : &qualifierFunctions[main->id - 1];
+    if (qualifierMain != nullptr) {
+      for (lang::MirBlock &block : const_cast<std::vector<lang::MirBlock> &>(
+               qualifierMain->body.blocks)) {
+        for (lang::MirInstruction &instruction :
+             const_cast<std::vector<lang::MirInstruction> &>(
+                 block.instructions)) {
+          if (instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callInputKind ==
+                  lang::HirCallInputKind::MutableTemporaryBorrow) {
+            instruction.callInputKind =
+                lang::HirCallInputKind::ReadTemporaryBorrow;
+            instruction.operands.front().kind =
+                lang::MirOperandKind::BorrowRead;
+            break;
+          }
+        }
+      }
+    }
+    expect(!lang::verifyMirProgram(wrongQualifier).valid(),
+           "the MIR verifier should reject a temporary input whose access "
+           "disagrees with the exact target qualifier");
+
+    lang::MirProgram missingDrop = frontend.mir;
+    auto &dropFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        missingDrop.functionInstances());
+    lang::MirFunctionInstance *dropMain =
+        main->id == 0 || main->id > dropFunctions.size()
+            ? nullptr
+            : &dropFunctions[main->id - 1];
+    bool forgedDrop = false;
+    if (dropMain != nullptr) {
+      auto &drops = const_cast<std::vector<lang::MirDropObligation> &>(
+          dropMain->body.dropObligations);
+      for (lang::MirDropObligation &drop : drops) {
+        if (drop.kind == lang::MirDropObligationKind::Value &&
+            drop.value != 0) {
+          const auto stage = std::find_if(
+              dropMain->body.blocks.begin(), dropMain->body.blocks.end(),
+              [&](const lang::MirBlock &block) {
+                return std::any_of(
+                    block.instructions.begin(), block.instructions.end(),
+                    [&](const lang::MirInstruction &instruction) {
+                      return instruction.kind ==
+                                 lang::MirInstructionKind::CallInput &&
+                             instruction.hirValue == drop.value &&
+                             (instruction.callInputKind ==
+                                  lang::HirCallInputKind::ReadTemporaryBorrow ||
+                              instruction.callInputKind ==
+                                  lang::HirCallInputKind::
+                                      MutableTemporaryBorrow);
+                    });
+              });
+          if (stage != dropMain->body.blocks.end()) {
+            drop.hirFullExpression = 0;
+            forgedDrop = true;
+            break;
+          }
+        }
+      }
+    }
+    expect(forgedDrop && !lang::verifyMirProgram(missingDrop).valid(),
+           "the MIR verifier should reject a temporary receiver without its "
+           "exact full-expression drop obligation");
+  }
+
+  const std::string invalidSource = R"(
+class InvalidReceiver {
+public:
+  InvalidReceiver() : value(0) {}
+  void reset() mut {}
+  mut int& expose() mut { return this.value; }
+  virtual void virtual_reset() mut {}
+
+private:
+  mut int value;
+};
+
+int main() {
+  InvalidReceiver fixed = InvalidReceiver();
+  fixed.reset();
+  mut InvalidReceiver moved = InvalidReceiver();
+  std::move(moved).reset();
+  bool choose = true;
+  (choose ? InvalidReceiver() : InvalidReceiver()).reset();
+  [[discard]] InvalidReceiver().expose();
+  InvalidReceiver().virtual_reset();
+  return 0;
+}
+)";
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-mutable-temporary-receivers.gti",
+                               invalidSource, {standardLibraryPrelude()});
+  expect(
+      !invalid.semanticValid &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Mutable method requires a mutable receiver") &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2081") == 4 &&
+          hasDiagnostic(invalid.diagnostics,
+                        "explicit move from existing storage") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "not produced directly by an ordinary constructor") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot produce a reference or value") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Virtual dispatch on a temporary receiver") &&
+          hasRelatedDiagnostic(invalid.diagnostics, "declared mutable here") &&
+          hasDiagnosticHint(invalid.diagnostics, "Bind the value"),
+      "unsupported temporary receivers should retain precise compiler "
+      "diagnostics while immutable named objects remain rejected");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -28262,6 +28641,10 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && std::string(argv[1]) == "static-assertions") {
     testStaticAssertions();
+    return failures == 0 ? 0 : 1;
+  }
+  if (argc == 2 && std::string(argv[1]) == "temporary-receivers") {
+    testMutableTemporaryReceivers();
     return failures == 0 ? 0 : 1;
   }
   testConstructorPartialRollbackRepresentation();
@@ -28332,6 +28715,7 @@ int main(int argc, char **argv) {
   testThisReceiverKeyword();
   testClassesStructsAndAccess();
   testMutableFieldGroups();
+  testMutableTemporaryReceivers();
   testConstructorsAndReceiverMutability();
   testInheritanceAndInterfaces();
   testInheritedGenericTargetInstances();

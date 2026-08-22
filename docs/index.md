@@ -120,9 +120,10 @@ description of the implementation.
 - [Static assertions](plans/static-assertions.md) — records the implemented
   frontend-owned exact-`bool` `static_assert`, including per-concrete-instance
   generic evaluation and erasure before HIR
-- [Mutable temporary receivers](plans/mutable-temporary-receivers.md) — proposes
-  a bounded ephemeral mutable-receiver capability for fresh, self-contained
-  class-value temporaries without making temporaries general mutable places
+- [Mutable temporary receivers](plans/mutable-temporary-receivers.md) — records
+  the implemented bounded ephemeral receiver capability for fresh,
+  self-contained class-value temporaries without making temporaries general
+  mutable places
 - [LSP evolution](plans/lsp-evolution.md)
 - [C interop target surface](plans/c-interop-target-surface.md) — the
   completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`

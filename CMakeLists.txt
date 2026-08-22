@@ -872,6 +872,14 @@ if(BUILD_TESTING)
     )
     set_tests_properties(mir_class_value_lifecycle_runtime PROPERTIES TIMEOUT 180)
     add_test(
+      NAME mutable_temporary_receiver_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(mutable_temporary_receiver_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mir_backend_scalar_failure_callgraph_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_scalar_failure_callgraph_runtime_test.py"

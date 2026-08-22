@@ -132,6 +132,14 @@ Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
 
+For a verified temporary receiver input, the body emitter publishes the exact
+producer result into its MIR value-rooted lifetime slot or exact CFG-promoted
+hidden slot and emits the selected method through the staged `BorrowRead` or
+`BorrowWrite` input. Verification and emission use the same MIR
+materialization query. The corresponding MIR drop remains the only destruction
+authority on normal and defined-failure paths. The backend does not infer
+mutability from a C++ rvalue or reselect the native member overload.
+
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
 effects come from the lowered MIR and generated-item contracts. Generic source

@@ -284,6 +284,17 @@ T& at(std::size_t index) {
 }
 ```
 
+A direct ordinary constructor or by-value GTI call may instead produce a
+self-contained class or struct value that is borrowed transiently as one
+read-only or mutable method receiver. The compiler materializes one mutable
+temporary place, begins the selected receiver borrow after successful
+production, ends that borrow after invocation, and retains ownership of the
+value until the enclosing full-expression cleanup. This ephemeral capability
+does not authorize a stored reference, address, field-assignment target, or
+mutable-reference argument. It is unavailable to a temporary containing
+tracked borrowed state, an explicit move from named storage, a virtual method,
+or a method whose result may carry receiver-tied borrowed state.
+
 An unqualified non-static field denotes the same receiver-rooted place as an
 explicit `this` projection. Consequently, both `return field;` and
 `return this.field;` preserve receiver-tied reference provenance, and a
