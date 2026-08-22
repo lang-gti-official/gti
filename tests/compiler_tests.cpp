@@ -7921,7 +7921,7 @@ int main() {
       gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
   const std::string emittedGet =
       getInfo == nullptr ? std::string{}
-                         : "static Application &__gti_fn_" +
+                         : "static ::__gti_program::Application &__gti_fn_" +
                                std::to_string(getInfo->id) + "_Get()";
   const std::string emittedFailureGet = getInfo == nullptr
                                             ? std::string{}
@@ -10020,7 +10020,7 @@ int main() { return 0; }
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("const T &value") != std::string::npos &&
+  expect(artifact.contents.find("const T & value") != std::string::npos &&
              artifact.contents.find("BorrowingIterator(const "
                                     "BorrowingIterator &) = delete") !=
                  std::string::npos &&
@@ -11266,7 +11266,8 @@ int main() {
   expect(artifact.contents.find("class unique_ptr") != std::string::npos &&
              artifact.contents.find("std::unique_ptr<T> owner = nullptr") !=
                  std::string::npos &&
-             artifact.contents.find("__gti_std::unique_ptr<Widget>") !=
+             artifact.contents.find(
+                 "__gti_std::unique_ptr<::__gti_program::Widget>") !=
                  std::string::npos,
          "the C++ backend should emit the nominal unique_ptr wrapper");
   expect(
@@ -15448,7 +15449,7 @@ int main() {
           generated.find("static std::int32_t count;") != std::string::npos &&
           generated.find("inline std::int32_t Counter::count = "
                          "static_cast<std::int32_t>(0)") != std::string::npos &&
-          generated.find("inline const Empty Empty::value = "
+          generated.find("inline const ::__gti_program::Empty Empty::value = "
                          "::__gti_program::Empty{}") != std::string::npos &&
           generated.find("inline std::int32_t Managed::live = "
                          "static_cast<std::int32_t>(0)") != std::string::npos &&
@@ -16032,7 +16033,7 @@ int main() {
                             validFrontend.hir, lang::OptimizationLevel::O0));
   const std::string &generated = generatedArtifact.contents;
   const std::string &lifecycleGenerated = generatedArtifact.contents;
-  expect(generated.find("explicit Counter(std::int32_t __gti_mir_arg_0);") !=
+  expect(generated.find("explicit Counter(const std::int32_t initial);") !=
                  std::string::npos &&
              generated.find("Counter::Counter(std::int32_t __gti_mir_arg_0) : "
                             "value(__gti_mir_arg_0)") != std::string::npos,
@@ -16496,7 +16497,8 @@ int main() {
   const std::size_t firstNameIdDefinition = generated.find(nameIdDefinition);
   expect(
       generated.find(
-          "class Sprite : public Entity, public Renderable, public Named") !=
+          "class Sprite : public ::__gti_program::Entity, public "
+          "::__gti_program::Renderable, public ::__gti_program::Named") !=
               std::string::npos &&
           generated.find("virtual std::int32_t render(") != std::string::npos &&
           generated.find("render(const std::int32_t frame) const override") !=
@@ -16507,7 +16509,7 @@ int main() {
           generated.find(" = 0;") != std::string::npos &&
           generated.find("virtual ~Renderable() noexcept = default;") !=
               std::string::npos &&
-          generated.find("explicit Sprite(std::int32_t __gti_mir_arg_0);") !=
+          generated.find("explicit Sprite(const std::int32_t id);") !=
               std::string::npos &&
           generated.find("Sprite::Sprite(std::int32_t __gti_mir_arg_0) : "
                          "::__gti_program::Entity(__gti_mir_arg_0)") !=
@@ -17363,7 +17365,7 @@ int main() {
              artifact.contents.find("___gti_operator_subscript") !=
                  std::string::npos &&
              artifact.contents.find(
-                 "friend const std::int32_t &"
+                 "friend const std::int32_t & "
                  "__gti_operator_dereference(const Handle &__gti_receiver)") !=
                  std::string::npos &&
              artifact.contents.find("::operator!=(__gti_mir_v_") !=
@@ -18448,7 +18450,8 @@ int main() {
          "generic classes should lower with matching C++ forward declarations");
   expect(generated.find("template <typename T>\n  T __gti_fn_") !=
                  std::string::npos &&
-             generated.find("_identity(T value)") != std::string::npos &&
+             generated.find("_identity(T __gti_mir_arg_0)") !=
+                 std::string::npos &&
              generated.find("_unbox(") != std::string::npos,
          "generic functions should lower as C++ function templates");
   expect(
@@ -18684,8 +18687,10 @@ int main() {
   const std::string generated = gti_test::emitCppText(valid);
   expect(generated.find("template <typename T>\n  T __gti_fn_") !=
                  std::string::npos &&
-             generated.find("_minimum(T left, T right)") != std::string::npos &&
-             generated.find("_minimum(std::int32_t __gti_mir_arg_0") !=
+             generated.find("_minimum(T __gti_mir_arg_0, T __gti_mir_arg_1)") !=
+                 std::string::npos &&
+             generated.find(
+                 "_minimum<std::int32_t>(std::int32_t __gti_mir_arg_0") !=
                  std::string::npos &&
              generated.find("mir_checked_multiply_v1<std::int32_t>") !=
                  std::string::npos &&
@@ -20281,26 +20286,29 @@ int main() {
   const std::string exactBridgeCpp =
       gti_test::emitCppText(exactSentinelBridges);
   expect(
-      exactBridgeCpp.find("::gti_internal::backend::exact_type<DerivedEnd>") !=
+      exactBridgeCpp.find("::gti_internal::backend::exact_type<const "
+                          "::__gti_program::DerivedEnd &>") !=
               std::string::npos &&
-          exactBridgeCpp.find("::gti_internal::backend::exact_type<BaseEnd>") !=
+          exactBridgeCpp.find("::gti_internal::backend::exact_type<const "
+                              "::__gti_program::BaseEnd &>") !=
+              std::string::npos &&
+          exactBridgeCpp.find("::gti_internal::backend::exact_type<"
+                              "::__gti_program::OtherEnd &>") ==
               std::string::npos &&
           exactBridgeCpp.find(
-              "::gti_internal::backend::exact_type<OtherEnd>") ==
-              std::string::npos &&
-          exactBridgeCpp.find(
-              "friend const std::int32_t &__gti_operator_dereference("
+              "friend const std::int32_t & __gti_operator_dereference("
               "const IteratorContract &__gti_receiver)") != std::string::npos &&
           exactBridgeCpp.find(
               "__gti_fn_166_dynamic_step__gti_mir_failure("
               "::__gti_program::IteratorContract & __gti_mir_arg_0, "
               "const ::__gti_program::DerivedEnd & __gti_mir_arg_1") !=
               std::string::npos &&
-          exactBridgeCpp.find("exact_type<GenericComparable<T, N>>") !=
+          exactBridgeCpp.find(
+              "exact_type<const ::__gti_program::GenericComparable<T, N> &>") !=
               std::string::npos &&
           exactBridgeCpp.find(
-              "operator!=(const GenericComparable<T, N> &other)") !=
-              std::string::npos &&
+              "operator!=(const ::__gti_program::GenericComparable<T, N> & "
+              "other)") != std::string::npos &&
           exactBridgeCpp.find("GenericComparable<void, 0>") ==
               std::string::npos,
       "sentinel bridges should tag exact read-only parameter types and "
@@ -20983,7 +20991,7 @@ int main() {
 
   const std::string generated = gti_test::emitCppText(valid);
   expect(generated.find("template <typename... Args>") != std::string::npos &&
-             generated.find("Args... values") != std::string::npos &&
+             generated.find("Args... __gti_mir_arg_0") != std::string::npos &&
              generated.find("__gti_fn_69_consume__gti_mir_failure("
                             "std::int32_t __gti_mir_arg_0, bool "
                             "__gti_mir_arg_1, std::string_view "
@@ -24564,19 +24572,17 @@ int main() {
          "expected construction and observers should pass semantic checks");
 
   const std::string cpp23 = gti_test::emitCppText(frontend);
-  expect(
-      cpp23.find("#include <expected>") != std::string::npos &&
-          cpp23.find("std::expected<std::int32_t, __gti_std::string_view>") !=
-              std::string::npos &&
-          cpp23.find("std::unexpected(") != std::string::npos &&
-          cpp23.find("return {};") != std::string::npos,
-      "C++23 should lower expected values to the standard library");
+  expect(cpp23.find("#include <expected>") != std::string::npos &&
+             cpp23.find("std::expected<std::int32_t, std::string_view>") !=
+                 std::string::npos &&
+             cpp23.find("std::unexpected(") != std::string::npos &&
+             cpp23.find("return {};") != std::string::npos,
+         "C++23 should lower expected values to the standard library");
 
   const std::string cpp20 =
       gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
   expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
-             cpp20.find(
-                 "::nonstd::expected<std::int32_t, __gti_std::string_view>") !=
+             cpp20.find("::nonstd::expected<std::int32_t, std::string_view>") !=
                  std::string::npos &&
              cpp20.find("::nonstd::make_unexpected(") != std::string::npos,
          "C++20 should lower expected values to the vendored implementation");
@@ -24759,8 +24765,8 @@ int main() {
   expect(generated.find("namespace gfx = engine::graphics;") !=
              std::string::npos,
          "emitter should preserve namespace aliases");
-  expect(generated.find("gfx::Renderer __gti_fn_3_createRenderer();") !=
-                 std::string::npos &&
+  expect(generated.find("::__gti_program::engine::graphics::Renderer "
+                        "__gti_fn_3_createRenderer();") != std::string::npos &&
              generated.find("namespace gfx = engine::graphics;") !=
                  std::string::npos,
          "qualified types should parse and emit through namespace aliases");

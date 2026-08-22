@@ -263,9 +263,12 @@ void testMetadataDriftIsRejected(const std::filesystem::path &fixture) {
     rejected = true;
     message = error.what();
   }
-  expect(rejected && message.find("requires coherent failure metadata") !=
-                         std::string::npos,
-         "CppBackend should reject descriptor drift before C++ emission");
+  expect(rejected &&
+             message.find("test fixture did not produce a lowered program") !=
+                 std::string::npos &&
+             message.find("invalid failure metadata") != std::string::npos,
+         "LoweredProgram construction should reject descriptor drift before "
+         "backend emission");
 }
 
 } // namespace

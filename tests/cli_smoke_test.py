@@ -393,7 +393,11 @@ def main():
                 emitted_extern_c,
             )
             assert "class socket" in emitted_extern_c
-            assert "static std::expected<socket, errc>" in emitted_extern_c
+            assert (
+                "static std::expected<::__gti_program::__gti_std::tcp::socket, "
+                "::__gti_program::__gti_std::tcp::errc>"
+                in emitted_extern_c
+            )
             assert re.search(
                 r"gti_internal::runtime::close\(__gti_mir_v_\d+\)",
                 emitted_extern_c,

@@ -2140,7 +2140,6 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   [[nodiscard]] bool
   loweredFailureBodySupported(const MirFunctionInstance &instance) const {
     return instance.definitionKind == MirDefinitionKind::Source &&
-           instance.mayRaiseDefinedFailure &&
            generalMirBodyEmitter().supportsFailureBodyText(
                {.kind = MirBodyKind::Function, .owner = instance.id});
   }
@@ -2457,15 +2456,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       emitLoweredFunctionSignature(*declaration, *function, nullptr, false,
                                    false, {}, generic);
       output << ";\n";
-      bool hasFailure = std::any_of(
+      const bool hasFailure = std::any_of(
           instances.begin(), instances.end(), [&](const auto *instance) {
             return loweredFailureBodySupported(*instance);
           });
-      if (generic && !hasFailure) {
-        hasFailure =
-            !loweredCallableTemplateBody(*function, instances, true).empty();
-      }
-      if (generic && hasFailure) {
+      const bool hasTemplateFailure =
+          generic &&
+          !loweredCallableTemplateBody(*function, instances, true).empty();
+      if (hasTemplateFailure) {
         emitLoweredTemplateDeclaration(function->genericParameters);
         writeIndent();
         emitLoweredFunctionSignature(*declaration, *function, nullptr, true,
@@ -3489,30 +3487,207 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     emitLoweredClassAssertions(classRow, declaration);
   }
 
-  void emitLoweredTypeDefinitions(LoweredDeclarationId parent) {
-    for (const LoweredDeclaration *declaration : loweredChildren(parent)) {
-      if (declaration->kind == LoweredDeclarationKind::Namespace) {
-        writeIndent();
-        output << "namespace "
-               << loweredNamespaceSpelling(declaration->name, parent == 0)
-               << " {\n";
-        ++indentation;
-        emitLoweredTypeDefinitions(declaration->id);
-        --indentation;
-        writeIndent();
-        output << "}\n";
+  void
+  loweredCollectRepresentationDependencies(const SemanticType &type,
+                                           std::vector<ClassId> &result) const {
+    switch (type.kind) {
+    case SemanticType::RawPointer:
+    case SemanticType::Reference:
+    case SemanticType::UniqueOwner:
+    case SemanticType::SharedPointer:
+    case SemanticType::Storage:
+    case SemanticType::PrefixStorage:
+      return;
+    case SemanticType::Class:
+      if (type.classId != 0) {
+        result.push_back(type.classId);
+      }
+      for (const SemanticType &argument : type.arguments) {
+        loweredCollectRepresentationDependencies(argument, result);
+      }
+      return;
+    case SemanticType::Array:
+    case SemanticType::Expected:
+    case SemanticType::Unexpected:
+      for (const SemanticType &argument : type.arguments) {
+        loweredCollectRepresentationDependencies(argument, result);
+      }
+      return;
+    default:
+      return;
+    }
+  }
+
+  void
+  loweredCollectInitializerDependencies(const MirBody &body,
+                                        std::vector<ClassId> &result) const {
+    for (const MirPlace &place : body.places) {
+      loweredCollectRepresentationDependencies(place.type, result);
+    }
+    for (const MirValue &value : body.values) {
+      loweredCollectRepresentationDependencies(value.info.type, result);
+    }
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        loweredCollectRepresentationDependencies(instruction.info.type, result);
+        loweredCollectRepresentationDependencies(instruction.dispatchOwner,
+                                                 result);
+        for (const SemanticType &parameter : instruction.parameterTypes) {
+          loweredCollectRepresentationDependencies(parameter, result);
+        }
+        for (const SemanticType &capture : instruction.closureCaptureTypes) {
+          loweredCollectRepresentationDependencies(capture, result);
+        }
+        if (instruction.receiver) {
+          loweredCollectRepresentationDependencies(instruction.receiver->type,
+                                                   result);
+        }
+        for (const MirOperand &operand : instruction.operands) {
+          loweredCollectRepresentationDependencies(operand.type, result);
+        }
+        if (instruction.functionTarget) {
+          const MirFunctionInstance *function =
+              mir.findFunctionInstance(*instruction.functionTarget);
+          const MirClassInstance *owner =
+              function != nullptr && function->owner
+                  ? mir.findClassInstance(*function->owner)
+                  : nullptr;
+          if (owner != nullptr) {
+            loweredCollectRepresentationDependencies(owner->type, result);
+          }
+        }
+        if (instruction.constructorTarget) {
+          const MirConstructorInstance *constructor =
+              mir.findConstructorInstance(*instruction.constructorTarget);
+          const MirClassInstance *owner =
+              constructor == nullptr
+                  ? nullptr
+                  : mir.findClassInstance(constructor->owner);
+          if (owner != nullptr) {
+            loweredCollectRepresentationDependencies(owner->type, result);
+          }
+        }
+      }
+    }
+  }
+
+  [[nodiscard]] std::vector<ClassId> loweredClassDefinitionDependencies(
+      const LoweredDeclaration &row,
+      const LoweredClassDeclaration &declaration) const {
+    std::vector<ClassId> result;
+    for (const LoweredClassBase &base : declaration.bases) {
+      loweredCollectRepresentationDependencies(base.type, result);
+    }
+    for (const LoweredDeclaration *member : loweredChildren(row.id)) {
+      const auto *storage =
+          std::get_if<LoweredStorageDeclaration>(&member->payload);
+      if (storage != nullptr) {
+        loweredCollectRepresentationDependencies(storage->type, result);
+      }
+    }
+    for (const MirClassInstance &instance : mir.classInstances()) {
+      if (instance.declaration != declaration.id) {
         continue;
       }
-      if (const auto *enumeration =
-              std::get_if<LoweredEnumDeclaration>(&declaration->payload)) {
-        emitLoweredEnumDefinition(*declaration, *enumeration);
-        loweredEmittedTypes.insert(declaration->id);
-        output << '\n';
-      } else if (const auto *type = std::get_if<LoweredClassDeclaration>(
-                     &declaration->payload)) {
-        emitLoweredClassDefinition(*declaration, *type);
-        output << '\n';
+      for (const MirClassFieldInfo &field : instance.declaredFields) {
+        loweredCollectRepresentationDependencies(field.type, result);
       }
+      loweredCollectInitializerDependencies(instance.fieldInitializers, result);
+    }
+    std::erase(result, declaration.id);
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+  }
+
+  void emitLoweredScheduledTypeDefinition(const LoweredDeclaration &row) {
+    const std::size_t namespaceCount =
+        emitLoweredNamespaceOpen(row.namespaceScope);
+    if (const auto *enumeration =
+            std::get_if<LoweredEnumDeclaration>(&row.payload)) {
+      emitLoweredEnumDefinition(row, *enumeration);
+      loweredEmittedTypes.insert(row.id);
+    } else if (const auto *type =
+                   std::get_if<LoweredClassDeclaration>(&row.payload)) {
+      emitLoweredClassDefinition(row, *type);
+    }
+    emitLoweredNamespaceClose(namespaceCount);
+    output << '\n';
+  }
+
+  void emitLoweredTypeDefinitions() {
+    std::vector<const LoweredDeclaration *> enumerations;
+    std::vector<const LoweredDeclaration *> classes;
+    std::unordered_map<ClassId, std::size_t> classSchedule;
+    for (const LoweredDeclaration &row : loweredProgram.declarations()) {
+      const LoweredDeclaration *parent =
+          loweredProgram.findDeclaration(row.parent);
+      if (parent != nullptr &&
+          std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
+        continue;
+      }
+      if (std::holds_alternative<LoweredEnumDeclaration>(row.payload)) {
+        enumerations.push_back(&row);
+        continue;
+      }
+      const auto *type = std::get_if<LoweredClassDeclaration>(&row.payload);
+      if (type == nullptr) {
+        continue;
+      }
+      const std::size_t index = classes.size();
+      classes.push_back(&row);
+      if (!type->forwardDeclaration &&
+          type->compilerCapability == CompilerCapabilityTypeKind::None &&
+          !type->cOpaqueHandle) {
+        classSchedule.insert_or_assign(type->id, index);
+      }
+    }
+
+    for (const LoweredDeclaration *enumeration : enumerations) {
+      emitLoweredScheduledTypeDefinition(*enumeration);
+    }
+
+    std::vector<unsigned char> state(classes.size(), 0);
+    const auto emitClass = [&](const auto &self, std::size_t index) -> void {
+      if (index >= classes.size() || state[index] == 2) {
+        return;
+      }
+      if (state[index] == 1) {
+        throw std::logic_error(
+            "lowered class layout contains a recursive by-value dependency");
+      }
+      state[index] = 1;
+      const LoweredDeclaration &row = *classes[index];
+      const auto *declaration =
+          std::get_if<LoweredClassDeclaration>(&row.payload);
+      if (declaration == nullptr) {
+        throw std::logic_error(
+            "lowered class schedule lost its declaration payload");
+      }
+      std::vector<ClassId> dependencies =
+          loweredClassDefinitionDependencies(row, *declaration);
+      std::sort(dependencies.begin(), dependencies.end(),
+                [&](ClassId left, ClassId right) {
+                  const auto leftAt = classSchedule.find(left);
+                  const auto rightAt = classSchedule.find(right);
+                  return (leftAt == classSchedule.end()
+                              ? std::numeric_limits<std::size_t>::max()
+                              : leftAt->second) <
+                         (rightAt == classSchedule.end()
+                              ? std::numeric_limits<std::size_t>::max()
+                              : rightAt->second);
+                });
+      for (const ClassId dependency : dependencies) {
+        if (const auto found = classSchedule.find(dependency);
+            found != classSchedule.end()) {
+          self(self, found->second);
+        }
+      }
+      emitLoweredScheduledTypeDefinition(row);
+      state[index] = 2;
+    };
+    for (std::size_t index = 0; index < classes.size(); ++index) {
+      emitClass(emitClass, index);
     }
   }
 
@@ -4585,7 +4760,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     emitLoweredFunctionForwardDeclarations(0);
     emitNativeCallbackAdapterDeclarations();
     emitLoweredGlobalStorageForwardDeclarations(0);
-    emitLoweredTypeDefinitions(0);
+    emitLoweredTypeDefinitions();
     emitLoweredMemberSpecializationDeclarations();
     emitLoweredSourceDeclarations(0);
     emitLoweredStaticFieldDefinitions();
