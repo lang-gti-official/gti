@@ -117,6 +117,11 @@ uses the ordinary member indentation, enclosed fields use one additional level,
 and the closing brace has no semicolon. Comments and conditional directives are
 retained, and formatting never expands the group into repeated `mut` prefixes.
 
+Static assertions retain their declaration form. Their keyword stays adjacent
+to `(`, the condition uses ordinary expression spacing, and a message comma is
+followed by one space: `static_assert(ready, "configuration must be ready");`.
+Formatting does not interpret or rewrite the message.
+
 A `return` followed by a parenthesized expression is always written as
 `return (expression)`. This separator is structural and remains present for
 every `SpaceBeforeParens` setting; that option continues to control call,

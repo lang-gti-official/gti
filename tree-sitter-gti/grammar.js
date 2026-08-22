@@ -61,6 +61,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "requires",
   "return",
   "static",
+  "static_assert",
   "this",
   "struct",
   "sizeof",
@@ -134,6 +135,7 @@ module.exports = grammar({
         $.conditional_declaration,
         $.configuration_directive,
         $.compile_error_directive,
+        $.static_assert_declaration,
         $.extern_c_declaration,
         $.namespace_declaration,
         $.namespace_alias_declaration,
@@ -202,6 +204,19 @@ module.exports = grammar({
       ),
     compile_error_directive: ($) =>
       seq("#error", field("message", $.string_literal)),
+
+    static_assert_declaration: ($) =>
+      prec.right(
+        PREC.assignment + 1,
+        seq(
+          "static_assert",
+          "(",
+          field("condition", $._expression_not_comma),
+          optional(seq(",", field("message", $.string_literal))),
+          ")",
+          ";",
+        ),
+      ),
 
     extern_c_declaration: ($) =>
       seq(
@@ -424,6 +439,7 @@ module.exports = grammar({
         $.conditional_class_members,
         $.configuration_directive,
         $.compile_error_directive,
+        $.static_assert_declaration,
         $.mutable_field_group,
         $.access_specifier,
         $.constructor_declaration,
@@ -789,6 +805,7 @@ module.exports = grammar({
         $.conditional_block_items,
         $.configuration_directive,
         $.compile_error_directive,
+        $.static_assert_declaration,
         $.structured_binding_declaration,
         $.variable_declaration,
         $.statement,

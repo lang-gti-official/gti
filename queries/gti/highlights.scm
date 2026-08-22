@@ -166,6 +166,8 @@
   "runtime" @attribute)
 (compiler_constraint_binding
   "compiler_constraint" @attribute)
+(static_assert_declaration
+  "static_assert" @keyword)
 
 [
   "#include"
@@ -203,7 +205,7 @@
     "co_await" "co_return" "co_yield" "decltype" "delete" "dynamic_cast"
     "explicit" "export" "friend" "goto" "inline" "long" "mutable" "new"
     "noexcept" "not" "not_eq" "or_eq" "protected" "register"
-    "reinterpret_cast" "short" "signed" "static_assert" "static_cast"
+    "reinterpret_cast" "short" "signed" "static_cast"
     "template" "thread_local" "throw" "try" "typedef" "typeid" "typename"
     "unsigned" "volatile" "wchar_t" "xor" "xor_eq")
   (#set! priority 96))

@@ -350,6 +350,7 @@ struct HirClassInstance {
   const ClassDecl *source = nullptr;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
+  std::optional<SourceSpan> instantiationSite;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
   ConcurrencyCapabilityPolicy transferPolicy =

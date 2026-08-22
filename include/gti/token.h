@@ -118,6 +118,7 @@ enum class TokenKind : std::uint8_t {
   REQUIRES,
   RETURN,
   STATIC,
+  STATIC_ASSERT,
   STRUCT,
   SIZEOF,
   SWITCH,
@@ -264,23 +265,22 @@ extern const std::unordered_map<std::string_view, TokenKind> keywords;
 // declaration. Spellings that are already GTI keywords live in `keywords`;
 // this list owns the remaining C++20/C++23 core keywords.
 inline constexpr std::string_view cppReservedIdentifiers[]{
-    "alignas",     "and_eq",     "asm",
-    "bitand",      "bitor",      "catch",
-    "char8_t",     "char16_t",   "char32_t",
-    "compl",       "const_cast", "consteval",
-    "constinit",   "co_await",   "co_return",
-    "co_yield",    "decltype",   "dynamic_cast",
-    "explicit",    "export",     "friend",
-    "goto",        "inline",     "long",
-    "mutable",     "new",        "noexcept",
-    "not",         "not_eq",     "or_eq",
-    "protected",   "register",   "reinterpret_cast",
-    "short",       "signed",     "static_assert",
-    "static_cast", "template",   "thread_local",
-    "throw",       "try",        "typedef",
-    "typeid",      "typename",   "unsigned",
-    "volatile",    "wchar_t",    "xor",
-    "xor_eq",
+    "alignas",   "and_eq",       "asm",
+    "bitand",    "bitor",        "catch",
+    "char8_t",   "char16_t",     "char32_t",
+    "compl",     "const_cast",   "consteval",
+    "constinit", "co_await",     "co_return",
+    "co_yield",  "decltype",     "dynamic_cast",
+    "explicit",  "export",       "friend",
+    "goto",      "inline",       "long",
+    "mutable",   "new",          "noexcept",
+    "not",       "not_eq",       "or_eq",
+    "protected", "register",     "reinterpret_cast",
+    "short",     "signed",       "static_cast",
+    "template",  "thread_local", "throw",
+    "try",       "typedef",      "typeid",
+    "typename",  "unsigned",     "volatile",
+    "wchar_t",   "xor",          "xor_eq",
 };
 
 inline constexpr bool isCppReservedIdentifier(std::string_view spelling) {
@@ -480,6 +480,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "RETURN";
   case TokenKind::STATIC:
     return "STATIC";
+  case TokenKind::STATIC_ASSERT:
+    return "STATIC_ASSERT";
   case TokenKind::STRUCT:
     return "STRUCT";
   case TokenKind::SIZEOF:

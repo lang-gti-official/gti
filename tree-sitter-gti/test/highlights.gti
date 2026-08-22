@@ -252,3 +252,5 @@ struct GroupedState {
     int grouped_value = 0;
   }
 };
+
+static_assert(scalar_layout == uint64_t(4), "scalar layout");

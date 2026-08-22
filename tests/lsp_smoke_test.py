@@ -2545,6 +2545,151 @@ def test_current_language_diagnostics(executable, root):
         session.close()
 
 
+def test_static_assertion_tooling(executable, root):
+    source = (
+        "int main() {\n"
+        "  constexpr bool ready = false;\n"
+        '  static_assert(ready, "ready must be true");\n'
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "static-assertion-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "documentSymbol": {
+                                "hierarchicalDocumentSymbolSupport": True
+                            },
+                            "publishDiagnostics": {"dataSupport": True},
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"]["semanticTokensProvider"][
+            "legend"
+        ]["tokenTypes"]
+        keyword_type = token_types.index("keyword")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and bool(message["params"]["diagnostics"])
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2079"
+        )
+        assertion_use = source.index("ready", source.index("static_assert"))
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, assertion_use),
+            "end": lsp_position(source, assertion_use + len("ready")),
+        }, diagnostic
+        assert diagnostic["data"] == {"phase": "semantics"}, diagnostic
+        assert "ready must be true" in diagnostic["message"], diagnostic
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        token_data = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]["data"]
+        tokens = semantic_tokens_by_position(token_data)
+        assertion_keyword = source.index("static_assert")
+        keyword_position = lsp_position(source, assertion_keyword)
+        keyword_token = tokens[
+            (keyword_position["line"], keyword_position["character"])
+        ]
+        assert keyword_token["type"] == keyword_type, keyword_token
+        assert keyword_token["length"] == len("static_assert"), keyword_token
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, assertion_use + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        assert hover and "```gti\nbool\n```" in hover["contents"]["value"], hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        outline = session.receive_until(lambda message: message.get("id") == 4)[
+            "result"
+        ]
+        assert [symbol["name"] for symbol in outline] == ["main"], outline
+
+        valid_source = source.replace("false", "true")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        cleared = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        assert cleared["diagnostics"] == [], cleared
+    finally:
+        session.close()
+
+
 def test_global_borrow_return_diagnostics(executable, root):
     valid_source = (
         "class Application { public: "
@@ -5560,6 +5705,7 @@ def main():
     test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
+    test_static_assertion_tooling(sys.argv[1], root)
     test_unique_ptr_null_state_tooling(sys.argv[1], root)
     test_global_borrow_return_diagnostics(sys.argv[1], root)
     test_cpp_reserved_identifier_diagnostic(sys.argv[1], root)

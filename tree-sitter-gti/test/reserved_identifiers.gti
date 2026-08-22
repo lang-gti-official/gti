@@ -33,7 +33,6 @@ int register = 1;
 int reinterpret_cast = 1;
 int short = 1;
 int signed = 1;
-int static_assert = 1;
 int static_cast = 1;
 int template = 1;
 int thread_local = 1;

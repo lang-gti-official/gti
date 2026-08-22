@@ -48,6 +48,10 @@
         "named": true
       },
       {
+        "type": "static_assert_declaration",
+        "named": true
+      },
+      {
         "type": "static_variable_declaration",
         "named": true
       },
@@ -725,6 +729,10 @@
           "named": true
         },
         {
+          "type": "static_assert_declaration",
+          "named": true
+        },
+        {
           "type": "structured_binding_declaration",
           "named": true
         },
@@ -901,6 +909,10 @@
         },
         {
           "type": "operator_declaration",
+          "named": true
+        },
+        {
+          "type": "static_assert_declaration",
           "named": true
         },
         {
@@ -1267,6 +1279,10 @@
           "named": true
         },
         {
+          "type": "static_assert_declaration",
+          "named": true
+        },
+        {
           "type": "structured_binding_declaration",
           "named": true
         },
@@ -1339,6 +1355,10 @@
         },
         {
           "type": "operator_declaration",
+          "named": true
+        },
+        {
+          "type": "static_assert_declaration",
           "named": true
         },
         {
@@ -3904,6 +3924,68 @@
     }
   },
   {
+    "type": "static_assert_declaration",
+    "named": true,
+    "fields": {
+      "condition": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "assignment_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "conditional_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "update_expression",
+            "named": true
+          }
+        ]
+      },
+      "message": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "static_variable_declaration",
     "named": true,
     "fields": {
@@ -4039,6 +4121,10 @@
         },
         {
           "type": "statement",
+          "named": true
+        },
+        {
+          "type": "static_assert_declaration",
           "named": true
         },
         {
@@ -4999,6 +5085,10 @@
   },
   {
     "type": "static",
+    "named": false
+  },
+  {
+    "type": "static_assert",
     "named": false
   },
   {

@@ -154,7 +154,8 @@ private:
   }
 
   [[nodiscard]] std::optional<HirClassInstanceId>
-  enqueueClass(const SemanticType &type) {
+  enqueueClass(const SemanticType &type,
+               std::optional<SourceSpan> site = std::nullopt) {
     const SemanticType resolvedType =
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
@@ -167,6 +168,10 @@ private:
     if (const std::optional<std::size_t> existing = instanceIndex.findClass(
             resolvedType.classId, resolvedType.arguments,
             resolvedType.valueArguments)) {
+      HirClassInstance &instance = output.program.classes[*existing - 1];
+      if (!instance.instantiationSite && site) {
+        instance.instantiationSite = std::move(site);
+      }
       return *existing;
     }
     const ClassTypeInfo *declaration =
@@ -184,6 +189,7 @@ private:
          .source = declaration->declaration,
          .typeArguments = resolvedType.arguments,
          .valueArguments = resolvedType.valueArguments,
+         .instantiationSite = std::move(site),
          .type = resolvedType,
          .traits = analyzer->traitsFor(resolvedType),
          .transferPolicy = declaration->transferPolicy,
@@ -237,13 +243,26 @@ private:
     }
 
     std::optional<HirClassInstanceId> owner;
+    const Token &declarationToken =
+        declaration.declaration != nullptr
+            ? (declaration.declaration->operatorName()
+                   ? declaration.declaration->operatorName()->symbol
+                   : declaration.declaration->name())
+            : Token{};
+    const std::optional<SourceSpan> classUse =
+        site ? site
+             : (declarationToken.lexeme.empty()
+                    ? std::optional<SourceSpan>{}
+                    : std::optional<SourceSpan>{tokenSpan(declarationToken)});
     if (declaration.ownerClass != 0) {
-      owner = enqueueClass(SemanticType::classType(
-          declaration.ownerClass, classTypeArguments, classValueArguments));
+      owner = enqueueClass(SemanticType::classType(declaration.ownerClass,
+                                                   classTypeArguments,
+                                                   classValueArguments),
+                           classUse);
     }
-    (void)enqueueClass(returnType);
+    (void)enqueueClass(returnType, classUse);
     for (const SemanticType &parameter : parameterTypes) {
-      (void)enqueueClass(parameter);
+      (void)enqueueClass(parameter, classUse);
     }
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
     if (freeFunction || owner.has_value()) {
@@ -347,7 +366,7 @@ private:
   enqueueConstructor(const ResolvedConstructionInfo &construction,
                      std::optional<SourceSpan> site = std::nullopt) {
     const std::optional<HirClassInstanceId> owner =
-        enqueueClass(construction.constructedType);
+        enqueueClass(construction.constructedType, site);
     if (!owner || construction.kind != ConstructorKind::Ordinary ||
         construction.declaration == nullptr || construction.constructor == 0) {
       return 0;
@@ -846,7 +865,8 @@ private:
       analysis = analyzer->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
           snapshot.valueArguments);
-      appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
+      appendInstanceDiagnostics(std::move(analysis.diagnostics),
+                                snapshot.instantiationSite);
       model = &analysis.model;
     }
     std::vector<HirClassField> fields;
@@ -1429,7 +1449,7 @@ private:
                                           HirBody &body) {
     const HirBindingId id = nextBindingId++;
     body.bindings.push_back({.id = id, .variable = &declaration, .info = info});
-    (void)enqueueClass(info.type);
+    (void)enqueueClass(info.type, tokenSpan(declaration.name()));
     return id;
   }
 
@@ -1464,7 +1484,7 @@ private:
          .info =
              info == nullptr ? makeBindingInfo(SemanticType::Unknown) : *info});
     if (info != nullptr) {
-      (void)enqueueClass(info->type);
+      (void)enqueueClass(info->type, tokenSpan(parameter.name));
     }
     return id;
   }
@@ -1846,6 +1866,9 @@ private:
                              body);
     }
     if (dynamic_cast<const CompileErrorDirective *>(statement) != nullptr) {
+      return std::nullopt;
+    }
+    if (dynamic_cast<const StaticAssertDecl *>(statement) != nullptr) {
       return std::nullopt;
     }
     if (const auto *expression =

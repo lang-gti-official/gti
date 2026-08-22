@@ -1,0 +1,14 @@
+class InlineBuffer<T, uint64_t N> {
+  static_assert(N > uint64_t(0), "InlineBuffer capacity must be positive");
+
+  T values[N] = {};
+};
+
+static_assert(sizeof(uint32_t) == uint64_t(4),
+              "uint32_t layout must remain four bytes");
+
+int main() {
+  InlineBuffer<int32_t, 4> buffer = InlineBuffer<int32_t, 4>();
+  std::println("static-assertions-ok");
+  return 0;
+}

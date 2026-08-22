@@ -56,6 +56,7 @@ program                = { declaration } END_OF_FILE ;
 declaration            = conditional-declaration
                        | configuration-directive
                        | compile-error-directive
+                       | static-assert-declaration
                        | concept-declaration
                        | compiler-concept-declaration
                        | class-declaration
@@ -99,6 +100,10 @@ target-property        = "os" | "vendor" | "arch" ;
 compile-error-directive
                        = "#error" STRING_LITERAL ;
 
+static-assert-declaration
+                       = "static_assert" "(" assignment-expression
+                         [ "," STRING_LITERAL ] ")" ";" ;
+
 (* Compile-time conditionals are parsed as GTI syntax. Every branch must be
    syntactically valid, but only the branch selected by the target and
    source-ordered valueless configuration flags is analyzed and emitted.
@@ -107,6 +112,11 @@ compile-error-directive
    semantic effect. Directives do not lower to C++ preprocessor directives.
    Includes cannot appear inside a compile-time
    conditional. *)
+
+(* A static assertion is a compile-time declaration with no symbol or runtime
+   effect. Its condition must resolve to exact bool and must be evaluable by
+   GTI's bounded constexpr evaluator. A dependent assertion in a generic
+   declaration is evaluated once for each canonical concrete instance. *)
 
 namespace-declaration  = "namespace" IDENTIFIER
                          ( namespace-body | namespace-alias ) ;
@@ -274,6 +284,7 @@ base-specifier         = [ "public" | "private" ] base-type ;
 class-member           = conditional-class-members
                        | configuration-directive
                        | compile-error-directive
+                       | static-assert-declaration
                        | mutable-field-group
                        | access-specifier
                        | constructor-declaration
@@ -861,6 +872,7 @@ block                  = "{" { block-item } "}" ;
 block-item             = conditional-block-items
                        | configuration-directive
                        | compile-error-directive
+                       | static-assert-declaration
                        | structured-binding-declaration
                        | variable-declaration
                        | statement ;

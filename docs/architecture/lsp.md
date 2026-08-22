@@ -158,6 +158,12 @@ definition/reference/rename use the ordinary field symbols. Tree-sitter alone
 retains the group node for structural highlighting, indentation, folds, and
 delimiter pairing.
 
+`static_assert` likewise has no document symbol or protocol-owned evaluator.
+The LSP publishes compiler-owned parser, exact-`bool`, constexpr, and failed-
+assertion diagnostics; lexically classifies the spelling as a keyword; and
+uses ordinary semantic occurrences for hover, definition, and references in
+the condition. A newer passing document snapshot clears the prior diagnostic.
+
 For `[[c_opaque]] struct Name;`, hover renders the incomplete declaration and
 the compiler-owned address-only contract instead of value/concurrency
 capability notes. Semantic tokens classify the attribute as a decorator.

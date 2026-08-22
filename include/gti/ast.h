@@ -398,6 +398,7 @@ class NamespaceDecl;
 class RangeForStmt;
 class ReturnStmt;
 class MutableFieldGroupDecl;
+class StaticAssertDecl;
 class SwitchStmt;
 class StructuredBindingDecl;
 class TypeAliasDecl;
@@ -516,6 +517,7 @@ public:
   virtual void visitNamespaceDecl(const NamespaceDecl &stmt) = 0;
   virtual void visitRangeForStmt(const RangeForStmt &stmt) = 0;
   virtual void visitReturnStmt(const ReturnStmt &stmt) = 0;
+  virtual void visitStaticAssertDecl(const StaticAssertDecl &stmt) = 0;
   virtual void visitSwitchStmt(const SwitchStmt &stmt) = 0;
   virtual void
   visitStructuredBindingDecl(const StructuredBindingDecl &stmt) = 0;
@@ -1507,6 +1509,53 @@ public:
 private:
   Token directive_;
   Token message_;
+};
+
+class StaticAssertDecl final : public Stmt {
+public:
+  StaticAssertDecl(Token keyword, Token leftParen, Token conditionStart,
+                   ExprPtr condition, std::optional<Token> comma,
+                   std::optional<Token> message, Token rightParen,
+                   Token semicolon)
+      : keyword_(std::move(keyword)), leftParen_(std::move(leftParen)),
+        conditionStart_(std::move(conditionStart)),
+        condition_(std::move(condition)), comma_(std::move(comma)),
+        message_(std::move(message)), rightParen_(std::move(rightParen)),
+        semicolon_(std::move(semicolon)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitStaticAssertDecl(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const Token &leftParen() const { return leftParen_; }
+  [[nodiscard]] const Token &conditionStart() const { return conditionStart_; }
+  [[nodiscard]] const ExprPtr &condition() const { return condition_; }
+  [[nodiscard]] const std::optional<Token> &comma() const { return comma_; }
+  [[nodiscard]] const std::optional<Token> &messageToken() const {
+    return message_;
+  }
+  [[nodiscard]] const std::string &message() const {
+    if (message_) {
+      if (const auto *text = std::get_if<std::string>(&message_->literal)) {
+        return *text;
+      }
+    }
+    static const std::string empty;
+    return empty;
+  }
+  [[nodiscard]] const Token &rightParen() const { return rightParen_; }
+  [[nodiscard]] const Token &semicolon() const { return semicolon_; }
+
+private:
+  Token keyword_;
+  Token leftParen_;
+  Token conditionStart_;
+  ExprPtr condition_;
+  std::optional<Token> comma_;
+  std::optional<Token> message_;
+  Token rightParen_;
+  Token semicolon_;
 };
 
 class EmptyStmt final : public Stmt {

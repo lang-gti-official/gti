@@ -380,6 +380,18 @@ requireLocalCapture(moveCaptureRow, "owned", "local.definition.var");
 requireLocalCapture(moveCaptureRow, "value", "local.reference");
 requireLocalCapture(moveCaptureRow, "owned", "local.reference");
 
+const staticAssertLine =
+  'static_assert(scalar_layout == uint64_t(4), "scalar layout");';
+const staticAssertRow = highlightLines.indexOf(staticAssertLine);
+if (staticAssertRow < 0) {
+  throw new Error("Missing static_assert fixture line");
+}
+requireCapture(staticAssertRow, "static_assert", "keyword");
+requireCapture(staticAssertRow, "scalar_layout", "variable");
+requireCapture(staticAssertRow, "uint64_t", "type.builtin");
+requireCapture(staticAssertRow, '"scalar layout"', "string");
+requireLocalCapture(staticAssertRow, "scalar_layout", "local.reference");
+
 const foldLine = "  (consume(values), ...);";
 const foldRow = highlightLines.indexOf(foldLine);
 if (foldRow < 0) {
@@ -474,6 +486,7 @@ requireRainbowDelimiter(
 );
 requireRainbowDelimiter(foldLine, "(");
 requireRainbowDelimiter(exactSpecializationLine, "<");
+requireRainbowDelimiter(staticAssertLine, "(");
 
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",

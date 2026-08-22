@@ -51,6 +51,13 @@ public:
                                        const std::string &failureDetail,
                                        const Token &location);
 
+  // A well-typed static assertion whose condition cannot be evaluated by the
+  // bounded GTI constexpr evaluator.
+  void reportStaticAssertEvaluationFailure(const StaticAssertDecl &declaration,
+                                           ConstantEvaluationFailure failure,
+                                           const std::string &failureDetail,
+                                           const Token &location);
+
   // A generic argument that fails its declared constraint: concept,
   // structural, or built-in constraint kinds each carry their exact
   // message and hint set.

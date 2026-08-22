@@ -855,6 +855,66 @@ std::unique_ptr<Widget> create() {
                 (identifier)))))))))
 
 ==================
+Static assertions in declaration and block scopes
+==================
+
+static_assert(true);
+static_assert(sizeof(int32_t) == uint64_t(4), "layout");
+
+struct Packet {
+  static_assert(true, "class invariant");
+};
+
+int main() {
+  static_assert(true);
+  return 0;
+}
+
+---
+
+(source_file
+  (static_assert_declaration
+    (primary_expression
+      (literal
+        (boolean_literal))))
+  (static_assert_declaration
+    (binary_expression
+      (primary_expression
+        (layout_query_expression
+          (type
+            (primitive_type))))
+      (primary_expression
+        (numeric_conversion
+          (primitive_type)
+          (primary_expression
+            (literal
+              (integer_literal))))))
+    (string_literal))
+  (class_declaration
+    (identifier)
+    (class_body
+      (static_assert_declaration
+        (primary_expression
+          (literal
+            (boolean_literal)))
+        (string_literal))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (static_assert_declaration
+        (primary_expression
+          (literal
+            (boolean_literal))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))
+
+==================
 Class value generics
 ==================
 

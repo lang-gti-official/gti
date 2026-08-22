@@ -267,4 +267,67 @@ void SemanticDiagnosticReporter::reportConstexprConditionFailure(
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
+void SemanticDiagnosticReporter::reportStaticAssertEvaluationFailure(
+    const StaticAssertDecl &declaration, ConstantEvaluationFailure failure,
+    const std::string &failureDetail, const Token &location) {
+  std::string message =
+      "The condition of 'static_assert' must be a constant bool expression.";
+  std::string hint =
+      "Use literals, earlier constexpr bindings, supported target layout "
+      "queries, or calls to available constexpr functions.";
+  switch (failure) {
+  case ConstantEvaluationFailure::NonConstantReference:
+    message = "The condition of 'static_assert' reads a binding that is not "
+              "constexpr.";
+    break;
+  case ConstantEvaluationFailure::ResourceLimit:
+    message = "The condition of 'static_assert' exceeded the compiler's "
+              "bounded evaluation limit.";
+    hint = "Reduce constexpr recursion or loop work in the condition.";
+    break;
+  case ConstantEvaluationFailure::IntegerOverflow:
+    message = "Integer overflow occurred while evaluating a 'static_assert' "
+              "condition.";
+    break;
+  case ConstantEvaluationFailure::DivisionByZero:
+    message = "Division by zero occurred in a 'static_assert' condition.";
+    break;
+  case ConstantEvaluationFailure::ModuloByZero:
+    message = "Modulo by zero occurred in a 'static_assert' condition.";
+    break;
+  case ConstantEvaluationFailure::NegativeShiftCount:
+    message = "A 'static_assert' shift count cannot be negative.";
+    break;
+  case ConstantEvaluationFailure::ShiftCountOutOfRange:
+    message = "A 'static_assert' shift count exceeds the integer width.";
+    break;
+  case ConstantEvaluationFailure::ConversionOutOfRange:
+    message = "An integer conversion in a 'static_assert' condition is "
+              "outside the target type's range.";
+    break;
+  case ConstantEvaluationFailure::UnsupportedType:
+    message = "The 'static_assert' condition uses a type that the bounded "
+              "constexpr evaluator does not support.";
+    break;
+  case ConstantEvaluationFailure::InvalidOperands:
+    message = "The constexpr evaluator cannot apply an operation in this "
+              "'static_assert' condition.";
+    break;
+  case ConstantEvaluationFailure::UnsupportedExpression:
+  case ConstantEvaluationFailure::None:
+    break;
+  }
+  if (!failureDetail.empty()) {
+    message += " " + failureDetail;
+  }
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2057", DiagnosticPhase::Semantics,
+                     location.lexeme.empty() ? declaration.keyword() : location,
+                     std::move(message));
+  diagnostic.related.push_back(
+      {tokenSpan(declaration.keyword()), "Static assertion declared here."});
+  diagnostic.hints.emplace_back(std::move(hint));
+  diagnostics.emplace_back(std::move(diagnostic));
+}
+
 } // namespace lang

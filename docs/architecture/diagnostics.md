@@ -163,6 +163,17 @@ diagnostics or letting a backend message choose either identity.
   for coherence, explain that the package must own the primary or one
   top-level nominal type argument. Do not offer a fix-it: changing the target,
   argument type, package ownership, or declaration location requires intent.
+- `GTI-S2079` owns an exact-`bool` static assertion that evaluates to false.
+  Point at the complete condition, begin with the stable text `Static assertion
+  failed.`, append the decoded user message when present, and attach concrete
+  generic substitutions plus the first requiring use as related information.
+  Do not offer a fix-it: removing the assertion, changing the condition, or
+  changing the invariant are distinct choices.
+- `GTI-S2080` owns a static-assertion condition whose resolved type is not exact
+  `bool`. Point at the condition and report the actual type without applying
+  integer truthiness or contextual conversion. Unsupported constant execution
+  remains `GTI-S2057`, with the assertion declaration attached as related
+  information; the LSP must not reinterpret either family.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

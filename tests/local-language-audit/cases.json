@@ -112,6 +112,18 @@
       "emit_contains": ["first", "second", "identity"]
     },
     {
+      "id": "static-assertions",
+      "kind": "execution",
+      "source": "execution/static-assertions.gti",
+      "exit_code": 0,
+      "stdout": "static-assertions-ok\n",
+      "stderr": "",
+      "emit_excludes": [
+        "InlineBuffer capacity must be positive",
+        "uint32_t layout must remain four bytes"
+      ]
+    },
+    {
       "id": "exact-call-diagnostic",
       "kind": "diagnostic",
       "source": "diagnostics/exact-call-types.gti",

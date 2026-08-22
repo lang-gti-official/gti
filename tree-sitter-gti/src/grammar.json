@@ -279,6 +279,10 @@
         },
         {
           "type": "STRING",
+          "value": "static_assert"
+        },
+        {
+          "type": "STRING",
           "value": "this"
         },
         {
@@ -377,6 +381,10 @@
         {
           "type": "SYMBOL",
           "name": "compile_error_directive"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "static_assert_declaration"
         },
         {
           "type": "SYMBOL",
@@ -816,6 +824,64 @@
           }
         }
       ]
+    },
+    "static_assert_declaration": {
+      "type": "PREC_RIGHT",
+      "value": 3,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "static_assert"
+          },
+          {
+            "type": "STRING",
+            "value": "("
+          },
+          {
+            "type": "FIELD",
+            "name": "condition",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_expression_not_comma"
+            }
+          },
+          {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": ","
+                  },
+                  {
+                    "type": "FIELD",
+                    "name": "message",
+                    "content": {
+                      "type": "SYMBOL",
+                      "name": "string_literal"
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
+          },
+          {
+            "type": "STRING",
+            "value": ")"
+          },
+          {
+            "type": "STRING",
+            "value": ";"
+          }
+        ]
+      }
     },
     "extern_c_declaration": {
       "type": "SEQ",
@@ -2043,6 +2109,10 @@
         {
           "type": "SYMBOL",
           "name": "compile_error_directive"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "static_assert_declaration"
         },
         {
           "type": "SYMBOL",
@@ -4420,6 +4490,10 @@
         {
           "type": "SYMBOL",
           "name": "compile_error_directive"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "static_assert_declaration"
         },
         {
           "type": "SYMBOL",

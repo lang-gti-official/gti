@@ -103,6 +103,9 @@ private:
       return compileErrorDirective();
     }
     rejectStrayConditionalDirective();
+    if (match({TokenKind::STATIC_ASSERT})) {
+      return staticAssertDeclaration(previous());
+    }
     if (match({TokenKind::AT})) {
       return attributedDeclaration();
     }
@@ -957,6 +960,40 @@ private:
         std::move(rightBrace));
   }
 
+  StmtPtr staticAssertDeclaration(Token keyword) {
+    Token leftParen =
+        consume(TokenKind::LEFT_PAREN, "Expect '(' after 'static_assert'.");
+    if (check(TokenKind::RIGHT_PAREN) || check(TokenKind::COMMA)) {
+      throw error(peek(), "Expect a condition in 'static_assert'.");
+    }
+    Token conditionStart = peek();
+    ExprPtr condition = assignment();
+    std::optional<Token> comma;
+    std::optional<Token> message;
+    if (match({TokenKind::COMMA})) {
+      comma = previous();
+      if (check(TokenKind::RIGHT_PAREN)) {
+        throw error(peek(),
+                    "A trailing comma is not allowed in 'static_assert'.");
+      }
+      message = consume(TokenKind::STRING_LITERAL,
+                        "Expect a quoted string message after ','.");
+      if (match({TokenKind::COMMA})) {
+        throw error(previous(),
+                    "'static_assert' accepts only a condition and one "
+                    "optional message.");
+      }
+    }
+    Token rightParen =
+        consume(TokenKind::RIGHT_PAREN, "Expect ')' after 'static_assert'.");
+    Token semicolon =
+        consume(TokenKind::SEMICOLON, "Expect ';' after 'static_assert'.");
+    return std::make_unique<StaticAssertDecl>(
+        std::move(keyword), std::move(leftParen), std::move(conditionStart),
+        std::move(condition), std::move(comma), std::move(message),
+        std::move(rightParen), std::move(semicolon));
+  }
+
   StmtPtr groupedFieldDeclaration() {
     if (match({TokenKind::MUT})) {
       throw error(previous(),
@@ -1238,6 +1275,11 @@ private:
       return compileErrorDirective();
     }
     rejectStrayConditionalDirective();
+
+    if (context != ItemContext::MutableFieldGroup &&
+        match({TokenKind::STATIC_ASSERT})) {
+      return staticAssertDeclaration(previous());
+    }
 
     if (context == ItemContext::MutableFieldGroup) {
       if (match({TokenKind::SEMICOLON})) {

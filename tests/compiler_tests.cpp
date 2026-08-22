@@ -15417,6 +15417,330 @@ constexpr uint64_t result = recurse(uint64_t(0));
       "resource limit");
 }
 
+void testStaticAssertions() {
+  lang::Lexer lexer;
+  const std::vector<lang::Token> keyword = lexer.scan("static_assert(true);");
+  expect(keyword.size() >= 2 &&
+             keyword.front().kind == lang::TokenKind::STATIC_ASSERT &&
+             lang::isKeywordToken(keyword.front().kind) &&
+             !lang::isCppReservedIdentifier("static_assert"),
+         "static_assert should be a dedicated GTI declaration keyword");
+
+  const std::string validSource = R"(
+#define ASSERTIONS_ENABLED
+
+constexpr uint64_t expected_width = uint64_t(4);
+static_assert(true);
+
+namespace checks {
+static_assert(expected_width == uint64_t(4),
+              "must never reach native C++");
+}
+
+struct Packet {
+  static_assert(sizeof(int32_t) == uint64_t(4), "packet field width");
+  int32_t value = 0;
+};
+
+interface Contract {
+  static_assert(true);
+};
+
+union Choice {
+  static_assert(true);
+  int32_t value;
+};
+
+int main() {
+  constexpr bool ready = true;
+  static_assert(ready, "local assertion");
+#ifdef ASSERTIONS_ENABLED
+  static_assert(true);
+#else
+  static_assert(false, "inactive configuration assertion");
+#endif
+  if constexpr (false) {
+    static_assert(false, "discarded constexpr assertion");
+  } else {
+    static_assert(true);
+  }
+  return 0;
+}
+)";
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("static-assertions.gti", validSource);
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && valid.diagnostics.empty(),
+         "active exact-bool static assertions should pass in namespace, "
+         "class-like, and block scopes");
+
+  const lang::StaticAssertDecl *topLevelAssertion = nullptr;
+  for (const lang::StmtPtr &declaration : valid.program.declarations()) {
+    if (const auto *assertion =
+            dynamic_cast<const lang::StaticAssertDecl *>(declaration.get())) {
+      topLevelAssertion = assertion;
+      break;
+    }
+  }
+  expect(topLevelAssertion != nullptr &&
+             valid.semantics.findStaticAssertResult(*topLevelAssertion) ==
+                 lang::StaticAssertResult::Passed,
+         "SemanticModel should retain the passed assertion result without "
+         "creating a binding");
+
+  bool assertionReachedHir = false;
+  const auto inspectBody = [&](const lang::HirBody &body) {
+    for (const lang::HirStatement &statement : body.statements) {
+      assertionReachedHir =
+          assertionReachedHir || dynamic_cast<const lang::StaticAssertDecl *>(
+                                     statement.source) != nullptr;
+    }
+  };
+  inspectBody(valid.hir.module());
+  for (const lang::HirFunctionInstance &function :
+       valid.hir.functionInstances()) {
+    inspectBody(function.body);
+  }
+  for (const lang::HirClassInstance &classType : valid.hir.classInstances()) {
+    inspectBody(classType.fieldInitializers);
+    inspectBody(classType.staticFieldInitializers);
+  }
+  expect(!assertionReachedHir,
+         "successful static assertions should be erased before HIR");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  expect(generated.find("must never reach native C++") == std::string::npos &&
+             generated.find("discarded constexpr assertion") ==
+                 std::string::npos,
+         "source static assertions and their messages must not be emitted to "
+         "the C++ backend");
+
+  const std::string formatted = lang::Formatter().format(
+      "static_assert(sizeof(int32_t)==uint64_t(4),\"layout\");");
+  expect(
+      formatted ==
+              "static_assert(sizeof(int32_t) == uint64_t(4), \"layout\");\n" &&
+          lang::Formatter().format(formatted) == formatted,
+      "the formatter should preserve both static_assert forms and space "
+      "the optional message comma");
+
+  const lang::FrontendResult falseAssertion =
+      lang::Frontend().analyze("false-static-assert.gti", R"(
+static_assert(false, "declared invariant");
+int main() { return 0; }
+)");
+  const lang::Diagnostic *failed = nullptr;
+  for (const lang::Diagnostic &diagnostic : falseAssertion.diagnostics) {
+    if (diagnostic.code == "GTI-S2079") {
+      failed = &diagnostic;
+      break;
+    }
+  }
+  expect(!falseAssertion.semanticValid && failed != nullptr &&
+             failed->message == "Static assertion failed. declared invariant" &&
+             failed->primary.start == 15 && failed->primary.end == 20,
+         "a false static assertion should use its full condition span and "
+         "dedicated diagnostic code");
+
+  const lang::FrontendResult wrongType =
+      lang::Frontend().analyze("typed-static-assert.gti", R"(
+static_assert(1);
+int main() { return 0; }
+)");
+  expect(!wrongType.semanticValid &&
+             hasDiagnosticCode(wrongType.diagnostics, "GTI-S2080") &&
+             hasDiagnostic(wrongType.diagnostics, "exact type 'bool'") &&
+             hasDiagnostic(wrongType.diagnostics, "int32_t"),
+         "static assertions should reject non-bool conditions without "
+         "contextual conversion");
+
+  const lang::FrontendResult runtimeDependency =
+      lang::Frontend().analyze("runtime-static-assert.gti", R"(
+int verify(int value) {
+  static_assert(value == 4);
+  return value;
+}
+)");
+  expect(!runtimeDependency.semanticValid &&
+             hasDiagnosticCode(runtimeDependency.diagnostics, "GTI-S2057") &&
+             hasDiagnostic(runtimeDependency.diagnostics,
+                           "reads a binding that is not constexpr"),
+         "runtime values should remain invalid in static assertions");
+
+  const lang::FrontendResult unusedDependent =
+      lang::Frontend().analyze("unused-dependent-static-assert.gti", R"(
+class Unused<T, uint64_t N> {
+  static_assert(sizeof(T) == N, "instance-only invariant");
+};
+int main() { return 0; }
+)");
+  const lang::ClassDecl *unusedClass =
+      findTopLevelClass(unusedDependent.program, "Unused");
+  const lang::StaticAssertDecl *deferred = nullptr;
+  if (unusedClass != nullptr) {
+    for (const lang::StmtPtr &member : unusedClass->members()) {
+      if (const auto *assertion =
+              dynamic_cast<const lang::StaticAssertDecl *>(member.get())) {
+        deferred = assertion;
+      }
+    }
+  }
+  expect(unusedDependent.canGenerateCode() && deferred != nullptr &&
+             unusedDependent.semantics.findStaticAssertResult(*deferred) ==
+                 lang::StaticAssertResult::Deferred,
+         "an unused genuinely dependent assertion should remain a deferred "
+         "semantic obligation");
+
+  const lang::FrontendResult repeatedFailure =
+      lang::Frontend().analyze("dependent-static-assert.gti", R"(
+class Bound<T, uint64_t N> {
+  static_assert(N <= uint64_t(4), "capacity too large");
+};
+
+int main() {
+  Bound<int32_t, 5> first{};
+  Bound<int32_t, 5> second{};
+  return 0;
+}
+)");
+  expect(!repeatedFailure.hirValid &&
+             countDiagnosticCode(repeatedFailure.diagnostics, "GTI-S2079") ==
+                 1 &&
+             hasRelatedDiagnostic(repeatedFailure.diagnostics,
+                                  "Concrete substitution: 'T' = 'int32_t'") &&
+             hasRelatedDiagnostic(repeatedFailure.diagnostics,
+                                  "Concrete substitution: 'N' = '5'") &&
+             hasRelatedDiagnostic(repeatedFailure.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "a dependent class assertion should run once per canonical instance "
+         "and identify substitutions plus the first requiring use");
+
+  const lang::FrontendResult functionFailure =
+      lang::Frontend().analyze("function-static-assert.gti", R"(
+int bounded<uint64_t N>(int values[N]) {
+  static_assert(N <= uint64_t(2), "too many values");
+  return values[0];
+}
+int main() { return bounded({1, 2, 3}); }
+)");
+  expect(!functionFailure.hirValid &&
+             countDiagnosticCode(functionFailure.diagnostics, "GTI-S2079") ==
+                 1 &&
+             hasRelatedDiagnostic(functionFailure.diagnostics,
+                                  "Concrete substitution: 'N' = '3'") &&
+             hasRelatedDiagnostic(functionFailure.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "dependent assertions in generic function bodies should evaluate "
+         "during canonical function-instance reanalysis");
+
+  const lang::FrontendResult constructorFailure =
+      lang::Frontend().analyze("constructor-static-assert.gti", R"(
+class Extent {
+public:
+  Extent<uint64_t N>(int values[N]) {
+    static_assert(N <= uint64_t(2), "too many constructor values");
+  }
+};
+int main() {
+  Extent value = Extent({1, 2, 3});
+  return 0;
+}
+)");
+  expect(!constructorFailure.hirValid &&
+             countDiagnosticCode(constructorFailure.diagnostics, "GTI-S2079") ==
+                 1 &&
+             hasRelatedDiagnostic(constructorFailure.diagnostics,
+                                  "Concrete substitution: 'N' = '3'") &&
+             hasRelatedDiagnostic(constructorFailure.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "dependent assertions in generic constructors should evaluate "
+         "during canonical constructor-instance reanalysis");
+
+  const lang::FrontendResult methodFailure =
+      lang::Frontend().analyze("method-static-assert.gti", R"(
+class Validator<T> {
+public:
+  int validate<uint64_t N>(int values[N]) {
+    static_assert(sizeof(T) == uint64_t(4) && N <= uint64_t(2),
+                  "unsupported method instance");
+    return values[0];
+  }
+};
+int main() {
+  Validator<int64_t> validator{};
+  return validator.validate({1, 2, 3});
+}
+)");
+  expect(!methodFailure.hirValid &&
+             countDiagnosticCode(methodFailure.diagnostics, "GTI-S2079") == 1 &&
+             hasRelatedDiagnostic(methodFailure.diagnostics,
+                                  "Concrete substitution: 'T' = 'int64_t'") &&
+             hasRelatedDiagnostic(methodFailure.diagnostics,
+                                  "Concrete substitution: 'N' = '3'") &&
+             hasRelatedDiagnostic(methodFailure.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "dependent assertions in generic methods should evaluate with the "
+         "combined owner and method substitution");
+
+  lang::FrontendOptions noToolingOptions;
+  noToolingOptions.toolingOccurrences = false;
+  const lang::FrontendResult noToolingFailure =
+      lang::Frontend(noToolingOptions)
+          .analyze("no-tooling-static-assert.gti", R"(
+class Limited<uint64_t N> {
+  static_assert(N < uint64_t(2), "extent is too large");
+};
+int main() {
+  Limited<3> value{};
+  return 0;
+}
+)");
+  expect(!noToolingFailure.hirValid &&
+             countDiagnosticCode(noToolingFailure.diagnostics, "GTI-S2079") ==
+                 1,
+         "dependent assertion detection must not depend on semantic tooling "
+         "occurrence collection");
+
+  const lang::FrontendResult immediateGenericFailure =
+      lang::Frontend().analyze("immediate-generic-static-assert.gti", R"(
+class Broken<T> {
+  static_assert(false, "not dependent");
+};
+int main() { return 0; }
+)");
+  expect(!immediateGenericFailure.semanticValid &&
+             countDiagnosticCode(immediateGenericFailure.diagnostics,
+                                 "GTI-S2079") == 1,
+         "a non-dependent false assertion in an unused generic declaration "
+         "should fail immediately");
+
+  const std::array<std::pair<std::string, std::string>, 7> malformed{{
+      {"static_assert; int recovered() { return 0; }", "Expect '('"},
+      {"static_assert(); int recovered() { return 0; }", "Expect a condition"},
+      {"static_assert(true,); int recovered() { return 0; }", "trailing comma"},
+      {"static_assert(true, 1); int recovered() { return 0; }",
+       "quoted string message"},
+      {"static_assert(true, \"one\", \"two\"); "
+       "int recovered() { return 0; }",
+       "only a condition and one optional message"},
+      {"static_assert(true) int recovered() { return 0; }", "Expect ';'"},
+      {"extern \"C\" { static_assert(true); int ok(); }",
+       "may contain only function declarations"},
+  }};
+  for (const auto &[source, expected] : malformed) {
+    lang::Parser parser(lexer.scan(source, "malformed-static-assert.gti"));
+    const lang::Program recovered = parser.parse();
+    expect(parser.hadError() && hasDiagnostic(parser.errors(), expected) &&
+               !recovered.declarations().empty(),
+           "malformed static assertions should diagnose precisely and retain "
+           "a recoverable declaration boundary");
+  }
+}
+
 void testStaticStorageAndMembers() {
   lang::Lexer lexer;
   const std::vector<lang::Token> keyword = lexer.scan("static int value = 1;");
@@ -27936,6 +28260,10 @@ int main(int argc, char **argv) {
     testMutableFieldGroups();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "static-assertions") {
+    testStaticAssertions();
+    return failures == 0 ? 0 : 1;
+  }
   testConstructorPartialRollbackRepresentation();
   testOwnedParameterStageArmsRollback();
   testFieldInitializerRollbackAndFailureEdges();
@@ -27999,6 +28327,7 @@ int main(int argc, char **argv) {
   testExecutablePathDiscovery();
   testDefaultImmutability();
   testConstexprBindings();
+  testStaticAssertions();
   testStaticStorageAndMembers();
   testThisReceiverKeyword();
   testClassesStructsAndAccess();

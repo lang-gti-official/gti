@@ -642,7 +642,41 @@ polymorphic constexpr functions, references, allocation, arrays, and
 runtime/intrinsic/C calls are rejected until they have compiler-owned
 evaluation rules.
 
-## 3.12 Static-Semantic Gaps
+## 3.12 Static Assertions
+
+`static_assert(condition);` and `static_assert(condition, "message");` are
+compile-time declarations admitted at namespace, complete class-like, and block
+scope. The condition must resolve to exact `bool`; GTI does not apply integer
+truthiness or contextual conversion. The optional message is one ordinary
+quoted string literal.
+
+An active assertion is evaluated by the same checked, step-bounded and
+depth-bounded constexpr evaluator used by constexpr bindings and
+`if constexpr`. A `true` result records a passed semantic fact. A `false`
+result emits `GTI-S2079` at the condition, with the optional decoded message.
+An unsupported constant operation or runtime dependency uses the existing
+constexpr-evaluation diagnostic family. Assertions in inactive configuration
+branches and discarded `if constexpr` branches are not evaluated; ordinary
+runtime reachability does not suppress them.
+
+An assertion that depends on an enclosing generic type or `uint64_t` value
+parameter is deferred during symbolic analysis. It is reanalyzed and evaluated
+once for each canonical concrete class, function, method, or constructor
+instance. Repeated uses of one instance do not duplicate a failure. A concrete
+failure retains the generic declaration as its primary location and reports
+the substituted arguments plus the first requiring use as related information.
+An independent assertion inside a generic declaration is still evaluated
+immediately, and an unused genuinely dependent assertion does not fail solely
+because it remains symbolic.
+
+Assertions introduce no binding or scope. Names in their conditions create
+ordinary semantic occurrences for tooling. A successful assertion is erased
+before HIR, so MIR, optimization, runtime behavior, native headers, and the C++
+backend contain no translated source assertion. Compiler-generated backend
+integrity guards remain separate representation checks and are not GTI
+language evaluation.
+
+## 3.13 Static-Semantic Gaps
 
 The following require later normative sections rather than inference from the
 current implementation:
@@ -654,7 +688,8 @@ current implementation:
 - owned callable escape beyond exact same-type generic return, the bounded
   one-field generic owner, local closure movement, and explicit owned
   move-capture;
-- generic and aggregate constexpr evaluation plus compile-time assertions;
+- generic and aggregate constexpr function/value evaluation beyond dependent
+  static-assertion conditions;
 - audited expansion beyond the bounded scalar, counted-text-input,
   `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, one-level raw-pointer,
   pointer-plus-count, and exact same-thread callback C surface, including

@@ -148,6 +148,8 @@ public:
     currentDefaultParameterNames.clear();
     analyzingCallCallee = false;
     analyzingPackFoldElement = false;
+    analyzingStaticAssertCondition = false;
+    staticAssertGenericDependency = false;
     allowPayloadEnumeratorReference = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
@@ -284,6 +286,8 @@ public:
     currentDefaultParameterNames.clear();
     analyzingCallCallee = false;
     analyzingPackFoldElement = false;
+    analyzingStaticAssertCondition = false;
+    staticAssertGenericDependency = false;
     allowPayloadEnumeratorReference = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
@@ -510,6 +514,7 @@ public:
                                      classValueArguments)) {
       return scope.finish();
     }
+    analyzeConcreteClassStaticAssertions(classType->declaration->members());
     for (const ClassFieldTypeInfo &field : classType->fields) {
       if (field.declaration != nullptr) {
         field.declaration->accept(*this);
@@ -688,6 +693,72 @@ public:
                                     : stmt.message();
     diagnostics.push_back(makeDiagnostic(
         "GTI-S2047", DiagnosticPhase::Semantics, stmt.directive(), message));
+  }
+
+  void visitStaticAssertDecl(const StaticAssertDecl &stmt) override {
+    const std::size_t diagnosticsBefore = diagnostics.size();
+    const bool enclosingStaticAssert = analyzingStaticAssertCondition;
+    const bool enclosingDependency = staticAssertGenericDependency;
+    analyzingStaticAssertCondition = true;
+    staticAssertGenericDependency = false;
+    const SemanticType conditionType = analyze(stmt.condition());
+    const bool genericDependent = staticAssertGenericDependency;
+    analyzingStaticAssertCondition = enclosingStaticAssert;
+    staticAssertGenericDependency = enclosingDependency;
+
+    if (diagnostics.size() != diagnosticsBefore ||
+        conditionType == SemanticType::Unknown) {
+      semanticModel.recordStaticAssertResult(stmt, StaticAssertResult::Failed);
+      return;
+    }
+    if (conditionType != SemanticType::Bool) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2080", DiagnosticPhase::Semantics,
+          staticAssertConditionSpan(stmt),
+          "Static assertion condition must have exact type 'bool', but found "
+          "'" +
+              typeSpelling(conditionType) + "'.");
+      appendStaticAssertSubstitutions(diagnostic);
+      diagnostics.emplace_back(std::move(diagnostic));
+      semanticModel.recordStaticAssertResult(stmt, StaticAssertResult::Failed);
+      return;
+    }
+    if (genericDependent) {
+      semanticModel.recordStaticAssertResult(stmt,
+                                             StaticAssertResult::Deferred);
+      return;
+    }
+
+    ConstexprExecutionContext context;
+    ConstexprEvaluation evaluated =
+        evaluateConstexprExpression(stmt.condition(), context);
+    const bool *value =
+        evaluated ? std::get_if<bool>(&*evaluated.value) : nullptr;
+    if (value == nullptr) {
+      if (evaluated) {
+        evaluated.failure = ConstantEvaluationFailure::InvalidOperands;
+        evaluated.value.reset();
+      }
+      reporter.reportStaticAssertEvaluationFailure(
+          stmt, evaluated.failure, evaluated.detail, evaluated.location);
+      appendStaticAssertSubstitutions(diagnostics.back());
+      semanticModel.recordStaticAssertResult(stmt, StaticAssertResult::Failed);
+      return;
+    }
+    if (!*value) {
+      std::string message = "Static assertion failed.";
+      if (!stmt.message().empty()) {
+        message += " " + stmt.message();
+      }
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2079", DiagnosticPhase::Semantics,
+                         staticAssertConditionSpan(stmt), std::move(message));
+      appendStaticAssertSubstitutions(diagnostic);
+      diagnostics.emplace_back(std::move(diagnostic));
+      semanticModel.recordStaticAssertResult(stmt, StaticAssertResult::Failed);
+      return;
+    }
+    semanticModel.recordStaticAssertResult(stmt, StaticAssertResult::Passed);
   }
 
   void visitConstructorDecl(const ConstructorDecl &stmt) override {
@@ -4938,6 +5009,11 @@ public:
 
     const LayoutEvaluation layout = evaluateLayout(queriedType);
     if (!layout) {
+      if (analyzingStaticAssertCondition &&
+          (layout.error == LayoutEvaluationError::SymbolicType ||
+           layout.error == LayoutEvaluationError::SymbolicExtent)) {
+        return;
+      }
       std::string message;
       switch (layout.error) {
       case LayoutEvaluationError::SymbolicType:
@@ -5834,7 +5910,12 @@ public:
         currentType = SemanticType::Unknown;
         return;
       }
-      if (resolveValueParameter(expr.name())) {
+      if (const std::optional<CompileTimeValue> parameter =
+              resolveValueParameter(expr.name())) {
+        if (analyzingStaticAssertCondition &&
+            parameter->kind == CompileTimeValue::Parameter) {
+          staticAssertGenericDependency = true;
+        }
         currentType = SemanticType::UInt64;
         return;
       }
@@ -7364,6 +7445,9 @@ private:
     if (dynamic_cast<const EmptyStmt *>(statement) != nullptr) {
       return {};
     }
+    if (dynamic_cast<const StaticAssertDecl *>(statement) != nullptr) {
+      return {};
+    }
     if (const auto *declaration =
             dynamic_cast<const VariableDecl *>(statement)) {
       const BindingInfo *binding = semanticModel.findBinding(*declaration);
@@ -7680,6 +7764,52 @@ private:
     return converted ? ConstexprEvaluation{.value = *converted.value,
                                            .location = callSite}
                      : constexprFailure(callSite, converted.failure);
+  }
+
+  [[nodiscard]] static SourceSpan
+  staticAssertConditionSpan(const StaticAssertDecl &declaration) {
+    const Token &start = declaration.conditionStart();
+    const Token &delimiter =
+        declaration.comma() ? *declaration.comma() : declaration.rightParen();
+    return {.source = start.source,
+            .start = start.position,
+            .end = std::max(start.position, delimiter.position),
+            .line = start.line};
+  }
+
+  void appendStaticAssertSubstitutions(Diagnostic &diagnostic) const {
+    struct Substitution {
+      GenericParameterId id = 0;
+      std::string value;
+    };
+    std::vector<Substitution> substitutions;
+    substitutions.reserve(instanceTypeSubstitution.size() +
+                          instanceValueSubstitution.size());
+    for (const auto &[id, type] : instanceTypeSubstitution) {
+      if (type.kind != SemanticType::TypeParameter) {
+        substitutions.push_back({id, typeSpelling(type)});
+      }
+    }
+    for (const auto &[id, value] : instanceValueSubstitution) {
+      if (value.kind == CompileTimeValue::UInt64) {
+        substitutions.push_back({id, std::to_string(value.value)});
+      }
+    }
+    std::sort(substitutions.begin(), substitutions.end(),
+              [](const Substitution &left, const Substitution &right) {
+                return left.id < right.id;
+              });
+    for (const Substitution &substitution : substitutions) {
+      const GenericParameterInfo *parameter =
+          genericParameterInfo(substitution.id);
+      if (parameter == nullptr) {
+        continue;
+      }
+      diagnostic.related.push_back(
+          {tokenSpan(parameter->name), "Concrete substitution: '" +
+                                           parameter->name.lexeme + "' = '" +
+                                           substitution.value + "'."});
+    }
   }
 
   void reportConstexprFailure(const VariableDecl &declaration,
@@ -18668,6 +18798,22 @@ private:
     return result;
   }
 
+  void analyzeConcreteClassStaticAssertions(const StmtList &members) {
+    for (const StmtPtr &member : members) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(member.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          analyzeConcreteClassStaticAssertions(*branch);
+        }
+        continue;
+      }
+      if (const auto *assertion =
+              dynamic_cast<const StaticAssertDecl *>(member.get())) {
+        assertion->accept(*this);
+      }
+    }
+  }
+
   void prepareInstanceAnalysis() {
     diagnostics.clear();
     scopes.clear();
@@ -18687,6 +18833,8 @@ private:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingDefaultArgument = false;
+    analyzingStaticAssertCondition = false;
+    staticAssertGenericDependency = false;
     currentDefaultArgumentRoot = nullptr;
     currentDefaultParameterNames.clear();
     analyzingCallCallee = false;
@@ -26725,6 +26873,9 @@ private:
            .staticMember = binding->staticMember || binding->internalLinkage});
       return;
     }
+    if (analyzingStaticAssertCondition) {
+      staticAssertGenericDependency = true;
+    }
     const GenericParameterInfo *parameter =
         genericParameterInfo(value.parameterId);
     if (parameter == nullptr) {
@@ -26782,6 +26933,10 @@ private:
     SemanticType resolvedType = typeOf(type);
     if (const std::optional<SemanticType> parameter =
             resolveTypeParameter(type.name)) {
+      if (analyzingStaticAssertCondition &&
+          parameter->kind == SemanticType::TypeParameter) {
+        staticAssertGenericDependency = true;
+      }
       const GenericParameterInfo *info =
           genericParameterInfo(parameter->genericParameterId);
       if (info != nullptr) {
@@ -30591,6 +30746,8 @@ private:
   std::unordered_set<std::string> currentDefaultParameterNames;
   bool analyzingCallCallee = false;
   bool analyzingPackFoldElement = false;
+  bool analyzingStaticAssertCondition = false;
+  bool staticAssertGenericDependency = false;
   bool allowPayloadEnumeratorReference = false;
   bool currentStaticMemberFunction = false;
   bool allowPackTypeReference = false;

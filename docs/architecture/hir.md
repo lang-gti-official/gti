@@ -13,6 +13,8 @@ type system.
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
 `SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
 Concrete generic validity is obtained through semantic instance reanalysis.
+Successfully checked static assertions are skipped entirely: they are semantic
+obligations, not HIR declarations or executable values.
 
 `HirProgram` owns:
 
@@ -84,6 +86,9 @@ its exact-specialization identity recursively. A matching primary application
 therefore enqueues the specialization's distinct `ClassId`; a nonmatching
 application enqueues the primary plus its concrete arguments. HIR does not
 compare specialization syntax, rank candidates, or defer selection to C++.
+Each canonical generic class instance also retains the first source span that
+requested it. That span is diagnostic provenance for concrete semantic
+reanalysis, not part of instance identity or backend representation.
 
 `HirInstanceIndex` (`include/gti/hir_instance_index.h`, compiled in
 `src/compiler/hir.cpp`) answers "has this instance already been discovered?"

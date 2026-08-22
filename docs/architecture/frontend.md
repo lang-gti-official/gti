@@ -144,6 +144,14 @@ itself has no symbol identity. Semantics flattens its active children in the
 surrounding access context before HIR, while the retained node remains
 available to formatting and source tooling.
 
+`StaticAssertDecl` preserves the keyword, delimiters, condition, optional
+message separator and string token, semicolon, and complete source extent. It
+is admitted as a declaration at namespace, complete class-like, and block
+scope, while the parser excludes parameter lists, initializer lists, concept
+requirements, `extern "C"`, and mutable field groups. The node introduces no
+symbol; exact typing, constant evaluation, and generic deferral belong to
+semantics.
+
 `ConceptDecl` retains every written type parameter and concept application.
 `FunctionDecl` optionally retains a `RequiresClause` containing the `requires`
 token and its conjunction of applications. The parser enforces only the

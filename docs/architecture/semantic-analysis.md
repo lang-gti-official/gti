@@ -49,6 +49,16 @@ The semantic model records no group symbol. Its retained origin is used only to
 attach related information when an existing field restriction, such as the
 read-only stored-reference rule, is triggered by inherited group mutability.
 
+Static assertions are analyzed as compile-time obligations rather than body
+operations. The semantic model records `Passed`, `Failed`, or `Deferred` by AST
+identity. Non-dependent exact-`bool` conditions use the existing bounded
+constexpr evaluator immediately. A condition that refers to an enclosing
+symbolic generic type or value parameter is deferred, then reanalyzed under the
+canonical concrete class/function/method/constructor substitution. Concrete
+instance tracking deduplicates evaluation and preserves the first requiring
+source span for related diagnostics; independent assertions in generic source
+still run during symbolic analysis.
+
 Declaration registration order is separate from runtime evaluation order.
 [Execution Section 4.2](../language/execution.md#42-evaluation-order) now fixes
 strict left-to-right expressions, full-expression boundaries, and a lexical
@@ -108,6 +118,7 @@ compiler IDs. Important facts include:
 - class bases, override roots, abstract/polymorphic state, and destruction;
 - array extents, switch constants, lambdas, target selections, moves, loans,
   unsafe operations, selected execution profile, and completion context;
+- static-assertion pass/fail/deferred state and concrete generic evaluation;
 - the semantic analysis seal, exact program-initialization plan, exact
   program-constant substitutions, and the selected hosted-entry plan.
 

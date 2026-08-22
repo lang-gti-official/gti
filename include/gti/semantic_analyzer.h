@@ -1633,6 +1633,12 @@ struct SemanticFullExpression {
   std::vector<const Expr *> roots;
 };
 
+enum class StaticAssertResult {
+  Passed,
+  Failed,
+  Deferred,
+};
+
 class SemanticModel {
 public:
   [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const;
@@ -1732,6 +1738,9 @@ public:
 
   [[nodiscard]] std::optional<bool>
   findConstexprBranch(const IfStmt &statement) const;
+
+  [[nodiscard]] std::optional<StaticAssertResult>
+  findStaticAssertResult(const StaticAssertDecl &declaration) const;
 
   [[nodiscard]] std::vector<SemanticLoanId>
   loansEndingAtSwitchArmEntry(const SwitchStmt &statement,
@@ -1950,6 +1959,9 @@ private:
 
   void recordConstexprBranch(const IfStmt &statement, bool thenBranch);
 
+  void recordStaticAssertResult(const StaticAssertDecl &declaration,
+                                StaticAssertResult result);
+
   void recordLoanEndAtSwitchArmEntry(SemanticLoanId id,
                                      const SwitchStmt &statement,
                                      std::size_t armIndex);
@@ -2094,6 +2106,8 @@ private:
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;
   std::unordered_map<const IfStmt *, bool> constexprBranches;
+  std::unordered_map<const StaticAssertDecl *, StaticAssertResult>
+      staticAssertResults;
   std::unordered_map<const SwitchStmt *,
                      std::vector<std::vector<SemanticLoanId>>>
       switchArmLoanEnds;

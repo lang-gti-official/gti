@@ -1,6 +1,7 @@
 # Static Assertions
 
-Status: Proposal; not implemented or accepted as current GTI semantics.
+Status: Implemented for GTI 0.294.0. Canonical syntax and semantics now live in
+`docs/language/grammar.ebnf` and `docs/language/static-semantics.md`.
 
 ## Summary
 
@@ -54,7 +55,7 @@ class inline_buffer<T, uint64_t N> {
 That assertion is checked for each concrete `inline_buffer<T, N>` instance, not
 while `N` is still symbolic.
 
-## Current Baseline
+## Implemented Baseline
 
 Current GTI already has one compiler-owned, resource-bounded constexpr
 evaluator. It supports fixed-width integers, `float`, `double`, `bool`, `char`,
@@ -67,10 +68,9 @@ facts. Evaluation uses a 4096-step budget and a 64-call-depth limit.
 selected branch into HIR. Active `#error` directives already produce a semantic
 diagnostic and disappear before HIR.
 
-The spelling `static_assert` is currently classified as a C++-reserved
-identifier rather than a GTI keyword, so all proposed forms are invalid today.
-The restriction ledger explicitly lists `static_assert` under `R-CONSTEXPR` and
-requires any implementation to use GTI evaluation and source diagnostics.
+The spelling `static_assert` is a dedicated GTI keyword. Both non-dependent and
+dependent forms use GTI evaluation and source diagnostics and are erased before
+HIR; native C++ constant evaluation is not language authority.
 
 ## Proposed Syntax
 
@@ -236,11 +236,12 @@ non-dependent and fails during symbolic declaration analysis. A library that
 intends a per-instance assertion must make the condition genuinely depend on a
 generic parameter.
 
-## Staged Delivery
+## Completed Delivery
 
-The feature should ship in two coherent slices.
+The feature was implemented as the following two coherent semantic slices in
+one release checkpoint.
 
-### Slice A: non-dependent assertions
+### Slice A: non-dependent assertions (complete)
 
 The first slice accepts assertions whose complete condition can be evaluated
 during ordinary semantic analysis. It covers namespace, class-like, and block
@@ -252,7 +253,7 @@ compiler emits a focused restriction diagnostic explaining that dependent
 static assertions require concrete-instance support. It must not emit C++ and
 hope native instantiation performs the check.
 
-### Slice B: dependent assertions
+### Slice B: dependent assertions (complete)
 
 The follow-on slice adds the retained obligation, canonical-instance
 deduplication, substitution display, instantiation-related information, and

@@ -522,6 +522,9 @@ private:
       collectList(group->members(), parent, ownerClass, namespaceScope);
       return;
     }
+    if (dynamic_cast<const StaticAssertDecl *>(&statement) != nullptr) {
+      return;
+    }
 
     LoweredDeclaration row;
     row.id = result_.size() + 1;

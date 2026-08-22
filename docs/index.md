@@ -117,9 +117,9 @@ description of the implementation.
 - [Mutable field groups](plans/mutable-field-groups.md) — records the bounded
   `mut { ... }` shorthand for consecutive mutable class and struct fields while
   preserving immutable defaults and existing receiver/write rules
-- [Static assertions](plans/static-assertions.md) — proposes frontend-owned
-  exact-`bool` `static_assert`, erased before HIR, with a non-dependent first
-  slice and per-concrete-instance generic evaluation as a follow-on
+- [Static assertions](plans/static-assertions.md) — records the implemented
+  frontend-owned exact-`bool` `static_assert`, including per-concrete-instance
+  generic evaluation and erasure before HIR
 - [Mutable temporary receivers](plans/mutable-temporary-receivers.md) — proposes
   a bounded ephemeral mutable-receiver capability for fresh, self-contained
   class-value temporaries without making temporaries general mutable places

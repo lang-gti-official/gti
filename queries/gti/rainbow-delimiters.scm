@@ -10,6 +10,10 @@
   "(" @delimiter
   ")" @delimiter) @container
 
+(static_assert_declaration
+  "(" @delimiter
+  ")" @delimiter) @container
+
 (concept_declaration
   "<" @delimiter
   ">" @delimiter) @container

@@ -689,6 +689,17 @@ SemanticModel::findConstexprBranch(const IfStmt &statement) const {
   return base == nullptr ? std::nullopt : base->findConstexprBranch(statement);
 }
 
+[[nodiscard]] std::optional<StaticAssertResult>
+SemanticModel::findStaticAssertResult(
+    const StaticAssertDecl &declaration) const {
+  const auto found = staticAssertResults.find(&declaration);
+  if (found != staticAssertResults.end()) {
+    return found->second;
+  }
+  return base == nullptr ? std::nullopt
+                         : base->findStaticAssertResult(declaration);
+}
+
 [[nodiscard]] std::vector<SemanticLoanId>
 SemanticModel::loansEndingAtSwitchArmEntry(const SwitchStmt &statement,
                                            std::size_t armIndex) const {
@@ -1147,6 +1158,7 @@ void SemanticModel::clear() {
   loanEnds.clear();
   conditionalLoanEnds.clear();
   constexprBranches.clear();
+  staticAssertResults.clear();
   switchArmLoanEnds.clear();
   structuredBindings.clear();
   functions.clear();
@@ -1461,6 +1473,11 @@ void SemanticModel::recordLoanEndAtConditionalEntry(SemanticLoanId id,
 void SemanticModel::recordConstexprBranch(const IfStmt &statement,
                                           bool thenBranch) {
   constexprBranches.insert_or_assign(&statement, thenBranch);
+}
+
+void SemanticModel::recordStaticAssertResult(
+    const StaticAssertDecl &declaration, StaticAssertResult result) {
+  staticAssertResults.insert_or_assign(&declaration, result);
 }
 
 void SemanticModel::recordLoanEndAtSwitchArmEntry(SemanticLoanId id,
