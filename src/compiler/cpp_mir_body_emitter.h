@@ -113,6 +113,23 @@ struct CppMirEnumRepresentation {
                          const CppMirEnumRepresentation &) = default;
 };
 
+// One exact source constructor that the C++ backend may expose through its
+// terminally-contained constructor tag. The row is target representation,
+// not executable authority: initializer selection still proves the matching
+// Construct/Invoke schedule and admits the constructor's failure-form MIR
+// body before using it.
+struct CppMirContainedConstructorRepresentation {
+  HirConstructorInstanceId constructor = 0;
+  SemanticType ownerType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  std::string tagSpelling;
+  std::string stateSpelling;
+
+  friend bool
+  operator==(const CppMirContainedConstructorRepresentation &,
+             const CppMirContainedConstructorRepresentation &) = default;
+};
+
 // A capability row names a sealed C++ representation helper or adapter
 // family. It never asserts that MIR has a missing schedule: the analysis below
 // reports MissingMirAuthority even when a matching row is present.
@@ -150,6 +167,7 @@ struct CppMirBodyEmissionMapRows {
   std::vector<CppMirBodyNameRepresentation> bodies;
   std::vector<CppMirSymbolRepresentation> symbols;
   std::vector<CppMirEnumRepresentation> enums;
+  std::vector<CppMirContainedConstructorRepresentation> containedConstructors;
   std::vector<CppMirEmissionCapabilityRepresentation> capabilities;
 };
 
@@ -171,6 +189,11 @@ public:
   [[nodiscard]] const std::vector<CppMirEnumRepresentation> &enums() const {
     return enums_;
   }
+  [[nodiscard]]
+  const std::vector<CppMirContainedConstructorRepresentation> &
+  containedConstructors() const {
+    return containedConstructors_;
+  }
   [[nodiscard]] const std::vector<CppMirEmissionCapabilityRepresentation> &
   capabilities() const {
     return capabilities_;
@@ -181,6 +204,7 @@ private:
   std::vector<CppMirBodyNameRepresentation> bodies_;
   std::vector<CppMirSymbolRepresentation> symbols_;
   std::vector<CppMirEnumRepresentation> enums_;
+  std::vector<CppMirContainedConstructorRepresentation> containedConstructors_;
   std::vector<CppMirEmissionCapabilityRepresentation> capabilities_;
 };
 
@@ -274,6 +298,7 @@ enum class CppMirBodyEmissionIssueKind {
   DuplicateBodyRepresentation,
   DuplicateSymbolRepresentation,
   DuplicateEnumRepresentation,
+  DuplicateContainedConstructorRepresentation,
   DuplicateCapabilityRepresentation,
   InvalidBodyKind,
   InvalidInstructionKind,
@@ -423,6 +448,11 @@ cppMirVirtualFailureContractRoot(const MirProgram &program,
 // caller and declaration from drifting to different generated C++ types.
 [[nodiscard]] std::string
 cppMirFailureConstructorTagSpelling(HirConstructorInstanceId constructor);
+
+// Compiler-private tag used by an in-class initializer to select the exact
+// terminal-containment overload paired with a failure-form constructor.
+[[nodiscard]] std::string
+cppMirContainedConstructorTagSpelling(HirConstructorInstanceId constructor);
 
 // The reference-field initializer schedule (ADR 018): each
 // stores-reference constructor initializer pairs bijectively with one

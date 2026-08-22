@@ -1,0 +1,22 @@
+#include <std/string>
+
+class StringHolder {
+public:
+  StringHolder() {}
+
+  std::size_t size() {
+    return text.size();
+  }
+
+private:
+  mut std::string text = std::string("");
+};
+
+int main() {
+  mut StringHolder value = StringHolder();
+  if (value.size() != 0) {
+    return 1;
+  }
+  std::println("string-owned-field-ok");
+  return 0;
+}

@@ -91,6 +91,18 @@
       "emit_contains": ["__gti_native_argc", "__gti_native_argv"]
     },
     {
+      "id": "string-owned-field",
+      "kind": "execution",
+      "source": "execution/string-owned-field.gti",
+      "exit_code": 0,
+      "stdout": "string-owned-field-ok\n",
+      "stderr": "",
+      "emit_contains": [
+        "mir_contained_constructor_tag_v1",
+        "mir_contained_constructor_state_v1"
+      ]
+    },
+    {
       "id": "exact-call-diagnostic",
       "kind": "diagnostic",
       "source": "diagnostics/exact-call-types.gti",

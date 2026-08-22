@@ -139,6 +139,15 @@ surfaces may be represented as C++ templates and concrete specializations;
 specialization eligibility comes from concrete-instance items, and executable
 specialization text still comes from MIR.
 
+When a field or static initializer selects a failure-capable source
+constructor, the private C++ representation snapshot derives one exact
+contained-constructor row from the lowered initializer schedule and constructor
+record. The row supplies backend-private tag and state spellings. Its generated
+overload delegates to the exact failure form and terminates with the unchanged
+failure record when construction fails. The emitter rejects missing,
+duplicated, or mismatched rows; no C++ spelling or containment policy enters
+`LoweredProgram`.
+
 ### Declarations And ABI
 
 `CppEmitter` walks `LoweredDeclaration` rows to assemble namespaces, aliases,

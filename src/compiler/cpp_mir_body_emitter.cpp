@@ -1,5 +1,6 @@
 #include "cpp_mir_body_emitter.h"
 #include <algorithm>
+#include <array>
 #include <iomanip>
 #include <iterator>
 #include <limits>
@@ -332,7 +333,9 @@ rawMemoryPlaceSpelling(const RawMemoryPlaceAccess &access) {
 // A storage symbol is self-identifying when the sealed snapshot contains one
 // row. Reused symbols from concrete generic class instances require the
 // current body owner; an unrelated body with several candidates remains
-// ambiguous until MIR carries the concrete storage owner itself.
+// ambiguous until MIR carries the concrete storage owner itself. A member-body
+// Symbol root may instead name its owner's exact field row; no global Storage
+// row is synthesized for that representation.
 [[nodiscard]] const CppMirSymbolRepresentation *
 storageRepresentation(const CppMirBodyEmissionMap &representations,
                       std::optional<HirClassInstanceId> owner,
@@ -356,7 +359,23 @@ storageRepresentation(const CppMirBodyEmissionMap &representations,
   if (matches == 1) {
     return only;
   }
-  return ownedMatches == 1 ? owned : nullptr;
+  if (ownedMatches == 1) {
+    return owned;
+  }
+  if (matches != 0 || !owner) {
+    return nullptr;
+  }
+  const CppMirSymbolRepresentation *field = nullptr;
+  std::size_t fieldMatches = 0;
+  for (const CppMirSymbolRepresentation &row : representations.symbols()) {
+    if (row.kind != CppMirSymbolRepresentationKind::Field ||
+        row.owner != *owner || row.symbol != symbol || row.ordinal != 0) {
+      continue;
+    }
+    field = &row;
+    ++fieldMatches;
+  }
+  return fieldMatches == 1 ? field : nullptr;
 }
 
 [[nodiscard]] const CppMirSymbolRepresentation *storageRepresentationForBody(
@@ -544,6 +563,7 @@ readinessForIssue(CppMirBodyEmissionIssueKind kind) {
   case CppMirBodyEmissionIssueKind::DuplicateBodyRepresentation:
   case CppMirBodyEmissionIssueKind::DuplicateSymbolRepresentation:
   case CppMirBodyEmissionIssueKind::DuplicateEnumRepresentation:
+  case CppMirBodyEmissionIssueKind::DuplicateContainedConstructorRepresentation:
   case CppMirBodyEmissionIssueKind::DuplicateCapabilityRepresentation:
   case CppMirBodyEmissionIssueKind::InvalidBodyKind:
   case CppMirBodyEmissionIssueKind::InvalidInstructionKind:
@@ -4594,6 +4614,62 @@ wrapperContainedCallSite(const MirProgram &program,
                                           instruction.info.type);
 }
 
+// The target-specific contained-constructor row authorizes one generated C++
+// overload that delegates to this exact constructor's failure-form MIR body
+// and terminates with its unchanged failure record. The initializer body still
+// owns the Construct/Invoke schedule; this probe merely proves that the native
+// representation exists and that its executable target is spellable.
+[[nodiscard]] const CppMirContainedConstructorRepresentation *
+containedFailureConstructorRepresentation(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Construct ||
+      !instruction.constructorTarget || instruction.destination ||
+      instruction.receiver || instruction.functionTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.callableInvocation ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      instruction.constructorKind != ConstructorKind::Ordinary ||
+      instruction.definedFailure.propagation !=
+          FailurePropagationKind::Constructor ||
+      !instruction.definedFailure.localOrigins.empty() ||
+      !instruction.localFailureSites.empty()) {
+    return nullptr;
+  }
+  const MirConstructorInstance *target =
+      program.findConstructorInstance(*instruction.constructorTarget);
+  const MirClassInstance *owner =
+      target == nullptr ? nullptr : program.findClassInstance(target->owner);
+  if (target == nullptr || owner == nullptr ||
+      target->definitionKind != MirDefinitionKind::Source ||
+      !target->mayRaiseDefinedFailure || owner->type != instruction.info.type ||
+      target->parameterTypes != instruction.parameterTypes) {
+    return nullptr;
+  }
+  const auto row = std::find_if(
+      representations.containedConstructors().begin(),
+      representations.containedConstructors().end(),
+      [&](const CppMirContainedConstructorRepresentation &candidate) {
+        return candidate.constructor == target->id &&
+               candidate.ownerType == owner->type &&
+               candidate.parameterTypes == target->parameterTypes;
+      });
+  if (row == representations.containedConstructors().end()) {
+    return nullptr;
+  }
+  thread_local std::vector<HirConstructorInstanceId> probing;
+  if (std::find(probing.begin(), probing.end(), target->id) != probing.end()) {
+    return nullptr;
+  }
+  probing.push_back(target->id);
+  const bool contained =
+      CppMirBodyEmitter(program, representations)
+          .supportsFailureBodyText(
+              {.kind = MirBodyKind::Constructor, .owner = target->id});
+  probing.pop_back();
+  return contained ? &*row : nullptr;
+}
+
 // A construction in a failure-form caller may use the ordinary constructor
 // only when the target's complete initializer chain cannot return a failure
 // status and that ordinary MIR body is itself spellable. The call then either
@@ -7721,6 +7797,64 @@ public:
       }
     }
 
+    for (std::size_t index = 0;
+         index < representations.containedConstructors().size(); ++index) {
+      const CppMirContainedConstructorRepresentation &row =
+          representations.containedConstructors()[index];
+      const MirConstructorInstance *constructor =
+          program.findConstructorInstance(row.constructor);
+      const MirClassInstance *owner =
+          constructor == nullptr
+              ? nullptr
+              : program.findClassInstance(constructor->owner);
+      bool initializerUse = false;
+      if (constructor != nullptr) {
+        for (const MirClassInstance &instance : program.classInstances()) {
+          const std::array<const MirBody *, 2> initializerBodies{
+              &instance.fieldInitializers, &instance.staticFieldInitializers};
+          for (const MirBody *body : initializerBodies) {
+            for (const MirBlock &block : body->blocks) {
+              initializerUse =
+                  initializerUse ||
+                  std::any_of(block.instructions.begin(),
+                              block.instructions.end(),
+                              [&](const MirInstruction &instruction) {
+                                return instruction.kind ==
+                                           MirInstructionKind::Construct &&
+                                       instruction.constructorTarget ==
+                                           row.constructor &&
+                                       instruction.constructorKind ==
+                                           ConstructorKind::Ordinary;
+                              });
+            }
+          }
+        }
+      }
+      if (constructor == nullptr || owner == nullptr || !initializerUse ||
+          constructor->definitionKind != MirDefinitionKind::Source ||
+          !constructor->mayRaiseDefinedFailure ||
+          row.ownerType != owner->type ||
+          row.parameterTypes != constructor->parameterTypes ||
+          row.tagSpelling !=
+              cppMirContainedConstructorTagSpelling(row.constructor) ||
+          row.stateSpelling != "::gti_internal::backend::"
+                               "mir_contained_constructor_state_v1") {
+        add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
+            "contained-constructor row is stale or disagrees with its exact "
+            "initializer target");
+      }
+      if (std::find_if(
+              representations.containedConstructors().begin(),
+              representations.containedConstructors().begin() + index,
+              [&](const CppMirContainedConstructorRepresentation &prior) {
+                return prior.constructor == row.constructor;
+              }) != representations.containedConstructors().begin() + index) {
+        add(CppMirBodyEmissionIssueKind::
+                DuplicateContainedConstructorRepresentation,
+            0, 0, "copied map contains duplicate contained-constructor rows");
+      }
+    }
+
     for (std::size_t index = 0; index < representations.capabilities().size();
          ++index) {
       const CppMirEmissionCapabilityRepresentation &row =
@@ -8390,9 +8524,17 @@ private:
                       result.body.owner, place.symbol,
                       currentType ? &*currentType : nullptr, place.capture);
       } else {
-        requireSymbol(CppMirSymbolRepresentationKind::Storage,
-                      storageOwner(place.symbol), place.symbol,
-                      currentType ? &*currentType : nullptr, 0);
+        const CppMirSymbolRepresentation *storage =
+            storageRepresentationForBody(program, representations,
+                                         concreteClassOwner(), place.symbol);
+        if (storage == nullptr) {
+          requireSymbol(CppMirSymbolRepresentationKind::Storage,
+                        storageOwner(place.symbol), place.symbol,
+                        currentType ? &*currentType : nullptr, 0);
+        } else {
+          requireSymbol(storage->kind, storage->owner, place.symbol,
+                        currentType ? &*currentType : nullptr, 0);
+        }
       }
     } else if (place.root == MirPlaceRootKind::This) {
       if (result.body.kind == MirBodyKind::Function) {
@@ -9133,6 +9275,7 @@ bool cppMirModuleMayRaiseDefinedFailure(const MirProgram &program) {
 CppMirBodyEmissionMap::CppMirBodyEmissionMap(CppMirBodyEmissionMapRows rows)
     : types_(std::move(rows.types)), bodies_(std::move(rows.bodies)),
       symbols_(std::move(rows.symbols)), enums_(std::move(rows.enums)),
+      containedConstructors_(std::move(rows.containedConstructors)),
       capabilities_(std::move(rows.capabilities)) {}
 
 bool cppMirFailureConstructorEmptyStateEligible(const MirProgram &program,
@@ -18184,6 +18327,12 @@ cppMirFailureConstructorTagSpelling(HirConstructorInstanceId constructor) {
          std::to_string(constructor) + ">";
 }
 
+std::string
+cppMirContainedConstructorTagSpelling(HirConstructorInstanceId constructor) {
+  return "::gti_internal::backend::mir_contained_constructor_tag_v1<" +
+         std::to_string(constructor) + ">";
+}
+
 bool CppMirBodyEmitter::boundaryDeclarationBody(MirBodyAddress address) const {
   if (address.kind != MirBodyKind::Function) {
     return false;
@@ -22474,8 +22623,11 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
           !cppMirTerminalCheckedHelperSpelling(producer->operation).empty() &&
           producer->localFailureSites.size() == 1;
       const bool containedConstruction =
-          producer != nullptr && plainConstructorBodyContainsFailure(
-                                     program_, representations_, *producer);
+          producer != nullptr &&
+          (plainConstructorBodyContainsFailure(program_, representations_,
+                                               *producer) ||
+           containedFailureConstructorRepresentation(program_, representations_,
+                                                     *producer) != nullptr);
       if ((!checkedCompute && !containedConstruction) || next == nullptr ||
           elseBlock == nullptr || !elseBlock->instructions.empty() ||
           elseBlock->terminator.kind != MirTerminatorKind::PropagateFailure) {
@@ -22723,16 +22875,23 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
           [&](const CppMirTypeRepresentation &candidate) {
             return candidate.type == instruction->info.type;
           });
-      const bool containedFailure =
+      const bool ordinaryContainedFailure =
           target != nullptr && target->mayRaiseDefinedFailure &&
           plainConstructorBodyContainsFailure(program_, representations_,
                                               *instruction);
+      const CppMirContainedConstructorRepresentation *containedFailure =
+          target != nullptr && target->mayRaiseDefinedFailure &&
+                  !ordinaryContainedFailure
+              ? containedFailureConstructorRepresentation(
+                    program_, representations_, *instruction)
+              : nullptr;
       if (!instruction->result || instruction->receiver ||
           instruction->destination ||
           instruction->constructorKind != ConstructorKind::Ordinary ||
           target == nullptr || owner == nullptr ||
           owner->type != instruction->info.type ||
-          (target->mayRaiseDefinedFailure && !containedFailure) ||
+          (target->mayRaiseDefinedFailure && !ordinaryContainedFailure &&
+           containedFailure == nullptr) ||
           target->parameterTypes != instruction->parameterTypes ||
           instruction->operands.size() != target->parameterTypes.size() ||
           !instruction->localFailureSites.empty() ||
@@ -22745,6 +22904,10 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
           dependentFieldTypeSpelling(*instruction->result);
       std::string spelled = dependent == nullptr ? row->spelling : *dependent;
       spelled += '(';
+      if (containedFailure != nullptr) {
+        spelled += containedFailure->tagSpelling;
+        spelled += "{}";
+      }
       for (std::size_t index = 0; index < instruction->operands.size();
            ++index) {
         const MirOperand &operand = instruction->operands[index];
@@ -22755,10 +22918,15 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
             operand.type != target->parameterTypes[index]) {
           return result;
         }
-        if (index != 0) {
+        if (index != 0 || containedFailure != nullptr) {
           spelled += ", ";
         }
         spelled += found->second;
+      }
+      if (containedFailure != nullptr) {
+        spelled += ", ";
+        spelled += containedFailure->stateSpelling;
+        spelled += "{}";
       }
       spelled += ')';
       spellings.emplace(*instruction->result, std::move(spelled));
