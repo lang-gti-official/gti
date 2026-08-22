@@ -132,6 +132,7 @@ module.exports = grammar({
     declaration: ($) =>
       choice(
         $.conditional_declaration,
+        $.configuration_directive,
         $.compile_error_directive,
         $.extern_c_declaration,
         $.namespace_declaration,
@@ -175,10 +176,21 @@ module.exports = grammar({
         $.endif_directive,
       ),
 
-    if_directive: ($) => seq("#if", field("condition", $.target_condition)),
-    elif_directive: ($) => seq("#elif", field("condition", $.target_condition)),
+    if_directive: ($) =>
+      choice(
+        seq("#if", field("condition", $.compile_condition)),
+        seq("#ifdef", field("flag", $.identifier)),
+        seq("#ifndef", field("flag", $.identifier)),
+      ),
+    elif_directive: ($) =>
+      seq("#elif", field("condition", $.compile_condition)),
     else_directive: () => "#else",
     endif_directive: () => "#endif",
+    configuration_directive: ($) =>
+      choice(
+        seq("#define", field("flag", $.identifier)),
+        seq("#undef", field("flag", $.identifier)),
+      ),
     compile_error_directive: ($) =>
       seq("#error", field("message", $.string_literal)),
 
@@ -199,6 +211,33 @@ module.exports = grammar({
         field("parameters", $.parameter_clause),
         ";",
       ),
+
+    compile_condition: ($) =>
+      choice(
+        prec.left(
+          1,
+          seq(
+            field("left", $.compile_condition),
+            field("operator", "||"),
+            field("right", $.compile_condition),
+          ),
+        ),
+        prec.left(
+          2,
+          seq(
+            field("left", $.compile_condition),
+            field("operator", "&&"),
+            field("right", $.compile_condition),
+          ),
+        ),
+        prec(3, seq(field("operator", "!"), $.compile_condition)),
+        $.defined_condition,
+        $.target_condition,
+        seq("(", $.compile_condition, ")"),
+      ),
+
+    defined_condition: ($) =>
+      seq("defined", "(", field("flag", $.identifier), ")"),
 
     target_condition: ($) =>
       seq(
@@ -366,6 +405,7 @@ module.exports = grammar({
     _class_member: ($) =>
       choice(
         $.conditional_class_members,
+        $.configuration_directive,
         $.compile_error_directive,
         $.access_specifier,
         $.constructor_declaration,
@@ -703,6 +743,7 @@ module.exports = grammar({
     _block_item: ($) =>
       choice(
         $.conditional_block_items,
+        $.configuration_directive,
         $.compile_error_directive,
         $.structured_binding_declaration,
         $.variable_declaration,

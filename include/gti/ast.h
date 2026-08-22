@@ -261,15 +261,92 @@ struct PureSpecifier {
 };
 
 struct CompileCondition {
-  Token propertyToken;
-  TargetProperty property;
+  enum class Kind {
+    TargetComparison,
+    Defined,
+    Not,
+    And,
+    Or,
+  };
+
+  Kind kind = Kind::TargetComparison;
+  Token token;
+  std::optional<TargetProperty> property;
   Token oper;
   Token valueToken;
   std::string expectedValue;
+  std::string flag;
+  std::unique_ptr<CompileCondition> left;
+  std::unique_ptr<CompileCondition> right;
+  std::optional<bool> resolved;
+
+  CompileCondition() = default;
+  CompileCondition(CompileCondition &&) = default;
+  CompileCondition(const CompileCondition &) = delete;
+  CompileCondition &operator=(CompileCondition &&) = default;
+  CompileCondition &operator=(const CompileCondition &) = delete;
+
+  static CompileCondition targetComparison(Token propertyToken,
+                                           TargetProperty property, Token oper,
+                                           Token valueToken,
+                                           std::string expectedValue) {
+    CompileCondition condition;
+    condition.kind = Kind::TargetComparison;
+    condition.token = std::move(propertyToken);
+    condition.property = property;
+    condition.oper = std::move(oper);
+    condition.valueToken = std::move(valueToken);
+    condition.expectedValue = std::move(expectedValue);
+    return condition;
+  }
+
+  static CompileCondition defined(Token flagToken) {
+    CompileCondition condition;
+    condition.kind = Kind::Defined;
+    condition.flag = flagToken.lexeme;
+    condition.resolved = flagToken.configurationFlagDefined;
+    condition.token = std::move(flagToken);
+    return condition;
+  }
+
+  static CompileCondition unary(Kind kind, Token oper,
+                                CompileCondition operand) {
+    CompileCondition condition;
+    condition.kind = kind;
+    condition.token = std::move(oper);
+    condition.left = std::make_unique<CompileCondition>(std::move(operand));
+    return condition;
+  }
+
+  static CompileCondition binary(Kind kind, CompileCondition left, Token oper,
+                                 CompileCondition right) {
+    CompileCondition condition;
+    condition.kind = kind;
+    condition.token = std::move(oper);
+    condition.left = std::make_unique<CompileCondition>(std::move(left));
+    condition.right = std::make_unique<CompileCondition>(std::move(right));
+    return condition;
+  }
 
   [[nodiscard]] bool matches(const TargetInfo &target) const {
-    const bool equal = target.value(property) == expectedValue;
-    return oper.kind == TokenKind::BANG_EQUAL ? !equal : equal;
+    if (resolved) {
+      return *resolved;
+    }
+    switch (kind) {
+    case Kind::TargetComparison: {
+      const bool equal = property && target.value(*property) == expectedValue;
+      return oper.kind == TokenKind::BANG_EQUAL ? !equal : equal;
+    }
+    case Kind::Defined:
+      return false;
+    case Kind::Not:
+      return left && !left->matches(target);
+    case Kind::And:
+      return left && right && left->matches(target) && right->matches(target);
+    case Kind::Or:
+      return left && right && (left->matches(target) || right->matches(target));
+    }
+    return false;
   }
 };
 

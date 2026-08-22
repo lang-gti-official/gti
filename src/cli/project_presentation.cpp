@@ -326,6 +326,12 @@ void writeProjectMetadata(std::ostream &stream,
       writeJsonString(stream, plan == nullptr
                                   ? std::string_view{}
                                   : plan->generatedSource().string());
+      stream << ", \"defines\": ";
+      if (plan == nullptr) {
+        writeJsonStrings(stream, {});
+      } else {
+        writeJsonStrings(stream, plan->configurationFlags());
+      }
       stream << ", \"native\": ";
       if (plan == nullptr) {
         writeNativeInputs(stream, {});

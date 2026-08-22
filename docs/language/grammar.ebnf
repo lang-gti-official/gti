@@ -54,6 +54,7 @@ angle-include-path     = "<" PATH_COMPONENT "/" PATH_COMPONENT
 program                = { declaration } END_OF_FILE ;
 
 declaration            = conditional-declaration
+                       | configuration-directive
                        | compile-error-directive
                        | concept-declaration
                        | compiler-concept-declaration
@@ -71,9 +72,24 @@ declaration            = conditional-declaration
 empty-declaration      = ";" ;
 
 conditional-declaration
-                       = "#if" target-condition { declaration }
-                         { "#elif" target-condition { declaration } }
+                       = conditional-start { declaration }
+                         { "#elif" compile-condition { declaration } }
                          [ "#else" { declaration } ] "#endif" ;
+
+conditional-start      = "#if" compile-condition
+                       | "#ifdef" IDENTIFIER
+                       | "#ifndef" IDENTIFIER ;
+
+configuration-directive
+                       = ( "#define" | "#undef" ) IDENTIFIER ;
+
+compile-condition      = compile-or ;
+compile-or             = compile-and { "||" compile-and } ;
+compile-and            = compile-unary { "&&" compile-unary } ;
+compile-unary          = "!" compile-unary | compile-primary ;
+compile-primary        = "defined" "(" IDENTIFIER ")"
+                       | target-condition
+                       | "(" compile-condition ")" ;
 
 target-condition       = "target" "." target-property
                          ( "==" | "!=" ) STRING_LITERAL ;
@@ -84,10 +100,12 @@ compile-error-directive
                        = "#error" STRING_LITERAL ;
 
 (* Compile-time conditionals are parsed as GTI syntax. Every branch must be
-   syntactically valid, but only the selected host-target branch is analyzed
-   and emitted. An active `#error` emits its string as a GTI diagnostic; an
-   inactive one has no semantic effect. Directives do not lower to C++
-   preprocessor directives. Includes cannot appear inside a compile-time
+   syntactically valid, but only the branch selected by the target and
+   source-ordered valueless configuration flags is analyzed and emitted.
+   `#define` and `#undef` never substitute tokens or carry values. An active
+   `#error` emits its string as a GTI diagnostic; an inactive one has no
+   semantic effect. Directives do not lower to C++ preprocessor directives.
+   Includes cannot appear inside a compile-time
    conditional. *)
 
 namespace-declaration  = "namespace" IDENTIFIER
@@ -242,6 +260,7 @@ base-clause            = ":" base-specifier { "," base-specifier } ;
 base-specifier         = [ "public" | "private" ] base-type ;
 
 class-member           = conditional-class-members
+                       | configuration-directive
                        | compile-error-directive
                        | access-specifier
                        | constructor-declaration
@@ -253,8 +272,8 @@ class-member           = conditional-class-members
                        | empty-declaration ;
 
 conditional-class-members
-                       = "#if" target-condition { class-member }
-                         { "#elif" target-condition { class-member } }
+                       = conditional-start { class-member }
+                         { "#elif" compile-condition { class-member } }
                          [ "#else" { class-member } ] "#endif" ;
 
 access-specifier       = ( "public" | "private" ) ":" ;
@@ -798,14 +817,15 @@ qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 block                  = "{" { block-item } "}" ;
 
 block-item             = conditional-block-items
+                       | configuration-directive
                        | compile-error-directive
                        | structured-binding-declaration
                        | variable-declaration
                        | statement ;
 
 conditional-block-items
-                       = "#if" target-condition { block-item }
-                         { "#elif" target-condition { block-item } }
+                       = conditional-start { block-item }
+                         { "#elif" compile-condition { block-item } }
                          [ "#else" { block-item } ] "#endif" ;
 
 statement              = block

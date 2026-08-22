@@ -20,6 +20,10 @@
         "named": true
       },
       {
+        "type": "configuration_directive",
+        "named": true
+      },
+      {
         "type": "empty_declaration",
         "named": true
       },
@@ -713,6 +717,10 @@
           "named": true
         },
         {
+          "type": "configuration_directive",
+          "named": true
+        },
+        {
           "type": "statement",
           "named": true
         },
@@ -868,6 +876,10 @@
           "named": true
         },
         {
+          "type": "configuration_directive",
+          "named": true
+        },
+        {
           "type": "constructor_declaration",
           "named": true
         },
@@ -1013,6 +1025,68 @@
     }
   },
   {
+    "type": "compile_condition",
+    "named": true,
+    "fields": {
+      "left": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "compile_condition",
+            "named": true
+          }
+        ]
+      },
+      "operator": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "!",
+            "named": false
+          },
+          {
+            "type": "&&",
+            "named": false
+          },
+          {
+            "type": "||",
+            "named": false
+          }
+        ]
+      },
+      "right": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "compile_condition",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "compile_condition",
+          "named": true
+        },
+        {
+          "type": "defined_condition",
+          "named": true
+        },
+        {
+          "type": "target_condition",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "compile_error_directive",
     "named": true,
     "fields": {
@@ -1151,6 +1225,10 @@
           "named": true
         },
         {
+          "type": "configuration_directive",
+          "named": true
+        },
+        {
           "type": "elif_directive",
           "named": true
         },
@@ -1199,6 +1277,10 @@
         },
         {
           "type": "conditional_class_members",
+          "named": true
+        },
+        {
+          "type": "configuration_directive",
           "named": true
         },
         {
@@ -1373,6 +1455,22 @@
         "types": [
           {
             "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "configuration_directive",
+    "named": true,
+    "fields": {
+      "flag": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
             "named": true
           }
         ]
@@ -1576,6 +1674,22 @@
     "fields": {}
   },
   {
+    "type": "defined_condition",
+    "named": true,
+    "fields": {
+      "flag": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "destructor_declaration",
     "named": true,
     "fields": {
@@ -1703,7 +1817,7 @@
         "required": true,
         "types": [
           {
-            "type": "target_condition",
+            "type": "compile_condition",
             "named": true
           }
         ]
@@ -2250,10 +2364,20 @@
     "fields": {
       "condition": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
-            "type": "target_condition",
+            "type": "compile_condition",
+            "named": true
+          }
+        ]
+      },
+      "flag": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
             "named": true
           }
         ]
@@ -3756,6 +3880,10 @@
           "named": true
         },
         {
+          "type": "configuration_directive",
+          "named": true
+        },
+        {
           "type": "default_label",
           "named": true
         },
@@ -4283,6 +4411,10 @@
     "named": false
   },
   {
+    "type": "#define",
+    "named": false
+  },
+  {
     "type": "#elif",
     "named": false
   },
@@ -4295,7 +4427,19 @@
     "named": false
   },
   {
+    "type": "#ifdef",
+    "named": false
+  },
+  {
+    "type": "#ifndef",
+    "named": false
+  },
+  {
     "type": "#include",
+    "named": false
+  },
+  {
+    "type": "#undef",
     "named": false
   },
   {
@@ -4533,6 +4677,10 @@
   },
   {
     "type": "default",
+    "named": false
+  },
+  {
+    "type": "defined",
     "named": false
   },
   {

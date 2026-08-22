@@ -45,6 +45,9 @@ struct SourceUnit {
   SourceUnitId id = 0;
   std::filesystem::path path;
   std::vector<Token> tokens;
+  // Token-granular inactive source spans are retained after parsing so editor
+  // tooling can fade unselected branches without analysing them semantically.
+  std::vector<SourceSpan> inactiveSpans;
   std::size_t declarationStart = 0;
   std::size_t declarationCount = 0;
   std::optional<std::string> standardLibraryName;

@@ -116,8 +116,8 @@ description of the implementation.
   F1/F2/F3 and the same-thread `S-CALL-01` callback boundary
 - [Performance tooling](plans/performance-tooling.md)
 - [Conditional compilation and configuration flags](plans/conditional-compilation.md)
-  — proposed `#define`/`#ifdef` flag axis over the existing target conditional,
-  and the LSP inactive-region rendering it enables
+  — implemented `#define`/`#ifdef` flag axis over target conditionals, its
+  design rationale, and LSP inactive-region rendering
 - [Language restriction ledger](plans/language-alignment.md) — current
   restrictions classified by reason, readiness role, owner, and evidence
 

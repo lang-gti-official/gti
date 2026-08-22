@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/configuration_flags.h"
 #include "gti/diagnostic.h"
 #include "gti/failure_metadata.h"
 #include "gti/hir.h"
@@ -26,6 +27,7 @@ enum class FrontendPhase {
 
 struct FrontendOptions {
   TargetInfo target = TargetInfo::host();
+  ConfigurationFlags configurationFlags;
   bool analyzeRecoveredProgram = false;
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;

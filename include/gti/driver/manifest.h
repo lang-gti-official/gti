@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/configuration_flags.h"
 #include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
 #include "gti/driver/native_toolchain.h"
@@ -106,13 +107,20 @@ struct ProjectProfile {
   ProjectNativeSettings native;
 };
 
+struct ProjectBuildSettings {
+  ConfigurationFlags defines;
+  std::vector<SourceSpan> defineDeclarations;
+  SourceSpan declaration;
+};
+
 class ProjectManifest final {
 public:
   ProjectManifest(
       std::filesystem::path path, ProjectPackage package,
       std::vector<ProjectTarget> targets, std::vector<ProjectProfile> profiles,
       std::vector<ProjectDependency> dependencies = {},
-      std::optional<ProjectWorkspaceManifest> workspace = std::nullopt);
+      std::optional<ProjectWorkspaceManifest> workspace = std::nullopt,
+      ProjectBuildSettings build = {});
 
   [[nodiscard]] const std::filesystem::path &path() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -122,6 +130,7 @@ public:
   [[nodiscard]] const std::vector<ProjectDependency> &dependencies() const;
   [[nodiscard]] const std::optional<ProjectWorkspaceManifest> &
   workspace() const;
+  [[nodiscard]] const ProjectBuildSettings &build() const;
   [[nodiscard]] const ProjectTarget *findTarget(std::string_view name) const;
   [[nodiscard]] const ProjectProfile *findProfile(std::string_view name) const;
 
@@ -133,6 +142,7 @@ private:
   std::vector<ProjectProfile> buildProfiles;
   std::vector<ProjectDependency> packageDependencies;
   std::optional<ProjectWorkspaceManifest> workspaceManifest;
+  ProjectBuildSettings projectBuildSettings;
 };
 
 enum class ManifestDiscoveryStatus {

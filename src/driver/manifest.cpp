@@ -1211,12 +1211,14 @@ ProjectManifest::ProjectManifest(
     std::filesystem::path path, ProjectPackage package,
     std::vector<ProjectTarget> targets, std::vector<ProjectProfile> profiles,
     std::vector<ProjectDependency> dependencies,
-    std::optional<ProjectWorkspaceManifest> workspace)
+    std::optional<ProjectWorkspaceManifest> workspace,
+    ProjectBuildSettings build)
     : manifestPath(std::move(path)), rootPath(manifestPath.parent_path()),
       packageIdentity(std::move(package)), projectTargets(std::move(targets)),
       buildProfiles(std::move(profiles)),
       packageDependencies(std::move(dependencies)),
-      workspaceManifest(std::move(workspace)) {}
+      workspaceManifest(std::move(workspace)),
+      projectBuildSettings(std::move(build)) {}
 
 std::string_view projectTargetKindName(ProjectTargetKind kind) {
   switch (kind) {
@@ -1255,6 +1257,10 @@ const std::vector<ProjectDependency> &ProjectManifest::dependencies() const {
 const std::optional<ProjectWorkspaceManifest> &
 ProjectManifest::workspace() const {
   return workspaceManifest;
+}
+
+const ProjectBuildSettings &ProjectManifest::build() const {
+  return projectBuildSettings;
 }
 
 const ProjectTarget *ProjectManifest::findTarget(std::string_view name) const {
@@ -1404,7 +1410,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
   toml::table document = std::move(parsed).table();
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
-                  "dependencies", "workspace"},
+                  "dependencies", "workspace", "build"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -1492,6 +1498,54 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
       document, packageRoot, sourceName, source, result.diagnostics);
   std::optional<ProjectWorkspaceManifest> workspace = parseWorkspace(
       document, packageRoot, sourceName, source, result.diagnostics);
+  ProjectBuildSettings build;
+  if (const toml::node *buildNode = document.get("build")) {
+    build.declaration = sourceSpan(sourceName, source, *buildNode);
+    const toml::table *buildTable = buildNode->as_table();
+    if (buildTable == nullptr) {
+      result.diagnostics.push_back(
+          buildDiagnostic("GTI-B1004", build.declaration,
+                          "Manifest field 'build' must be a table."));
+    } else {
+      validateFields(*buildTable, {"defines"}, "build", sourceName, source,
+                     result.diagnostics);
+      build.defines =
+          stringArray(*buildTable, "defines", "Build", sourceName, source,
+                      result.diagnostics, &build.defineDeclarations);
+      std::vector<std::pair<std::string, SourceSpan>> valid;
+      for (std::size_t index = 0; index < build.defines.size(); ++index) {
+        if (!isConfigurationFlagName(build.defines[index])) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1005", build.defineDeclarations[index],
+                              "Build define '" + build.defines[index] +
+                                  "' is not an ordinary GTI identifier."));
+          continue;
+        }
+        valid.emplace_back(build.defines[index],
+                           build.defineDeclarations[index]);
+      }
+      std::sort(valid.begin(), valid.end(),
+                [](const auto &left, const auto &right) {
+                  if (left.first != right.first) {
+                    return left.first < right.first;
+                  }
+                  return left.second.start < right.second.start;
+                });
+      valid.erase(std::unique(valid.begin(), valid.end(),
+                              [](const auto &left, const auto &right) {
+                                return left.first == right.first;
+                              }),
+                  valid.end());
+      build.defines.clear();
+      build.defineDeclarations.clear();
+      build.defines.reserve(valid.size());
+      build.defineDeclarations.reserve(valid.size());
+      for (auto &[name, declaration] : valid) {
+        build.defines.push_back(std::move(name));
+        build.defineDeclarations.push_back(std::move(declaration));
+      }
+    }
+  }
 
   std::vector<ProjectTarget> targets;
   if (const toml::node *targetsNode = document.get("targets")) {
@@ -1706,7 +1760,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
   result.status = ManifestLoadStatus::Success;
   result.manifest.emplace(manifestPath, std::move(package), std::move(targets),
                           std::move(profiles), std::move(dependencies),
-                          std::move(workspace));
+                          std::move(workspace), std::move(build));
   return result;
 }
 

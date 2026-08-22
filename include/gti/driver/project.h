@@ -16,6 +16,7 @@ struct ProjectBuildOverrides {
   std::optional<CppStandard> cppStandard;
   std::optional<ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
+  ConfigurationFlags configurationFlags;
 };
 
 class ProjectBuildRequest final {
@@ -57,6 +58,7 @@ public:
                    OptimizationLevel optimization, CppStandard cppStandard,
                    bool keepCpp, NativeInputs nativeInputs,
                    std::vector<PackageSourceRoot> packageSourceRoots,
+                   ConfigurationFlags configurationFlags,
                    std::string projectModelIdentity);
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
@@ -76,6 +78,7 @@ public:
   [[nodiscard]] bool keepCpp() const;
   [[nodiscard]] const NativeInputs &nativeInputs() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
+  [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
   [[nodiscard]] const std::string &projectModelIdentity() const;
 
 private:
@@ -96,6 +99,7 @@ private:
   bool retainGeneratedSource;
   NativeInputs resolvedNativeInputs;
   std::vector<PackageSourceRoot> resolvedPackageSources;
+  ConfigurationFlags resolvedConfigurationFlags;
   std::string resolvedProjectModelIdentity;
 };
 

@@ -1,8 +1,10 @@
 # Conditional Compilation And Configuration Flags
 
-> **Plan status:** proposal. Nothing in the *Proposed surface* section below is
-> implemented. The *Verified baseline* section describes behaviour that exists
-> today and was read from source, not inferred.
+> **Plan status:** implemented by `S-CFG-01` for GTI 0.292.0. The language
+> contract now lives in
+> [`programs-and-targets.md`](../language/programs-and-targets.md) and the
+> canonical grammar. This document retains the design rationale and delivery
+> evidence.
 
 This plan extends GTI's existing compile-time conditional to carry named
 configuration flags — `#define DEBUG`, `#ifdef DEBUG` — so that a unit can vary
@@ -25,10 +27,10 @@ implementation.
 A systems language needs both axes. The target axis is a property of the
 machine; the flag axis is a property of the build.
 
-## Verified baseline
+## Prior baseline
 
-Read from source at the time of writing. This is what a new implementation
-must extend rather than replace.
+This was the implemented baseline before `S-CFG-01` and is retained to explain
+the architecture the slice extended rather than replaced.
 
 | Directive | Token | Notes |
 | --- | --- | --- |
@@ -128,7 +130,7 @@ property the build system and LSP both rely on.
 Unchanged from today. Emitted C++ contains the selected branch and nothing
 else. No `#define` in GTI source becomes a `#define` in generated C++.
 
-## Proposed surface
+## Implemented surface
 
 ### Directives
 
@@ -143,9 +145,8 @@ else. No `#define` in GTI source becomes a `#define` in generated C++.
 
 ### Condition grammar
 
-The condition language grows from a single comparison to a boolean expression.
-Proposed EBNF, to be added to `docs/language/grammar.ebnf` alongside the
-existing `target-condition`:
+The condition language grew from a single comparison to a boolean expression.
+The canonical EBNF in `docs/language/grammar.ebnf` now uses this precedence:
 
 ```ebnf
 compile-condition   = compile-or ;
@@ -187,24 +188,24 @@ Three sources, in increasing precedence:
 A later `#define` of an already-defined flag is a no-op, not an error.
 `#undef` of an undefined flag is likewise a no-op, matching C.
 
-Predefined flags are **not** proposed here. The target axis already covers
+Predefined flags are deliberately absent. The target axis already covers
 platform identification and adding `__GTI__`-style predefines would create two
 overlapping ways to ask the same question.
 
 ## Diagnostics
 
-Proposed codes. The next free value in each family was checked against the
-tree: `GTI-L` is allocated to 0011, `GTI-I` to 0010, `GTI-P` to 0002, `GTI-S`
-to 2074.
+The delivered diagnostic contract is:
 
 | Code | Phase | Condition |
 | --- | --- | --- |
 | `GTI-L0012` | Lexer | `#define`/`#undef`/`#ifdef`/`#ifndef` not followed by an identifier |
 | `GTI-I0011` | Loader | `#define` names a flag with a replacement list — "Configuration flags carry no value; use a `constexpr` selected by `#ifdef`." |
-| `GTI-I0012` | Loader | `#undef` without a matching visible `#define` in a `--strict-defines` build (opt-in; a no-op otherwise) |
 | `GTI-P0003` | Parser | malformed boolean condition — unbalanced parentheses, missing operand |
 | `GTI-P0004` | Parser | `defined` used outside a compile-time condition |
-| `GTI-S2075` | Semantics | a flag is referenced by `#ifdef` but defined nowhere in the project — warning, not error; catches the misspelling C silently treats as false |
+| `GTI-S2075` | Semantics | a flag is referenced by a condition but defined nowhere in the compilation — warning, not error; catches the misspelling C silently treats as false |
+
+The optional `--strict-defines` mode and its proposed `GTI-I0012` diagnostic
+did not ship; ordinary `#undef` of an absent flag is intentionally a no-op.
 
 `GTI-S2075` is the one with no C equivalent and the highest practical value.
 `#ifdef DEBGU` in C is silently false forever. GTI can see the whole define set
@@ -225,7 +226,7 @@ This is a direct dividend of D1 — it only holds because flags carry no value.
 
 ### Mechanism
 
-Two candidates, both viable in Neovim:
+Two candidates were considered:
 
 1. **Semantic token modifier** — add `inactiveCode` to the `tokenModifiers`
    legend in `src/lsp/main.cpp` (line 1483, currently `declaration`,
@@ -234,8 +235,8 @@ Two candidates, both viable in Neovim:
 2. **`DiagnosticTag.Unnecessary`** — standard LSP since 3.15, renders as faded
    in most clients with no configuration.
 
-**Recommendation: the semantic token modifier**, with `DiagnosticTag` rejected
-rather than kept as a fallback. Inactive code is not a diagnostic; publishing
+The implementation uses the semantic token modifier, with `DiagnosticTag`
+rejected rather than kept as a fallback. Inactive code is not a diagnostic; publishing
 one per inactive branch would fill the diagnostic list and the quickfix window
 with entries the user cannot act on. The legend already exists, so the modifier
 costs one string.
@@ -244,22 +245,15 @@ Note the client-support caveat: clients that do not request semantic tokens get
 no greying and must not be broken by its absence. The
 [LSP evolution plan](lsp-evolution.md) acceptance checks apply.
 
-### Work required
+### Delivered work
 
-The blocker is that the tooling layer currently walks **only** the active
-branch — `language_queries.cpp` lines 1343 and 1510 call `activeBranch(target)`
-and recurse into it alone. Inactive branches are in the AST but invisible to
-every query.
-
-1. Extend the tooling walk to visit inactive branches, tagging their tokens
-   with the new modifier. Semantics must still analyse only the active branch:
-   this is a tooling-layer traversal, not a semantic one, and must not be
-   implemented by widening `visitConditionalStmt`.
-2. Ensure inactive-branch tokens are lexically classified only. An inactive
-   branch has no resolved types, so requesting hover or go-to-definition inside
-   one must degrade cleanly rather than fabricate a result.
-3. Recompute on define-set change. Editing `gti.toml` defines, or a `#define`
-   earlier in the file, must invalidate the token cache for the unit.
+1. `SourceUnit` retains loader-resolved inactive token spans and the semantic
+   token adapter applies the modifier without widening semantic analysis.
+2. Inactive identifiers use lexical classification only; semantic queries
+   degrade cleanly when no resolved occurrence exists.
+3. The LSP watches `gti.toml`, reloads `[build].defines`, and invalidates every
+   open document's analysis and token cache when the manifest changes. A source
+   edit already follows the ordinary document-generation invalidation path.
 
 ### Acceptance
 
@@ -270,8 +264,8 @@ the rendering after a reload.
 
 ## Implementation phases
 
-Each phase is independently landable and independently verifiable. Phases 1–3
-are compiler-side and have no LSP dependency; phase 5 depends on 1–3 only.
+All six phases landed as one coherent vertical slice. The dependency order is
+retained below as implementation history.
 
 | Phase | Scope | Exit gate |
 | --- | --- | --- |
@@ -286,24 +280,19 @@ C1 is deliberately first and flag-free: it is the only phase that touches the
 existing condition parser, so landing it alone keeps the blast radius on
 already-shipped conditionals small and testable.
 
-## Tests
+## Verification coverage
 
-- **Parser/loader unit tests** for each new diagnostic code, following the
-  fixture pattern in `tests/fixtures/`.
-- **Selection matrix**: a fixture compiled under several define sets, asserting
-  which branch reached the output. This is the core correctness test and should
-  assert on emitted C++, not on a log.
-- **Dead-branch define isolation** (D3) as an explicit named test — this is the
-  rule most likely to regress silently.
-- **Syntactic validity of inactive branches**: a fixture whose inactive branch
-  contains a deliberate syntax error must still fail. This guards property (1)
-  against an implementation that starts skipping tokens as an optimisation.
-- **LSP**: extend `tests/lsp_smoke_test.py` with a semantic-token request over
-  a conditional fixture, asserting the modifier appears on inactive spans and
-  not on active ones.
-- **No corpus movement**: `tests/mir_census_test.py` must be unchanged by C1–C4.
-  These phases add no MIR bodies; a census delta means something leaked into
-  the backend.
+- `compiler_pipeline` covers every new diagnostic, boolean/source/include
+  selection under multiple flag sets, externally seeded `#undef`, dead-branch
+  isolation, inactive-branch syntax rejection, emitted C++, and formatting.
+- `project_model`, `cli_workflow`, and `project_cli_workflow` cover manifest
+  validation/canonicalization, plan/cache identity, metadata schema 9, direct
+  and project `-D`, and successful-warning presentation.
+- Tree-sitter corpus/query gates cover the syntax and highlighting.
+- `lsp_protocol` asserts the `inactiveCode` modifier on nested inactive spans
+  and flips the selected arm after a watched `gti.toml` define change.
+- `mir_census_regression` remains unchanged: the feature adds no MIR bodies and
+  leaks no directive into the backend.
 
 ## Explicitly out of scope
 
@@ -327,15 +316,9 @@ Deferred, not rejected:
 
 This plan owns no work queue of its own.
 [`docs/plans/implementation-sequence.md`](implementation-sequence.md) is the
-single queue, and this work is registered there as **`S-CFG-01`**, order 4,
-state *planned*, prerequisite `M-BACK-02` done. It must not preempt the active
-backend-authority campaign.
+single queue, where **`S-CFG-01`** is recorded complete.
 
 [`docs/plans/language-alignment.md`](language-alignment.md) carries the
-matching restriction row **`R-BUILD-CONFIG`** (class *choice*, readiness
-*design-first*), recording that build-configuration variance is currently
-inexpressible, with this document as the reconsideration evidence.
-
-Once any phase lands, the implemented behaviour moves to
-`docs/language/programs-and-targets.md` and `docs/language/grammar.ebnf`, per
-the rule that `docs/plans/` describes future work only.
+matching restriction row **`R-BUILD-CONFIG`** as closed. Implemented behaviour
+is specified in `docs/language/programs-and-targets.md` and
+`docs/language/grammar.ebnf`; this plan is rationale and historical evidence.

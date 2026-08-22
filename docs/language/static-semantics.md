@@ -569,7 +569,7 @@ A non-generic free function or static method may be `constexpr` when its
 parameters and return use those scalar domains. Its body may use scalar local
 bindings, assignment and compound assignment, increment and decrement,
 blocks, returns, ordinary and constexpr conditionals, loops, switch,
-`break`/`continue`, target conditionals, recursion, and calls to available
+`break`/`continue`, compile-time conditionals, recursion, and calls to available
 constexpr definitions. Calling such a function at runtime remains an ordinary
 GTI call.
 

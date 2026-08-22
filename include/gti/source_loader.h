@@ -1,7 +1,9 @@
 #pragma once
 
+#include "gti/configuration_flags.h"
 #include "gti/diagnostic.h"
 #include "gti/source_graph.h"
+#include "gti/target.h"
 #include "gti/token.h"
 
 #include <cstddef>
@@ -10,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace lang {
@@ -25,7 +28,9 @@ public:
        const std::unordered_map<std::string, std::string> &sourceOverrides = {},
        const std::vector<std::filesystem::path> &standardLibraryRoots = {},
        std::optional<std::size_t> completionOffset = std::nullopt,
-       const std::vector<PackageSourceRoot> &packageSourceRoots = {});
+       const std::vector<PackageSourceRoot> &packageSourceRoots = {},
+       TargetInfo target = TargetInfo::host(),
+       ConfigurationFlags configurationFlags = {});
 
   [[nodiscard]] bool hadError() const;
 
@@ -102,6 +107,9 @@ private:
   std::vector<PackageSourceRoot> packageSourceRoots;
   bool entrySourceConsumed = false;
   std::optional<std::size_t> completionOffset;
+  TargetInfo targetInfo = TargetInfo::host();
+  std::unordered_set<std::string> activeFlags;
+  std::unordered_set<std::string> declaredFlags;
 };
 
 } // namespace lang

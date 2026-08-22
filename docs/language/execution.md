@@ -51,7 +51,7 @@ effect of A completes before B begins. Safe GTI has no pair of source
 subexpressions whose relative execution order is selected by the backend.
 
 This order applies after semantic analysis has selected declarations,
-overloads, conversions, dispatch, and active target-conditional branches.
+overloads, conversions, dispatch, and active compile-time-conditional branches.
 Compile-time name lookup and target selection are not runtime evaluations.
 
 ### 4.2.1 Operands, Calls, And Assignments
@@ -250,7 +250,7 @@ Program source units are initialized by this deterministic walk:
    on its first visit; and
 4. within a unit, initialize selected namespace globals and non-generic class
    static fields by increasing source position. A static field occupies the
-   position of its field declaration. Inactive target-conditional declarations
+   position of its field declaration. Inactive compile-time declarations
    contribute no step.
 
 Implicit prelude edges injected into ordinary units do not repeat step 1.

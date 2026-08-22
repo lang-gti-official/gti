@@ -13,7 +13,15 @@ are compiled into `gti_compiler` from `src/compiler/source_loader.cpp`.
 `SourceGraph` traversal/mutation and `SourceManager` location work compile in
 `src/compiler/source_graph.cpp` and `src/compiler/diagnostic.cpp`. The loader
 canonicalizes source identity, lexes each unit, resolves `#include` directives,
-and builds `SourceGraph`.
+resolves target/configuration conditions in source order, and builds
+`SourceGraph`. The initial valueless flag set comes from `FrontendOptions`.
+Active `#define`/`#undef` directives update that set and are removed before
+parsing; they never substitute tokens. A definition before an include enters
+that unit, and active definitions made there remain visible when loading
+resumes. Definitions in an inactive branch do not leak. The loader records the
+source-ordered value on each `defined(NAME)` flag token while retaining every
+branch for the parser; semantic selection still owns target comparisons and
+boolean composition.
 Quoted paths are relative GTI files; `<std/name>` resolves only beneath the
 configured GTI standard-library roots. When the driver supplies an immutable
 package graph, `<alias/name>` resolves only through the including package's
@@ -39,9 +47,10 @@ loaded entry point resumes the same parser/semantic/HIR/MIR pipeline; it is not
 a second include resolver or frontend representation.
 
 Each `SourceUnit` retains its path, logical import where applicable, tokens,
-dependency edges, and final declaration range in the combined transitional
-`Program`. Semantic visibility uses the graph: a unit sees itself, direct
-includes, and the prelude, not arbitrary declarations in the combined AST.
+token-granular inactive spans for editor presentation, dependency edges, and
+final declaration range in the combined transitional `Program`. Semantic
+visibility uses the graph: a unit sees itself, direct includes, and the
+prelude, not arbitrary declarations in the combined AST.
 
 `SourceGraph::compilationOrder()` supplies the current dependency-first parsing
 and combined-AST assembly order. It is not runtime program-initialization
@@ -54,8 +63,8 @@ closed rather than silently changing order.
 Semantics consumes those facts to build the separate immutable
 `ProgramInitializationPlan`: ordered prelude roots precede the entry walk,
 explicit include edges are followed in lexical dependency-first order with
-first-visit deduplication, and only declarations in active target branches are
-admitted in source order. Source-unit IDs, loader worklist order,
+first-visit deduplication, and only declarations in selected compile-time
+branches are admitted in source order. Source-unit IDs, loader worklist order,
 `compilationOrder()`, and the combined declaration vector are therefore not
 execution authority.
 
@@ -186,7 +195,8 @@ rather than deep-copied.
 - Change grammar and recovery in `Parser`/AST, not semantic lookup.
 - Preserve source-unit identity and half-open byte spans for downstream
   diagnostics and tooling.
-- Parse every target-conditional branch; semantics selects the active branch.
+- Resolve source-ordered flag references in `SourceLoader`, parse every branch,
+  and keep target comparison and boolean selection in semantics.
 - Add each new AST node to every applicable visitor, HIR path, formatter,
   Tree-sitter grammar, and tooling surface rather than leaving a silent default.
 

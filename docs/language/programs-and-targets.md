@@ -74,22 +74,55 @@ hosted program boundary completes required GTI cleanup, reports the structured
 record, and terminates with status 70 as specified in
 [Execution And Runtime Semantics](execution.md#410-defined-runtime-failure).
 
-## 6.2 Target Selection
+## 6.2 Target And Configuration Selection
 
-`#if`, `#elif`, and `#else` select declarations or block items using the
-specified target properties. Every branch is parsed; only the selected branch
-participates in semantic analysis and execution. Target conditionals are not a
-textual macro processor and do not lower to native preprocessor directives.
+`#if`, `#elif`, and `#else` select declarations, class members, or block items
+using target properties and valueless configuration flags. `#ifdef NAME` is
+equivalent to `#if defined(NAME)`; `#ifndef NAME` is equivalent to
+`#if !defined(NAME)`. Conditions compose target comparisons and `defined(...)`
+with `!`, `&&`, `||`, and parentheses using ordinary boolean precedence.
+
+Every branch is parsed and must be syntactically valid; only the selected
+branch participates in semantic analysis, HIR/MIR lowering, and execution.
+Conditional compilation is not a textual macro processor and no directive
+lowers to a native preprocessor directive.
+
+`#define NAME` defines a case-sensitive flag from that point in source order;
+`#undef NAME` removes it. Repeating a definition and undefining an absent flag
+are no-ops. A definition in an inactive branch has no effect. Definitions
+before an include are visible while that unit is loaded, and active definitions
+made by the included unit remain visible afterwards. Includes themselves
+remain forbidden inside a conditional, and each included unit is loaded once.
+
+Flags carry no value and never replace tokens. A replacement list such as
+`#define BUFFER_SIZE 4096` is ill-formed; a typed `constexpr` selected by a
+flag is the value-bearing alternative. Function-like macros, stringification,
+token pasting, arithmetic flag expressions, and predefined compiler-identity
+flags are not part of GTI.
+
+An invocation may seed the initial flag set with repeatable `-D NAME` options.
+A project may seed it for every target/profile plan in `gti.toml`:
+
+```toml
+[build]
+defines = ["DEBUG", "USE_EPOLL"]
+```
+
+CLI flags are added to manifest flags. Source directives are then applied in
+load order, so a later source `#undef` can deliberately remove either input.
+Flag names use ordinary GTI identifier syntax. Referencing a flag that is
+defined nowhere in the loaded program produces warning `GTI-S2075` and still
+evaluates false.
 
 `#error "message"` is a compile-time diagnostic directive. It is syntactically
-valid wherever target conditionals are valid and makes the program ill-formed
-only when it appears outside a conditional or in the selected branch. Its
-message is reported against the GTI directive; it is never forwarded to a
-native preprocessor.
+valid wherever compile-time conditionals are valid and makes the program
+ill-formed only when it appears outside a conditional or in the selected
+branch. Its message is reported against the GTI directive; it is never
+forwarded to a native preprocessor.
 
 The frontend, optimizer, and backend shall consume equivalent target facts.
 
-Target conditions have exactly three case-sensitive properties:
+Target comparisons have exactly three case-sensitive properties:
 
 | Property | Current values produced by a supported triple |
 | --- | --- |
@@ -164,10 +197,10 @@ extent.
 The selected layout and every source layout-query result are frontend facts,
 not LLVM or C++ layout objects. A compiler configuration without a supported
 layout is rejected as `GTI-S2062`
-before parsing or semantic analysis can select a target branch and before any
-backend runs. Installed-toolchain tests compare the host selection against the
-native scalar, pointer, positive-array, and `[[c_abi]]` record ABI on every
-supported build target.
+before parsing or semantic analysis can consume a selected compile-time branch
+and before any backend runs. Installed-toolchain tests compare the host
+selection against the native scalar, pointer, positive-array, and `[[c_abi]]`
+record ABI on every supported build target.
 
 Target selection does not itself promise cross-compilation. A compiler-library
 client may analyze a program with any supported normalized target facts, but

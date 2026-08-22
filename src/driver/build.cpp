@@ -744,6 +744,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
                static_cast<std::uint64_t>(request.compilation().cppStandard()));
   identity.add("optimization", static_cast<std::uint64_t>(
                                    request.compilation().optimization()));
+  for (const std::string &flag : request.compilation().configurationFlags()) {
+    identity.add("configuration.flag", flag);
+  }
 
   const TargetInfo &target = request.compilation().target();
   identity.add("target.os", target.os);
@@ -1823,6 +1826,8 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
 
           result.compilation.status = CompilationStatus::Success;
           result.compilation.sources = std::move(compilationInputs.sources);
+          result.compilation.diagnostics =
+              std::move(compilationInputs.diagnostics);
           result.compilation.artifact =
               BackendArtifact{.kind = BackendArtifactKind::Source,
                               .contents = lookup.generated,

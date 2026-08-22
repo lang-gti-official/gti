@@ -360,7 +360,7 @@ if(GTI_BUILD_LSP)
   find_package(Threads REQUIRED)
   add_executable("gti_lsp" "src/lsp/main.cpp")
   target_include_directories("gti_lsp" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
-  target_link_libraries("gti_lsp" PRIVATE gti_compiler Threads::Threads)
+  target_link_libraries("gti_lsp" PRIVATE gti_driver Threads::Threads)
   target_compile_definitions(
     "gti_lsp"
     PRIVATE

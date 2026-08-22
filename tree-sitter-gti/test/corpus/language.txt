@@ -508,8 +508,9 @@ int load() { return 1; }
 (source_file
   (conditional_declaration
     (if_directive
-      (target_condition
-        (string_literal)))
+      (compile_condition
+        (target_condition
+          (string_literal))))
     (function_declaration
       (type
         (expected_type
@@ -539,6 +540,97 @@ int load() { return 1; }
             (primary_expression
               (literal
                 (integer_literal)))))))
+    (endif_directive)))
+
+==================
+Configuration flags and boolean compile conditions
+==================
+
+#define DEBUG
+#if defined(DEBUG) && !(target.os == "never")
+int selected() { return 1; }
+#elif defined(FALLBACK)
+int selected() { return 2; }
+#else
+int selected() { return 3; }
+#endif
+#undef DEBUG
+#ifndef DEBUG
+int main() { return selected(); }
+#endif
+
+---
+
+(source_file
+  (configuration_directive
+    flag: (identifier))
+  (conditional_declaration
+    (if_directive
+      condition: (compile_condition
+        left: (compile_condition
+          (defined_condition
+            flag: (identifier)))
+        right: (compile_condition
+          (compile_condition
+            (compile_condition
+              (target_condition
+                value: (string_literal)))))))
+    (function_declaration
+      return_type: (type
+        (primitive_type))
+      name: (identifier)
+      parameters: (parameter_clause)
+      body: (block
+        (return_statement
+          value: (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal)))))))
+    (elif_directive
+      condition: (compile_condition
+        (defined_condition
+          flag: (identifier))))
+    (function_declaration
+      return_type: (type
+        (primitive_type))
+      name: (identifier)
+      parameters: (parameter_clause)
+      body: (block
+        (return_statement
+          value: (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal)))))))
+    (else_directive)
+    (function_declaration
+      return_type: (type
+        (primitive_type))
+      name: (identifier)
+      parameters: (parameter_clause)
+      body: (block
+        (return_statement
+          value: (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal)))))))
+    (endif_directive))
+  (configuration_directive
+    flag: (identifier))
+  (conditional_declaration
+    (if_directive
+      flag: (identifier))
+    (function_declaration
+      return_type: (type
+        (primitive_type))
+      name: (identifier)
+      parameters: (parameter_clause)
+      body: (block
+        (return_statement
+          value: (initializer_expression
+            (call_expression
+              function: (primary_expression
+                (identifier))
+              arguments: (argument_list))))))
     (endif_directive)))
 
 ==================

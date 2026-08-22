@@ -23,16 +23,18 @@ gti build|check|run|test|clean|metadata project mode
   native processes, or project output policy.
 - `gti_cpp_backend` contains the compiled C++ emitter and consumes the immutable
   compiler-owned `BackendInput` contract. It depends on `gti_compiler`; the LSP
-  does not depend on it.
+  never invokes it.
 - `gti_driver` in `include/gti/driver/` and `src/driver/` owns immutable
   compilation/build requests, resources, manifests, project plans, artifacts,
   native command construction, and process execution.
 - `src/cli/` owns argument routing, diagnostics/output presentation, and exit
   status. It constructs driver requests rather than reimplementing compilation.
-- `gti_lsp` is built whenever `GTI_BUILD_LSP` is enabled. Its private JSON
-  protocol machinery reuses the mandatory LLVM support dependency, so LSP
-  availability no longer depends on discovering or bundling a separate json-c
-  library.
+- `gti_lsp` is built whenever `GTI_BUILD_LSP` is enabled. It links the driver
+  for canonical read-only manifest discovery/parsing of `[build].defines`, but
+  does not construct compilation, backend, or native-process requests. Its
+  private JSON protocol machinery reuses the mandatory LLVM support dependency,
+  so LSP availability no longer depends on discovering or bundling a separate
+  json-c library.
 
 `gti_driver` exposes `compileWithBackend` as the generic whole-program backend
 seam. The driver runs the same frontend, optimization, and verified-MIR gates
@@ -80,7 +82,10 @@ package does not load a downstream LLVM package.
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
 Its source graph produces one whole-program C++ artifact and one native compiler
-invocation. Accepted native arguments after `--` remain exact argv values.
+invocation. Repeatable `-D NAME` options seed valueless GTI configuration flags
+for the invocation. Accepted native arguments after `--` remain exact argv
+values; native `-DNAME[=VALUE]` operands there are compiler arguments and do
+not define GTI flags.
 The shared native-argument policy rejects response files and recognized option
 families that replace driver-owned output, executable build mode,
 language/optimization, target, sysroot, or data layout. Raw Clang cc1/driver
@@ -126,6 +131,14 @@ rejects a test target and points to `gti test`. `clean` removes only a validated
 tool-owned subtree. When a package has one executable plus test targets, that
 executable remains the default for `build`, `check`, and `run`. `metadata` is
 read-only.
+
+An optional top-level `[build]` table accepts
+`defines = ["DEBUG", "FEATURE"]`. Names must be ordinary GTI identifiers;
+they are sorted and deduplicated. Repeatable project-command `-D NAME` values
+are added to the manifest set. The effective set is immutable in every
+`ProjectBuildPlan`, participates in its model identity, and is passed through
+the shared frontend request. Metadata schema 9 reports that effective `defines`
+array beside each target/profile output plan.
 
 `gti build --all` builds every declared executable and test target of the
 selected package for one profile. Each target is delegated to a child
@@ -174,8 +187,10 @@ then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 `GTI_CXX`, then `CXX`, then `c++`.
 
 Project and direct modes construct the same `CompilationRequest` and
-`ExecutableBuildRequest`. A manifest describes package/target policy; it does
-not replace `SourceGraph` or flatten GTI visibility.
+`ExecutableBuildRequest`. `CompilationRequest` carries the normalized initial
+configuration flag set alongside target and source-graph inputs. A manifest
+describes package/target policy; it does not replace `SourceGraph` or flatten
+GTI visibility.
 
 ### Workspaces And Local Source Dependencies
 
@@ -281,7 +296,7 @@ refuse the build with `GTI-B17xx` diagnostics. A plain build may materialize
 a lock-covered missing checkout; `--offline` and `--locked` never run git,
 so `gti fetch && gti build --locked` is the reproducible-pipeline shape.
 `gti metadata` and `gti clean` never acquire dependencies, and metadata
-schema 8 publishes each package's source as `path` or
+schema 9 publishes each package's source as `path` or
 `git+<url>#<rev>#<checksum>`. A fetched package's own path dependencies must
 stay inside its checkout; its git dependencies join the same locked closure
 transitively. The workspace model identity carries the git source identity,
@@ -349,9 +364,9 @@ MIR, backend generation, or final native linking.
 
 The current key includes:
 
-- the GTI release and project-manifest model identities, backend C++ standard,
-  optimization, execution profile, target triple, and complete GTI data
-  layout;
+- the GTI release and project-manifest model identities, normalized GTI
+  configuration flags, backend C++ standard, optimization, execution profile,
+  target triple, and complete GTI data layout;
 - the ordered `SourceGraph::preludeRoots()` logical identities, followed by
   SHA-256 content identities for every loaded GTI unit, ordered logical source
   edges, and standard-library import names;

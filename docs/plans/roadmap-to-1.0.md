@@ -126,7 +126,7 @@ metadata, typed HIR, and structural MIR:
 | Area | Implemented foundation |
 | --- | --- |
 | Values | fixed-width integers, `int`/`uint`, exact binary32 `float` and binary64 `double`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating/checked-result add/subtract/multiply, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants including passive native records, defined modulo/shift edges, immutable-by-default bindings |
-| Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
+| Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target/configuration conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, one-level `T*`/`const T*` raw pointers, and declaration-identity-bound compiler-private capability types |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
