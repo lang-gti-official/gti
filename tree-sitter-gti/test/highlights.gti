@@ -232,3 +232,15 @@ extern "C" {
 }
 
 using NativeCallback = (int32_t, c_string) -> int32_t;
+
+#define HIGHLIGHT_FLAG
+#if defined(HIGHLIGHT_FLAG)
+int configured_highlight() { return 1; }
+#endif
+#undef HIGHLIGHT_FLAG
+#ifdef HIGHLIGHT_FLAG
+int configured_ifdef_highlight() { return 2; }
+#endif
+#ifndef HIGHLIGHT_FLAG
+int configured_ifndef_highlight() { return 3; }
+#endif

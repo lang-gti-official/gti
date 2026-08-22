@@ -17,9 +17,10 @@ class ConditionEvaluator final {
 public:
   ConditionEvaluator(std::vector<Token> &tokens, std::size_t begin,
                      std::size_t end, const TargetInfo &target,
-                     const std::unordered_set<std::string> &flags)
-      : tokens(tokens), current(begin), end(end), target(target), flags(flags) {
-  }
+                     const std::unordered_set<std::string> &flags,
+                     std::vector<ConfigurationToken> &configurationTokens)
+      : tokens(tokens), current(begin), end(end), target(target), flags(flags),
+        configurationTokens(configurationTokens) {}
 
   [[nodiscard]] std::optional<bool> evaluate() { return compileOr(); }
 
@@ -70,12 +71,16 @@ private:
 
     if (current < end && tokens[current].kind == TokenKind::IDENTIFIER &&
         tokens[current].lexeme == "defined") {
+      configurationTokens.push_back({.kind = ConfigurationTokenKind::Operator,
+                                     .span = tokenSpan(tokens[current])});
       ++current;
       if (!matches(TokenKind::LEFT_PAREN) || current >= end ||
           tokens[current].kind != TokenKind::IDENTIFIER) {
         return std::nullopt;
       }
       Token &flag = tokens[current++];
+      configurationTokens.push_back(
+          {.kind = ConfigurationTokenKind::Flag, .span = tokenSpan(flag)});
       flag.configurationFlagReference = true;
       const bool isDefined = flags.contains(flag.lexeme);
       flag.configurationFlagDefined = isDefined;
@@ -120,6 +125,7 @@ private:
   std::size_t end;
   const TargetInfo &target;
   const std::unordered_set<std::string> &flags;
+  std::vector<ConfigurationToken> &configurationTokens;
 };
 
 std::size_t directiveLineEnd(const std::vector<Token> &tokens,
@@ -452,6 +458,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
 
   std::vector<Token> output;
   std::vector<SourceSpan> inactiveSpans;
+  std::vector<ConfigurationToken> configurationTokens;
   int braceDepth = 0;
   std::size_t includeOccurrence = 0;
   struct ConditionalFrame {
@@ -492,12 +499,19 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       const bool parentActive = currentPathActive();
       bool selected = false;
       if (token.kind == TokenKind::HASH_IF) {
-        selected = ConditionEvaluator(fileTokens, index + 1, fileTokens.size(),
-                                      targetInfo, activeFlags)
-                       .evaluate()
-                       .value_or(false);
+        selected =
+            ConditionEvaluator(fileTokens, index + 1, fileTokens.size(),
+                               targetInfo, activeFlags, configurationTokens)
+                .evaluate()
+                .value_or(false);
       } else {
         const std::size_t end = directiveLineEnd(fileTokens, index);
+        if (index + 1 < end &&
+            fileTokens[index + 1].kind == TokenKind::IDENTIFIER) {
+          configurationTokens.push_back(
+              {.kind = ConfigurationTokenKind::Flag,
+               .span = tokenSpan(fileTokens[index + 1])});
+        }
         if (index + 1 >= end ||
             fileTokens[index + 1].kind != TokenKind::IDENTIFIER ||
             index + 2 != end) {
@@ -526,7 +540,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     } else if (token.kind == TokenKind::HASH_ELIF) {
       const bool selected =
           ConditionEvaluator(fileTokens, index + 1, fileTokens.size(),
-                             targetInfo, activeFlags)
+                             targetInfo, activeFlags, configurationTokens)
               .evaluate()
               .value_or(false);
       if (conditionals.empty()) {
@@ -566,6 +580,11 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       const bool hasName = index + 1 < end &&
                            fileTokens[index + 1].kind == TokenKind::IDENTIFIER;
       const bool hasExtra = hasName && index + 2 < end;
+      if (hasName) {
+        configurationTokens.push_back(
+            {.kind = ConfigurationTokenKind::Flag,
+             .span = tokenSpan(fileTokens[index + 1])});
+      }
       if (!hasName) {
         reportFlagName(token);
       } else if (hasExtra) {
@@ -661,6 +680,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   SourceUnit *loadedUnit = graph.findUnit(unitId);
   loadedUnit->tokens = std::move(output);
   loadedUnit->inactiveSpans = std::move(inactiveSpans);
+  loadedUnit->configurationTokens = std::move(configurationTokens);
   states[key].state = LoadState::Loaded;
   return unitId;
 }

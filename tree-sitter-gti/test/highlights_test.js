@@ -212,6 +212,31 @@ requireCapture(212, "event", "variable.parameter");
 requireCapture(226, "upcast", "function.method.call");
 requireCapture(226, "Base", "type");
 
+const defineFlagRow = fixtureLines.findIndex(
+  (line) => line === "#define HIGHLIGHT_FLAG",
+);
+const definedFlagRow = fixtureLines.findIndex((line) =>
+  line.includes("defined(HIGHLIGHT_FLAG)"),
+);
+const undefFlagRow = fixtureLines.findIndex(
+  (line) => line === "#undef HIGHLIGHT_FLAG",
+);
+const ifdefFlagRow = fixtureLines.findIndex(
+  (line) => line === "#ifdef HIGHLIGHT_FLAG",
+);
+const ifndefFlagRow = fixtureLines.findIndex(
+  (line) => line === "#ifndef HIGHLIGHT_FLAG",
+);
+requireCapture(defineFlagRow, "#define", "keyword.directive.define");
+requireCapture(defineFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
+requireCapture(definedFlagRow, "#if", "keyword.directive");
+requireCapture(definedFlagRow, "defined", "function.macro");
+requireCapture(definedFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
+requireCapture(undefFlagRow, "#undef", "keyword.directive");
+requireCapture(undefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
+requireCapture(ifdefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
+requireCapture(ifndefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
+
 const blockCommentFixture = path.join(__dirname, "block_comments.gti");
 const blockCommentCaptures = queryCaptures(
   "highlights",

@@ -32,6 +32,16 @@ enum class SourceUnitRole {
   StandardLibrary,
 };
 
+enum class ConfigurationTokenKind {
+  Operator,
+  Flag,
+};
+
+struct ConfigurationToken {
+  ConfigurationTokenKind kind = ConfigurationTokenKind::Flag;
+  SourceSpan span;
+};
+
 struct SourceDependency {
   SourceUnitId source = 0;
   SourceUnitId target = 0;
@@ -48,6 +58,10 @@ struct SourceUnit {
   // Token-granular inactive source spans are retained after parsing so editor
   // tooling can fade unselected branches without analysing them semantically.
   std::vector<SourceSpan> inactiveSpans;
+  // Configuration syntax is resolved by the source loader before semantic
+  // analysis. Retain its exact roles so tooling does not need to reconstruct
+  // directive grammar from neighbouring lexical tokens.
+  std::vector<ConfigurationToken> configurationTokens;
   std::size_t declarationStart = 0;
   std::size_t declarationCount = 0;
   std::optional<std::string> standardLibraryName;

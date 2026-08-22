@@ -31,10 +31,14 @@ or declaration parsing.
 
 Compile-time conditions retain loader-resolved inactive token spans in each
 `SourceUnit`. Semantic tokens apply the `inactiveCode` modifier to those spans;
-unresolved identifiers there receive lexical variable classification only, so
-an inactive branch can fade without being semantically analysed or fabricating
-hover/definition results. Clients that do not consume semantic-token modifiers
-remain unaffected.
+the loader also retains the exact `defined` operator and configuration-flag
+name roles it resolved. Flag names receive the LSP `macro` type even in an
+inactive condition, while `#define` and `defined` remain owned by the more
+precise Tree-sitter captures. Other directive keywords retain their existing
+LSP `macro` classification. Other unresolved identifiers in inactive branches
+receive lexical variable classification only, so an inactive branch can fade
+without being semantically analysed or fabricating hover/definition results.
+Clients that do not consume semantic-token modifiers remain unaffected.
 
 The `sizeof` and `alignof` reserved words use the compiler's operator token
 classification, while invalid operands publish the shared `GTI-S2063`
