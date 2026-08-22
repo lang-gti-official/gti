@@ -47,6 +47,7 @@ template <typename Enum>
   }
   if (identity.kind == CppMirThunkKind::StructuralOperatorAdapter ||
       identity.kind == CppMirThunkKind::CallableAdapter ||
+      identity.kind == CppMirThunkKind::LifecycleCleanup ||
       identity.kind == CppMirThunkKind::NativeInteropAdapter) {
     return identity.owner != 0 && identity.ordinal == 0;
   }
@@ -151,6 +152,7 @@ nativeCallbackRequirements(const MirBody &body) {
          kind == CppMirThunkKind::ProgramInitialization ||
          kind == CppMirThunkKind::StructuralOperatorAdapter ||
          kind == CppMirThunkKind::CallableAdapter ||
+         kind == CppMirThunkKind::LifecycleCleanup ||
          kind == CppMirThunkKind::NativeInteropAdapter;
 }
 
@@ -631,6 +633,8 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
         std::get_if<CppMirStructuralOperatorThunk>(&thunk.payload);
     const CppMirCallableThunk *callable =
         std::get_if<CppMirCallableThunk>(&thunk.payload);
+    const CppMirLifecycleCleanupThunk *lifecycle =
+        std::get_if<CppMirLifecycleCleanupThunk>(&thunk.payload);
     if (thunk.identity.kind == CppMirThunkKind::StructuralOperatorAdapter) {
       const bool validOperation =
           structural != nullptr &&
@@ -649,6 +653,39 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
                  "callable thunk has no exact function/capability payload",
                  std::nullopt, std::nullopt, thunk.identity);
       }
+    } else if (thunk.identity.kind == CppMirThunkKind::LifecycleCleanup) {
+      const MirDestructorInstance *destructor =
+          lifecycle == nullptr
+              ? nullptr
+              : program.findDestructorInstance(lifecycle->destructorInstance);
+      const MirClassInstance *owner =
+          destructor == nullptr ? nullptr
+                                : program.findClassInstance(destructor->owner);
+      const bool validForm =
+          lifecycle != nullptr &&
+          ordinal(lifecycle->form) < ordinal(CppMirLifecycleCleanupForm::Count);
+      const CppMirLifecycleCleanupForm expectedForm =
+          owner != nullptr && (!owner->type.arguments.empty() ||
+                               !owner->type.valueArguments.empty())
+              ? CppMirLifecycleCleanupForm::ConcreteSpecialization
+              : CppMirLifecycleCleanupForm::OrdinaryClass;
+      if (!validForm || destructor == nullptr || owner == nullptr ||
+          thunk.identity.owner != lifecycle->destructorInstance ||
+          destructor->owner != lifecycle->classInstance ||
+          owner->id != lifecycle->classInstance ||
+          owner->declaration != lifecycle->ownerClass ||
+          owner->destructor != lifecycle->destructorInstance ||
+          owner->destructorStatus != SpecialMemberStatus::Declared ||
+          !owner->requiresActiveDropState || !owner->requiresActiveCleanup ||
+          lifecycle->form != expectedForm ||
+          destructor->definitionKind != MirDefinitionKind::Source ||
+          destructor->mayRaiseDefinedFailure !=
+              lifecycle->mayRaiseDefinedFailure) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+                 "lifecycle cleanup thunk has no exact active class and "
+                 "destructor payload",
+                 std::nullopt, std::nullopt, thunk.identity);
+      }
     } else if (thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
       if (nativeCallback == nullptr) {
         addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
@@ -664,7 +701,8 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
 
     const bool declarationAdapter =
         thunk.identity.kind == CppMirThunkKind::StructuralOperatorAdapter ||
-        thunk.identity.kind == CppMirThunkKind::CallableAdapter;
+        thunk.identity.kind == CppMirThunkKind::CallableAdapter ||
+        thunk.identity.kind == CppMirThunkKind::LifecycleCleanup;
     bool validSource = ordinal(thunk.sourceKind) <
                        ordinal(CppMirGeneratedThunkSourceKind::Count);
     if (thunk.sourceKind == CppMirGeneratedThunkSourceKind::Declaration) {
@@ -1042,15 +1080,17 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
   }
   for (const CppMirGeneratedThunk &thunk : plan.thunks) {
     if (thunk.identity.kind != CppMirThunkKind::StructuralOperatorAdapter &&
-        thunk.identity.kind != CppMirThunkKind::CallableAdapter) {
+        thunk.identity.kind != CppMirThunkKind::CallableAdapter &&
+        thunk.identity.kind != CppMirThunkKind::LifecycleCleanup) {
       continue;
     }
     if (thunk.sourceKind != CppMirGeneratedThunkSourceKind::Declaration ||
         thunk.sourceDeclaration == 0 || !thunk.dependencies.empty()) {
-      addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
-               "declaration adapter requires one exact declaration source "
-               "and no generated dependencies",
-               std::nullopt, std::nullopt, thunk.identity);
+      addIssue(
+          plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
+          "declaration-generated thunk requires one exact declaration source "
+          "and no generated dependencies",
+          std::nullopt, std::nullopt, thunk.identity);
     }
   }
   for (const CppMirGeneratedThunk &thunk : plan.thunks) {

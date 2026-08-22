@@ -495,9 +495,30 @@ struct LoweredCallableAdapterItem {
                          const LoweredCallableAdapterItem &) = default;
 };
 
+enum class LoweredLifecycleCleanupForm {
+  OrdinaryClass,
+  ConcreteSpecialization,
+  Count,
+};
+
+// One target-independent containment adapter around one concrete destructor
+// MIR body. A backend chooses names and ABI spelling; these facts select the
+// exact class representation and whether the helper needs failure dispatch.
+struct LoweredLifecycleCleanupItem {
+  ClassId ownerClass = 0;
+  HirClassInstanceId classInstance = 0;
+  HirDestructorInstanceId destructorInstance = 0;
+  LoweredLifecycleCleanupForm form = LoweredLifecycleCleanupForm::OrdinaryClass;
+  bool mayRaiseDefinedFailure = true;
+
+  friend bool operator==(const LoweredLifecycleCleanupItem &,
+                         const LoweredLifecycleCleanupItem &) = default;
+};
+
 using LoweredGeneratedItemPayload =
     std::variant<std::monostate, LoweredStructuralOperatorAdapterItem,
-                 LoweredCallableAdapterItem, LoweredNativeCallbackItem>;
+                 LoweredCallableAdapterItem, LoweredLifecycleCleanupItem,
+                 LoweredNativeCallbackItem>;
 
 enum class LoweredGeneratedItemSourceKind {
   Body,

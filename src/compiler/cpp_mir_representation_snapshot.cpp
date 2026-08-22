@@ -2199,15 +2199,19 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
              declaration.requiredGeneratedItems) {
           if (required.kind ==
                   LoweredGeneratedItemKind::StructuralOperatorAdapter ||
-              required.kind == LoweredGeneratedItemKind::CallableAdapter) {
-            roots.requiredThunks.push_back(
-                {.kind =
-                     required.kind ==
-                             LoweredGeneratedItemKind::StructuralOperatorAdapter
-                         ? CppMirThunkKind::StructuralOperatorAdapter
-                         : CppMirThunkKind::CallableAdapter,
-                 .owner = required.owner,
-                 .ordinal = required.ordinal});
+              required.kind == LoweredGeneratedItemKind::CallableAdapter ||
+              required.kind == LoweredGeneratedItemKind::LifecycleCleanup) {
+            CppMirThunkKind kind = CppMirThunkKind::LifecycleCleanup;
+            if (required.kind ==
+                LoweredGeneratedItemKind::StructuralOperatorAdapter) {
+              kind = CppMirThunkKind::StructuralOperatorAdapter;
+            } else if (required.kind ==
+                       LoweredGeneratedItemKind::CallableAdapter) {
+              kind = CppMirThunkKind::CallableAdapter;
+            }
+            roots.requiredThunks.push_back({.kind = kind,
+                                            .owner = required.owner,
+                                            .ordinal = required.ordinal});
           }
         }
         if (!roots.requiredThunks.empty()) {
@@ -2218,18 +2222,22 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
            lowered.program->generatedItems()) {
         if (item.identity.kind !=
                 LoweredGeneratedItemKind::StructuralOperatorAdapter &&
-            item.identity.kind != LoweredGeneratedItemKind::CallableAdapter) {
+            item.identity.kind != LoweredGeneratedItemKind::CallableAdapter &&
+            item.identity.kind != LoweredGeneratedItemKind::LifecycleCleanup) {
           continue;
         }
+        CppMirThunkKind kind = CppMirThunkKind::LifecycleCleanup;
+        if (item.identity.kind ==
+            LoweredGeneratedItemKind::StructuralOperatorAdapter) {
+          kind = CppMirThunkKind::StructuralOperatorAdapter;
+        } else if (item.identity.kind ==
+                   LoweredGeneratedItemKind::CallableAdapter) {
+          kind = CppMirThunkKind::CallableAdapter;
+        }
         CppMirGeneratedThunk thunk{
-            .identity =
-                {.kind =
-                     item.identity.kind ==
-                             LoweredGeneratedItemKind::StructuralOperatorAdapter
-                         ? CppMirThunkKind::StructuralOperatorAdapter
-                         : CppMirThunkKind::CallableAdapter,
-                 .owner = item.identity.owner,
-                 .ordinal = item.identity.ordinal},
+            .identity = {.kind = kind,
+                         .owner = item.identity.owner,
+                         .ordinal = item.identity.ordinal},
             .sourceKind = CppMirGeneratedThunkSourceKind::Declaration,
             .sourceDeclaration = item.sourceDeclaration,
             .support = CppMirSurfaceSupport::Supported};
@@ -2242,6 +2250,20 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
                        std::get_if<LoweredCallableAdapterItem>(&item.payload)) {
           thunk.payload = CppMirCallableThunk{
               .function = adapter->function, .capability = adapter->capability};
+        } else if (const auto *cleanup =
+                       std::get_if<LoweredLifecycleCleanupItem>(
+                           &item.payload)) {
+          const CppMirLifecycleCleanupForm form =
+              cleanup->form ==
+                      LoweredLifecycleCleanupForm::ConcreteSpecialization
+                  ? CppMirLifecycleCleanupForm::ConcreteSpecialization
+                  : CppMirLifecycleCleanupForm::OrdinaryClass;
+          thunk.payload = CppMirLifecycleCleanupThunk{
+              .ownerClass = cleanup->ownerClass,
+              .classInstance = cleanup->classInstance,
+              .destructorInstance = cleanup->destructorInstance,
+              .form = form,
+              .mayRaiseDefinedFailure = cleanup->mayRaiseDefinedFailure};
         }
         snapshot.thunks.push_back(std::move(thunk));
       }
@@ -2372,6 +2394,19 @@ cppThunkSourceKind(LoweredGeneratedItemSourceKind kind) {
     return CppMirGeneratedThunkSourceKind::Count;
   }
   return CppMirGeneratedThunkSourceKind::Count;
+}
+
+[[nodiscard]] CppMirLifecycleCleanupForm
+cppLifecycleCleanupForm(LoweredLifecycleCleanupForm form) {
+  switch (form) {
+  case LoweredLifecycleCleanupForm::OrdinaryClass:
+    return CppMirLifecycleCleanupForm::OrdinaryClass;
+  case LoweredLifecycleCleanupForm::ConcreteSpecialization:
+    return CppMirLifecycleCleanupForm::ConcreteSpecialization;
+  case LoweredLifecycleCleanupForm::Count:
+    return CppMirLifecycleCleanupForm::Count;
+  }
+  return CppMirLifecycleCleanupForm::Count;
 }
 
 [[nodiscard]] std::optional<CppMirDataKind>
@@ -2592,6 +2627,14 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
                    std::get_if<LoweredCallableAdapterItem>(&item.payload)) {
       thunk.payload = CppMirCallableThunk{.function = adapter->function,
                                           .capability = adapter->capability};
+    } else if (const auto *cleanup =
+                   std::get_if<LoweredLifecycleCleanupItem>(&item.payload)) {
+      thunk.payload = CppMirLifecycleCleanupThunk{
+          .ownerClass = cleanup->ownerClass,
+          .classInstance = cleanup->classInstance,
+          .destructorInstance = cleanup->destructorInstance,
+          .form = cppLifecycleCleanupForm(cleanup->form),
+          .mayRaiseDefinedFailure = cleanup->mayRaiseDefinedFailure};
     } else if (const auto *callback =
                    std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
       thunk.payload = CppMirNativeCallbackThunk{.adapter = callback->adapter};

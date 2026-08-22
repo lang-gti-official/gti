@@ -875,6 +875,12 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
                    std::get_if<LoweredCallableAdapterItem>(&item.payload)) {
       output << " payload=callable:" << adapter->function << ':'
              << static_cast<std::size_t>(adapter->capability);
+    } else if (const auto *cleanup =
+                   std::get_if<LoweredLifecycleCleanupItem>(&item.payload)) {
+      output << " payload=lifecycle-cleanup:" << cleanup->ownerClass << ':'
+             << cleanup->classInstance << ':' << cleanup->destructorInstance
+             << ':' << static_cast<std::size_t>(cleanup->form) << ':'
+             << (cleanup->mayRaiseDefinedFailure ? "raise" : "no-raise");
     } else if (const auto *callback =
                    std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
       output << " payload=native-callback:" << callback->adapter.id << ':'

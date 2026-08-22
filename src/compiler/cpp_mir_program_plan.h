@@ -174,9 +174,27 @@ struct CppMirCallableThunk {
                          const CppMirCallableThunk &) = default;
 };
 
+enum class CppMirLifecycleCleanupForm {
+  OrdinaryClass,
+  ConcreteSpecialization,
+  Count,
+};
+
+struct CppMirLifecycleCleanupThunk {
+  ClassId ownerClass = 0;
+  HirClassInstanceId classInstance = 0;
+  HirDestructorInstanceId destructorInstance = 0;
+  CppMirLifecycleCleanupForm form = CppMirLifecycleCleanupForm::OrdinaryClass;
+  bool mayRaiseDefinedFailure = true;
+
+  friend bool operator==(const CppMirLifecycleCleanupThunk &,
+                         const CppMirLifecycleCleanupThunk &) = default;
+};
+
 using CppMirGeneratedThunkPayload =
     std::variant<std::monostate, CppMirStructuralOperatorThunk,
-                 CppMirCallableThunk, CppMirNativeCallbackThunk>;
+                 CppMirCallableThunk, CppMirLifecycleCleanupThunk,
+                 CppMirNativeCallbackThunk>;
 
 enum class CppMirGeneratedThunkSourceKind {
   Body,

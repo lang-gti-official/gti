@@ -141,11 +141,18 @@ stale, wrongly classified, or dependency-incoherent entries. Valid plans are
 either complete or explicitly unsupported; neither state can silently select
 an older emitter.
 
-`HostedEntry` and `ProgramInitialization` are currently contracted generated
-thunks. The hosted entry is rooted in its exact entry body. Program
+`HostedEntry`, `ProgramInitialization`, and lifecycle cleanup are currently
+contracted generated thunks. The hosted entry is rooted in its exact entry body. Program
 initialization exists only when the verified merged MIR initialization plan
 contains executable initializer work, and it is rooted in `Module/0`.
 Constant and implicit-zero initialization remain data-only.
+
+Each concrete source destructor that requires active-drop containment owns one
+declaration-rooted lifecycle item. Its target-independent payload identifies
+the class declaration, concrete class and destructor instances,
+ordinary-class versus concrete-template-specialization form, and defined-
+failure mode. The C++ backend chooses helper names and failure ABI spelling;
+the lowered row decides which containment helper exists.
 
 ## Executable Body Emission
 
@@ -223,10 +230,10 @@ route.
 The source-body cutover is complete, but the backend is not yet independent of
 AST/HIR representation planning. In particular, MIR does not yet provide a
 complete inventory and semantic description for every generated adapter.
-`HostedEntry`, `ProgramInitialization`, structural-operator, callable, and
-same-thread native-callback adapters have explicit plan contracts.
-Lifecycle-cleanup, other native-interop, and concrete-instance adapters still
-derive part of their shape from sealed frontend representation facts.
+`HostedEntry`, `ProgramInitialization`, structural-operator, callable,
+lifecycle-cleanup, and same-thread native-callback adapters have explicit plan
+contracts. Other native-interop and concrete-instance adapters still derive
+part of their shape from sealed frontend representation facts.
 
 Native callbacks are the first migrated generated-adapter family. The sealed
 snapshot copies each verified MIR adapter into a target-independent generated-
@@ -253,7 +260,7 @@ The current generated-item family census is:
 | Program initialization | Exact `Module/0` owner and root | Contracted |
 | Structural operator adapter | Exact function/operator payload and declaration root | Contracted; C++ spelling awaits declaration-emitter cutover |
 | Callable adapter | Exact function/capability payload and declaration root | Contracted; C++ spelling awaits declaration-emitter cutover |
-| Lifecycle cleanup | Identity kind reserved | Not yet exhaustively inventoried |
+| Lifecycle cleanup | Exact class/destructor instance, specialization form, failure mode, and destructor declaration root | Contracted; C++ names remain backend policy |
 | Native interop adapter | Exact payload, source function, MIR-operation roots, and order for native callbacks | Native callbacks contracted; other native adapters pending |
 | Concrete-instance adapter | Identity kind reserved | Not yet exhaustively inventoried |
 

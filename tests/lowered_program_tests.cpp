@@ -126,6 +126,12 @@ public:
   int32_t operator()(int32_t value) { return value + 1; }
 };
 
+class Cleanup {
+  mut int32_t value = 1;
+public:
+  ~Cleanup() { this.value = 0; }
+};
+
 mut int32_t process_seed = 1;
 
 extern "C" {
@@ -149,6 +155,7 @@ int main() {
     [[discard]] install_callback(add_one);
   }
   Counter counter = Counter();
+  Cleanup cleanup = Cleanup();
   return identity<int32_t>(counter.read()) + process_seed + apply_offset(0) - 2;
 }
 )");
@@ -235,10 +242,13 @@ void testDetachedDeterministicProgram() {
           generatedCount(
               *first,
               lang::LoweredGeneratedItemKind::StructuralOperatorAdapter) == 3 &&
+          generatedCount(
+              *first, lang::LoweredGeneratedItemKind::CallableAdapter) == 1 &&
           generatedCount(*first,
-                         lang::LoweredGeneratedItemKind::CallableAdapter) == 1,
+                         lang::LoweredGeneratedItemKind::LifecycleCleanup) == 1,
       "the lowered program should own startup, initialization, and native "
-      "callback/declaration adapter contracts without frontend pointers");
+      "callback/declaration/lifecycle adapter contracts without frontend "
+      "pointers");
   const bool declarationAdaptersRooted = std::all_of(
       first->generatedItems().begin(), first->generatedItems().end(),
       [&](const lang::LoweredGeneratedItem &item) {
@@ -260,6 +270,31 @@ void testDetachedDeterministicProgram() {
   expect(declarationAdaptersRooted,
          "structural and callable adapters should be rooted by their exact "
          "lowered function declarations");
+  const auto lifecycle = std::find_if(
+      first->generatedItems().begin(), first->generatedItems().end(),
+      [](const lang::LoweredGeneratedItem &item) {
+        return item.identity.kind ==
+               lang::LoweredGeneratedItemKind::LifecycleCleanup;
+      });
+  const auto *lifecyclePayload =
+      lifecycle == first->generatedItems().end()
+          ? nullptr
+          : std::get_if<lang::LoweredLifecycleCleanupItem>(&lifecycle->payload);
+  const lang::LoweredDeclaration *lifecycleSource =
+      lifecycle == first->generatedItems().end()
+          ? nullptr
+          : first->findDeclaration(lifecycle->sourceDeclaration);
+  expect(lifecyclePayload != nullptr && lifecycleSource != nullptr &&
+             lifecycle->sourceKind ==
+                 lang::LoweredGeneratedItemSourceKind::Declaration &&
+             std::holds_alternative<lang::LoweredDestructorDeclaration>(
+                 lifecycleSource->payload) &&
+             lifecyclePayload->destructorInstance ==
+                 lifecycle->identity.owner &&
+             lifecyclePayload->form ==
+                 lang::LoweredLifecycleCleanupForm::OrdinaryClass,
+         "lifecycle cleanup should retain one exact destructor-rooted "
+         "ordinary-class payload");
   expect(!first->declarations().empty() &&
              std::all_of(first->declarations().begin(),
                          first->declarations().end(),
@@ -392,6 +427,28 @@ void testMutationRejection() {
         hasIssue(lang::verifyLoweredProgram(cyclic),
                  lang::LoweredProgramIssueKind::CyclicGeneratedItemDependency),
         "a generated-item dependency cycle should be diagnosed");
+  }
+
+  lang::LoweredProgram invalidLifecycle = original;
+  auto &lifecycleItems =
+      lang::LoweredProgramTestAccess::generatedItems(invalidLifecycle);
+  const auto lifecycle =
+      std::find_if(lifecycleItems.begin(), lifecycleItems.end(),
+                   [](const lang::LoweredGeneratedItem &item) {
+                     return item.identity.kind ==
+                            lang::LoweredGeneratedItemKind::LifecycleCleanup;
+                   });
+  expect(lifecycle != lifecycleItems.end(),
+         "the mutation fixture should contain lifecycle cleanup");
+  if (lifecycle != lifecycleItems.end()) {
+    auto &payload =
+        std::get<lang::LoweredLifecycleCleanupItem>(lifecycle->payload);
+    ++payload.classInstance;
+    expect(
+        hasIssue(lang::verifyLoweredProgram(invalidLifecycle),
+                 lang::LoweredProgramIssueKind::InvalidGeneratedItemInventory),
+        "forging a lifecycle class instance should invalidate its exact "
+        "generated-item contract");
   }
 
   lang::LoweredProgram staleSeal = original;

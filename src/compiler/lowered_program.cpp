@@ -835,6 +835,16 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
          function.requirements.empty();
 }
 
+[[nodiscard]] bool concreteLifecycleType(const SemanticType &type) {
+  if (type == SemanticType::Unknown ||
+      type.kind == SemanticType::TypeParameter ||
+      type.kind == SemanticType::TypePack) {
+    return false;
+  }
+  return std::all_of(type.arguments.begin(), type.arguments.end(),
+                     concreteLifecycleType);
+}
+
 [[nodiscard]] DerivedGeneratedGraph
 deriveGeneratedGraph(const MirProgram &program,
                      const std::vector<LoweredDeclaration> &declarations) {
@@ -971,6 +981,70 @@ deriveGeneratedGraph(const MirProgram &program,
                    function->receiverMutability)}});
       rootDeclaration(declaration.id, identity);
     }
+  }
+
+  for (const MirDestructorInstance &destructor :
+       program.destructorInstances()) {
+    const MirClassInstance *owner = program.findClassInstance(destructor.owner);
+    if (owner == nullptr || owner->destructor != destructor.id ||
+        owner->destructorStatus != SpecialMemberStatus::Declared ||
+        !owner->requiresActiveDropState || !owner->requiresActiveCleanup ||
+        owner->cAbiRecord || owner->cAbiLayout || owner->unionLayout ||
+        owner->kind == ClassKind::Union ||
+        destructor.definitionKind != MirDefinitionKind::Source ||
+        !concreteLifecycleType(owner->type)) {
+      continue;
+    }
+
+    const LoweredDeclaration *classRow = nullptr;
+    const LoweredDeclaration *destructorRow = nullptr;
+    for (const LoweredDeclaration &declaration : declarations) {
+      if (const auto *classDeclaration =
+              std::get_if<LoweredClassDeclaration>(&declaration.payload);
+          classDeclaration != nullptr &&
+          classDeclaration->id == owner->declaration) {
+        classRow = &declaration;
+      }
+      if (const auto *destructorDeclaration =
+              std::get_if<LoweredDestructorDeclaration>(&declaration.payload);
+          destructorDeclaration != nullptr &&
+          destructorDeclaration->owner == owner->declaration) {
+        destructorRow = &declaration;
+      }
+    }
+    const auto *classDeclaration =
+        classRow == nullptr
+            ? nullptr
+            : std::get_if<LoweredClassDeclaration>(&classRow->payload);
+    if (classDeclaration == nullptr || destructorRow == nullptr ||
+        !classDeclaration->requiresActiveDropState ||
+        classDeclaration->destructor != SpecialMemberStatus::Declared) {
+      continue;
+    }
+
+    const bool generic = !classDeclaration->genericParameters.empty();
+    const bool instantiated =
+        !owner->type.arguments.empty() || !owner->type.valueArguments.empty();
+    if (generic && !instantiated) {
+      continue;
+    }
+    const LoweredLifecycleCleanupForm form =
+        generic ? LoweredLifecycleCleanupForm::ConcreteSpecialization
+                : LoweredLifecycleCleanupForm::OrdinaryClass;
+    const LoweredGeneratedItemIdentity identity{
+        .kind = LoweredGeneratedItemKind::LifecycleCleanup,
+        .owner = destructor.id};
+    graph.items.push_back(
+        {.identity = identity,
+         .sourceKind = LoweredGeneratedItemSourceKind::Declaration,
+         .sourceDeclaration = destructorRow->id,
+         .payload = LoweredLifecycleCleanupItem{
+             .ownerClass = owner->declaration,
+             .classInstance = owner->id,
+             .destructorInstance = destructor.id,
+             .form = form,
+             .mayRaiseDefinedFailure = destructor.mayRaiseDefinedFailure}});
+    rootDeclaration(destructorRow->id, identity);
   }
 
   for (auto &[address, roots] : graph.bodyRoots) {
@@ -1131,6 +1205,7 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
   if (identity.kind == LoweredGeneratedItemKind::HostedEntry ||
       identity.kind == LoweredGeneratedItemKind::StructuralOperatorAdapter ||
       identity.kind == LoweredGeneratedItemKind::CallableAdapter ||
+      identity.kind == LoweredGeneratedItemKind::LifecycleCleanup ||
       identity.kind == LoweredGeneratedItemKind::NativeInteropAdapter) {
     return identity.owner != 0 && identity.ordinal == 0;
   }
@@ -2228,7 +2303,8 @@ verifyLoweredProgram(const LoweredProgram &program) {
     const bool declarationAdapter =
         item.identity.kind ==
             LoweredGeneratedItemKind::StructuralOperatorAdapter ||
-        item.identity.kind == LoweredGeneratedItemKind::CallableAdapter;
+        item.identity.kind == LoweredGeneratedItemKind::CallableAdapter ||
+        item.identity.kind == LoweredGeneratedItemKind::LifecycleCleanup;
     std::optional<MirBodyAddress> sourceBody;
     bool sourceValid = ordinal(item.sourceKind) <
                        ordinal(LoweredGeneratedItemSourceKind::Count);
@@ -2296,6 +2372,52 @@ verifyLoweredProgram(const LoweredProgram &program) {
         addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
                  "callable adapter payload differs from its exact function "
                  "declaration",
+                 std::nullopt, item.sourceDeclaration, item.identity);
+      }
+    } else if (item.identity.kind ==
+               LoweredGeneratedItemKind::LifecycleCleanup) {
+      const auto *payload =
+          std::get_if<LoweredLifecycleCleanupItem>(&item.payload);
+      const LoweredDeclaration *source =
+          findDeclaration(program.declarations_, item.sourceDeclaration);
+      const auto *destructorDeclaration =
+          source == nullptr
+              ? nullptr
+              : std::get_if<LoweredDestructorDeclaration>(&source->payload);
+      const MirDestructorInstance *destructor =
+          payload == nullptr ? nullptr
+                             : program.mir_.findDestructorInstance(
+                                   payload->destructorInstance);
+      const MirClassInstance *owner =
+          destructor == nullptr
+              ? nullptr
+              : program.mir_.findClassInstance(destructor->owner);
+      const LoweredClassDeclaration *classDeclaration =
+          payload == nullptr
+              ? nullptr
+              : program.findClassDeclaration(payload->ownerClass);
+      const LoweredLifecycleCleanupForm expectedForm =
+          classDeclaration != nullptr &&
+                  !classDeclaration->genericParameters.empty()
+              ? LoweredLifecycleCleanupForm::ConcreteSpecialization
+              : LoweredLifecycleCleanupForm::OrdinaryClass;
+      if (payload == nullptr || destructorDeclaration == nullptr ||
+          destructor == nullptr || owner == nullptr ||
+          classDeclaration == nullptr ||
+          item.identity.owner != payload->destructorInstance ||
+          destructorDeclaration->owner != payload->ownerClass ||
+          destructor->owner != payload->classInstance ||
+          owner->id != payload->classInstance ||
+          owner->declaration != payload->ownerClass ||
+          owner->destructor != payload->destructorInstance ||
+          payload->form != expectedForm ||
+          ordinal(payload->form) >=
+              ordinal(LoweredLifecycleCleanupForm::Count) ||
+          payload->mayRaiseDefinedFailure !=
+              destructor->mayRaiseDefinedFailure) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
+                 "lifecycle cleanup payload differs from its exact class and "
+                 "destructor instances",
                  std::nullopt, item.sourceDeclaration, item.identity);
       }
     }

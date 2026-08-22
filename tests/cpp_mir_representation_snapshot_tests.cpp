@@ -1749,6 +1749,102 @@ int main() {
          "families rather than unsupported placeholders");
 }
 
+void testLifecycleCleanupGeneratedItemRows() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cpp-mir-representation-lifecycle-cleanup.gti", R"(
+class OrdinaryCleanup {
+  mut int32_t value = 1;
+public:
+  ~OrdinaryCleanup() { this.value = 0; }
+};
+
+class GenericCleanup<T> {
+  mut int32_t value = 1;
+public:
+  ~GenericCleanup() { this.value = 0; }
+};
+
+int main() {
+  OrdinaryCleanup ordinary = OrdinaryCleanup();
+  GenericCleanup<int32_t> generic = GenericCleanup<int32_t>();
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the lifecycle-cleanup fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  expectLoweredRowsMatch(frontend, "the lifecycle-cleanup fixture");
+
+  lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O1,
+                                        .target = lang::TargetInfo::host()});
+  lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, lang::TargetInfo::host());
+  expect(optimized.valid() && lowered.valid(),
+         "the lifecycle-cleanup fixture should produce LoweredProgram");
+  if (!optimized.valid() || !lowered.valid()) {
+    return;
+  }
+  lang::CppMirRepresentationSnapshotBuild build =
+      lang::buildCppMirRepresentationSnapshot(*lowered.program);
+  expect(build.valid() &&
+             thunkCount(*build.snapshot,
+                        lang::CppMirThunkKind::LifecycleCleanup) == 2,
+         "ordinary and concrete generic destructors should each own one "
+         "lifecycle cleanup row");
+  if (!build.valid()) {
+    return;
+  }
+
+  std::size_t ordinary = 0;
+  std::size_t specialization = 0;
+  bool exact = true;
+  for (const lang::CppMirGeneratedThunk &thunk : build.snapshot->thunks) {
+    if (thunk.identity.kind != lang::CppMirThunkKind::LifecycleCleanup) {
+      continue;
+    }
+    const auto *payload =
+        std::get_if<lang::CppMirLifecycleCleanupThunk>(&thunk.payload);
+    const lang::MirDestructorInstance *destructor =
+        payload == nullptr
+            ? nullptr
+            : optimized.mir.findDestructorInstance(payload->destructorInstance);
+    const lang::MirClassInstance *owner =
+        destructor == nullptr
+            ? nullptr
+            : optimized.mir.findClassInstance(destructor->owner);
+    exact =
+        exact && payload != nullptr && destructor != nullptr &&
+        owner != nullptr &&
+        thunk.sourceKind == lang::CppMirGeneratedThunkSourceKind::Declaration &&
+        thunk.sourceDeclaration != 0 &&
+        thunk.identity.owner == payload->destructorInstance &&
+        payload->classInstance == owner->id &&
+        payload->ownerClass == owner->declaration &&
+        payload->mayRaiseDefinedFailure == destructor->mayRaiseDefinedFailure;
+    ordinary +=
+        payload != nullptr &&
+        payload->form == lang::CppMirLifecycleCleanupForm::OrdinaryClass;
+    specialization +=
+        payload != nullptr &&
+        payload->form ==
+            lang::CppMirLifecycleCleanupForm::ConcreteSpecialization;
+  }
+  expect(exact && ordinary == 1 && specialization == 1,
+         "lifecycle rows should preserve exact destructor provenance and "
+         "ordinary-versus-specialization form");
+
+  const lang::CppMirProgramPlan plan =
+      lang::planCppMirProgram(optimized.mir, std::move(*build.snapshot));
+  expect(plan.complete() && plan.issues.empty() && plan.unsupported.empty(),
+         "lifecycle cleanup should be a contracted production family");
+}
+
 int main() {
   testExhaustiveSealedInventory();
   testNativeCallbackGeneratedItemRows();
@@ -1766,6 +1862,7 @@ int main() {
   testRepresentationSpellingAuthorities();
   testClosureAndCallableRows();
   testDeclarationAdapterGeneratedItemRows();
+  testLifecycleCleanupGeneratedItemRows();
 
   if (failures != 0) {
     std::cerr << failures

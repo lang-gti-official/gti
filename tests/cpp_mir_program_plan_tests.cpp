@@ -320,11 +320,14 @@ void addClosedThunkGraph(lang::CppMirRepresentationSnapshot &snapshot,
     return;
   }
 
-  const lang::CppMirThunkIdentity lifecycle{
-      .kind = lang::CppMirThunkKind::LifecycleCleanup, .owner = helper->id};
+  const lang::CppMirThunkIdentity prerequisite{
+      .kind = lang::CppMirThunkKind::ConcreteInstanceAdapter,
+      .owner = helper->id,
+      .ordinal = 1};
   const lang::CppMirThunkIdentity concrete{
       .kind = lang::CppMirThunkKind::ConcreteInstanceAdapter,
-      .owner = helper->id};
+      .owner = helper->id,
+      .ordinal = 2};
   const lang::CppMirThunkIdentity hosted{
       .kind = lang::CppMirThunkKind::HostedEntry, .owner = entry->id};
   snapshot.thunks = {
@@ -333,8 +336,8 @@ void addClosedThunkGraph(lang::CppMirRepresentationSnapshot &snapshot,
                       .owner = entry->id}},
       {.identity = concrete,
        .sourceBody = {.kind = lang::MirBodyKind::Function, .owner = helper->id},
-       .dependencies = {lifecycle}},
-      {.identity = lifecycle,
+       .dependencies = {prerequisite}},
+      {.identity = prerequisite,
        .sourceBody = {.kind = lang::MirBodyKind::Function,
                       .owner = helper->id}}};
   if (lang::CppMirBodyRepresentation *body =
@@ -459,9 +462,11 @@ void testCoherentInventoryAndThunkClosure() {
              plan.thunks[0].identity.kind ==
                  lang::CppMirThunkKind::HostedEntry &&
              plan.thunks[1].identity.kind ==
-                 lang::CppMirThunkKind::LifecycleCleanup &&
+                 lang::CppMirThunkKind::ConcreteInstanceAdapter &&
+             plan.thunks[1].identity.ordinal == 1 &&
              plan.thunks[2].identity.kind ==
-                 lang::CppMirThunkKind::ConcreteInstanceAdapter,
+                 lang::CppMirThunkKind::ConcreteInstanceAdapter &&
+             plan.thunks[2].identity.ordinal == 2,
          "generated thunks should be canonicalized dependency before user");
 }
 
@@ -916,10 +921,8 @@ void testThunkIntegrityFailures() {
   expect(cyclic.thunks.size() == 3,
          "the closed thunk fixture should contain three thunks");
   if (lang::CppMirGeneratedThunk *structural =
-          findThunk(cyclic, lang::CppMirThunkKind::LifecycleCleanup)) {
-    structural->dependencies = {
-        {.kind = lang::CppMirThunkKind::ConcreteInstanceAdapter,
-         .owner = structural->identity.owner}};
+          findThunk(cyclic, lang::CppMirThunkKind::ConcreteInstanceAdapter)) {
+    structural->dependencies = {structural->identity};
   }
   const lang::CppMirProgramPlan cyclicPlan =
       planSnapshotForTesting(frontend.mir, std::move(cyclic));

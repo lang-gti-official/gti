@@ -7397,6 +7397,8 @@ private:
   // specialization per concrete MIR instance.
   [[nodiscard]] bool generalFailureDestructorSurfaceEligible(
       const MirDestructorInstance &instance) const {
+    const CppMirLifecycleCleanupThunk *cleanup =
+        lifecycleCleanupAdapter(instance.id);
     const HirDestructorInstance *source =
         hir.findDestructorInstance(instance.id);
     if (source == nullptr || source->source == nullptr ||
@@ -7410,8 +7412,11 @@ private:
             ? &hir.classInstances()[source->owner - 1]
             : nullptr;
     const MirClassInstance *mirOwner = mir->findClassInstance(instance.owner);
-    if (owner == nullptr || owner->source == nullptr || mirOwner == nullptr ||
-        owner->id != source->owner || owner->type != mirOwner->type ||
+    if (cleanup == nullptr || owner == nullptr || owner->source == nullptr ||
+        mirOwner == nullptr || owner->id != source->owner ||
+        owner->type != mirOwner->type || cleanup->classInstance != owner->id ||
+        cleanup->ownerClass != owner->declaration ||
+        cleanup->mayRaiseDefinedFailure != instance.mayRaiseDefinedFailure ||
         !typeIsConcrete(owner->type) || !mirOwner->requiresActiveDropState ||
         !mirOwner->requiresActiveCleanup || mirOwner->cAbiRecord ||
         mirOwner->cAbiLayout || mirOwner->unionLayout ||
@@ -7432,12 +7437,16 @@ private:
     const HirDestructorInstance *source =
         hir.findDestructorInstance(instance.id);
     const MirClassInstance *owner = mir->findClassInstance(instance.owner);
+    const CppMirLifecycleCleanupThunk *cleanup =
+        lifecycleCleanupAdapter(instance.id);
     const HirClassInstance *hirOwner =
         source == nullptr || source->owner == 0 ||
                 source->owner > hir.classInstances().size()
             ? nullptr
             : &hir.classInstances()[source->owner - 1];
-    if (source == nullptr || source->source != &declaration ||
+    if (cleanup == nullptr ||
+        cleanup->form != CppMirLifecycleCleanupForm::ConcreteSpecialization ||
+        source == nullptr || source->source != &declaration ||
         owner == nullptr || hirOwner == nullptr ||
         hirOwner->source == nullptr ||
         hirOwner->source->genericParameters().empty() ||
@@ -9040,6 +9049,14 @@ private:
     if (selected == nullptr) {
       return nullptr;
     }
+    const CppMirLifecycleCleanupThunk *cleanup =
+        lifecycleCleanupAdapter(selected->id);
+    if (cleanup == nullptr ||
+        cleanup->form != CppMirLifecycleCleanupForm::OrdinaryClass ||
+        cleanup->classInstance != selected->owner ||
+        cleanup->mayRaiseDefinedFailure != selected->mayRaiseDefinedFailure) {
+      return nullptr;
+    }
     if (!generalDestructorBodyAdmitted(selected->id)) {
       return nullptr;
     }
@@ -9080,7 +9097,12 @@ private:
     }
     const MirDestructorInstance *selected =
         mir->findDestructorInstance(source->id);
-    if (selected == nullptr ||
+    const CppMirLifecycleCleanupThunk *cleanup =
+        selected == nullptr ? nullptr : lifecycleCleanupAdapter(selected->id);
+    if (selected == nullptr || cleanup == nullptr ||
+        cleanup->form != CppMirLifecycleCleanupForm::OrdinaryClass ||
+        cleanup->classInstance != selected->owner ||
+        cleanup->mayRaiseDefinedFailure != selected->mayRaiseDefinedFailure ||
         !generalFailureDestructorSurfaceEligible(*selected) ||
         !generalFailureDestructorBodyAdmitted(selected->id)) {
       return nullptr;
@@ -10879,6 +10901,26 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
                               thunk.identity.owner == info->id;
                      });
     return found == programPlan.thunks.end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] const CppMirLifecycleCleanupThunk *
+  lifecycleCleanupAdapter(HirDestructorInstanceId destructor) const {
+    const auto found = std::find_if(
+        programPlan.thunks.begin(), programPlan.thunks.end(),
+        [&](const CppMirGeneratedThunk &thunk) {
+          return thunk.identity.kind == CppMirThunkKind::LifecycleCleanup &&
+                 thunk.identity.owner == destructor;
+        });
+    if (found == programPlan.thunks.end()) {
+      return nullptr;
+    }
+    const auto *payload =
+        std::get_if<CppMirLifecycleCleanupThunk>(&found->payload);
+    if (payload == nullptr || payload->destructorInstance != destructor) {
+      throw std::logic_error(
+          "lifecycle cleanup adapter lost its sealed destructor payload");
+    }
+    return payload;
   }
 
   void emitStructuralOperatorAdapter(const FunctionDecl &function) {
