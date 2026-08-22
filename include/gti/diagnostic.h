@@ -34,6 +34,8 @@ struct SourceSpan {
   std::size_t start = 0;
   std::size_t end = 0;
   int line = 1;
+
+  friend bool operator==(const SourceSpan &, const SourceSpan &) = default;
 };
 
 struct RelatedDiagnostic {

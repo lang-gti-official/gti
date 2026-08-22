@@ -2,10 +2,15 @@
 
 Status: Accepted
 
-Implementation note (2026-08-22): the source-body portion of this decision is
-complete. The public no-MIR emitter and executable AST/HIR route are removed.
-The remaining work is a target-independent inventory for generated adapters;
-the migration-era compatibility references below are historical context.
+Implementation note (2026-08-22): the source-body portion is complete and the
+first production `LoweredProgram` boundary is implemented. The reusable driver
+constructs and verifies that immutable, pointer-free value after MIR
+optimization, and `MirBackend` is the first client that reads only this
+contract. It currently owns optimized MIR, target layout, an active declaration
+census, source/body identities, and the exact hosted-entry,
+program-initialization, and native-callback generated-item graph. Rich
+declaration/type/layout payloads and the C++ and native-header cutovers remain
+in progress; transitional `BackendInput` fields are therefore still present.
 
 ## Context
 
@@ -34,14 +39,14 @@ through the MIR architecture document and the implementation plan.
 
 Executable C++ generation converges on one immutable lowered-program input.
 
-- The lowered program contains the verified optimized MIR bodies; the
-  deterministic representation tables (C++ names and symbol identities, type
-  spellings, declaration content and ordering, layout and ABI facts); the
-  canonical failure metadata; and the program initialization and hosted entry
-  plans. The private `CppMirRepresentationSnapshot` and `CppMirProgramPlan`
-  components are the seed of these tables and grow into them; representation
-  rows are extracted from the compatibility emitter's naming authorities, not
-  re-derived downstream.
+- The lowered program contains the verified optimized MIR bodies;
+  deterministic backend-neutral declaration, symbol, type, instance, source,
+  layout, ABI, ordering, and generated-item facts; canonical failure metadata;
+  and the program initialization and hosted-entry plans. C++ names, type
+  spellings, include selection, and source syntax remain C++ backend policy.
+  The private `CppMirRepresentationSnapshot` and `CppMirProgramPlan`
+  components are migration inputs whose target-independent facts move into
+  this compiler-owned contract; they are not the final API.
 - AST, semantics, and HIR remain upstream compiler stages with unchanged
   ownership: syntax, resolved meaning, and concrete instance discovery. They
   stop being consulted by executable body emission. HIR is not deleted; it

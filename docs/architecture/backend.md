@@ -1,6 +1,7 @@
 # Backend And Native Handoff
 
-Status: current architecture after the executable-body MIR cutover.
+Status: current architecture during the single lowered-program boundary
+migration.
 
 GTI currently ships a native C++ source backend. The backend is deliberately
 split into two kinds of authority:
@@ -15,8 +16,15 @@ facts. It must not recover source-body behavior from the AST or HIR.
 
 ## Backend Contract
 
-`include/gti/backend.h` defines the target-independent `Backend` interface.
-`BackendInput` carries one coherent frontend result:
+`include/gti/backend.h` defines the backend interface. The reusable driver now
+constructs one immutable `LoweredProgram` after verified optimization. It owns
+optimized MIR and copied backend-neutral target, body, declaration-census, and
+generated-item facts, and it has no AST, semantic, or HIR pointers.
+
+`MirBackend` is the first independent contract client: it verifies and reads
+only `LoweredProgram`. During the remaining migration, `BackendInput` also
+carries the older coherent frontend tuple required by C++ and native-header
+emission:
 
 - the active parsed `Program`;
 - the `SemanticModel`;
@@ -24,15 +32,40 @@ facts. It must not recover source-body behavior from the AST or HIR.
 - verified optimized MIR;
 - the verified source MIR snapshot from before optimization;
 - the optimization result; and
-- the selected target description.
+- the selected target description; plus
+- the compiler-owned `LoweredProgram` supplied by production compilation.
 
 A backend returns a `BackendArtifact`. The C++ backend returns source text with
 the `.cpp` extension. File publication and native compiler invocation belong
 to the driver, not to the backend.
 
-The source MIR snapshot is mandatory for an executable backend. It is not an
-optional compatibility input. The optimized MIR may differ from it only by a
-rewrite accepted by `verifyMirOptimizationCoherence`.
+The source MIR snapshot remains mandatory for the transitional C++ backend.
+The optimized MIR may differ from it only by a rewrite accepted by
+`verifyMirOptimizationCoherence`. It is deliberately absent from
+`LoweredProgram`: optimization coherence is checked once while constructing
+the boundary, not re-established by future backends.
+
+## Lowered Program Construction
+
+`LoweredProgramBuilder` is the phase frontier. It checks the analyzed
+Program/target seal, semantic/HIR program plans, source and optimized MIR,
+failure metadata, source-to-optimized coherence, and concrete HIR/MIR instance
+identity before publishing a value. The value exposes const access only and
+owns all of its payloads.
+
+The current generated-item contract is complete for hosted entry, executable
+program initialization, and native callback adapters. Items have stable
+identities, exact source bodies, dependency edges, and executable-body roots.
+Construction and independent verification reject omissions, duplicates,
+reordering, missing roots, or cycles. `LoweredProgramPrinter` provides a
+versioned deterministic full serialization; process-local place snapshot
+guards are normalized in text while remaining intact in the owned MIR.
+
+The declaration inventory is currently a stable active-tree census rather
+than the final emission payload. The C++ cutover requires enriching those rows
+with copied signatures, type/class/enum/union/layout/storage facts and every
+remaining generated-item family. Until that work lands, C++ and native-header
+emission still use the transitional tuple above.
 
 ## C++ Backend Ingress
 
@@ -209,15 +242,16 @@ driver/toolchain installation contract.
 
 ## Future Backends
 
-A future LLVM or other native backend should consume the same checked
-`BackendInput`, but it must define its own representation snapshot and
-emission contracts. It must not parse generated C++, depend on C++ spelling
-helpers, or treat HIR as an executable fallback.
+A future LLVM or other native backend will consume `LoweredProgram` plus its
+own backend policy. It must not receive the transitional AST, semantic, HIR,
+source-MIR, or optimization inputs; parse generated C++; depend on C++ spelling
+helpers; or treat HIR as an executable fallback.
 
 The intended phase direction is:
 
 ```text
-source -> AST -> semantics -> HIR -> MIR -> verified optimization -> backend
+source -> AST -> semantics -> HIR -> MIR -> verified optimization
+       -> LoweredProgram -> backend
 ```
 
 AST owns syntax, semantics owns resolved language meaning, HIR owns concrete

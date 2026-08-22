@@ -1,6 +1,6 @@
 #include "gti/mir_backend.h"
 
-#include "gti/mir.h"
+#include "gti/lowered_program.h"
 #include "gti/mir_printer.h"
 
 #include <stdexcept>
@@ -8,16 +8,18 @@
 namespace lang {
 
 BackendArtifact MirBackend::generate(const BackendInput &input) {
-  // The reusable compilation boundary verifies the optimized program before
-  // any backend runs, but this backend is also a public library surface, so
-  // it re-checks rather than serializing an invalid program as if it were
-  // authoritative.
-  if (!verifyMirProgram(input.mir).valid()) {
+  if (input.loweredProgram == nullptr) {
     throw std::logic_error(
-        "MIR backend refuses to serialize an invalid MIR program");
+        "MIR backend requires the compiler-owned lowered program");
+  }
+  // This is the first independent contract client: it deliberately does not
+  // consult any transitional Program, semantic, HIR, or optimizer fields.
+  if (!verifyLoweredProgram(*input.loweredProgram).empty()) {
+    throw std::logic_error(
+        "MIR backend refuses to serialize an invalid lowered program");
   }
   return {.kind = BackendArtifactKind::Source,
-          .contents = MirPrinter().print(input.mir),
+          .contents = MirPrinter().print(input.loweredProgram->mir()),
           .extension = ".mir"};
 }
 

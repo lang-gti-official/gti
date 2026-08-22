@@ -644,6 +644,45 @@ struct MirClassFieldInfo {
                          const MirClassFieldInfo &) = default;
 };
 
+struct MirCAbiRecordFieldLayout {
+  SymbolId field = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t offsetBytes = 0;
+  std::uint64_t sizeBytes = 0;
+  std::uint32_t abiAlignmentBytes = 0;
+
+  friend bool operator==(const MirCAbiRecordFieldLayout &,
+                         const MirCAbiRecordFieldLayout &) = default;
+};
+
+struct MirCAbiRecordLayout {
+  std::uint64_t sizeBytes = 0;
+  std::uint32_t abiAlignmentBytes = 0;
+  std::vector<MirCAbiRecordFieldLayout> fields;
+
+  friend bool operator==(const MirCAbiRecordLayout &,
+                         const MirCAbiRecordLayout &) = default;
+};
+
+struct MirUnionFieldLayout {
+  SymbolId field = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t sizeBytes = 0;
+  std::uint32_t abiAlignmentBytes = 0;
+
+  friend bool operator==(const MirUnionFieldLayout &,
+                         const MirUnionFieldLayout &) = default;
+};
+
+struct MirUnionLayout {
+  std::uint64_t sizeBytes = 0;
+  std::uint32_t abiAlignmentBytes = 0;
+  std::vector<MirUnionFieldLayout> fields;
+
+  friend bool operator==(const MirUnionLayout &,
+                         const MirUnionLayout &) = default;
+};
+
 struct MirClassInstance {
   HirClassInstanceId id = 0;
   ClassId declaration = 0;
@@ -655,8 +694,8 @@ struct MirClassInstance {
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;
-  std::optional<CAbiRecordLayout> cAbiLayout;
-  std::optional<UnionLayout> unionLayout;
+  std::optional<MirCAbiRecordLayout> cAbiLayout;
+  std::optional<MirUnionLayout> unionLayout;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;

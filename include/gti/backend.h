@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/hir.h"
+#include "gti/lowered_program.h"
 #include "gti/mir.h"
 #include "gti/optimizer.h"
 
@@ -25,6 +26,10 @@ struct BackendInput {
   const MirProgram *sourceMir = nullptr;
   const OptimizationResult &optimizations;
   TargetInfo target = TargetInfo::host();
+  // Transitional until every backend has moved to the compiler-owned
+  // boundary. Production compilation always supplies this value; legacy
+  // direct C++/native-header tests may omit it while those backends migrate.
+  const LoweredProgram *loweredProgram = nullptr;
 };
 
 struct BackendArtifact {

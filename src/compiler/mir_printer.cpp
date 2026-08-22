@@ -296,13 +296,9 @@ public:
         for (std::size_t index = 0; index < instance.cAbiLayout->fields.size();
              ++index) {
           separator(index);
-          const CAbiRecordFieldLayout &field =
+          const MirCAbiRecordFieldLayout &field =
               instance.cAbiLayout->fields[index];
-          output << "{name="
-                 << (field.declaration == nullptr
-                         ? std::string_view{"?"}
-                         : std::string_view{field.declaration->name().lexeme})
-                 << ",type=";
+          output << "{symbol=" << field.field << ",type=";
           type(field.type);
           output << ",offset=" << field.offsetBytes
                  << ",size=" << field.sizeBytes
@@ -317,12 +313,9 @@ public:
         for (std::size_t index = 0; index < instance.unionLayout->fields.size();
              ++index) {
           separator(index);
-          const UnionFieldLayout &field = instance.unionLayout->fields[index];
-          output << "{name="
-                 << (field.declaration == nullptr
-                         ? std::string_view{"?"}
-                         : std::string_view{field.declaration->name().lexeme})
-                 << ",type=";
+          const MirUnionFieldLayout &field =
+              instance.unionLayout->fields[index];
+          output << "{symbol=" << field.field << ",type=";
           type(field.type);
           output << ",size=" << field.sizeBytes
                  << ",align=" << field.abiAlignmentBytes << '}';

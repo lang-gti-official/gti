@@ -138,6 +138,8 @@ struct TargetInfo {
   TargetDataLayout dataLayout{};
   ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
 
+  friend bool operator==(const TargetInfo &, const TargetInfo &) = default;
+
   [[nodiscard]] std::string_view value(TargetProperty property) const;
 
   [[nodiscard]] bool supported() const;

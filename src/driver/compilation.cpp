@@ -2,6 +2,7 @@
 
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/lowered_program.h"
 #include "gti/mir_backend.h"
 #include "gti/native_header.h"
 #include "gti/source_loader.h"
@@ -85,6 +86,18 @@ CompilationResult compileWithBackendInputs(const CompilationRequest &request,
     return result;
   };
 
+  LoweredProgramBuild loweredBuild = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir,
+      optimizedProgram.sourceMir, optimizedProgram.mir, request.target());
+  if (!loweredBuild.valid()) {
+    const std::string detail =
+        loweredBuild.issues.empty()
+            ? "unknown lowered-program construction failure"
+            : loweredBuild.issues.front().detail;
+    return backendFailure("lowered-program construction failed: " + detail);
+  }
+  LoweredProgram loweredProgram = std::move(*loweredBuild.program);
+
   try {
     result.artifact =
         backend.generate({.program = frontend.program,
@@ -93,7 +106,8 @@ CompilationResult compileWithBackendInputs(const CompilationRequest &request,
                           .mir = optimizedProgram.mir,
                           .sourceMir = &optimizedProgram.sourceMir,
                           .optimizations = optimizations,
-                          .target = request.target()});
+                          .target = request.target(),
+                          .loweredProgram = &loweredProgram});
   } catch (const std::exception &exception) {
     return backendFailure(exception.what());
   } catch (...) {

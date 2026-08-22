@@ -13360,19 +13360,19 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
              .owner = instance.id,
              .message = "C ABI record class metadata is structurally invalid"});
       } else {
-        const CAbiRecordLayout &layout = *instance.cAbiLayout;
+        const MirCAbiRecordLayout &layout = *instance.cAbiLayout;
         bool validLayout = layout.sizeBytes != 0 &&
                            layout.abiAlignmentBytes != 0 &&
                            layout.sizeBytes % layout.abiAlignmentBytes == 0 &&
                            !layout.fields.empty();
         std::uint64_t previousEnd = 0;
-        for (const CAbiRecordFieldLayout &field : layout.fields) {
+        for (const MirCAbiRecordFieldLayout &field : layout.fields) {
           const bool fieldEndValid =
               field.offsetBytes <=
               std::numeric_limits<std::uint64_t>::max() - field.sizeBytes;
           const std::uint64_t fieldEnd =
               fieldEndValid ? field.offsetBytes + field.sizeBytes : 0;
-          validLayout = validLayout && field.declaration != nullptr &&
+          validLayout = validLayout && field.field != 0 &&
                         field.type != SemanticType::Unknown &&
                         field.sizeBytes != 0 && field.abiAlignmentBytes != 0 &&
                         field.offsetBytes % field.abiAlignmentBytes == 0 &&
@@ -13402,14 +13402,14 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           !instance.requiresActiveCleanup && instance.fields.empty() &&
           instance.fieldDropOrder.empty();
       if (instance.unionLayout) {
-        const UnionLayout &layout = *instance.unionLayout;
+        const MirUnionLayout &layout = *instance.unionLayout;
         validLayout = validLayout && layout.sizeBytes != 0 &&
                       layout.abiAlignmentBytes != 0 &&
                       layout.sizeBytes % layout.abiAlignmentBytes == 0 &&
                       !layout.fields.empty() &&
                       layout.fields.size() == instance.declaredFields.size();
-        for (const UnionFieldLayout &field : layout.fields) {
-          validLayout = validLayout && field.declaration != nullptr &&
+        for (const MirUnionFieldLayout &field : layout.fields) {
+          validLayout = validLayout && field.field != 0 &&
                         field.type != SemanticType::Unknown &&
                         field.sizeBytes != 0 && field.abiAlignmentBytes != 0 &&
                         field.sizeBytes <= layout.sizeBytes &&

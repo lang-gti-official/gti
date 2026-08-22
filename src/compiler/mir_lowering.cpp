@@ -34,6 +34,55 @@ programConstantLiteral(const ConstantValue &constant) {
   return std::nullopt;
 }
 
+[[nodiscard]] std::optional<MirCAbiRecordLayout>
+lowerCAbiRecordLayout(const HirClassInstance &instance) {
+  if (!instance.cAbiLayout) {
+    return std::nullopt;
+  }
+  MirCAbiRecordLayout result{.sizeBytes = instance.cAbiLayout->sizeBytes,
+                             .abiAlignmentBytes =
+                                 instance.cAbiLayout->abiAlignmentBytes};
+  result.fields.reserve(instance.cAbiLayout->fields.size());
+  for (const CAbiRecordFieldLayout &field : instance.cAbiLayout->fields) {
+    const auto source =
+        std::find_if(instance.fields.begin(), instance.fields.end(),
+                     [&](const HirClassField &candidate) {
+                       return candidate.declaration == field.declaration;
+                     });
+    result.fields.push_back(
+        {.field = source == instance.fields.end() ? 0 : source->info.symbol,
+         .type = field.type,
+         .offsetBytes = field.offsetBytes,
+         .sizeBytes = field.sizeBytes,
+         .abiAlignmentBytes = field.abiAlignmentBytes});
+  }
+  return result;
+}
+
+[[nodiscard]] std::optional<MirUnionLayout>
+lowerUnionLayout(const HirClassInstance &instance) {
+  if (!instance.unionLayout) {
+    return std::nullopt;
+  }
+  MirUnionLayout result{.sizeBytes = instance.unionLayout->sizeBytes,
+                        .abiAlignmentBytes =
+                            instance.unionLayout->abiAlignmentBytes};
+  result.fields.reserve(instance.unionLayout->fields.size());
+  for (const UnionFieldLayout &field : instance.unionLayout->fields) {
+    const auto source =
+        std::find_if(instance.fields.begin(), instance.fields.end(),
+                     [&](const HirClassField &candidate) {
+                       return candidate.declaration == field.declaration;
+                     });
+    result.fields.push_back(
+        {.field = source == instance.fields.end() ? 0 : source->info.symbol,
+         .type = field.type,
+         .sizeBytes = field.sizeBytes,
+         .abiAlignmentBytes = field.abiAlignmentBytes});
+  }
+  return result;
+}
+
 } // namespace
 
 class MirBodyLowerer {
@@ -6276,8 +6325,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .abstract = instance.abstract,
         .polymorphic = instance.polymorphic,
         .cAbiRecord = instance.cAbiRecord,
-        .cAbiLayout = instance.cAbiLayout,
-        .unionLayout = instance.unionLayout,
+        .cAbiLayout = lowerCAbiRecordLayout(instance),
+        .unionLayout = lowerUnionLayout(instance),
         .defaultConstructor = instance.defaultConstructor,
         .copyConstructor = instance.copyConstructor,
         .moveConstructor = instance.moveConstructor,

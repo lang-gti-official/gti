@@ -986,6 +986,79 @@ void appendSourceDeclarationRows(const ProgramDeclarationInventory &inventory,
 }
 
 [[nodiscard]] bool
+exactCAbiLayoutSnapshotsMatch(const HirClassInstance &source,
+                              const MirClassInstance &lowered) {
+  if (source.cAbiLayout.has_value() != lowered.cAbiLayout.has_value()) {
+    return false;
+  }
+  if (!source.cAbiLayout) {
+    return true;
+  }
+  if (source.cAbiLayout->sizeBytes != lowered.cAbiLayout->sizeBytes ||
+      source.cAbiLayout->abiAlignmentBytes !=
+          lowered.cAbiLayout->abiAlignmentBytes ||
+      source.cAbiLayout->fields.size() != lowered.cAbiLayout->fields.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < source.cAbiLayout->fields.size();
+       ++index) {
+    const CAbiRecordFieldLayout &sourceField = source.cAbiLayout->fields[index];
+    const MirCAbiRecordFieldLayout &loweredField =
+        lowered.cAbiLayout->fields[index];
+    const auto declaration =
+        std::find_if(source.fields.begin(), source.fields.end(),
+                     [&](const HirClassField &field) {
+                       return field.declaration == sourceField.declaration;
+                     });
+    if (declaration == source.fields.end() ||
+        declaration->info.symbol != loweredField.field ||
+        sourceField.type != loweredField.type ||
+        sourceField.offsetBytes != loweredField.offsetBytes ||
+        sourceField.sizeBytes != loweredField.sizeBytes ||
+        sourceField.abiAlignmentBytes != loweredField.abiAlignmentBytes) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool
+exactUnionLayoutSnapshotsMatch(const HirClassInstance &source,
+                               const MirClassInstance &lowered) {
+  if (source.unionLayout.has_value() != lowered.unionLayout.has_value()) {
+    return false;
+  }
+  if (!source.unionLayout) {
+    return true;
+  }
+  if (source.unionLayout->sizeBytes != lowered.unionLayout->sizeBytes ||
+      source.unionLayout->abiAlignmentBytes !=
+          lowered.unionLayout->abiAlignmentBytes ||
+      source.unionLayout->fields.size() != lowered.unionLayout->fields.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < source.unionLayout->fields.size();
+       ++index) {
+    const UnionFieldLayout &sourceField = source.unionLayout->fields[index];
+    const MirUnionFieldLayout &loweredField =
+        lowered.unionLayout->fields[index];
+    const auto declaration =
+        std::find_if(source.fields.begin(), source.fields.end(),
+                     [&](const HirClassField &field) {
+                       return field.declaration == sourceField.declaration;
+                     });
+    if (declaration == source.fields.end() ||
+        declaration->info.symbol != loweredField.field ||
+        sourceField.type != loweredField.type ||
+        sourceField.sizeBytes != loweredField.sizeBytes ||
+        sourceField.abiAlignmentBytes != loweredField.abiAlignmentBytes) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool
 exactClassInstanceSnapshotsMatch(const HirClassInstance &source,
                                  const MirClassInstance &lowered) {
   if (source.id != lowered.id || source.declaration != lowered.declaration ||
@@ -995,8 +1068,8 @@ exactClassInstanceSnapshotsMatch(const HirClassInstance &source,
       source.abstract != lowered.abstract ||
       source.polymorphic != lowered.polymorphic ||
       source.cAbiRecord != lowered.cAbiRecord ||
-      source.cAbiLayout != lowered.cAbiLayout ||
-      source.unionLayout != lowered.unionLayout ||
+      !exactCAbiLayoutSnapshotsMatch(source, lowered) ||
+      !exactUnionLayoutSnapshotsMatch(source, lowered) ||
       source.defaultConstructor != lowered.defaultConstructor ||
       source.copyConstructor != lowered.copyConstructor ||
       source.moveConstructor != lowered.moveConstructor ||

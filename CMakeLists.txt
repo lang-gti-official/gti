@@ -220,6 +220,8 @@ add_library(
   "src/compiler/hir_lowering.cpp"
   "src/compiler/language_queries.cpp"
   "src/compiler/lexer.cpp"
+  "src/compiler/lowered_program.cpp"
+  "src/compiler/lowered_program_printer.cpp"
   "src/compiler/mir.cpp"
   "src/compiler/mir_dominance.cpp"
   "src/compiler/mir_lowering.cpp"
@@ -590,6 +592,11 @@ if(BUILD_TESTING)
   add_executable("gti_mir_backend_tests" "tests/mir_backend_tests.cpp")
   target_link_libraries("gti_mir_backend_tests" PRIVATE gti_cpp_backend)
   add_test(NAME mir_backend_first_family COMMAND gti_mir_backend_tests)
+
+  add_executable("gti_lowered_program_tests"
+                 "tests/lowered_program_tests.cpp")
+  target_link_libraries("gti_lowered_program_tests" PRIVATE gti_compiler)
+  add_test(NAME lowered_program_contract COMMAND gti_lowered_program_tests)
 
   add_executable("gti_cpp_mir_program_plan_tests"
                  "tests/cpp_mir_program_plan_tests.cpp")
