@@ -16335,6 +16335,24 @@ private:
   }
 
   [[nodiscard]] bool
+  callArgumentRejectedByOwnership(const SemanticType &parameter,
+                                  const SemanticType &argument,
+                                  const ExprPtr &expression) const {
+    if (expression == nullptr || parameter != argument ||
+        parameter.kind == SemanticType::Reference ||
+        parameter.kind == SemanticType::TypePack) {
+      return false;
+    }
+    const ExpressionInfo *info = semanticModel.findExpression(*expression);
+    if (info == nullptr) {
+      return false;
+    }
+    const SemanticTypeTraits traits = typeTraits(argument);
+    return (info->category == ValueCategory::Value && !traits.movable) ||
+           (info->category == ValueCategory::Place && !traits.copyable);
+  }
+
+  [[nodiscard]] bool
   callArgumentMatches(const SemanticType &parameter,
                       const SemanticType &argument, const ExprPtr &expression,
                       bool allowValueAssignment = false) const {
@@ -16650,8 +16668,14 @@ private:
       bool generatedDefault = false;
       ConstructorKind kind = ConstructorKind::Ordinary;
     };
+    struct RejectedConstructorArgument {
+      const ConstructorInfo *constructor = nullptr;
+      std::vector<SemanticType> parameterTypes;
+      std::size_t argumentIndex = 0;
+    };
     std::vector<ViableConstructor> viable;
     std::vector<const ConstructorInfo *> privateViable;
+    std::vector<RejectedConstructorArgument> rejectedArguments;
     for (const ConstructorInfo &constructor : owner.constructors) {
       if (arguments.size() < constructor.requiredParameterCount ||
           arguments.size() > constructor.parameterTypes.size()) {
@@ -16694,6 +16718,7 @@ private:
       std::vector<SemanticType> parameterTypes;
       parameterTypes.reserve(constructor.parameterTypes.size());
       bool exact = true;
+      std::optional<std::size_t> rejectedArgument;
       for (std::size_t index = 0; index < constructor.parameterTypes.size();
            ++index) {
         const SemanticType parameterType = substituteType(
@@ -16714,8 +16739,18 @@ private:
                           parameterType, argument.type, *argument.expression,
                           argument.deferred);
         if (!matches) {
+          if (argument.forwardedPackElement || argument.deferred ||
+              argument.expression == nullptr ||
+              !callArgumentRejectedByOwnership(parameterType, argument.type,
+                                               *argument.expression)) {
+            exact = false;
+            rejectedArgument.reset();
+            break;
+          }
           exact = false;
-          break;
+          if (!rejectedArgument) {
+            rejectedArgument = index;
+          }
         }
       }
       if (exact) {
@@ -16727,6 +16762,13 @@ private:
                           std::move(constructorTypeArguments),
                           std::move(constructorValueArguments), false,
                           ConstructorKind::Ordinary});
+      } else if (rejectedArgument &&
+                 (isCompilerTrustedRequester(paren) ||
+                  !constructor.compilerPrivate) &&
+                 (constructor.access != AccessModifier::Private ||
+                  currentClass == classId)) {
+        rejectedArguments.push_back(
+            {&constructor, std::move(parameterTypes), *rejectedArgument});
       }
     }
 
@@ -16850,6 +16892,33 @@ private:
                      : "Transfer the value with std::move only if the type "
                        "remains movable.");
           diagnostics.emplace_back(std::move(diagnostic));
+          currentType = constructedType;
+          return;
+        }
+        if (viable.empty() && rejectedArguments.size() == 1) {
+          const RejectedConstructorArgument &rejected =
+              rejectedArguments.front();
+          const std::size_t index = rejected.argumentIndex;
+          const std::size_t diagnosticCount = diagnostics.size();
+          reportCallArgumentMismatch(
+              index, rejected.parameterTypes[index], arguments[index].type,
+              *arguments[index].expression, "Constructor");
+          if (diagnostics.size() > diagnosticCount &&
+              rejected.constructor != nullptr &&
+              rejected.constructor->declaration != nullptr) {
+            diagnostics.back().related.push_back(
+                {tokenSpan(rejected.constructor->declaration->name()),
+                 "Exact-type candidate: " +
+                     constructorSignatureSpelling(*rejected.constructor)});
+            if (diagnostics.back().code == "GTI-S2018" &&
+                diagnostics.back().message.find("std::move") ==
+                    std::string::npos &&
+                typeTraits(rejected.parameterTypes[index]).movable) {
+              diagnostics.back().hints.emplace_back(
+                  "Pass the argument with std::move(...) when this call "
+                  "should transfer ownership.");
+            }
+          }
           currentType = constructedType;
           return;
         }

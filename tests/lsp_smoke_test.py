@@ -2690,6 +2690,105 @@ def test_static_assertion_tooling(executable, root):
         session.close()
 
 
+def test_constructor_ownership_diagnostic(executable, root):
+    source = (
+        "#include <std/string>\n"
+        "class Path {\n"
+        "public:\n"
+        "  Path(std::string value) {}\n"
+        "};\n"
+        "int main() {\n"
+        '  mut std::string source = std::string("/hello/world.txt");\n'
+        "  Path parsed = Path(source);\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "constructor-ownership-diagnostic.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and any(
+                diagnostic.get("code") == "GTI-S2018"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2018"
+        )
+        argument = source.rfind("source);")
+        declaration = source.index("Path(std::string")
+        assert (
+            "Constructor argument 1 would call the deleted copy constructor "
+            "of 'std::string'" in diagnostic["message"]
+        )
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, argument),
+            "end": lsp_position(source, argument + len("source")),
+        }
+        assert diagnostic["data"]["phase"] == "semantics"
+        assert diagnostic["data"]["hints"] == [
+            "Pass the argument with std::move(...) when this call should "
+            "transfer ownership."
+        ]
+        assert "fixes" not in diagnostic["data"]
+        assert not any(
+            item.get("code") == "GTI-S2012"
+            for item in publication["diagnostics"]
+        )
+        assert len(diagnostic["relatedInformation"]) == 1
+        related = diagnostic["relatedInformation"][0]
+        assert related["location"]["uri"] == uri
+        assert related["location"]["range"] == {
+            "start": lsp_position(source, declaration),
+            "end": lsp_position(source, declaration + len("Path")),
+        }
+        assert related["message"] == "Exact-type candidate: Path(std::string)"
+    finally:
+        session.close()
+
+
 def test_global_borrow_return_diagnostics(executable, root):
     valid_source = (
         "class Application { public: "
@@ -5706,6 +5805,7 @@ def main():
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
     test_static_assertion_tooling(sys.argv[1], root)
+    test_constructor_ownership_diagnostic(sys.argv[1], root)
     test_unique_ptr_null_state_tooling(sys.argv[1], root)
     test_global_borrow_return_diagnostics(sys.argv[1], root)
     test_cpp_reserved_identifier_diagnostic(sys.argv[1], root)
