@@ -931,7 +931,7 @@ if(BUILD_TESTING)
       set_tests_properties(
         driver_pipeline
         output_determinism defined_integer_runtime binary64_runtime sum_types_runtime
-        native_record_c_oracle native_header_c_cpp_oracle
+        native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle
         cli_workflow project_cli_workflow
         mir_backend_first_family_runtime failure_descriptor_backend_compile
         mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
