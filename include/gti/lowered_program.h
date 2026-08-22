@@ -13,12 +13,15 @@
 
 namespace lang {
 
-class HirProgram;
-class Program;
-class SemanticModel;
+class LoweredProgramBuilder;
 struct LoweredProgramTestAccess;
 
 using LoweredDeclarationId = std::size_t;
+using LoweredClassInstanceId = std::size_t;
+using LoweredFunctionInstanceId = std::size_t;
+using LoweredConstructorInstanceId = std::size_t;
+using LoweredDestructorInstanceId = std::size_t;
+using LoweredLambdaInstanceId = std::size_t;
 
 enum class LoweredBodyDefinitionKind {
   ImplicitSource,
@@ -397,7 +400,7 @@ struct LoweredSymbol {
 };
 
 struct LoweredClassInstance {
-  HirClassInstanceId id = 0;
+  LoweredClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
   std::vector<SemanticType> typeArguments;
@@ -409,10 +412,10 @@ struct LoweredClassInstance {
 };
 
 struct LoweredFunctionInstance {
-  HirFunctionInstanceId id = 0;
+  LoweredFunctionInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   FunctionId declaration = 0;
-  std::optional<HirClassInstanceId> owner;
+  std::optional<LoweredClassInstanceId> owner;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::optional<SourceSpan> instantiationSource;
@@ -423,10 +426,10 @@ struct LoweredFunctionInstance {
 };
 
 struct LoweredConstructorInstance {
-  HirConstructorInstanceId id = 0;
+  LoweredConstructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
-  HirClassInstanceId owner = 0;
+  LoweredClassInstanceId owner = 0;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::optional<SourceSpan> instantiationSource;
@@ -437,9 +440,9 @@ struct LoweredConstructorInstance {
 };
 
 struct LoweredDestructorInstance {
-  HirDestructorInstanceId id = 0;
+  LoweredDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
-  HirClassInstanceId owner = 0;
+  LoweredClassInstanceId owner = 0;
   SourceSpan source;
 
   friend bool operator==(const LoweredDestructorInstance &,
@@ -459,7 +462,7 @@ struct LoweredLambdaCapture {
 };
 
 struct LoweredLambdaInstance {
-  HirLambdaId id = 0;
+  LoweredLambdaInstanceId id = 0;
   LambdaId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
@@ -507,8 +510,8 @@ enum class LoweredLifecycleCleanupForm {
 // exact class representation and whether the helper needs failure dispatch.
 struct LoweredLifecycleCleanupItem {
   ClassId ownerClass = 0;
-  HirClassInstanceId classInstance = 0;
-  HirDestructorInstanceId destructorInstance = 0;
+  LoweredClassInstanceId classInstance = 0;
+  LoweredDestructorInstanceId destructorInstance = 0;
   LoweredLifecycleCleanupForm form = LoweredLifecycleCleanupForm::OrdinaryClass;
   bool mayRaiseDefinedFailure = true;
 
@@ -531,7 +534,7 @@ struct LoweredConcreteInstanceAdapterItem {
       LoweredConcreteInstanceAdapterKind::Function;
   MirBodyAddress body;
   std::size_t declaration = 0;
-  HirClassInstanceId ownerClassInstance = 0;
+  LoweredClassInstanceId ownerClassInstance = 0;
   bool mayRaiseDefinedFailure = true;
 
   friend bool operator==(const LoweredConcreteInstanceAdapterItem &,
@@ -649,15 +652,15 @@ public:
   findGenericParameter(GenericParameterId id) const;
   [[nodiscard]] const LoweredSymbol *findSymbol(SymbolId id) const;
   [[nodiscard]] const LoweredClassInstance *
-  findClassInstance(HirClassInstanceId id) const;
+  findClassInstance(LoweredClassInstanceId id) const;
   [[nodiscard]] const LoweredFunctionInstance *
-  findFunctionInstance(HirFunctionInstanceId id) const;
+  findFunctionInstance(LoweredFunctionInstanceId id) const;
   [[nodiscard]] const LoweredConstructorInstance *
-  findConstructorInstance(HirConstructorInstanceId id) const;
+  findConstructorInstance(LoweredConstructorInstanceId id) const;
   [[nodiscard]] const LoweredDestructorInstance *
-  findDestructorInstance(HirDestructorInstanceId id) const;
+  findDestructorInstance(LoweredDestructorInstanceId id) const;
   [[nodiscard]] const LoweredLambdaInstance *
-  findLambdaInstance(HirLambdaId id) const;
+  findLambdaInstance(LoweredLambdaInstanceId id) const;
   [[nodiscard]] const LoweredGeneratedItem *
   findGeneratedItem(const LoweredGeneratedItemIdentity &identity) const;
 
@@ -681,23 +684,6 @@ private:
   friend struct LoweredProgramTestAccess;
   friend std::vector<LoweredProgramIssue>
   verifyLoweredProgram(const LoweredProgram &program);
-};
-
-struct LoweredProgramBuild {
-  std::optional<LoweredProgram> program;
-  std::vector<LoweredProgramIssue> issues;
-
-  [[nodiscard]] bool valid() const {
-    return program.has_value() && issues.empty();
-  }
-};
-
-class LoweredProgramBuilder final {
-public:
-  [[nodiscard]] LoweredProgramBuild
-  build(const Program &program, const SemanticModel &semantics,
-        const HirProgram &hir, const MirProgram &sourceMir,
-        const MirProgram &optimizedMir, const TargetInfo &target) const;
 };
 
 [[nodiscard]] std::vector<LoweredProgramIssue>

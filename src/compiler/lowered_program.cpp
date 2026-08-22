@@ -1,4 +1,4 @@
-#include "gti/lowered_program.h"
+#include "gti/lowered_program_builder.h"
 
 #include "gti/ast.h"
 #include "gti/failure_metadata.h"
@@ -1809,34 +1809,34 @@ const LoweredSymbol *LoweredProgram::findSymbol(SymbolId id) const {
 }
 
 const LoweredClassInstance *
-LoweredProgram::findClassInstance(HirClassInstanceId id) const {
+LoweredProgram::findClassInstance(LoweredClassInstanceId id) const {
   return id == 0 || id > classInstances_.size() ? nullptr
                                                 : &classInstances_[id - 1];
 }
 
 const LoweredFunctionInstance *
-LoweredProgram::findFunctionInstance(HirFunctionInstanceId id) const {
+LoweredProgram::findFunctionInstance(LoweredFunctionInstanceId id) const {
   return id == 0 || id > functionInstances_.size()
              ? nullptr
              : &functionInstances_[id - 1];
 }
 
 const LoweredConstructorInstance *
-LoweredProgram::findConstructorInstance(HirConstructorInstanceId id) const {
+LoweredProgram::findConstructorInstance(LoweredConstructorInstanceId id) const {
   return id == 0 || id > constructorInstances_.size()
              ? nullptr
              : &constructorInstances_[id - 1];
 }
 
 const LoweredDestructorInstance *
-LoweredProgram::findDestructorInstance(HirDestructorInstanceId id) const {
+LoweredProgram::findDestructorInstance(LoweredDestructorInstanceId id) const {
   return id == 0 || id > destructorInstances_.size()
              ? nullptr
              : &destructorInstances_[id - 1];
 }
 
 const LoweredLambdaInstance *
-LoweredProgram::findLambdaInstance(HirLambdaId id) const {
+LoweredProgram::findLambdaInstance(LoweredLambdaInstanceId id) const {
   return id == 0 || id > lambdaInstances_.size() ? nullptr
                                                  : &lambdaInstances_[id - 1];
 }

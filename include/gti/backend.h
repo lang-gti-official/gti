@@ -1,35 +1,15 @@
 #pragma once
 
-#include "gti/hir.h"
-#include "gti/lowered_program.h"
-#include "gti/mir.h"
-#include "gti/optimizer.h"
-
 #include <string>
 #include <string_view>
 
 namespace lang {
 
+class LoweredProgram;
+
 enum class BackendArtifactKind {
   Source,
   Object,
-};
-
-struct BackendInput {
-  const Program &program;
-  const SemanticModel &semantics;
-  const HirProgram &hir;
-  const MirProgram &mir;
-  // Required by executable-body backends. This is the verified MIR snapshot
-  // before optimization; `mir` may differ only through a MIR-authorized
-  // rewrite accepted by `verifyMirOptimizationCoherence`.
-  const MirProgram *sourceMir = nullptr;
-  const OptimizationResult &optimizations;
-  TargetInfo target = TargetInfo::host();
-  // Transitional until every backend has moved to the compiler-owned
-  // boundary. Production compilation always supplies this value; legacy
-  // direct C++/native-header tests may omit it while those backends migrate.
-  const LoweredProgram *loweredProgram = nullptr;
 };
 
 struct BackendArtifact {
@@ -46,7 +26,8 @@ public:
   virtual ~Backend() = default;
 
   [[nodiscard]] virtual std::string_view name() const = 0;
-  [[nodiscard]] virtual BackendArtifact generate(const BackendInput &input) = 0;
+  [[nodiscard]] virtual BackendArtifact
+  generate(const LoweredProgram &program) = 0;
 };
 
 } // namespace lang

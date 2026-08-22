@@ -1,10 +1,14 @@
 #include "gti/frontend.h"
 #include "gti/lowered_program.h"
+#include "gti/lowered_program_builder.h"
 #include "gti/lowered_program_printer.h"
 #include "gti/optimizer.h"
 
+#include "lowered_program_contract_client.h"
+
 #include <algorithm>
 #include <iostream>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -202,6 +206,28 @@ void testDetachedDeterministicProgram() {
   expect(firstText.find("lowered-program-v1") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
+  const gti_test::LoweredProgramInventory inventory =
+      gti_test::inspectLoweredProgram(*first);
+  expect(inventory.deterministicText == firstText &&
+             inventory.bodies == first->bodies().size() &&
+             inventory.declarations == first->declarations().size() &&
+             inventory.symbols == first->symbols().size() &&
+             inventory.classInstances == first->classInstances().size() &&
+             inventory.functionInstances == first->functionInstances().size() &&
+             inventory.constructorInstances ==
+                 first->constructorInstances().size() &&
+             inventory.destructorInstances ==
+                 first->destructorInstances().size() &&
+             inventory.lambdaInstances == first->lambdaInstances().size() &&
+             inventory.generatedItems == first->generatedItems().size() &&
+             std::accumulate(inventory.declarationKinds.begin(),
+                             inventory.declarationKinds.end(),
+                             std::size_t{0}) == inventory.declarations &&
+             std::accumulate(inventory.generatedItemKinds.begin(),
+                             inventory.generatedItemKinds.end(),
+                             std::size_t{0}) == inventory.generatedItems,
+         "an independent contract client should enumerate and print the "
+         "complete lowered program without frontend representations");
   expect(lang::verifyLoweredProgram(*first).empty(),
          "the detached lowered program should verify after frontend owners "
          "have been destroyed");

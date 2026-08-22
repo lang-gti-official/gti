@@ -1,5 +1,7 @@
 #include "gti/native_header.h"
 
+#include "gti/lowered_program.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <iomanip>
@@ -779,20 +781,15 @@ private:
 
 } // namespace
 
-BackendArtifact NativeHeaderBackend::generate(const BackendInput &input) {
-  if (input.loweredProgram == nullptr) {
-    throw std::logic_error(
-        "native-header backend requires the lowered program boundary");
-  }
-  const std::vector<LoweredProgramIssue> issues =
-      verifyLoweredProgram(*input.loweredProgram);
+BackendArtifact NativeHeaderBackend::generate(const LoweredProgram &program) {
+  const std::vector<LoweredProgramIssue> issues = verifyLoweredProgram(program);
   if (!issues.empty()) {
     throw std::logic_error("native-header backend requires a verified lowered "
                            "program: " +
                            issues.front().detail);
   }
   return {.kind = BackendArtifactKind::Source,
-          .contents = NativeHeaderEmitter(*input.loweredProgram).emit(),
+          .contents = NativeHeaderEmitter(program).emit(),
           .extension = ".h"};
 }
 

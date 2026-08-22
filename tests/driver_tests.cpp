@@ -120,7 +120,7 @@ public:
   }
 
   [[nodiscard]] lang::BackendArtifact
-  generate(const lang::BackendInput &) override {
+  generate(const lang::LoweredProgram &) override {
     invoked = true;
     if (standardException) {
       throw std::runtime_error("deliberate backend failure");

@@ -3,6 +3,8 @@
 #include "gti/mir_printer.h"
 #include "gti/optimizer.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -163,12 +165,8 @@ lang::MirInstruction *definitionFor(lang::MirFunctionInstance *function,
 lang::BackendArtifact emit(const lang::FrontendResult &frontend,
                            const lang::MirProgram &mir,
                            const lang::OptimizationResult &compatibility) {
-  return lang::CppBackend().generate({.program = frontend.program,
-                                      .semantics = frontend.semantics,
-                                      .hir = frontend.hir,
-                                      .mir = mir,
-                                      .sourceMir = &frontend.mir,
-                                      .optimizations = compatibility});
+  static_cast<void>(compatibility);
+  return gti_test::emitCpp(frontend, frontend.mir, mir);
 }
 
 bool emissionRejected(const lang::FrontendResult &frontend,

@@ -5,6 +5,8 @@
 #include "gti/optimization/effects.h"
 #include "gti/support.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
@@ -393,12 +395,7 @@ int main() {
 
   const lang::OptimizationResult optimizations;
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("owner_access(pointer)") == std::string::npos,
          "raw dereference must not use checked-owner lowering");
   const std::size_t mainMarker =
@@ -795,12 +792,7 @@ int main() {
          "opaque void pointer C APIs should work inside unsafe");
   const lang::OptimizationResult optimizations;
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = valid.program,
-                                   .semantics = valid.semantics,
-                                   .hir = valid.hir,
-                                   .mir = valid.mir,
-                                   .sourceMir = &valid.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
   expect(artifact.contents.find("extern \"C\"") != std::string::npos &&
              artifact.contents.find("const void*") != std::string::npos,
          "C prototypes should preserve raw pointer and pointee const types");

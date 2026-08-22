@@ -5,6 +5,8 @@
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -52,6 +54,14 @@ lang::FrontendResult analyzeWithStandardLibrary(std::string name,
     }
   }
   return result;
+}
+
+lang::CppMirBodyEmissionMapRows
+buildRows(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
+          lang::CppStandard standard = lang::CppStandard::Cpp23) {
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, mir);
+  return lang::buildCppMirBodyEmissionMapRows(lowered, standard);
 }
 
 bool hasIssue(const lang::CppMirBodyEmissionAnalysis &analysis,
@@ -541,12 +551,7 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(owned.hir, lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = owned.program,
-                                   .semantics = owned.semantics,
-                                   .hir = owned.hir,
-                                   .mir = owned.mir,
-                                   .sourceMir = &owned.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(owned, owned.mir, owned.mir, optimizations);
   const auto marker = [&](std::string_view kind, std::size_t owner) {
     return artifact.contents.find(std::string(kind) + " " +
                                   std::to_string(owner) + "\n") !=
@@ -808,8 +813,8 @@ int64_t raw_distance() {
       "unsafe raw-pointer MIR should require its sealed representation "
       "capability");
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   expect(emitter.analyze(address).ready() && emitter.supportsBodyText(address),
          "the production snapshot should admit the exact raw-pointer MIR "
@@ -1021,8 +1026,8 @@ int32_t read_counter() { return Counter::value; }
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   std::size_t supported = 0;
   for (const lang::MirFunctionInstance &function :
@@ -1144,8 +1149,8 @@ class Dashboard {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::CppMirInitializerScheduleText *selected = nullptr;
   std::optional<lang::CppMirInitializerScheduleText> schedule;
@@ -1214,8 +1219,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   std::size_t arrays = 0;
   std::size_t wrappers = 0;
@@ -1292,8 +1297,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirClassInstance *owner =
       frontend.mir.findClassInstance(holder->id);
@@ -1331,12 +1336,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const auto marker = [&](std::size_t constructor) {
     return artifact.contents.find("scalar-cfg-v1 constructor-instance " +
                                   std::to_string(constructor) + "\n") !=
@@ -1440,8 +1440,8 @@ void instantiate() {
          "the owning base initializer failure effect should reach both "
          "constructors");
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   expect(
       emitter.supportsNativeContainedBaseConstruction(derivedConstructor->id),
@@ -1514,8 +1514,7 @@ void testExampleCorpusEmissionReadiness() {
     }
     lang::CppMirBodyEmissionMapRows rows = completeRows(frontend.mir);
     const lang::CppMirBodyEmissionMapRows productionRows =
-        lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
-                                             lang::CppStandard::Cpp23);
+        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
     rows.enums = productionRows.enums;
     for (const lang::CppMirEnumRepresentation &enumeration : rows.enums) {
       addType(rows, enumeration.underlyingType);
@@ -1644,18 +1643,12 @@ void testGeneralTextStepMatchesProductionEmission() {
         lang::OptimizationPipeline().run(frontend.hir,
                                          lang::OptimizationLevel::O0);
     const lang::BackendArtifact artifact =
-        lang::CppBackend().generate({.program = frontend.program,
-                                     .semantics = frontend.semantics,
-                                     .hir = frontend.hir,
-                                     .mir = frontend.mir,
-                                     .sourceMir = &frontend.mir,
-                                     .optimizations = optimizations});
+        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
 
-    lang::CppMirBodyEmissionMapRows rows = lang::buildCppMirBodyEmissionMapRows(
-        frontend.semantics, frontend.mir, lang::CppStandard::Cpp23);
+    lang::CppMirBodyEmissionMapRows rows =
+        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
     const lang::CppMirBodyEmissionMapRows again =
-        lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
-                                             lang::CppStandard::Cpp23);
+        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
     deterministic =
         deterministic && rows.types == again.types &&
         rows.bodies == again.bodies && rows.symbols == again.symbols &&
@@ -1773,8 +1766,8 @@ void testCleanupFixtureFunctionBodiesAreReady() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   bool functionBodiesReady = true;
   std::size_t scalarFunctionBodies = 0;
@@ -1847,8 +1840,8 @@ void testOwnedLifecycleConstructionBodiesReady() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::CppMirProgramEmissionAnalysis program = emitter.analyzeProgram();
   bool constructionReady = program.issues.empty();
@@ -1904,8 +1897,8 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   std::size_t dischargedReadBodies = 0;
   std::size_t checkedFlowIssues = 0;
@@ -1992,8 +1985,8 @@ int main() {
   if (entry == frontend.mir.functionInstances().end()) {
     return;
   }
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -2069,8 +2062,8 @@ int main() {
   if (entry == frontend.mir.functionInstances().end()) {
     return;
   }
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -2162,8 +2155,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress entryAddress{.kind = lang::MirBodyKind::Function,
                                           .owner = entry->id};
@@ -2176,12 +2169,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const auto productionMarker = [&](lang::HirFunctionInstanceId id) {
     return artifact.contents.find("function-instance " + std::to_string(id) +
                                   "\n") != std::string::npos;
@@ -2233,8 +2221,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -2247,12 +2235,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("function-instance " +
                                 std::to_string(entry->id) + "\n") !=
                  std::string::npos &&
@@ -2310,8 +2293,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   for (const lang::MirFunctionInstance *function : {entry, member}) {
     const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
@@ -2326,12 +2309,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
   const std::string transformedDefinition =
       "bool __gti_program::Total::__gti_fn_" +
@@ -2390,8 +2368,7 @@ int main() {
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = invoke->id};
   lang::CppMirBodyEmissionMapRows production =
-      lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
-                                           lang::CppStandard::Cpp23);
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
   {
     lang::CppMirBodyEmissionMapRows copy = production;
     const lang::CppMirBodyEmissionMap withoutOverlay{std::move(copy)};
@@ -2498,8 +2475,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = fallback->id};
@@ -2523,12 +2500,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const auto productionMarker = [&](lang::HirFunctionInstanceId id) {
     return artifact.contents.find("// GTI verified-MIR body: ") !=
                std::string::npos &&
@@ -2577,12 +2549,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
   const auto count = [&](std::string_view needle) {
     std::size_t occurrences = 0;
@@ -2694,8 +2661,8 @@ int main() {
              initializesFromRetainedLoan,
          "a retained root call result should preserve its exact loan pointer "
          "as the local reference carrier");
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = bump->id};
@@ -2713,12 +2680,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
   const auto contains = [&](std::string_view needle) {
     return text.find(needle) != std::string::npos;
@@ -2781,12 +2743,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const auto contains = [&](std::string_view needle) {
     return artifact.contents.find(needle) != std::string::npos;
   };
@@ -2849,8 +2806,8 @@ int main() {
              (*bindings)[0].parameter == 0,
          "the schedule should pair the reference field with the reference "
          "parameter");
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
                                      .owner = constructor->id};
@@ -2873,12 +2830,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find(" : target(__gti_mir_arg_0) ") !=
              std::string::npos,
          "the emitted constructor should bind the reference field in its "
@@ -2919,12 +2871,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const auto contains = [&](std::string_view needle) {
     return artifact.contents.find(needle) != std::string::npos;
   };
@@ -3009,12 +2956,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const auto containsMarker = [&](std::string_view kind, std::size_t id) {
     return artifact.contents.find(std::string(kind) + " " + std::to_string(id) +
                                   "\n") != std::string::npos;
@@ -3096,12 +3038,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("constructor-instance " +
                                 std::to_string(constructor->id)) !=
                  std::string::npos &&
@@ -3162,12 +3099,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const auto contains = [&](std::string_view needle) {
     return artifact.contents.find(needle) != std::string::npos;
   };
@@ -3252,8 +3184,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = selected->id};
@@ -3282,12 +3214,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("scalar-cfg-failure-v1 function-instance " +
                                 std::to_string(selected->id) + "\n") !=
              std::string::npos,
@@ -3397,8 +3324,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = selected->id};
@@ -3439,12 +3366,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("scalar-cfg-failure-v1 function-instance " +
                                 std::to_string(selected->id) + "\n") !=
              std::string::npos,
@@ -3550,8 +3472,8 @@ int32_t main() {
          "generated copy/move MIR should retain exact source, ownership, and "
          "destination-lifetime authority");
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -3655,8 +3577,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = forwarded->id};
@@ -3729,8 +3651,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
 
   const lang::MirBodyAddress conditionalAddress{
@@ -3816,8 +3738,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -3940,8 +3862,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
 
   const lang::MirBodyAddress defaultAddress{.kind = lang::MirBodyKind::Function,
@@ -4070,8 +3992,8 @@ int32_t main() {
          "the stable override should exercise a failure-free implementation "
          "of a conservatively failure-capable virtual contract");
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   for (const lang::MirFunctionInstance *function :
        {dereferenceOverride, incrementOverride, stableOverride, entry}) {
@@ -4087,12 +4009,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
   expect(text.find("virtual bool "
                    "__gti_operator_dereference__gti_mir_failure(") !=
@@ -4194,8 +4111,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress entryAddress{.kind = lang::MirBodyKind::Function,
                                           .owner = entry->id};
@@ -4208,12 +4125,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("scalar-cfg-failure-v1 function-instance " +
                                 std::to_string(entry->id)) !=
                  std::string::npos &&
@@ -4334,8 +4246,8 @@ int32_t main() {
          "a pure virtual declared on an abstract class should own the same "
          "status ABI as its concrete override");
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   for (const lang::MirFunctionInstance *function :
        {override, inheritedCaller, fieldReader, entry}) {
@@ -4358,12 +4270,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("virtual bool advance__gti_mir_failure(") !=
                  std::string::npos &&
              artifact.contents.find("advance__gti_mir_failure(") !=
@@ -4481,8 +4388,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = upcast->id};
@@ -4515,12 +4422,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::size_t primary = artifact.contents.find("class unique_ptr");
   const std::size_t nextMember = artifact.contents.find("const T &", primary);
   std::size_t declarations = 0;
@@ -4615,8 +4517,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = selected->id};
@@ -4700,8 +4602,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -4729,12 +4631,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("function-instance " +
                                 std::to_string(entry->id) + "\n") !=
              std::string::npos,
@@ -4776,8 +4673,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -4859,8 +4756,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   for (const lang::MirFunctionInstance *function :
        {payloadProducer, forwarder, entry}) {
@@ -4876,12 +4773,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const std::string &text = artifact.contents;
   const auto hasMarker = [&](const lang::MirFunctionInstance &function) {
     return text.find("scalar-cfg-failure-v1 function-instance " +
@@ -5021,8 +4913,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const auto failureText = [&](const lang::MirFunctionInstance &function,
                                std::string_view label) {
@@ -5108,8 +5000,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -5146,12 +5038,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("scalar-cfg-failure-v1 function-instance " +
                                 std::to_string(entry->id)) !=
                  std::string::npos &&
@@ -5230,8 +5117,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = selected->id};
@@ -5283,8 +5170,8 @@ int32_t main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = entry->id};
@@ -5315,12 +5202,7 @@ int32_t main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("scalar-cfg-failure-v1 function-instance " +
                                 std::to_string(entry->id) + "\n") !=
              std::string::npos,
@@ -5388,8 +5270,8 @@ int main() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = selected->id};
@@ -5481,8 +5363,8 @@ callback make_callback() {
     return;
   }
 
-  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, mir, lang::CppStandard::Cpp23));
   const lang::CppMirBodyEmitter emitter(mir, map);
   const lang::CppMirProgramEmissionAnalysis programAnalysis =
       emitter.analyzeProgram();

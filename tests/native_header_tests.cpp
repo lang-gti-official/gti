@@ -34,19 +34,6 @@ bool hasCode(const lang::FrontendResult &result, std::string_view code) {
                      });
 }
 
-lang::BackendInput backendInput(const lang::FrontendResult &frontend,
-                                const lang::OptimizationResult &optimizations,
-                                const lang::LoweredProgram &lowered) {
-  return {.program = frontend.program,
-          .semantics = frontend.semantics,
-          .hir = frontend.hir,
-          .mir = frontend.mir,
-          .sourceMir = &frontend.mir,
-          .optimizations = optimizations,
-          .target = lang::TargetInfo::host(),
-          .loweredProgram = &lowered};
-}
-
 void testCAndCppHeaderSurface() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("native-header.gti", R"(
@@ -93,29 +80,12 @@ int main() { return 0; }
     return;
   }
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O1);
   const lang::LoweredProgram lowered = gti_test::lowerProgram(
       frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
-  const lang::BackendInput input =
-      backendInput(frontend, optimizations, lowered);
   lang::NativeHeaderBackend headerBackend;
-  const lang::BackendArtifact first = headerBackend.generate(input);
-  const lang::BackendArtifact second = headerBackend.generate(input);
+  const lang::BackendArtifact first = headerBackend.generate(lowered);
+  const lang::BackendArtifact second = headerBackend.generate(lowered);
   const std::string &header = first.contents;
-
-  bool rejectedMissingBoundary = false;
-  try {
-    lang::BackendInput missing = input;
-    missing.loweredProgram = nullptr;
-    static_cast<void>(headerBackend.generate(missing));
-  } catch (const std::logic_error &) {
-    rejectedMissingBoundary = true;
-  }
-  expect(rejectedMissingBoundary,
-         "native-header emission should reject the transitional frontend "
-         "tuple without LoweredProgram");
 
   expect(first.extension == ".h" &&
              first.kind == lang::BackendArtifactKind::Source &&
@@ -154,7 +124,7 @@ int main() { return 0; }
          "namespaced records, strict empty parameter lists, and layout "
          "assertions");
 
-  const lang::BackendArtifact cpp = lang::CppBackend().generate(input);
+  const lang::BackendArtifact cpp = lang::CppBackend().generate(lowered);
   const std::size_t record = cpp.contents.find("struct RootRecord {");
   const std::size_t recordEnd = cpp.contents.find("};", record);
   const std::string recordBody =
@@ -209,16 +179,11 @@ int main() {
     return;
   }
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O1);
   const lang::LoweredProgram lowered = gti_test::lowerProgram(
       frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
-  const lang::BackendInput input =
-      backendInput(frontend, optimizations, lowered);
   const std::string header =
-      lang::NativeHeaderBackend().generate(input).contents;
-  const std::string cpp = lang::CppBackend().generate(input).contents;
+      lang::NativeHeaderBackend().generate(lowered).contents;
+  const std::string cpp = lang::CppBackend().generate(lowered).contents;
   expect(header.find("const char* native_name(void)") != std::string::npos &&
              header.find("native_name_length(const char* value)") !=
                  std::string::npos &&
@@ -311,15 +276,10 @@ int main() {
     return;
   }
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O1);
   const lang::LoweredProgram lowered = gti_test::lowerProgram(
       frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
-  const lang::BackendInput input =
-      backendInput(frontend, optimizations, lowered);
   const std::string header =
-      lang::NativeHeaderBackend().generate(input).contents;
+      lang::NativeHeaderBackend().generate(lowered).contents;
   expect(header.find("NativeHandle** native_handles(int32_t* count)") !=
                  std::string::npos &&
              header.find("const NativePoint* native_points(uint32_t* count)") !=

@@ -5,6 +5,8 @@
 #include "gti/optimizer.h"
 #include "gti/parser.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <iostream>
@@ -198,12 +200,7 @@ void testSemanticAndIrModel() {
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O1);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = result.program,
-                                   .semantics = result.semantics,
-                                   .hir = result.hir,
-                                   .mir = result.mir,
-                                   .sourceMir = &result.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
   expect(
       artifact.contents.find("union Bits {") != std::string::npos &&
           artifact.contents.find("std::variant<") != std::string::npos &&

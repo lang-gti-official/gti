@@ -12,7 +12,8 @@ public:
   explicit CppBackend(CppStandard standard = CppStandard::Cpp23);
 
   [[nodiscard]] std::string_view name() const override;
-  [[nodiscard]] BackendArtifact generate(const BackendInput &input) override;
+  [[nodiscard]] BackendArtifact
+  generate(const LoweredProgram &program) override;
 
 private:
   CppStandard standard;

@@ -594,9 +594,22 @@ if(BUILD_TESTING)
   add_test(NAME mir_backend_first_family COMMAND gti_mir_backend_tests)
 
   add_executable("gti_lowered_program_tests"
-                 "tests/lowered_program_tests.cpp")
+                 "tests/lowered_program_tests.cpp"
+                 "tests/lowered_program_contract_client.cpp")
   target_link_libraries("gti_lowered_program_tests" PRIVATE gti_compiler)
   add_test(NAME lowered_program_contract COMMAND gti_lowered_program_tests)
+
+  add_executable("gti_lowered_program_census"
+                 "tests/lowered_program_census.cpp"
+                 "tests/lowered_program_contract_client.cpp")
+  target_link_libraries("gti_lowered_program_census" PRIVATE gti_compiler)
+
+  add_executable("gti_backend_lowered_program_rejection_tests"
+                 "tests/backend_lowered_program_rejection_tests.cpp")
+  target_link_libraries("gti_backend_lowered_program_rejection_tests"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME backend_lowered_program_rejection
+           COMMAND gti_backend_lowered_program_rejection_tests)
 
   add_executable("gti_cpp_mir_program_plan_tests"
                  "tests/cpp_mir_program_plan_tests.cpp")
@@ -714,6 +727,21 @@ if(BUILD_TESTING)
   )
 
   if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME backend_lowered_program_boundary
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_boundary_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(
+      NAME lowered_program_corpus_census
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/lowered_program_census_test.py"
+              "$<TARGET_FILE:gti_lowered_program_census>"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/lowered_program_census_baseline.json"
+    )
+    set_tests_properties(lowered_program_corpus_census PROPERTIES TIMEOUT 900)
     add_test(
       NAME runtime_failure_subprocess
       COMMAND "${Python3_EXECUTABLE}"

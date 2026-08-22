@@ -3,12 +3,8 @@
 #include "cpp_mir_body_emitter.h"
 #include "cpp_mir_program_plan.h"
 
-#include "gti/ast.h"
 #include "gti/cpp_emitter.h"
-#include "gti/hir.h"
 #include "gti/lowered_program.h"
-#include "gti/semantic_analyzer.h"
-#include "gti/target.h"
 
 #include <optional>
 #include <string>
@@ -16,24 +12,16 @@
 
 namespace lang {
 
-// Private C++-representation boundary. Public backend callers provide only
-// frontend snapshots; they cannot author body/data/thunk support claims.
+// Private C++-representation boundary. Backend callers provide only the sealed
+// lowered program; they cannot author body/data/thunk support claims.
 enum class CppMirRepresentationSnapshotIssueKind {
   InvalidLoweredProgram,
-  CrossPhaseMismatch,
-  MissingProgramDeclaration,
-  MissingSemanticDeclaration,
-  MissingHirDeclaration,
-  MissingMirBodyIdentity,
-  InvalidHostedEntry,
-  InvalidProgramInitialization,
-  InvalidNativeCallbackAdapter,
   UnsupportedMirEmission,
 };
 
 struct CppMirRepresentationSnapshotIssue {
   CppMirRepresentationSnapshotIssueKind kind =
-      CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch;
+      CppMirRepresentationSnapshotIssueKind::InvalidLoweredProgram;
   std::string detail;
 };
 
@@ -46,29 +34,9 @@ struct CppMirRepresentationSnapshotBuild {
   }
 };
 
-// Checks the exact SemanticModel/HIR analyzed-Program/target seal, verified
-// HIR-to-MIR program-initialization plan/storage/provenance identity, and MIR
-// header/owner identities consumed by source-MIR admission and the
-// representation snapshot builder.
-[[nodiscard]] bool
-cppMirFrontendSnapshotsMatch(const SemanticModel &semantics,
-                             const HirProgram &hir, const MirProgram &mir,
-                             std::string *mismatch = nullptr);
-
-// Builds and privately seals the complete copied representation inventory for
-// one exact Program/SemanticModel/HIR/MIR/Target tuple. Support and thunk
-// claims are derived here; no boolean/capability input can bless a row.
-[[nodiscard]] CppMirRepresentationSnapshotBuild
-buildCppMirRepresentationSnapshot(const Program &program,
-                                  const SemanticModel &semantics,
-                                  const HirProgram &hir, const MirProgram &mir,
-                                  const TargetInfo &target,
-                                  CppStandard standard = CppStandard::Cpp23,
-                                  const MirProgram *sourceMir = nullptr);
-
-// Builds the same C++-private planning inventory from the compiler's sealed
-// backend boundary. This is the production route; the frontend overload is
-// retained temporarily as a migration oracle for exact equivalence tests.
+// Builds and privately seals the complete C++ representation inventory from
+// the compiler-owned backend contract. Support and generated-item claims are
+// derived here; no boolean/capability input can bless a row.
 [[nodiscard]] CppMirRepresentationSnapshotBuild
 buildCppMirRepresentationSnapshot(const LoweredProgram &program,
                                   CppStandard standard = CppStandard::Cpp23);
@@ -82,10 +50,6 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
 // rows for every non-payload enum MIR references. Facts outside this
 // inventory are deliberately absent so unsupported shapes stay fail-closed.
 [[nodiscard]] CppMirBodyEmissionMapRows
-buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
-                               const MirProgram &mir, CppStandard standard);
-
-[[nodiscard]] CppMirBodyEmissionMapRows
 buildCppMirBodyEmissionMapRows(const LoweredProgram &program,
                                CppStandard standard);
 
@@ -93,25 +57,12 @@ buildCppMirBodyEmissionMapRows(const LoweredProgram &program,
 // instance must be emitted through a source C++ template (most importantly an
 // unnameable closure type represented by its GTI generic parameter). The
 // returned count is zero when no overlay was needed; nullopt means the exact
-// semantic/HIR/MIR identities cannot produce an unambiguous overlay.
-[[nodiscard]] std::optional<std::size_t>
-cppMirApplyCallableTemplateTypeOverlays(CppMirBodyEmissionMapRows &rows,
-                                        const SemanticModel &semantics,
-                                        CppStandard standard,
-                                        const FunctionInfo &declaration,
-                                        const MirFunctionInstance &instance);
-
+// lowered declaration/MIR identities cannot produce an unambiguous overlay.
 [[nodiscard]] std::optional<std::size_t>
 cppMirApplyCallableTemplateTypeOverlays(
     CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
     CppStandard standard, const LoweredFunctionDeclaration &declaration,
     const MirFunctionInstance &instance);
-
-[[nodiscard]] std::optional<std::size_t>
-cppMirApplyGenericOwnerConstructorTypeOverlays(
-    CppMirBodyEmissionMapRows &rows, const SemanticModel &semantics,
-    const HirProgram &hir, const MirProgram &mir,
-    const ConstructorDecl &declaration, const MirConstructorInstance &instance);
 
 [[nodiscard]] std::optional<std::size_t>
 cppMirApplyGenericOwnerConstructorTypeOverlays(

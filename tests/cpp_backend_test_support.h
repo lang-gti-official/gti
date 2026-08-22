@@ -3,6 +3,7 @@
 #include "gti/backend.h"
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/lowered_program_builder.h"
 #include "gti/optimizer.h"
 
 #include <optional>
@@ -53,14 +54,28 @@ emitCpp(const lang::FrontendResult &frontend,
   }
   const lang::LoweredProgram lowered =
       lowerProgram(frontend, optimized.sourceMir, optimized.mir, target);
-  return lang::CppBackend(standard).generate({.program = frontend.program,
-                                              .semantics = frontend.semantics,
-                                              .hir = frontend.hir,
-                                              .mir = optimized.mir,
-                                              .sourceMir = &frontend.mir,
-                                              .optimizations = *compatibility,
-                                              .target = std::move(target),
-                                              .loweredProgram = &lowered});
+  return lang::CppBackend(standard).generate(lowered);
+}
+
+inline lang::BackendArtifact
+emitCpp(const lang::FrontendResult &frontend, const lang::MirProgram &sourceMir,
+        const lang::MirProgram &optimizedMir,
+        lang::CppStandard standard = lang::CppStandard::Cpp23,
+        lang::TargetInfo target = lang::TargetInfo::host()) {
+  const lang::LoweredProgram lowered =
+      lowerProgram(frontend, sourceMir, optimizedMir, target);
+  return lang::CppBackend(standard).generate(lowered);
+}
+
+inline lang::BackendArtifact
+emitCpp(const lang::FrontendResult &frontend, const lang::MirProgram &sourceMir,
+        const lang::MirProgram &optimizedMir,
+        const lang::OptimizationResult &compatibility,
+        lang::CppStandard standard = lang::CppStandard::Cpp23,
+        lang::TargetInfo target = lang::TargetInfo::host()) {
+  static_cast<void>(compatibility);
+  return emitCpp(frontend, sourceMir, optimizedMir, standard,
+                 std::move(target));
 }
 
 inline std::string

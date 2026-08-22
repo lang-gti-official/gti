@@ -2,6 +2,8 @@
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
@@ -35,12 +37,8 @@ lang::BackendArtifact emit(const lang::FrontendResult &frontend,
                            const lang::MirProgram &mir,
                            const lang::OptimizationResult &compatibility,
                            lang::CppStandard standard) {
-  return lang::CppBackend(standard).generate({.program = frontend.program,
-                                              .semantics = frontend.semantics,
-                                              .hir = frontend.hir,
-                                              .mir = mir,
-                                              .sourceMir = &frontend.mir,
-                                              .optimizations = compatibility});
+  static_cast<void>(compatibility);
+  return gti_test::emitCpp(frontend, frontend.mir, mir, standard);
 }
 
 std::string expectedByteArray(std::string_view name,

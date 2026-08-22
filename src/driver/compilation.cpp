@@ -2,7 +2,7 @@
 
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
-#include "gti/lowered_program.h"
+#include "gti/lowered_program_builder.h"
 #include "gti/mir_backend.h"
 #include "gti/native_header.h"
 #include "gti/source_loader.h"
@@ -26,9 +26,9 @@ FrontendResult analyze(const CompilationRequest &request,
                      inputs.sourceValid);
 }
 
-CompilationResult compileWithBackendInputs(const CompilationRequest &request,
-                                           CompilationInputs inputs,
-                                           Backend &backend) {
+CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
+                                          CompilationInputs inputs,
+                                          Backend &backend) {
   FrontendResult frontend = analyze(request, std::move(inputs));
   CompilationResult result;
   if (!frontend.canGenerateCode()) {
@@ -99,15 +99,7 @@ CompilationResult compileWithBackendInputs(const CompilationRequest &request,
   LoweredProgram loweredProgram = std::move(*loweredBuild.program);
 
   try {
-    result.artifact =
-        backend.generate({.program = frontend.program,
-                          .semantics = frontend.semantics,
-                          .hir = frontend.hir,
-                          .mir = optimizedProgram.mir,
-                          .sourceMir = &optimizedProgram.sourceMir,
-                          .optimizations = optimizations,
-                          .target = request.target(),
-                          .loweredProgram = &loweredProgram});
+    result.artifact = backend.generate(loweredProgram);
   } catch (const std::exception &exception) {
     return backendFailure(exception.what());
   } catch (...) {
@@ -179,8 +171,8 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
 
 CompilationResult compileWithBackend(const CompilationRequest &request,
                                      Backend &backend) {
-  return compileWithBackendInputs(request, loadCompilationInputs(request),
-                                  backend);
+  return compileWithLoadedInputs(request, loadCompilationInputs(request),
+                                 backend);
 }
 
 CheckResult checkCompilation(const CompilationRequest &request) {
@@ -201,7 +193,7 @@ CompilationResult compileToCpp(const CompilationRequest &request) {
 CompilationResult compileToCpp(const CompilationRequest &request,
                                CompilationInputs inputs) {
   CppBackend backend(request.cppStandard());
-  return compileWithBackendInputs(request, std::move(inputs), backend);
+  return compileWithLoadedInputs(request, std::move(inputs), backend);
 }
 
 CompilationResult compileToNativeHeader(const CompilationRequest &request) {

@@ -3,6 +3,8 @@
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -173,12 +175,8 @@ lang::OptimizedProgram optimize(const lang::FrontendResult &frontend,
 lang::BackendArtifact emit(const lang::FrontendResult &frontend,
                            const lang::MirProgram &mir,
                            const lang::OptimizationResult &compatibility) {
-  return lang::CppBackend().generate({.program = frontend.program,
-                                      .semantics = frontend.semantics,
-                                      .hir = frontend.hir,
-                                      .mir = mir,
-                                      .sourceMir = &frontend.mir,
-                                      .optimizations = compatibility});
+  static_cast<void>(compatibility);
+  return gti_test::emitCpp(frontend, frontend.mir, mir);
 }
 
 void expectEmissionRejected(const lang::FrontendResult &frontend,
@@ -363,19 +361,13 @@ void testSelectedFamily(const std::filesystem::path &fixture) {
   expectSelectedDefinitions(o1Artifact.contents);
   expectSelectedDefinitions(o3Artifact.contents);
 
-  bool missingSourceRejected = false;
-  try {
-    (void)lang::CppBackend().generate({.program = frontend.program,
-                                       .semantics = frontend.semantics,
-                                       .hir = frontend.hir,
-                                       .mir = o0.mir,
-                                       .optimizations = o0Compatibility});
-  } catch (const std::logic_error &) {
-    missingSourceRejected = true;
-  }
-  expect(missingSourceRejected,
-         "production C++ emission must fail closed without its canonical "
-         "pre-optimization MIR snapshot");
+  const lang::LoweredProgramBuild missingSource =
+      lang::LoweredProgramBuilder().build(frontend.program, frontend.semantics,
+                                          frontend.hir, lang::MirProgram{},
+                                          o0.mir, lang::TargetInfo::host());
+  expect(!missingSource.valid(),
+         "LoweredProgram construction must fail closed without canonical "
+         "pre-optimization MIR");
 
   const std::string_view o0Fold =
       functionDefinition(o0Artifact.contents, "cfg_fold");

@@ -344,13 +344,9 @@ int main() {
   expect(optimizedProgram.valid(),
          "the owned MIR pipeline should optimize the fixture");
   std::unique_ptr<lang::Backend> backend = std::make_unique<lang::CppBackend>();
-  const lang::BackendArtifact artifact =
-      backend->generate({.program = frontend.program,
-                         .semantics = frontend.semantics,
-                         .hir = frontend.hir,
-                         .mir = optimizedProgram.mir,
-                         .sourceMir = &frontend.mir,
-                         .optimizations = optimized});
+  const lang::LoweredProgram lowered = gti_test::lowerProgram(
+      frontend, optimizedProgram.sourceMir, optimizedProgram.mir);
+  const lang::BackendArtifact artifact = backend->generate(lowered);
   expect(backend->name() == "cpp" &&
              artifact.kind == lang::BackendArtifactKind::Source &&
              artifact.extension == ".cpp",
@@ -5163,12 +5159,7 @@ int main() {
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = valid.program,
-                                   .semantics = valid.semantics,
-                                   .hir = valid.hir,
-                                   .mir = valid.mir,
-                                   .sourceMir = &valid.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
   expect(
       artifact.contents.find("const std::int32_t value") == std::string::npos &&
           artifact.contents.find("const std::int32_t source") ==
@@ -7524,12 +7515,7 @@ void testNonNullReferences() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find(
              "const ::__gti_program::Counter & __gti_mir_arg_0") !=
                  std::string::npos &&
@@ -7932,12 +7918,7 @@ int main() {
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = valid.program,
-                                   .semantics = valid.semantics,
-                                   .hir = valid.hir,
-                                   .mir = valid.mir,
-                                   .sourceMir = &valid.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
   const std::string emittedGet =
       getInfo == nullptr ? std::string{}
                          : "static Application &__gti_fn_" +
@@ -8126,12 +8107,7 @@ int main() {
         lang::OptimizationPipeline().run(valid.hir,
                                          lang::OptimizationLevel::O0);
     const lang::BackendArtifact artifact =
-        lang::CppBackend().generate({.program = valid.program,
-                                     .semantics = valid.semantics,
-                                     .hir = valid.hir,
-                                     .mir = valid.mir,
-                                     .sourceMir = &valid.mir,
-                                     .optimizations = optimizations});
+        gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
     expect(
         artifact.contents.find(
             "::gti_internal::backend::prefix_storage<T> data;") !=
@@ -8264,12 +8240,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
       artifact.contents.find(
           "::__gti_fn_69_get__gti_mir_failure(const std::int32_t **") !=
@@ -10048,12 +10019,7 @@ int main() { return 0; }
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("const T &value") != std::string::npos &&
              artifact.contents.find("BorrowingIterator(const "
                                     "BorrowingIterator &) = delete") !=
@@ -11296,12 +11262,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("class unique_ptr") != std::string::npos &&
              artifact.contents.find("std::unique_ptr<T> owner = nullptr") !=
                  std::string::npos &&
@@ -11478,13 +11439,8 @@ int main() {
   const lang::OptimizationResult nullOptimizations =
       lang::OptimizationPipeline().run(nullState.hir,
                                        lang::OptimizationLevel::O0);
-  const lang::BackendArtifact nullArtifact =
-      lang::CppBackend().generate({.program = nullState.program,
-                                   .semantics = nullState.semantics,
-                                   .hir = nullState.hir,
-                                   .mir = nullState.mir,
-                                   .sourceMir = &nullState.mir,
-                                   .optimizations = nullOptimizations});
+  const lang::BackendArtifact nullArtifact = gti_test::emitCpp(
+      nullState, nullState.mir, nullState.mir, nullOptimizations);
   expect(
       nullArtifact.contents.find(
           "explicit unique_ptr(const std::nullptr_t empty);") !=
@@ -11778,14 +11734,10 @@ int main() {
          "HIR and MIR should retain the trusted ownership-preserving upcast "
          "identity");
 
-  const lang::BackendArtifact artifact = lang::CppBackend().generate(
-      {.program = frontend.program,
-       .semantics = frontend.semantics,
-       .hir = frontend.hir,
-       .mir = frontend.mir,
-       .sourceMir = &frontend.mir,
-       .optimizations = lang::OptimizationPipeline().run(
-           frontend.hir, lang::OptimizationLevel::O0)});
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
+                        lang::OptimizationPipeline().run(
+                            frontend.hir, lang::OptimizationLevel::O0));
   expect(artifact.contents.find("unique_owner_upcast<") != std::string::npos &&
              artifact.contents.find("virtual ~Layer() noexcept = default;") !=
                  std::string::npos,
@@ -12085,12 +12037,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("::gti_internal::backend::storage<T> data;") !=
                  std::string::npos &&
              artifact.contents.find(
@@ -12337,12 +12284,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("EmplacingBuffer<::__gti_program::Pair>::"
                                 "__gti_fn_72_emplace__gti_mir_failure(") !=
                  std::string::npos &&
@@ -12447,14 +12389,10 @@ int main() {
          "HIR and MIR should retain both exact storage-shift operations used "
          "by source-defined vector insertion and erasure");
 
-  const lang::BackendArtifact vectorArtifact = lang::CppBackend().generate(
-      {.program = vectorFrontend.program,
-       .semantics = vectorFrontend.semantics,
-       .hir = vectorFrontend.hir,
-       .mir = vectorFrontend.mir,
-       .sourceMir = &vectorFrontend.mir,
-       .optimizations = lang::OptimizationPipeline().run(
-           vectorFrontend.hir, lang::OptimizationLevel::O0)});
+  const lang::BackendArtifact vectorArtifact =
+      gti_test::emitCpp(vectorFrontend, vectorFrontend.mir, vectorFrontend.mir,
+                        lang::OptimizationPipeline().run(
+                            vectorFrontend.hir, lang::OptimizationLevel::O0));
   expect(vectorArtifact.contents.find("storage_shift_right") !=
                  std::string::npos &&
              vectorArtifact.contents.find("storage_shift_left") !=
@@ -12786,12 +12724,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
       artifact.contents.find("const Buffer<std::int32_t> value") ==
               std::string::npos &&
@@ -13119,12 +13052,7 @@ int main() { return run() - 4; }
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact generated =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   // The cleanup-gate narrowing admitted this body to general verified-MIR
   // emission (its scope owner's cleanup cannot raise); the body-first MIR
   // structure is pinned above, and the backend now emits the verified
@@ -13286,12 +13214,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact generated =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
       generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
               std::string::npos &&
@@ -16103,14 +16026,10 @@ int main() {
   expect(mirCopies == 2 && mirMoves == 2,
          "MIR construct instructions should retain copy and move identity");
 
-  const lang::BackendArtifact generatedArtifact = lang::CppBackend().generate(
-      {.program = validFrontend.program,
-       .semantics = validFrontend.semantics,
-       .hir = validFrontend.hir,
-       .mir = validFrontend.mir,
-       .sourceMir = &validFrontend.mir,
-       .optimizations = lang::OptimizationPipeline().run(
-           validFrontend.hir, lang::OptimizationLevel::O0)});
+  const lang::BackendArtifact generatedArtifact =
+      gti_test::emitCpp(validFrontend, validFrontend.mir, validFrontend.mir,
+                        lang::OptimizationPipeline().run(
+                            validFrontend.hir, lang::OptimizationLevel::O0));
   const std::string &generated = generatedArtifact.contents;
   const std::string &lifecycleGenerated = generatedArtifact.contents;
   expect(generated.find("explicit Counter(std::int32_t __gti_mir_arg_0);") !=
@@ -16567,14 +16486,10 @@ int main() {
              spriteMir->polymorphic,
          "MIR should preserve inheritance metadata for future backends");
 
-  const lang::BackendArtifact generatedArtifact = lang::CppBackend().generate(
-      {.program = frontend.program,
-       .semantics = frontend.semantics,
-       .hir = frontend.hir,
-       .mir = frontend.mir,
-       .sourceMir = &frontend.mir,
-       .optimizations = lang::OptimizationPipeline().run(
-           frontend.hir, lang::OptimizationLevel::O0)});
+  const lang::BackendArtifact generatedArtifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
+                        lang::OptimizationPipeline().run(
+                            frontend.hir, lang::OptimizationLevel::O0));
   const std::string &generated = generatedArtifact.contents;
   constexpr std::string_view nameIdDefinition =
       "std::int32_t Sprite::name_id() const {";
@@ -17236,12 +17151,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   const lang::ClassTypeInfo *cleanupType =
       cleanupClass == nullptr ? nullptr
                               : frontend.semantics.findClassType(*cleanupClass);
@@ -17446,12 +17356,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("___gti_operator_arrow") != std::string::npos &&
              artifact.contents.find("___gti_operator_dereference") !=
                  std::string::npos &&
@@ -17668,12 +17573,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("___gti_operator_call") != std::string::npos &&
              artifact.contents.find(" operator()(") == std::string::npos,
          "call operators should lower to the semantically selected member");
@@ -18040,12 +17940,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find(
              "std::int32_t __gti_fn_69___gti_operator_call() &&;") !=
                  std::string::npos &&
@@ -18394,12 +18289,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   constexpr std::string_view rangeLoanDeclaration =
       "const ::__gti_program::CounterRange *__gti_mir_loan_";
   const std::size_t firstRangeLoan =
@@ -21525,12 +21415,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find(
              "::__gti_program::math::__gti_fn_1_pow__gti_mir_failure(") !=
                  std::string::npos &&
@@ -21764,12 +21649,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
       artifact.contents.find("const std::array<std::uint32_t, 2048> video = "
                              "std::array<std::uint32_t, 2048>{}") !=
@@ -21959,12 +21839,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O1);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("bool __gti_entry__gti_mir_failure(") !=
                  std::string::npos &&
              artifact.contents.find("std::int32_t __gti_mir_p_") !=
@@ -22282,12 +22157,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
       artifact.contents.find("bool __gti_entry__gti_mir_failure(") !=
               std::string::npos &&
@@ -22549,12 +22419,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O1);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
       artifact.contents.find("auto __gti_mir_closure_factory_") !=
               std::string::npos &&
@@ -23447,12 +23312,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O1);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
       artifact.contents.find("// GTI verified-MIR body: scalar-cfg-failure-v1 "
                              "function-instance") != std::string::npos &&
@@ -24151,12 +24011,7 @@ int main() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O1);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(
       artifact.contents.find("// GTI verified-MIR body: scalar-cfg-failure-v1 "
                              "function-instance") != std::string::npos &&

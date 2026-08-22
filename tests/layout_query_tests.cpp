@@ -6,6 +6,8 @@
 #include "gti/lexer.h"
 #include "gti/optimizer.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -510,12 +512,7 @@ void testHirMirAndBackend() {
          "constant folding should consume retained layout-query constants");
 
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = result.program,
-                                   .semantics = result.semantics,
-                                   .hir = result.hir,
-                                   .mir = result.mir,
-                                   .sourceMir = &result.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
   // The body emits from verified MIR: layout results stage as the
   // frontend-computed literals, and the emitted body region carries no
   // native layout query at all (the sealed helpers above it may).

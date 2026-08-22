@@ -3,6 +3,8 @@
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -207,12 +209,7 @@ void testSemanticLayoutAndAbi() {
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O1);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = result.program,
-                                   .semantics = result.semantics,
-                                   .hir = result.hir,
-                                   .mir = result.mir,
-                                   .sourceMir = &result.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
   expect(
       artifact.contents.find("static_assert(sizeof(Packet) == 32") !=
               std::string::npos &&
@@ -639,12 +636,7 @@ int main() {
         lang::OptimizationPipeline().run(valid.hir,
                                          lang::OptimizationLevel::O1);
     const lang::BackendArtifact cpp =
-        lang::CppBackend().generate({.program = valid.program,
-                                     .semantics = valid.semantics,
-                                     .hir = valid.hir,
-                                     .mir = valid.mir,
-                                     .sourceMir = &valid.mir,
-                                     .optimizations = optimizations});
+        gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
     expect(cpp.contents.find("struct NativeEngine;") != std::string::npos &&
                cpp.contents.find("struct NativeEngine {") ==
                    std::string::npos &&

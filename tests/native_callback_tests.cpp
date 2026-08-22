@@ -53,19 +53,6 @@ analyze(std::string_view name, std::string source,
                {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
 }
 
-lang::BackendInput backendInput(const lang::FrontendResult &frontend,
-                                const lang::OptimizationResult &optimizations,
-                                const lang::LoweredProgram &lowered) {
-  return {.program = frontend.program,
-          .semantics = frontend.semantics,
-          .hir = frontend.hir,
-          .mir = frontend.mir,
-          .sourceMir = &frontend.mir,
-          .optimizations = optimizations,
-          .target = lang::TargetInfo::host(),
-          .loweredProgram = &lowered};
-}
-
 void testNativeCallbackPipeline() {
   const lang::FrontendResult frontend = analyze("native-callback.gti", R"(
 [[c_opaque]] struct NativeHandle;
@@ -148,16 +135,11 @@ int main() {
          "MIR verification should reject a callback adapter detached from its "
          "source function");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O1);
   const lang::LoweredProgram lowered = gti_test::lowerProgram(
       frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
-  const lang::BackendInput input =
-      backendInput(frontend, optimizations, lowered);
-  const std::string cpp = lang::CppBackend().generate(input).contents;
+  const std::string cpp = lang::CppBackend().generate(lowered).contents;
   const std::string header =
-      lang::NativeHeaderBackend().generate(input).contents;
+      lang::NativeHeaderBackend().generate(lowered).contents;
 
   expect(cpp.find("extern \"C\" std::int32_t "
                   "__gti_native_callback_") != std::string::npos &&

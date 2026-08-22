@@ -9,6 +9,8 @@
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -329,12 +331,7 @@ int main(int argc, char **argv) {
         lang::OptimizationPipeline().run(frontend.hir,
                                          lang::OptimizationLevel::O0);
     const lang::BackendArtifact artifact =
-        lang::CppBackend().generate({.program = frontend.program,
-                                     .semantics = frontend.semantics,
-                                     .hir = frontend.hir,
-                                     .mir = frontend.mir,
-                                     .sourceMir = &frontend.mir,
-                                     .optimizations = optimizations});
+        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
     const std::filesystem::path path = directory / (name + ".cpp");
     std::ofstream(path) << artifact.contents;
     return path;

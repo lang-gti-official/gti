@@ -3,7 +3,10 @@
 
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/lowered_program_builder.h"
 #include "gti/optimizer.h"
+
+#include "cpp_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -23,15 +26,6 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
-}
-
-bool hasBuildIssue(const lang::CppMirRepresentationSnapshotBuild &build,
-                   lang::CppMirRepresentationSnapshotIssueKind kind) {
-  return std::any_of(
-      build.issues.begin(), build.issues.end(),
-      [kind](const lang::CppMirRepresentationSnapshotIssue &issue) {
-        return issue.kind == kind;
-      });
 }
 
 bool hasPlanIssue(const lang::CppMirProgramPlan &plan,
@@ -117,13 +111,21 @@ int main() {
 
 lang::CppMirRepresentationSnapshotBuild
 buildSnapshot(const lang::FrontendResult &frontend) {
-  return lang::buildCppMirRepresentationSnapshot(
-      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      lang::TargetInfo::host());
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  return lang::buildCppMirRepresentationSnapshot(lowered);
 }
 
-void expectLoweredRowsMatch(const lang::FrontendResult &frontend,
-                            std::string_view fixture) {
+lang::CppMirBodyEmissionMapRows
+buildRows(const lang::FrontendResult &frontend,
+          lang::CppStandard standard = lang::CppStandard::Cpp23) {
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  return lang::buildCppMirBodyEmissionMapRows(lowered, standard);
+}
+
+void expectLoweredRowsDeterministic(const lang::FrontendResult &frontend,
+                                    std::string_view fixture) {
   lang::OptimizedProgram optimized =
       lang::OptimizationPipeline().run({.hir = frontend.hir,
                                         .mir = frontend.mir,
@@ -145,62 +147,49 @@ void expectLoweredRowsMatch(const lang::FrontendResult &frontend,
     }
     return;
   }
-  const lang::CppMirBodyEmissionMapRows semanticRows =
-      lang::buildCppMirBodyEmissionMapRows(frontend.semantics, optimized.mir,
-                                           lang::CppStandard::Cpp23);
-  const lang::CppMirBodyEmissionMapRows loweredRows =
+  const lang::CppMirBodyEmissionMapRows firstRows =
       lang::buildCppMirBodyEmissionMapRows(*lowered.program,
                                            lang::CppStandard::Cpp23);
-  expect(semanticRows.types == loweredRows.types &&
-             semanticRows.bodies == loweredRows.bodies &&
-             semanticRows.symbols == loweredRows.symbols &&
-             semanticRows.enums == loweredRows.enums &&
-             semanticRows.capabilities == loweredRows.capabilities,
+  const lang::CppMirBodyEmissionMapRows secondRows =
+      lang::buildCppMirBodyEmissionMapRows(*lowered.program,
+                                           lang::CppStandard::Cpp23);
+  expect(firstRows.types == secondRows.types &&
+             firstRows.bodies == secondRows.bodies &&
+             firstRows.symbols == secondRows.symbols &&
+             firstRows.enums == secondRows.enums &&
+             firstRows.capabilities == secondRows.capabilities,
          std::string(fixture) +
-             " should build byte-identical C++ rows from LoweredProgram");
+             " should build deterministic C++ rows from LoweredProgram");
 
-  const lang::CppMirRepresentationSnapshotBuild frontendSnapshot =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, frontend.hir, optimized.mir,
-          lang::TargetInfo::host(), lang::CppStandard::Cpp23,
-          &optimized.sourceMir);
-  const lang::CppMirRepresentationSnapshotBuild loweredSnapshot =
+  const lang::CppMirRepresentationSnapshotBuild firstSnapshot =
       lang::buildCppMirRepresentationSnapshot(*lowered.program,
                                               lang::CppStandard::Cpp23);
-  expect(frontendSnapshot.valid() && loweredSnapshot.valid(),
-         std::string(fixture) +
-             " should build valid frontend and lowered planning snapshots");
-  if (!frontendSnapshot.valid() || !loweredSnapshot.valid()) {
+  const lang::CppMirRepresentationSnapshotBuild secondSnapshot =
+      lang::buildCppMirRepresentationSnapshot(*lowered.program,
+                                              lang::CppStandard::Cpp23);
+  expect(firstSnapshot.valid() && secondSnapshot.valid(),
+         std::string(fixture) + " should build valid lowered snapshots");
+  if (!firstSnapshot.valid() || !secondSnapshot.valid()) {
     for (const lang::CppMirRepresentationSnapshotIssue &issue :
-         loweredSnapshot.issues) {
+         firstSnapshot.issues) {
       std::cerr << "  lowered snapshot issue: " << issue.detail << '\n';
     }
     return;
   }
-  expect(
-      frontendSnapshot.snapshot->mir == loweredSnapshot.snapshot->mir &&
-          frontendSnapshot.snapshot->bodies ==
-              loweredSnapshot.snapshot->bodies &&
-          frontendSnapshot.snapshot->data == loweredSnapshot.snapshot->data &&
-          frontendSnapshot.snapshot->declarationRoots ==
-              loweredSnapshot.snapshot->declarationRoots &&
-          frontendSnapshot.snapshot->thunks == loweredSnapshot.snapshot->thunks,
-      std::string(fixture) +
-          " should build an exact C++ plan inventory from LoweredProgram");
-
-  const lang::CppMirProgramPlan frontendPlan =
-      lang::planCppMirProgram(optimized.mir, *frontendSnapshot.snapshot);
-  const lang::CppMirProgramPlan loweredPlan =
-      lang::planCppMirProgram(optimized.mir, *loweredSnapshot.snapshot);
-  expect(frontendPlan.status == loweredPlan.status &&
-             frontendPlan.bodies == loweredPlan.bodies &&
-             frontendPlan.data == loweredPlan.data &&
-             frontendPlan.declarationRoots == loweredPlan.declarationRoots &&
-             frontendPlan.thunks == loweredPlan.thunks &&
-             frontendPlan.issues.size() == loweredPlan.issues.size() &&
-             frontendPlan.unsupported.size() == loweredPlan.unsupported.size(),
+  expect(firstSnapshot.snapshot->mir == secondSnapshot.snapshot->mir &&
+             firstSnapshot.snapshot->bodies ==
+                 secondSnapshot.snapshot->bodies &&
+             firstSnapshot.snapshot->data == secondSnapshot.snapshot->data &&
+             firstSnapshot.snapshot->declarationRoots ==
+                 secondSnapshot.snapshot->declarationRoots &&
+             firstSnapshot.snapshot->thunks == secondSnapshot.snapshot->thunks,
          std::string(fixture) +
-             " should produce the same sealed C++ whole-program plan");
+             " should build a deterministic C++ plan inventory");
+
+  const lang::CppMirProgramPlan plan =
+      lang::planCppMirProgram(optimized.mir, *firstSnapshot.snapshot);
+  expect(plan.complete() && plan.issues.empty() && plan.unsupported.empty(),
+         std::string(fixture) + " should produce a complete C++ plan");
 }
 
 void testExhaustiveSealedInventory() {
@@ -214,7 +203,7 @@ void testExhaustiveSealedInventory() {
     return;
   }
 
-  expectLoweredRowsMatch(frontend, "the rich representation fixture");
+  expectLoweredRowsDeterministic(frontend, "the rich representation fixture");
 
   lang::CppMirRepresentationSnapshotBuild build = buildSnapshot(frontend);
   expect(build.valid(),
@@ -334,7 +323,7 @@ int main() {
     return;
   }
 
-  expectLoweredRowsMatch(frontend, "the native callback fixture");
+  expectLoweredRowsDeterministic(frontend, "the native callback fixture");
 
   lang::CppMirRepresentationSnapshotBuild build = buildSnapshot(frontend);
   expect(build.valid() &&
@@ -388,17 +377,13 @@ int main() {
   }
   expect(lang::verifyMirProgram(drifted).valid(),
          "the callback drift mutation should remain independently valid MIR");
-  const lang::CppMirRepresentationSnapshotBuild driftedBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, frontend.hir, drifted,
-          lang::TargetInfo::host());
-  expect(
-      !driftedBuild.valid() &&
-          hasBuildIssue(
-              driftedBuild,
-              lang::CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch),
-      "the snapshot boundary should reject valid MIR callback rows that "
-      "drift from their exact HIR adapter identities");
+  const lang::LoweredProgramBuild driftedBuild =
+      lang::LoweredProgramBuilder().build(frontend.program, frontend.semantics,
+                                          frontend.hir, frontend.mir, drifted,
+                                          lang::TargetInfo::host());
+  expect(!driftedBuild.valid(),
+         "LoweredProgram construction should reject valid MIR callback rows "
+         "that drift from their exact HIR adapter identities");
 }
 
 void testUnusedSourceTemplatesRemainInventorySurface() {
@@ -510,7 +495,7 @@ int main() { return 0; }
          "complete whole-program representation route");
 }
 
-void testExactProgramAndTargetAnalysisSeal() {
+void testLoweredProgramConstructionSeal() {
   constexpr std::string_view passiveSource = R"(
 namespace alpha {}
 namespace selected = alpha;
@@ -525,37 +510,25 @@ namespace selected = alpha;
     return;
   }
 
-  const lang::CppMirRepresentationSnapshotBuild mixedProgram =
-      lang::buildCppMirRepresentationSnapshot(
+  const lang::LoweredProgramBuild mixedProgram =
+      lang::LoweredProgramBuilder().build(
           otherProgram.program, analyzed.semantics, analyzed.hir, analyzed.mir,
-          lang::TargetInfo::host());
-  expect(!mixedProgram.valid() &&
-             hasBuildIssue(mixedProgram,
-                           lang::CppMirRepresentationSnapshotIssueKind::
-                               MissingProgramDeclaration),
-         "a passive-only Program cannot borrow semantic/HIR/MIR ownership "
-         "from a byte-identical but separately parsed Program");
+          analyzed.mir, lang::TargetInfo::host());
+  expect(!mixedProgram.valid(),
+         "LoweredProgram construction should reject separately owned "
+         "frontend snapshots even when their source bytes match");
 
   lang::HirProgram differentGraph = analyzed.hir;
   auto &differentGraphSeal =
       const_cast<lang::SemanticAnalysisSeal &>(differentGraph.analysisSeal());
   differentGraphSeal.sourceGraph.preludeRoots.push_back(999);
-  expect(differentGraphSeal.programSnapshot ==
-                 analyzed.semantics.analysisSeal().programSnapshot &&
-             differentGraphSeal.matchesTarget(lang::TargetInfo::host()),
-         "the graph-drift mutation should preserve exact Program and target "
-         "identity");
-  const lang::CppMirRepresentationSnapshotBuild mixedGraph =
-      lang::buildCppMirRepresentationSnapshot(
+  const lang::LoweredProgramBuild mixedGraph =
+      lang::LoweredProgramBuilder().build(
           analyzed.program, analyzed.semantics, differentGraph, analyzed.mir,
-          lang::TargetInfo::host());
-  expect(
-      !mixedGraph.valid() &&
-          hasBuildIssue(
-              mixedGraph,
-              lang::CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch),
-      "the same Program and target must still reject a HIR snapshot sealed "
-      "for different source-graph/prelude provenance");
+          analyzed.mir, lang::TargetInfo::host());
+  expect(!mixedGraph.valid(),
+         "LoweredProgram construction should reject source-graph provenance "
+         "drift before a backend can observe it");
 
   const lang::FrontendResult conditional =
       lang::Frontend().analyze("cpp-mir-representation-passive-target.gti", R"(
@@ -574,33 +547,13 @@ using Selected = int32_t;
   }
   lang::TargetInfo otherProfile = lang::TargetInfo::host();
   otherProfile.executionProfile = lang::ExecutionProfile::Concurrent;
-  const lang::CppMirRepresentationSnapshotBuild mixedProfile =
-      lang::buildCppMirRepresentationSnapshot(
+  const lang::LoweredProgramBuild mixedProfile =
+      lang::LoweredProgramBuilder().build(
           conditional.program, conditional.semantics, conditional.hir,
-          conditional.mir, otherProfile);
-  expect(
-      !mixedProfile.valid() &&
-          hasBuildIssue(
-              mixedProfile,
-              lang::CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch),
-      "the full backend TargetInfo seal must reject a changed execution "
-      "profile even when the active passive branch is unchanged");
-
-  lang::TargetInfo otherTarget = lang::TargetInfo::host();
-  otherTarget.os = "never";
-  const lang::CppMirRepresentationSnapshotBuild mixedTarget =
-      lang::buildCppMirRepresentationSnapshot(
-          conditional.program, conditional.semantics, conditional.hir,
-          conditional.mir, otherTarget);
-  expect(!mixedTarget.valid() &&
-             hasBuildIssue(mixedTarget,
-                           lang::CppMirRepresentationSnapshotIssueKind::
-                               CrossPhaseMismatch) &&
-             hasBuildIssue(mixedTarget,
-                           lang::CppMirRepresentationSnapshotIssueKind::
-                               MissingProgramDeclaration),
-         "the builder must reject a different full backend target and the "
-         "different passive branch that target would activate");
+          conditional.mir, conditional.mir, otherProfile);
+  expect(!mixedProfile.valid(),
+         "LoweredProgram construction should reject a backend target that "
+         "differs from the analyzed target seal");
 }
 
 void testPrivateInventorySealAndContractedThunkClosure() {
@@ -780,7 +733,8 @@ int main() { return seed - 7 + zeroed; }
   if (!frontend.canGenerateCode()) {
     return;
   }
-  expectLoweredRowsMatch(frontend, "the data-only representation fixture");
+  expectLoweredRowsDeterministic(frontend,
+                                 "the data-only representation fixture");
   expect(frontend.hir.module().roots.empty() &&
              !frontend.mir.programInitializationPlan().steps.empty() &&
              !frontend.mir.module().places.empty() &&
@@ -843,17 +797,18 @@ int main() { return outer::values::dynamic - 1; }
     return;
   }
 
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const lang::CppMirBodyEmissionMapRows rows =
-      lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
-                                           lang::CppStandard::Cpp23);
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
   const auto hasStorage = [&](std::string_view qualified,
                               std::string_view spelling) {
     const auto step = std::find_if(
         frontend.mir.programInitializationPlan().steps.begin(),
         frontend.mir.programInitializationPlan().steps.end(),
         [&](const lang::MirProgramInitializationStep &candidate) {
-          const lang::SymbolRecord *record =
-              frontend.semantics.database().findSymbol(candidate.symbol);
+          const lang::LoweredSymbol *record =
+              lowered.findSymbol(candidate.symbol);
           return record != nullptr && record->qualifiedName == qualified;
         });
     return step != frontend.mir.programInitializationPlan().steps.end() &&
@@ -1045,236 +1000,6 @@ void testMissingAndStaleFactsFailClosed() {
     return;
   }
 
-  lang::FrontendResult staleProgram = analyzeRichProgram();
-  expect(staleProgram.canGenerateCode(),
-         "the independently owned stale Program should also be valid");
-  const lang::CppMirRepresentationSnapshotBuild staleProgramBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          staleProgram.program, frontend.semantics, frontend.hir, frontend.mir,
-          lang::TargetInfo::host());
-  expect(!staleProgramBuild.valid() &&
-             hasBuildIssue(staleProgramBuild,
-                           lang::CppMirRepresentationSnapshotIssueKind::
-                               MissingProgramDeclaration),
-         "byte-identical declarations from another Program must not satisfy "
-         "the sealed source-identity inventory");
-
-  lang::HirProgram missingEnumHir = frontend.hir;
-  auto &enums = const_cast<std::vector<lang::HirEnum> &>(
-      missingEnumHir.enumDeclarations());
-  expect(!enums.empty(), "the data fixture should retain one HIR enum");
-  if (!enums.empty()) {
-    enums.clear();
-  }
-  const lang::CppMirRepresentationSnapshotBuild missingDataBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, missingEnumHir, frontend.mir,
-          lang::TargetInfo::host());
-  expect(!missingDataBuild.valid() &&
-             hasBuildIssue(missingDataBuild,
-                           lang::CppMirRepresentationSnapshotIssueKind::
-                               MissingHirDeclaration),
-         "an omitted semantic data declaration should fail the builder seal");
-
-  lang::HirProgram staleInitializationPlan = frontend.hir;
-  auto &initializationPlan = const_cast<lang::HirProgramInitializationPlan &>(
-      staleInitializationPlan.programInitializationPlan());
-  expect(!initializationPlan.unitOrder.empty(),
-         "the plan-drift fixture should retain source-unit order");
-  if (!initializationPlan.unitOrder.empty()) {
-    initializationPlan.unitOrder.push_back(
-        initializationPlan.unitOrder.front());
-  }
-  expect(frontend.semantics.analysisSeal() ==
-                 staleInitializationPlan.analysisSeal() &&
-             !lang::verifyHirProgramPlans(frontend.semantics,
-                                          staleInitializationPlan)
-                  .valid(),
-         "the plan-drift mutation should preserve the frontend seal while "
-         "breaking semantic/HIR plan coherence");
-  std::string planMismatch;
-  expect(!lang::cppMirFrontendSnapshotsMatch(frontend.semantics,
-                                             staleInitializationPlan,
-                                             frontend.mir, &planMismatch) &&
-             planMismatch.find("program plans differ") != std::string::npos,
-         "the shared backend frontend-snapshot gate should report HIR plan "
-         "verification drift before representation inventory");
-  const lang::CppMirRepresentationSnapshotBuild stalePlanBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, staleInitializationPlan,
-          frontend.mir, lang::TargetInfo::host());
-  expect(
-      !stalePlanBuild.valid() &&
-          hasBuildIssue(
-              stalePlanBuild,
-              lang::CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch),
-      "the snapshot builder must reject coordinated HIR plan drift even "
-      "when Program, target, and analysis seal still match");
-
-  lang::MirProgram staleDataConstant = frontend.mir;
-  auto &constantSteps = const_cast<lang::MirProgramInitializationPlan &>(
-                            staleDataConstant.programInitializationPlan())
-                            .steps;
-  const auto constantStep = std::find_if(
-      constantSteps.begin(), constantSteps.end(),
-      [](const lang::MirProgramInitializationStep &step) {
-        return step.dataInitialization ==
-                   lang::MirProgramDataInitializationKind::Constant &&
-               step.dataConstant.has_value();
-      });
-  expect(constantStep != constantSteps.end(),
-         "the cross-phase constant fixture should retain a data constant");
-  if (constantStep != constantSteps.end()) {
-    if (auto *integer =
-            std::get_if<lang::ConstantInteger>(&*constantStep->dataConstant)) {
-      ++integer->magnitude;
-    }
-  }
-  expect(constantStep != constantSteps.end() &&
-             lang::verifyMirProgram(staleDataConstant).valid(),
-         "a same-type program data-constant drift should remain generically "
-         "valid MIR");
-  std::string constantMismatch;
-  expect(!lang::cppMirFrontendSnapshotsMatch(frontend.semantics, frontend.hir,
-                                             staleDataConstant,
-                                             &constantMismatch) &&
-             constantMismatch.find("data-only initialization facts") !=
-                 std::string::npos,
-         "the frontend snapshot gate must reject a verifier-valid stale data "
-         "constant");
-  const lang::CppMirRepresentationSnapshotBuild staleConstantBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, frontend.hir, staleDataConstant,
-          lang::TargetInfo::host());
-  expect(
-      !staleConstantBuild.valid() &&
-          hasBuildIssue(
-              staleConstantBuild,
-              lang::CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch),
-      "the sealed builder must reject verifier-valid stale data "
-      "provenance");
-
-  lang::MirProgram staleStaticOwner = frontend.mir;
-  auto &ownerSteps = const_cast<lang::MirProgramInitializationPlan &>(
-                         staleStaticOwner.programInitializationPlan())
-                         .steps;
-  const auto staticStep = std::find_if(
-      ownerSteps.begin(), ownerSteps.end(),
-      [](const lang::MirProgramInitializationStep &step) {
-        return step.storageKind == lang::ProgramStorageKind::StaticField;
-      });
-  const auto alternateOwner = std::find_if(
-      frontend.mir.classInstances().begin(),
-      frontend.mir.classInstances().end(), [&](const auto &candidate) {
-        return staticStep != ownerSteps.end() &&
-               candidate.id != staticStep->ownerClass;
-      });
-  expect(staticStep != ownerSteps.end() &&
-             alternateOwner != frontend.mir.classInstances().end(),
-         "the cross-phase owner fixture should retain an alternate class");
-  if (staticStep != ownerSteps.end() &&
-      alternateOwner != frontend.mir.classInstances().end()) {
-    staticStep->ownerClass = alternateOwner->id;
-  }
-  expect(staticStep != ownerSteps.end() &&
-             alternateOwner != frontend.mir.classInstances().end() &&
-             lang::verifyMirProgram(staleStaticOwner).valid(),
-         "an alternate valid static class owner should remain generically "
-         "valid MIR");
-  std::string ownerMismatch;
-  expect(!lang::cppMirFrontendSnapshotsMatch(frontend.semantics, frontend.hir,
-                                             staleStaticOwner,
-                                             &ownerMismatch) &&
-             ownerMismatch.find("step identity differs") != std::string::npos,
-         "the frontend snapshot gate must reject a verifier-valid stale "
-         "static owner");
-  const lang::CppMirRepresentationSnapshotBuild staleOwnerBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, frontend.hir, staleStaticOwner,
-          lang::TargetInfo::host());
-  expect(
-      !staleOwnerBuild.valid() &&
-          hasBuildIssue(
-              staleOwnerBuild,
-              lang::CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch),
-      "the sealed builder must reject verifier-valid stale class "
-      "ownership");
-
-  lang::MirProgram staleHostedAnchor = frontend.mir;
-  auto &hostedPlan = const_cast<std::optional<lang::MirHostedStartupPlan> &>(
-      staleHostedAnchor.hostedStartupPlan());
-  expect(hostedPlan.has_value() &&
-             hostedPlan->sourceAnchor.end > hostedPlan->sourceAnchor.start + 1,
-         "the hosted-anchor fixture should retain a nonempty main span");
-  if (hostedPlan &&
-      hostedPlan->sourceAnchor.end > hostedPlan->sourceAnchor.start + 1) {
-    ++hostedPlan->sourceAnchor.start;
-  }
-  expect(hostedPlan.has_value() &&
-             lang::verifyMirProgram(staleHostedAnchor).valid(),
-         "a different nonempty hosted source anchor should remain generically "
-         "valid MIR");
-  std::string hostedAnchorMismatch;
-  expect(!lang::cppMirFrontendSnapshotsMatch(frontend.semantics, frontend.hir,
-                                             staleHostedAnchor,
-                                             &hostedAnchorMismatch) &&
-             hostedAnchorMismatch.find("hosted-startup identity differs") !=
-                 std::string::npos,
-         "the frontend snapshot gate must reject verifier-valid hosted main "
-         "anchor drift");
-  const lang::CppMirRepresentationSnapshotBuild staleHostedAnchorBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, frontend.hir, staleHostedAnchor,
-          lang::TargetInfo::host());
-  expect(
-      !staleHostedAnchorBuild.valid() &&
-          hasBuildIssue(
-              staleHostedAnchorBuild,
-              lang::CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch),
-      "the sealed builder must reject verifier-valid hosted source "
-      "provenance drift");
-
-  lang::MirProgram missingBodyIdentity = frontend.mir;
-  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-      missingBodyIdentity.functionInstances());
-  expect(!functions.empty(), "the body fixture should retain MIR functions");
-  if (!functions.empty()) {
-    functions.front().id = functions.size() + 100;
-  }
-  const lang::CppMirRepresentationSnapshotBuild missingBodyBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, frontend.hir,
-          missingBodyIdentity, lang::TargetInfo::host());
-  expect(!missingBodyBuild.valid() &&
-             hasBuildIssue(missingBodyBuild,
-                           lang::CppMirRepresentationSnapshotIssueKind::
-                               MissingMirBodyIdentity),
-         "a missing/stale core MIR body identity should fail closed");
-
-  lang::HirProgram staleEntryHir = frontend.hir;
-  auto &hirFunctions = const_cast<std::vector<lang::HirFunctionInstance> &>(
-      staleEntryHir.functionInstances());
-  const auto entry =
-      std::find_if(hirFunctions.begin(), hirFunctions.end(),
-                   [](const lang::HirFunctionInstance &function) {
-                     return function.entryKind != lang::ProgramEntryKind::None;
-                   });
-  expect(entry != hirFunctions.end(),
-         "the thunk fixture should retain a hosted entry");
-  if (entry != hirFunctions.end()) {
-    entry->entryKind = lang::ProgramEntryKind::None;
-  }
-  const lang::CppMirRepresentationSnapshotBuild staleThunkBuild =
-      lang::buildCppMirRepresentationSnapshot(
-          frontend.program, frontend.semantics, staleEntryHir, frontend.mir,
-          lang::TargetInfo::host());
-  expect(
-      !staleThunkBuild.valid() &&
-          hasBuildIssue(
-              staleThunkBuild,
-              lang::CppMirRepresentationSnapshotIssueKind::InvalidHostedEntry),
-      "stale hosted-entry facts should fail before planning");
-
   lang::CppMirRepresentationSnapshotBuild exact = buildSnapshot(frontend);
   expect(exact.valid(), "the exact mutation seed should build");
   if (!exact.valid()) {
@@ -1362,31 +1087,35 @@ int main() {
     return;
   }
 
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const lang::MirFunctionInstance *callable = nullptr;
-  const lang::FunctionInfo *declaration = nullptr;
   for (const lang::MirFunctionInstance &instance :
-       frontend.mir.functionInstances()) {
+       lowered.mir().functionInstances()) {
     if (std::any_of(instance.parameterTypes.begin(),
                     instance.parameterTypes.end(),
                     [](const lang::SemanticType &type) {
                       return type.kind == lang::SemanticType::Lambda;
                     })) {
       callable = &instance;
-      declaration = frontend.semantics.findFunction(instance.declaration);
       break;
     }
   }
+  const lang::LoweredFunctionDeclaration *declaration =
+      callable == nullptr
+          ? nullptr
+          : lowered.findFunctionDeclaration(callable->declaration);
   expect(callable != nullptr && declaration != nullptr,
          "the fixture should retain one concrete lambda-parameter instance");
   if (callable == nullptr || declaration == nullptr) {
     return;
   }
 
-  lang::CppMirBodyEmissionMapRows rows = lang::buildCppMirBodyEmissionMapRows(
-      frontend.semantics, frontend.mir, lang::CppStandard::Cpp23);
+  lang::CppMirBodyEmissionMapRows rows =
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
   const lang::CppMirBodyEmissionMap baseMap(rows);
   const lang::CppMirProgramEmissionAnalysis base =
-      lang::CppMirBodyEmitter(frontend.mir, baseMap).analyzeProgram();
+      lang::CppMirBodyEmitter(lowered.mir(), baseMap).analyzeProgram();
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                      .owner = callable->id};
   const auto body =
@@ -1405,9 +1134,8 @@ int main() {
          "specialized text surface");
 
   const std::optional<std::size_t> overlays =
-      lang::cppMirApplyCallableTemplateTypeOverlays(rows, frontend.semantics,
-                                                    lang::CppStandard::Cpp23,
-                                                    *declaration, *callable);
+      lang::cppMirApplyCallableTemplateTypeOverlays(
+          rows, lowered, lang::CppStandard::Cpp23, *declaration, *callable);
   expect(overlays && *overlays > 0,
          "the callable instance should derive an exact declaration-level type "
          "overlay");
@@ -1415,7 +1143,7 @@ int main() {
     return;
   }
   const lang::CppMirBodyEmissionMap overlayMap(std::move(rows));
-  const lang::CppMirBodyEmitter overlayEmitter(frontend.mir, overlayMap);
+  const lang::CppMirBodyEmitter overlayEmitter(lowered.mir(), overlayMap);
   expect(overlayEmitter.analyze(address).ready() &&
              (overlayEmitter.supportsBodyText(address) ||
               overlayEmitter.supportsFailureBodyText(address)),
@@ -1457,12 +1185,7 @@ void testAtomicBackendRouteAndIncoherentRejection() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("// Generated by GTI.") != std::string::npos &&
              artifact.contents.find("native_identity") != std::string::npos &&
              artifact.contents.find("helper") != std::string::npos &&
@@ -1503,26 +1226,18 @@ void testAtomicBackendRouteAndIncoherentRejection() {
 
   const lang::FrontendResult stale = analyzeRichProgram();
   expect(stale.canGenerateCode(),
-         "the stale backend Program should independently pass the frontend");
-  rejected = false;
-  try {
-    (void)lang::CppBackend().generate({.program = stale.program,
-                                       .semantics = frontend.semantics,
-                                       .hir = frontend.hir,
-                                       .mir = frontend.mir,
-                                       .sourceMir = &frontend.mir,
-                                       .optimizations = optimizations});
-  } catch (const std::logic_error &) {
-    rejected = true;
-  }
-  expect(rejected,
-         "CppBackend should reject an incoherent Program/representation "
-         "snapshot before publishing bytes");
+         "the stale Program should independently pass the frontend");
+  const lang::LoweredProgramBuild staleBuild =
+      lang::LoweredProgramBuilder().build(
+          stale.program, frontend.semantics, frontend.hir, frontend.mir,
+          frontend.mir, lang::TargetInfo::host());
+  expect(!staleBuild.valid(),
+         "LoweredProgram construction should reject an incoherent frontend "
+         "snapshot before a backend can observe it");
 }
 
-// ADR 016 phase-4 agreement gate: every extracted representation authority
-// must spell exactly the bytes the compatibility emitter writes, so table
-// rows can never drift from emitted output while both paths coexist.
+// C++ spellings are derived only from the sealed lowered program and must
+// match the bytes the backend emits.
 void testRepresentationSpellingAuthorities() {
   const lang::FrontendResult frontend = analyzeRichProgram();
   expect(frontend.canGenerateCode(),
@@ -1531,18 +1246,17 @@ void testRepresentationSpellingAuthorities() {
     return;
   }
 
-  const lang::FunctionDecl *helper = nullptr;
-  const lang::EnumDecl *exitCode = nullptr;
-  for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
-    if (const auto *function =
-            dynamic_cast<const lang::FunctionDecl *>(declaration.get());
-        function != nullptr && function->name().lexeme == "helper") {
-      helper = function;
-    }
-    if (const auto *enumeration =
-            dynamic_cast<const lang::EnumDecl *>(declaration.get());
-        enumeration != nullptr && enumeration->name().lexeme == "ExitCode") {
-      exitCode = enumeration;
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  const lang::LoweredFunctionDeclaration *helper = nullptr;
+  const lang::LoweredEnumDeclaration *exitCode = nullptr;
+  for (const lang::LoweredDeclaration &declaration : lowered.declarations()) {
+    if (declaration.name == "helper") {
+      helper =
+          std::get_if<lang::LoweredFunctionDeclaration>(&declaration.payload);
+    } else if (declaration.name == "ExitCode") {
+      exitCode =
+          std::get_if<lang::LoweredEnumDeclaration>(&declaration.payload);
     }
   }
   expect(helper != nullptr && exitCode != nullptr,
@@ -1555,38 +1269,26 @@ void testRepresentationSpellingAuthorities() {
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
-      lang::CppBackend().generate({.program = frontend.program,
-                                   .semantics = frontend.semantics,
-                                   .hir = frontend.hir,
-                                   .mir = frontend.mir,
-                                   .sourceMir = &frontend.mir,
-                                   .optimizations = optimizations});
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
 
   const std::string helperSpelling =
-      lang::cppFunctionSpelling(frontend.semantics, *helper);
-  const lang::FunctionInfo *helperInfo =
-      frontend.semantics.findFunction(*helper);
-  expect(helperInfo != nullptr &&
-             helperSpelling ==
-                 "__gti_fn_" + std::to_string(helperInfo->id) + "_helper" &&
+      lang::cppFunctionSpelling(*helper, "helper");
+  expect(helperSpelling ==
+                 "__gti_fn_" + std::to_string(helper->id) + "_helper" &&
              artifact.contents.find(helperSpelling + "(") != std::string::npos,
          "the function-spelling authority should produce the exact emitted "
          "helper definition name");
 
   lang::SemanticType int32Type;
   int32Type.kind = lang::SemanticType::Int32;
-  const lang::EnumTypeInfo *exitCodeInfo =
-      frontend.semantics.findEnumType(*exitCode);
   lang::SemanticType enumType;
   enumType.kind = lang::SemanticType::Enum;
-  enumType.enumId = exitCodeInfo == nullptr ? 0 : exitCodeInfo->id;
+  enumType.enumId = exitCode->id;
   const std::string enumSpelling = lang::cppSemanticTypeSpelling(
-      frontend.semantics, lang::CppStandard::Cpp20, enumType);
-  expect(lang::cppSemanticTypeSpelling(frontend.semantics,
-                                       lang::CppStandard::Cpp20,
+      lowered, lang::CppStandard::Cpp20, enumType);
+  expect(lang::cppSemanticTypeSpelling(lowered, lang::CppStandard::Cpp20,
                                        int32Type) == "std::int32_t" &&
              artifact.contents.find("std::int32_t") != std::string::npos &&
-             exitCodeInfo != nullptr &&
              enumSpelling == "::__gti_program::ExitCode",
          "the type-spelling authority should produce the exact emitted "
          "scalar and enum spellings");
@@ -1620,10 +1322,9 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  expectLoweredRowsMatch(frontend, "the closure representation fixture");
-  const lang::CppMirBodyEmissionMapRows rows =
-      lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
-                                           lang::CppStandard::Cpp23);
+  expectLoweredRowsDeterministic(frontend,
+                                 "the closure representation fixture");
+  const lang::CppMirBodyEmissionMapRows rows = buildRows(frontend);
   const auto capability = [&](lang::CppMirEmissionCapabilityKind kind,
                               std::string_view spelling) {
     return std::any_of(
@@ -1775,7 +1476,7 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  expectLoweredRowsMatch(frontend, "the lifecycle-cleanup fixture");
+  expectLoweredRowsDeterministic(frontend, "the lifecycle-cleanup fixture");
 
   lang::OptimizedProgram optimized =
       lang::OptimizationPipeline().run({.hir = frontend.hir,
@@ -1867,7 +1568,7 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  expectLoweredRowsMatch(frontend, "the concrete-instance fixture");
+  expectLoweredRowsDeterministic(frontend, "the concrete-instance fixture");
 
   lang::OptimizedProgram optimized =
       lang::OptimizationPipeline().run({.hir = frontend.hir,
@@ -1958,7 +1659,7 @@ int main() {
   testExhaustiveSealedInventory();
   testNativeCallbackGeneratedItemRows();
   testUnusedSourceTemplatesRemainInventorySurface();
-  testExactProgramAndTargetAnalysisSeal();
+  testLoweredProgramConstructionSeal();
   testPrivateInventorySealAndContractedThunkClosure();
   testPureDataOnlyProgramInitializationPlan();
   testNamespacedProgramStorageRows();

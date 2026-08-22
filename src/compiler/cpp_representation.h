@@ -1,30 +1,18 @@
 #pragma once
 
 #include "gti/cpp_emitter.h"
-#include "gti/semantic_analyzer.h"
+#include "gti/lowered_program.h"
 
 #include <string>
 #include <string_view>
 
 namespace lang {
 
-class LoweredProgram;
-struct LoweredFunctionDeclaration;
-
-// Deterministic C++ representation authorities extracted from the
-// compatibility emitter, per ADR 016. These are the single source of the
-// spellings the transitional emitter writes today and the lowered-program
-// representation tables consume tomorrow; the emitter delegates here, so an
-// extracted spelling can never drift from an emitted one.
+// Deterministic C++ representation authorities over the sealed lowered
+// program, per ADR 016. These are backend policy: no C++ spelling is stored in
+// LoweredProgram itself.
 
 inline constexpr std::string_view cppEmittedStandardNamespace = "__gti_std";
-
-// The exact spelling `CppEmitter` writes for a semantic type at the given
-// C++ standard. Unknown and unrepresentable kinds spell as `void`, matching
-// the emitter's historical conservative fallback.
-[[nodiscard]] std::string
-cppSemanticTypeSpelling(const SemanticModel &semantics, CppStandard standard,
-                        const SemanticType &type);
 
 [[nodiscard]] std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                                                   CppStandard standard,
@@ -35,9 +23,6 @@ cppSemanticTypeSpelling(const SemanticModel &semantics, CppStandard standard,
 // C-linkage passthrough names, the reserved `__gti_entry` hosted entry name,
 // virtual-method source names, and the `__gti_fn_<id>_<name>` spelling for
 // ordinary GTI functions.
-[[nodiscard]] std::string cppFunctionSpelling(const SemanticModel &semantics,
-                                              const FunctionDecl &function);
-
 [[nodiscard]] std::string
 cppFunctionSpelling(const LoweredFunctionDeclaration &function,
                     std::string_view sourceName);
