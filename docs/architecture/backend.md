@@ -109,6 +109,13 @@ frontend representation facts and C++ emission. Its production builder is the
 only component permitted to seal a snapshot. Public backend callers cannot
 claim that a body, declaration, or thunk is supported.
 
+The generic MIR body representation-row builder has crossed the new boundary:
+production C++ compilation now derives type, field, storage, capture, enum, and
+body-name rows from `LoweredProgram`. C++ type/function spelling remains
+backend policy. A temporary semantic-input overload is retained only for
+direct migration tests, which exact-compare both row inventories; it is not
+selected by the reusable driver.
+
 The builder checks the exact `Program`/semantic/HIR/MIR/target tuple and then
 inventories:
 

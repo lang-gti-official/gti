@@ -1433,6 +1433,38 @@ LoweredProgram::findStorageDeclaration(SymbolId id) const {
   return nullptr;
 }
 
+const LoweredGenericParameter *
+LoweredProgram::findGenericParameter(GenericParameterId id) const {
+  const auto find = [id](const std::vector<LoweredGenericParameter> &items) {
+    const auto found = std::find_if(
+        items.begin(), items.end(),
+        [id](const LoweredGenericParameter &item) { return item.id == id; });
+    return found == items.end() ? nullptr : &*found;
+  };
+  for (const LoweredDeclaration &declaration : declarations_) {
+    if (const auto *payload =
+            std::get_if<LoweredClassDeclaration>(&declaration.payload)) {
+      if (const LoweredGenericParameter *parameter =
+              find(payload->genericParameters)) {
+        return parameter;
+      }
+    } else if (const auto *payload = std::get_if<LoweredFunctionDeclaration>(
+                   &declaration.payload)) {
+      if (const LoweredGenericParameter *parameter =
+              find(payload->genericParameters)) {
+        return parameter;
+      }
+    } else if (const auto *payload = std::get_if<LoweredConstructorDeclaration>(
+                   &declaration.payload)) {
+      if (const LoweredGenericParameter *parameter =
+              find(payload->genericParameters)) {
+        return parameter;
+      }
+    }
+  }
+  return nullptr;
+}
+
 const LoweredSymbol *LoweredProgram::findSymbol(SymbolId id) const {
   const auto found = std::find_if(
       symbols_.begin(), symbols_.end(),

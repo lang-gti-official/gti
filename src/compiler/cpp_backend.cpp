@@ -87,9 +87,13 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
 
   // Copied representation rows for the generic body emitter are built and
   // owned at this boundary, beside the program plan, from the same verified
-  // inputs (ADR 016). The emitter receives them; it does not derive them.
+  // inputs (ADR 016). Production uses only LoweredProgram for these rows;
+  // direct legacy test construction remains until BackendInput itself narrows.
   CppMirBodyEmissionMap generalRows(
-      buildCppMirBodyEmissionMapRows(input.semantics, input.mir, standard));
+      input.loweredProgram != nullptr
+          ? buildCppMirBodyEmissionMapRows(*input.loweredProgram, standard)
+          : buildCppMirBodyEmissionMapRows(input.semantics, input.mir,
+                                           standard));
 
   // The complete plan above proves every executable body has generic MIR text
   // coverage before this one whole-program representation emitter is built.

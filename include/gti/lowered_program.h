@@ -570,6 +570,8 @@ public:
   findFunctionDeclaration(FunctionId id) const;
   [[nodiscard]] const LoweredStorageDeclaration *
   findStorageDeclaration(SymbolId id) const;
+  [[nodiscard]] const LoweredGenericParameter *
+  findGenericParameter(GenericParameterId id) const;
   [[nodiscard]] const LoweredSymbol *findSymbol(SymbolId id) const;
   [[nodiscard]] const LoweredGeneratedItem *
   findGeneratedItem(const LoweredGeneratedItemIdentity &identity) const;

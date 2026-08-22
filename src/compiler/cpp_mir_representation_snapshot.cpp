@@ -69,7 +69,8 @@ struct ProgramDeclarationInventory {
   }
 };
 
-[[nodiscard]] std::string cppProgramStorageSpelling(const SymbolRecord &record,
+template <typename Symbol>
+[[nodiscard]] std::string cppProgramStorageSpelling(const Symbol &record,
                                                     SymbolId symbol) {
   if (record.kind != SymbolKind::GlobalVariable || record.name.empty()) {
     return {};
@@ -2079,10 +2080,238 @@ selectCppMirBackendProgramRoute(const CppMirProgramPlan &plan) {
 
 namespace {
 
+struct RowClassFacts {
+  std::string name;
+  bool passiveCAbiRecord = false;
+  SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus moveAssignment = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
+};
+
+struct RowEnumVariantFacts {
+  std::size_t index = 0;
+  std::vector<SemanticType> fieldTypes;
+};
+
+struct RowEnumFacts {
+  SemanticType underlyingType = SemanticType::Unknown;
+  bool payload = false;
+  std::vector<RowEnumVariantFacts> variants;
+};
+
+struct RowSymbolFacts {
+  SymbolKind kind = SymbolKind::LocalVariable;
+  std::string name;
+  std::string qualifiedName;
+  SemanticType type = SemanticType::Unknown;
+  bool internalLinkage = false;
+};
+
+struct RowFunctionFacts {
+  std::string name;
+  std::vector<std::string> namespaceScope;
+  std::vector<LoweredGenericParameter> genericParameters;
+  std::vector<SemanticType> parameterTypes;
+  std::string spelling;
+  bool cLinkage = false;
+  bool runtimeBinding = false;
+};
+
+class RowFactProvider final {
+public:
+  explicit RowFactProvider(const SemanticModel &semantics)
+      : semantics(&semantics) {}
+  explicit RowFactProvider(const LoweredProgram &lowered) : lowered(&lowered) {}
+
+  [[nodiscard]] std::string typeSpelling(CppStandard standard,
+                                         const SemanticType &type) const {
+    return semantics != nullptr
+               ? cppSemanticTypeSpelling(*semantics, standard, type)
+               : cppSemanticTypeSpelling(*lowered, standard, type);
+  }
+
+  [[nodiscard]] std::optional<RowClassFacts> classFacts(ClassId id) const {
+    if (semantics != nullptr) {
+      const ClassTypeInfo *info = semantics->findClassType(id);
+      const ClassLifecycleInfo *lifecycle =
+          info == nullptr || info->declaration == nullptr
+              ? nullptr
+              : semantics->findClassLifecycle(*info->declaration);
+      if (info == nullptr || info->declaration == nullptr) {
+        return std::nullopt;
+      }
+      return RowClassFacts{
+          .name = info->declaration->name().lexeme,
+          .passiveCAbiRecord = info->cAbiRecord && info->cAbiLayout &&
+                               !info->cOpaqueHandle && !info->unionLayout,
+          .defaultConstructor = lifecycle == nullptr
+                                    ? SpecialMemberStatus::Deleted
+                                    : lifecycle->defaultConstructor,
+          .copyConstructor = lifecycle == nullptr ? SpecialMemberStatus::Deleted
+                                                  : lifecycle->copyConstructor,
+          .moveAssignment = lifecycle == nullptr ? SpecialMemberStatus::Deleted
+                                                 : lifecycle->moveAssignment,
+          .copyAssignment = lifecycle == nullptr ? SpecialMemberStatus::Deleted
+                                                 : lifecycle->copyAssignment};
+    }
+    const LoweredClassDeclaration *info = lowered->findClassDeclaration(id);
+    if (info == nullptr) {
+      return std::nullopt;
+    }
+    const std::size_t separator = info->qualifiedName.rfind("::");
+    return RowClassFacts{
+        .name = separator == std::string::npos
+                    ? info->qualifiedName
+                    : info->qualifiedName.substr(separator + 2),
+        .passiveCAbiRecord = info->cAbiRecord && info->cAbiLayout &&
+                             !info->cOpaqueHandle && !info->unionLayout,
+        .defaultConstructor = info->defaultConstructor,
+        .copyConstructor = info->copyConstructor,
+        .moveAssignment = info->moveAssignment,
+        .copyAssignment = info->copyAssignment};
+  }
+
+  [[nodiscard]] std::optional<RowEnumFacts> enumFacts(EnumId id) const {
+    RowEnumFacts result;
+    if (semantics != nullptr) {
+      const EnumTypeInfo *info = semantics->findEnumType(id);
+      if (info == nullptr) {
+        return std::nullopt;
+      }
+      result.underlyingType = info->underlyingType;
+      result.payload = info->payload;
+      result.variants.reserve(info->enumerators.size());
+      for (const EnumeratorInfo &enumerator : info->enumerators) {
+        result.variants.push_back({.index = enumerator.variantIndex,
+                                   .fieldTypes = enumerator.payloadTypes});
+      }
+      return result;
+    }
+    const LoweredEnumDeclaration *info = lowered->findEnumDeclaration(id);
+    if (info == nullptr) {
+      return std::nullopt;
+    }
+    result.underlyingType = info->underlyingType;
+    result.payload = info->payload;
+    result.variants.reserve(info->enumerators.size());
+    for (const LoweredEnumerator &enumerator : info->enumerators) {
+      result.variants.push_back({.index = enumerator.variantIndex,
+                                 .fieldTypes = enumerator.payloadTypes});
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::optional<RowSymbolFacts> symbolFacts(SymbolId id) const {
+    if (semantics != nullptr) {
+      const SymbolRecord *record = semantics->database().findSymbol(id);
+      if (record == nullptr) {
+        return std::nullopt;
+      }
+      return RowSymbolFacts{.kind = record->kind,
+                            .name = record->name,
+                            .qualifiedName = record->qualifiedName,
+                            .type = record->type,
+                            .internalLinkage = record->internalLinkage};
+    }
+    const LoweredSymbol *record = lowered->findSymbol(id);
+    if (record == nullptr) {
+      return std::nullopt;
+    }
+    return RowSymbolFacts{.kind = record->kind,
+                          .name = record->name,
+                          .qualifiedName = record->qualifiedName,
+                          .type = record->type,
+                          .internalLinkage = record->internalLinkage};
+  }
+
+  [[nodiscard]] std::optional<RowFunctionFacts>
+  functionFacts(FunctionId id) const {
+    if (semantics != nullptr) {
+      const FunctionInfo *info = semantics->findFunction(id);
+      if (info == nullptr || info->declaration == nullptr) {
+        return std::nullopt;
+      }
+      RowFunctionFacts result{
+          .name = info->declaration->name().lexeme,
+          .namespaceScope = info->namespaceScope,
+          .parameterTypes = info->parameterTypes,
+          .spelling = cppFunctionSpelling(*semantics, *info->declaration),
+          .cLinkage = info->declaration->hasCLinkage(),
+          .runtimeBinding = info->declaration->runtimeBinding().has_value()};
+      result.genericParameters.reserve(info->genericParameters.size());
+      for (const GenericParameterInfo &parameter : info->genericParameters) {
+        result.genericParameters.push_back(
+            {.id = parameter.id,
+             .name = parameter.name.lexeme,
+             .pack = parameter.pack,
+             .value = parameter.value,
+             .constraints = parameter.constraints});
+      }
+      return result;
+    }
+    for (const LoweredDeclaration &declaration : lowered->declarations()) {
+      const auto *info =
+          std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
+      if (info == nullptr || info->id != id) {
+        continue;
+      }
+      RowFunctionFacts result{
+          .name = declaration.name,
+          .namespaceScope = declaration.namespaceScope,
+          .genericParameters = info->genericParameters,
+          .spelling = cppFunctionSpelling(*info, declaration.name),
+          .cLinkage = info->linkage == LanguageLinkage::C,
+          .runtimeBinding =
+              info->definitionKind == MirDefinitionKind::RuntimeBinding};
+      result.parameterTypes.reserve(info->parameters.size());
+      for (const LoweredParameter &parameter : info->parameters) {
+        result.parameterTypes.push_back(parameter.type);
+      }
+      return result;
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<std::string>
+  lambdaCaptureName(LambdaId declaration, HirLambdaId instanceId,
+                    SymbolId symbol, std::size_t index) const {
+    if (semantics != nullptr) {
+      const LambdaInfo *info = semantics->findLambda(declaration);
+      if (info == nullptr) {
+        return std::nullopt;
+      }
+      const auto found =
+          std::find_if(info->captures.begin(), info->captures.end(),
+                       [symbol](const LambdaCaptureInfo &capture) {
+                         return capture.bindingSymbol == symbol;
+                       });
+      return found == info->captures.end() || found->capture.lexeme.empty()
+                 ? std::nullopt
+                 : std::optional<std::string>{found->capture.lexeme};
+    }
+    if (instanceId == 0 || instanceId > lowered->lambdaInstances().size()) {
+      return std::nullopt;
+    }
+    const LoweredLambdaInstance &instance =
+        lowered->lambdaInstances()[instanceId - 1];
+    if (index >= instance.captures.size() ||
+        instance.captures[index].symbol != symbol ||
+        instance.captures[index].name.empty()) {
+      return std::nullopt;
+    }
+    return instance.captures[index].name;
+  }
+
+private:
+  const SemanticModel *semantics = nullptr;
+  const LoweredProgram *lowered = nullptr;
+};
+
 // Deterministic first-seen type-row collection with the exact argument
 // closure the emission analysis recurses through.
 struct RowsBuilder {
-  const SemanticModel &semantics;
+  const RowFactProvider &facts;
   const MirProgram &mir;
   CppStandard standard;
   CppMirBodyEmissionMapRows rows;
@@ -2111,37 +2340,29 @@ struct RowsBuilder {
       bool copyable = false;
       std::string templateNameSpelling;
       if (type.kind == SemanticType::Class) {
-        const ClassTypeInfo *classInfo = semantics.findClassType(type.classId);
-        const ClassLifecycleInfo *lifecycle =
-            classInfo == nullptr || classInfo->declaration == nullptr
-                ? nullptr
-                : semantics.findClassLifecycle(*classInfo->declaration);
-        const bool passiveCAbiRecord =
-            classInfo != nullptr && classInfo->cAbiRecord &&
-            classInfo->cAbiLayout && !classInfo->cOpaqueHandle &&
-            !classInfo->unionLayout;
+        const std::optional<RowClassFacts> classInfo =
+            facts.classFacts(type.classId);
         boundaryConstructible =
-            passiveCAbiRecord ||
-            (lifecycle != nullptr &&
-             lifecycle->defaultConstructor != SpecialMemberStatus::Deleted &&
-             lifecycle->moveAssignment != SpecialMemberStatus::Deleted);
+            classInfo &&
+            (classInfo->passiveCAbiRecord ||
+             (classInfo->defaultConstructor != SpecialMemberStatus::Deleted &&
+              classInfo->moveAssignment != SpecialMemberStatus::Deleted));
         copyable =
-            passiveCAbiRecord ||
-            (lifecycle != nullptr &&
-             lifecycle->copyConstructor != SpecialMemberStatus::Deleted &&
-             lifecycle->copyAssignment != SpecialMemberStatus::Deleted);
+            classInfo &&
+            (classInfo->passiveCAbiRecord ||
+             (classInfo->copyConstructor != SpecialMemberStatus::Deleted &&
+              classInfo->copyAssignment != SpecialMemberStatus::Deleted));
         if (!type.arguments.empty() || !type.valueArguments.empty()) {
           SemanticType primary = type;
           primary.arguments.clear();
           primary.valueArguments.clear();
-          templateNameSpelling =
-              cppSemanticTypeSpelling(semantics, standard, primary);
+          templateNameSpelling = facts.typeSpelling(standard, primary);
         }
       }
       rows.types.push_back(
           {.type = type,
            .kind = *kind,
-           .spelling = cppSemanticTypeSpelling(semantics, standard, type),
+           .spelling = facts.typeSpelling(standard, type),
            .templateNameSpelling = std::move(templateNameSpelling),
            .boundaryConstructible = boundaryConstructible,
            .copyable = copyable});
@@ -2170,28 +2391,26 @@ struct RowsBuilder {
                                   })) {
       return;
     }
-    const EnumTypeInfo *info = semantics.findEnumType(owner);
-    if (info == nullptr) {
+    const std::optional<RowEnumFacts> info = facts.enumFacts(owner);
+    if (!info) {
       return;
     }
     SemanticType type;
     type.kind = SemanticType::Enum;
     type.enumId = owner;
-    CppMirEnumRepresentation row{
-        .owner = owner,
-        .spelling = cppSemanticTypeSpelling(semantics, standard, type),
-        .underlyingType = info->underlyingType};
+    CppMirEnumRepresentation row{.owner = owner,
+                                 .spelling = facts.typeSpelling(standard, type),
+                                 .underlyingType = info->underlyingType};
     // A payload enum's row copies the compatibility record layout: each
     // enumerator is a __gti_variant_<index> alternative of the __gti_value
     // variant, holding its payload fields in declaration order.
     if (info->payload) {
-      for (const EnumeratorInfo &enumerator : info->enumerators) {
+      for (const RowEnumVariantFacts &enumerator : info->variants) {
         row.payloadVariants.push_back(
-            {.index = enumerator.variantIndex,
-             .spelling =
-                 "__gti_variant_" + std::to_string(enumerator.variantIndex),
-             .fieldTypes = enumerator.payloadTypes});
-        for (const SemanticType &field : enumerator.payloadTypes) {
+            {.index = enumerator.index,
+             .spelling = "__gti_variant_" + std::to_string(enumerator.index),
+             .fieldTypes = enumerator.fieldTypes});
+        for (const SemanticType &field : enumerator.fieldTypes) {
           addType(field);
         }
       }
@@ -2248,10 +2467,9 @@ struct RowsBuilder {
 
 } // namespace
 
-CppMirBodyEmissionMapRows
-buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
-                               const MirProgram &mir, CppStandard standard) {
-  RowsBuilder builder{.semantics = semantics, .mir = mir, .standard = standard};
+static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
+    const RowFactProvider &facts, const MirProgram &mir, CppStandard standard) {
+  RowsBuilder builder{.facts = facts, .mir = mir, .standard = standard};
 
   for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
     if (const MirBody *body = findMirBody(mir, address)) {
@@ -2296,8 +2514,7 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
         builder.rows.bodies.push_back(
             {.address = {.kind = MirBodyKind::Constructor,
                          .owner = constructor.id},
-             .spelling =
-                 cppSemanticTypeSpelling(semantics, standard, owner->type)});
+             .spelling = facts.typeSpelling(standard, owner->type)});
       }
     }
   }
@@ -2306,43 +2523,36 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
       continue;
     }
     const MirClassInstance *owner = mir.findClassInstance(destructor.owner);
-    const ClassTypeInfo *info =
-        owner == nullptr ? nullptr
-                         : semantics.findClassType(owner->declaration);
-    if (owner == nullptr || info == nullptr || info->declaration == nullptr) {
+    const std::optional<RowClassFacts> info =
+        owner == nullptr ? std::nullopt : facts.classFacts(owner->declaration);
+    if (owner == nullptr || !info) {
       continue;
     }
     builder.rows.bodies.push_back(
         {.address = {.kind = MirBodyKind::Destructor, .owner = destructor.id},
-         .spelling = cppSemanticTypeSpelling(semantics, standard, owner->type) +
-                     "::~" + info->declaration->name().lexeme});
+         .spelling =
+             facts.typeSpelling(standard, owner->type) + "::~" + info->name});
   }
 
   // Capture name rows: each lambda instance's captures spell exactly the
   // source capture names the compatibility literal prints, matched from
   // the semantic capture list by binding symbol.
   for (const MirLambdaInstance &lambda : mir.lambdaInstances()) {
-    const LambdaInfo *info = semantics.findLambda(lambda.declaration);
-    if (info == nullptr) {
-      continue;
-    }
     for (std::size_t index = 0; index < lambda.captureSymbols.size(); ++index) {
       const SymbolId symbol = lambda.captureSymbols[index];
       if (symbol == 0 || index >= lambda.captureTypes.size()) {
         continue;
       }
-      for (const LambdaCaptureInfo &capture : info->captures) {
-        if (capture.bindingSymbol == symbol &&
-            !capture.capture.lexeme.empty()) {
-          builder.rows.symbols.push_back(
-              {.kind = CppMirSymbolRepresentationKind::Capture,
-               .owner = lambda.id,
-               .symbol = symbol,
-               .ordinal = index + 1,
-               .type = lambda.captureTypes[index],
-               .spelling = capture.capture.lexeme});
-          break;
-        }
+      const std::optional<std::string> name =
+          facts.lambdaCaptureName(lambda.declaration, lambda.id, symbol, index);
+      if (name) {
+        builder.rows.symbols.push_back(
+            {.kind = CppMirSymbolRepresentationKind::Capture,
+             .owner = lambda.id,
+             .symbol = symbol,
+             .ordinal = index + 1,
+             .type = lambda.captureTypes[index],
+             .spelling = *name});
       }
     }
   }
@@ -2494,9 +2704,8 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
     builder.rows.bodies.push_back(
         {.address = {.kind = MirBodyKind::FieldInitializers,
                      .owner = instance.id},
-         .spelling =
-             cppSemanticTypeSpelling(semantics, standard, instance.type) +
-             "::__gti_field_initializers"});
+         .spelling = facts.typeSpelling(standard, instance.type) +
+                     "::__gti_field_initializers"});
   }
   for (const MirLambdaInstance &lambda : mir.lambdaInstances()) {
     // A lambda body is never a call target: it spells only nested inside
@@ -2541,9 +2750,9 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
                       })) {
         continue;
       }
-      const SymbolRecord *record =
-          semantics.database().findSymbol(place.symbol);
-      if (record == nullptr || record->name.empty()) {
+      const std::optional<RowSymbolFacts> record =
+          facts.symbolFacts(place.symbol);
+      if (!record || record->name.empty()) {
         continue;
       }
       // An enumerator read spells the enum type's qualified constant; the
@@ -2551,11 +2760,11 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
       // enums stay rowless — their variants are not plain constants.
       if (record->kind == SymbolKind::Enumerator &&
           place.type.kind == SemanticType::Enum) {
-        const EnumTypeInfo *enumInfo =
-            semantics.findEnumType(place.type.enumId);
+        const std::optional<RowEnumFacts> enumInfo =
+            facts.enumFacts(place.type.enumId);
         const std::string enumSpelling =
-            cppSemanticTypeSpelling(semantics, standard, place.type);
-        if (enumInfo == nullptr || enumInfo->payload || enumSpelling.empty()) {
+            facts.typeSpelling(standard, place.type);
+        if (!enumInfo || enumInfo->payload || enumSpelling.empty()) {
           continue;
         }
         builder.rows.symbols.push_back(
@@ -2600,9 +2809,10 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
     if (step.ownerClass != 0) {
       const MirClassInstance *ownerInstance =
           mir.findClassInstance(step.ownerClass);
-      const SymbolRecord *record = semantics.database().findSymbol(step.symbol);
+      const std::optional<RowSymbolFacts> record =
+          facts.symbolFacts(step.symbol);
       const MirPlace *storage = mir.module().findPlace(step.storagePlace);
-      if (ownerInstance == nullptr || record == nullptr || storage == nullptr ||
+      if (ownerInstance == nullptr || !record || storage == nullptr ||
           record->name.empty() ||
           std::any_of(builder.rows.symbols.begin(), builder.rows.symbols.end(),
                       [&](const CppMirSymbolRepresentation &row) {
@@ -2619,8 +2829,7 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
            .symbol = step.symbol,
            .ordinal = 0,
            .type = storage->type,
-           .spelling = cppSemanticTypeSpelling(semantics, standard,
-                                               ownerInstance->type) +
+           .spelling = facts.typeSpelling(standard, ownerInstance->type) +
                        "::" + record->name});
       builder.addType(storage->type);
       continue;
@@ -2633,9 +2842,9 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
                     })) {
       continue;
     }
-    const SymbolRecord *record = semantics.database().findSymbol(step.symbol);
+    const std::optional<RowSymbolFacts> record = facts.symbolFacts(step.symbol);
     const MirPlace *storage = mir.module().findPlace(step.storagePlace);
-    if (record == nullptr || storage == nullptr) {
+    if (!record || storage == nullptr) {
       continue;
     }
     std::string spelling = cppProgramStorageSpelling(*record, step.symbol);
@@ -2654,15 +2863,14 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
 
   for (const MirClassInstance &instance : mir.classInstances()) {
     for (const MirClassFieldInfo &field : instance.declaredFields) {
-      const SymbolRecord *record =
-          semantics.database().findSymbol(field.symbol);
-      if (record == nullptr || record->name.empty()) {
+      const std::optional<RowSymbolFacts> record =
+          facts.symbolFacts(field.symbol);
+      if (!record || record->name.empty()) {
         continue;
       }
       std::string declarationTypeSpelling;
       if (record->type != field.type && containsDependentType(record->type)) {
-        declarationTypeSpelling =
-            cppSemanticTypeSpelling(semantics, standard, record->type);
+        declarationTypeSpelling = facts.typeSpelling(standard, record->type);
         if (declarationTypeSpelling == "void") {
           declarationTypeSpelling.clear();
         }
@@ -2685,8 +2893,9 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
     // declarations their exact external names. Only the namespace-scope
     // source-defined GTI form is also a valid call-target spelling; the
     // scalar call family's gates admit exactly that form.
-    const FunctionInfo *info = semantics.findFunction(function.declaration);
-    if (info == nullptr || info->declaration == nullptr) {
+    const std::optional<RowFunctionFacts> info =
+        facts.functionFacts(function.declaration);
+    if (!info) {
       continue;
     }
     std::string spelling;
@@ -2696,11 +2905,9 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
       if (ownerInstance == nullptr) {
         continue;
       }
-      spelling =
-          cppSemanticTypeSpelling(semantics, standard, ownerInstance->type);
+      spelling = facts.typeSpelling(standard, ownerInstance->type);
       spelling += "::";
-    } else if (!info->declaration->hasCLinkage() &&
-               !info->declaration->runtimeBinding()) {
+    } else if (!info->cLinkage && !info->runtimeBinding) {
       spelling = "::__gti_program";
       for (std::size_t index = 0; index < info->namespaceScope.size();
            ++index) {
@@ -2727,14 +2934,13 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
       }
       spelling += "::";
     }
-    spelling += cppFunctionSpelling(semantics, *info->declaration);
+    spelling += info->spelling;
     // A generic parameter that appears in no parameter type cannot be
     // deduced at a call site, so the instance's call spelling carries its
     // substituted arguments explicitly — exactly like the compatibility
     // call site. Deducible instances keep the bare name so shipped
     // spellings stay byte-stable.
-    if (!function.typeArguments.empty() &&
-        !info->declaration->genericParameters().empty()) {
+    if (!function.typeArguments.empty() && !info->genericParameters.empty()) {
       const auto mentionsParameter = [&](const GenericParameterId parameter) {
         const auto mentions = [&](const auto &self,
                                   const SemanticType &type) -> bool {
@@ -2757,7 +2963,7 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
         return false;
       };
       bool needsExplicit = false;
-      for (const GenericParameterInfo &parameter : info->genericParameters) {
+      for (const LoweredGenericParameter &parameter : info->genericParameters) {
         if (!parameter.pack && !mentionsParameter(parameter.id)) {
           needsExplicit = true;
           break;
@@ -2770,8 +2976,8 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
           if (index != 0) {
             spelling += ", ";
           }
-          spelling += cppSemanticTypeSpelling(semantics, standard,
-                                              function.typeArguments[index]);
+          spelling +=
+              facts.typeSpelling(standard, function.typeArguments[index]);
         }
         spelling += '>';
       }
@@ -2782,6 +2988,21 @@ buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
   }
 
   return builder.rows;
+}
+
+CppMirBodyEmissionMapRows
+buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
+                               const MirProgram &mir, CppStandard standard) {
+  const RowFactProvider facts(semantics);
+  return buildCppMirBodyEmissionMapRowsFromFacts(facts, mir, standard);
+}
+
+CppMirBodyEmissionMapRows
+buildCppMirBodyEmissionMapRows(const LoweredProgram &program,
+                               CppStandard standard) {
+  const RowFactProvider facts(program);
+  return buildCppMirBodyEmissionMapRowsFromFacts(facts, program.mir(),
+                                                 standard);
 }
 
 } // namespace lang

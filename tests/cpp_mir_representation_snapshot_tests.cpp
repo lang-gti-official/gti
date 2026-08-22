@@ -122,6 +122,44 @@ buildSnapshot(const lang::FrontendResult &frontend) {
       lang::TargetInfo::host());
 }
 
+void expectLoweredRowsMatch(const lang::FrontendResult &frontend,
+                            std::string_view fixture) {
+  lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O1,
+                                        .target = lang::TargetInfo::host()});
+  expect(optimized.valid(),
+         std::string(fixture) + " should produce verified optimized MIR");
+  if (!optimized.valid()) {
+    return;
+  }
+  lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, lang::TargetInfo::host());
+  expect(lowered.valid(),
+         std::string(fixture) + " should produce a lowered program");
+  if (!lowered.valid()) {
+    for (const lang::LoweredProgramIssue &issue : lowered.issues) {
+      std::cerr << "  lowered issue: " << issue.detail << '\n';
+    }
+    return;
+  }
+  const lang::CppMirBodyEmissionMapRows semanticRows =
+      lang::buildCppMirBodyEmissionMapRows(frontend.semantics, optimized.mir,
+                                           lang::CppStandard::Cpp23);
+  const lang::CppMirBodyEmissionMapRows loweredRows =
+      lang::buildCppMirBodyEmissionMapRows(*lowered.program,
+                                           lang::CppStandard::Cpp23);
+  expect(semanticRows.types == loweredRows.types &&
+             semanticRows.bodies == loweredRows.bodies &&
+             semanticRows.symbols == loweredRows.symbols &&
+             semanticRows.enums == loweredRows.enums &&
+             semanticRows.capabilities == loweredRows.capabilities,
+         std::string(fixture) +
+             " should build byte-identical C++ rows from LoweredProgram");
+}
+
 void testExhaustiveSealedInventory() {
   const lang::FrontendResult frontend = analyzeRichProgram();
   expect(frontend.canGenerateCode(),
@@ -132,6 +170,8 @@ void testExhaustiveSealedInventory() {
     }
     return;
   }
+
+  expectLoweredRowsMatch(frontend, "the rich representation fixture");
 
   lang::CppMirRepresentationSnapshotBuild build = buildSnapshot(frontend);
   expect(build.valid(),
@@ -695,6 +735,7 @@ int main() { return seed - 7 + zeroed; }
   if (!frontend.canGenerateCode()) {
     return;
   }
+  expectLoweredRowsMatch(frontend, "the data-only representation fixture");
   expect(frontend.hir.module().roots.empty() &&
              !frontend.mir.programInitializationPlan().steps.empty() &&
              !frontend.mir.module().places.empty() &&
@@ -1534,6 +1575,7 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
+  expectLoweredRowsMatch(frontend, "the closure representation fixture");
   const lang::CppMirBodyEmissionMapRows rows =
       lang::buildCppMirBodyEmissionMapRows(frontend.semantics, frontend.mir,
                                            lang::CppStandard::Cpp23);

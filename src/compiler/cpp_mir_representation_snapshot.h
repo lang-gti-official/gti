@@ -6,6 +6,7 @@
 #include "gti/ast.h"
 #include "gti/cpp_emitter.h"
 #include "gti/hir.h"
+#include "gti/lowered_program.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/target.h"
 
@@ -74,6 +75,10 @@ buildCppMirRepresentationSnapshot(const Program &program,
 [[nodiscard]] CppMirBodyEmissionMapRows
 buildCppMirBodyEmissionMapRows(const SemanticModel &semantics,
                                const MirProgram &mir, CppStandard standard);
+
+[[nodiscard]] CppMirBodyEmissionMapRows
+buildCppMirBodyEmissionMapRows(const LoweredProgram &program,
+                               CppStandard standard);
 
 // Applies the declaration-level type spellings required when one concrete MIR
 // instance must be emitted through a source C++ template (most importantly an

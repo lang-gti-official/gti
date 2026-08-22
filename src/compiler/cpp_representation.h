@@ -8,6 +8,9 @@
 
 namespace lang {
 
+class LoweredProgram;
+struct LoweredFunctionDeclaration;
+
 // Deterministic C++ representation authorities extracted from the
 // compatibility emitter, per ADR 016. These are the single source of the
 // spellings the transitional emitter writes today and the lowered-program
@@ -23,6 +26,10 @@ inline constexpr std::string_view cppEmittedStandardNamespace = "__gti_std";
 cppSemanticTypeSpelling(const SemanticModel &semantics, CppStandard standard,
                         const SemanticType &type);
 
+[[nodiscard]] std::string cppSemanticTypeSpelling(const LoweredProgram &program,
+                                                  CppStandard standard,
+                                                  const SemanticType &type);
+
 // The exact unqualified name `CppEmitter` writes for a function declaration:
 // comparison/assignment operator source spellings, runtime-binding and
 // C-linkage passthrough names, the reserved `__gti_entry` hosted entry name,
@@ -30,6 +37,10 @@ cppSemanticTypeSpelling(const SemanticModel &semantics, CppStandard standard,
 // ordinary GTI functions.
 [[nodiscard]] std::string cppFunctionSpelling(const SemanticModel &semantics,
                                               const FunctionDecl &function);
+
+[[nodiscard]] std::string
+cppFunctionSpelling(const LoweredFunctionDeclaration &function,
+                    std::string_view sourceName);
 
 // The exact holder and value spellings `CppEmitter` writes for
 // internal-linkage static storage: the `__gti_static_<symbol>_<name>` holder

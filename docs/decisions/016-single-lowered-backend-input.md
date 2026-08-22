@@ -13,6 +13,9 @@ source/body identities, and the exact hosted-entry, program-initialization, and
 native-callback generated-item graph. The C++ representation consumer,
 remaining generated-item families, and native-header cutover remain in
 progress; transitional `BackendInput` fields are therefore still present.
+The production generic-MIR representation-row builder already consumes this
+contract, with semantic-vs-lowered equality tests retained as migration
+evidence.
 
 ## Context
 
