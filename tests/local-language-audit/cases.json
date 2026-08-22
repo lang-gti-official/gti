@@ -103,6 +103,15 @@
       ]
     },
     {
+      "id": "mutable-field-groups",
+      "kind": "execution",
+      "source": "execution/mutable-field-groups.gti",
+      "exit_code": 0,
+      "stdout": "mutable-field-groups-ok\n",
+      "stderr": "",
+      "emit_contains": ["first", "second", "identity"]
+    },
+    {
       "id": "exact-call-diagnostic",
       "kind": "diagnostic",
       "source": "diagnostics/exact-call-types.gti",

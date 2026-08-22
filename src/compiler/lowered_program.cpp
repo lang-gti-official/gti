@@ -517,6 +517,11 @@ private:
       }
       return;
     }
+    if (const auto *group =
+            dynamic_cast<const MutableFieldGroupDecl *>(&statement)) {
+      collectList(group->members(), parent, ownerClass, namespaceScope);
+      return;
+    }
 
     LoweredDeclaration row;
     row.id = result_.size() + 1;

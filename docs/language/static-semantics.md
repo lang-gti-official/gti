@@ -29,7 +29,12 @@ Aliases are transparent names and do not introduce new nominal types.
 ## 3.2 Bindings And Access
 
 Bindings and parameters are immutable unless declared `mut`. Fields are also
-immutable unless declared `mut`. Methods have read-only receivers unless their
+immutable unless declared `mut`. A class or struct may group consecutive direct
+instance fields inside `mut { ... }`; each enclosed field is semantically the
+same ordinary mutable field as if it had its own leading `mut`. The group does
+not change binding or receiver mutability, access, type identity, layout,
+lifecycle, initialization order, or the immutable default outside its braces.
+Methods have read-only receivers unless their
 declaration has a trailing `mut` qualifier. The bounded trailing `&&` receiver
 qualifier is available only on `operator()` and denotes consuming access, not a
 general rvalue-reference type. A consuming call operator may mutate its

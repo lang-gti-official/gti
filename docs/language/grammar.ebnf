@@ -274,6 +274,7 @@ base-specifier         = [ "public" | "private" ] base-type ;
 class-member           = conditional-class-members
                        | configuration-directive
                        | compile-error-directive
+                       | mutable-field-group
                        | access-specifier
                        | constructor-declaration
                        | destructor-declaration
@@ -288,9 +289,38 @@ conditional-class-members
                          { "#elif" compile-condition { class-member } }
                          [ "#else" { class-member } ] "#endif" ;
 
+mutable-field-group    = "mut" "{" mutable-field-group-item
+                         { mutable-field-group-item } "}" ;
+
+mutable-field-group-item
+                       = conditional-mutable-field-group-items
+                       | configuration-directive
+                       | compile-error-directive
+                       | grouped-field-declaration
+                       | empty-declaration ;
+
+conditional-mutable-field-group-items
+                       = conditional-start { mutable-field-group-item }
+                         { "#elif" compile-condition
+                           { mutable-field-group-item } }
+                         [ "#else" { mutable-field-group-item } ] "#endif" ;
+
+grouped-field-declaration
+                       = type IDENTIFIER { array-extent }
+                         [ "=" initializer-expression
+                         | direct-initializer ] ";" ;
+
 access-specifier       = ( "public" | "private" ) ":" ;
 
-(* Class members are private by default and struct members are public by
+(* A `mut { ... }` member is admitted only in a complete class or struct. Each
+   direct grouped field has exactly the semantics of the same declaration with
+   a leading `mut`; the group introduces no name, scope, storage, layout, or
+   runtime boundary. The surrounding access section applies to every grouped
+   field. Groups cannot contain access labels, static or constexpr fields,
+   methods, constructors, destructors, operators, nested groups, or an
+   explicitly repeated `mut`, and no semicolon follows the closing brace.
+
+   Class members are private by default and struct members are public by
    default. An access specifier changes the visibility of following members.
    A union is always public and semantic analysis restricts it to passive
    instance fields; the shared parser surface keeps malformed declarations

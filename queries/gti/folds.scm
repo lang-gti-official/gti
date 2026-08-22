@@ -3,6 +3,7 @@
   (extern_c_declaration)
   (class_declaration
     body: (class_body))
+  (mutable_field_group)
   (enum_declaration)
   (function_declaration)
   (method_declaration)

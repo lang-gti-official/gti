@@ -5000,7 +5000,10 @@ def test_document_symbols(executable, root):
     source = (
         "namespace engine {\n"
         "class Sprite {\n"
-        "  /* αβ */ int frames = 0;\n"
+        "  mut {\n"
+        "    /* αβ */ int frames = 0;\n"
+        "    int updates = 0;\n"
+        "  }\n"
         "public:\n"
         "  Sprite(int frames) : frames(frames) {}\n"
         "  int count() { return this.frames; }\n"
@@ -5100,14 +5103,20 @@ def test_document_symbols(executable, root):
         }
         assert [
             (child["name"], child["kind"]) for child in sprite["children"]
-        ] == [("frames", 8), ("Sprite", 9), ("count", 6)], sprite["children"]
+        ] == [
+            ("frames", 8),
+            ("updates", 8),
+            ("Sprite", 9),
+            ("count", 6),
+        ], sprite["children"]
         # The member on the comment line converts to UTF-16 columns.
         frames = sprite["children"][0]
         frames_offset = source.index("frames = 0")
         assert frames["selectionRange"]["start"] == lsp_position(
             source, frames_offset
         )
-        assert frames["detail"] == "int32_t frames"
+        assert frames["detail"] == "mut int32_t frames"
+        assert sprite["children"][1]["detail"] == "mut int32_t updates"
 
         mode = outline[1]
         assert [

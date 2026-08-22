@@ -132,6 +132,7 @@ public:
     currentNamespace.clear();
     currentSourceUnit = 0;
     predeclaredVariables.clear();
+    mutableFieldGroupOrigins.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
     semanticModel.setExecutionProfile(target.executionProfile);
@@ -268,6 +269,7 @@ public:
     currentNamespace.clear();
     currentSourceUnit = 0;
     predeclaredVariables.clear();
+    mutableFieldGroupOrigins.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
     semanticModel.setExecutionProfile(target.executionProfile);
@@ -1767,6 +1769,10 @@ public:
       recordLoanFlowBreak(stmt);
     }
     recordValueControlFlowExit(isBreak);
+  }
+
+  void visitMutableFieldGroupDecl(const MutableFieldGroupDecl &stmt) override {
+    analyze(stmt.members());
   }
 
   void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) override {
@@ -23337,10 +23343,20 @@ private:
                                 .type = fieldType,
                                 .access = fieldType.referenceAccess};
         if (field.declaration->isMutable()) {
-          report(field.declaration->name(),
-                 "Stored reference fields must be read-only; mutable stored "
-                 "dependency graphs are not supported.",
-                 "GTI-S2045");
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2045", DiagnosticPhase::Semantics,
+              field.declaration->name(),
+              "Stored reference fields must be read-only; mutable stored "
+              "dependency graphs are not supported.");
+          if (const auto grouped =
+                  mutableFieldGroupOrigins.find(field.declaration);
+              grouped != mutableFieldGroupOrigins.end() &&
+              grouped->second != nullptr) {
+            diagnostic.related.push_back(
+                {tokenSpan(*grouped->second),
+                 "This field inherits mutability from this field group."});
+          }
+          diagnostics.emplace_back(std::move(diagnostic));
         }
         if (field.declaration->initializer()) {
           report(field.declaration->name(),
@@ -23716,12 +23732,18 @@ private:
   }
 
   void collectMembers(const StmtList &members, ClassInfo &owner,
-                      AccessModifier &access) {
+                      AccessModifier &access,
+                      const Token *mutableGroupOrigin = nullptr) {
     for (const StmtPtr &statement : members) {
+      if (const auto *group =
+              dynamic_cast<const MutableFieldGroupDecl *>(statement.get())) {
+        collectMembers(group->members(), owner, access, &group->keyword());
+        continue;
+      }
       if (const auto *conditional =
               dynamic_cast<const ConditionalStmt *>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
-          collectMembers(*branch, owner, access);
+          collectMembers(*branch, owner, access, mutableGroupOrigin);
         }
         continue;
       }
@@ -24054,6 +24076,10 @@ private:
         }
       } else if (const auto *variable =
                      dynamic_cast<const VariableDecl *>(statement.get())) {
+        if (mutableGroupOrigin != nullptr) {
+          mutableFieldGroupOrigins.insert_or_assign(variable,
+                                                    mutableGroupOrigin);
+        }
         if (owner.kind == ClassKind::Union && variable->isStatic()) {
           report(variable->name(),
                  "A passive union cannot declare static fields.", "GTI-S2066");
@@ -30546,6 +30572,8 @@ private:
   std::vector<std::string> currentNamespace;
   SourceUnitId currentSourceUnit = 0;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
+  std::unordered_map<const VariableDecl *, const Token *>
+      mutableFieldGroupOrigins;
   std::unordered_set<const VariableDecl *> structuredBindingElements;
   std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
   TargetInfo target;

@@ -1,0 +1,27 @@
+struct State {
+  mut {
+    int first = 1;
+    int second = 2;
+  }
+
+  int identity = 4;
+
+  void step() mut {
+    this.first++;
+    this.second++;
+  }
+
+  int total() {
+    return this.first + this.second + this.identity;
+  }
+};
+
+int main() {
+  mut State state = State();
+  state.step();
+  if (state.total() != 9) {
+    return 1;
+  }
+  std::println("mutable-field-groups-ok");
+  return 0;
+}

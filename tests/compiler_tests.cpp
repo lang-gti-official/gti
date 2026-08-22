@@ -15833,6 +15833,257 @@ int main() { return 0; }
          "formatted class access labels should be idempotent");
 }
 
+void testMutableFieldGroups() {
+  const lang::TargetInfo target = lang::TargetInfo::host();
+  const std::string source = R"(
+#define FIELD_GROUP_ACTIVE
+
+struct Counter {
+public:
+  mut {
+    int first = 1;
+#ifdef FIELD_GROUP_ACTIVE
+    int second = 2;
+#else
+    int second = 20;
+#endif
+  }
+
+  int identity = 4;
+
+  void increment() mut {
+    this.first++;
+    this.second++;
+  }
+
+  int value() {
+    return this.first + this.second + this.identity;
+  }
+};
+
+[[c_abi]] struct GroupedNative {
+  mut {
+    int32_t x;
+    int32_t y;
+  }
+};
+
+[[c_abi]] struct ExpandedNative {
+  mut int32_t x;
+  mut int32_t y;
+};
+
+int main() {
+  mut Counter counter = Counter();
+  counter.increment();
+  return counter.value() == 9 ? 0 : 1;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend({.target = target})
+          .analyze("mutable-field-groups.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "mutable field groups should compile as ordinary mutable fields");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::ClassDecl *counter = nullptr;
+  const lang::ClassDecl *groupedNative = nullptr;
+  const lang::ClassDecl *expandedNative = nullptr;
+  for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
+    const auto *classDecl =
+        dynamic_cast<const lang::ClassDecl *>(declaration.get());
+    if (classDecl == nullptr) {
+      continue;
+    }
+    if (classDecl->name().lexeme == "Counter") {
+      counter = classDecl;
+    } else if (classDecl->name().lexeme == "GroupedNative") {
+      groupedNative = classDecl;
+    } else if (classDecl->name().lexeme == "ExpandedNative") {
+      expandedNative = classDecl;
+    }
+  }
+  expect(counter != nullptr && groupedNative != nullptr &&
+             expandedNative != nullptr,
+         "field-group fixtures should retain their class declarations");
+  if (counter == nullptr || groupedNative == nullptr ||
+      expandedNative == nullptr) {
+    return;
+  }
+
+  const lang::MutableFieldGroupDecl *group = nullptr;
+  for (const lang::StmtPtr &member : counter->members()) {
+    if (const auto *candidate =
+            dynamic_cast<const lang::MutableFieldGroupDecl *>(member.get())) {
+      group = candidate;
+      break;
+    }
+  }
+  expect(group != nullptr && !group->members().empty(),
+         "the AST should preserve the mutable field-group source container");
+  if (group == nullptr) {
+    return;
+  }
+  const auto *first =
+      dynamic_cast<const lang::VariableDecl *>(group->members().front().get());
+  expect(first != nullptr && first->isMutable(),
+         "grouped field declarations should carry effective mutable "
+         "semantics without an individual mut token");
+
+  const lang::ClassTypeInfo *counterInfo =
+      frontend.semantics.findClassType(*counter);
+  expect(counterInfo != nullptr && counterInfo->fields.size() == 3 &&
+             counterInfo->fields[0].declaration->name().lexeme == "first" &&
+             counterInfo->fields[1].declaration->name().lexeme == "second" &&
+             counterInfo->fields[2].declaration->name().lexeme == "identity" &&
+             counterInfo->fields[0].declaration->isMutable() &&
+             counterInfo->fields[1].declaration->isMutable() &&
+             !counterInfo->fields[2].declaration->isMutable(),
+         "semantic collection should flatten active grouped fields in source "
+         "order without changing following immutable fields");
+
+  const lang::ClassTypeInfo *groupedInfo =
+      frontend.semantics.findClassType(*groupedNative);
+  const lang::ClassTypeInfo *expandedInfo =
+      frontend.semantics.findClassType(*expandedNative);
+  bool matchingAbi = groupedInfo != nullptr && expandedInfo != nullptr &&
+                     groupedInfo->cAbiLayout && expandedInfo->cAbiLayout &&
+                     groupedInfo->cAbiLayout->sizeBytes ==
+                         expandedInfo->cAbiLayout->sizeBytes &&
+                     groupedInfo->cAbiLayout->abiAlignmentBytes ==
+                         expandedInfo->cAbiLayout->abiAlignmentBytes &&
+                     groupedInfo->cAbiLayout->fields.size() ==
+                         expandedInfo->cAbiLayout->fields.size();
+  if (matchingAbi) {
+    for (std::size_t index = 0; index < groupedInfo->cAbiLayout->fields.size();
+         ++index) {
+      const lang::CAbiRecordFieldLayout &groupedField =
+          groupedInfo->cAbiLayout->fields[index];
+      const lang::CAbiRecordFieldLayout &expandedField =
+          expandedInfo->cAbiLayout->fields[index];
+      matchingAbi =
+          matchingAbi && groupedField.type == expandedField.type &&
+          groupedField.offsetBytes == expandedField.offsetBytes &&
+          groupedField.sizeBytes == expandedField.sizeBytes &&
+          groupedField.abiAlignmentBytes == expandedField.abiAlignmentBytes;
+    }
+  }
+  expect(matchingAbi,
+         "grouped and explicitly mutable C ABI records should have identical "
+         "layout facts");
+
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
+  std::size_t counterFields = 0;
+  bool groupLeakedIntoLowering = false;
+  for (const lang::LoweredDeclaration &declaration : lowered.declarations()) {
+    groupLeakedIntoLowering =
+        groupLeakedIntoLowering ||
+        declaration.kind == lang::LoweredDeclarationKind::Other;
+    const auto *storage =
+        std::get_if<lang::LoweredStorageDeclaration>(&declaration.payload);
+    if (storage != nullptr && counterInfo != nullptr &&
+        storage->ownerClass == counterInfo->id) {
+      ++counterFields;
+      if (declaration.name == "first" || declaration.name == "second") {
+        expect(storage->mutability == lang::Mutability::Mutable,
+               "lowered grouped fields should retain ordinary mutable field "
+               "records");
+      }
+    }
+  }
+  expect(counterFields == 3 && !groupLeakedIntoLowering,
+         "LoweredProgram should contain only flattened ordinary fields and no "
+         "mutable-group declaration");
+
+  const std::string generated =
+      gti_test::emitCppText(frontend, lang::CppStandard::Cpp23, target);
+  expect(generated.find("std::int32_t first") != std::string::npos &&
+             generated.find("std::int32_t second") != std::string::npos &&
+             generated.find("mutable_field_group") == std::string::npos,
+         "the C++ backend should consume flattened field declarations only");
+
+  const std::string formatted = lang::Formatter().format(
+      "struct Sample{private:mut{int first=0;int second=1;}int id=2;};");
+  const std::string expectedFormatting = R"(struct Sample {
+private:
+  mut {
+    int first = 0;
+    int second = 1;
+  }
+  int id = 2;
+};
+)";
+  expect(formatted == expectedFormatting &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should preserve and idempotently indent mutable field "
+         "groups without adding a semicolon");
+
+  const std::array<std::pair<std::string, std::string>, 12> invalidSyntax{{
+      {"interface Bad { mut { int value = 0; } };",
+       "Interfaces cannot contain mutable field groups"},
+      {"union Bad { mut { int value = 0; } };",
+       "Unions cannot contain mutable field groups"},
+      {"struct Bad { mut {} };",
+       "A mutable field group must contain at least one field"},
+      {"struct Bad { mut { mut int value = 0; } int recovered = 1; };",
+       "already mutable"},
+      {"struct Bad { mut { static int value = 0; } int recovered = 1; };",
+       "only direct instance fields"},
+      {"struct Bad { mut { constexpr int value = 0; } "
+       "int recovered = 1; };",
+       "cannot contain constexpr fields"},
+      {"struct Bad { mut { void run() {} } int recovered = 1; };",
+       "Methods and constructors cannot be declared"},
+      {"struct Bad { mut { Bad() {} } int recovered = 1; };",
+       "only direct instance field declarations"},
+      {"struct Bad { mut { ~Bad() {} } int recovered = 1; };",
+       "only direct instance field declarations"},
+      {"struct Bad { mut { operator int() {} } int recovered = 1; };",
+       "only direct instance field declarations"},
+      {"struct Bad { mut { private: int value = 0; } "
+       "int recovered = 1; };",
+       "only direct instance field declarations"},
+      {"struct Bad { mut { mut { int value = 0; } } "
+       "int recovered = 1; };",
+       "already mutable"},
+  }};
+  for (const auto &[invalidSource, expected] : invalidSyntax) {
+    const lang::FrontendResult invalid = lang::Frontend().analyze(
+        "invalid-mutable-field-group.gti", invalidSource);
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnostic(invalid.diagnostics, expected),
+           "invalid mutable field-group contents should produce a focused "
+           "parser diagnostic");
+  }
+
+  const lang::FrontendResult storedReference =
+      lang::Frontend().analyze("mutable-field-group-reference.gti", R"(
+class Borrowed {
+  mut {
+    int& value;
+  }
+
+public:
+  Borrowed(int& input) : value(input) {}
+};
+)");
+  expect(!storedReference.canGenerateCode() &&
+             hasDiagnostic(storedReference.diagnostics,
+                           "Stored reference fields must be read-only") &&
+             hasRelatedDiagnostic(storedReference.diagnostics,
+                                  "inherits mutability from this field group"),
+         "a grouped stored-reference error should identify the inherited "
+         "mutability source");
+}
+
 void testConstructorsAndReceiverMutability() {
   lang::Lexer lexer;
   const std::string validSource = R"(
@@ -27681,6 +27932,10 @@ int main(int argc, char **argv) {
     testExactQualifiedClassSpecializations();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "field-groups") {
+    testMutableFieldGroups();
+    return failures == 0 ? 0 : 1;
+  }
   testConstructorPartialRollbackRepresentation();
   testOwnedParameterStageArmsRollback();
   testFieldInitializerRollbackAndFailureEdges();
@@ -27747,6 +28002,7 @@ int main(int argc, char **argv) {
   testStaticStorageAndMembers();
   testThisReceiverKeyword();
   testClassesStructsAndAccess();
+  testMutableFieldGroups();
   testConstructorsAndReceiverMutability();
   testInheritanceAndInterfaces();
   testInheritedGenericTargetInstances();

@@ -114,7 +114,7 @@ description of the implementation.
 - [Optimization architecture](plans/optimization.md)
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
-- [Mutable field groups](plans/mutable-field-groups.md) — proposes the bounded
+- [Mutable field groups](plans/mutable-field-groups.md) — records the bounded
   `mut { ... }` shorthand for consecutive mutable class and struct fields while
   preserving immutable defaults and existing receiver/write rules
 - [Static assertions](plans/static-assertions.md) — proposes frontend-owned

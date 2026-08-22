@@ -136,6 +136,14 @@ shape. `EnumeratorDecl` retains an optional ordered `Parameter` payload. The
 AST does not infer a tag representation, validate payload storage, or decide
 whether a switch pattern is exhaustive.
 
+`MutableFieldGroupDecl` preserves a class/struct member written as
+`mut { ... }`, including its braces and conditional/configuration children.
+The parser restricts its contents to direct non-static field declarations and
+records each child `VariableDecl` with effective mutable semantics. The group
+itself has no symbol identity. Semantics flattens its active children in the
+surrounding access context before HIR, while the retained node remains
+available to formatting and source tooling.
+
 `ConceptDecl` retains every written type parameter and concept application.
 `FunctionDecl` optionally retains a `RequiresClause` containing the `requires`
 token and its conjunction of applications. The parser enforces only the

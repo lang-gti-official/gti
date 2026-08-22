@@ -1,6 +1,7 @@
 # Mutable Field Groups
 
-Status: Proposal; not implemented or accepted as current GTI semantics.
+Status: Implemented for GTI 0.294.0. Canonical syntax and semantics now live in
+`docs/language/grammar.ebnf` and `docs/language/static-semantics.md`.
 
 ## Summary
 
@@ -67,9 +68,7 @@ backend emit a physical `const` data member. Whole-object assignment, ownership
 state, layout, and lifecycle are therefore already independent from how the
 source field's mutability was spelled.
 
-The `mut { ... }` spelling is currently invalid. This document proposes future
-behavior only; it does not amend the implemented grammar or language
-specification.
+The `mut { ... }` spelling is implemented with the bounded behavior below.
 
 ## Proposed Syntax
 

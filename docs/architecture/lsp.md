@@ -151,6 +151,13 @@ decorator token, and invalid declarations publish the shared `GTI-S2064`
 diagnostic; the protocol layer neither computes layout nor keeps a second field
 allowlist.
 
+`mut { ... }` field groups have no document symbol or protocol-owned semantic
+rule. The compiler query flattens their enclosed fields into the containing
+class/struct outline, hover renders each field's effective mutable binding, and
+definition/reference/rename use the ordinary field symbols. Tree-sitter alone
+retains the group node for structural highlighting, indentation, folds, and
+delimiter pairing.
+
 For `[[c_opaque]] struct Name;`, hover renders the incomplete declaration and
 the compiler-owned address-only contract instead of value/concurrency
 capability notes. Semantic tokens classify the attribute as a decorator.

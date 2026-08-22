@@ -32,6 +32,9 @@ void collectActiveProgramStatement(const Stmt *statement,
     collectActiveProgramStatements(block->statements(), target, result);
   } else if (const auto *owner = dynamic_cast<const ClassDecl *>(statement)) {
     collectActiveProgramStatements(owner->members(), target, result);
+  } else if (const auto *group =
+                 dynamic_cast<const MutableFieldGroupDecl *>(statement)) {
+    collectActiveProgramStatements(group->members(), target, result);
   } else if (const auto *conditional =
                  dynamic_cast<const ConditionalStmt *>(statement)) {
     if (const StmtList *branch = conditional->activeBranch(target)) {

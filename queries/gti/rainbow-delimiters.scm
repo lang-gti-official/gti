@@ -34,6 +34,10 @@
   "{" @delimiter
   "}" @delimiter) @container
 
+(mutable_field_group
+  "{" @delimiter
+  "}" @delimiter) @container
+
 (constructor_initializer_argument_list
   "(" @delimiter
   ")" @delimiter) @container

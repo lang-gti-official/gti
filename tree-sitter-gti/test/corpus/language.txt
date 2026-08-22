@@ -2166,6 +2166,69 @@ public:
               (primary_expression
                 (identifier)))))))))
 
+==================
+Mutable field groups
+==================
+
+struct State {
+private:
+  mut {
+    int first = 0;
+#ifdef DETAIL
+    int second = 1;
+#else
+    int second = 2;
+#endif
+  }
+  int identity = 3;
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (mutable_field_group
+        (grouped_field_declaration
+          (type
+            (primitive_type))
+          (identifier)
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal)))))
+        (conditional_mutable_field_group_items
+          (if_directive
+            (identifier))
+          (grouped_field_declaration
+            (type
+              (primitive_type))
+            (identifier)
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal)))))
+          (else_directive)
+          (grouped_field_declaration
+            (type
+              (primitive_type))
+            (identifier)
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal)))))
+          (endif_directive)))
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))
+
 ===========================================
 Array extent expressions and base-prefixed integers
 ===========================================
@@ -2940,6 +3003,7 @@ extern "C" {
             (primitive_type)
             (pointer_declarator))
           (identifier))))))
+
 ==================
 Exact qualified class specialization
 ==================

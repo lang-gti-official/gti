@@ -85,6 +85,10 @@
   (static_variable_declaration
     name: (identifier) @local.definition.field))
 
+(mutable_field_group
+  (grouped_field_declaration
+    name: (identifier) @local.definition.field))
+
 (lambda_capture
   name: (identifier) @local.definition.var)
 

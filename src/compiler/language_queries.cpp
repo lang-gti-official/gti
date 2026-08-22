@@ -1391,6 +1391,12 @@ private:
         }
         continue;
       }
+      if (const auto *group =
+              dynamic_cast<const MutableFieldGroupDecl *>(statement.get())) {
+        appendOutline(snapshot, sourceUnit, unitPath, target, group->members(),
+                      insideClass, result);
+        continue;
+      }
       if (const auto *foreign =
               dynamic_cast<const ExternCDecl *>(statement.get())) {
         if (foreign->keyword().source != unitPath) {

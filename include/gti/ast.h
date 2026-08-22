@@ -397,6 +397,7 @@ class NamespaceAliasDecl;
 class NamespaceDecl;
 class RangeForStmt;
 class ReturnStmt;
+class MutableFieldGroupDecl;
 class SwitchStmt;
 class StructuredBindingDecl;
 class TypeAliasDecl;
@@ -509,6 +510,8 @@ public:
   virtual void visitFunctionDecl(const FunctionDecl &stmt) = 0;
   virtual void visitIfStmt(const IfStmt &stmt) = 0;
   virtual void visitLoopControlStmt(const LoopControlStmt &stmt) = 0;
+  virtual void
+  visitMutableFieldGroupDecl(const MutableFieldGroupDecl &stmt) = 0;
   virtual void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) = 0;
   virtual void visitNamespaceDecl(const NamespaceDecl &stmt) = 0;
   virtual void visitRangeForStmt(const RangeForStmt &stmt) = 0;
@@ -1261,6 +1264,29 @@ public:
 private:
   Token keyword_;
   AccessModifier modifier_;
+};
+
+class MutableFieldGroupDecl final : public Stmt {
+public:
+  MutableFieldGroupDecl(Token keyword, Token leftBrace, StmtList members,
+                        Token rightBrace)
+      : keyword_(std::move(keyword)), leftBrace_(std::move(leftBrace)),
+        members_(std::move(members)), rightBrace_(std::move(rightBrace)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitMutableFieldGroupDecl(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const Token &leftBrace() const { return leftBrace_; }
+  [[nodiscard]] const StmtList &members() const { return members_; }
+  [[nodiscard]] const Token &rightBrace() const { return rightBrace_; }
+
+private:
+  Token keyword_;
+  Token leftBrace_;
+  StmtList members_;
+  Token rightBrace_;
 };
 
 struct ConstructorInitializer {

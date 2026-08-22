@@ -42,6 +42,13 @@ This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
 
+Mutable field groups are source-only declaration containers. Member collection
+recurses through the active group items with the surrounding access state,
+registering every child as an ordinary mutable direct field in textual order.
+The semantic model records no group symbol. Its retained origin is used only to
+attach related information when an existing field restriction, such as the
+read-only stored-reference rule, is triggered by inherited group mutability.
+
 Declaration registration order is separate from runtime evaluation order.
 [Execution Section 4.2](../language/execution.md#42-evaluation-order) now fixes
 strict left-to-right expressions, full-expression boundaries, and a lexical

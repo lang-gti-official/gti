@@ -112,6 +112,11 @@ indentation beneath the containing structure, and remains idempotent.
 Formatting does not consult emitted C++ or delegate GTI syntax decisions to a
 native C++ tool.
 
+A mutable field group is preserved as a braced class member. Its opening `mut`
+uses the ordinary member indentation, enclosed fields use one additional level,
+and the closing brace has no semicolon. Comments and conditional directives are
+retained, and formatting never expands the group into repeated `mut` prefixes.
+
 A `return` followed by a parenthesized expression is always written as
 `return (expression)`. This separator is structural and remains present for
 every `SpaceBeforeParens` setting; that option continues to control call,

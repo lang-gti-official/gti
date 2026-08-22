@@ -113,6 +113,9 @@
 (class_body
   (static_variable_declaration
     name: (identifier) @variable.member))
+(mutable_field_group
+  (grouped_field_declaration
+    name: (identifier) @variable.member))
 (parameter
   name: (identifier) @variable.parameter)
 (lambda_capture

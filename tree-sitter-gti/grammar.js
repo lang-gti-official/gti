@@ -167,6 +167,15 @@ module.exports = grammar({
         $.endif_directive,
       ),
 
+    conditional_mutable_field_group_items: ($) =>
+      seq(
+        $.if_directive,
+        repeat($._mutable_field_group_item),
+        repeat(seq($.elif_directive, repeat($._mutable_field_group_item))),
+        optional(seq($.else_directive, repeat($._mutable_field_group_item))),
+        $.endif_directive,
+      ),
+
     conditional_block_items: ($) =>
       seq(
         $.if_directive,
@@ -415,6 +424,7 @@ module.exports = grammar({
         $.conditional_class_members,
         $.configuration_directive,
         $.compile_error_directive,
+        $.mutable_field_group,
         $.access_specifier,
         $.constructor_declaration,
         $.destructor_declaration,
@@ -423,6 +433,32 @@ module.exports = grammar({
         $.static_variable_declaration,
         $.variable_declaration,
         $.empty_declaration,
+      ),
+
+    mutable_field_group: ($) =>
+      seq("mut", "{", repeat($._mutable_field_group_item), "}"),
+
+    _mutable_field_group_item: ($) =>
+      choice(
+        $.conditional_mutable_field_group_items,
+        $.configuration_directive,
+        $.compile_error_directive,
+        $.grouped_field_declaration,
+        $.empty_declaration,
+      ),
+
+    grouped_field_declaration: ($) =>
+      seq(
+        field("type", $.type),
+        field("name", $.identifier),
+        repeat(field("extent", $.array_extent)),
+        optional(
+          choice(
+            seq("=", field("value", $.initializer_expression)),
+            field("value", $.direct_initializer),
+          ),
+        ),
+        ";",
       ),
 
     access_specifier: () => seq(choice("public", "private"), ":"),

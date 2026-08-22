@@ -20,6 +20,7 @@ private:
   enum class ItemContext {
     Declaration,
     ClassMember,
+    MutableFieldGroup,
     Block,
   };
 
@@ -77,6 +78,7 @@ private:
     current = 0;
     diagnostics.clear();
     currentClassName.reset();
+    currentClassKind.reset();
     consumedCompletion = false;
     generatedNameCounter = 0;
     missingTokenError = false;
@@ -397,7 +399,9 @@ private:
 
     StmtList members;
     const std::optional<Token> enclosingClassName = currentClassName;
+    const std::optional<ClassKind> enclosingClassKind = currentClassKind;
     currentClassName = name;
+    currentClassKind = kind;
     try {
       while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
         try {
@@ -411,9 +415,11 @@ private:
       consume(TokenKind::SEMICOLON, "Expect ';' after type declaration.");
     } catch (const ParseError &) {
       currentClassName = enclosingClassName;
+      currentClassKind = enclosingClassKind;
       throw;
     }
     currentClassName = enclosingClassName;
+    currentClassKind = enclosingClassKind;
 
     return std::make_unique<ClassDecl>(
         std::move(attributes), std::move(keyword), kind, name,
@@ -918,6 +924,74 @@ private:
         std::move(staticKeyword), false, std::move(constexprKeyword));
   }
 
+  StmtPtr mutableFieldGroupDeclaration(Token keyword) {
+    Token leftBrace = consume(TokenKind::LEFT_BRACE,
+                              "Expect '{' after 'mut' field-group keyword.");
+    if (currentClassKind == ClassKind::Interface ||
+        currentClassKind == ClassKind::Union) {
+      diagnostics.push_back(
+          makeDiagnostic("GTI-P0001", DiagnosticPhase::Parsing, keyword,
+                         currentClassKind == ClassKind::Interface
+                             ? "Interfaces cannot contain mutable field groups."
+                             : "Unions cannot contain mutable field groups."));
+    }
+
+    StmtList members;
+    while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      try {
+        members.emplace_back(item(ItemContext::MutableFieldGroup));
+      } catch (const ParseError &) {
+        synchronize(true, false, false, false, false, false);
+      }
+    }
+    Token rightBrace = consume(TokenKind::RIGHT_BRACE,
+                               "Expect '}' after mutable field group.");
+    if (members.empty()) {
+      diagnostics.push_back(makeDiagnostic(
+          "GTI-P0001", DiagnosticPhase::Parsing, keyword,
+          "A mutable field group must contain at least one field or "
+          "configuration item."));
+    }
+    return std::make_unique<MutableFieldGroupDecl>(
+        std::move(keyword), std::move(leftBrace), std::move(members),
+        std::move(rightBrace));
+  }
+
+  StmtPtr groupedFieldDeclaration() {
+    if (match({TokenKind::MUT})) {
+      throw error(previous(),
+                  "Fields inside a 'mut { ... }' group are already mutable; "
+                  "remove the redundant 'mut'.");
+    }
+    if (match({TokenKind::STATIC})) {
+      throw error(previous(),
+                  "A mutable field group can contain only direct instance "
+                  "fields; move this static field outside the group.");
+    }
+    if (match({TokenKind::CONSTEXPR})) {
+      throw error(previous(),
+                  "A mutable field group cannot contain constexpr fields; "
+                  "move this field outside the group.");
+    }
+    if (!isTypedDeclaration()) {
+      throw error(peek(),
+                  "A mutable field group can contain only direct instance "
+                  "field declarations.");
+    }
+
+    TypeRef type = parseType();
+    Token name = consume(TokenKind::IDENTIFIER,
+                         "Expect field name in mutable field group.");
+    if (check(TokenKind::LESS) || check(TokenKind::LEFT_PAREN)) {
+      throw error(peek(),
+                  "Methods and constructors cannot be declared inside a "
+                  "mutable field group.");
+    }
+    parseArrayDeclaratorSuffix(type);
+    return variableDeclaration(Mutability::Mutable, std::move(type),
+                               std::move(name));
+  }
+
   ExprPtr directInitializer(Token brace) {
     ExprList arguments;
     if (!check(TokenKind::RIGHT_BRACE)) {
@@ -1165,6 +1239,13 @@ private:
     }
     rejectStrayConditionalDirective();
 
+    if (context == ItemContext::MutableFieldGroup) {
+      if (match({TokenKind::SEMICOLON})) {
+        return std::make_unique<EmptyStmt>(previous());
+      }
+      return groupedFieldDeclaration();
+    }
+
     if (match({TokenKind::USING})) {
       throw error(previous(),
                   "Type aliases are currently limited to namespace scope.");
@@ -1180,6 +1261,10 @@ private:
     }
 
     if (context == ItemContext::ClassMember) {
+      if (check(TokenKind::MUT) && peekAt(1).kind == TokenKind::LEFT_BRACE) {
+        Token keyword = advance();
+        return mutableFieldGroupDeclaration(std::move(keyword));
+      }
       if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
         Token keyword = previous();
         consume(TokenKind::COLON, "Expect ':' after access specifier.");
@@ -2624,6 +2709,7 @@ private:
   std::size_t current = 0;
   std::size_t generatedNameCounter = 0;
   std::optional<Token> currentClassName;
+  std::optional<ClassKind> currentClassKind;
   bool consumedCompletion = false;
   bool missingTokenError = false;
 };

@@ -896,6 +896,10 @@
           "named": true
         },
         {
+          "type": "mutable_field_group",
+          "named": true
+        },
+        {
           "type": "operator_declaration",
           "named": true
         },
@@ -1330,6 +1334,10 @@
           "named": true
         },
         {
+          "type": "mutable_field_group",
+          "named": true
+        },
+        {
           "type": "operator_declaration",
           "named": true
         },
@@ -1473,6 +1481,53 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "conditional_mutable_field_group_items",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "compile_error_directive",
+          "named": true
+        },
+        {
+          "type": "conditional_mutable_field_group_items",
+          "named": true
+        },
+        {
+          "type": "configuration_directive",
+          "named": true
+        },
+        {
+          "type": "elif_directive",
+          "named": true
+        },
+        {
+          "type": "else_directive",
+          "named": true
+        },
+        {
+          "type": "empty_declaration",
+          "named": true
+        },
+        {
+          "type": "endif_directive",
+          "named": true
+        },
+        {
+          "type": "grouped_field_declaration",
+          "named": true
+        },
+        {
+          "type": "if_directive",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -2373,6 +2428,56 @@
     }
   },
   {
+    "type": "grouped_field_declaration",
+    "named": true,
+    "fields": {
+      "extent": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "array_extent",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "direct_initializer",
+            "named": true
+          },
+          {
+            "type": "initializer_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "if_directive",
     "named": true,
     "fields": {
@@ -2896,6 +3001,37 @@
       "types": [
         {
           "type": "pure_specifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "mutable_field_group",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "compile_error_directive",
+          "named": true
+        },
+        {
+          "type": "conditional_mutable_field_group_items",
+          "named": true
+        },
+        {
+          "type": "configuration_directive",
+          "named": true
+        },
+        {
+          "type": "empty_declaration",
+          "named": true
+        },
+        {
+          "type": "grouped_field_declaration",
           "named": true
         }
       ]

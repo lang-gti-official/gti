@@ -246,3 +246,9 @@ int configured_ifndef_highlight() { return 3; }
 #endif
 
 class demo::Value<int32_t> {};
+
+struct GroupedState {
+  mut {
+    int grouped_value = 0;
+  }
+};

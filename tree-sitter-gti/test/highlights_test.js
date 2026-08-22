@@ -237,6 +237,12 @@ requireCapture(undefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
 requireCapture(ifdefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
 requireCapture(ifndefFlagRow, "HIGHLIGHT_FLAG", "constant.macro");
 
+const groupedFieldRow = fixtureLines.findIndex((line) =>
+  line.includes("grouped_value"),
+);
+requireCapture(groupedFieldRow - 1, "mut", "keyword.modifier");
+requireCapture(groupedFieldRow, "grouped_value", "variable.member");
+
 const blockCommentFixture = path.join(__dirname, "block_comments.gti");
 const blockCommentCaptures = queryCaptures(
   "highlights",
