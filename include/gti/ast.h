@@ -73,6 +73,7 @@ struct TypeRef {
   std::vector<TypeRef> arguments;
   std::optional<Token> pointeeConst;
   std::optional<Token> pointer;
+  std::optional<Token> outerPointer;
   std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
   GenericArgumentSyntax genericArgumentSyntax = GenericArgumentSyntax::Type;
@@ -242,6 +243,11 @@ struct ConceptApplication {
 struct RequiresClause {
   Token keyword;
   std::vector<ConceptApplication> requirements;
+};
+
+struct NativeCArrayAttribute {
+  Token attribute;
+  Token countParameter;
 };
 
 struct PureSpecifier {
@@ -1478,7 +1484,8 @@ public:
       std::optional<PureSpecifier> pureSpecifier = std::nullopt,
       LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<Token> constexprKeyword = std::nullopt,
-      std::optional<RequiresClause> requiresClause = std::nullopt)
+      std::optional<RequiresClause> requiresClause = std::nullopt,
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -1491,7 +1498,8 @@ public:
         overrideKeyword_(std::move(overrideKeyword)),
         pureSpecifier_(std::move(pureSpecifier)), linkage_(linkage),
         constexprKeyword_(std::move(constexprKeyword)),
-        requiresClause_(std::move(requiresClause)) {}
+        requiresClause_(std::move(requiresClause)),
+        nativeCArray_(std::move(nativeCArray)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -1547,6 +1555,10 @@ public:
   [[nodiscard]] const std::optional<RequiresClause> &requiresClause() const {
     return requiresClause_;
   }
+  [[nodiscard]] const std::optional<NativeCArrayAttribute> &
+  nativeCArray() const {
+    return nativeCArray_;
+  }
 
 private:
   TypeRef returnType_;
@@ -1565,6 +1577,7 @@ private:
   LanguageLinkage linkage_ = LanguageLinkage::Gti;
   std::optional<Token> constexprKeyword_;
   std::optional<RequiresClause> requiresClause_;
+  std::optional<NativeCArrayAttribute> nativeCArray_;
 };
 
 class IfStmt final : public Stmt {

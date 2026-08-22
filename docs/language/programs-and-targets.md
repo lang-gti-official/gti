@@ -220,14 +220,17 @@ are ill-formed. The C symbol `main` is reserved for the GTI entry point, and a
 C-linkage function shall not reuse the name of root-namespace GTI storage.
 
 The bounded ABI permits `void` results and fixed-width signed or unsigned
-integer, `float`, and `double` scalar parameters/results. It also permits valid
-`[[c_abi]]` records by value and one-level raw pointers whose pointee is `void`,
-one of those scalar types, a valid `[[c_abi]]` record, or a `[[c_opaque]]`
-handle; the pointee may be qualified with `const`. Scalar, record, and
-raw-pointer parameters are immutable bindings passed by value. `bool`, `char`,
-enums, references, arrays,
+integer, `float`, and `double` scalar parameters/results, plus the
+NUL-terminated `c_string` boundary type. It also permits valid `[[c_abi]]`
+records by value and one-level raw pointers whose pointee is `void`, one of
+those scalar types, `c_string`, a valid `[[c_abi]]` record, or a
+`[[c_opaque]]` handle; the pointee may be qualified with `const`. An exact
+`[[c_array(count)]]` return may add one outer pointer and pairs that result
+with an immutable writable fixed-width integer out pointer. Scalar, record,
+and raw-pointer parameters are immutable bindings passed by value. `bool`,
+`char`, enums, references, arrays,
 ordinary classes and structs, generics, owners, recoverable-result types,
-pointer-to-pointer types, and function pointers do not have C ABI forms.
+general pointer-to-pointer types, and function pointers do not have C ABI forms.
 `std::string_view` is additionally permitted as a parameter only and lowers to
 the explicit record:
 
@@ -270,11 +273,12 @@ claim that current artifacts can be safely embedded and resumed. E-EMBED-01
 owns the first explicit wrapper, context-validity/poisoning rule, descriptor
 lifetime, and same-process re-entry evidence.
 
-**Specification gap:** Pointer-to-pointer out parameters, annotated opaque
-handle ownership transfer, callbacks and function-pointer types, arrays at the
-C boundary, C enums, alternate calling conventions, casts, native error
-conventions, allocation, packing, unions, bit-fields, and manual lifetime
-remain to be designed.
+**Specification gap:** Annotated opaque-handle ownership transfer, callbacks
+and function-pointer types, array parameters at the C boundary, C enums,
+alternate calling conventions, casts, native error conventions, allocation,
+packing, unions, bit-fields, and manual lifetime remain to be designed. The
+returned pointer-plus-count idiom is the one implemented bounded nested-pointer
+form; it is not a general pointer-to-pointer facility.
 
 ## 6.6 Hosted And Future Execution Environments
 

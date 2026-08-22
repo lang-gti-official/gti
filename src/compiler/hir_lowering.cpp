@@ -245,6 +245,7 @@ private:
          .constexprFunction = declaration.constexprFunction,
          .linkage = declaration.linkage,
          .externalSymbol = declaration.externalSymbol,
+         .cArrayCountParameter = declaration.cArrayCountParameter,
          .virtualMethod = declaration.virtualMethod,
          .pureVirtual = declaration.pureVirtual,
          .overrideMethod = declaration.overrideMethod,

@@ -96,11 +96,14 @@ lexically enclosing `unsafe` block. A nested lambda starts a fresh safety
 context. Unsafe context does not suppress type, access, initialization,
 ownership, or control-flow checking.
 
-Exactly one pointer level is supported. Pointer-to-pointer types, references to
-raw pointers, function pointers, pointer-to-array types, implicit fixed-array
+The ordinary type surface supports exactly one pointer level. Pointer-to-pointer
+locals, parameters, fields, aliases, and unannotated returns, references to raw
+pointers, function pointers, pointer-to-array types, implicit fixed-array
 decay, casts, and source allocation/deallocation expressions are ill-formed.
-`void*` is opaque and cannot be dereferenced, indexed, used for member access,
-or used in pointer arithmetic.
+An exact `[[c_array(count)]] extern "C"` return may add one outer pointer when
+the named parameter is a writable fixed-width integer out pointer; this does
+not admit nested pointers elsewhere. `void*` is opaque and cannot be
+dereferenced, indexed, used for member access, or used in pointer arithmetic.
 
 The complete programmer obligations are incorporated from
 [`raw-pointers.md`](raw-pointers.md).

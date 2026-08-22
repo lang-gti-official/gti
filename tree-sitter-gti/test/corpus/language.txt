@@ -2711,3 +2711,48 @@ int choose<Owner, Base>(Owner& owner, int left, int middle, int right) {
           (primary_expression
             (literal
               (integer_literal))))))))
+
+==================
+Bounded native pointer-plus-count arrays
+==================
+
+extern "C" {
+  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
+  [[c_array(count)]] c_string* native_names(uint32_t* count);
+}
+
+---
+
+(source_file
+  (extern_c_declaration
+    (string_literal)
+    (extern_c_function_prototype
+      (native_c_array_attribute
+        (identifier)
+        (identifier))
+      (type
+        (user_type
+          (identifier))
+        (pointer_declarator))
+      (identifier)
+      (parameter_clause
+        (parameter
+          (type
+            (primitive_type)
+            (pointer_declarator))
+          (identifier))))
+    (extern_c_function_prototype
+      (native_c_array_attribute
+        (identifier)
+        (identifier))
+      (type
+        (user_type
+          (identifier))
+        (pointer_declarator))
+      (identifier)
+      (parameter_clause
+        (parameter
+          (type
+            (primitive_type)
+            (pointer_declarator))
+          (identifier))))))

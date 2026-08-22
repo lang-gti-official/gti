@@ -5,8 +5,9 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.289.0 plus the completed hard-cutover audit. The
-backend-authority campaign's per-release record lives in
+Checkpoint version: 0.289.0 plus the completed hard-cutover audit and bounded
+F1/F2/F3 C-interoperation families. The backend-authority campaign's
+per-release record lives in
 [`implementation-sequence.md`](implementation-sequence.md).
 
 This document records where the compiler currently sits against
@@ -45,11 +46,19 @@ evaluation, IR, and backend requirements still apply.
 Source loading, parsing, semantic selection, concrete HIR discovery, and MIR
 lowering remain directional, and the C++ backend does not decide overloads,
 ownership, dispatch, or language validity. Production source-body execution is
-no longer split: all 2,487 reviewed identities across 57 examples emit through
+no longer split: all 2,601 reviewed identities across 57 examples emit through
 the general verified-MIR route. The public no-MIR emitter and executable AST
 statement route are removed. An exact census, a two-endpoint native corpus
 oracle, structural mutation tests, and focused runtime matrices guard the
 cutover.
+
+The current C-interoperation checkpoint admits direct fixed arrays in passive
+native records, an exact NUL-terminated `c_string` boundary, and
+`[[c_array(count)]]` returned pointer-plus-count declarations. The latter may
+spell one bounded `T**` return while ordinary nested pointer types remain
+invalid. All three families retain semantic facts through HIR/MIR and pass the
+generated C17/C++20/C++23 oracle. Native function/callback types remain the
+next GLFW blocker.
 
 The remaining backend boundary is generated representation. Hosted entry and
 program initialization have explicit thunk contracts; some structural,
@@ -1065,7 +1074,7 @@ semantic publication prevent application access to the surrounding namespace.
 | Typed HIR | Concrete-instance authority | Owns concrete generic, class, callable, and entry instances; resolved calls; typed values and places; constants; ownership, borrow, lifecycle, cleanup, failure, native-linkage, payload, storage, pack, and ordered-input facts; and the target-independent program-initialization plan. HIR remains immutable and does not own backend spelling. Some expression families still need more uniform destination/materialization schedules, but that gap cannot move executable authority back from MIR. |
 | MIR | Sole executable-body authority with bounded verifier gaps | Owns every body CFG and identity, values, places, calls, moves, loans, raw-memory and synchronization operations, construction/drop/cleanup schedules, failure metadata and propagation, program initialization, hosted startup, and source/optimized provenance. Verification rejects malformed ownership, effects, schedules, and rewrites. Remaining work includes a uniform materialization model for all operation families, double failure, and target-independent generated-item/ABI contracts; it is not a source-body migration. |
 | Optimizer | Bounded verified production transforms | Backend-neutral constant evaluation, HIR constant analysis, MIR dominance, controlled atomic editing, repair/invalidation, and source-to-optimized coherence are implemented. Every executable body consumes optimized MIR; only transformations replayed and accepted by the coherence verifier can change emitted behavior. General pass management, cached analyses, loop infrastructure, and broader folds remain client-gated. |
-| C++ backend | Source-body hard cutover complete; generated representation still transitional | `CppBackend` requires coherent source and optimized MIR, builds and seals a complete body/data/thunk representation inventory, and accepts only the `VerifiedMir` whole-program route. All 2,487 reviewed body identities emit through `CppMirBodyEmitter`; executable AST visitors and the public no-MIR emitter are removed. AST, semantics, and HIR still supply declaration, layout, ABI, template, and generated-adapter representation facts. Hosted entry and program initialization are explicitly planned; several other generated adapter kinds remain the next backend-separation boundary. |
+| C++ backend | Source-body hard cutover complete; generated representation still transitional | `CppBackend` requires coherent source and optimized MIR, builds and seals a complete body/data/thunk representation inventory, and accepts only the `VerifiedMir` whole-program route. All 2,601 reviewed body identities emit through `CppMirBodyEmitter`; executable AST visitors and the public no-MIR emitter are removed. AST, semantics, and HIR still supply declaration, layout, ABI, template, and generated-adapter representation facts. Hosted entry and program initialization are explicitly planned; several other generated adapter kinds remain the next backend-separation boundary. |
 | Compiler library boundary | Migration complete | Frontend, semantic model/analysis, HIR/MIR lowering and queries, optimization, formatting/language queries, and support algorithms compile in `gti_compiler`; C++ emission compiles in `gti_cpp_backend`, and native/project orchestration compiles in `gti_driver`. Public headers retain records, templates, `constexpr` values, trivial accessors, and exact-version facades. |
 | Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `test`, `clean`, and schema-7 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Test targets build and execute independently in deterministic order. Project build/run/test requests use a verified content-addressed whole-program cache. Canonical workspaces and source-only path dependencies now provide deterministic package selection, direct package aliases, graph diagnostics, shared outputs, and cache provenance without network access. Git/registry dependencies, lockfiles, native dependency composition, and LSP project-fact consumption remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
 

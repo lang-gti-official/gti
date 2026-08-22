@@ -76,6 +76,7 @@ extern "C" {
   NativeCounter* c_counter_create(int32_t initial);
   void c_counter_destroy(NativeCounter* counter);
   int32_t c_counter_read(const NativeCounter* counter);
+  [[c_array(count)]] NativeCounter** c_counter_array(int32_t* count);
   NativePoint c_point_make(float x, float y);
   void c_macro_name_probe(offsetof value, int32_t offsetof,
                           int32_t INT32_C, int32_t _parameter);
@@ -83,6 +84,7 @@ extern "C" {
   c_string c_static_name();
   int32_t c_c_string_length(c_string value);
   void c_replace_description(c_string* value);
+  [[c_array(count)]] c_string* c_names(uint32_t* count);
   NativePoint cpp_point_scale(NativePoint value, float factor);
   int32_t cpp_text_length(std::string_view value);
 }
@@ -94,6 +96,8 @@ c_string empty_c_string() { return nullptr; }
 int main() {
   mut NativePoint point = c_point_make(3.0, 4.0);
   mut int32_t counter_value = 0;
+  mut int32_t counter_count = 0;
+  mut uint32_t name_count = 0;
   mut c_string native_name = c_static_name();
   mut c_string description = native_name;
   unsafe {
@@ -104,12 +108,17 @@ int main() {
     point = bridge_cpp::cpp_apply_offset(
         point, bridge_cpp::cpp_offset_make(1.0, -1.0));
     counter_value = c_counter_read(counter);
+    auto counters = c_counter_array(&counter_count);
+    auto names = c_names(&name_count);
+    counter_value += c_counter_read(counters[0]);
+    counter_value += c_c_string_length(names[1]);
     bridge_cpp::cpp_engine_destroy(engine);
     c_counter_destroy(counter);
     c_replace_description(&description);
   }
   if (point.x != 7.0 || point.y != 7.0 ||
-      counter_value != 17 || c_boundary_version() != uint32_t(17) ||
+      counter_value != 47 || counter_count != 1 || name_count != uint32_t(2) ||
+      c_boundary_version() != uint32_t(17) ||
       cpp_text_length("bridge") != 6 || native_name == nullptr ||
       c_c_string_length("bridge") != 6 ||
       c_c_string_length(description) != 8 ||
@@ -132,6 +141,10 @@ struct NativeCounter {
   int32_t value;
 };
 
+static struct NativeCounter c_array_counter = {24};
+static struct NativeCounter* c_array_counters[] = {&c_array_counter};
+static const char* c_array_names[] = {"first", "second"};
+
 NativeCounter* c_counter_create(int32_t initial) {
   NativeCounter* counter = (NativeCounter*)malloc(sizeof(NativeCounter));
   if (counter != NULL) {
@@ -144,6 +157,13 @@ void c_counter_destroy(NativeCounter* counter) { free(counter); }
 
 int32_t c_counter_read(const NativeCounter* counter) {
   return counter == NULL ? -1 : counter->value;
+}
+
+NativeCounter** c_counter_array(int32_t* count) {
+  if (count != NULL) {
+    *count = 1;
+  }
+  return c_array_counters;
 }
 
 NativePoint c_point_make(float x, float y) {
@@ -163,6 +183,13 @@ void c_replace_description(const char** value) {
   if (value != NULL) {
     *value = "replaced";
   }
+}
+
+const char** c_names(uint32_t* count) {
+  if (count != NULL) {
+    *count = 2U;
+  }
+  return c_array_names;
 }
 '''
 
@@ -294,6 +321,8 @@ extern "C" NativePoint cpp_apply_offset(NativePoint value, Offset offset) {
             "const char* c_static_name(void)" not in header
             or "c_c_string_length(const char* value)" not in header
             or "c_replace_description(const char** value)" not in header
+            or "NativeCounter** c_counter_array(int32_t* count)" not in header
+            or "const char** c_names(uint32_t* count)" not in header
         ):
             raise RuntimeError("generated native header lacks exact c_string spelling")
         if (

@@ -32,6 +32,9 @@
   name: (identifier) @type.definition)
 (class_attribute_list
   attribute: (identifier) @attribute)
+(native_c_array_attribute
+  attribute: (identifier) @attribute
+  count: (identifier) @variable.parameter)
 (enum_declaration
   name: (identifier) @type.definition)
 (enumerator

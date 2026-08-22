@@ -1875,6 +1875,16 @@
     "type": "extern_c_function_prototype",
     "named": true,
     "fields": {
+      "attribute": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "native_c_array_attribute",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -1981,6 +1991,16 @@
     "type": "function_declaration",
     "named": true,
     "fields": {
+      "attribute": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "native_c_array_attribute",
+            "named": true
+          }
+        ]
+      },
       "binding": {
         "multiple": false,
         "required": false,
@@ -2795,6 +2815,32 @@
         ]
       },
       "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "native_c_array_attribute",
+    "named": true,
+    "fields": {
+      "attribute": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "count": {
         "multiple": false,
         "required": true,
         "types": [

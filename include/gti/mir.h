@@ -735,6 +735,7 @@ struct MirFunctionInstance {
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
+  std::optional<std::size_t> cArrayCountParameter;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;

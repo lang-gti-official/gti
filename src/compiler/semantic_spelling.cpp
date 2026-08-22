@@ -50,6 +50,9 @@ std::string typeRefSpelling(const TypeRef &type) {
   if (type.pointer) {
     result += '*';
   }
+  if (type.outerPointer) {
+    result += '*';
+  }
   for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
     result +=
         '[' + (extent ? arrayExtentSpelling(*extent) : std::string("?")) + ']';

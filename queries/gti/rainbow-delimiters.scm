@@ -74,6 +74,14 @@
   "[[" @delimiter
   "]]" @delimiter) @container
 
+(native_c_array_attribute
+  "[[" @delimiter
+  "]]" @delimiter) @container
+
+(native_c_array_attribute
+  "(" @delimiter
+  ")" @delimiter) @container
+
 (array_extent_parenthesized_expression
   "(" @delimiter
   ")" @delimiter) @container

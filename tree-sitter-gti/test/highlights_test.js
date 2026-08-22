@@ -45,6 +45,7 @@ function queryCaptures(name, input = fixture) {
 }
 
 const captures = queryCaptures("highlights");
+const fixtureLines = fs.readFileSync(fixture, "utf8").split("\n");
 
 function requireCapture(row, text, name) {
   if (
@@ -84,6 +85,11 @@ requireCapture(30, "no_transfer", "attribute");
 requireCapture(30, "unsafe_share", "attribute");
 requireCapture(185, "c_abi", "attribute");
 requireCapture(190, "c_opaque", "attribute");
+const nativeArrayRow = fixtureLines.findIndex((line) =>
+  line.includes("[[c_array(count)]]"),
+);
+requireCapture(nativeArrayRow, "c_array", "attribute");
+requireCapture(nativeArrayRow, "count", "variable.parameter");
 requireCapture(33, "this", "variable.builtin");
 requireCapture(33, "self", "variable");
 requireCapture(36, "Counter", "type");
@@ -403,6 +409,14 @@ requireRainbowDelimiter(
 );
 requireRainbowDelimiter("[[c_abi]] struct NativePoint {", "[[");
 requireRainbowDelimiter("[[c_opaque]] struct NativeHandle;", "[[");
+requireRainbowDelimiter(
+  "  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);",
+  "[[",
+);
+requireRainbowDelimiter(
+  "  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);",
+  "(",
+);
 requireRainbowDelimiter(
   "constexpr uint64_t scalar_layout = sizeof(int32_t);",
   "(",

@@ -1243,7 +1243,7 @@ public:
     validateRuntimeBinding(stmt);
     const bool enclosingPackTypeReference = allowPackTypeReference;
     allowPackTypeReference = true;
-    validateType(stmt.returnType());
+    validateType(stmt.returnType(), stmt.nativeCArray().has_value());
     allowPackTypeReference = enclosingPackTypeReference;
     const bool methodDeclaration = currentClass && functionDepth == 0;
     if ((stmt.isVirtual() || stmt.isOverride() || stmt.isPure()) &&
@@ -1365,6 +1365,7 @@ public:
     const bool constexprDeclarationValid =
         validateConstexprFunction(stmt, methodDeclaration, intrinsicDeclaration,
                                   declaredReturnType, isEntryPoint);
+    validateNativeCArrayAttribute(stmt, declaredReturnType);
     validateExternCFunction(stmt, methodDeclaration, declaredReturnType);
     if (isEntryPoint) {
       const SemanticType returnType =
@@ -4730,6 +4731,9 @@ public:
       element = SemanticType::rawPointerTo(
           std::move(element),
           type.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
+    }
+    if (type.outerPointer) {
+      element = SemanticType::rawPointerTo(std::move(element));
     }
     LayoutEvaluation accumulated = evaluateLayout(element);
     if (!accumulated) {
@@ -16409,8 +16413,8 @@ private:
   [[nodiscard]] std::optional<CompileTimeValue>
   genericValueArgument(const TypeRef &argument) const {
     if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
-        argument.pointer || !argument.arrayExtents.empty() ||
-        argument.reference) {
+        argument.pointer || argument.outerPointer ||
+        !argument.arrayExtents.empty() || argument.reference) {
       return std::nullopt;
     }
     const Token &token = argument.name.last();
@@ -16586,7 +16590,8 @@ private:
     }
   }
 
-  void validateType(const TypeRef &type) {
+  void validateType(const TypeRef &type,
+                    bool allowNativeCArrayOuterPointer = false) {
     if (type.name.last().kind == TokenKind::AUTO) {
       report(type.name.last(),
              "'auto' is only valid for an initialized local binding.",
@@ -16631,6 +16636,12 @@ private:
                      "pointee.",
                "GTI-S2056");
       }
+    }
+    if (type.outerPointer && !allowNativeCArrayOuterPointer) {
+      report(*type.outerPointer,
+             "A two-level pointer is available only on a "
+             "[[c_array(count)]] extern \"C\" return type.",
+             "GTI-S2074");
     }
     if (!type.pointer) {
       const SemanticType direct = baseTypeOf(type, currentNamespace);
@@ -18533,6 +18544,79 @@ private:
             isCOpaqueHandleType(type.arguments.front()));
   }
 
+  [[nodiscard]] bool isCAbiArrayReturnPointer(const SemanticType &type) const {
+    if (isCAbiRawPointer(type)) {
+      return true;
+    }
+    if (type.kind != SemanticType::RawPointer || type.arguments.size() != 1) {
+      return false;
+    }
+    const SemanticType &inner = type.arguments.front();
+    return inner.kind == SemanticType::RawPointer &&
+           inner.arguments.size() == 1 &&
+           inner.arguments.front() != SemanticType::CString &&
+           isCAbiRawPointer(inner);
+  }
+
+  void validateNativeCArrayAttribute(const FunctionDecl &function,
+                                     const SemanticType &returnType) {
+    if (!function.nativeCArray()) {
+      return;
+    }
+    const NativeCArrayAttribute &attribute = *function.nativeCArray();
+    const auto fail = [&](const Token &location, std::string message) {
+      report(location, std::move(message), "GTI-S2073");
+    };
+    if (!function.hasCLinkage()) {
+      fail(attribute.attribute,
+           "[[c_array(count)]] is valid only on an extern \"C\" function "
+           "declaration.");
+    }
+    if (!isCAbiArrayReturnPointer(returnType)) {
+      fail(attribute.attribute,
+           "[[c_array(count)]] requires a returned C ABI pointer or the "
+           "bounded two-level pointer form.");
+    }
+
+    const FunctionInfo *info = semanticModel.findFunction(function);
+    if (info == nullptr || !info->cArrayCountParameter ||
+        *info->cArrayCountParameter >= function.parameters().size()) {
+      fail(attribute.countParameter,
+           "[[c_array(" + attribute.countParameter.lexeme +
+               ")]] does not name a parameter of this function.");
+      return;
+    }
+    const std::size_t index = *info->cArrayCountParameter;
+    const Parameter &count = function.parameters()[index];
+    const SemanticType countType = typeOf(count);
+    const bool validCount = count.mutability == Mutability::Immutable &&
+                            !count.pack && !count.type.reference &&
+                            count.type.arrayExtents.empty() &&
+                            !count.type.outerPointer &&
+                            countType.kind == SemanticType::RawPointer &&
+                            countType.pointerAccess == AccessMode::Mutable &&
+                            countType.arguments.size() == 1 &&
+                            isInteger(countType.arguments.front());
+    if (!validCount) {
+      fail(attribute.countParameter,
+           "[[c_array(count)]] must name an immutable one-level pointer to a "
+           "mutable fixed-width integer count.");
+      return;
+    }
+
+    if (const BindingInfo *binding = semanticModel.findBinding(count);
+        binding != nullptr && binding->symbol != 0) {
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(attribute.countParameter),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = binding->symbol,
+           .roles = OccurrenceRole::Reference,
+           .name = attribute.countParameter.lexeme,
+           .type = countType});
+    }
+  }
+
   void validateExternCFunction(const FunctionDecl &function,
                                bool methodDeclaration,
                                const SemanticType &returnType) {
@@ -18577,7 +18661,9 @@ private:
         function.returnType().reference ||
         (returnType != SemanticType::Void &&
          returnType != SemanticType::CString && !isCAbiScalar(returnType) &&
-         !isCAbiRawPointer(returnType) && !isCAbiRecordType(returnType))) {
+         !isCAbiRawPointer(returnType) &&
+         !isCAbiArrayReturnPointer(returnType) &&
+         !isCAbiRecordType(returnType))) {
       fail(function.returnType().name.last(),
            "extern \"C\" return types are limited to void, fixed-width "
            "integer or float scalars, c_string, valid [[c_abi]] records, and "
@@ -20544,6 +20630,7 @@ private:
                 .externalSymbol = function->hasCLinkage()
                                       ? function->name().lexeme
                                       : std::string{},
+                .cArrayCountParameter = nativeCArrayCountParameter(*function),
                 .intrinsic = intrinsic,
                 .compilerPrivate =
                     compilerPrivateDeclaration(currentSourceUnit, scope)});
@@ -20563,6 +20650,24 @@ private:
         scope.pop_back();
       }
     }
+  }
+
+  [[nodiscard]] static std::optional<std::size_t>
+  nativeCArrayCountParameter(const FunctionDecl &function) {
+    if (!function.nativeCArray()) {
+      return std::nullopt;
+    }
+    const auto found =
+        std::find_if(function.parameters().begin(), function.parameters().end(),
+                     [&](const Parameter &parameter) {
+                       return parameter.name.lexeme ==
+                              function.nativeCArray()->countParameter.lexeme;
+                     });
+    if (found == function.parameters().end()) {
+      return std::nullopt;
+    }
+    return static_cast<std::size_t>(
+        std::distance(function.parameters().begin(), found));
   }
 
   void registerNamespaceSymbols(const StmtList &statements,
@@ -22869,6 +22974,7 @@ private:
                      .constexprFunction = registered->constexprFunction,
                      .linkage = registered->linkage,
                      .externalSymbol = registered->externalSymbol,
+                     .cArrayCountParameter = registered->cArrayCountParameter,
                      .virtualMethod = candidate.virtualMethod,
                      .pureVirtual = candidate.pureVirtual,
                      .overrideMethod = candidate.overrideMethod,
@@ -28893,6 +28999,9 @@ private:
       result = SemanticType::rawPointerTo(
           std::move(result),
           type.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
+    }
+    if (type.outerPointer) {
+      result = SemanticType::rawPointerTo(std::move(result));
     }
     for (auto extent = type.arrayExtents.rbegin();
          extent != type.arrayExtents.rend(); ++extent) {

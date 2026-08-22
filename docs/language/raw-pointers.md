@@ -3,9 +3,10 @@
 Status: current bounded language contract
 
 GTI provides one-level raw pointers for native C interoperation and low-level
-implementation work. Their spelling follows C++, while operations that can
-violate memory safety are permitted only inside a Rust-style lexical
-`unsafe { ... }` block.
+implementation work. One bounded C-return form may add a second level when a
+`[[c_array(count)]]` attribute pairs it with an exact integer out parameter.
+Their spelling follows C++, while operations that can violate memory safety
+are permitted only inside a Rust-style lexical `unsafe { ... }` block.
 
 Raw pointers are deliberately not owners or checked borrows. They are the
 escape hatch beneath safe values, references, and RAII classes, not a
@@ -36,10 +37,13 @@ GTI has not introduced general C++-style `const` values or `T* const`
 declarators. A raw-pointer variable or field must have an explicit initializer.
 Use `nullptr` when no address is available yet.
 
-This first surface has exactly one pointer level. Pointer-to-pointer types,
-references to raw pointers, function pointers, pointer-to-array types, and
-implicit array-to-pointer decay are rejected. A fixed array may contain
-one-level pointer values, but the array itself does not become a pointer.
+The ordinary type surface has exactly one pointer level. Pointer-to-pointer
+locals, parameters, fields, aliases, and unannotated returns, references to raw
+pointers, function pointers, pointer-to-array types, and implicit
+array-to-pointer decay are rejected. The only written `T**` form is an
+`extern "C"` return carrying valid `[[c_array(count)]]` metadata. A fixed array
+may contain one-level pointer values, but the array itself does not become a
+pointer.
 
 Raw pointers are nullable, trivially copyable and movable, and non-owning. A
 raw-pointer value does not keep its pointee alive, arrange destruction, or
@@ -170,6 +174,14 @@ has checked public representation; a `[[c_opaque]]` handle deliberately has no
 pointee representation and therefore retains the address-only restriction
 above.
 
+An annotated `[[c_array(count)]]` return may be one admitted pointer or the
+exact two-level form whose inner pointer is admitted. The named count is an
+immutable one-level pointer to a writable fixed-width integer. This metadata
+does not make the native storage owned, non-null, bounded in the raw type, or
+safe to retain; calls and element access stay lexical `unsafe`. See
+[`native-c-interop.md`](native-c-interop.md#native-pointer-plus-count-arrays)
+for the complete pair contract.
+
 A declaration is not itself an unsafe operation. Calling a pointer-bearing C
 function is unsafe because the declaration cannot express native bounds,
 retention, nullability, ownership transfer, or aliasing requirements. A C call
@@ -227,7 +239,8 @@ exposing it has a separately documented contract.
 
 This feature does not add:
 
-- pointer-to-pointer types or callbacks;
+- general pointer-to-pointer types or callbacks beyond the bounded annotated
+  C-array return;
 - implicit fixed-array decay;
 - typed-pointer/`void*` conversions or raw casts;
 - general C arrays, unions, bit-fields, packing, or platform-layout imports;

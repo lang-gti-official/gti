@@ -27,9 +27,14 @@ SignaturePrinter::function(const FunctionInfo &info,
       selected == nullptr ? info.returnType : selected->returnType;
   const std::vector<SemanticType> &parameterTypes =
       selected == nullptr ? info.parameterTypes : selected->parameterTypes;
-  std::string result =
-      info.declaration != nullptr && info.declaration->isStatic() ? "static "
-                                                                  : "";
+  std::string result;
+  if (declaration != nullptr && declaration->nativeCArray()) {
+    result += "[[c_array(" +
+              declaration->nativeCArray()->countParameter.lexeme + ")]] ";
+  }
+  if (info.declaration != nullptr && info.declaration->isStatic()) {
+    result += "static ";
+  }
   result += types.print(returnType) + " " + functionName(info);
   if (selected != nullptr &&
       (!selected->typeArguments.empty() || !selected->valueArguments.empty())) {

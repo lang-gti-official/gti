@@ -628,10 +628,14 @@ linkage blocks without promising a C++ or GTI binary ABI:
   scalar, a valid native record, or an opaque handle; pointer-bearing calls,
   including records containing pointers, require lexical `unsafe`, while
   pointer-free record, scalar-only, and counted-text calls remain safe;
+- `c_string` carries a NUL-terminated `const char*` boundary, and
+  `[[c_array(count)]]` admits the exact returned pointer-plus-count family,
+  including one bounded outer pointer, without introducing general nested
+  pointers;
 - ordinary GTI classes/structs, enums, generics, ownership wrappers,
-  `expected`, references, arrays, bool, char, variadics, pointer-to-pointer and
-  function-pointer types, callbacks, and backend C++ types do not cross the
-  boundary;
+  `expected`, references, array parameters, bool, char, variadics, general
+  pointer-to-pointer and function-pointer types, callbacks, and backend C++
+  types do not cross the boundary;
 - direct mode links native libraries through explicit compiler arguments after
   `--`; project manifests provide structured package/profile/target native
   inputs selected from the resolved target; source-level native includes and
@@ -649,8 +653,9 @@ Opaque pointers remain nullable and non-owning; ordinary GTI RAII wrappers own
 factory/null/destroy policy. The exact implemented rules live in
 [`docs/language/native-c-interop.md`](../language/native-c-interop.md) and
 [`docs/language/raw-pointers.md`](../language/raw-pointers.md). Remaining work
-includes pointer-to-pointer and callback types, annotated opaque-handle
-ownership transfer, casts, arrays/enums at the boundary, and manual lifetime.
+includes callback types, annotated opaque-handle ownership transfer, casts,
+array parameters/enums at the boundary, and manual lifetime. General nested
+pointers remain deliberately unavailable beyond the annotated C-array return.
 Those additions need explicit semantic, lifetime, ABI, build, and diagnostic design
 rather than widening the current allowlist by accident.
 
@@ -899,7 +904,7 @@ standard-library need, and tooling impact.
 
 The maintained sequence, blockers, parallel lanes, and current ready queue live
 in [`implementation-sequence.md`](implementation-sequence.md). At this
-checkpoint the source executable-body cutover is complete. All 2,487 reviewed
+checkpoint the source executable-body cutover is complete. All 2,601 reviewed
 body identities across 57 examples use verified optimized MIR and the general
 C++ body emitter. The no-MIR emitter and executable AST statement route are
 gone; the exact census and two-endpoint corpus oracle guard that result.

@@ -109,6 +109,15 @@ diagnostics or letting a backend message choose either identity.
   element type is outside the bounded native field set. Point at the written
   element type, name the field and owning record, preserve ordinary
   type-resolution diagnostics, and do not guess a replacement type.
+- `GTI-S2073` owns a malformed `[[c_array(count)]]` declaration. Point at the
+  attribute when it is outside `extern "C"` or its return is not an admitted
+  native pointer; otherwise point at the count name and distinguish a missing
+  parameter from a parameter that is not an immutable one-level pointer to a
+  writable fixed-width integer. Do not infer a different count parameter or
+  offer a fix-it.
+- `GTI-S2074` owns a written second raw-pointer level outside an exact
+  `[[c_array(count)]] extern "C"` return. Point at the outer `*`, explain the
+  bounded exception, and do not suggest general nested-pointer syntax.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

@@ -809,6 +809,18 @@ void testFormatting() {
              lang::Formatter().format(opaque) == opaque,
          "the formatter should preserve canonical opaque-handle syntax and "
          "remain idempotent");
+
+  const std::string nativeArray =
+      lang::Formatter().format("[[ c_opaque ]]struct NativeHandle;extern \"C\"{"
+                               "[[ c_array ( count ) ]]NativeHandle ** "
+                               "native_handles(int32_t * count);}");
+  expect(
+      nativeArray.find("[[c_array(count)]]") != std::string::npos &&
+          nativeArray.find("NativeHandle** native_handles(int32_t* count);") !=
+              std::string::npos &&
+          lang::Formatter().format(nativeArray) == nativeArray,
+      "the formatter should preserve the bounded native-array attribute "
+      "and two-level return spelling idempotently");
 }
 
 } // namespace

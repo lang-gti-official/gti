@@ -226,3 +226,7 @@ void fold_values<Values...>(Values... values) {
 void call_member_generic<Owner, Base>(Owner& owner) {
   owner.upcast<Base>();
 }
+
+extern "C" {
+  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
+}

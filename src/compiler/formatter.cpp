@@ -349,7 +349,8 @@ public:
           state.referenceMarker(lexeme.text);
         } else if (lexeme.text == "*" &&
                    isPointerDeclarator(lexemes, index, declaredTypes)) {
-          state.pointerMarker();
+          state.pointerMarker(next == nullptr || next->kind != Kind::Operator ||
+                              next->text != "*");
         } else if (previous != nullptr && previous->kind == Kind::Word &&
                    previous->text == "operator") {
           state.trimSpaces();
@@ -633,10 +634,12 @@ private:
       }
     }
 
-    void pointerMarker() {
+    void pointerMarker(bool trailingSpace) {
       trimSpaces();
       append("*");
-      space();
+      if (trailingSpace) {
+        space();
+      }
     }
 
     void pushBlock(bool switchBody, bool doBody) {

@@ -13368,6 +13368,34 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
            .owner = instance.id,
            .message = "GTI-linkage function has an external C symbol"});
     }
+    const bool nestedPointerReturn =
+        instance.returnType.kind == SemanticType::RawPointer &&
+        instance.returnType.arguments.size() == 1 &&
+        instance.returnType.arguments.front().kind == SemanticType::RawPointer;
+    if (nestedPointerReturn && !instance.cArrayCountParameter) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "two-level pointer return lacks c_array metadata"});
+    }
+    if (instance.cArrayCountParameter) {
+      const std::size_t count = *instance.cArrayCountParameter;
+      const SemanticType *countType = count < instance.parameterTypes.size()
+                                          ? &instance.parameterTypes[count]
+                                          : nullptr;
+      const bool validCount =
+          countType != nullptr && countType->kind == SemanticType::RawPointer &&
+          countType->pointerAccess == AccessMode::Mutable &&
+          countType->arguments.size() == 1 &&
+          constantIntegerDomain(countType->arguments.front()).has_value();
+      if (instance.linkage != LanguageLinkage::C ||
+          instance.returnType.kind != SemanticType::RawPointer || !validCount) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::Function,
+             .owner = instance.id,
+             .message = "c_array function metadata is invalid"});
+      }
+    }
     bool validCallableContracts = true;
     std::string callableContractError;
     const auto rejectCallableContract = [&](std::string message) {

@@ -194,6 +194,9 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
   if (type.pointer) {
     text += "*";
   }
+  if (type.outerPointer) {
+    text += "*";
+  }
   for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
     text +=
         "[" + (extent ? arrayExtentSpelling(*extent) : std::string("?")) + "]";

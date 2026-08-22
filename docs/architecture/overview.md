@@ -54,7 +54,7 @@ validity together, which keeps AST-address semantic side tables alive.
   instance adapters from sealed AST/semantic/HIR facts. Completing a target-
   independent generated-item inventory is the remaining backend-separation
   boundary, not permission to restore executable HIR emission.
-- The post-cutover example corpus contains 2,487 reviewed MIR body identities
+- The post-cutover example corpus contains 2,601 reviewed MIR body identities
   across 57 examples. An exact census and two native endpoint builds guard the
   cutover; focused structural and runtime fixtures cover shapes outside that
   corpus.

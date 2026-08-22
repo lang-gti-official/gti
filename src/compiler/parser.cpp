@@ -120,7 +120,7 @@ private:
     }
     if (check(TokenKind::LEFT_BRACKET) &&
         peekAt(1).kind == TokenKind::LEFT_BRACKET) {
-      return attributedClassDeclaration();
+      return bracketAttributedDeclaration(LanguageLinkage::Gti);
     }
     if (match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
                TokenKind::UNION})) {
@@ -192,12 +192,17 @@ private:
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
       try {
         const Token declarationStart = peek();
-        if (!isTypedDeclaration()) {
+        StmtPtr declaration;
+        if (check(TokenKind::LEFT_BRACKET) &&
+            peekAt(1).kind == TokenKind::LEFT_BRACKET) {
+          declaration = bracketAttributedDeclaration(LanguageLinkage::C);
+        } else if (!isTypedDeclaration()) {
           throw error(peek(), "An extern \"C\" block may contain only function "
                               "declarations.");
+        } else {
+          declaration = typedDeclaration(true, std::nullopt, false, false, true,
+                                         LanguageLinkage::C);
         }
-        StmtPtr declaration = typedDeclaration(true, std::nullopt, false, false,
-                                               true, LanguageLinkage::C);
         const auto *function =
             dynamic_cast<const FunctionDecl *>(declaration.get());
         if (function == nullptr) {
@@ -300,16 +305,43 @@ private:
     return {std::move(name), std::move(arguments)};
   }
 
-  StmtPtr attributedClassDeclaration() {
+  StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage) {
     consume(TokenKind::LEFT_BRACKET,
-            "Expect '[[' before class or interface attributes.");
+            "Expect '[[' before declaration attributes.");
     consume(TokenKind::LEFT_BRACKET,
-            "Expect '[[' before class or interface attributes.");
+            "Expect '[[' before declaration attributes.");
+    Token first =
+        consume(TokenKind::IDENTIFIER, "Expect an attribute name after '[['.");
+    if (match({TokenKind::LEFT_PAREN})) {
+      if (first.lexeme != "c_array") {
+        throw error(first, "Unknown function attribute '[[" + first.lexeme +
+                               "(...)]]'.");
+      }
+      Token count =
+          consume(TokenKind::IDENTIFIER,
+                  "Expect the count out-parameter name in '[[c_array(...)]]'.");
+      consume(TokenKind::RIGHT_PAREN,
+              "Expect ')' after the c_array count parameter.");
+      consume(TokenKind::RIGHT_BRACKET,
+              "Expect ']]' after the c_array attribute.");
+      consume(TokenKind::RIGHT_BRACKET,
+              "Expect ']]' after the c_array attribute.");
+      if (!isTypedDeclaration()) {
+        throw error(peek(), "[[c_array(...)]] must annotate a function "
+                            "declaration.");
+      }
+      return typedDeclaration(
+          true, std::nullopt, false, false, true, linkage,
+          NativeCArrayAttribute{.attribute = std::move(first),
+                                .countParameter = std::move(count)});
+    }
+
     std::vector<Token> attributes;
-    do {
+    attributes.emplace_back(std::move(first));
+    while (match({TokenKind::COMMA})) {
       attributes.emplace_back(consume(TokenKind::IDENTIFIER,
                                       "Expect an attribute name after '[['."));
-    } while (match({TokenKind::COMMA}));
+    }
     consume(TokenKind::RIGHT_BRACKET,
             "Expect ']]' after class or interface attributes.");
     consume(TokenKind::RIGHT_BRACKET,
@@ -413,12 +445,12 @@ private:
         std::move(underlyingType), std::move(enumerators));
   }
 
-  StmtPtr
-  typedDeclaration(bool allowFunction,
-                   std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
-                   bool allowMutableReceiver = false,
-                   bool allowOperators = false, bool allowStatic = true,
-                   LanguageLinkage linkage = LanguageLinkage::Gti) {
+  StmtPtr typedDeclaration(
+      bool allowFunction,
+      std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
+      bool allowMutableReceiver = false, bool allowOperators = false,
+      bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt) {
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
       virtualKeyword = previous();
@@ -484,7 +516,8 @@ private:
           std::move(type), name, std::move(genericParameters),
           std::move(runtimeBinding), allowMutableReceiver, mutability,
           std::move(operatorName), std::move(staticKeyword),
-          std::move(virtualKeyword), linkage, std::move(constexprKeyword));
+          std::move(virtualKeyword), linkage, std::move(constexprKeyword),
+          std::move(nativeCArray));
     }
 
     if (operatorName) {
@@ -498,6 +531,10 @@ private:
 
     if (runtimeBinding) {
       throw error(name, "Runtime binding must annotate a function.");
+    }
+    if (nativeCArray) {
+      throw error(nativeCArray->attribute,
+                  "[[c_array(...)]] must annotate a function declaration.");
     }
     if (virtualKeyword) {
       throw error(*virtualKeyword,
@@ -520,7 +557,8 @@ private:
       std::optional<Token> staticKeyword = std::nullopt,
       std::optional<Token> virtualKeyword = std::nullopt,
       LanguageLinkage linkage = LanguageLinkage::Gti,
-      std::optional<Token> constexprKeyword = std::nullopt) {
+      std::optional<Token> constexprKeyword = std::nullopt,
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
 
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
@@ -603,7 +641,8 @@ private:
           receiverMutability, returnMutability, std::move(operatorName),
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::move(pureSpecifier), linkage,
-          std::move(constexprKeyword), std::move(requiresClause));
+          std::move(constexprKeyword), std::move(requiresClause),
+          std::move(nativeCArray));
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -613,7 +652,8 @@ private:
           receiverMutability, returnMutability, std::move(operatorName),
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::nullopt, linkage,
-          std::move(constexprKeyword), std::move(requiresClause));
+          std::move(constexprKeyword), std::move(requiresClause),
+          std::move(nativeCArray));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -624,7 +664,8 @@ private:
         receiverMutability, returnMutability, std::move(operatorName),
         std::move(staticKeyword), std::move(virtualKeyword),
         std::move(overrideKeyword), std::nullopt, linkage,
-        std::move(constexprKeyword), std::move(requiresClause));
+        std::move(constexprKeyword), std::move(requiresClause),
+        std::move(nativeCArray));
   }
 
   StmtPtr conversionOperatorDeclaration(
@@ -884,6 +925,9 @@ private:
     TypeRef type = parseBaseType();
     if (match({TokenKind::STAR})) {
       type.pointer = previous();
+      if (match({TokenKind::STAR})) {
+        type.outerPointer = previous();
+      }
     }
     type.pointeeConst = std::move(pointeeConst);
     if (type.pointeeConst && !type.pointer) {
@@ -2156,6 +2200,9 @@ private:
   arrayTypeEnd(std::size_t offset) const {
     if (peekAt(offset).kind == TokenKind::STAR) {
       ++offset;
+      if (peekAt(offset).kind == TokenKind::STAR) {
+        ++offset;
+      }
     }
     while (peekAt(offset).kind == TokenKind::LEFT_BRACKET) {
       if ((peekAt(offset + 1).kind != TokenKind::INT_LITERAL &&

@@ -1219,6 +1219,7 @@ bool cppMirFrontendSnapshotsMatch(const SemanticModel &semantics,
         source.returnBorrowPlace != lowered.returnBorrowPlace ||
         source.linkage != lowered.linkage ||
         source.externalSymbol != lowered.externalSymbol ||
+        source.cArrayCountParameter != lowered.cArrayCountParameter ||
         source.virtualMethod != lowered.virtualMethod ||
         source.pureVirtual != lowered.pureVirtual ||
         source.overrideMethod != lowered.overrideMethod ||

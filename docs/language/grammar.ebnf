@@ -62,6 +62,7 @@ declaration            = conditional-declaration
                        | namespace-declaration
                        | type-alias-declaration
                        | extern-c-declaration
+                       | native-c-array-attribute function-declaration
                        | [ runtime-binding ] function-declaration
                        | static-variable-declaration
                        | variable-declaration
@@ -168,9 +169,13 @@ extern-c-declaration   = "extern" STRING_LITERAL "{"
                          { extern-c-function-declaration } "}" ;
 
 extern-c-function-declaration
-                       = [ "static" ] [ "mut" ] type IDENTIFIER
+                       = [ native-c-array-attribute ]
+                         [ "static" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause ";" ;
+
+native-c-array-attribute
+                       = "[[" "c_array" "(" IDENTIFIER ")" "]]" ;
 
 (* The linkage string must decode to exactly `"C"`. The block is valid only at
    namespace scope and may contain only bodyless free-function declarations.
@@ -179,18 +184,24 @@ extern-c-function-declaration
    type outside the bounded native ABI.
 
    Returns are limited to `void`, the fixed-width signed and unsigned integer
-   types, `float`, `double`, valid `[[c_abi]]` records, and one-level raw
-   pointers whose pointee is `void`, one of those scalar types, a valid native
-   record, or a `[[c_opaque]]` handle. Parameters are immutable by-value
-   instances of the same scalar and native-record types, the admitted pointer
-   types, plus `std::string_view` as a non-retained counted input buffer. A
+   types, `float`, `double`, valid `[[c_abi]]` records, `c_string`, and
+   one-level raw pointers whose pointee is `void`, one of those scalar types,
+   `c_string`, a valid native record, or a `[[c_opaque]]` handle. A
+   `[[c_array(count)]]` declaration may add one outer pointer to an otherwise
+   admitted one-level pointer return. Its named parameter must be an immutable
+   one-level pointer to a writable fixed-width integer. Parameters are
+   immutable by-value instances of the same scalar and native-record types,
+   the admitted pointer types, plus `std::string_view` as a non-retained
+   counted input buffer. A
    raw-pointer pointee may be qualified with `const`. `int`,
    `uint`, suffix-less fixed-width spellings, and transparent aliases follow
    their resolved fixed-width type. Bool, char, enums, ordinary complete
    classes, expected,
-   references, arrays, packs, string-view returns, native variables,
+   references, arrays, packs, string-view returns, native variables, general
    pointer-to-pointer types, and function pointers are not part of this
-   contract. Calling a pointer-bearing C declaration requires an `unsafe`
+   contract. `GTI-S2073` owns malformed C-array pairs and `GTI-S2074` owns a
+   second pointer level outside that annotated return. Calling a
+   pointer-bearing C declaration requires an `unsafe`
    block; scalar-only calls and the counted string-view case remain safe. The
    exact function identifier is the native C symbol; a containing GTI namespace
    affects source lookup but does not qualify or mangle that symbol. See
@@ -537,7 +548,7 @@ direct-initializer     = "{" [ assignment-expression
 type                   = ( raw-pointer-base | base-type )
                          { array-extent } [ "&" ] ;
 
-raw-pointer-base       = [ "const" ] base-type "*" ;
+raw-pointer-base       = [ "const" ] base-type "*" [ "*" ] ;
 
 base-type              = primitive-type
                        | user-type
@@ -560,11 +571,13 @@ base-type              = primitive-type
 (* `T*` and `const T*` are nullable, non-owning, one-level raw-pointer types.
    `const` is valid here only when followed by `*` and makes the pointee
    read-only. Leading declaration `mut` controls whether the pointer binding
-   may be reseated; it does not change pointee access. Pointer-to-pointer types,
-   references to raw pointers, function pointers, pointer-to-array types, and
-   implicit array decay are rejected semantically. A fixed array may contain
-   one-level pointer values. Raw-pointer variables and fields require an
-   explicit initializer, normally `nullptr`.
+   may be reseated; it does not change pointee access. A second parsed `*` is
+   admitted semantically only on an `extern "C"` return carrying a valid
+   `[[c_array(count)]]` pair. Pointer-to-pointer locals, parameters, fields,
+   aliases, and unannotated returns, references to raw pointers, function
+   pointers, pointer-to-array types, and implicit array decay are rejected. A
+   fixed array may contain one-level pointer values. Raw-pointer variables and
+   fields require an explicit initializer, normally `nullptr`.
 
    Carrying, copying, assigning, passing, returning, null comparison, compatible
    equality, and adding `const` pointee qualification are safe. Address

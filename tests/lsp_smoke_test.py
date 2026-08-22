@@ -3301,7 +3301,8 @@ def test_native_record_tooling(executable, root):
         "void native_close(NativeHandle* handle); "
         "NativePoint point_roundtrip(NativePoint value); "
         "c_string native_name(); "
-        "int32_t native_length(c_string value); }\n"
+        "int32_t native_length(c_string value); "
+        "[[c_array(count)]] NativeHandle** native_handles(int32_t* count); }\n"
         "int main() { return native_length(\"gti\") - 3 + "
         "int32_t(sizeof(NativePoint) - uint64_t(8)); }\n"
     )
@@ -3334,6 +3335,7 @@ def test_native_record_tooling(executable, root):
             "legend"
         ]["tokenTypes"]
         attribute_type = token_types.index("decorator")
+        parameter_type = token_types.index("parameter")
         struct_type = token_types.index("struct")
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         session.send(
@@ -3454,6 +3456,46 @@ def test_native_record_tooling(executable, root):
             c_string_hover
         )
 
+        native_handles_name = source.index("native_handles")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 23,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, native_handles_name + 1),
+                },
+            }
+        )
+        native_array_hover = session.receive_until(
+            lambda message: message.get("id") == 23
+        )["result"]
+        assert native_array_hover and "[[c_array(count)]]" in json.dumps(
+            native_array_hover
+        ), native_array_hover
+
+        count_attribute = source.index("count)")
+        count_parameter = source.index("count);", count_attribute)
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 24,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, count_attribute + 1),
+                },
+            }
+        )
+        count_definition = session.receive_until(
+            lambda message: message.get("id") == 24
+        )["result"]
+        assert count_definition and count_definition["range"] == {
+            "start": lsp_position(source, count_parameter),
+            "end": lsp_position(source, count_parameter + len("count")),
+        }, count_definition
+
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -3478,6 +3520,17 @@ def test_native_record_tooling(executable, root):
                 opaque_attribute_position["character"],
             )
         ]["type"] == attribute_type
+        c_array_position = lsp_position(source, source.index("c_array"))
+        assert tokens[(c_array_position["line"], c_array_position["character"])][
+            "type"
+        ] == attribute_type
+        count_attribute_position = lsp_position(source, count_attribute)
+        assert tokens[
+            (
+                count_attribute_position["line"],
+                count_attribute_position["character"],
+            )
+        ]["type"] == parameter_type
         opaque_name_position = lsp_position(source, opaque_name)
         assert tokens[
             (opaque_name_position["line"], opaque_name_position["character"])

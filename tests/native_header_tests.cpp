@@ -4,10 +4,14 @@
 #include "gti/optimizer.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -246,12 +250,189 @@ int main() {
          "conversion into unrestricted retained conversions");
 }
 
+void testNativeArrayBoundarySurface() {
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "native-c-array.gti", R"(
+[[c_opaque]] struct NativeHandle;
+[[c_abi]] struct NativePoint { mut int32_t x; mut int32_t y; };
+
+extern "C" {
+  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
+  [[c_array(count)]] const NativePoint* native_points(uint32_t* count);
+  [[c_array(count)]] c_string* native_names(uint32_t* count);
+}
+
+int main() {
+  mut int32_t handle_count = 0;
+  mut uint32_t point_count = 0;
+  mut uint32_t name_count = 0;
+  unsafe {
+    auto handles = native_handles(&handle_count);
+    auto points = native_points(&point_count);
+    auto names = native_names(&name_count);
+    if (handles == nullptr || points == nullptr || names == nullptr) {
+      return 1;
+    }
+  }
+  return 0;
+}
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "c_array should pair returned native arrays with exact integer "
+         "out-count parameters");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O1);
+  const lang::BackendInput input = backendInput(frontend, optimizations);
+  const std::string header =
+      lang::NativeHeaderBackend().generate(input).contents;
+  expect(header.find("NativeHandle** native_handles(int32_t* count)") !=
+                 std::string::npos &&
+             header.find("const NativePoint* native_points(uint32_t* count)") !=
+                 std::string::npos &&
+             header.find("const char** native_names(uint32_t* count)") !=
+                 std::string::npos,
+         "native headers should erase c_array metadata into exact recursive C "
+         "pointer declarations");
+
+  const auto nativeHandles =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &instance) {
+                     return instance.externalSymbol == "native_handles";
+                   });
+  expect(nativeHandles != frontend.mir.functionInstances().end() &&
+             nativeHandles->cArrayCountParameter ==
+                 std::optional<std::size_t>{0} &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "MIR should retain and verify the exact native-array count parameter");
+  if (nativeHandles != frontend.mir.functionInstances().end()) {
+    const std::size_t functionIndex = static_cast<std::size_t>(
+        std::distance(frontend.mir.functionInstances().begin(), nativeHandles));
+
+    lang::MirProgram missingPair = frontend.mir;
+    auto &missingFunctions =
+        const_cast<std::vector<lang::MirFunctionInstance> &>(
+            missingPair.functionInstances());
+    missingFunctions[functionIndex].cArrayCountParameter.reset();
+    expect(!lang::verifyMirProgram(missingPair).valid(),
+           "MIR verification should reject a nested return after a pass drops "
+           "its native-array pair metadata");
+
+    lang::MirProgram invalidPair = frontend.mir;
+    auto &invalidFunctions =
+        const_cast<std::vector<lang::MirFunctionInstance> &>(
+            invalidPair.functionInstances());
+    invalidFunctions[functionIndex].cArrayCountParameter =
+        invalidFunctions[functionIndex].parameterTypes.size();
+    expect(!lang::verifyMirProgram(invalidPair).valid(),
+           "MIR verification should reject an out-of-range native-array count "
+           "parameter identity");
+  }
+}
+
+void testNativeArrayBoundaryRejectsInvalidPairs() {
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto analyze = [&](std::string_view name, std::string source) {
+    return lang::Frontend().analyze(
+        std::filesystem::path(name), std::move(source),
+        {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  };
+
+  const lang::FrontendResult missing = analyze("c-array-missing.gti", R"(
+extern "C" {
+  [[c_array(missing)]] int32_t* native_values(int32_t* count);
+}
+int main() { return 0; }
+)");
+  expect(!missing.canGenerateCode() && hasCode(missing, "GTI-S2073"),
+         "c_array should reject a count name outside its declaration");
+
+  const lang::FrontendResult byValue = analyze("c-array-value.gti", R"(
+extern "C" {
+  [[c_array(count)]] int32_t* native_values(int32_t count);
+}
+int main() { return 0; }
+)");
+  expect(!byValue.canGenerateCode() && hasCode(byValue, "GTI-S2073"),
+         "c_array should require a writable integer out-pointer");
+
+  const lang::FrontendResult nonNative = analyze("c-array-gti.gti", R"(
+[[c_array(count)]] int32_t* values(int32_t* count) { return nullptr; }
+int main() { return 0; }
+)");
+  expect(!nonNative.canGenerateCode() && hasCode(nonNative, "GTI-S2073"),
+         "c_array should remain confined to C-linkage declarations");
+
+  const lang::FrontendResult unannotated = analyze("c-array-nested.gti", R"(
+[[c_opaque]] struct NativeHandle;
+extern "C" { NativeHandle** native_handles(int32_t* count); }
+int main() { return 0; }
+)");
+  expect(!unannotated.canGenerateCode() && hasCode(unannotated, "GTI-S2074"),
+         "two-level pointer syntax should require the c_array boundary");
+
+  const lang::FrontendResult ordinaryPositions =
+      analyze("c-array-ordinary-nested.gti", R"(
+class NestedField { int32_t** value = nullptr; };
+void consume(int32_t** value) {}
+int main() {
+  int32_t** local = nullptr;
+  return 0;
+}
+)");
+  const std::size_t nestedDiagnostics = static_cast<std::size_t>(
+      std::count_if(ordinaryPositions.diagnostics.begin(),
+                    ordinaryPositions.diagnostics.end(),
+                    [](const lang::Diagnostic &diagnostic) {
+                      return diagnostic.code == "GTI-S2074";
+                    }));
+  expect(!ordinaryPositions.canGenerateCode() && nestedDiagnostics == 3,
+         "two-level pointers should remain rejected for fields, parameters, "
+         "and locals");
+
+  const lang::FrontendResult readOnlyCount =
+      analyze("c-array-const-count.gti", R"(
+extern "C" {
+  [[c_array(count)]] int32_t* native_values(const int32_t* count);
+}
+int main() { return 0; }
+)");
+  expect(!readOnlyCount.canGenerateCode() &&
+             hasCode(readOnlyCount, "GTI-S2073"),
+         "c_array should require a writable count pointee");
+
+  const lang::FrontendResult nestedCString = analyze("c-array-c-string.gti", R"(
+extern "C" {
+  [[c_array(count)]] c_string** native_names(uint32_t* count);
+}
+int main() { return 0; }
+)");
+  expect(!nestedCString.canGenerateCode() &&
+             hasCode(nestedCString, "GTI-S2073"),
+         "c_array should use c_string* for const char** rather than admitting "
+         "a third physical pointer level");
+}
+
 } // namespace
 
 int main() {
   testCAndCppHeaderSurface();
   testCStringBoundarySurface();
   testCStringBoundaryRejectsUnprovedUses();
+  testNativeArrayBoundarySurface();
+  testNativeArrayBoundaryRejectsInvalidPairs();
   if (failures != 0) {
     std::cerr << failures << " native-header test(s) failed\n";
     return 1;

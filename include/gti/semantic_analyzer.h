@@ -861,6 +861,7 @@ struct FunctionInfo {
   bool constexprFunction = false;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
+  std::optional<std::size_t> cArrayCountParameter;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;

@@ -193,6 +193,7 @@ module.exports = grammar({
 
     extern_c_function_prototype: ($) =>
       seq(
+        optional(field("attribute", $.native_c_array_attribute)),
         field("return_type", $.type),
         field("name", $.identifier),
         field("parameters", $.parameter_clause),
@@ -339,6 +340,16 @@ module.exports = grammar({
         "[[",
         field("attribute", $.identifier),
         repeat(seq(",", field("attribute", $.identifier))),
+        "]]",
+      ),
+
+    native_c_array_attribute: ($) =>
+      seq(
+        "[[",
+        field("attribute", alias("c_array", $.identifier)),
+        "(",
+        field("count", $.identifier),
+        ")",
         "]]",
       ),
 
@@ -496,6 +507,7 @@ module.exports = grammar({
 
     function_declaration: ($) =>
       seq(
+        optional(field("attribute", $.native_c_array_attribute)),
         optional(field("binding", $.runtime_binding)),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
@@ -590,7 +602,7 @@ module.exports = grammar({
         ),
       ),
 
-    pointer_declarator: () => "*",
+    pointer_declarator: () => seq("*", optional("*")),
 
     reference_declarator: () => choice("&", "&&"),
 

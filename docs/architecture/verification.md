@@ -39,7 +39,7 @@ assertions.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_census_regression` | exact reviewed per-example MIR body ownership for all 2,487 identities across 57 examples |
+| `mir_census_regression` | exact reviewed per-example MIR body ownership for all 2,601 identities across 57 examples |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
 | `cpp_mir_body_emitter` | generic MIR body-emission classification and a corpus sweep requiring every frontend-produced body to be coherent and text-ready |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
@@ -393,7 +393,7 @@ Two complementary gates replace it:
   identical body ownership at both endpoints, and compares exit status,
   stdout, and stderr.
 
-The reviewed corpus currently contains 2,487 MIR body identities across 57
+The reviewed corpus currently contains 2,601 MIR body identities across 57
 examples. The two-endpoint corpus matrix covers source and optimized MIR plus
 both supported C++ standards without retaining eight duplicate full-corpus
 jobs. Focused runtime matrices continue to exercise intermediate optimization

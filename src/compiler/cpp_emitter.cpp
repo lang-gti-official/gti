@@ -6842,6 +6842,7 @@ private:
         hirInstance->returnBorrowPlace != selected->returnBorrowPlace ||
         hirInstance->linkage != selected->linkage ||
         hirInstance->externalSymbol != selected->externalSymbol ||
+        hirInstance->cArrayCountParameter != selected->cArrayCountParameter ||
         hirInstance->virtualMethod != selected->virtualMethod ||
         hirInstance->pureVirtual != selected->pureVirtual ||
         hirInstance->overrideMethod != selected->overrideMethod ||
@@ -11408,6 +11409,9 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     }
     emitUnqualifiedBaseType(type);
     if (type.pointer.has_value()) {
+      output << '*';
+    }
+    if (type.outerPointer.has_value()) {
       output << '*';
     }
   }

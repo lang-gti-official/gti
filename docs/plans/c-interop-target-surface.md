@@ -1,8 +1,9 @@
 # C Interop Target Surface
 
-> **Plan status:** active implementation artifact. F1 fixed-array native fields
-> and the bounded F2 `c_string` boundary compile and pass the independent C
-> oracle; dynamic owner borrowing, F3, and `S-CALL-01` remain. This
+> **Plan status:** active implementation artifact. F1 fixed-array native fields,
+> the bounded F2 `c_string` boundary, and F3 pointer-plus-count returns compile
+> and pass the independent C oracle; dynamic owner borrowing and `S-CALL-01`
+> remain. This
 > is the surface `S-FFI-02` families F1/F2/F3 and `S-CALL-01` are built
 > against, kept here rather than under `examples/` because CMake globs
 > `examples/*.gti` into
@@ -79,8 +80,8 @@ extern "C" {
 
   // F3: the annotation names the out-parameter carrying the length, and is
   // what admits the second pointer level here and nowhere else.
-  [[c_array(count)]] GLFWmonitor** glfwGetMonitors(mut int32_t* count);
-  int32_t glfwGetError(mut c_string* description);
+  [[c_array(count)]] GLFWmonitor** glfwGetMonitors(int32_t* count);
+  int32_t glfwGetError(c_string* description);
 
   // S-CALL-01: callbacks become ordinary parameters.
   GLFWkeyfun glfwSetKeyCallback(GLFWwindow* window, GLFWkeyfun callback);

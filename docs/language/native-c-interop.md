@@ -21,10 +21,11 @@ int main() {
 
 This is a bounded C ABI rather than a general foreign-definition facility. It
 supports fixed-width values, passive `[[c_abi]]` records, nominal pointer-only
-`[[c_opaque]]` handles, and bounded one-level raw pointers behind lexical
-`unsafe`. It does not expose native variables, callbacks, variadic calls, C++
-linkage, annotated ownership transfer, or a stable binary ABI for ordinary
-GTI-defined types.
+`[[c_opaque]]` handles, bounded one-level raw pointers, NUL-terminated
+`c_string` values, and annotated native pointer-plus-count returns behind
+lexical `unsafe`. It does not expose native variables, callbacks, variadic
+calls, C++ linkage, annotated ownership transfer, or a stable binary ABI for
+ordinary GTI-defined types.
 
 The compiler can emit one native bridge header for this bounded surface. The
 header is valid C17 and C++20/C++23: C sees deterministic C record names, while
@@ -99,7 +100,9 @@ follows the same rule as its canonical allowed type:
   `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, valid `[[c_abi]]`
   records, `c_string`, and one-level raw pointers whose pointee is `void`, one
   of those scalar types, `c_string`, a valid C ABI record, or a
-  `[[c_opaque]]` handle;
+  `[[c_opaque]]` handle. A `[[c_array(count)]]` declaration may additionally
+  return the exact bounded two-level form whose inner pointer satisfies this
+  same allowlist;
 - parameters: the same fixed-width scalar types, passed immutably by value,
   valid C ABI records passed immutably by value, one-level raw pointers with
   immutable bindings and the same permitted pointees, plus
@@ -119,11 +122,11 @@ their source meaning should not inherit platform C representation choices.
 Enums, ordinary complete classes/structs/interfaces, `expected`, owners,
 references, arrays, mutable parameters, packs, string-view returns,
 general pointer-to-pointer types, function pointers, and pointers to non-ABI
-pointees are also rejected. `c_string*` is the one existing bounded
-pointer-to-pointer representation: it spells `const char**` for a C out
-parameter without admitting nested raw-pointer syntax.
-The allowlist does not define array parameters, callbacks, opaque ownership
-transfer, or direct C++ linkage.
+pointees are also rejected. The two bounded exceptions do not create general
+nested pointer types: `c_string*` spells `const char**` for a C out parameter,
+and a `[[c_array(count)]]` return may add one outer pointer to an otherwise
+admitted one-level C pointer. The allowlist does not define array parameters,
+callbacks, opaque ownership transfer, or direct C++ linkage.
 
 Every C ABI call is conservatively effectful. A successful declaration says
 only how GTI calls the symbol; it does not make the native implementation safe,
@@ -152,6 +155,59 @@ requires the owner to maintain a terminator and the returned value to retain a
 loan invalidated by mutation or destruction. Until that lifetime contract is
 implemented, GTI rejects retained string-view-to-`c_string` conversions rather
 than reproducing C++'s dangling `c_str()` behavior.
+
+## Native Pointer-Plus-Count Arrays
+
+`[[c_array(count)]]` describes the common C contract in which a function
+returns borrowed array storage and writes its element count through an exact
+out parameter:
+
+```gti
+[[c_opaque]] struct NativeHandle;
+[[c_abi]] struct NativePoint { mut int32_t x; mut int32_t y; };
+
+extern "C" {
+  [[c_array(count)]] const NativePoint* native_points(uint32_t* count);
+  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
+  [[c_array(count)]] c_string* native_names(uint32_t* count);
+}
+```
+
+The attribute is valid only on a bodyless `extern "C"` function. Its result
+must be an admitted one-level C pointer, or the exact two-level form whose
+inner pointer is itself admitted. The named count must be an immutable
+parameter binding of type `I*`, where `I` is a fixed-width integer and the
+pointee is writable. Consequently the parameter is written as `int32_t* count`,
+not `mut int32_t* count`: leading `mut` would make the local pointer binding
+reseatable and is prohibited on C parameters.
+
+The attribute is boundary metadata, not a GTI container type. It does not
+infer ownership, storage duration, aliasing, nullability, or a cleanup
+function. The native result may be null, especially when the count is zero,
+and the library's own contract determines how long the elements remain valid.
+An API whose returned storage must be freed belongs to a separate ownership
+transfer family.
+
+Calling the pointer-bearing function and indexing the returned storage require
+`unsafe`. A two-level result can be captured with `auto`; explicit `T**`
+locals, parameters, fields, and unannotated returns remain invalid:
+
+```gti
+mut int32_t count = 0;
+unsafe {
+  auto handles = native_handles(&count);
+  if (handles != nullptr && count > 0) {
+    NativeHandle* first = handles[0];
+  }
+}
+```
+
+Semantics resolves the count name to its exact parameter and HIR/MIR retain
+that parameter index. MIR verification rejects a nested-pointer return without
+the pair metadata or a malformed pair before backend entry. The generated
+C/C++ bridge header erases the attribute and emits the exact C declarator.
+`GTI-S2073` owns an invalid attribute/count pair; `GTI-S2074` owns nested raw
+pointer syntax outside this return boundary.
 
 ## Passive Native Records
 
@@ -295,8 +351,9 @@ the `[[c_opaque]]` declaration.
 
 A `[[c_abi]]` field may contain `NativeDatabase*` or
 `const NativeDatabase*`. The record contains only the address; the opaque
-pointee contributes no record-layout fact. Pointer-to-pointer output remains a
-separate family and is not enabled by this declaration.
+pointee contributes no record-layout fact. An annotated `[[c_array(count)]]`
+function may return `NativeDatabase**`, but the opaque declaration alone does
+not enable nested pointers in any other position.
 
 The generated bridge header gives each handle a deterministic dual surface:
 

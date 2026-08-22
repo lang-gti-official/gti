@@ -173,7 +173,7 @@ shadow infrastructure:
    gate covers O0/O1/O3 and C++20/C++23; broader signatures, lifecycle failure,
    initialization, double failure, embedding, and callbacks remain separate
    work rather than implied completion of M-FAIL-01.
-7. **Final authority cutover — done (`M-BACK-02`).** All 2,487 reviewed source
+7. **Final authority cutover — done (`M-BACK-02`).** All 2,601 reviewed source
    body identities across 57 examples emit through `CppMirBodyEmitter` from
    verified optimized MIR and copied representation rows. Functions,
    constructors, destructors, lambdas, class initializers, module
@@ -889,7 +889,7 @@ analysis, HIR, MIR, and the backend.
 
 ### M-BACK-02: Complete MIR Body-Family Migration
 
-- **State/role:** complete for source executable bodies. All 2,487 reviewed
+- **State/role:** complete for source executable bodies. All 2,601 reviewed
   body identities across 57 examples use the verified-MIR production route.
   The named families below are historical migration stages, not current
   selectors or fallback authorities.
@@ -1768,8 +1768,7 @@ do not expose C++ object layout as GTI semantics.
   initialization, retention, aliasing, nullability, cleanup, and unsafe
   obligations. A selected ownership family must build on the opaque identity
   rather than retroactively making raw handle pointers owners.
-  Diagnostic codes below are allocated from the first free `GTI-S20xx` range;
-  `GTI-S2068` is the highest currently in use.
+  Diagnostic codes are retained beside the family that owns them.
 
   - **F1 — fixed-array `[[c_abi]]` fields (complete).** Admit `T[N]` fields of otherwise
     admissible element types. ADR 013 already anticipates this: it excluded
@@ -1833,7 +1832,7 @@ do not expose C++ object layout as GTI semantics.
       `glfwGetJoystickGUID`, `glfwUpdateGamepadMappings`, `glfwGetGamepadName`,
       `glfwSetClipboardString`, `glfwGetClipboardString`, and
       `glfwExtensionSupported`.
-  - **F3 — out-parameter and returned pointer-plus-count.** C's "returns an
+  - **F3 — out-parameter and returned pointer-plus-count (complete).** C's "returns an
     array, writes the length through an out parameter" idiom. Admit it as one
     bounded boundary form rather than admitting `T**` generally, which would
     import pointer nesting and aliasing that `R-RAW-POINTERS` excludes as a
@@ -1843,11 +1842,13 @@ do not expose C++ object layout as GTI semantics.
       pointer appears outside an annotated `[[c_array]]` boundary, which keeps
       the general `R-RAW-POINTERS` rejection intact and explains the one
       exception.
-    - *Obligations.* Initialization: the callee writes both the pointer and
-      the count, so GTI must treat the pair as uninitialized until the call
-      returns and must not read either beforehand. Retention: the returned
-      array is owned by the C library and its lifetime is that library's
-      contract; GTI infers nothing and each binding states it per function.
+    - *Obligations.* Initialization: GTI's ordinary definite-initialization
+      rule still requires storage for the count before its address is passed;
+      the native call may overwrite it, and the returned pointer exists only
+      after the call completes. The attribute does not create a hidden pair
+      value. Retention: the returned array is owned by the C library and its
+      lifetime is that library's contract; GTI infers nothing and each binding
+      states it per function.
       Aliasing: elements may alias anything, and GTI makes no claim.
       Nullability: the array pointer may be null when the count is zero, and
       the wrapper must handle that rather than index it. Cleanup: none by GTI;
@@ -1857,6 +1858,13 @@ do not expose C++ object layout as GTI semantics.
       wrapper that converts the pair into an ordinary GTI view.
     - *Acceptance.* `glfwGetError`, `glfwGetMonitors`, and
       `glfwGetRequiredInstanceExtensions`.
+    - *Completion evidence.* `[[c_array(count)]]` resolves one exact writable
+      fixed-width integer out parameter and admits either one C ABI pointer or
+      the bounded two-level return whose inner pointer is independently
+      admissible. Semantics, HIR, MIR, the MIR verifier, C++ emission, native
+      header generation, formatter, Tree-sitter, LSP hover/definition/tokens,
+      and C17/C++20/C++23 oracle coverage agree. Explicit nested-pointer locals,
+      parameters, fields, and unannotated returns remain rejected.
   - Callbacks are **not** in this row. `S-CALL-01` owns them and gates the
     remaining ~20 GLFW entry points.
   - The surface these families are built against is written out in
@@ -2705,7 +2713,7 @@ owned by the rows and domain plans above.
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
 | MIR transformations | first client required | bounded editor in `O-MIR-01`, not framework-first |
-| MIR-backed C++ emission | **source-body cutover complete** | 2,487/2,487 reviewed corpus bodies use the verified-MIR route; generated-adapter inventory remains a backend-separation follow-up |
+| MIR-backed C++ emission | **source-body cutover complete** | 2,601/2,601 reviewed corpus bodies use the verified-MIR route; generated-adapter inventory remains a backend-separation follow-up |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
 | `LoopInfo`/incremental dominance | **measured defer** | stable editor, invalidation, concrete loop client |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |

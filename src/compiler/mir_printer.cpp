@@ -416,8 +416,9 @@ public:
       borrowOriginPlace(instance.returnBorrowPlace);
       output << " linkage="
              << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
-             << " symbol=" << instance.externalSymbol
-             << " receiver=" << number(instance.receiverMutability)
+             << " symbol=" << instance.externalSymbol << " c-array-count=";
+      optional(instance.cArrayCountParameter);
+      output << " receiver=" << number(instance.receiverMutability)
              << " operator=";
       if (instance.overloadedOperator) {
         output << number(*instance.overloadedOperator);
