@@ -22,10 +22,10 @@ optimized MIR and copied backend-neutral target, body, declaration, symbol,
 concrete-instance, and generated-item facts, and it has no AST, semantic, or
 HIR pointers.
 
-`MirBackend` is the first independent contract client: it verifies and reads
-only `LoweredProgram`. During the remaining migration, `BackendInput` also
-carries the older coherent frontend tuple required by C++ and native-header
-emission:
+`MirBackend` and `NativeHeaderBackend` are independent contract clients: they
+verify and read only `LoweredProgram`. During the remaining C++ migration,
+`BackendInput` also carries the older coherent frontend tuple required by the
+C++ declaration emitter:
 
 - the active parsed `Program`;
 - the `SemanticModel`;
@@ -75,8 +75,13 @@ tables against optimized MIR and rejects missing or duplicate identities.
 The C++ row builder and whole-program planner now consume these tables in
 production. The remaining C++ cutover work is declaration/source assembly,
 the unfinished generated-item families, and removal of the transitional tuple.
-Native-header emission also still uses that tuple until it is migrated or
-formally classified as a frontend artifact.
+Native-header emission no longer uses that tuple.
+
+`NativeHeaderBackend` derives public C/C++ records, opaque handles, callback
+aliases, external function signatures, namespace scopes, field names, and
+target-resolved record layouts entirely from lowered declarations and symbols.
+It rejects calls that omit or mutate the lowered boundary; no AST/semantic
+collector remains.
 
 ## C++ Backend Ingress
 

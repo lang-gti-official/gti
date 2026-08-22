@@ -16,22 +16,21 @@ namespace lang {
 namespace {
 
 struct NativeRecord {
-  const ClassDecl *declaration = nullptr;
-  const ClassTypeInfo *info = nullptr;
+  const LoweredDeclaration *declaration = nullptr;
+  const LoweredClassDeclaration *info = nullptr;
   std::string cName;
 };
 
 using NativeOpaqueHandle = NativeRecord;
 
 struct NativeFunction {
-  const FunctionDecl *declaration = nullptr;
-  const FunctionInfo *info = nullptr;
+  const LoweredDeclaration *declaration = nullptr;
+  const LoweredFunctionDeclaration *info = nullptr;
 };
 
 struct NativeCallbackAlias {
-  const TypeAliasDecl *declaration = nullptr;
-  const TypeAliasInfo *info = nullptr;
-  std::vector<std::string> namespaceScope;
+  const LoweredDeclaration *declaration = nullptr;
+  const LoweredTypeAliasDeclaration *info = nullptr;
   std::string cName;
 };
 
@@ -39,21 +38,22 @@ std::string emittedScope(std::string_view scope, std::size_t index) {
   return index == 0 && scope == "std" ? "__gti_std" : std::string(scope);
 }
 
-std::string qualifiedCppName(const ClassTypeInfo &info) {
+std::string qualifiedCppName(const NativeRecord &record) {
   // Opaque handles are completed by the C++ consumer, so their public source
   // name must remain the actual type rather than an alias to a private type
   // that user code could not define. Passive records are compiler-defined and
   // can safely expose a familiar alias to their isolated representation.
-  std::string result = info.cOpaqueHandle ? "::" : "::__gti_program::";
-  for (std::size_t index = 0; index < info.namespaceScope.size(); ++index) {
-    result += emittedScope(info.namespaceScope[index], index);
+  std::string result = record.info->cOpaqueHandle ? "::" : "::__gti_program::";
+  for (std::size_t index = 0; index < record.declaration->namespaceScope.size();
+       ++index) {
+    result += emittedScope(record.declaration->namespaceScope[index], index);
     result += "::";
   }
-  result += info.declaration->name().lexeme;
+  result += record.declaration->name;
   return result;
 }
 
-std::string encodedCRecordName(const ClassTypeInfo &info) {
+std::string encodedCRecordName(const LoweredClassDeclaration &info) {
   std::ostringstream output;
   output << "gti_cabi_";
   for (const unsigned char byte : info.qualifiedName) {
@@ -63,7 +63,7 @@ std::string encodedCRecordName(const ClassTypeInfo &info) {
   return output.str();
 }
 
-std::string encodedCCallbackName(const TypeAliasInfo &info) {
+std::string encodedCCallbackName(const LoweredTypeAliasDeclaration &info) {
   std::ostringstream output;
   output << "gti_cabi_callback_";
   for (const unsigned char byte : info.qualifiedName) {
@@ -111,12 +111,11 @@ void closePublicCppNamespaces(std::ostream &output,
 
 class NativeHeaderEmitter {
 public:
-  NativeHeaderEmitter(const Program &program, const SemanticModel &semantics,
-                      TargetInfo target)
-      : program(program), semantics(semantics), target(std::move(target)) {}
+  explicit NativeHeaderEmitter(const LoweredProgram &program)
+      : program(program) {}
 
   std::string emit() {
-    collect(program.declarations());
+    collect();
     assignCNames();
     orderCallbackAliases();
     orderRecords();
@@ -155,65 +154,41 @@ public:
   }
 
 private:
-  void collect(const StmtList &declarations,
-               std::vector<std::string> namespaceScope = {}) {
-    for (const StmtPtr &statement : declarations) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
-        if (const StmtList *branch = conditional->activeBranch(target)) {
-          collect(*branch, namespaceScope);
-        }
-        continue;
-      }
-      if (const auto *namespaceDeclaration =
-              dynamic_cast<const NamespaceDecl *>(statement.get())) {
-        namespaceScope.push_back(namespaceDeclaration->name().lexeme);
-        collect(namespaceDeclaration->declarations(), namespaceScope);
-        namespaceScope.pop_back();
+  void collect() {
+    for (const LoweredDeclaration &declaration : program.declarations()) {
+      if (declaration.ownerClass != 0) {
         continue;
       }
       if (const auto *alias =
-              dynamic_cast<const TypeAliasDecl *>(statement.get())) {
-        const TypeAliasInfo *info = semantics.findTypeAlias(*alias);
-        if (info != nullptr &&
-            info->type.kind == SemanticType::NativeFunction &&
-            !info->compilerPrivate) {
-          callbackAliases.push_back({.declaration = alias,
-                                     .info = info,
-                                     .namespaceScope = namespaceScope});
-        }
+              std::get_if<LoweredTypeAliasDeclaration>(&declaration.payload);
+          alias != nullptr &&
+          alias->type.kind == SemanticType::NativeFunction &&
+          !alias->compilerPrivate) {
+        callbackAliases.push_back({.declaration = &declaration, .info = alias});
         continue;
       }
       if (const auto *classDeclaration =
-              dynamic_cast<const ClassDecl *>(statement.get())) {
-        const ClassTypeInfo *info = semantics.findClassType(*classDeclaration);
-        if (info != nullptr && info->cAbiRecord && info->cAbiLayout &&
-            !info->compilerPrivate) {
+              std::get_if<LoweredClassDeclaration>(&declaration.payload)) {
+        if (classDeclaration->cAbiRecord && classDeclaration->cAbiLayout &&
+            !classDeclaration->compilerPrivate) {
           const std::size_t index = records.size();
-          records.push_back({.declaration = classDeclaration, .info = info});
-          recordByClass.emplace(info->id, index);
-        } else if (info != nullptr && info->cOpaqueHandle &&
-                   !info->compilerPrivate) {
+          records.push_back(
+              {.declaration = &declaration, .info = classDeclaration});
+          recordByClass.emplace(classDeclaration->id, index);
+        } else if (classDeclaration->cOpaqueHandle &&
+                   !classDeclaration->compilerPrivate) {
           const std::size_t index = opaqueHandles.size();
           opaqueHandles.push_back(
-              {.declaration = classDeclaration, .info = info});
-          opaqueByClass.emplace(info->id, index);
+              {.declaration = &declaration, .info = classDeclaration});
+          opaqueByClass.emplace(classDeclaration->id, index);
         }
         continue;
       }
-      const auto *externC = dynamic_cast<const ExternCDecl *>(statement.get());
-      if (externC == nullptr) {
-        continue;
-      }
-      for (const StmtPtr &declaration : externC->declarations()) {
-        const auto *function =
-            dynamic_cast<const FunctionDecl *>(declaration.get());
-        const FunctionInfo *info =
-            function == nullptr ? nullptr : semantics.findFunction(*function);
-        if (function != nullptr && info != nullptr &&
-            info->linkage == LanguageLinkage::C && !info->compilerPrivate) {
-          functions.push_back({.declaration = function, .info = info});
-        }
+      if (const auto *function =
+              std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
+          function != nullptr && function->linkage == LanguageLinkage::C &&
+          !function->compilerPrivate) {
+        functions.push_back({.declaration = &declaration, .info = function});
       }
     }
   }
@@ -222,8 +197,8 @@ private:
     std::unordered_set<std::string> used;
     const auto assignRoots = [&](auto &types) {
       for (NativeRecord &type : types) {
-        if (type.info->namespaceScope.empty()) {
-          type.cName = type.declaration->name().lexeme;
+        if (type.declaration->namespaceScope.empty()) {
+          type.cName = type.declaration->name;
           used.insert(type.cName);
         }
       }
@@ -241,9 +216,9 @@ private:
     assignRoots(records);
     assignRoots(opaqueHandles);
     for (NativeCallbackAlias &alias : callbackAliases) {
-      if (alias.namespaceScope.empty() &&
-          used.insert(alias.declaration->name().lexeme).second) {
-        alias.cName = alias.declaration->name().lexeme;
+      if (alias.declaration->namespaceScope.empty() &&
+          used.insert(alias.declaration->name).second) {
+        alias.cName = alias.declaration->name;
       }
     }
     assignNamespaced(records);
@@ -269,7 +244,8 @@ private:
           "checked C ABI record graph is unavailable to native header");
     }
     const NativeRecord &record = records[found->second];
-    for (const CAbiRecordFieldLayout &field : record.info->cAbiLayout->fields) {
+    for (const MirCAbiRecordFieldLayout &field :
+         record.info->cAbiLayout->fields) {
       const SemanticType *dependency = &field.type;
       while (dependency->kind == SemanticType::Array &&
              dependency->arguments.size() == 1) {
@@ -369,11 +345,12 @@ private:
 
   std::string qualifiedCppCallbackName(const NativeCallbackAlias &alias) const {
     std::string result = "::__gti_program::";
-    for (std::size_t index = 0; index < alias.namespaceScope.size(); ++index) {
-      result += emittedScope(alias.namespaceScope[index], index);
+    for (std::size_t index = 0;
+         index < alias.declaration->namespaceScope.size(); ++index) {
+      result += emittedScope(alias.declaration->namespaceScope[index], index);
       result += "::";
     }
-    result += alias.declaration->name().lexeme;
+    result += alias.declaration->name;
     return result;
   }
 
@@ -408,7 +385,7 @@ private:
     case SemanticType::NativeFunction:
       return qualifiedCppCallbackName(nativeCallbackFor(type));
     case SemanticType::Class:
-      return qualifiedCppName(*nativeTypeFor(type.classId).info);
+      return qualifiedCppName(nativeTypeFor(type.classId));
     case SemanticType::RawPointer: {
       if (type.arguments.size() != 1) {
         break;
@@ -472,7 +449,7 @@ private:
   }
 
   template <typename TypeEmitter>
-  std::string fieldDeclaration(const CAbiRecordFieldLayout &field,
+  std::string fieldDeclaration(const MirCAbiRecordFieldLayout &field,
                                TypeEmitter emitType) const {
     const SemanticType *element = &field.type;
     std::vector<std::uint64_t> extents;
@@ -481,8 +458,12 @@ private:
       extents.push_back(element->arrayLength);
       element = &element->arguments.front();
     }
-    std::string result =
-        emitType(*element) + " " + field.declaration->name().lexeme;
+    const LoweredSymbol *symbol = program.findSymbol(field.field);
+    if (symbol == nullptr || symbol->name.empty()) {
+      throw std::logic_error(
+          "checked C ABI field symbol is unavailable to native header");
+    }
+    std::string result = emitType(*element) + " " + symbol->name;
     for (const std::uint64_t extent : extents) {
       result += "[" + std::to_string(extent) + "]";
     }
@@ -491,22 +472,23 @@ private:
 
   void emitCppForward(std::ostream &output, const NativeRecord &record) const {
     if (record.info->cOpaqueHandle) {
-      openPublicCppNamespaces(output, record.info->namespaceScope);
+      openPublicCppNamespaces(output, record.declaration->namespaceScope);
     } else {
-      openCppNamespaces(output, record.info->namespaceScope);
+      openCppNamespaces(output, record.declaration->namespaceScope);
     }
-    output << "struct " << record.declaration->name().lexeme << ";\n";
+    output << "struct " << record.declaration->name << ";\n";
     if (record.info->cOpaqueHandle) {
-      closePublicCppNamespaces(output, record.info->namespaceScope);
+      closePublicCppNamespaces(output, record.declaration->namespaceScope);
     } else {
-      closeCppNamespaces(output, record.info->namespaceScope);
+      closeCppNamespaces(output, record.declaration->namespaceScope);
     }
   }
 
   void emitCppRecord(std::ostream &output, const NativeRecord &record) const {
-    openCppNamespaces(output, record.info->namespaceScope);
-    output << "struct " << record.declaration->name().lexeme << " {\n";
-    for (const CAbiRecordFieldLayout &field : record.info->cAbiLayout->fields) {
+    openCppNamespaces(output, record.declaration->namespaceScope);
+    output << "struct " << record.declaration->name << " {\n";
+    for (const MirCAbiRecordFieldLayout &field :
+         record.info->cAbiLayout->fields) {
       output << "  "
              << fieldDeclaration(
                     field,
@@ -514,7 +496,7 @@ private:
              << ";\n";
     }
     output << "};\n";
-    closeCppNamespaces(output, record.info->namespaceScope);
+    closeCppNamespaces(output, record.declaration->namespaceScope);
   }
 
   void emitCppCallbackAlias(std::ostream &output,
@@ -524,8 +506,8 @@ private:
     if (returnType == nullptr) {
       throw std::logic_error("checked native callback alias is malformed");
     }
-    openCppNamespaces(output, alias.namespaceScope);
-    output << "using " << alias.declaration->name().lexeme << " = "
+    openCppNamespaces(output, alias.declaration->namespaceScope);
+    output << "using " << alias.declaration->name << " = "
            << cppType(*returnType) << " (*)(";
     const std::span<const SemanticType> parameters =
         alias.info->type.nativeFunctionParameterTypes();
@@ -536,7 +518,7 @@ private:
       output << cppType(parameters[index]);
     }
     output << ");\n";
-    closeCppNamespaces(output, alias.namespaceScope);
+    closeCppNamespaces(output, alias.declaration->namespaceScope);
   }
 
   void emitCCallbackAlias(std::ostream &output,
@@ -563,8 +545,8 @@ private:
 
   void emitCppAssertions(std::ostream &output,
                          const NativeRecord &record) const {
-    const std::string type = qualifiedCppName(*record.info);
-    const CAbiRecordLayout &layout = *record.info->cAbiLayout;
+    const std::string type = qualifiedCppName(record);
+    const MirCAbiRecordLayout &layout = *record.info->cAbiLayout;
     output << "static_assert(std::is_standard_layout_v<" << type
            << "> && std::is_trivially_copyable_v<" << type
            << ">, \"GTI native record must remain a passive C ABI value\");\n"
@@ -573,9 +555,14 @@ private:
            << "static_assert(alignof(" << type
            << ") == " << layout.abiAlignmentBytes
            << ", \"GTI native record alignment mismatch\");\n";
-    for (const CAbiRecordFieldLayout &field : layout.fields) {
-      output << "static_assert(offsetof(" << type << ", "
-             << field.declaration->name().lexeme << ") == " << field.offsetBytes
+    for (const MirCAbiRecordFieldLayout &field : layout.fields) {
+      const LoweredSymbol *symbol = program.findSymbol(field.field);
+      if (symbol == nullptr || symbol->name.empty()) {
+        throw std::logic_error(
+            "checked C ABI field symbol is unavailable to native header");
+      }
+      output << "static_assert(offsetof(" << type << ", " << symbol->name
+             << ") == " << field.offsetBytes
              << ", \"GTI native record field offset "
              << "mismatch\");\n";
     }
@@ -587,18 +574,17 @@ private:
                              TypeEmitter emitType, bool cBranch) const {
     output << emitType(function.info->returnType) << ' '
            << function.info->externalSymbol << '(';
-    if (function.info->parameterTypes.empty() && cBranch) {
+    if (function.info->parameters.empty() && cBranch) {
       output << "void";
     }
-    for (std::size_t index = 0; index < function.info->parameterTypes.size();
+    for (std::size_t index = 0; index < function.info->parameters.size();
          ++index) {
       if (index != 0) {
         output << ", ";
       }
-      output << emitType(function.info->parameterTypes[index]);
-      if (index < function.declaration->parameters().size() &&
-          !function.declaration->parameters()[index].name.lexeme.empty()) {
-        output << ' ' << function.declaration->parameters()[index].name.lexeme;
+      output << emitType(function.info->parameters[index].type);
+      if (!function.info->parameters[index].name.empty()) {
+        output << ' ' << function.info->parameters[index].name;
       }
     }
     output << ");\n";
@@ -607,9 +593,9 @@ private:
   void emitCppFunction(std::ostream &output, const NativeFunction &function,
                        bool publicSourceNamespace) const {
     if (publicSourceNamespace) {
-      openPublicCppNamespaces(output, function.info->namespaceScope);
+      openPublicCppNamespaces(output, function.declaration->namespaceScope);
     } else {
-      openCppNamespaces(output, function.info->namespaceScope);
+      openCppNamespaces(output, function.declaration->namespaceScope);
     }
     output << "extern \"C\" {\n";
     emitFunctionSignature(
@@ -617,26 +603,26 @@ private:
         [this](const SemanticType &type) { return cppType(type); }, false);
     output << "}\n";
     if (publicSourceNamespace) {
-      closePublicCppNamespaces(output, function.info->namespaceScope);
+      closePublicCppNamespaces(output, function.declaration->namespaceScope);
     } else {
-      closeCppNamespaces(output, function.info->namespaceScope);
+      closeCppNamespaces(output, function.declaration->namespaceScope);
     }
   }
 
   void emitCppTypeAlias(std::ostream &output,
                         const NativeRecord &record) const {
-    openPublicCppNamespaces(output, record.info->namespaceScope);
-    output << "using " << record.declaration->name().lexeme << " = "
-           << qualifiedCppName(*record.info) << ";\n";
-    closePublicCppNamespaces(output, record.info->namespaceScope);
+    openPublicCppNamespaces(output, record.declaration->namespaceScope);
+    output << "using " << record.declaration->name << " = "
+           << qualifiedCppName(record) << ";\n";
+    closePublicCppNamespaces(output, record.declaration->namespaceScope);
   }
 
   void emitCppCallbackSourceAlias(std::ostream &output,
                                   const NativeCallbackAlias &alias) const {
-    openPublicCppNamespaces(output, alias.namespaceScope);
-    output << "using " << alias.declaration->name().lexeme << " = "
+    openPublicCppNamespaces(output, alias.declaration->namespaceScope);
+    output << "using " << alias.declaration->name << " = "
            << qualifiedCppCallbackName(alias) << ";\n";
-    closePublicCppNamespaces(output, alias.namespaceScope);
+    closePublicCppNamespaces(output, alias.declaration->namespaceScope);
   }
 
   void emitCppSourceNameAliases(std::ostream &output) const {
@@ -728,7 +714,7 @@ private:
     for (const std::size_t index : orderedRecords) {
       const NativeRecord &record = records[index];
       output << "struct " << record.cName << " {\n";
-      for (const CAbiRecordFieldLayout &field :
+      for (const MirCAbiRecordFieldLayout &field :
            record.info->cAbiLayout->fields) {
         output << "  "
                << fieldDeclaration(
@@ -739,17 +725,21 @@ private:
       output << "};\n\n";
     }
     for (const NativeRecord &record : records) {
-      const CAbiRecordLayout &layout = *record.info->cAbiLayout;
+      const MirCAbiRecordLayout &layout = *record.info->cAbiLayout;
       output << "_Static_assert(sizeof(" << record.cName
              << ") == " << layout.sizeBytes
              << ", \"GTI native record size mismatch\");\n"
              << "_Static_assert(_Alignof(" << record.cName
              << ") == " << layout.abiAlignmentBytes
              << ", \"GTI native record alignment mismatch\");\n";
-      for (const CAbiRecordFieldLayout &field : layout.fields) {
+      for (const MirCAbiRecordFieldLayout &field : layout.fields) {
+        const LoweredSymbol *symbol = program.findSymbol(field.field);
+        if (symbol == nullptr || symbol->name.empty()) {
+          throw std::logic_error(
+              "checked C ABI field symbol is unavailable to native header");
+        }
         output << "_Static_assert(offsetof(" << record.cName << ", "
-               << field.declaration->name().lexeme
-               << ") == " << field.offsetBytes
+               << symbol->name << ") == " << field.offsetBytes
                << ", \"GTI native record field offset mismatch\");\n";
       }
     }
@@ -775,9 +765,7 @@ private:
     return output.str();
   }
 
-  const Program &program;
-  const SemanticModel &semantics;
-  TargetInfo target;
+  const LoweredProgram &program;
   std::vector<NativeRecord> records;
   std::unordered_map<ClassId, std::size_t> recordByClass;
   std::vector<NativeOpaqueHandle> opaqueHandles;
@@ -792,10 +780,19 @@ private:
 } // namespace
 
 BackendArtifact NativeHeaderBackend::generate(const BackendInput &input) {
+  if (input.loweredProgram == nullptr) {
+    throw std::logic_error(
+        "native-header backend requires the lowered program boundary");
+  }
+  const std::vector<LoweredProgramIssue> issues =
+      verifyLoweredProgram(*input.loweredProgram);
+  if (!issues.empty()) {
+    throw std::logic_error("native-header backend requires a verified lowered "
+                           "program: " +
+                           issues.front().detail);
+  }
   return {.kind = BackendArtifactKind::Source,
-          .contents =
-              NativeHeaderEmitter(input.program, input.semantics, input.target)
-                  .emit(),
+          .contents = NativeHeaderEmitter(*input.loweredProgram).emit(),
           .extension = ".h"};
 }
 

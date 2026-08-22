@@ -4,6 +4,8 @@
 #include "gti/native_header.h"
 #include "gti/optimizer.h"
 
+#include "cpp_backend_test_support.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
@@ -52,14 +54,16 @@ analyze(std::string_view name, std::string source,
 }
 
 lang::BackendInput backendInput(const lang::FrontendResult &frontend,
-                                const lang::OptimizationResult &optimizations) {
+                                const lang::OptimizationResult &optimizations,
+                                const lang::LoweredProgram &lowered) {
   return {.program = frontend.program,
           .semantics = frontend.semantics,
           .hir = frontend.hir,
           .mir = frontend.mir,
           .sourceMir = &frontend.mir,
           .optimizations = optimizations,
-          .target = lang::TargetInfo::host()};
+          .target = lang::TargetInfo::host(),
+          .loweredProgram = &lowered};
 }
 
 void testNativeCallbackPipeline() {
@@ -147,7 +151,10 @@ int main() {
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O1);
-  const lang::BackendInput input = backendInput(frontend, optimizations);
+  const lang::LoweredProgram lowered = gti_test::lowerProgram(
+      frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
+  const lang::BackendInput input =
+      backendInput(frontend, optimizations, lowered);
   const std::string cpp = lang::CppBackend().generate(input).contents;
   const std::string header =
       lang::NativeHeaderBackend().generate(input).contents;

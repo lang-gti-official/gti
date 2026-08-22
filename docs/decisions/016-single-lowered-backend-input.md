@@ -13,9 +13,9 @@ source/body identities, and the exact hosted-entry, program-initialization, and
 native-callback generated-item graph. The production C++ generic-MIR row
 builder and whole-program planner consume this contract;
 frontend-vs-lowered exact inventory and plan comparisons remain as migration
-evidence. C++ declaration assembly, remaining generated-item families, and
-native-header cutover remain in progress, so transitional `BackendInput`
-fields are still present.
+evidence. `NativeHeaderBackend` also consumes only this contract. C++
+declaration assembly and remaining generated-item families remain in progress,
+so transitional `BackendInput` fields are still present.
 
 ## Context
 
