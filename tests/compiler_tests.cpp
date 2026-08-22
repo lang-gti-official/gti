@@ -11106,6 +11106,31 @@ int loop_aliases() {
       mirLoan = &*found;
     }
   }
+  std::size_t exactReferenceAddressSources = 0;
+  if (sequentialMir != nullptr && mirLoan != nullptr) {
+    for (const lang::MirBlock &block : sequentialMir->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            !instruction.destination || instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Loan ||
+            instruction.operands.front().loan != mirLoan->id) {
+          continue;
+        }
+        const lang::MirPlace *destination =
+            sequentialMir->body.findPlace(*instruction.destination);
+        const lang::MirPlace *address =
+            sequentialMir->body.findPlace(instruction.operands.front().place);
+        if (destination != nullptr && address != nullptr &&
+            destination->type.kind == lang::SemanticType::Reference &&
+            destination->type.arguments.size() == 1 &&
+            instruction.operands.front().type ==
+                destination->type.arguments.front() &&
+            address->type == instruction.operands.front().type) {
+          ++exactReferenceAddressSources;
+        }
+      }
+    }
+  }
   bool endsBeforeMutation = false;
   if (sequentialMir != nullptr && mirLoan != nullptr) {
     for (const lang::MirBlock &block : sequentialMir->body.blocks) {
@@ -11127,10 +11152,31 @@ int loop_aliases() {
     }
   }
   expect(sequentialMir != nullptr && mirLoan != nullptr &&
-             mirLoan->carriers.size() == 3 && endsBeforeMutation &&
+             mirLoan->carriers.size() == 3 &&
+             exactReferenceAddressSources == 2 && endsBeforeMutation &&
              lang::verifyMirBody(sequentialMir->body).valid(),
-         "MIR should represent shared aliases with one loan, end it before "
-         "owner mutation, and satisfy loan-flow verification");
+         "MIR should retain one shared provenance loan, each alias's exact "
+         "runtime address source, and the endpoint before owner mutation");
+
+  if (sequentialMir != nullptr && mirLoan != nullptr) {
+    lang::MirBody missingAddress = sequentialMir->body;
+    bool mutated = false;
+    for (lang::MirBlock &block : missingAddress.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (!mutated &&
+            instruction.kind == lang::MirInstructionKind::Initialize &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == lang::MirOperandKind::Loan &&
+            instruction.operands.front().loan == mirLoan->id) {
+          instruction.operands.front().place = 0;
+          mutated = true;
+        }
+      }
+    }
+    expect(mutated && !lang::verifyMirBody(missingAddress).valid(),
+           "MIR verification should reject a reference initializer whose "
+           "physical address source was removed");
+  }
 
   for (const char *const name : {"conditional_aliases", "loop_aliases"}) {
     const lang::FunctionDecl *function =

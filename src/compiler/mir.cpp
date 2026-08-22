@@ -1098,8 +1098,13 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner) {
         case MirOperandKind::Move:
         case MirOperandKind::Value:
         case MirOperandKind::Constant:
-        case MirOperandKind::Loan:
           return std::nullopt;
+        case MirOperandKind::Loan:
+          return operand.place == 0
+                     ? std::nullopt
+                     : requireAvailable(state, operand.place, *block,
+                                        instruction,
+                                        "reference address source");
         }
         return std::nullopt;
       };
@@ -3776,8 +3781,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return operand.value == 0 && operand.loan == 0 && !operand.literal &&
              validPlace(operand.place);
     case MirOperandKind::Loan:
-      return operand.value == 0 && operand.place == 0 && !operand.literal &&
-             validLoan(operand.loan);
+      return operand.value == 0 && !operand.literal &&
+             validLoan(operand.loan) &&
+             (operand.place == 0 ||
+              (validPlace(operand.place) &&
+               body.places[operand.place - 1].type == operand.type));
     }
     return false;
   };
@@ -4282,9 +4290,38 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return noOperation && hasResult && !instruction.destination &&
              instruction.operands.size() == 1 &&
              instruction.operands.front().kind == MirOperandKind::Copy;
-    case MirInstructionKind::Initialize:
-      return noOperation && !hasResult && instruction.destination &&
-             instruction.operands.size() <= 1;
+    case MirInstructionKind::Initialize: {
+      if (!noOperation || hasResult || !instruction.destination ||
+          instruction.operands.size() > 1) {
+        return false;
+      }
+      const MirPlace *destination = body.findPlace(*instruction.destination);
+      if (destination == nullptr ||
+          destination->root != MirPlaceRootKind::Binding ||
+          destination->type.kind != SemanticType::Reference) {
+        return true;
+      }
+      // A reference field without an in-class initializer is represented by
+      // an empty placeholder in the class field-initializer body; a
+      // constructor initializer supplies the actual address later.
+      if (instruction.operands.empty()) {
+        return body.kind == MirBodyKind::FieldInitializers;
+      }
+      if (instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Loan ||
+          instruction.operands.front().place == 0 ||
+          destination->type.arguments.size() != 1) {
+        return false;
+      }
+      const MirOperand &source = instruction.operands.front();
+      const MirPlace *address = body.findPlace(source.place);
+      const MirLoan *loan = body.findLoan(source.loan);
+      return address != nullptr && loan != nullptr &&
+             std::find(loan->carriers.begin(), loan->carriers.end(),
+                       destination->binding) != loan->carriers.end() &&
+             (destination->type.referenceAccess != AccessMode::Mutable ||
+              loan->access == AccessMode::Mutable);
+    }
     case MirInstructionKind::Assign:
       return hasResult && instruction.destination &&
              instruction.operands.size() == 1 &&
@@ -6729,7 +6766,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       appendPlaceValues(values, operand.place);
       break;
     case MirOperandKind::Constant:
+      break;
     case MirOperandKind::Loan:
+      if (operand.place != 0) {
+        appendPlaceValues(values, operand.place);
+      }
       break;
     }
   };

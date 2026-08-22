@@ -161,6 +161,15 @@ deliberately covers only GTI
 defined failure; it is not a summary of allocation, arbitrary user code,
 synchronization, or the other future O-MIR-02 effect dimensions.
 
+Version 36 makes local reference initialization self-contained. A `Loan`
+operand used by a binding `Initialize` retains both the provenance loan and the
+exact runtime address-source place. These facts may intentionally differ for a
+borrow-carrying value: the loan protects the owner while the place names the
+object being aliased. Verification requires the source place to be available,
+type-correct, and paired with the destination carrier. Backends consume that
+place directly and do not reconstruct source expressions from loan parents,
+full-expression roots, or carrier order.
+
 `deriveMirDefinedFailureEffects` starts every function, constructor, and
 destructor conservatively at `true`. Its function component retains version
 20's source-defined, closed, acyclic scalar-CFG/static-call proof and also
@@ -665,7 +674,9 @@ One MIR loan may name multiple carrier bindings for a shared read-only
 semantic loan. It still has exactly one producer and one path-sensitive loan
 state; a shared loan uses its active and inactive states. Ending it invalidates
 every carrier simultaneously, and verification rejects any subsequent carrier
-use or inconsistent state at a join.
+use or inconsistent state at a join. Each local reference carrier's
+`Initialize` separately retains its physical address-source place, so sharing
+one provenance identity does not erase the runtime alias chain.
 
 A bounded exclusive reborrow instead lowers as a distinct mutable or read-only
 child loan linked to one mutable parent. Producing the child suspends the

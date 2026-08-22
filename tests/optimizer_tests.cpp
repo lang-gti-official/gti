@@ -3904,6 +3904,12 @@ int siblings(mut Pair& parent) {
   return left + right;
 }
 
+int readonly_siblings(mut Pair& parent) {
+  int& left = parent.left;
+  int& right = parent.right;
+  return left + right;
+}
+
 int disjoint_parent_access(mut Pair& parent) {
   mut int& left = parent.left;
   parent.right += 1;
@@ -3970,6 +3976,8 @@ int switch_reactivation(mut int& parent) {
 
   const lang::MirBody *nested = findFunction(frontend, "nested");
   const lang::MirBody *siblings = findFunction(frontend, "siblings");
+  const lang::MirBody *readonlySiblings =
+      findFunction(frontend, "readonly_siblings");
   const lang::MirBody *disjointParent =
       findFunction(frontend, "disjoint_parent_access");
   const lang::MirBody *readonlyDisjointParent =
@@ -3985,15 +3993,17 @@ int switch_reactivation(mut int& parent) {
   const lang::MirBody *switchReactivation =
       findFunction(frontend, "switch_reactivation");
   expect(nested != nullptr && siblings != nullptr &&
-             disjointParent != nullptr && readonlyDisjointParent != nullptr &&
+             readonlySiblings != nullptr && disjointParent != nullptr &&
+             readonlyDisjointParent != nullptr &&
              retainedCallChild != nullptr && retainedCallChain != nullptr &&
              nonretainedCallMember != nullptr && conditional != nullptr &&
              switchReactivation != nullptr,
          "exclusive reborrow fixtures should expose all MIR bodies");
-  if (nested == nullptr || siblings == nullptr || disjointParent == nullptr ||
-      readonlyDisjointParent == nullptr || retainedCallChild == nullptr ||
-      conditional == nullptr || retainedCallChain == nullptr ||
-      nonretainedCallMember == nullptr || switchReactivation == nullptr) {
+  if (nested == nullptr || siblings == nullptr || readonlySiblings == nullptr ||
+      disjointParent == nullptr || readonlyDisjointParent == nullptr ||
+      retainedCallChild == nullptr || conditional == nullptr ||
+      retainedCallChain == nullptr || nonretainedCallMember == nullptr ||
+      switchReactivation == nullptr) {
     return;
   }
 
@@ -4094,14 +4104,28 @@ int switch_reactivation(mut int& parent) {
     expect(hasError(lang::verifyMirBody(overlappingSibling),
                     "active sibling loan"),
            "the verifier should reject overlapping mutable sibling reborrows");
+  }
 
-    lang::MirBody overlappingReadonlyLocals = *siblings;
-    overlappingReadonlyLocals.loans[siblingChildren[0]->id - 1].access =
-        lang::AccessMode::ReadOnly;
-    overlappingReadonlyLocals.loans[siblingChildren[1]->id - 1].access =
-        lang::AccessMode::ReadOnly;
-    overlappingReadonlyLocals.loans[siblingChildren[1]->id - 1].source =
-        siblingChildren[0]->source;
+  std::vector<const lang::MirLoan *> readonlySiblingChildren;
+  for (const lang::MirLoan &loan : readonlySiblings->loans) {
+    if (loan.parent != 0) {
+      readonlySiblingChildren.push_back(&loan);
+    }
+  }
+  expect(readonlySiblingChildren.size() == 2 &&
+             readonlySiblingChildren[0]->parent ==
+                 readonlySiblingChildren[1]->parent &&
+             readonlySiblingChildren[0]->source !=
+                 readonlySiblingChildren[1]->source &&
+             readonlySiblingChildren[0]->access == lang::AccessMode::ReadOnly &&
+             readonlySiblingChildren[1]->access == lang::AccessMode::ReadOnly &&
+             lang::verifyMirBody(*readonlySiblings).valid(),
+         "disjoint read-only field reborrows should coexist as distinct "
+         "children of one mutable parent");
+  if (readonlySiblingChildren.size() == 2) {
+    lang::MirBody overlappingReadonlyLocals = *readonlySiblings;
+    overlappingReadonlyLocals.loans[readonlySiblingChildren[1]->id - 1].source =
+        readonlySiblingChildren[0]->source;
     expect(hasError(lang::verifyMirBody(overlappingReadonlyLocals),
                     "active sibling loan"),
            "distinct overlapping read-only Local child loans should be "

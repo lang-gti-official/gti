@@ -33,7 +33,11 @@
       "exit_code": 0,
       "stdout": "drop\ndrop\ndone\n",
       "stderr": "",
-      "emit_contains": ["operator=(nullptr)", "owner = nullptr"]
+      "emit_contains": [
+        "operator=(const std::nullptr_t",
+        "__gti_mir_op_assign__gti_mir_failure",
+        "owner = nullptr"
+      ]
     },
     {
       "id": "compound-assignment-output",
@@ -133,20 +137,20 @@
       "kind": "runtime_failure",
       "source": "runtime/checked-addition-overflow.gti",
       "contains": ["GTI-R0001", "integer_overflow", "addition"],
-      "emit_contains": ["// GTI verified-MIR body: scalar-failure-callgraph-v1"]
+      "emit_contains": ["// GTI verified-MIR body: scalar-cfg-failure-v1"]
     },
     {
       "id": "checked-negation-overflow",
       "kind": "runtime_failure",
       "source": "runtime/checked-negation-overflow.gti",
-      "contains": ["integer negation overflow"],
-      "emit_contains": ["gti_internal::backend::negate"]
+      "contains": ["GTI-R0001", "integer_overflow", "negation"],
+      "emit_contains": ["mir_checked_negate_v1"]
     },
     {
       "id": "checked-array-bounds",
       "kind": "runtime_failure",
       "source": "runtime/checked-array-bounds.gti",
-      "contains": ["fixed array index out of bounds"],
+      "contains": ["GTI-R0007", "index_out_of_bounds", "fixed_array"],
       "emit_contains": ["array_at"]
     },
     {

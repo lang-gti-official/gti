@@ -3820,8 +3820,12 @@ int32_t main() {
           }
           const lang::MirPlace *destination =
               function.body.findPlace(*instruction.destination);
+          const lang::MirPlace *address =
+              function.body.findPlace(instruction.operands.front().place);
           if (destination == nullptr ||
-              destination->type.kind != lang::SemanticType::Reference) {
+              destination->type.kind != lang::SemanticType::Reference ||
+              address == nullptr ||
+              address->root != lang::MirPlaceRootKind::Loan) {
             continue;
           }
           const lang::MirLoanId parent = instruction.operands.front().loan;
@@ -3831,10 +3835,11 @@ int32_t main() {
                 return loan.kind == lang::MirLoanKind::CallResult &&
                        loan.parent == parent;
               });
-          if (child != function.body.loans.end()) {
+          if (child != function.body.loans.end() &&
+              address->loan == child->id) {
             referencePlace = destination->id;
             retainedLoan = parent;
-            addressLoan = child->id;
+            addressLoan = address->loan;
           }
         }
       }
@@ -3891,15 +3896,106 @@ int32_t main() {
         entryAddress, "retained-reference-address-test-v0", 1);
     const std::string destination =
         "__gti_mir_p_" + std::to_string(referencePlace) + " = ";
-    expect(text.text.find(destination + "__gti_mir_loan_" +
-                          std::to_string(addressLoan) + ";") !=
+    expect(text.text.find(destination + "&(*__gti_mir_loan_" +
+                          std::to_string(addressLoan) + ");") !=
                    std::string::npos &&
-               text.text.find(destination + "__gti_mir_loan_" +
-                              std::to_string(retainedLoan) + ";") ==
+               text.text.find(destination + "&(*__gti_mir_loan_" +
+                              std::to_string(retainedLoan) + ");") ==
                    std::string::npos,
            "a retained reference should copy the child call-result address, "
            "not its provenance-only parent loan");
   }
+}
+
+void testStoredBorrowReferenceAliasAddresses() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-stored-borrow-reference-aliases.gti", R"(
+#include <std/string>
+
+int32_t main() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::detail::storage_iterator<char>& alias = iterator;
+  std::detail::storage_iterator<char>& second_alias = alias;
+  char first = *iterator;
+  char second = *alias;
+  char third = *second_alias;
+  value.push_back('!');
+  return first == second and second == third ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the stored-borrow reference-alias fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirFunctionInstance *entry = nullptr;
+  std::vector<lang::MirPlaceId> aliases;
+  lang::MirLoanId provenance = 0;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None) {
+      continue;
+    }
+    entry = &function;
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            !instruction.destination || instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Loan ||
+            instruction.operands.front().place == 0) {
+          continue;
+        }
+        const lang::MirPlace *destination =
+            function.body.findPlace(*instruction.destination);
+        const lang::MirLoan *loan =
+            function.body.findLoan(instruction.operands.front().loan);
+        if (destination != nullptr && loan != nullptr &&
+            destination->type.kind == lang::SemanticType::Reference &&
+            loan->kind == lang::MirLoanKind::Stored && loan->storedField == 0) {
+          aliases.push_back(destination->id);
+          provenance = loan->id;
+        }
+      }
+    }
+  }
+  expect(entry != nullptr && aliases.size() == 2 && provenance != 0,
+         "both aliases should retain the stored provenance loan and their "
+         "exact physical source places");
+  if (entry == nullptr || aliases.size() != 2 || provenance == 0) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyzeProgram().ready() &&
+             emitter.supportsFailureBodyText(address),
+         "stored-borrow aliases should remain inside the complete C++ MIR "
+         "text vocabulary");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      emitter
+          .emitFailureBodyText(address, "stored-borrow-reference-alias-test-v0",
+                               1)
+          .text;
+  bool exactAddresses = true;
+  for (const lang::MirPlaceId alias : aliases) {
+    exactAddresses =
+        exactAddresses && text.find("__gti_mir_p_" + std::to_string(alias) +
+                                    " = &") != std::string::npos;
+  }
+  expect(exactAddresses &&
+             text.find(" = __gti_mir_loan_" + std::to_string(provenance) +
+                       ";") == std::string::npos,
+         "reference aliases should bind from MIR's physical address places, "
+         "not from the stored provenance loan");
 }
 
 void testVirtualFailureInterfaceFamily() {
@@ -5435,6 +5531,7 @@ int main() {
   testConditionalClassReturnAndPreparedResultStage();
   testConditionalFailureDestructorDrop();
   testRetainedReferenceAddressAndConcreteDefaultReturn();
+  testStoredBorrowReferenceAliasAddresses();
   testVirtualFailureInterfaceFamily();
   testConcreteOnlyGenericVirtualContractRoots();
   testAbstractBaseFailureFamilyAndInheritedMembers();

@@ -5398,6 +5398,11 @@ private:
           binding->info.type.kind == SemanticType::Reference) {
         MirOperand reference =
             referenceOperand(*statement.value, *statement.binding);
+        // The loan is provenance authority; the place is the exact runtime
+        // address source. Borrow-carrying values can intentionally make those
+        // differ, so retain both rather than asking a backend to reconstruct
+        // the source expression from carrier topology.
+        reference.place = placeForValue(*statement.value);
         retainedLoan = reference.loan;
         operands.push_back(std::move(reference));
       } else {

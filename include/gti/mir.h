@@ -139,6 +139,8 @@ enum class MirOperandKind {
 struct MirOperand {
   MirOperandKind kind = MirOperandKind::Value;
   MirValueId value = 0;
+  // A Loan operand may additionally retain the exact runtime address source
+  // for reference initialization; the loan remains provenance authority.
   MirPlaceId place = 0;
   MirLoanId loan = 0;
   std::optional<Literal> literal;

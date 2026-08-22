@@ -10449,45 +10449,44 @@ ownerBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
   return nullptr;
 }
 
-// A local reference binding retains a provenance loan, but a reference-
-// returning call may publish the physical address through a shorter-lived
-// CallResult child. Pair that child only when it is the unique matching root
-// of the binding's full expression; the parent remains the borrow-checker's
-// retained identity while the child supplies the C++ pointer value.
-[[nodiscard]] const MirLoan *
-referenceBindingAddressLoan(const MirProgram &program, const MirBody &body,
-                            const MirInstruction &initialize) {
+// A reference initializer owns two independent MIR facts: its loan is the
+// provenance checked by borrow flow, while its place is the exact runtime
+// address source. Keeping the latter in MIR avoids reconstructing a source
+// expression from loan parents or carrier order in a backend.
+[[nodiscard]] const MirPlace *
+referenceBindingAddressPlace(const MirProgram &program, const MirBody &body,
+                             const MirInstruction &initialize) {
   if (initialize.kind != MirInstructionKind::Initialize ||
       !initialize.destination || initialize.operands.size() != 1 ||
-      initialize.operands.front().kind != MirOperandKind::Loan) {
+      initialize.operands.front().kind != MirOperandKind::Loan ||
+      initialize.operands.front().place == 0) {
     return nullptr;
   }
+  const MirOperand &source = initialize.operands.front();
   const MirPlace *destination = body.findPlace(*initialize.destination);
-  const MirLoan *retained = body.findLoan(initialize.operands.front().loan);
+  const MirPlace *address = body.findPlace(source.place);
+  const MirLoan *retained = body.findLoan(source.loan);
   if (destination == nullptr ||
       destination->root != MirPlaceRootKind::Binding ||
       !destination->projections.empty() ||
       destination->type.kind != SemanticType::Reference ||
-      destination->type.arguments.size() != 1 || retained == nullptr ||
+      destination->type.arguments.size() != 1 || address == nullptr ||
+      retained == nullptr || address->type != source.type ||
       loanCarriedByBinding(body, destination->binding) != retained) {
     return nullptr;
   }
-
   const SemanticType &referent = destination->type.arguments.front();
-  const auto referentCompatible = [&](const SemanticType &source) {
-    if (source == referent) {
-      return true;
-    }
-    if (source.kind != SemanticType::Class ||
+  if (source.type != referent) {
+    if (source.type.kind != SemanticType::Class ||
         referent.kind != SemanticType::Class) {
-      return false;
+      return nullptr;
     }
     const MirClassInstance *sourceClass =
-        uniqueClassInstanceForType(program, source);
+        uniqueClassInstanceForType(program, source.type);
     const MirClassInstance *targetClass =
         uniqueClassInstanceForType(program, referent);
     if (sourceClass == nullptr || targetClass == nullptr) {
-      return false;
+      return nullptr;
     }
     std::unordered_set<HirClassInstanceId> seen;
     const auto derivesFrom = [&](const auto &self,
@@ -10507,52 +10506,9 @@ referenceBindingAddressLoan(const MirProgram &program, const MirBody &body,
       }
       return false;
     };
-    return derivesFrom(derivesFrom, *sourceClass);
-  };
-  const std::optional<SemanticType> retainedReferent =
-      loanReferentType(program, body, *retained);
-  const bool retainedHasPointer =
-      retained->kind != MirLoanKind::Stored &&
-      ownerBorrowLoanProducer(body, *retained) == nullptr &&
-      !returnLoanErasedByConstruct(body, *retained) &&
-      elementBorrowLoanProducer(body, *retained) == nullptr;
-  if (retainedHasPointer && retainedReferent &&
-      referentCompatible(*retainedReferent) &&
-      (destination->type.referenceAccess != AccessMode::Mutable ||
-       retained->access == AccessMode::Mutable)) {
-    return retained;
-  }
-
-  const MirLoan *address = nullptr;
-  for (const MirLoan &candidate : body.loans) {
-    if (candidate.parent != retained->id ||
-        candidate.kind != MirLoanKind::CallResult ||
-        loanProducingReferenceCall(program, body, candidate) == nullptr) {
-      continue;
+    if (!derivesFrom(derivesFrom, *sourceClass)) {
+      return nullptr;
     }
-    const std::optional<SemanticType> candidateReferent =
-        loanReferentType(program, body, candidate);
-    const bool sameFullExpression =
-        initialize.hirStatement != 0 && candidate.producedBy != 0 &&
-        std::any_of(
-            body.fullExpressions.begin(), body.fullExpressions.end(),
-            [&](const MirFullExpression &expression) {
-              return expression.statement == initialize.hirStatement &&
-                     std::find(expression.roots.begin(), expression.roots.end(),
-                               candidate.producedBy) != expression.roots.end();
-            });
-    const bool accessCompatible =
-        destination->type.referenceAccess != AccessMode::Mutable ||
-        candidate.access == AccessMode::Mutable;
-    if (!candidateReferent || !referentCompatible(*candidateReferent) ||
-        !accessCompatible || !sameFullExpression || address != nullptr) {
-      if (candidateReferent && referentCompatible(*candidateReferent) &&
-          accessCompatible && sameFullExpression) {
-        return nullptr;
-      }
-      continue;
-    }
-    address = &candidate;
   }
   return address;
 }
@@ -13383,14 +13339,15 @@ private:
           slot->type.kind == SemanticType::Reference &&
           instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Loan) {
-        const MirLoan *address =
-            referenceBindingAddressLoan(program, facts.body, instruction);
+        const MirPlace *address =
+            referenceBindingAddressPlace(program, facts.body, instruction);
         if (address == nullptr) {
           throw std::logic_error(
-              "verified reference binding lost its address loan");
+              "verified reference binding lost its address place");
         }
-        output << "__gti_mir_p_" << slot->id << " = __gti_mir_loan_"
-               << address->id << ";\n";
+        output << "__gti_mir_p_" << slot->id << " = &";
+        emitStoragePlaceValue(facts, *address);
+        output << ";\n";
         return;
       }
       if (slot != nullptr && instruction.operands.size() == 1 &&
@@ -20493,7 +20450,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             destination->root == MirPlaceRootKind::Binding &&
             destination->projections.empty() &&
             destination->type.kind == SemanticType::Reference) {
-          if (referenceBindingAddressLoan(program_, body, instruction) ==
+          if (referenceBindingAddressPlace(program_, body, instruction) ==
               nullptr) {
             return false;
           }
