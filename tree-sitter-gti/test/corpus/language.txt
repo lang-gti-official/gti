@@ -2940,3 +2940,38 @@ extern "C" {
             (primitive_type)
             (pointer_declarator))
           (identifier))))))
+==================
+Exact qualified class specialization
+==================
+
+class std::hash<int> {
+public:
+  int operator()(int& value) { return value; }
+};
+
+---
+
+(source_file
+  (class_declaration
+    (scoped_identifier
+      (identifier)
+      (identifier))
+    (type_argument_clause
+      (type
+        (primitive_type)))
+    (class_body
+      (access_specifier)
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type)
+              (reference_declarator))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier)))))))))

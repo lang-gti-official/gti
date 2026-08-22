@@ -57,12 +57,17 @@ private:
     HirStatementId statement = 0;
   };
 
-  [[nodiscard]] static SemanticType
+  [[nodiscard]] SemanticType
   substitute(const SemanticType &type,
-             const GenericSubstitution &substitution) {
+             const GenericSubstitution &substitution) const {
     if (type.kind == SemanticType::TypeParameter) {
       const auto found = substitution.types.find(type.genericParameterId);
-      return found == substitution.types.end() ? type : found->second;
+      if (found == substitution.types.end()) {
+        return type;
+      }
+      return baseModel == nullptr
+                 ? found->second
+                 : baseModel->resolveExactClassSpecialization(found->second);
     }
     SemanticType result = type;
     for (SemanticType &argument : result.arguments) {
@@ -108,7 +113,9 @@ private:
         result.arrayLengthParameterId = found->second.parameterId;
       }
     }
-    return result;
+    return baseModel == nullptr
+               ? result
+               : baseModel->resolveExactClassSpecialization(std::move(result));
   }
 
   [[nodiscard]] static std::vector<const Expr *>
@@ -148,17 +155,22 @@ private:
 
   [[nodiscard]] std::optional<HirClassInstanceId>
   enqueueClass(const SemanticType &type) {
-    for (const SemanticType &argument : type.arguments) {
+    const SemanticType resolvedType =
+        baseModel == nullptr ? type
+                             : baseModel->resolveExactClassSpecialization(type);
+    for (const SemanticType &argument : resolvedType.arguments) {
       (void)enqueueClass(argument);
     }
-    if (type.kind != SemanticType::Class || type.classId == 0) {
+    if (resolvedType.kind != SemanticType::Class || resolvedType.classId == 0) {
       return std::nullopt;
     }
     if (const std::optional<std::size_t> existing = instanceIndex.findClass(
-            type.classId, type.arguments, type.valueArguments)) {
+            resolvedType.classId, resolvedType.arguments,
+            resolvedType.valueArguments)) {
       return *existing;
     }
-    const ClassTypeInfo *declaration = baseModel->findClassType(type.classId);
+    const ClassTypeInfo *declaration =
+        baseModel->findClassType(resolvedType.classId);
     if (declaration == nullptr || declaration->declaration == nullptr) {
       return std::nullopt;
     }
@@ -168,12 +180,12 @@ private:
     output.program.classes.push_back(
         {.id = id,
          .sourceUnit = declaration->sourceUnit,
-         .declaration = type.classId,
+         .declaration = resolvedType.classId,
          .source = declaration->declaration,
-         .typeArguments = type.arguments,
-         .valueArguments = type.valueArguments,
-         .type = type,
-         .traits = analyzer->traitsFor(type),
+         .typeArguments = resolvedType.arguments,
+         .valueArguments = resolvedType.valueArguments,
+         .type = resolvedType,
+         .traits = analyzer->traitsFor(resolvedType),
          .transferPolicy = declaration->transferPolicy,
          .sharePolicy = declaration->sharePolicy,
          .kind = declaration->kind,
@@ -197,9 +209,10 @@ private:
                                                   : lifecycle->destructor,
          .requiresActiveDropState =
              lifecycle != nullptr && lifecycle->requiresActiveDropState,
-         .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
-    instanceIndex.recordClass(type.classId, type.arguments, type.valueArguments,
-                              id);
+         .requiresActiveCleanup =
+             analyzer->requiresActiveCleanupFor(resolvedType)});
+    instanceIndex.recordClass(resolvedType.classId, resolvedType.arguments,
+                              resolvedType.valueArguments, id);
     return id;
   }
 

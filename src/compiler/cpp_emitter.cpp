@@ -2237,6 +2237,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         if (type->compilerCapability != CompilerCapabilityTypeKind::None) {
           continue;
         }
+        if (type->exactSpecializationPrimary != 0) {
+          continue;
+        }
         if (type->cOpaqueHandle) {
           writeIndent();
           output << "using " << declaration->name << " = "
@@ -2264,6 +2267,54 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           output << ";\n";
         }
       }
+    }
+  }
+
+  [[nodiscard]] std::string
+  loweredExactClassArguments(const LoweredClassDeclaration &declaration) const {
+    if (declaration.exactSpecializationPrimary == 0) {
+      return {};
+    }
+    std::string result = "<";
+    bool separator = false;
+    for (const SemanticType &argument : declaration.exactTypeArguments) {
+      if (separator) {
+        result += ", ";
+      }
+      result += cppSemanticTypeSpelling(loweredProgram, standard, argument);
+      separator = true;
+    }
+    for (const CompileTimeValue &argument : declaration.exactValueArguments) {
+      if (separator) {
+        result += ", ";
+      }
+      if (argument.kind != CompileTimeValue::UInt64) {
+        throw std::logic_error(
+            "exact class specialization retained a symbolic value argument");
+      }
+      result += std::to_string(argument.value);
+      separator = true;
+    }
+    result += '>';
+    return result;
+  }
+
+  void emitLoweredExactClassSpecializationForwardDeclarations() {
+    for (const LoweredDeclaration &row : loweredProgram.declarations()) {
+      const auto *type = std::get_if<LoweredClassDeclaration>(&row.payload);
+      if (type == nullptr || type->exactSpecializationPrimary == 0) {
+        continue;
+      }
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(row.namespaceScope);
+      writeIndent();
+      output << "template <>\n";
+      writeIndent();
+      output << (type->kind == ClassKind::Struct  ? "struct "
+                 : type->kind == ClassKind::Union ? "union "
+                                                  : "class ")
+             << row.name << loweredExactClassArguments(*type) << ";\n";
+      emitLoweredNamespaceClose(namespaceCount);
     }
   }
 
@@ -3386,12 +3437,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       return;
     }
 
-    emitLoweredTemplateDeclaration(declaration.genericParameters);
+    if (declaration.exactSpecializationPrimary != 0) {
+      writeIndent();
+      output << "template <>\n";
+    } else {
+      emitLoweredTemplateDeclaration(declaration.genericParameters);
+    }
     writeIndent();
     output << (declaration.kind == ClassKind::Struct  ? "struct "
                : declaration.kind == ClassKind::Union ? "union "
                                                       : "class ")
-           << classRow.name;
+           << classRow.name << loweredExactClassArguments(declaration);
     if (!declaration.bases.empty()) {
       output << " : ";
       for (std::size_t index = 0; index < declaration.bases.size(); ++index) {
@@ -3575,6 +3631,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const LoweredDeclaration &row,
       const LoweredClassDeclaration &declaration) const {
     std::vector<ClassId> result;
+    if (declaration.exactSpecializationPrimary != 0) {
+      result.push_back(declaration.exactSpecializationPrimary);
+    }
     for (const LoweredClassBase &base : declaration.bases) {
       loweredCollectRepresentationDependencies(base.type, result);
     }
@@ -4009,6 +4068,10 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << "::";
     }
     output << classRow.name;
+    if (declaration->exactSpecializationPrimary != 0) {
+      output << loweredExactClassArguments(*declaration);
+      return;
+    }
     if (declaration->genericParameters.empty()) {
       return;
     }
@@ -4236,7 +4299,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       result += row.name;
       const auto *declaration =
           std::get_if<LoweredClassDeclaration>(&row.payload);
-      if (declaration == nullptr || declaration->genericParameters.empty()) {
+      if (declaration == nullptr) {
+        return;
+      }
+      if (declaration->exactSpecializationPrimary != 0) {
+        result += loweredExactClassArguments(*declaration);
+        return;
+      }
+      if (declaration->genericParameters.empty()) {
         return;
       }
       result += '<';
@@ -4756,6 +4826,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     output << "namespace __gti_program {\n";
     ++indentation;
     emitLoweredTypeForwardDeclarations(0);
+    emitLoweredExactClassSpecializationForwardDeclarations();
     emitLoweredAliasForwardDeclarations(0);
     emitLoweredFunctionForwardDeclarations(0);
     emitNativeCallbackAdapterDeclarations();

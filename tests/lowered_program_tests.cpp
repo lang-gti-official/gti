@@ -136,6 +136,18 @@ public:
   ~Cleanup() { this.value = 0; }
 };
 
+namespace demo {
+class Marker<T> {
+public:
+  int32_t read() { return 1; }
+};
+}
+
+class demo::Marker<int32_t> {
+public:
+  int32_t read() { return 2; }
+};
+
 mut int32_t process_seed = 1;
 
 extern "C" {
@@ -160,7 +172,9 @@ int main() {
   }
   Counter counter = Counter();
   Cleanup cleanup = Cleanup();
-  return identity<int32_t>(counter.read()) + process_seed + apply_offset(0) - 2;
+  demo::Marker<int32_t> marker{};
+  return identity<int32_t>(counter.read()) + process_seed + apply_offset(0) +
+         marker.read() - 4;
 }
 )");
   if (!frontend.canGenerateCode()) {
@@ -203,7 +217,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v1") == 0 &&
+  expect(firstText.find("lowered-program-v2") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =
@@ -420,6 +434,27 @@ void testDetachedDeterministicProgram() {
              !first->lambdaInstances().front().captures.empty(),
          "lowered concrete-instance tables should exactly cover MIR and own "
          "lambda names");
+
+  const lang::LoweredClassDeclaration *exactMarker = nullptr;
+  const lang::LoweredDeclaration *exactMarkerRow = nullptr;
+  for (const lang::LoweredDeclaration &declaration : first->declarations()) {
+    const auto *candidate =
+        std::get_if<lang::LoweredClassDeclaration>(&declaration.payload);
+    if (candidate != nullptr && candidate->qualifiedName == "demo::Marker" &&
+        candidate->exactSpecializationPrimary != 0) {
+      exactMarker = candidate;
+      exactMarkerRow = &declaration;
+      break;
+    }
+  }
+  expect(exactMarker != nullptr && exactMarkerRow != nullptr &&
+             exactMarkerRow->namespaceScope ==
+                 std::vector<std::string>{"demo"} &&
+             exactMarker->exactTypeArguments ==
+                 std::vector<lang::SemanticType>{lang::SemanticType::Int32} &&
+             exactMarker->exactValueArguments.empty(),
+         "the lowered declaration inventory should retain an exact class "
+         "specialization's primary and canonical key");
 }
 
 void testMutationRejection() {
@@ -590,6 +625,38 @@ void testMutationRejection() {
       secondFunctionRow = &declaration;
       break;
     }
+  }
+
+  lang::LoweredProgram invalidSpecialization = original;
+  auto &specializationDeclarations =
+      lang::LoweredProgramTestAccess::declarations(invalidSpecialization);
+  const auto exactSpecialization = std::find_if(
+      specializationDeclarations.begin(), specializationDeclarations.end(),
+      [](const lang::LoweredDeclaration &declaration) {
+        const auto *payload =
+            std::get_if<lang::LoweredClassDeclaration>(&declaration.payload);
+        return payload != nullptr && payload->exactSpecializationPrimary != 0;
+      });
+  expect(exactSpecialization != specializationDeclarations.end(),
+         "the mutation fixture should contain an exact specialization");
+  if (exactSpecialization != specializationDeclarations.end()) {
+    const std::size_t exactIndex = static_cast<std::size_t>(
+        std::distance(specializationDeclarations.begin(), exactSpecialization));
+    std::get<lang::LoweredClassDeclaration>(exactSpecialization->payload)
+        .exactSpecializationPrimary = 999999;
+    expect(hasIssue(lang::verifyLoweredProgram(invalidSpecialization),
+                    lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+           "an exact specialization with a missing primary should be "
+           "rejected");
+
+    lang::LoweredProgram wrongSpecializationScope = original;
+    lang::LoweredProgramTestAccess::declarations(
+        wrongSpecializationScope)[exactIndex]
+        .namespaceScope = {"wrong"};
+    expect(hasIssue(lang::verifyLoweredProgram(wrongSpecializationScope),
+                    lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+           "an exact specialization outside its primary's canonical namespace "
+           "should be rejected");
   }
   expect(firstFunction != nullptr && secondFunctionRow != nullptr,
          "the mutation fixture should contain multiple function identities");

@@ -22,8 +22,10 @@ analysis state or visitor internals.
 `SemanticVisitor::check(const Program&)` is staged because later facts depend
 on declaration-wide registration. It currently:
 
-1. registers namespaces, aliases, type aliases, enums, concepts, and classes;
-2. resolves concepts, aliases, and inheritance;
+1. registers namespaces, aliases, type aliases, enums, concepts, and primary
+   classes;
+2. resolves concepts and aliases, then registers canonical exact class
+   specializations before resolving inheritance;
 3. registers function generic parameters and namespace symbols;
 4. collects root native-storage symbols, class members, and summary-only
    namespace-global storage identities;
@@ -86,6 +88,8 @@ compiler IDs. Important facts include:
 - binding types, mutability, ownership/drop/copy/move and transfer/share
   traits, and source symbol;
 - functions, classes, enums, aliases, concepts, constructors, and lifecycle;
+- each exact class specialization's distinct class ID, primary class ID, and
+  canonical type/value key, plus primary-application lookup by that key;
 - exact selected calls, operators, conversions, constructors, contextual
   integer operands, intrinsic identity, dispatch mode, borrow origin, and any
   exact global/static borrow place;

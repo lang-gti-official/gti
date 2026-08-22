@@ -122,6 +122,14 @@ used the bodyless `struct Name;` form. Semantics admits that syntax only with
 forward declaration receives one source diagnostic rather than a brace
 cascade.
 
+`ClassDecl` also distinguishes an ordinary generic declaration from an exact
+qualified specialization. The latter retains one complete target `TypeRef`,
+including the written namespace path and concrete arguments, while its name
+token remains the final primary-name segment for diagnostics and tooling.
+The parser recognizes this form only through a qualified target such as
+`class std::hash<Widget> { ... };`; canonical argument identity, primary
+lookup, package coherence, and selection belong to semantics.
+
 The parser also records `union` as a distinct `ClassKind` while reusing the
 recoverable class-member tree; semantic analysis owns the narrower passive
 shape. `EnumeratorDecl` retains an optional ordered `Parameter` payload. The

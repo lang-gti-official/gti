@@ -5,8 +5,9 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.290.0 plus the completed hard-cutover audit, bounded
-F1/F2/F3 C-interoperation families, and same-thread native callback boundary.
+Checkpoint version: 0.293.0 plus the completed hard-cutover audit, bounded
+F1/F2/F3 C-interoperation families, same-thread native callback boundary, and
+exact qualified class specialization.
 The backend-authority campaign's
 per-release record lives in
 [`implementation-sequence.md`](implementation-sequence.md).
@@ -63,6 +64,16 @@ same-thread adapter. Ordinary nested pointers and general function pointers
 remain invalid. The complete 124-function GLFW 3.4 surface, including all five
 records and Vulkan-facing declarations, passes generated C17/C++20/C++23 and
 linked O0/O3 oracles.
+
+Exact qualified class and struct specialization is now a frontend-owned
+language feature. A package-scope declaration such as
+`class std::hash<Widget> { ... };` resolves a visible generic primary, checks a
+canonical concrete type/value key and package coherence, and receives a
+distinct semantic class identity before HIR discovery. Matching applications
+select that identity independently of declaration order; HIR, the lowered
+program, and the C++ backend preserve the selection. Partial specialization,
+specialization ranking, SFINAE, and constraint-selected specialization remain
+outside the language.
 
 ADR 016's backend representation boundary is complete. Hosted entry, program
 initialization, native callbacks, structural operators, callable adapters,

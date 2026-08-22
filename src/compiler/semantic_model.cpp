@@ -775,6 +775,67 @@ SemanticModel::findClassType(ClassId id) const {
   return base == nullptr ? nullptr : base->findClassType(id);
 }
 
+[[nodiscard]] SemanticType
+SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
+  for (SemanticType &argument : type.arguments) {
+    argument = resolveExactClassSpecialization(std::move(argument));
+  }
+  for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
+    argument = resolveExactClassSpecialization(std::move(argument));
+  }
+  for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+    argument = resolveExactClassSpecialization(std::move(argument));
+  }
+  if (type.kind != SemanticType::Class || type.classId == 0) {
+    return type;
+  }
+
+  const auto canonicalize = [&](const auto &self,
+                                SemanticType value) -> SemanticType {
+    for (SemanticType &argument : value.arguments) {
+      argument = self(self, std::move(argument));
+    }
+    for (SemanticType &argument : value.lambdaEnclosingClassTypes) {
+      argument = self(self, std::move(argument));
+    }
+    for (SemanticType &argument : value.lambdaEnclosingFunctionTypes) {
+      argument = self(self, std::move(argument));
+    }
+    if (value.kind != SemanticType::Class || value.classId == 0) {
+      return value;
+    }
+    const ClassTypeInfo *info = findClassType(value.classId);
+    if (info == nullptr || info->exactSpecializationPrimary == 0) {
+      return value;
+    }
+    SemanticType primary = SemanticType::classType(
+        info->exactSpecializationPrimary, info->exactTypeArguments,
+        info->exactValueArguments);
+    return self(self, std::move(primary));
+  };
+  const SemanticType key = canonicalize(canonicalize, type);
+
+  const auto find = [&](const auto &self,
+                        const SemanticModel *model) -> ClassId {
+    if (model == nullptr) {
+      return 0;
+    }
+    const auto found =
+        std::find_if(model->exactClassSpecializations.begin(),
+                     model->exactClassSpecializations.end(),
+                     [&](const ExactClassSpecializationRecord &candidate) {
+                       return candidate.primary == key.classId &&
+                              candidate.typeArguments == key.arguments &&
+                              candidate.valueArguments == key.valueArguments;
+                     });
+    return found == model->exactClassSpecializations.end()
+               ? self(self, model->base)
+               : found->specialization;
+  };
+  const ClassId specialization = find(find, this);
+  return specialization == 0 ? type : SemanticType::classType(specialization);
+}
+
 [[nodiscard]] const TypeAliasInfo *
 SemanticModel::findTypeAlias(const TypeAliasDecl &declaration) const {
   const auto found = typeAliases.find(&declaration);
@@ -1091,6 +1152,7 @@ void SemanticModel::clear() {
   lambdasById.clear();
   classTypes.clear();
   classTypesById.clear();
+  exactClassSpecializations.clear();
   typeAliases.clear();
   enumTypes.clear();
   enumTypesById.clear();
@@ -1486,6 +1548,17 @@ void SemanticModel::recordClassType(const ClassDecl &declaration,
   const auto [found, _] =
       classTypes.insert_or_assign(&declaration, std::move(info));
   classTypesById.insert_or_assign(found->second.id, &declaration);
+}
+
+void SemanticModel::recordExactClassSpecialization(
+    ClassId primary, ClassId specialization,
+    std::vector<SemanticType> typeArguments,
+    std::vector<CompileTimeValue> valueArguments) {
+  exactClassSpecializations.push_back(
+      {.primary = primary,
+       .specialization = specialization,
+       .typeArguments = std::move(typeArguments),
+       .valueArguments = std::move(valueArguments)});
 }
 
 void SemanticModel::record(const TypeAliasDecl &declaration,

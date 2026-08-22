@@ -147,6 +147,13 @@ storage, fields, native linkage, opaque ABI types, compiler-provided
 representations, and generated adapters. It uses lowered symbols and instances
 for resolved identity and C++-private helpers for spelling.
 
+An exact specialized class arrives with a distinct lowered class identity, its
+generic primary identity, canonical concrete argument key, and canonical
+namespace. The C++ backend emits that already-selected identity as an explicit
+full specialization, forward-declares it before instantiating uses, and orders
+its definition after the primary. It does not match source arguments or choose
+between the primary and specialization.
+
 C++ type syntax, include selection, helper names, failure ABI syntax, and
 representation choices remain inside the C++ backend. C++ source fragments do
 not belong in `LoweredProgram`.

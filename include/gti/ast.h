@@ -1344,11 +1344,13 @@ private:
 class ClassDecl final : public Stmt {
 public:
   ClassDecl(std::vector<Token> attributes, Token keyword, ClassKind kind,
-            Token name, std::vector<GenericParameter> genericParameters,
+            Token name, std::optional<TypeRef> exactSpecialization,
+            std::vector<GenericParameter> genericParameters,
             std::vector<BaseSpecifier> bases, StmtList members,
             bool forwardDeclaration = false)
       : attributes_(std::move(attributes)), keyword_(std::move(keyword)),
         kind_(kind), name_(std::move(name)),
+        exactSpecialization_(std::move(exactSpecialization)),
         genericParameters_(std::move(genericParameters)),
         bases_(std::move(bases)), members_(std::move(members)),
         forwardDeclaration_(forwardDeclaration) {}
@@ -1363,6 +1365,12 @@ public:
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] ClassKind kind() const { return kind_; }
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::optional<TypeRef> &exactSpecialization() const {
+    return exactSpecialization_;
+  }
+  [[nodiscard]] bool isExactSpecialization() const {
+    return exactSpecialization_.has_value();
+  }
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
     return genericParameters_;
   }
@@ -1379,6 +1387,7 @@ private:
   Token keyword_;
   ClassKind kind_;
   Token name_;
+  std::optional<TypeRef> exactSpecialization_;
   std::vector<GenericParameter> genericParameters_;
   std::vector<BaseSpecifier> bases_;
   StmtList members_;

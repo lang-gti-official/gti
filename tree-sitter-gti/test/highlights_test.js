@@ -384,6 +384,19 @@ requireCapture(foldRow, "values", "variable");
 requireCapture(foldRow, "...", "punctuation.special");
 requireLocalCapture(foldRow, "values", "local.reference");
 
+const exactSpecializationLine = "class demo::Value<int32_t> {};";
+const exactSpecializationRow = highlightLines.indexOf(exactSpecializationLine);
+if (exactSpecializationRow < 0) {
+  throw new Error("Missing exact class-specialization fixture line");
+}
+requireCapture(exactSpecializationRow, "demo", "module");
+requireCapture(exactSpecializationRow, "Value", "type.definition");
+requireLocalCapture(
+  exactSpecializationRow,
+  "Value",
+  "local.definition.type",
+);
+
 const rainbowCaptures = queryCaptures("rainbow-delimiters");
 
 function requireRainbowDelimiter(lineText, token, occurrence = 1) {
@@ -454,6 +467,7 @@ requireRainbowDelimiter(
   "(",
 );
 requireRainbowDelimiter(foldLine, "(");
+requireRainbowDelimiter(exactSpecializationLine, "<");
 
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",

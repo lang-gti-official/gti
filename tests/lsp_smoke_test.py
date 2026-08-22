@@ -1423,6 +1423,235 @@ def test_semantic_definition(executable, root):
         session.close()
 
 
+def test_exact_qualified_specialization_tooling(executable, root):
+    source = (
+        "namespace demo {\n"
+        "class Value<T> { public: int read() { return 1; } };\n"
+        "}\n"
+        "int exact(demo::Value<int>& value) { return value.read(); }\n"
+        "class demo::Value<int> { public: int read() { return 2; } };\n"
+        "int fallback(demo::Value<bool>& value) { return value.read(); }\n"
+    )
+    path = root / "exact-specialization-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {
+                                "contentFormat": ["markdown", "plaintext"]
+                            },
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            },
+                            "documentSymbol": {
+                                "hierarchicalDocumentSymbolSupport": True
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        capabilities = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]["capabilities"]
+        assert capabilities["hoverProvider"] is True
+        assert capabilities["definitionProvider"] is True
+        assert capabilities["documentSymbolProvider"] is True
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        primary_declaration = source.index("Value<T>")
+        specialization_declaration = source.index(
+            "Value<int>", source.index("class demo::")
+        )
+        exact_use = source.index("Value<int>", source.index("int exact"))
+        fallback_use = source.index("Value<bool>")
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, exact_use + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert "```gti\ndemo::Value<int32_t>\n```" in hover["contents"][
+            "value"
+        ], hover
+
+        def definition(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        exact_definition = definition(3, exact_use + 1)
+        assert exact_definition == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, specialization_declaration),
+                "end": lsp_position(
+                    source, specialization_declaration + len("Value")
+                ),
+            },
+        }, exact_definition
+
+        fallback_definition = definition(4, fallback_use + 1)
+        assert fallback_definition == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, primary_declaration),
+                "end": lsp_position(source, primary_declaration + len("Value")),
+            },
+        }, fallback_definition
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 20,
+                "method": "textDocument/references",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, exact_use + 1),
+                    "context": {"includeDeclaration": True},
+                },
+            }
+        )
+        exact_references = session.receive_until(
+            lambda message: message.get("id") == 20
+        )["result"]
+        assert [entry["range"]["start"] for entry in exact_references] == [
+            lsp_position(source, exact_use),
+            lsp_position(source, specialization_declaration),
+        ], exact_references
+        assert all(entry["uri"] == uri for entry in exact_references)
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 5)[
+                "result"
+            ]["data"]
+        )
+        for offset in (specialization_declaration, exact_use, fallback_use):
+            position = lsp_position(source, offset)
+            assert tokens[(position["line"], position["character"])]["type"] == 4
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        outline = session.receive_until(lambda message: message.get("id") == 6)[
+            "result"
+        ]
+        specialization_symbol = next(
+            symbol
+            for symbol in outline
+            if symbol["name"] == "demo::Value<int32_t>"
+        )
+        assert specialization_symbol["detail"] == "class demo::Value<int32_t>"
+
+        invalid_source = (
+            "namespace duplicate { class Box<T> {}; }\n"
+            "class duplicate::Box<int> {};\n"
+            "class duplicate::Box<int> {};\n"
+        )
+        invalid_path = root / "invalid-exact-specialization-tooling.gti"
+        invalid_path.write_text(invalid_source, encoding="utf-8")
+        invalid_uri = invalid_path.resolve().as_uri()
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": invalid_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": invalid_source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == invalid_uri
+            and message["params"].get("version") == 1
+            and any(
+                diagnostic.get("code") == "GTI-S2078"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        duplicate = next(
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2078"
+        )
+        assert "Duplicate exact specialization" in duplicate["message"]
+        assert duplicate["data"]["phase"] == "semantics"
+        assert duplicate["relatedInformation"]
+        assert "fixes" not in duplicate["data"]
+    finally:
+        session.close()
+
+
 def test_semantic_completion_and_parameter_tokens(executable, root):
     source = (
         "static int file_value = 1;\n"
@@ -5317,6 +5546,7 @@ def main():
     test_requires_tooling(sys.argv[1], root)
     test_contextual_array_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
+    test_exact_qualified_specialization_tooling(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
     test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)

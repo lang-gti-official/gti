@@ -176,6 +176,14 @@ the source owner and invalidation state directly.
 The standard library currently has no stable public raw allocator, shared
 owner, weak owner, dynamic borrowed view, or general unsafe memory API.
 
+`<std/functional>` declares the generic customization primary `std::hash<T>`.
+A package may provide a complete exact specialization for a nominal type it
+owns, such as `class std::hash<Widget> { ... };`; the specialization must expose
+the declared exact call shape. The standard library does not yet provide the
+primitive hash implementations or the public hashability capability needed by
+an associative container. Exact specialization is the customization mechanism,
+not evidence that those library contracts are complete.
+
 ## 7.5 Errors And Failure
 
 Library operations that model environmental or resource conditions callers can

@@ -560,6 +560,10 @@ The remaining capability work is:
   relationship, rather than implicit conversion;
 - hashability through an exact hasher call rather than hidden ADL.
 
+ADR 020 supplies the exact qualified class-specialization mechanism needed to
+implement `std::hash<AppType>`. It does not itself define the hashability
+capability or ship hash algorithms.
+
 These capabilities should affect validity, not overload ranking. Do not import
 C++ general requires-expressions, SFINAE, subsumption, partial specialization,
 or a second template metaprogramming language merely to describe them.
@@ -580,7 +584,8 @@ or a second template metaprogramming language merely to describe them.
   through the same evaluator.
 - Keep default generic arguments client-gated under `L-CONST-01` until canonical
   type/value identity is stable and a concrete library client justifies them.
-  Do not add specialization as a side effect.
+  Do not widen exact specialization into partial or constraint-selected
+  specialization as a side effect.
 
 This is library-enabling work, especially for constants and generic API
 ergonomics, but it is not allowed to block the owner-tied container and
@@ -882,7 +887,8 @@ building the GTI compiler.
 - unrestricted multiple state-bearing inheritance, diamonds, `protected`, and
   covariant virtual returns;
 - initializer-list preference, aggregate list conversion, CTAD, SFINAE,
-  specialization, and unrestricted compile-time metaprogramming;
+  partial or constraint-selected specialization, and unrestricted compile-time
+  metaprogramming;
 - default generic arguments until a concrete library client and canonical
   type/value identity justify the bounded `L-CONST-01` design;
 - stored reference captures, general escaping lambdas, and type erasure beyond

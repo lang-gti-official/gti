@@ -154,6 +154,15 @@ diagnostics or letting a backend message choose either identity.
   parameters, choosing an explicit boundary value, or replacing an expression
   is not mechanically safe. Preserve ordinary lookup/type diagnostics when
   they are more specific and avoid cascades after an unknown expression.
+- `GTI-S2078` owns a syntactically valid but semantically invalid exact
+  qualified class specialization. Point at the final primary-name segment and
+  distinguish an unknown/non-generic/wrong-kind primary, non-concrete or
+  malformed key, non-root or incomplete declaration, canonical duplicate,
+  forbidden native representation, compiler-private target, and package
+  coherence failure. Relate the primary or prior specialization when known;
+  for coherence, explain that the package must own the primary or one
+  top-level nominal type argument. Do not offer a fix-it: changing the target,
+  argument type, package ownership, or declaration location requires intent.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

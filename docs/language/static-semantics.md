@@ -419,7 +419,57 @@ nullable, non-owning, and subject to lexical unsafe rules. Direct values,
 construction, inheritance, generic arguments, pointee layout queries, and
 ordinary forward declarations are rejected with `GTI-S2065` before lowering.
 
-### 3.8.1 Passive Unions And Payload Enums
+### 3.8.1 Exact Qualified Class Specializations
+
+A generic class or struct may have a complete exact specialization. The
+declaration is written at package scope, outside every namespace, with a
+qualified primary name and every concrete type or `uint64_t` value argument:
+
+```gti
+namespace std {
+class hash<T> {
+public:
+  size_t operator()(T& value);
+};
+}
+
+class Widget {};
+
+class std::hash<Widget> {
+public:
+  size_t operator()(Widget& value) { return 0; }
+};
+```
+
+The specialization uses the primary's `class` or `struct` kind, declares no
+generic parameters, and provides a body. It may use ordinary class capability
+attributes but not native-record representation attributes. Interfaces,
+unions, bodyless specializations, and unqualified specialization targets are
+ill-formed.
+
+Every argument is resolved and canonicalized before matching. Transparent
+aliases therefore do not create distinct specializations, and compatibility
+spellings such as `int` and `int32_t` denote the same key. Value arguments are
+concrete `uint64_t` values. A symbolic argument, partial pattern, duplicate
+canonical key, or wrong arity is ill-formed. Declaration order has no effect:
+semantic analysis registers all valid exact keys before checking bodies and
+selects the distinct specialization class identity whenever a resolved primary
+application has that key, including after generic substitution. A nonmatching
+application keeps the primary class identity. Requirements do not rank or
+select specializations.
+
+Package coherence permits a specialization only when its declaring package
+owns the primary or owns at least one top-level nominal class, struct, or enum
+type argument. A nominal hidden inside another generic argument does not grant
+ownership, and value arguments never grant ownership. This admits an
+application's `std::hash<Widget>` while rejecting its `std::hash<int>`, and it
+prevents two unrelated packages from defining the same foreign/foreign key.
+Canonical duplicates and coherence failures use `GTI-S2078`.
+
+Exact specialization is not partial specialization, specialization ranking,
+SFINAE, or a general template metaprogramming facility.
+
+### 3.8.2 Passive Unions And Payload Enums
 
 `union Name { fields... };` declares untagged overlapping storage. A union is
 nongeneric, complete, baseless, non-empty, and public. It contains only
