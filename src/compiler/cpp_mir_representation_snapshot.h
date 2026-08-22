@@ -63,7 +63,8 @@ buildCppMirRepresentationSnapshot(const Program &program,
                                   const SemanticModel &semantics,
                                   const HirProgram &hir, const MirProgram &mir,
                                   const TargetInfo &target,
-                                  CppStandard standard = CppStandard::Cpp23);
+                                  CppStandard standard = CppStandard::Cpp23,
+                                  const MirProgram *sourceMir = nullptr);
 
 // Builds the same C++-private planning inventory from the compiler's sealed
 // backend boundary. This is the production route; the frontend overload is

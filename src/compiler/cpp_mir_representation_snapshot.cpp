@@ -13,11 +13,12 @@ namespace lang {
 class CppMirRepresentationSnapshotBuilderAccess {
 public:
   static void seal(CppMirRepresentationSnapshot &snapshot) {
-    snapshot.inventorySeal_ =
-        CppMirRepresentationSnapshot::InventorySeal{.mir = snapshot.mir,
-                                                    .bodies = snapshot.bodies,
-                                                    .data = snapshot.data,
-                                                    .thunks = snapshot.thunks};
+    snapshot.inventorySeal_ = CppMirRepresentationSnapshot::InventorySeal{
+        .mir = snapshot.mir,
+        .bodies = snapshot.bodies,
+        .data = snapshot.data,
+        .declarationRoots = snapshot.declarationRoots,
+        .thunks = snapshot.thunks};
   }
 };
 
@@ -1748,7 +1749,7 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
 CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
     const Program &program, const SemanticModel &semantics,
     const HirProgram &hir, const MirProgram &mir, const TargetInfo &target,
-    CppStandard standard) {
+    CppStandard standard, const MirProgram *sourceMir) {
   CppMirRepresentationSnapshotBuild build;
   CppMirRepresentationSnapshot snapshot;
   snapshot.mir = mir;
@@ -2174,6 +2175,79 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
         "representation snapshot omitted exact Module/0");
   }
 
+  // Legacy direct-backend tests still enter through the frontend tuple while
+  // BackendInput is being narrowed. Derive declaration-generated adapters
+  // through the same sealed LoweredProgram builder as production so this
+  // temporary oracle cannot retain a second eligibility implementation.
+  if (build.issues.empty()) {
+    LoweredProgramBuild lowered = LoweredProgramBuilder().build(
+        program, semantics, hir, sourceMir == nullptr ? mir : *sourceMir, mir,
+        target);
+    if (!lowered.valid()) {
+      const std::string detail =
+          lowered.issues.empty() ? "unknown LoweredProgram construction error"
+                                 : lowered.issues.front().detail;
+      addIssue(build, CppMirRepresentationSnapshotIssueKind::CrossPhaseMismatch,
+               "frontend compatibility snapshot could not construct its "
+               "LoweredProgram adapter inventory: " +
+                   detail);
+    } else {
+      for (const LoweredDeclaration &declaration :
+           lowered.program->declarations()) {
+        CppMirDeclarationThunkRoots roots{.declaration = declaration.id};
+        for (const LoweredGeneratedItemIdentity &required :
+             declaration.requiredGeneratedItems) {
+          if (required.kind ==
+                  LoweredGeneratedItemKind::StructuralOperatorAdapter ||
+              required.kind == LoweredGeneratedItemKind::CallableAdapter) {
+            roots.requiredThunks.push_back(
+                {.kind =
+                     required.kind ==
+                             LoweredGeneratedItemKind::StructuralOperatorAdapter
+                         ? CppMirThunkKind::StructuralOperatorAdapter
+                         : CppMirThunkKind::CallableAdapter,
+                 .owner = required.owner,
+                 .ordinal = required.ordinal});
+          }
+        }
+        if (!roots.requiredThunks.empty()) {
+          snapshot.declarationRoots.push_back(std::move(roots));
+        }
+      }
+      for (const LoweredGeneratedItem &item :
+           lowered.program->generatedItems()) {
+        if (item.identity.kind !=
+                LoweredGeneratedItemKind::StructuralOperatorAdapter &&
+            item.identity.kind != LoweredGeneratedItemKind::CallableAdapter) {
+          continue;
+        }
+        CppMirGeneratedThunk thunk{
+            .identity =
+                {.kind =
+                     item.identity.kind ==
+                             LoweredGeneratedItemKind::StructuralOperatorAdapter
+                         ? CppMirThunkKind::StructuralOperatorAdapter
+                         : CppMirThunkKind::CallableAdapter,
+                 .owner = item.identity.owner,
+                 .ordinal = item.identity.ordinal},
+            .sourceKind = CppMirGeneratedThunkSourceKind::Declaration,
+            .sourceDeclaration = item.sourceDeclaration,
+            .support = CppMirSurfaceSupport::Supported};
+        if (const auto *adapter =
+                std::get_if<LoweredStructuralOperatorAdapterItem>(
+                    &item.payload)) {
+          thunk.payload = CppMirStructuralOperatorThunk{
+              .function = adapter->function, .operation = adapter->operation};
+        } else if (const auto *adapter =
+                       std::get_if<LoweredCallableAdapterItem>(&item.payload)) {
+          thunk.payload = CppMirCallableThunk{
+              .function = adapter->function, .capability = adapter->capability};
+        }
+        snapshot.thunks.push_back(std::move(thunk));
+      }
+    }
+  }
+
   if (build.issues.empty()) {
     const CppMirBodyEmissionMapRows emissionRows =
         buildCppMirBodyEmissionMapRows(semantics, mir, standard);
@@ -2285,6 +2359,19 @@ cppThunkIdentity(const LoweredGeneratedItemIdentity &identity) {
   return {.kind = cppThunkKind(identity.kind),
           .owner = identity.owner,
           .ordinal = identity.ordinal};
+}
+
+[[nodiscard]] CppMirGeneratedThunkSourceKind
+cppThunkSourceKind(LoweredGeneratedItemSourceKind kind) {
+  switch (kind) {
+  case LoweredGeneratedItemSourceKind::Body:
+    return CppMirGeneratedThunkSourceKind::Body;
+  case LoweredGeneratedItemSourceKind::Declaration:
+    return CppMirGeneratedThunkSourceKind::Declaration;
+  case LoweredGeneratedItemSourceKind::Count:
+    return CppMirGeneratedThunkSourceKind::Count;
+  }
+  return CppMirGeneratedThunkSourceKind::Count;
 }
 
 [[nodiscard]] std::optional<CppMirDataKind>
@@ -2474,16 +2561,39 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
   }
 
   appendLoweredDeclarationRows(program, snapshot, build);
+  for (const LoweredDeclaration &declaration : program.declarations()) {
+    if (declaration.requiredGeneratedItems.empty()) {
+      continue;
+    }
+    CppMirDeclarationThunkRoots roots{.declaration = declaration.id};
+    roots.requiredThunks.reserve(declaration.requiredGeneratedItems.size());
+    for (const LoweredGeneratedItemIdentity &required :
+         declaration.requiredGeneratedItems) {
+      roots.requiredThunks.push_back(cppThunkIdentity(required));
+    }
+    snapshot.declarationRoots.push_back(std::move(roots));
+  }
   for (const LoweredGeneratedItem &item : program.generatedItems()) {
     CppMirGeneratedThunk thunk{.identity = cppThunkIdentity(item.identity),
+                               .sourceKind =
+                                   cppThunkSourceKind(item.sourceKind),
                                .sourceBody = item.sourceBody,
+                               .sourceDeclaration = item.sourceDeclaration,
                                .support = CppMirSurfaceSupport::Supported};
     thunk.dependencies.reserve(item.dependencies.size());
     for (const LoweredGeneratedItemIdentity &dependency : item.dependencies) {
       thunk.dependencies.push_back(cppThunkIdentity(dependency));
     }
-    if (const auto *callback =
-            std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
+    if (const auto *adapter =
+            std::get_if<LoweredStructuralOperatorAdapterItem>(&item.payload)) {
+      thunk.payload = CppMirStructuralOperatorThunk{
+          .function = adapter->function, .operation = adapter->operation};
+    } else if (const auto *adapter =
+                   std::get_if<LoweredCallableAdapterItem>(&item.payload)) {
+      thunk.payload = CppMirCallableThunk{.function = adapter->function,
+                                          .capability = adapter->capability};
+    } else if (const auto *callback =
+                   std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
       thunk.payload = CppMirNativeCallbackThunk{.adapter = callback->adapter};
     }
     snapshot.thunks.push_back(std::move(thunk));

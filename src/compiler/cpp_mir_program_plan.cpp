@@ -45,7 +45,9 @@ template <typename Enum>
   if (identity.kind == CppMirThunkKind::ProgramInitialization) {
     return identity.owner == 0 && identity.ordinal == 0;
   }
-  if (identity.kind == CppMirThunkKind::NativeInteropAdapter) {
+  if (identity.kind == CppMirThunkKind::StructuralOperatorAdapter ||
+      identity.kind == CppMirThunkKind::CallableAdapter ||
+      identity.kind == CppMirThunkKind::NativeInteropAdapter) {
     return identity.owner != 0 && identity.ordinal == 0;
   }
   return identity.owner != 0;
@@ -147,6 +149,8 @@ nativeCallbackRequirements(const MirBody &body) {
 [[nodiscard]] bool isContractedThunkKind(CppMirThunkKind kind) {
   return kind == CppMirThunkKind::HostedEntry ||
          kind == CppMirThunkKind::ProgramInitialization ||
+         kind == CppMirThunkKind::StructuralOperatorAdapter ||
+         kind == CppMirThunkKind::CallableAdapter ||
          kind == CppMirThunkKind::NativeInteropAdapter;
 }
 
@@ -170,6 +174,16 @@ findThunk(const std::vector<CppMirGeneratedThunk> &thunks,
                                     return thunk.identity == identity;
                                   });
   return found == thunks.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] const CppMirDeclarationThunkRoots *
+findDeclarationRoots(const std::vector<CppMirDeclarationThunkRoots> &roots,
+                     std::size_t declaration) {
+  const auto found =
+      std::find_if(roots.begin(), roots.end(), [&](const auto &row) {
+        return row.declaration == declaration;
+      });
+  return found == roots.end() ? nullptr : &*found;
 }
 
 [[nodiscard]] std::size_t
@@ -312,6 +326,7 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
       *snapshot.inventorySeal_->mir == program &&
       snapshot.inventorySeal_->bodies == snapshot.bodies &&
       snapshot.inventorySeal_->data == snapshot.data &&
+      snapshot.inventorySeal_->declarationRoots == snapshot.declarationRoots &&
       snapshot.inventorySeal_->thunks == snapshot.thunks;
   if (!inventorySealed) {
     addIssue(plan, CppMirPlanIssueKind::InvalidInventorySeal,
@@ -320,6 +335,7 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
   }
   plan.bodies = std::move(snapshot.bodies);
   plan.data = std::move(snapshot.data);
+  plan.declarationRoots = std::move(snapshot.declarationRoots);
   plan.thunks = std::move(snapshot.thunks);
 
   const MirVerificationResult verification = verifyMirProgram(program);
@@ -519,6 +535,41 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
     }
   }
 
+  std::sort(plan.declarationRoots.begin(), plan.declarationRoots.end(),
+            [](const CppMirDeclarationThunkRoots &left,
+               const CppMirDeclarationThunkRoots &right) {
+              return left.declaration < right.declaration;
+            });
+  for (std::size_t index = 0; index < plan.declarationRoots.size(); ++index) {
+    CppMirDeclarationThunkRoots &roots = plan.declarationRoots[index];
+    if (roots.declaration == 0 || roots.requiredThunks.empty()) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidDeclarationThunkRoot,
+               "declaration generated-thunk roots require a nonzero source "
+               "and at least one thunk");
+    }
+    if (index != 0 &&
+        plan.declarationRoots[index - 1].declaration == roots.declaration) {
+      addIssue(plan, CppMirPlanIssueKind::DuplicateDeclarationThunkRoot,
+               "declaration generated-thunk root is duplicated");
+    }
+    std::sort(roots.requiredThunks.begin(), roots.requiredThunks.end(),
+              thunkLess);
+    for (std::size_t required = 0; required < roots.requiredThunks.size();
+         ++required) {
+      const CppMirThunkIdentity identity = roots.requiredThunks[required];
+      if (!validThunkIdentity(identity)) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkIdentity,
+                 "declaration names an invalid generated-thunk identity",
+                 std::nullopt, std::nullopt, identity);
+      }
+      if (required != 0 && roots.requiredThunks[required - 1] == identity) {
+        addIssue(plan, CppMirPlanIssueKind::DuplicateDeclarationThunkDependency,
+                 "declaration names one generated thunk more than once",
+                 std::nullopt, std::nullopt, identity);
+      }
+    }
+  }
+
   std::vector<CppMirThunkIdentity> expectedNativeCallbacks;
   expectedNativeCallbacks.reserve(program.nativeCallbackAdapters().size());
   for (const MirNativeCallbackAdapter &adapter :
@@ -576,7 +627,29 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
 
     const CppMirNativeCallbackThunk *nativeCallback =
         std::get_if<CppMirNativeCallbackThunk>(&thunk.payload);
-    if (thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
+    const CppMirStructuralOperatorThunk *structural =
+        std::get_if<CppMirStructuralOperatorThunk>(&thunk.payload);
+    const CppMirCallableThunk *callable =
+        std::get_if<CppMirCallableThunk>(&thunk.payload);
+    if (thunk.identity.kind == CppMirThunkKind::StructuralOperatorAdapter) {
+      const bool validOperation =
+          structural != nullptr &&
+          (structural->operation == OverloadedOperator::Dereference ||
+           structural->operation == OverloadedOperator::PreIncrement ||
+           structural->operation == OverloadedOperator::NotEqual);
+      if (!validOperation || structural->function != thunk.identity.owner) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+                 "structural operator thunk has no exact function/operator "
+                 "payload",
+                 std::nullopt, std::nullopt, thunk.identity);
+      }
+    } else if (thunk.identity.kind == CppMirThunkKind::CallableAdapter) {
+      if (callable == nullptr || callable->function != thunk.identity.owner) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
+                 "callable thunk has no exact function/capability payload",
+                 std::nullopt, std::nullopt, thunk.identity);
+      }
+    } else if (thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
       if (nativeCallback == nullptr) {
         addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
                  "native callback thunk has no target-independent callback "
@@ -585,69 +658,88 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
       }
     } else if (!std::holds_alternative<std::monostate>(thunk.payload)) {
       addIssue(plan, CppMirPlanIssueKind::InvalidThunkPayload,
-               "non-callback thunk carries a native callback payload",
+               "generated thunk carries a payload for a different family",
                std::nullopt, std::nullopt, thunk.identity);
     }
 
-    const auto source =
-        std::find_if(plan.bodies.begin(), plan.bodies.end(),
-                     [&](const CppMirBodyRepresentation &body) {
-                       return body.identity.address == thunk.sourceBody;
-                     });
-    const std::size_t sourceCount = static_cast<std::size_t>(
-        std::count_if(plan.bodies.begin(), plan.bodies.end(),
-                      [&](const CppMirBodyRepresentation &body) {
-                        return body.identity.address == thunk.sourceBody;
-                      }));
-    const bool sourceExists = sourceCount == 1 && source != plan.bodies.end() &&
-                              findMirBody(program, thunk.sourceBody) != nullptr;
-    bool validSource = sourceExists;
-    if (validSource && thunk.identity.kind == CppMirThunkKind::HostedEntry) {
-      validSource = source->role == CppMirBodyRole::SourceExecutable;
-      const std::optional<MirHostedStartupPlan> &startup =
-          program.hostedStartupPlan();
-      const MirFunctionInstance *entry =
-          program.findFunctionInstance(thunk.identity.owner);
-      validSource = validSource &&
-                    thunk.sourceBody.kind == MirBodyKind::HostedStartup &&
-                    thunk.sourceBody.owner == thunk.identity.owner && startup &&
-                    startup->entry == thunk.identity.owner &&
-                    program.hostedStartup() != nullptr && entry != nullptr &&
-                    entry->id == thunk.identity.owner &&
-                    entry->definitionKind == MirDefinitionKind::Source &&
-                    entry->entryKind != ProgramEntryKind::None;
-    } else if (validSource &&
-               thunk.identity.kind == CppMirThunkKind::ProgramInitialization) {
-      // The verified merged Module/0 Initializer plan is the sole authority
-      // for this program-wide thunk. Legacy generic static-initializer bodies
-      // remain unsupported inventory and cannot infer this contract.
-      validSource =
-          thunk.sourceBody ==
-              MirBodyAddress{.kind = MirBodyKind::Module, .owner = 0} &&
-          source->role == CppMirBodyRole::SourceExecutable &&
-          hasExecutableProgramInitialization(program);
-    } else if (validSource &&
-               thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
-      const CppMirNativeCallbackThunk *callback =
-          std::get_if<CppMirNativeCallbackThunk>(&thunk.payload);
-      const MirFunctionInstance *target =
-          callback == nullptr
-              ? nullptr
-              : program.findFunctionInstance(callback->adapter.target);
-      validSource = callback != nullptr && target != nullptr &&
-                    thunk.sourceBody ==
-                        MirBodyAddress{.kind = MirBodyKind::Function,
-                                       .owner = callback->adapter.target} &&
-                    source->role == CppMirBodyRole::SourceExecutable &&
-                    target->definitionKind == MirDefinitionKind::Source;
-    } else if (validSource) {
-      validSource = source->role == CppMirBodyRole::SourceExecutable;
+    const bool declarationAdapter =
+        thunk.identity.kind == CppMirThunkKind::StructuralOperatorAdapter ||
+        thunk.identity.kind == CppMirThunkKind::CallableAdapter;
+    bool validSource = ordinal(thunk.sourceKind) <
+                       ordinal(CppMirGeneratedThunkSourceKind::Count);
+    if (thunk.sourceKind == CppMirGeneratedThunkSourceKind::Declaration) {
+      const CppMirDeclarationThunkRoots *roots =
+          findDeclarationRoots(plan.declarationRoots, thunk.sourceDeclaration);
+      validSource = validSource && declarationAdapter &&
+                    thunk.sourceDeclaration != 0 &&
+                    thunk.sourceBody == MirBodyAddress{} && roots != nullptr &&
+                    containsThunk(roots->requiredThunks, thunk.identity);
+    } else if (thunk.sourceKind == CppMirGeneratedThunkSourceKind::Body) {
+      const auto source =
+          std::find_if(plan.bodies.begin(), plan.bodies.end(),
+                       [&](const CppMirBodyRepresentation &body) {
+                         return body.identity.address == thunk.sourceBody;
+                       });
+      const std::size_t sourceCount = static_cast<std::size_t>(
+          std::count_if(plan.bodies.begin(), plan.bodies.end(),
+                        [&](const CppMirBodyRepresentation &body) {
+                          return body.identity.address == thunk.sourceBody;
+                        }));
+      const bool sourceExists =
+          sourceCount == 1 && source != plan.bodies.end() &&
+          findMirBody(program, thunk.sourceBody) != nullptr;
+      validSource = validSource && thunk.sourceDeclaration == 0 &&
+                    !declarationAdapter && sourceExists;
+      if (validSource && thunk.identity.kind == CppMirThunkKind::HostedEntry) {
+        validSource = source->role == CppMirBodyRole::SourceExecutable;
+        const std::optional<MirHostedStartupPlan> &startup =
+            program.hostedStartupPlan();
+        const MirFunctionInstance *entry =
+            program.findFunctionInstance(thunk.identity.owner);
+        validSource = validSource &&
+                      thunk.sourceBody.kind == MirBodyKind::HostedStartup &&
+                      thunk.sourceBody.owner == thunk.identity.owner &&
+                      startup && startup->entry == thunk.identity.owner &&
+                      program.hostedStartup() != nullptr && entry != nullptr &&
+                      entry->id == thunk.identity.owner &&
+                      entry->definitionKind == MirDefinitionKind::Source &&
+                      entry->entryKind != ProgramEntryKind::None;
+      } else if (validSource && thunk.identity.kind ==
+                                    CppMirThunkKind::ProgramInitialization) {
+        // The verified merged Module/0 Initializer plan is the sole authority
+        // for this program-wide thunk. Legacy generic static-initializer
+        // bodies remain unsupported inventory and cannot infer this contract.
+        validSource =
+            thunk.sourceBody ==
+                MirBodyAddress{.kind = MirBodyKind::Module, .owner = 0} &&
+            source->role == CppMirBodyRole::SourceExecutable &&
+            hasExecutableProgramInitialization(program);
+      } else if (validSource &&
+                 thunk.identity.kind == CppMirThunkKind::NativeInteropAdapter) {
+        const CppMirNativeCallbackThunk *callback =
+            std::get_if<CppMirNativeCallbackThunk>(&thunk.payload);
+        const MirFunctionInstance *target =
+            callback == nullptr
+                ? nullptr
+                : program.findFunctionInstance(callback->adapter.target);
+        validSource = callback != nullptr && target != nullptr &&
+                      thunk.sourceBody ==
+                          MirBodyAddress{.kind = MirBodyKind::Function,
+                                         .owner = callback->adapter.target} &&
+                      source->role == CppMirBodyRole::SourceExecutable &&
+                      target->definitionKind == MirDefinitionKind::Source;
+      } else if (validSource) {
+        validSource = source->role == CppMirBodyRole::SourceExecutable;
+      }
     }
     if (!validSource) {
       addIssue(plan, CppMirPlanIssueKind::InvalidThunkSource,
-               "generated thunk does not name its exact contracted executable "
-               "core body",
-               thunk.sourceBody, std::nullopt, thunk.identity);
+               "generated thunk does not name its exact contracted body or "
+               "declaration source",
+               thunk.sourceKind == CppMirGeneratedThunkSourceKind::Body
+                   ? std::optional<MirBodyAddress>{thunk.sourceBody}
+                   : std::nullopt,
+               std::nullopt, thunk.identity);
     }
 
     std::sort(thunk.dependencies.begin(), thunk.dependencies.end(), thunkLess);
@@ -910,6 +1002,10 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
         addIssue(plan, CppMirPlanIssueKind::MissingThunkDependency,
                  "body-required generated thunk is absent",
                  body.identity.address, std::nullopt, required);
+      } else if (thunk->sourceKind != CppMirGeneratedThunkSourceKind::Body) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkSource,
+                 "body cannot root a declaration-generated thunk",
+                 body.identity.address, std::nullopt, required);
       } else if (required.kind == CppMirThunkKind::HostedEntry &&
                  body.identity.address != thunk->sourceBody) {
         addIssue(plan, CppMirPlanIssueKind::InvalidThunkSource,
@@ -928,6 +1024,35 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
       }
     }
   }
+  for (const CppMirDeclarationThunkRoots &declaration : plan.declarationRoots) {
+    for (const CppMirThunkIdentity &required : declaration.requiredThunks) {
+      const CppMirGeneratedThunk *thunk = findThunk(plan.thunks, required);
+      if (thunk == nullptr) {
+        addIssue(plan, CppMirPlanIssueKind::MissingThunkDependency,
+                 "declaration-required generated thunk is absent", std::nullopt,
+                 std::nullopt, required);
+      } else if (thunk->sourceKind !=
+                     CppMirGeneratedThunkSourceKind::Declaration ||
+                 thunk->sourceDeclaration != declaration.declaration) {
+        addIssue(plan, CppMirPlanIssueKind::InvalidThunkSource,
+                 "declaration must root a thunk from that exact declaration",
+                 std::nullopt, std::nullopt, required);
+      }
+    }
+  }
+  for (const CppMirGeneratedThunk &thunk : plan.thunks) {
+    if (thunk.identity.kind != CppMirThunkKind::StructuralOperatorAdapter &&
+        thunk.identity.kind != CppMirThunkKind::CallableAdapter) {
+      continue;
+    }
+    if (thunk.sourceKind != CppMirGeneratedThunkSourceKind::Declaration ||
+        thunk.sourceDeclaration == 0 || !thunk.dependencies.empty()) {
+      addIssue(plan, CppMirPlanIssueKind::InvalidContractedThunkGraph,
+               "declaration adapter requires one exact declaration source "
+               "and no generated dependencies",
+               std::nullopt, std::nullopt, thunk.identity);
+    }
+  }
   for (const CppMirGeneratedThunk &thunk : plan.thunks) {
     for (const CppMirThunkIdentity &dependency : thunk.dependencies) {
       if (findThunk(plan.thunks, dependency) == nullptr) {
@@ -942,6 +1067,10 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
   for (const CppMirBodyRepresentation &body : plan.bodies) {
     roots.insert(roots.end(), body.requiredThunks.begin(),
                  body.requiredThunks.end());
+  }
+  for (const CppMirDeclarationThunkRoots &declaration : plan.declarationRoots) {
+    roots.insert(roots.end(), declaration.requiredThunks.begin(),
+                 declaration.requiredThunks.end());
   }
   std::sort(roots.begin(), roots.end(), thunkLess);
   roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
@@ -966,8 +1095,8 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
   for (const CppMirGeneratedThunk &thunk : plan.thunks) {
     if (!containsThunk(reachable, thunk.identity)) {
       addIssue(plan, CppMirPlanIssueKind::OrphanThunk,
-               "generated thunk is not rooted by any body", std::nullopt,
-               std::nullopt, thunk.identity);
+               "generated thunk is not rooted by any body or declaration",
+               std::nullopt, std::nullopt, thunk.identity);
     }
   }
 

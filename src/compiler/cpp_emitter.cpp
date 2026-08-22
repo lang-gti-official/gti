@@ -10866,42 +10866,33 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     output << ">\n";
   }
 
-  [[nodiscard]] static bool
-  isStructuralOperatorBridge(const FunctionDecl &function,
-                             const FunctionInfo *info) {
-    if (!function.operatorName() || info == nullptr || info->compilerPrivate ||
-        !info->requirements.empty() || function.requiresClause()) {
-      return false;
+  [[nodiscard]] const CppMirGeneratedThunk *
+  declarationAdapter(const FunctionDecl &function, CppMirThunkKind kind) const {
+    const FunctionInfo *info = semantics.findFunction(function);
+    if (info == nullptr || info->id == 0) {
+      return nullptr;
     }
-    switch (function.operatorName()->kind) {
-    case OverloadedOperator::Dereference:
-      return function.parameters().empty() &&
-             function.receiverMutability() == ReceiverMutability::ReadOnly &&
-             info->returnType.kind == SemanticType::Reference &&
-             info->returnType.arguments.size() == 1;
-    case OverloadedOperator::PreIncrement:
-      return function.parameters().empty() &&
-             function.receiverMutability() == ReceiverMutability::Mutable &&
-             info->returnType == SemanticType::Void;
-    case OverloadedOperator::NotEqual:
-      return function.receiverMutability() == ReceiverMutability::ReadOnly &&
-             info->returnType == SemanticType::Bool &&
-             info->parameterTypes.size() == 1 &&
-             info->parameterTypes.front().kind == SemanticType::Reference &&
-             info->parameterTypes.front().arguments.size() == 1 &&
-             info->parameterTypes.front().referenceAccess ==
-                 AccessMode::ReadOnly;
-    default:
-      return false;
-    }
+    const auto found =
+        std::find_if(programPlan.thunks.begin(), programPlan.thunks.end(),
+                     [&](const CppMirGeneratedThunk &thunk) {
+                       return thunk.identity.kind == kind &&
+                              thunk.identity.owner == info->id;
+                     });
+    return found == programPlan.thunks.end() ? nullptr : &*found;
   }
 
   void emitStructuralOperatorAdapter(const FunctionDecl &function) {
-    const FunctionInfo *info = semantics.findFunction(function);
-    if (currentClass == nullptr ||
-        currentClassAccess != AccessModifier::Public ||
-        !isStructuralOperatorBridge(function, info)) {
+    const CppMirGeneratedThunk *thunk = declarationAdapter(
+        function, CppMirThunkKind::StructuralOperatorAdapter);
+    if (thunk == nullptr) {
       return;
+    }
+    const FunctionInfo *info = semantics.findFunction(function);
+    const auto *adapter =
+        std::get_if<CppMirStructuralOperatorThunk>(&thunk->payload);
+    if (currentClass == nullptr || info == nullptr || adapter == nullptr) {
+      throw std::logic_error(
+          "structural operator adapter lost its sealed declaration source");
     }
 
     writeIndent();
@@ -10912,12 +10903,12 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     }
     emitType(function.returnType());
     output << (function.returnType().reference ? " &" : " ")
-           << operatorFunctionName(function.operatorName()->kind) << '(';
+           << operatorFunctionName(adapter->operation) << '(';
     if (function.receiverMutability() == ReceiverMutability::ReadOnly) {
       output << "const ";
     }
     output << currentClass->name().lexeme << " &__gti_receiver";
-    if (function.operatorName()->kind == OverloadedOperator::NotEqual) {
+    if (adapter->operation == OverloadedOperator::NotEqual) {
       output << ", ::gti_internal::backend::exact_type<";
       emitType(function.parameters().front().type);
       output << ">";
@@ -10928,10 +10919,7 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
                     "__gti_argument_" + std::to_string(index));
     }
     output << ") { ";
-    const bool returnsVoid =
-        info != nullptr
-            ? info->returnType == SemanticType::Void
-            : function.returnType().name.last().kind == TokenKind::VOID;
+    const bool returnsVoid = info->returnType == SemanticType::Void;
     if (!returnsVoid) {
       output << "return ";
     }
@@ -10952,17 +10940,18 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
   }
 
   void emitCallableAdapter(const FunctionDecl &function) {
-    if (classDepth == 0 || !function.operatorName() ||
-        function.operatorName()->kind != OverloadedOperator::Call ||
-        !function.body() || currentClassLifecycle == nullptr ||
-        currentClassLifecycle->declaration == nullptr) {
+    const CppMirGeneratedThunk *thunk =
+        declarationAdapter(function, CppMirThunkKind::CallableAdapter);
+    if (thunk == nullptr) {
       return;
     }
     const FunctionInfo *info = semantics.findFunction(function);
-    if (function.requiresClause() ||
-        (info != nullptr &&
-         (info->compilerPrivate || !info->requirements.empty()))) {
-      return;
+    const auto *adapter = std::get_if<CppMirCallableThunk>(&thunk->payload);
+    if (classDepth == 0 || currentClassLifecycle == nullptr ||
+        currentClassLifecycle->declaration == nullptr || info == nullptr ||
+        adapter == nullptr) {
+      throw std::logic_error(
+          "callable adapter lost its sealed declaration source");
     }
     writeIndent();
     output << "friend ";
@@ -10980,51 +10969,14 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
                    ? " &&__gti_callable"
                    : " &__gti_callable");
     output << ", ";
-    if (info != nullptr) {
-      emitExactCallTagType(
-          callableInvocationCapability(function.receiverMutability()),
-          info->parameterTypes, {}, true);
-    } else {
-      output << "::gti_internal::backend::exact_call<"
-                "::gti_internal::backend::callable_capability::";
-      switch (function.receiverMutability()) {
-      case ReceiverMutability::ReadOnly:
-        output << "read_call";
-        break;
-      case ReceiverMutability::Mutable:
-        output << "mutable_call";
-        break;
-      case ReceiverMutability::Consuming:
-        output << "once_call";
-        break;
-      }
-      for (const Parameter &parameter : function.parameters()) {
-        output << ", ";
-        output << "::gti_internal::backend::call_parameter<"
-                  "::gti_internal::backend::callable_binding::";
-        if (!parameter.type.reference) {
-          output << "value";
-        } else if (parameter.mutability == Mutability::Mutable) {
-          output << "mutable_reference";
-        } else {
-          output << "read_reference";
-        }
-        output << ", ";
-        emitType(parameter.type);
-        output << '>';
-      }
-      output << '>';
-    }
+    emitExactCallTagType(adapter->capability, info->parameterTypes, {}, true);
     for (std::size_t index = 0; index < function.parameters().size(); ++index) {
       output << ", ";
       emitParameter(function.parameters()[index],
                     "__gti_arg_" + std::to_string(index));
     }
     output << ") { ";
-    const bool returnsVoid =
-        info != nullptr
-            ? info->returnType == SemanticType::Void
-            : function.returnType().name.last().kind == TokenKind::VOID;
+    const bool returnsVoid = info->returnType == SemanticType::Void;
     if (!returnsVoid) {
       output << "return ";
     }

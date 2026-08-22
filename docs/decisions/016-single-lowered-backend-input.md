@@ -9,13 +9,17 @@ optimization, and `MirBackend` is the first client that reads only this
 contract. It currently owns optimized MIR, target layout, an active declaration
 tree with resolved declaration payloads, a complete semantic symbol vocabulary,
 concrete class/function/constructor/destructor/lambda instance metadata,
-source/body identities, and the exact hosted-entry, program-initialization, and
-native-callback generated-item graph. The production C++ generic-MIR row
-builder and whole-program planner consume this contract;
+source/body identities, and the exact hosted-entry, program-initialization,
+structural-operator, callable, and native-callback generated-item graph. The
+production C++ generic-MIR row builder and whole-program planner consume this
+contract; structural and callable adapter eligibility is now read only from
+its declaration-rooted rows, while adapter spelling remains in the
+transitional declaration emitter. The
 frontend-vs-lowered exact inventory and plan comparisons remain as migration
 evidence. `NativeHeaderBackend` also consumes only this contract. C++
-declaration assembly and remaining generated-item families remain in progress,
-so transitional `BackendInput` fields are still present.
+declaration assembly, lifecycle cleanup, remaining native interoperability,
+and concrete-instance generated families remain in progress, so transitional
+`BackendInput` fields are still present.
 
 ## Context
 

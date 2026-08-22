@@ -162,7 +162,8 @@ void expectLoweredRowsMatch(const lang::FrontendResult &frontend,
   const lang::CppMirRepresentationSnapshotBuild frontendSnapshot =
       lang::buildCppMirRepresentationSnapshot(
           frontend.program, frontend.semantics, frontend.hir, optimized.mir,
-          lang::TargetInfo::host(), lang::CppStandard::Cpp23);
+          lang::TargetInfo::host(), lang::CppStandard::Cpp23,
+          &optimized.sourceMir);
   const lang::CppMirRepresentationSnapshotBuild loweredSnapshot =
       lang::buildCppMirRepresentationSnapshot(*lowered.program,
                                               lang::CppStandard::Cpp23);
@@ -181,6 +182,8 @@ void expectLoweredRowsMatch(const lang::FrontendResult &frontend,
           frontendSnapshot.snapshot->bodies ==
               loweredSnapshot.snapshot->bodies &&
           frontendSnapshot.snapshot->data == loweredSnapshot.snapshot->data &&
+          frontendSnapshot.snapshot->declarationRoots ==
+              loweredSnapshot.snapshot->declarationRoots &&
           frontendSnapshot.snapshot->thunks == loweredSnapshot.snapshot->thunks,
       std::string(fixture) +
           " should build an exact C++ plan inventory from LoweredProgram");
@@ -192,6 +195,7 @@ void expectLoweredRowsMatch(const lang::FrontendResult &frontend,
   expect(frontendPlan.status == loweredPlan.status &&
              frontendPlan.bodies == loweredPlan.bodies &&
              frontendPlan.data == loweredPlan.data &&
+             frontendPlan.declarationRoots == loweredPlan.declarationRoots &&
              frontendPlan.thunks == loweredPlan.thunks &&
              frontendPlan.issues.size() == loweredPlan.issues.size() &&
              frontendPlan.unsupported.size() == loweredPlan.unsupported.size(),
@@ -1661,6 +1665,90 @@ int main() {
   }
 }
 
+void testDeclarationAdapterGeneratedItemRows() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cpp-mir-representation-declaration-adapters.gti", R"(
+class Cursor {
+  mut int32_t current = 0;
+public:
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(Cursor& other) { return this.current != other.current; }
+};
+
+class Increment {
+public:
+  int32_t operator()(int32_t value) { return value + 1; }
+};
+
+int main() {
+  Increment increment = Increment();
+  return increment(0);
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the declaration-adapter fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O1,
+                                        .target = lang::TargetInfo::host()});
+  lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, lang::TargetInfo::host());
+  expect(optimized.valid() && lowered.valid(),
+         "the declaration-adapter fixture should produce LoweredProgram");
+  if (!optimized.valid() || !lowered.valid()) {
+    return;
+  }
+  lang::CppMirRepresentationSnapshotBuild build =
+      lang::buildCppMirRepresentationSnapshot(*lowered.program);
+  expect(build.valid(),
+         "the lowered declaration adapters should build a sealed C++ plan");
+  if (!build.valid()) {
+    return;
+  }
+  expect(thunkCount(*build.snapshot,
+                    lang::CppMirThunkKind::StructuralOperatorAdapter) == 3 &&
+             thunkCount(*build.snapshot,
+                        lang::CppMirThunkKind::CallableAdapter) == 1 &&
+             build.snapshot->declarationRoots.size() == 4,
+         "each eligible function declaration should own one exact generated "
+         "adapter row and root");
+  const bool exactSources = std::all_of(
+      build.snapshot->thunks.begin(), build.snapshot->thunks.end(),
+      [&](const lang::CppMirGeneratedThunk &thunk) {
+        if (thunk.identity.kind !=
+                lang::CppMirThunkKind::StructuralOperatorAdapter &&
+            thunk.identity.kind != lang::CppMirThunkKind::CallableAdapter) {
+          return true;
+        }
+        const auto roots =
+            std::find_if(build.snapshot->declarationRoots.begin(),
+                         build.snapshot->declarationRoots.end(),
+                         [&](const lang::CppMirDeclarationThunkRoots &row) {
+                           return row.declaration == thunk.sourceDeclaration;
+                         });
+        return thunk.sourceKind ==
+                   lang::CppMirGeneratedThunkSourceKind::Declaration &&
+               thunk.sourceDeclaration != 0 &&
+               roots != build.snapshot->declarationRoots.end() &&
+               std::find(roots->requiredThunks.begin(),
+                         roots->requiredThunks.end(),
+                         thunk.identity) != roots->requiredThunks.end();
+      });
+  expect(exactSources,
+         "adapter rows should retain their exact declaration provenance");
+  const lang::CppMirProgramPlan plan =
+      lang::planCppMirProgram(optimized.mir, std::move(*build.snapshot));
+  expect(plan.complete() && plan.issues.empty() && plan.unsupported.empty(),
+         "structural and callable adapters should be contracted production "
+         "families rather than unsupported placeholders");
+}
+
 int main() {
   testExhaustiveSealedInventory();
   testNativeCallbackGeneratedItemRows();
@@ -1677,6 +1765,7 @@ int main() {
   testAtomicBackendRouteAndIncoherentRejection();
   testRepresentationSpellingAuthorities();
   testClosureAndCallableRows();
+  testDeclarationAdapterGeneratedItemRows();
 
   if (failures != 0) {
     std::cerr << failures

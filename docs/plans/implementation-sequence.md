@@ -2788,17 +2788,19 @@ retired no-MIR emitter as a comparison, fallback, or legacy mode.
 
 ### Next migration campaign: generated-item inventory
 
-The native-callback adapter is the first completed migration client. Its
-semantic selection, exact HIR-to-MIR identity, verified failure policy, and
-per-body MIR roots are copied into sealed generated-item rows. The planner
-independently verifies their census and ordering, and `CppEmitter` is now the
-sole production consumer; C++ spelling remains backend-only. The remaining
-families should follow the same contract one at a time.
+Native-callback, structural-operator, and callable adapters are completed
+migration clients. Native callback semantic selection, exact HIR-to-MIR
+identity, verified failure policy, and per-body MIR roots are copied into
+sealed generated-item rows. Structural and callable adapters instead carry
+exact function/operator or function/capability payloads and active-declaration
+roots. The planner verifies each census, source, payload, closure, and order,
+and `CppEmitter` uses the sealed plan as the sole adapter-existence authority;
+C++ spelling remains backend-only. The remaining families should follow the
+same contract one at a time.
 
-1. Give every hosted-entry, program-initialization, native-boundary,
-   lifecycle, and concrete-instance adapter a stable generated-item identity
-   in the sealed whole-program plan. Record an exact census before moving any
-   family.
+1. Give every remaining lifecycle, native-boundary, and concrete-instance
+   adapter a stable generated-item identity in the sealed whole-program plan.
+   Record an exact census before moving any family.
 2. Move one adapter family at a time into immutable, target-independent
    representation rows whose inputs are semantic identities, concrete HIR
    instances, and verified MIR schedules. Keep C++ spelling and ABI policy in

@@ -581,7 +581,8 @@ private:
     output << "];flags=" << value.parameterPack << ':' << value.staticMember
            << ':' << value.internalLinkage << ':' << value.constexprFunction
            << ':' << value.virtualMethod << ':' << value.pureVirtual << ':'
-           << value.overrideMethod << ':' << value.compilerPrivate << ')';
+           << value.overrideMethod << ':' << value.hasRequiresClause << ':'
+           << value.compilerPrivate << ')';
   }
 
   void printValue(const LoweredConstructorDeclaration &value) {
@@ -708,7 +709,14 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
     }
     output << " source=" << std::quoted(declaration.source.source) << ':'
            << declaration.source.start << ':' << declaration.source.end << ':'
-           << declaration.source.line << " payload=";
+           << declaration.source.line
+           << " roots=" << declaration.requiredGeneratedItems.size();
+    for (const LoweredGeneratedItemIdentity &required :
+         declaration.requiredGeneratedItems) {
+      output << ' ';
+      printGeneratedIdentity(output, required);
+    }
+    output << " payload=";
     DeclarationPayloadPrinter(output).print(declaration.payload);
     output << '\n';
   }
@@ -845,15 +853,30 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   for (const LoweredGeneratedItem &item : program.generatedItems()) {
     output << "generated-item ";
     printGeneratedIdentity(output, item.identity);
-    output << " source=" << bodyKindName(item.sourceBody.kind) << '/'
-           << item.sourceBody.owner
-           << " dependencies=" << item.dependencies.size();
+    output << " source=";
+    if (item.sourceKind == LoweredGeneratedItemSourceKind::Body) {
+      output << "body:" << bodyKindName(item.sourceBody.kind) << '/'
+             << item.sourceBody.owner;
+    } else if (item.sourceKind == LoweredGeneratedItemSourceKind::Declaration) {
+      output << "declaration:" << item.sourceDeclaration;
+    } else {
+      output << "invalid";
+    }
+    output << " dependencies=" << item.dependencies.size();
     for (const LoweredGeneratedItemIdentity &dependency : item.dependencies) {
       output << ' ';
       printGeneratedIdentity(output, dependency);
     }
-    if (const auto *callback =
-            std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
+    if (const auto *adapter =
+            std::get_if<LoweredStructuralOperatorAdapterItem>(&item.payload)) {
+      output << " payload=structural-operator:" << adapter->function << ':'
+             << static_cast<std::size_t>(adapter->operation);
+    } else if (const auto *adapter =
+                   std::get_if<LoweredCallableAdapterItem>(&item.payload)) {
+      output << " payload=callable:" << adapter->function << ':'
+             << static_cast<std::size_t>(adapter->capability);
+    } else if (const auto *callback =
+                   std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
       output << " payload=native-callback:" << callback->adapter.id << ':'
              << callback->adapter.target << ':'
              << (callback->adapter.targetMayRaiseDefinedFailure ? "raise"

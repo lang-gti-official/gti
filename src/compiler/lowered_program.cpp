@@ -59,6 +59,23 @@ findBody(const std::vector<LoweredBody> &bodies, MirBodyAddress address) {
   return const_cast<LoweredBody *>(findBody(std::as_const(bodies), address));
 }
 
+[[nodiscard]] const LoweredDeclaration *
+findDeclaration(const std::vector<LoweredDeclaration> &declarations,
+                LoweredDeclarationId id) {
+  const auto found = std::find_if(declarations.begin(), declarations.end(),
+                                  [&](const LoweredDeclaration &declaration) {
+                                    return declaration.id == id;
+                                  });
+  return found == declarations.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] LoweredDeclaration *
+findDeclaration(std::vector<LoweredDeclaration> &declarations,
+                LoweredDeclarationId id) {
+  return const_cast<LoweredDeclaration *>(
+      findDeclaration(std::as_const(declarations), id));
+}
+
 [[nodiscard]] LoweredBodyDefinitionKind
 bodyDefinition(MirDefinitionKind definition) {
   switch (definition) {
@@ -665,6 +682,7 @@ private:
             .virtualMethod = info->virtualMethod,
             .pureVirtual = info->pureVirtual,
             .overrideMethod = info->overrideMethod,
+            .hasRequiresClause = declaration->requiresClause().has_value(),
             .compilerPrivate = info->compilerPrivate};
       }
     } else if (const auto *declaration =
@@ -772,22 +790,78 @@ struct DerivedGeneratedGraph {
   std::vector<LoweredGeneratedItem> items;
   std::vector<
       std::pair<MirBodyAddress, std::vector<LoweredGeneratedItemIdentity>>>
-      roots;
+      bodyRoots;
+  std::vector<std::pair<LoweredDeclarationId,
+                        std::vector<LoweredGeneratedItemIdentity>>>
+      declarationRoots;
 };
 
+[[nodiscard]] bool
+structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
+                          AccessModifier access) {
+  if (access != AccessModifier::Public || !function.overloadedOperator ||
+      function.compilerPrivate || function.hasRequiresClause ||
+      !function.requirements.empty()) {
+    return false;
+  }
+  switch (*function.overloadedOperator) {
+  case OverloadedOperator::Dereference:
+    return function.parameters.empty() &&
+           function.receiverMutability == ReceiverMutability::ReadOnly &&
+           function.returnType.kind == SemanticType::Reference &&
+           function.returnType.arguments.size() == 1;
+  case OverloadedOperator::PreIncrement:
+    return function.parameters.empty() &&
+           function.receiverMutability == ReceiverMutability::Mutable &&
+           function.returnType == SemanticType::Void;
+  case OverloadedOperator::NotEqual:
+    return function.receiverMutability == ReceiverMutability::ReadOnly &&
+           function.returnType == SemanticType::Bool &&
+           function.parameters.size() == 1 &&
+           function.parameters.front().type.kind == SemanticType::Reference &&
+           function.parameters.front().type.arguments.size() == 1 &&
+           function.parameters.front().type.referenceAccess ==
+               AccessMode::ReadOnly;
+  default:
+    return false;
+  }
+}
+
+[[nodiscard]] bool callableAdapter(const LoweredFunctionDeclaration &function) {
+  return function.ownerClass != 0 && function.overloadedOperator &&
+         *function.overloadedOperator == OverloadedOperator::Call &&
+         function.definitionKind == MirDefinitionKind::Source &&
+         !function.compilerPrivate && !function.hasRequiresClause &&
+         function.requirements.empty();
+}
+
 [[nodiscard]] DerivedGeneratedGraph
-deriveGeneratedGraph(const MirProgram &program) {
+deriveGeneratedGraph(const MirProgram &program,
+                     const std::vector<LoweredDeclaration> &declarations) {
   DerivedGeneratedGraph graph;
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
-    graph.roots.emplace_back(address,
-                             std::vector<LoweredGeneratedItemIdentity>{});
+    graph.bodyRoots.emplace_back(address,
+                                 std::vector<LoweredGeneratedItemIdentity>{});
   }
-  const auto root = [&](MirBodyAddress address,
-                        LoweredGeneratedItemIdentity identity) {
+  for (const LoweredDeclaration &declaration : declarations) {
+    graph.declarationRoots.emplace_back(
+        declaration.id, std::vector<LoweredGeneratedItemIdentity>{});
+  }
+  const auto rootBody = [&](MirBodyAddress address,
+                            LoweredGeneratedItemIdentity identity) {
     const auto found =
-        std::find_if(graph.roots.begin(), graph.roots.end(),
+        std::find_if(graph.bodyRoots.begin(), graph.bodyRoots.end(),
                      [&](const auto &entry) { return entry.first == address; });
-    if (found != graph.roots.end()) {
+    if (found != graph.bodyRoots.end()) {
+      found->second.push_back(identity);
+    }
+  };
+  const auto rootDeclaration = [&](LoweredDeclarationId declaration,
+                                   LoweredGeneratedItemIdentity identity) {
+    const auto found = std::find_if(
+        graph.declarationRoots.begin(), graph.declarationRoots.end(),
+        [&](const auto &entry) { return entry.first == declaration; });
+    if (found != graph.declarationRoots.end()) {
       found->second.push_back(identity);
     }
   };
@@ -799,7 +873,7 @@ deriveGeneratedGraph(const MirProgram &program) {
     graph.items.push_back(
         {.identity = *initialization,
          .sourceBody = {.kind = MirBodyKind::Module, .owner = 0}});
-    root({.kind = MirBodyKind::Module, .owner = 0}, *initialization);
+    rootBody({.kind = MirBodyKind::Module, .owner = 0}, *initialization);
   }
 
   if (const std::optional<MirHostedStartupPlan> &startup =
@@ -814,8 +888,8 @@ deriveGeneratedGraph(const MirProgram &program) {
       item.dependencies.push_back(*initialization);
     }
     graph.items.push_back(std::move(item));
-    root({.kind = MirBodyKind::HostedStartup, .owner = startup->entry},
-         identity);
+    rootBody({.kind = MirBodyKind::HostedStartup, .owner = startup->entry},
+             identity);
   }
 
   for (const MirNativeCallbackAdapter &adapter :
@@ -840,14 +914,72 @@ deriveGeneratedGraph(const MirProgram &program) {
             !instruction.nativeCallbackAdapter) {
           continue;
         }
-        root(address, {.kind = LoweredGeneratedItemKind::NativeInteropAdapter,
-                       .owner = *instruction.nativeCallbackAdapter});
+        rootBody(address,
+                 {.kind = LoweredGeneratedItemKind::NativeInteropAdapter,
+                  .owner = *instruction.nativeCallbackAdapter});
       }
     }
   }
 
-  for (auto &[address, roots] : graph.roots) {
+  std::unordered_map<LoweredDeclarationId, AccessModifier> classAccess;
+  for (const LoweredDeclaration &declaration : declarations) {
+    if (const auto *classDeclaration =
+            std::get_if<LoweredClassDeclaration>(&declaration.payload)) {
+      classAccess[declaration.id] = classDeclaration->kind == ClassKind::Class
+                                        ? AccessModifier::Private
+                                        : AccessModifier::Public;
+      continue;
+    }
+    if (const auto *access =
+            std::get_if<LoweredAccessDeclaration>(&declaration.payload)) {
+      if (classAccess.contains(declaration.parent)) {
+        classAccess[declaration.parent] = access->access;
+      }
+      continue;
+    }
+    const auto *function =
+        std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
+    if (function == nullptr || function->id == 0 ||
+        !classAccess.contains(declaration.parent)) {
+      continue;
+    }
+    if (structuralOperatorAdapter(*function,
+                                  classAccess.at(declaration.parent))) {
+      const LoweredGeneratedItemIdentity identity{
+          .kind = LoweredGeneratedItemKind::StructuralOperatorAdapter,
+          .owner = function->id};
+      graph.items.push_back(
+          {.identity = identity,
+           .sourceKind = LoweredGeneratedItemSourceKind::Declaration,
+           .sourceDeclaration = declaration.id,
+           .payload = LoweredStructuralOperatorAdapterItem{
+               .function = function->id,
+               .operation = *function->overloadedOperator}});
+      rootDeclaration(declaration.id, identity);
+    }
+    if (callableAdapter(*function)) {
+      const LoweredGeneratedItemIdentity identity{
+          .kind = LoweredGeneratedItemKind::CallableAdapter,
+          .owner = function->id};
+      graph.items.push_back(
+          {.identity = identity,
+           .sourceKind = LoweredGeneratedItemSourceKind::Declaration,
+           .sourceDeclaration = declaration.id,
+           .payload = LoweredCallableAdapterItem{
+               .function = function->id,
+               .capability = callableInvocationCapability(
+                   function->receiverMutability)}});
+      rootDeclaration(declaration.id, identity);
+    }
+  }
+
+  for (auto &[address, roots] : graph.bodyRoots) {
     static_cast<void>(address);
+    std::sort(roots.begin(), roots.end(), generatedLess);
+    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+  }
+  for (auto &[declaration, roots] : graph.declarationRoots) {
+    static_cast<void>(declaration);
     std::sort(roots.begin(), roots.end(), generatedLess);
     roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
   }
@@ -997,6 +1129,8 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
     return identity.owner == 0 && identity.ordinal == 0;
   }
   if (identity.kind == LoweredGeneratedItemKind::HostedEntry ||
+      identity.kind == LoweredGeneratedItemKind::StructuralOperatorAdapter ||
+      identity.kind == LoweredGeneratedItemKind::CallableAdapter ||
       identity.kind == LoweredGeneratedItemKind::NativeInteropAdapter) {
     return identity.owner != 0 && identity.ordinal == 0;
   }
@@ -1704,11 +1838,18 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         {.identity = *identity, .role = bodyRole(optimizedMir, *identity)});
   }
 
-  DerivedGeneratedGraph graph = deriveGeneratedGraph(optimizedMir);
+  DerivedGeneratedGraph graph =
+      deriveGeneratedGraph(optimizedMir, lowered.declarations_);
   lowered.generatedItems_ = std::move(graph.items);
-  for (auto &[address, roots] : graph.roots) {
+  for (auto &[address, roots] : graph.bodyRoots) {
     if (LoweredBody *body = findBody(lowered.bodies_, address)) {
       body->requiredGeneratedItems = std::move(roots);
+    }
+  }
+  for (auto &[declaration, roots] : graph.declarationRoots) {
+    if (LoweredDeclaration *row =
+            findDeclaration(lowered.declarations_, declaration)) {
+      row->requiredGeneratedItems = std::move(roots);
     }
   }
   if (!build.issues.empty()) {
@@ -2038,18 +2179,29 @@ verifyLoweredProgram(const LoweredProgram &program) {
     }
   }
 
-  const DerivedGeneratedGraph expected = deriveGeneratedGraph(program.mir_);
+  const DerivedGeneratedGraph expected =
+      deriveGeneratedGraph(program.mir_, program.declarations_);
   if (program.generatedItems_ != expected.items) {
     addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
              "generated-item inventory differs from exact MIR-derived "
              "contracts");
   }
-  for (const auto &[address, roots] : expected.roots) {
+  for (const auto &[address, roots] : expected.bodyRoots) {
     const LoweredBody *body = findBody(program.bodies_, address);
     if (body == nullptr || body->requiredGeneratedItems != roots) {
       addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
                "body generated-item roots differ from exact MIR operations",
                address);
+    }
+  }
+  for (const auto &[declaration, roots] : expected.declarationRoots) {
+    const LoweredDeclaration *row =
+        findDeclaration(program.declarations_, declaration);
+    if (row == nullptr || row->requiredGeneratedItems != roots) {
+      addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
+               "declaration generated-item roots differ from exact lowered "
+               "declaration contracts",
+               std::nullopt, declaration);
     }
   }
 
@@ -2073,15 +2225,79 @@ verifyLoweredProgram(const LoweredProgram &program) {
                "generated item identity is duplicated", std::nullopt,
                std::nullopt, item.identity);
     }
-    if (findMirBody(program.mir_, item.sourceBody) == nullptr ||
+    const bool declarationAdapter =
+        item.identity.kind ==
+            LoweredGeneratedItemKind::StructuralOperatorAdapter ||
+        item.identity.kind == LoweredGeneratedItemKind::CallableAdapter;
+    std::optional<MirBodyAddress> sourceBody;
+    bool sourceValid = ordinal(item.sourceKind) <
+                       ordinal(LoweredGeneratedItemSourceKind::Count);
+    if (item.sourceKind == LoweredGeneratedItemSourceKind::Body) {
+      sourceBody = item.sourceBody;
+      sourceValid = sourceValid && item.sourceDeclaration == 0 &&
+                    !declarationAdapter &&
+                    findMirBody(program.mir_, item.sourceBody) != nullptr;
+    } else if (item.sourceKind == LoweredGeneratedItemSourceKind::Declaration) {
+      const LoweredDeclaration *declaration =
+          findDeclaration(program.declarations_, item.sourceDeclaration);
+      sourceValid =
+          sourceValid && declarationAdapter && item.sourceDeclaration != 0 &&
+          item.sourceBody == MirBodyAddress{} && declaration != nullptr &&
+          containsGenerated(declaration->requiredGeneratedItems, item.identity);
+    }
+    if (!sourceValid ||
         !std::is_sorted(item.dependencies.begin(), item.dependencies.end(),
                         generatedLess) ||
         std::adjacent_find(item.dependencies.begin(),
                            item.dependencies.end()) !=
             item.dependencies.end()) {
-      addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
-               "generated item source or dependency order is invalid",
-               item.sourceBody, std::nullopt, item.identity);
+      addIssue(
+          issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
+          "generated item source or dependency order is invalid", sourceBody,
+          item.sourceDeclaration == 0
+              ? std::nullopt
+              : std::optional<LoweredDeclarationId>{item.sourceDeclaration},
+          item.identity);
+    }
+    if (item.identity.kind ==
+        LoweredGeneratedItemKind::StructuralOperatorAdapter) {
+      const auto *payload =
+          std::get_if<LoweredStructuralOperatorAdapterItem>(&item.payload);
+      const LoweredDeclaration *source =
+          findDeclaration(program.declarations_, item.sourceDeclaration);
+      const auto *function =
+          source == nullptr
+              ? nullptr
+              : std::get_if<LoweredFunctionDeclaration>(&source->payload);
+      if (payload == nullptr || function == nullptr ||
+          payload->function != item.identity.owner ||
+          function->id != payload->function || !function->overloadedOperator ||
+          payload->operation != *function->overloadedOperator) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
+                 "structural operator adapter payload differs from its exact "
+                 "function declaration",
+                 std::nullopt, item.sourceDeclaration, item.identity);
+      }
+    } else if (item.identity.kind ==
+               LoweredGeneratedItemKind::CallableAdapter) {
+      const auto *payload =
+          std::get_if<LoweredCallableAdapterItem>(&item.payload);
+      const LoweredDeclaration *source =
+          findDeclaration(program.declarations_, item.sourceDeclaration);
+      const auto *function =
+          source == nullptr
+              ? nullptr
+              : std::get_if<LoweredFunctionDeclaration>(&source->payload);
+      if (payload == nullptr || function == nullptr ||
+          payload->function != item.identity.owner ||
+          function->id != payload->function ||
+          payload->capability !=
+              callableInvocationCapability(function->receiverMutability)) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidGeneratedItemInventory,
+                 "callable adapter payload differs from its exact function "
+                 "declaration",
+                 std::nullopt, item.sourceDeclaration, item.identity);
+      }
     }
     for (const LoweredGeneratedItemIdentity &dependency : item.dependencies) {
       if (findGenerated(program.generatedItems_, dependency) == nullptr) {
@@ -2096,6 +2312,10 @@ verifyLoweredProgram(const LoweredProgram &program) {
   for (const LoweredBody &body : program.bodies_) {
     roots.insert(roots.end(), body.requiredGeneratedItems.begin(),
                  body.requiredGeneratedItems.end());
+  }
+  for (const LoweredDeclaration &declaration : program.declarations_) {
+    roots.insert(roots.end(), declaration.requiredGeneratedItems.begin(),
+                 declaration.requiredGeneratedItems.end());
   }
   std::sort(roots.begin(), roots.end(), generatedLess);
   roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
@@ -2120,7 +2340,7 @@ verifyLoweredProgram(const LoweredProgram &program) {
   for (const LoweredGeneratedItem &item : program.generatedItems_) {
     if (!containsGenerated(reachable, item.identity)) {
       addIssue(issues, LoweredProgramIssueKind::OrphanGeneratedItem,
-               "generated item is not rooted by an executable body",
+               "generated item is not rooted by a body or declaration",
                std::nullopt, std::nullopt, item.identity);
     }
   }

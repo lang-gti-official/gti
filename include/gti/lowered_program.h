@@ -264,6 +264,7 @@ struct LoweredFunctionDeclaration {
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;
+  bool hasRequiresClause = false;
   bool compilerPrivate = false;
 
   friend bool operator==(const LoweredFunctionDeclaration &,
@@ -364,6 +365,7 @@ struct LoweredDeclaration {
   std::vector<std::string> namespaceScope;
   SourceSpan source;
   bool generic = false;
+  std::vector<LoweredGeneratedItemIdentity> requiredGeneratedItems;
   LoweredDeclarationPayload payload;
 
   friend bool operator==(const LoweredDeclaration &,
@@ -476,12 +478,39 @@ struct LoweredNativeCallbackItem {
                          const LoweredNativeCallbackItem &) = default;
 };
 
+struct LoweredStructuralOperatorAdapterItem {
+  FunctionId function = 0;
+  OverloadedOperator operation = OverloadedOperator::Dereference;
+
+  friend bool
+  operator==(const LoweredStructuralOperatorAdapterItem &,
+             const LoweredStructuralOperatorAdapterItem &) = default;
+};
+
+struct LoweredCallableAdapterItem {
+  FunctionId function = 0;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
+
+  friend bool operator==(const LoweredCallableAdapterItem &,
+                         const LoweredCallableAdapterItem &) = default;
+};
+
 using LoweredGeneratedItemPayload =
-    std::variant<std::monostate, LoweredNativeCallbackItem>;
+    std::variant<std::monostate, LoweredStructuralOperatorAdapterItem,
+                 LoweredCallableAdapterItem, LoweredNativeCallbackItem>;
+
+enum class LoweredGeneratedItemSourceKind {
+  Body,
+  Declaration,
+  Count,
+};
 
 struct LoweredGeneratedItem {
   LoweredGeneratedItemIdentity identity;
+  LoweredGeneratedItemSourceKind sourceKind =
+      LoweredGeneratedItemSourceKind::Body;
   MirBodyAddress sourceBody;
+  LoweredDeclarationId sourceDeclaration = 0;
   std::vector<LoweredGeneratedItemIdentity> dependencies;
   LoweredGeneratedItemPayload payload;
 

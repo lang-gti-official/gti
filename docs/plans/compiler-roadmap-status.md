@@ -64,11 +64,13 @@ remain invalid. The complete 124-function GLFW 3.4 surface, including all five
 records and Vulkan-facing declarations, passes generated C17/C++20/C++23 and
 linked O0/O3 oracles.
 
-The remaining backend boundary is generated representation. Hosted entry and
-program initialization have explicit thunk contracts; some structural,
-callable, lifecycle, native, and concrete-instance adapters still derive shape
-from sealed frontend facts. This is a future second-backend concern, not a
-source-body compatibility route.
+The remaining backend boundary is generated representation and declaration
+assembly. Hosted entry, program initialization, native callbacks, structural
+operators, and callable adapters have explicit generated-item contracts;
+lifecycle, remaining native, and concrete-instance adapters still derive shape
+from sealed frontend facts. Structural/callable C++ spelling also remains in
+the transitional declaration emitter. This is a future second-backend concern,
+not a source-body compatibility route.
 
 ### Historical backend campaign notes
 

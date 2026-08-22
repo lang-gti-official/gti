@@ -72,9 +72,9 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
   CppMirRepresentationSnapshotBuild snapshot =
       input.loweredProgram != nullptr
           ? buildCppMirRepresentationSnapshot(*input.loweredProgram, standard)
-          : buildCppMirRepresentationSnapshot(input.program, input.semantics,
-                                              input.hir, input.mir,
-                                              input.target, standard);
+          : buildCppMirRepresentationSnapshot(
+                input.program, input.semantics, input.hir, input.mir,
+                input.target, standard, input.sourceMir);
   if (!snapshot.valid()) {
     const std::string detail = snapshot.issues.empty()
                                    ? "unknown snapshot-builder failure"

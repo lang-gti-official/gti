@@ -158,23 +158,58 @@ struct CppMirNativeCallbackThunk {
                          const CppMirNativeCallbackThunk &) = default;
 };
 
+struct CppMirStructuralOperatorThunk {
+  FunctionId function = 0;
+  OverloadedOperator operation = OverloadedOperator::Dereference;
+
+  friend bool operator==(const CppMirStructuralOperatorThunk &,
+                         const CppMirStructuralOperatorThunk &) = default;
+};
+
+struct CppMirCallableThunk {
+  FunctionId function = 0;
+  CallableInvocationCapability capability = CallableInvocationCapability::Read;
+
+  friend bool operator==(const CppMirCallableThunk &,
+                         const CppMirCallableThunk &) = default;
+};
+
 using CppMirGeneratedThunkPayload =
-    std::variant<std::monostate, CppMirNativeCallbackThunk>;
+    std::variant<std::monostate, CppMirStructuralOperatorThunk,
+                 CppMirCallableThunk, CppMirNativeCallbackThunk>;
+
+enum class CppMirGeneratedThunkSourceKind {
+  Body,
+  Declaration,
+  Count,
+};
 
 struct CppMirGeneratedThunk {
   CppMirThunkIdentity identity;
+  CppMirGeneratedThunkSourceKind sourceKind =
+      CppMirGeneratedThunkSourceKind::Body;
   MirBodyAddress sourceBody;
+  std::size_t sourceDeclaration = 0;
   CppMirSurfaceSupport support = CppMirSurfaceSupport::Supported;
   // Dependencies are emitted before this thunk. The planner requires the
-  // graph to be unique, closed, acyclic, and rooted by a body row. The exact
-  // ProgramInitialization source and sole root are executable Module/0 when
-  // its verified merged plan contains an Initializer step. Legacy executable
-  // generic static-initializer bodies do not infer this thunk.
+  // graph to be unique, closed, acyclic, and rooted by a body or declaration
+  // row. The exact ProgramInitialization source and sole root are executable
+  // Module/0 when its verified merged plan contains an Initializer step.
+  // Legacy executable generic static-initializer bodies do not infer this
+  // thunk.
   std::vector<CppMirThunkIdentity> dependencies;
   CppMirGeneratedThunkPayload payload;
 
   friend bool operator==(const CppMirGeneratedThunk &,
                          const CppMirGeneratedThunk &) = default;
+};
+
+struct CppMirDeclarationThunkRoots {
+  std::size_t declaration = 0;
+  std::vector<CppMirThunkIdentity> requiredThunks;
+
+  friend bool operator==(const CppMirDeclarationThunkRoots &,
+                         const CppMirDeclarationThunkRoots &) = default;
 };
 
 struct CppMirRepresentationSnapshot {
@@ -189,6 +224,7 @@ struct CppMirRepresentationSnapshot {
   // checks the builder's private full-copy inventory seal before doing so; it
   // does not independently reconstruct source declarations from MIR.
   std::vector<CppMirDataRepresentation> data;
+  std::vector<CppMirDeclarationThunkRoots> declarationRoots;
   std::vector<CppMirGeneratedThunk> thunks;
 
 private:
@@ -196,6 +232,7 @@ private:
     std::optional<MirProgram> mir;
     std::vector<CppMirBodyRepresentation> bodies;
     std::vector<CppMirDataRepresentation> data;
+    std::vector<CppMirDeclarationThunkRoots> declarationRoots;
     std::vector<CppMirGeneratedThunk> thunks;
 
     friend bool operator==(const InventorySeal &,
@@ -233,6 +270,9 @@ enum class CppMirPlanIssueKind {
   InvalidThunkSource,
   InvalidThunkPayload,
   DuplicateBodyThunkDependency,
+  InvalidDeclarationThunkRoot,
+  DuplicateDeclarationThunkRoot,
+  DuplicateDeclarationThunkDependency,
   DuplicateThunkDependency,
   MissingThunkDependency,
   MissingContractedThunk,
@@ -267,9 +307,11 @@ struct CppMirUnsupportedSurface {
 struct CppMirProgramPlan {
   CppMirProgramPlanStatus status = CppMirProgramPlanStatus::Incoherent;
   // Valid plans store bodies in enumerateMirBodyAddresses order, data in
-  // identity order, and thunks in deterministic dependency-before-user order.
+  // identity order, declaration roots in declaration order, and thunks in
+  // deterministic dependency-before-user order.
   std::vector<CppMirBodyRepresentation> bodies;
   std::vector<CppMirDataRepresentation> data;
+  std::vector<CppMirDeclarationThunkRoots> declarationRoots;
   std::vector<CppMirGeneratedThunk> thunks;
   std::vector<CppMirPlanIssue> issues;
   std::vector<CppMirUnsupportedSurface> unsupported;

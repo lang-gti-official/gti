@@ -113,6 +113,19 @@ public:
   int32_t read() { return this.value; }
 };
 
+class Cursor {
+  mut int32_t current = 0;
+public:
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(Cursor& other) { return this.current != other.current; }
+};
+
+class Increment {
+public:
+  int32_t operator()(int32_t value) { return value + 1; }
+};
+
 mut int32_t process_seed = 1;
 
 extern "C" {
@@ -218,9 +231,35 @@ void testDetachedDeterministicProgram() {
               1 &&
           generatedCount(
               *first, lang::LoweredGeneratedItemKind::NativeInteropAdapter) ==
-              1,
+              1 &&
+          generatedCount(
+              *first,
+              lang::LoweredGeneratedItemKind::StructuralOperatorAdapter) == 3 &&
+          generatedCount(*first,
+                         lang::LoweredGeneratedItemKind::CallableAdapter) == 1,
       "the lowered program should own startup, initialization, and native "
-      "callback contracts without frontend pointers");
+      "callback/declaration adapter contracts without frontend pointers");
+  const bool declarationAdaptersRooted = std::all_of(
+      first->generatedItems().begin(), first->generatedItems().end(),
+      [&](const lang::LoweredGeneratedItem &item) {
+        if (item.identity.kind !=
+                lang::LoweredGeneratedItemKind::StructuralOperatorAdapter &&
+            item.identity.kind !=
+                lang::LoweredGeneratedItemKind::CallableAdapter) {
+          return true;
+        }
+        const lang::LoweredDeclaration *source =
+            first->findDeclaration(item.sourceDeclaration);
+        return item.sourceKind ==
+                   lang::LoweredGeneratedItemSourceKind::Declaration &&
+               source != nullptr &&
+               std::find(source->requiredGeneratedItems.begin(),
+                         source->requiredGeneratedItems.end(),
+                         item.identity) != source->requiredGeneratedItems.end();
+      });
+  expect(declarationAdaptersRooted,
+         "structural and callable adapters should be rooted by their exact "
+         "lowered function declarations");
   expect(!first->declarations().empty() &&
              std::all_of(first->declarations().begin(),
                          first->declarations().end(),
@@ -327,6 +366,21 @@ void testMutationRejection() {
   expect(hasIssue(derootedIssues,
                   lang::LoweredProgramIssueKind::OrphanGeneratedItem),
          "de-rooting generated contracts should expose orphan items");
+
+  lang::LoweredProgram declarationDerooted = original;
+  for (lang::LoweredDeclaration &declaration :
+       lang::LoweredProgramTestAccess::declarations(declarationDerooted)) {
+    declaration.requiredGeneratedItems.clear();
+  }
+  const std::vector<lang::LoweredProgramIssue> declarationDerootedIssues =
+      lang::verifyLoweredProgram(declarationDerooted);
+  expect(
+      hasIssue(declarationDerootedIssues,
+               lang::LoweredProgramIssueKind::InvalidGeneratedItemInventory) &&
+          hasIssue(declarationDerootedIssues,
+                   lang::LoweredProgramIssueKind::OrphanGeneratedItem),
+      "de-rooting declaration adapters should fail the exact inventory and "
+      "reachability checks");
 
   lang::LoweredProgram cyclic = original;
   auto &cyclicItems = lang::LoweredProgramTestAccess::generatedItems(cyclic);

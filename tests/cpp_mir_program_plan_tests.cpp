@@ -17,11 +17,12 @@ namespace lang {
 // rows, keeping the production builder as the sole snapshot authority.
 struct CppMirRepresentationSnapshotTestAccess {
   static void seal(CppMirRepresentationSnapshot &snapshot) {
-    snapshot.inventorySeal_ =
-        CppMirRepresentationSnapshot::InventorySeal{.mir = snapshot.mir,
-                                                    .bodies = snapshot.bodies,
-                                                    .data = snapshot.data,
-                                                    .thunks = snapshot.thunks};
+    snapshot.inventorySeal_ = CppMirRepresentationSnapshot::InventorySeal{
+        .mir = snapshot.mir,
+        .bodies = snapshot.bodies,
+        .data = snapshot.data,
+        .declarationRoots = snapshot.declarationRoots,
+        .thunks = snapshot.thunks};
   }
 };
 
@@ -319,27 +320,27 @@ void addClosedThunkGraph(lang::CppMirRepresentationSnapshot &snapshot,
     return;
   }
 
-  const lang::CppMirThunkIdentity structural{
-      .kind = lang::CppMirThunkKind::StructuralOperatorAdapter,
+  const lang::CppMirThunkIdentity lifecycle{
+      .kind = lang::CppMirThunkKind::LifecycleCleanup, .owner = helper->id};
+  const lang::CppMirThunkIdentity concrete{
+      .kind = lang::CppMirThunkKind::ConcreteInstanceAdapter,
       .owner = helper->id};
-  const lang::CppMirThunkIdentity callable{
-      .kind = lang::CppMirThunkKind::CallableAdapter, .owner = helper->id};
   const lang::CppMirThunkIdentity hosted{
       .kind = lang::CppMirThunkKind::HostedEntry, .owner = entry->id};
   snapshot.thunks = {
       {.identity = hosted,
        .sourceBody = {.kind = lang::MirBodyKind::HostedStartup,
                       .owner = entry->id}},
-      {.identity = callable,
+      {.identity = concrete,
        .sourceBody = {.kind = lang::MirBodyKind::Function, .owner = helper->id},
-       .dependencies = {structural}},
-      {.identity = structural,
+       .dependencies = {lifecycle}},
+      {.identity = lifecycle,
        .sourceBody = {.kind = lang::MirBodyKind::Function,
                       .owner = helper->id}}};
   if (lang::CppMirBodyRepresentation *body =
           findBody(snapshot, {.kind = lang::MirBodyKind::Function,
                               .owner = helper->id})) {
-    body->requiredThunks = {callable};
+    body->requiredThunks = {concrete};
   }
   if (lang::CppMirBodyRepresentation *body =
           findBody(snapshot, {.kind = lang::MirBodyKind::HostedStartup,
@@ -458,9 +459,9 @@ void testCoherentInventoryAndThunkClosure() {
              plan.thunks[0].identity.kind ==
                  lang::CppMirThunkKind::HostedEntry &&
              plan.thunks[1].identity.kind ==
-                 lang::CppMirThunkKind::StructuralOperatorAdapter &&
+                 lang::CppMirThunkKind::LifecycleCleanup &&
              plan.thunks[2].identity.kind ==
-                 lang::CppMirThunkKind::CallableAdapter,
+                 lang::CppMirThunkKind::ConcreteInstanceAdapter,
          "generated thunks should be canonicalized dependency before user");
 }
 
@@ -876,8 +877,8 @@ void testThunkIntegrityFailures() {
   lang::CppMirRepresentationSnapshot duplicateDependency =
       makeSnapshot(frontend.mir);
   addClosedThunkGraph(duplicateDependency, frontend.mir);
-  lang::CppMirGeneratedThunk *duplicateCallable =
-      findThunk(duplicateDependency, lang::CppMirThunkKind::CallableAdapter);
+  lang::CppMirGeneratedThunk *duplicateCallable = findThunk(
+      duplicateDependency, lang::CppMirThunkKind::ConcreteInstanceAdapter);
   expect(duplicateCallable != nullptr &&
              !duplicateCallable->dependencies.empty(),
          "the closed thunk fixture should retain a callable dependency");
@@ -898,7 +899,7 @@ void testThunkIntegrityFailures() {
       makeSnapshot(frontend.mir);
   addClosedThunkGraph(missingDependency, frontend.mir);
   if (lang::CppMirGeneratedThunk *callable = findThunk(
-          missingDependency, lang::CppMirThunkKind::CallableAdapter)) {
+          missingDependency, lang::CppMirThunkKind::ConcreteInstanceAdapter)) {
     callable->dependencies = {
         {.kind = lang::CppMirThunkKind::NativeInteropAdapter, .owner = 999}};
   }
@@ -915,9 +916,10 @@ void testThunkIntegrityFailures() {
   expect(cyclic.thunks.size() == 3,
          "the closed thunk fixture should contain three thunks");
   if (lang::CppMirGeneratedThunk *structural =
-          findThunk(cyclic, lang::CppMirThunkKind::StructuralOperatorAdapter)) {
-    structural->dependencies = {{.kind = lang::CppMirThunkKind::CallableAdapter,
-                                 .owner = structural->identity.owner}};
+          findThunk(cyclic, lang::CppMirThunkKind::LifecycleCleanup)) {
+    structural->dependencies = {
+        {.kind = lang::CppMirThunkKind::ConcreteInstanceAdapter,
+         .owner = structural->identity.owner}};
   }
   const lang::CppMirProgramPlan cyclicPlan =
       planSnapshotForTesting(frontend.mir, std::move(cyclic));

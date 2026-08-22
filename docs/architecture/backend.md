@@ -223,9 +223,9 @@ route.
 The source-body cutover is complete, but the backend is not yet independent of
 AST/HIR representation planning. In particular, MIR does not yet provide a
 complete inventory and semantic description for every generated adapter.
-`HostedEntry`, `ProgramInitialization`, and same-thread native-callback
-adapters have explicit plan contracts. Structural-operator, callable,
-lifecycle-cleanup, other native-interop, and concrete-instance adapters still
+`HostedEntry`, `ProgramInitialization`, structural-operator, callable, and
+same-thread native-callback adapters have explicit plan contracts.
+Lifecycle-cleanup, other native-interop, and concrete-instance adapters still
 derive part of their shape from sealed frontend representation facts.
 
 Native callbacks are the first migrated generated-adapter family. The sealed
@@ -236,14 +236,23 @@ or reordered rows. `CppEmitter` consumes that completed inventory for adapter
 declarations and definitions; it does not query the HIR callback table. C++
 names and ABI spelling remain backend policy rather than MIR facts.
 
+Structural-operator and callable adapters are declaration-generated rather
+than executable-body-generated. `LoweredProgram` gives each eligible function
+one exact target-independent payload and roots it from the resolved active
+function declaration. The C++ private planner verifies declaration provenance,
+payload identity, graph closure, and ordering; `CppEmitter` consults that
+sealed plan to decide whether an adapter exists. Its current spelling still
+uses the transitional declaration emitter, so this completes adapter
+eligibility authority but not the broader AST-free declaration cutover.
+
 The current generated-item family census is:
 
 | Family | Sealed contract | Production state |
 | --- | --- | --- |
 | Hosted entry | Exact owner, startup body, initialization dependency, and body root | Contracted |
 | Program initialization | Exact `Module/0` owner and root | Contracted |
-| Structural operator adapter | Identity kind reserved | Not yet exhaustively inventoried |
-| Callable adapter | Identity kind reserved | Not yet exhaustively inventoried |
+| Structural operator adapter | Exact function/operator payload and declaration root | Contracted; C++ spelling awaits declaration-emitter cutover |
+| Callable adapter | Exact function/capability payload and declaration root | Contracted; C++ spelling awaits declaration-emitter cutover |
 | Lifecycle cleanup | Identity kind reserved | Not yet exhaustively inventoried |
 | Native interop adapter | Exact payload, source function, MIR-operation roots, and order for native callbacks | Native callbacks contracted; other native adapters pending |
 | Concrete-instance adapter | Identity kind reserved | Not yet exhaustively inventoried |
