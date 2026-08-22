@@ -14238,6 +14238,51 @@ int main() {
          "std::string copies should require explicit allocating clone() rather "
          "than hidden allocation");
 
+  const std::string constructorOwnershipSource = R"(
+#include <std/string>
+class Path {
+public:
+  Path(std::string value) {}
+};
+int main() {
+  mut std::string source = std::string("/hello/world.txt");
+  Path parsed = Path(source);
+  return 0;
+}
+)";
+  const lang::FrontendResult invalidConstructorCopy = lang::Frontend().analyze(
+      entry, constructorOwnershipSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const lang::Diagnostic *constructorOwnership =
+      findDiagnosticByCode(invalidConstructorCopy.diagnostics, "GTI-S2018");
+  const std::size_t constructorArgument =
+      constructorOwnershipSource.rfind("source);");
+  const std::size_t constructorDeclaration =
+      constructorOwnershipSource.find("Path(std::string");
+  expect(!invalidConstructorCopy.canGenerateCode() &&
+             constructorOwnership != nullptr &&
+             countDiagnosticCode(invalidConstructorCopy.diagnostics,
+                                 "GTI-S2012") == 0 &&
+             constructorOwnership->message.find(
+                 "Constructor argument 1 would call the deleted copy "
+                 "constructor of 'std::string'") != std::string::npos &&
+             constructorOwnership->primary.start == constructorArgument &&
+             constructorOwnership->primary.end == constructorArgument + 6 &&
+             constructorOwnership->related.size() == 1 &&
+             constructorOwnership->related.front().span.start ==
+                 constructorDeclaration &&
+             constructorOwnership->related.front().span.end ==
+                 constructorDeclaration + 4 &&
+             constructorOwnership->related.front().message ==
+                 "Exact-type candidate: Path(std::string)" &&
+             constructorOwnership->hints.size() == 1 &&
+             constructorOwnership->hints.front().find(
+                 "std::move(...) when this call should transfer ownership") !=
+                 std::string::npos &&
+             constructorOwnership->fixes.empty(),
+         "an exact-type constructor rejected only by copy viability should "
+         "report the argument ownership failure rather than a type mismatch");
+
   const lang::FrontendResult integerOutput = lang::Frontend().analyze(
       entry, R"(
 int main() {

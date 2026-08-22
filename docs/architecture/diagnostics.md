@@ -82,6 +82,15 @@ diagnostics or letting a backend message choose either identity.
   separately owns an invalid or uninferable `uint64_t` extent generic; point at
   its declaration name or the call that cannot infer it. Neither family has a
   universally correct fix-it.
+- `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a
+  by-value argument. When constructor search finds one accessible candidate
+  whose parameter types match and rejects it only because the written value
+  category cannot initialize that parameter, point at the argument and report
+  `GTI-S2018` rather than the aggregate `GTI-S2012` no-exact-constructor
+  diagnostic. Relate the exact-type constructor candidate, state whether copy
+  or move construction is unavailable, and suggest explicit ownership transfer
+  when applicable. Do not attach a fix-it: moving the value versus preserving
+  it with an explicit allocating copy requires programmer intent.
 - `GTI-S2023` owns a syntactically complete but semantically invalid bounded
   comma pack fold. Point at the ellipsis for an invalid target or constraint,
   at a repeated call argument that is not a named value, or at the final
