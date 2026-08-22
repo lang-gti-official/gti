@@ -2917,7 +2917,11 @@ public:
       diagnostics.emplace_back(std::move(diagnostic));
     } else if (symbol->ownerClass != 0 && !symbol->staticMember &&
                !receiverAllowsMutation(currentReceiverMutability)) {
-      report(expr.name(), "Cannot mutate through a read-only receiver.");
+      const std::optional<ResolvedFieldUse> root =
+          receiverRestrictedField(expr.name(), *symbol);
+      if (!root || !reportReceiverRestrictedMutation(expr.name(), *root)) {
+        report(expr.name(), "Cannot mutate through a read-only receiver.");
+      }
     } else {
       reportLoanPlaceConflict(
           expr.name(), targetPlace, AccessMode::Mutable,
@@ -4410,7 +4414,7 @@ public:
         report(expr.bracket(),
                "operator[] does not provide mutable element access.",
                "GTI-S2002");
-      } else if (!reportReceiverRestrictedArrayField(expr.object())) {
+      } else if (!reportReceiverRestrictedMutation(expr.object())) {
         report(expr.bracket(),
                "Cannot assign through an immutable fixed array binding.",
                "GTI-S2002");
@@ -5646,7 +5650,11 @@ public:
     } else if (!resolvedMember.assignable) {
       report(expr.name(), "Member is immutable.");
     } else if (!mutableReceiver) {
-      report(expr.name(), "Cannot mutate through a read-only receiver.");
+      const std::optional<ResolvedFieldUse> root = receiverRestrictedMemberRoot(
+          expr.object(), expr.name(), member->symbol);
+      if (!root || !reportReceiverRestrictedMutation(expr.name(), *root)) {
+        report(expr.name(), "Cannot mutate through a read-only receiver.");
+      }
     } else {
       reportLoanPlaceConflict(
           expr.name(), targetPlace, AccessMode::Mutable,
@@ -18144,9 +18152,11 @@ private:
             "active mutable parent loan.");
         diagnostics.emplace_back(std::move(diagnostic));
       } else if (info->access != AccessMode::Mutable) {
-        report(expressionToken(initializer),
-               "A mutable reference requires a mutable initializer.",
-               "GTI-S2017");
+        if (!reportReceiverRestrictedReference(initializer)) {
+          report(expressionToken(initializer),
+                 "A mutable reference requires a mutable initializer.",
+                 "GTI-S2017");
+        }
       }
     }
   }
@@ -28843,10 +28853,24 @@ private:
     return false;
   }
 
+  [[nodiscard]] bool receiverRestrictionActive() const {
+    return currentClass && currentFunctionDeclaration != nullptr &&
+           !receiverAllowsMutation(currentReceiverMutability) &&
+           !currentStaticMemberFunction && lambdaDepth == 0;
+  }
+
+  [[nodiscard]] std::optional<ResolvedFieldUse>
+  receiverRestrictedField(const Token &use, const Symbol &symbol) const {
+    if (!receiverRestrictionActive() || symbol.ownerClass != *currentClass ||
+        symbol.staticMember || !symbol.assignable) {
+      return std::nullopt;
+    }
+    return ResolvedFieldUse{.use = &use, .symbol = &symbol};
+  }
+
   [[nodiscard]] std::optional<ResolvedFieldUse>
   receiverRestrictedField(const ExprPtr &expression) const {
-    if (!currentClass || receiverAllowsMutation(currentReceiverMutability) ||
-        currentStaticMemberFunction || !expression) {
+    if (!receiverRestrictionActive() || !expression) {
       return std::nullopt;
     }
     if (const auto *grouping =
@@ -28854,49 +28878,135 @@ private:
       return receiverRestrictedField(grouping->expression());
     }
     if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      const SemanticType *objectType = semanticModel.findType(*index->object());
+      if (objectType == nullptr || objectType->kind != SemanticType::Array) {
+        return std::nullopt;
+      }
       return receiverRestrictedField(index->object());
     }
     if (const auto *variable =
             dynamic_cast<const Variable *>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
-      if (symbol != nullptr && symbol->ownerClass == *currentClass &&
-          !symbol->staticMember && symbol->assignable) {
-        return ResolvedFieldUse{.use = &variable->name(), .symbol = symbol};
-      }
-      return std::nullopt;
+      return symbol == nullptr
+                 ? std::nullopt
+                 : receiverRestrictedField(variable->name(), *symbol);
     }
     const auto *member = dynamic_cast<const Get *>(expression.get());
-    if (member == nullptr || member->access().kind != TokenKind::DOT ||
-        !isThisObject(member->object())) {
+    if (member == nullptr || member->access().kind != TokenKind::DOT) {
       return std::nullopt;
     }
     const SemanticType objectType = memberAccessObjectType(*member);
     const MemberInfo *resolved = findMember(objectType, member->name());
-    if (resolved == nullptr || resolved->symbol.ownerClass != *currentClass ||
-        resolved->symbol.staticMember || !resolved->symbol.assignable) {
+    if (resolved == nullptr || resolved->symbol.staticMember ||
+        !resolved->symbol.assignable) {
       return std::nullopt;
     }
-    return ResolvedFieldUse{.use = &member->name(),
-                            .symbol = &resolved->symbol};
+    if (isThisObject(member->object())) {
+      return receiverRestrictedField(member->name(), resolved->symbol);
+    }
+    return receiverRestrictedField(member->object());
   }
 
-  bool reportReceiverRestrictedArrayField(const ExprPtr &expression) {
-    const std::optional<ResolvedFieldUse> field =
-        receiverRestrictedField(expression);
-    if (!field || field->use == nullptr || field->symbol == nullptr) {
+  [[nodiscard]] std::optional<ResolvedFieldUse>
+  receiverRestrictedMemberRoot(const ExprPtr &object, const Token &memberUse,
+                               const Symbol &member) const {
+    if (!receiverRestrictionActive() || member.staticMember ||
+        !member.assignable) {
+      return std::nullopt;
+    }
+    if (isThisObject(object)) {
+      return receiverRestrictedField(memberUse, member);
+    }
+    return receiverRestrictedField(object);
+  }
+
+  void appendReceiverRestrictionContext(Diagnostic &diagnostic,
+                                        const ResolvedFieldUse &root) const {
+    const FunctionDecl &method = *currentFunctionDeclaration;
+    const Token &methodToken =
+        method.operatorName() ? method.operatorName()->keyword : method.name();
+    diagnostic.related.push_back(
+        {tokenSpan(methodToken),
+         "Method '" + methodToken.lexeme + "' is read-only by default."});
+    diagnostic.related.push_back(
+        {tokenSpan(root.symbol->declaration),
+         "Field '" + root.symbol->declaration.lexeme +
+             "' is declared mutable, but it is writable only through a "
+             "mutable receiver."});
+    diagnostic.hints.emplace_back(
+        "Add trailing 'mut' only if callers should require a mutable '" +
+        classInfo(*currentClass).name.lexeme +
+        "'; otherwise avoid changing receiver state in this method.");
+  }
+
+  bool reportReceiverRestrictedMutation(const Token &writtenField,
+                                        const ResolvedFieldUse &root) {
+    if (root.use == nullptr || root.symbol == nullptr ||
+        currentFunctionDeclaration == nullptr || !currentClass) {
       return false;
     }
-    Diagnostic diagnostic =
-        makeDiagnostic("GTI-S2002", DiagnosticPhase::Semantics, *field->use,
-                       "Cannot modify field '" + field->use->lexeme +
-                           "' through a read-only receiver.");
-    diagnostic.related.push_back({tokenSpan(field->symbol->declaration),
-                                  "Field '" +
-                                      field->symbol->declaration.lexeme +
-                                      "' is declared mutable here."});
-    diagnostic.hints.emplace_back(
-        "Methods are read-only by default; add trailing 'mut' to this method "
-        "when it must modify mutable fields.");
+    const Token &methodToken =
+        currentFunctionDeclaration->operatorName()
+            ? currentFunctionDeclaration->operatorName()->keyword
+            : currentFunctionDeclaration->name();
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2002", DiagnosticPhase::Semantics, writtenField,
+        "Cannot modify field '" + writtenField.lexeme + "' because method '" +
+            methodToken.lexeme + "' has no trailing 'mut' receiver qualifier.");
+    appendReceiverRestrictionContext(diagnostic, root);
+    diagnostics.emplace_back(std::move(diagnostic));
+    return true;
+  }
+
+  [[nodiscard]] static const Token *
+  receiverRestrictedWrittenField(const ExprPtr &expression) {
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return receiverRestrictedWrittenField(grouping->expression());
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return receiverRestrictedWrittenField(index->object());
+    }
+    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      return &member->name();
+    }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      return &variable->name();
+    }
+    return nullptr;
+  }
+
+  bool reportReceiverRestrictedMutation(const ExprPtr &targetExpression) {
+    const std::optional<ResolvedFieldUse> root =
+        receiverRestrictedField(targetExpression);
+    const Token *writtenField =
+        receiverRestrictedWrittenField(targetExpression);
+    return root && writtenField != nullptr &&
+           reportReceiverRestrictedMutation(*writtenField, *root);
+  }
+
+  bool reportReceiverRestrictedReference(const ExprPtr &initializer) {
+    const std::optional<ResolvedFieldUse> root =
+        receiverRestrictedField(initializer);
+    if (!root || root->use == nullptr || root->symbol == nullptr ||
+        currentFunctionDeclaration == nullptr || !currentClass) {
+      return false;
+    }
+    const Token *writtenField = receiverRestrictedWrittenField(initializer);
+    if (writtenField == nullptr) {
+      return false;
+    }
+    const Token &methodToken =
+        currentFunctionDeclaration->operatorName()
+            ? currentFunctionDeclaration->operatorName()->keyword
+            : currentFunctionDeclaration->name();
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics, *writtenField,
+        "Cannot bind a mutable reference to field '" + writtenField->lexeme +
+            "' because method '" + methodToken.lexeme +
+            "' has no trailing 'mut' receiver qualifier.");
+    appendReceiverRestrictionContext(diagnostic, *root);
     diagnostics.emplace_back(std::move(diagnostic));
     return true;
   }

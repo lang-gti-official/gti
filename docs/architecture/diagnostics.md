@@ -82,6 +82,17 @@ diagnostics or letting a backend message choose either identity.
   separately owns an invalid or uninferable `uint64_t` extent generic; point at
   its declaration name or the call that cannot infer it. Neither family has a
   universally correct fix-it.
+- `GTI-S2002` owns assignment through the current method's read-only receiver
+  when the receiver-rooted field path is otherwise mutable. Trace only
+  ordinary grouping, named `.` projections, and built-in fixed-array indexing;
+  stop at calls, overloaded projections, raw pointers, immutable path
+  segments, and unrelated storage. Point at the written field, name the
+  method's missing trailing `mut` in the primary message, relate the read-only
+  method and mutable root-field declarations, and explain the caller-facing
+  API tradeoff in a hint. The equivalent mutable-reference binding retains
+  `GTI-S2017` while carrying the same cause and structured context. Neither
+  form offers a fix-it because adding receiver mutability changes the callable
+  contract.
 - `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a
   by-value argument. When constructor search finds one accessible candidate
   whose parameter types match and rejects it only because the written value

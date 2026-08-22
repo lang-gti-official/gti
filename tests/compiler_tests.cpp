@@ -22614,27 +22614,28 @@ int main() {
 )");
   expect(!invalid.canGenerateCode(),
          "invalid fixed array operations should fail semantic analysis");
-  expect(hasDiagnostic(invalid.diagnostics, "requires exactly 3") &&
-             hasDiagnostic(invalid.diagnostics, "immutable fixed array") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Cannot modify field 'slots' through a read-only "
-                           "receiver") &&
-             hasDiagnosticHint(invalid.diagnostics, "trailing 'mut'") &&
-             hasRelatedDiagnostic(invalid.diagnostics,
-                                  "is declared mutable here") &&
-             hasDiagnostic(invalid.diagnostics, "index must have an integer") &&
-             hasDiagnostic(invalid.diagnostics, "valid range [0, 2)") &&
-             hasDiagnostic(invalid.diagnostics, "require an initializer") &&
-             hasDiagnostic(invalid.diagnostics, "default-initializable") &&
-             hasDiagnostic(invalid.diagnostics, "No overload of 'choose'") &&
-             hasDiagnostic(invalid.diagnostics, "Unknown fixed array member") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "extent arithmetic overflows uint64_t") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "cannot produce a negative value") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "cannot divide or take modulo by zero"),
-         "fixed array diagnostics should explain extent, access, and bounds");
+  expect(
+      hasDiagnostic(invalid.diagnostics, "requires exactly 3") &&
+          hasDiagnostic(invalid.diagnostics, "immutable fixed array") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot modify field 'slots' because method "
+                        "'write' has no trailing 'mut' receiver qualifier") &&
+          hasDiagnosticHint(invalid.diagnostics, "trailing 'mut'") &&
+          hasRelatedDiagnostic(invalid.diagnostics,
+                               "is declared mutable, but it is writable") &&
+          hasDiagnostic(invalid.diagnostics, "index must have an integer") &&
+          hasDiagnostic(invalid.diagnostics, "valid range [0, 2)") &&
+          hasDiagnostic(invalid.diagnostics, "require an initializer") &&
+          hasDiagnostic(invalid.diagnostics, "default-initializable") &&
+          hasDiagnostic(invalid.diagnostics, "No overload of 'choose'") &&
+          hasDiagnostic(invalid.diagnostics, "Unknown fixed array member") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "extent arithmetic overflows uint64_t") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot produce a negative value") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot divide or take modulo by zero"),
+      "fixed array diagnostics should explain extent, access, and bounds");
 
   lang::Lexer lexer;
   lang::Parser malformed(lexer.scan("int broken[] = {}; int recovered = 1;"));
@@ -28656,6 +28657,163 @@ int main() {
       "diagnostics while immutable named objects remain rejected");
 }
 
+void testReadOnlyReceiverDiagnostics() {
+  const std::string invalidSource = R"(
+struct Component {
+  mut int offset = 0;
+};
+
+class Path {
+public:
+  void direct() {
+    direct_value = 1;
+  }
+
+  void nested() {
+    component.offset = 2;
+  }
+
+  void bind() {
+    mut int& alias = component.offset;
+  }
+
+private:
+  mut int direct_value = 0;
+  mut Component component = Component();
+};
+)";
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "read-only-receiver-diagnostics.gti", invalidSource);
+  const auto diagnosticAt = [&](std::string_view code, std::size_t offset) {
+    return std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [&](const lang::Diagnostic &diagnostic) {
+                          return diagnostic.code == code &&
+                                 diagnostic.primary.start == offset;
+                        });
+  };
+  const std::size_t directUse = invalidSource.find("direct_value = 1");
+  const std::size_t nestedUse = invalidSource.find("offset = 2");
+  const std::size_t referenceUse = invalidSource.rfind("offset;");
+  const auto direct = diagnosticAt("GTI-S2002", directUse);
+  const auto nested = diagnosticAt("GTI-S2002", nestedUse);
+  const auto reference = diagnosticAt("GTI-S2017", referenceUse);
+  const auto hasReceiverContract = [&](const lang::Diagnostic &diagnostic,
+                                       std::string_view method,
+                                       std::size_t methodOffset,
+                                       std::string_view root,
+                                       std::size_t rootOffset) {
+    return diagnostic.related.size() == 2 &&
+           diagnostic.related[0].span.start == methodOffset &&
+           diagnostic.related[0].span.end == methodOffset + method.size() &&
+           diagnostic.related[0].message == "Method '" + std::string(method) +
+                                                "' is read-only by default." &&
+           diagnostic.related[1].span.start == rootOffset &&
+           diagnostic.related[1].span.end == rootOffset + root.size() &&
+           diagnostic.related[1].message ==
+               "Field '" + std::string(root) +
+                   "' is declared mutable, but it is writable only through "
+                   "a mutable receiver." &&
+           diagnostic.hints ==
+               std::vector<std::string>{
+                   "Add trailing 'mut' only if callers should require a "
+                   "mutable 'Path'; otherwise avoid changing receiver state "
+                   "in this method."} &&
+           diagnostic.fixes.empty();
+  };
+  const std::size_t directDeclaration = invalidSource.find("direct_value = 0");
+  const std::size_t componentDeclaration =
+      invalidSource.find("component = Component");
+  expect(!invalid.canGenerateCode() && direct != invalid.diagnostics.end() &&
+             direct->primary.end ==
+                 directUse + std::string("direct_value").size() &&
+             direct->message ==
+                 "Cannot modify field 'direct_value' because method 'direct' "
+                 "has no trailing 'mut' receiver qualifier." &&
+             hasReceiverContract(*direct, "direct",
+                                 invalidSource.find("direct()"), "direct_value",
+                                 directDeclaration),
+         "a direct implicit field write should identify the read-only method "
+         "and mutable field declaration");
+  expect(
+      nested != invalid.diagnostics.end() &&
+          nested->primary.end == nestedUse + std::string("offset").size() &&
+          nested->message ==
+              "Cannot modify field 'offset' because method 'nested' has no "
+              "trailing 'mut' receiver qualifier." &&
+          hasReceiverContract(*nested, "nested", invalidSource.find("nested()"),
+                              "component", componentDeclaration),
+      "a nested receiver-rooted field write should retain its terminal field "
+      "and root declaration");
+  expect(reference != invalid.diagnostics.end() &&
+             reference->primary.end ==
+                 referenceUse + std::string("offset").size() &&
+             reference->message ==
+                 "Cannot bind a mutable reference to field 'offset' because "
+                 "method 'bind' has no trailing 'mut' receiver qualifier." &&
+             hasReceiverContract(*reference, "bind",
+                                 invalidSource.find("bind()"), "component",
+                                 componentDeclaration),
+         "a receiver-rooted mutable-reference initializer should retain S2017 "
+         "while explaining the missing receiver qualifier");
+  expect(countDiagnosticContaining(invalid.diagnostics,
+                                   "no trailing 'mut' receiver qualifier") ==
+                 3 &&
+             !hasDiagnostic(invalid.diagnostics,
+                            "Cannot mutate through a read-only receiver"),
+         "receiver-rooted failures should not cascade with the generic "
+         "read-only receiver diagnostic");
+
+  const lang::FrontendResult immutableField =
+      lang::Frontend().analyze("immutable-receiver-field.gti", R"(
+struct Component { int offset = 0; };
+class Path {
+public:
+  void update() { component.offset = 1; }
+private:
+  mut Component component = Component();
+};
+)");
+  expect(!immutableField.canGenerateCode() &&
+             hasDiagnostic(immutableField.diagnostics, "Member is immutable") &&
+             !hasDiagnostic(immutableField.diagnostics,
+                            "no trailing 'mut' receiver qualifier"),
+         "an immutable terminal field should keep field immutability "
+         "precedence");
+
+  const lang::FrontendResult unrelatedObject =
+      lang::Frontend().analyze("unrelated-read-only-object.gti", R"(
+struct Component { mut int offset = 0; };
+void update(Component value) { value.offset = 1; }
+)");
+  expect(!unrelatedObject.canGenerateCode() &&
+             hasDiagnostic(unrelatedObject.diagnostics,
+                           "Cannot mutate through a read-only receiver") &&
+             !hasDiagnostic(unrelatedObject.diagnostics,
+                            "no trailing 'mut' receiver qualifier"),
+         "an unrelated read-only object should not be mislabeled as the "
+         "current method receiver");
+
+  const lang::FrontendResult mutableReceiver =
+      lang::Frontend().analyze("mutable-receiver-fields.gti", R"(
+struct Component { mut int offset = 0; };
+class Path {
+public:
+  void update() mut {
+    direct_value = 1;
+    component.offset = 2;
+    mut int& alias = component.offset;
+    alias = 3;
+  }
+private:
+  mut int direct_value = 0;
+  mut Component component = Component();
+};
+)");
+  expect(mutableReceiver.canGenerateCode(),
+         "adding trailing mut should preserve valid receiver mutation and "
+         "mutable-reference semantics");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -28690,6 +28848,10 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && std::string(argv[1]) == "temporary-receivers") {
     testMutableTemporaryReceivers();
+    return failures == 0 ? 0 : 1;
+  }
+  if (argc == 2 && std::string(argv[1]) == "receiver-diagnostics") {
+    testReadOnlyReceiverDiagnostics();
     return failures == 0 ? 0 : 1;
   }
   testConstructorPartialRollbackRepresentation();
@@ -28761,6 +28923,7 @@ int main(int argc, char **argv) {
   testClassesStructsAndAccess();
   testMutableFieldGroups();
   testMutableTemporaryReceivers();
+  testReadOnlyReceiverDiagnostics();
   testConstructorsAndReceiverMutability();
   testInheritanceAndInterfaces();
   testInheritedGenericTargetInstances();

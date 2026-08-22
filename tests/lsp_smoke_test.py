@@ -2789,6 +2789,139 @@ def test_constructor_ownership_diagnostic(executable, root):
         session.close()
 
 
+def test_read_only_receiver_diagnostic(executable, root):
+    source = (
+        "struct Component {\n"
+        "  mut int offset = 0;\n"
+        "};\n"
+        "class Path {\n"
+        "public:\n"
+        "  void update() { component.offset = 1; }\n"
+        "private:\n"
+        "  mut Component component = Component();\n"
+        "};\n"
+    )
+    path = root / "read-only-receiver-diagnostic.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and any(
+                diagnostic.get("code") == "GTI-S2002"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2002"
+        )
+        written_field = source.index("offset = 1")
+        method = source.index("update()")
+        root_field = source.index("component = Component")
+        assert diagnostic["message"].splitlines()[0] == (
+            "Cannot modify field 'offset' because method 'update' has no "
+            "trailing 'mut' receiver qualifier."
+        ), diagnostic
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, written_field),
+            "end": lsp_position(source, written_field + len("offset")),
+        }
+        assert diagnostic["data"] == {
+            "phase": "semantics",
+            "hints": [
+                "Add trailing 'mut' only if callers should require a mutable "
+                "'Path'; otherwise avoid changing receiver state in this method."
+            ],
+        }
+        assert "fixes" not in diagnostic["data"]
+        assert not any(
+            item.get("code") == "GTI-S2000"
+            for item in publication["diagnostics"]
+        )
+        assert len(diagnostic["relatedInformation"]) == 2
+        method_related, field_related = diagnostic["relatedInformation"]
+        assert method_related["location"] == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, method),
+                "end": lsp_position(source, method + len("update")),
+            },
+        }
+        assert method_related["message"] == "Method 'update' is read-only by default."
+        assert field_related["location"] == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, root_field),
+                "end": lsp_position(source, root_field + len("component")),
+            },
+        }
+        assert field_related["message"] == (
+            "Field 'component' is declared mutable, but it is writable only "
+            "through a mutable receiver."
+        )
+
+        valid_source = source.replace("void update()", "void update() mut")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        cleared = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        assert cleared["diagnostics"] == [], cleared
+    finally:
+        session.close()
+
+
 def test_global_borrow_return_diagnostics(executable, root):
     valid_source = (
         "class Application { public: "
@@ -5806,6 +5939,7 @@ def main():
     test_current_language_diagnostics(sys.argv[1], root)
     test_static_assertion_tooling(sys.argv[1], root)
     test_constructor_ownership_diagnostic(sys.argv[1], root)
+    test_read_only_receiver_diagnostic(sys.argv[1], root)
     test_unique_ptr_null_state_tooling(sys.argv[1], root)
     test_global_borrow_return_diagnostics(sys.argv[1], root)
     test_cpp_reserved_identifier_diagnostic(sys.argv[1], root)
@@ -6118,7 +6252,7 @@ def main():
         diagnostic
         for diagnostic in diagnostics
         if diagnostic["code"] == "GTI-S2002"
-        and "read-only receiver" in diagnostic["message"]
+        and "no trailing 'mut' receiver qualifier" in diagnostic["message"]
     )
     receiver_field = source.index("slots[0]")
     assert receiver_mutation["range"] == {
@@ -6126,7 +6260,10 @@ def main():
         "end": lsp_position(source, receiver_field + len("slots")),
     }
     assert "trailing 'mut'" in receiver_mutation["message"]
-    assert "declared mutable here" in receiver_mutation["relatedInformation"][0][
+    assert "read-only by default" in receiver_mutation["relatedInformation"][0][
+        "message"
+    ]
+    assert "declared mutable" in receiver_mutation["relatedInformation"][1][
         "message"
     ]
     assert any(

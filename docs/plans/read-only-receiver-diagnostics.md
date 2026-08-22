@@ -1,6 +1,6 @@
 # Read-only Receiver Diagnostic Precision
 
-Status: Proposed diagnostic-only refinement.
+Status: Implemented in GTI 0.294.0.
 
 ## Outcome
 
@@ -15,9 +15,9 @@ cached state, such as `std::filesystem::path::extension()`. The language rule
 does not change: methods remain read-only by default, and a field declared
 `mut` is writable only through a mutable receiver.
 
-## Current Baseline
+## Former Baseline
 
-This reduced program is rejected today:
+Before 0.294.0, this reduced program was rejected with an imprecise message:
 
 ```gti
 struct Component {
@@ -35,7 +35,7 @@ private:
 };
 ```
 
-The primary diagnostic points at `offset` but reports only:
+The primary diagnostic pointed at `offset` but reported only:
 
 ```text
 error[GTI-S2000]: Cannot mutate through a read-only receiver.
@@ -46,7 +46,7 @@ read-only method because its declaration has no trailing `mut`. In an editor
 that renders only the primary message as virtual text, a hint would not repair
 that omission.
 
-Semantic analysis already owns every fact needed to distinguish this case:
+Semantic analysis owns every fact needed to distinguish this case:
 
 - `currentReceiverMutability` identifies the current method as read-only;
 - `currentFunctionDeclaration` identifies the method declaration;
@@ -54,14 +54,14 @@ Semantic analysis already owns every fact needed to distinguish this case:
 - expression information identifies whether the attempted target is a place
   reached through mutable or read-only access.
 
-The current implementation has two generic emission sites in
+The former implementation had two generic emission sites in
 `SemanticAnalyzer`: assignment to an implicit receiver field and assignment
 through a member expression. Fixed-array element assignment already has a
 special receiver-root classifier and emits structured `GTI-S2002` information,
 including a trailing-`mut` hint. The result is diagnostic drift between
 equivalent mutation operations.
 
-## Proposed Diagnostic Contract
+## Diagnostic Contract
 
 ### Trigger
 
@@ -146,7 +146,7 @@ provides the exact spelling without presenting an API change as mechanical.
 
 ## Operation Coverage
 
-The first implementation should apply the same cause and structured payload
+The implementation applies the same cause and structured payload
 to receiver-rooted operations that already require mutable access:
 
 - plain and compound field assignment;
@@ -222,25 +222,24 @@ published code, UTF-16 range, related information, hint, and absence of fixes.
 Existing current-snapshot publication owns stale-version behavior; this
 diagnostic refinement does not require a new LSP inference or cache path.
 
-## Implementation Sequence
+## Completed Implementation Sequence
 
-1. Generalize the existing receiver-root field classifier to recognize nested
+1. Generalized the existing receiver-root field classifier to recognize nested
    named projections while remaining fail-closed at unproven roots.
-2. Add one structured diagnostic builder for receiver-rooted assignment
-   failures and replace the two generic `GTI-S2000` reports.
-3. Route fixed-array receiver writes through the shared builder without
+2. Added one structured diagnostic builder for receiver-rooted assignment
+   failures and replaced the two generic `GTI-S2000` reports.
+3. Routed fixed-array receiver writes through the shared builder without
    changing their established `GTI-S2002` identity.
-4. Enrich receiver-rooted mutable-reference initialization while retaining
+4. Enriched receiver-rooted mutable-reference initialization while retaining
    `GTI-S2017`.
-5. Add focused compiler and LSP assertions and update the canonical diagnostics
-   documentation when the behavior lands.
-6. Advance the patch version with the implementation because users and editor
-   clients observe the changed diagnostic. This proposal alone does not change
-   `VERSION`.
+5. Added focused compiler and LSP assertions and updated the canonical
+   diagnostics documentation with the implemented behavior.
+6. Included the user-visible diagnostic change in the 0.294.0 language and
+   tooling release.
 
-## Implementation Acceptance Criteria
+## Acceptance Evidence
 
-Implementation of the proposal is complete when it demonstrates that:
+The implementation demonstrates that:
 
 - the motivating nested write identifies the missing trailing `mut` in its
   primary message;
