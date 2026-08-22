@@ -124,6 +124,9 @@ description of the implementation.
   the implemented bounded ephemeral receiver capability for fresh,
   self-contained class-value temporaries without making temporaries general
   mutable places
+- [Read-only receiver diagnostic precision](plans/read-only-receiver-diagnostics.md)
+  — proposes cause-specific assignment and mutable-reference diagnostics when
+  a method lacks the trailing `mut` receiver qualifier
 - [LSP evolution](plans/lsp-evolution.md)
 - [C interop target surface](plans/c-interop-target-surface.md) — the
   completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
