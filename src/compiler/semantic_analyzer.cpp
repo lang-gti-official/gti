@@ -18113,6 +18113,22 @@ private:
     if (dynamic_cast<const This *>(expression.get()) != nullptr) {
       return true;
     }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      const Symbol *symbol = resolve(variable->name());
+      if (currentClass && symbol != nullptr &&
+          symbol->bindingKind == SemanticBindingKind::Field &&
+          !symbol->staticMember) {
+        // An unqualified instance field is the same receiver-rooted place as
+        // an explicit this.field projection. Keep that resolved provenance
+        // while leaving a same-spelled local or parameter independent.
+        return true;
+      }
+      if (const ExprPtr *source = storedBorrowSource(expression)) {
+        return isReceiverDerivedBorrow(*source, visiting);
+      }
+      return false;
+    }
     if (const auto *grouping =
             dynamic_cast<const Grouping *>(expression.get())) {
       return isReceiverDerivedBorrow(grouping->expression(), visiting);

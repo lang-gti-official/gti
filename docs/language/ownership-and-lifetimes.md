@@ -284,6 +284,14 @@ T& at(std::size_t index) {
 }
 ```
 
+An unqualified non-static field denotes the same receiver-rooted place as an
+explicit `this` projection. Consequently, both `return field;` and
+`return this.field;` preserve receiver-tied reference provenance, and a
+receiver-tied carrier may be returned from either `field.begin()` or
+`this.field.begin()`. Normal lexical shadowing still applies: a local or
+parameter named `field` is an independent place and cannot be returned under
+the receiver rule.
+
 A free function or static method may return a read-only borrowed result when
 every reachable return derives from one eligible read-only parameter. A `T&`
 parameter can introduce that dependency. A by-value parameter whose concrete

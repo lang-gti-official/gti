@@ -2785,6 +2785,16 @@ private:
         value.place = value.ownership->place;
       }
     }
+    if (value.kind == HirValueKind::Variable && value.place &&
+        value.place->receiver && value.symbol != 0) {
+      // Preserve the resolved meaning of an unqualified instance field in
+      // HIR. It is the same receiver projection as `this.field`, even though
+      // the source omitted the explicit receiver.
+      kind = HirValueKind::MemberAccess;
+      value.kind = kind;
+      value.operands.insert(value.operands.begin(),
+                            lowerImplicitReceiver(body));
+    }
     if (const auto *call = dynamic_cast<const Call *>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
