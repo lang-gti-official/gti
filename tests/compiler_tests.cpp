@@ -18668,6 +18668,217 @@ int use() {
          "parser recovery should continue after malformed generic parameters");
 }
 
+void testExactQualifiedClassSpecializations() {
+  const std::string source = R"(
+class demo::Value<int> {
+public:
+  int read() { return 2; }
+};
+
+namespace demo {
+class Value<T> {
+public:
+  int read() { return 1; }
+};
+
+class Count<uint64_t N> {
+public:
+  int read() { return 1; }
+};
+}
+
+int read_exact(demo::Value<int>& value) { return value.read(); }
+
+class demo::Count<7> {
+public:
+  int read() { return 7; }
+};
+
+int read_through_generic<T>(demo::Value<T>& value) {
+  return value.read();
+}
+
+int main() {
+  demo::Value<int> exact{};
+  demo::Value<bool> primary{};
+  demo::Count<7> exact_value{};
+  demo::Count<8> primary_value{};
+  return read_exact(exact) + read_through_generic<int>(exact) +
+         primary.read() + exact_value.read() + primary_value.read() - 13;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("exact-qualified-specialization.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected exact-specialization diagnostic: "
+                << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "a qualified exact class specialization should replace its primary "
+         "for the matching canonical application");
+
+  const lang::ClassTypeInfo *specialization = nullptr;
+  const lang::ClassTypeInfo *primary = nullptr;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    const lang::ClassTypeInfo *info =
+        frontend.semantics.findClassType(instance.declaration);
+    if (info == nullptr || info->qualifiedName != "demo::Value") {
+      continue;
+    }
+    if (info->exactSpecializationPrimary == 0) {
+      primary = info;
+    } else {
+      specialization = info;
+    }
+  }
+  expect(primary != nullptr && specialization != nullptr &&
+             specialization->exactSpecializationPrimary == primary->id &&
+             specialization->exactTypeArguments ==
+                 std::vector<lang::SemanticType>{lang::SemanticType::Int32},
+         "HIR discovery should retain separate primary and exact semantic "
+         "class identities");
+
+  if (frontend.canGenerateCode()) {
+    const std::string generated = gti_test::emitCppText(frontend);
+    const std::size_t primaryDefinition = generated.find("class Value {");
+    const std::size_t specializationDefinition =
+        generated.find("class Value<std::int32_t> {");
+    expect(generated.find("class Value<std::int32_t>;") != std::string::npos &&
+               primaryDefinition != std::string::npos &&
+               specializationDefinition != std::string::npos &&
+               primaryDefinition < specializationDefinition,
+           "the C++ representation should emit a forward declaration and "
+           "dependency-order the selected full specialization after its "
+           "primary");
+  }
+
+  const std::string formatted = lang::Formatter().format(
+      "namespace demo{class Value<T>{};}class demo::Value<int>{};");
+  expect(formatted.find("class demo::Value<int> {") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should preserve qualified exact-specialization "
+         "syntax idempotently");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-exact-qualified-specialization.gti", R"(
+namespace demo {
+class Value<T> {};
+class Nested<T> {};
+}
+using signed_int = int32_t;
+class demo::Value<int> {};
+class demo::Value<signed_int> {};
+class demo::Nested<UnknownType> {};
+class demo::Value<int>;
+struct demo::Value<bool> {};
+namespace misplaced {
+  class demo::Nested<bool> {};
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2078") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Duplicate exact specialization") &&
+             hasRelatedDiagnostic(invalid.diagnostics,
+                                  "Previous exact specialization") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must provide a complete definition") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must use the primary declaration's 'class'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must be declared at package scope"),
+         "exact specialization diagnostics should reject canonical "
+         "duplicates, unknown arguments, forward declarations, and "
+         "nested-namespace "
+         "declarations");
+
+  const lang::FrontendResult wrongArity =
+      lang::Frontend().analyze("wrong-arity-exact-specialization.gti", R"(
+namespace demo { class Value<T> {}; }
+class demo::Value<int, bool> {};
+)");
+  expect(!wrongArity.canGenerateCode() &&
+             hasDiagnosticCode(wrongArity.diagnostics, "GTI-S2078") &&
+             hasDiagnostic(wrongArity.diagnostics,
+                           "requires 1 generic type argument"),
+         "a malformed exact key should use the exact-specialization "
+         "diagnostic family");
+
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "gti-exact-specialization";
+  const lang::FrontendResult standardHash = lang::Frontend().analyze(
+      root / "hash.gti", R"(
+#include <std/functional>
+class Widget {
+  int value = 42;
+public:
+  int read() { return this.value; }
+};
+class std::hash<Widget> {
+public:
+  size_t operator()(Widget& value) { return size_t(value.read()); }
+};
+int main() {
+  Widget value{};
+  std::hash<Widget> hash{};
+  return int(hash(value)) - 42;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(standardHash.canGenerateCode(),
+         "an application should be able to specialize std::hash for a "
+         "nominal type owned by that application");
+
+  const lang::FrontendResult orphanHash = lang::Frontend().analyze(
+      root / "orphan-hash.gti", R"(
+#include <std/functional>
+class std::hash<int> {
+public:
+  size_t operator()(int& value) { return size_t(value); }
+};
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !orphanHash.canGenerateCode() &&
+          hasDiagnosticCode(orphanHash.diagnostics, "GTI-S2078") &&
+          hasDiagnostic(orphanHash.diagnostics,
+                        "owns neither the primary nor a top-level nominal") &&
+          hasDiagnosticHint(orphanHash.diagnostics, "primary's package"),
+      "the coherence rule should reject a std::hash specialization for a "
+      "builtin type owned by neither side");
+
+  const lang::FrontendResult nestedOrphanHash = lang::Frontend().analyze(
+      root / "nested-orphan-hash.gti", R"(
+#include <std/functional>
+#include <std/vector>
+class Widget {};
+class std::hash<std::vector<Widget>> {
+public:
+  size_t operator()(std::vector<Widget>& value) { return 0; }
+};
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!nestedOrphanHash.canGenerateCode() &&
+             hasDiagnosticCode(nestedOrphanHash.diagnostics, "GTI-S2078") &&
+             hasDiagnostic(nestedOrphanHash.diagnostics,
+                           "owns neither the primary nor a top-level nominal"),
+         "a nominal nested inside a foreign generic argument should not grant "
+         "specialization ownership");
+
+  lang::Lexer lexer;
+  lang::Parser malformedParser(
+      lexer.scan("class demo::Value {}; int recovered() { return 0; }"));
+  const lang::Program recovered = malformedParser.parse();
+  expect(malformedParser.hadError() &&
+             findTopLevelFunction(recovered, "recovered") != nullptr,
+         "a qualified class declaration without an exact argument list "
+         "should diagnose and recover to later declarations");
+}
+
 void testConstrainedGenerics() {
   const std::string source = R"(
 T minimum<std::ordered T>(T left, T right) {
@@ -27537,6 +27748,10 @@ int main(int argc, char **argv) {
     testDefaultParameters();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "specialization") {
+    testExactQualifiedClassSpecializations();
+    return failures == 0 ? 0 : 1;
+  }
   testConstructorPartialRollbackRepresentation();
   testOwnedParameterStageArmsRollback();
   testFieldInitializerRollbackAndFailureEdges();
@@ -27613,6 +27828,7 @@ int main(int argc, char **argv) {
   testConsumingCallableOperators();
   testRangeBasedForAndIteratorProtocol();
   testNamedGenerics();
+  testExactQualifiedClassSpecializations();
   testConstrainedGenerics();
   testConcurrencyTypeCapabilities();
   testConcurrentGlobalPolicy();

@@ -11,6 +11,11 @@
   name: (identifier) @local.definition.type
   body: (class_body) @local.scope)
 
+(class_declaration
+  name: (scoped_identifier
+    name: (identifier) @local.definition.type)
+  body: (class_body) @local.scope)
+
 (enum_declaration
   name: (identifier) @local.definition.type)
 

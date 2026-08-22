@@ -192,9 +192,9 @@ public names `std::accumulate`, `std::input_iterator`, `std::sentinel_for`, or
 
 The implemented language does not provide general C++ requires-expressions,
 arbitrary expression requirements, disjunction, negation, associated types,
-value constraints, specialization, constraint subsumption, constraint-based
-overload ordering, conditionally available operators, constrained polymorphic
-contracts, or unrestricted compile-time reflection.
+value constraints, concept or partial specialization, constraint subsumption,
+constraint-based overload ordering, conditionally available operators,
+constrained polymorphic contracts, or unrestricted compile-time reflection.
 
 Add a new source concept when existing facts can express the contract. Add a
 new private compiler capability only when semantic analysis must answer a

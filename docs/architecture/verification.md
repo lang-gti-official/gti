@@ -124,6 +124,16 @@ target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
 
+For exact qualified class specializations, `compiler_pipeline` owns qualified
+syntax, canonical type/value keys, declaration-order independence, primary
+fallback, generic-substitution selection, distinct semantic/HIR class identity,
+`GTI-S2078`, coherence for `std::hash<AppType>`, formatter idempotence, and
+explicit C++ full-specialization shape. Native direct-CLI runs cover matching
+and fallback calls at O0/O1/O3 under C++20/C++23. Tree-sitter covers the
+qualified declaration shape, while `lsp_protocol` owns canonical hover/outline,
+matching-versus-primary definition targets, semantic tokens, and publication
+of the shared duplicate diagnostic.
+
 For bounded layout queries, `layout_query_pipeline` owns the reserved-word and
 type-only grammar, alias/raw-pointer/integral-enum/passive-union/recursive
 positive-array matrix, `uint64_t` constant retention, `GTI-S2063` spans, HIR

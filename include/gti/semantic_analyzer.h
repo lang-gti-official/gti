@@ -991,6 +991,12 @@ struct ClassTypeInfo {
   const ClassDecl *declaration = nullptr;
   std::string qualifiedName;
   std::vector<std::string> namespaceScope;
+  // An exact specialization is a distinct semantic class identity whose
+  // qualified source name and canonical argument key still name this primary.
+  // Zero denotes an ordinary (possibly generic) class declaration.
+  ClassId exactSpecializationPrimary = 0;
+  std::vector<SemanticType> exactTypeArguments;
+  std::vector<CompileTimeValue> exactValueArguments;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
@@ -1754,6 +1760,12 @@ public:
 
   [[nodiscard]] const ClassTypeInfo *findClassType(ClassId id) const;
 
+  // Selects a registered full class specialization after recursively
+  // resolving concrete nested class arguments. Symbolic generic types retain
+  // their primary identity until instance substitution makes them exact.
+  [[nodiscard]] SemanticType
+  resolveExactClassSpecialization(SemanticType type) const;
+
   [[nodiscard]] const TypeAliasInfo *
   findTypeAlias(const TypeAliasDecl &declaration) const;
 
@@ -1959,6 +1971,11 @@ private:
 
   void recordClassType(const ClassDecl &declaration, ClassTypeInfo info);
 
+  void
+  recordExactClassSpecialization(ClassId primary, ClassId specialization,
+                                 std::vector<SemanticType> typeArguments,
+                                 std::vector<CompileTimeValue> valueArguments);
+
   void record(const TypeAliasDecl &declaration, TypeAliasInfo info);
 
   void recordEnumType(const EnumDecl &declaration, EnumTypeInfo info);
@@ -2088,6 +2105,13 @@ private:
   std::unordered_map<LambdaId, const Lambda *> lambdasById;
   std::unordered_map<const ClassDecl *, ClassTypeInfo> classTypes;
   std::unordered_map<ClassId, const ClassDecl *> classTypesById;
+  struct ExactClassSpecializationRecord {
+    ClassId primary = 0;
+    ClassId specialization = 0;
+    std::vector<SemanticType> typeArguments;
+    std::vector<CompileTimeValue> valueArguments;
+  };
+  std::vector<ExactClassSpecializationRecord> exactClassSpecializations;
   std::unordered_map<const TypeAliasDecl *, TypeAliasInfo> typeAliases;
   std::unordered_map<const EnumDecl *, EnumTypeInfo> enumTypes;
   std::unordered_map<EnumId, const EnumDecl *> enumTypesById;

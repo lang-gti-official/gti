@@ -983,6 +983,20 @@
           {
             "type": "identifier",
             "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      },
+      "type_arguments": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type_argument_clause",
+            "named": true
           }
         ]
       },

@@ -228,6 +228,13 @@ including:
 - hosted-entry, initialization, callable, lifecycle, structural, native, and
   concrete-instance adapters.
 
+An exact specialized class arrives with a semantic/lowered specialization ID,
+its primary ID, and its canonical argument key. The C++ representation spells
+that identity as an explicit full specialization (`template <> class
+Primary<Args>`) with its forward declaration before instantiating uses. The
+backend schedules and spells the already-selected identity; it does not match
+source arguments or choose between the primary and specialization.
+
 This is representation work rather than executable-language authority. Any
 adapter that performs GTI-visible control flow, ownership, cleanup, or failure
 behavior must be represented by MIR before it may become a new source-body

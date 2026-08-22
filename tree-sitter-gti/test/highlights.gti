@@ -244,3 +244,5 @@ int configured_ifdef_highlight() { return 2; }
 #ifndef HIGHLIGHT_FLAG
 int configured_ifndef_highlight() { return 3; }
 #endif
+
+class demo::Value<int32_t> {};

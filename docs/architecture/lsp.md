@@ -137,6 +137,14 @@ labels explicit opt-out, interface-requirement, or unsafe-assertion policy from
 Capability attribute identifiers are syntax-owned decorator tokens in both
 Tree-sitter and LSP highlighting.
 
+Exact qualified class specializations use their distinct compiler-owned class
+and symbol identities. Hover and outline render the canonical primary plus
+arguments; definition from a matching application reaches the specialization,
+while a nonmatching application reaches the primary. Semantic tokens use the
+ordinary nominal type classes, and invalid declarations publish the shared
+`GTI-S2078` diagnostic with related primary or duplicate locations. The
+protocol adapter performs no specialization matching.
+
 For a valid `[[c_abi]]` declaration, the same compiler query renders the
 attribute and reports the selected record size and ABI alignment. `c_abi` is a
 decorator token, and invalid declarations publish the shared `GTI-S2064`

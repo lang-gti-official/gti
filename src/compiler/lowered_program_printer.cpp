@@ -412,7 +412,21 @@ private:
   void printValue(const LoweredClassDeclaration &value) {
     output << "class(id=" << value.id << ";unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName)
-           << ";kind=" << number(value.kind) << ";generics=";
+           << ";kind=" << number(value.kind)
+           << ";exact-primary=" << value.exactSpecializationPrimary
+           << ";exact-types=[";
+    for (std::size_t index = 0; index < value.exactTypeArguments.size();
+         ++index) {
+      separator(index);
+      type(value.exactTypeArguments[index]);
+    }
+    output << "];exact-values=[";
+    for (std::size_t index = 0; index < value.exactValueArguments.size();
+         ++index) {
+      separator(index);
+      compileTimeValue(value.exactValueArguments[index]);
+    }
+    output << "];generics=";
     genericParameters(value.genericParameters);
     output << ";bases=[";
     for (std::size_t index = 0; index < value.bases.size(); ++index) {
@@ -645,7 +659,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v1\n";
+  output << "lowered-program-v2\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

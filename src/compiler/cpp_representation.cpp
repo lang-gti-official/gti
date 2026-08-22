@@ -102,17 +102,25 @@ std::string cppSemanticTypeSpelling(const SemanticModel &semantics,
       result += "::";
     }
     result += classInfo->declaration->name().lexeme;
-    if (!type.arguments.empty() || !type.valueArguments.empty()) {
+    const std::vector<SemanticType> &typeArguments =
+        classInfo->exactSpecializationPrimary == 0
+            ? type.arguments
+            : classInfo->exactTypeArguments;
+    const std::vector<CompileTimeValue> &valueArguments =
+        classInfo->exactSpecializationPrimary == 0
+            ? type.valueArguments
+            : classInfo->exactValueArguments;
+    if (!typeArguments.empty() || !valueArguments.empty()) {
       result += '<';
       bool separator = false;
-      for (const SemanticType &argument : type.arguments) {
+      for (const SemanticType &argument : typeArguments) {
         if (separator) {
           result += ", ";
         }
         result += spell(argument);
         separator = true;
       }
-      for (const CompileTimeValue &argument : type.valueArguments) {
+      for (const CompileTimeValue &argument : valueArguments) {
         if (separator) {
           result += ", ";
         }
@@ -369,17 +377,25 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     }
     std::string result = cppLoweredQualifiedName(classInfo->qualifiedName,
                                                  classInfo->cOpaqueHandle);
-    if (!type.arguments.empty() || !type.valueArguments.empty()) {
+    const std::vector<SemanticType> &typeArguments =
+        classInfo->exactSpecializationPrimary == 0
+            ? type.arguments
+            : classInfo->exactTypeArguments;
+    const std::vector<CompileTimeValue> &valueArguments =
+        classInfo->exactSpecializationPrimary == 0
+            ? type.valueArguments
+            : classInfo->exactValueArguments;
+    if (!typeArguments.empty() || !valueArguments.empty()) {
       result += '<';
       bool separator = false;
-      for (const SemanticType &argument : type.arguments) {
+      for (const SemanticType &argument : typeArguments) {
         if (separator) {
           result += ", ";
         }
         result += spell(argument);
         separator = true;
       }
-      for (const CompileTimeValue &argument : type.valueArguments) {
+      for (const CompileTimeValue &argument : valueArguments) {
         if (separator) {
           result += ", ";
         }

@@ -1728,12 +1728,20 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                              : AccessModifier::Public;
     currentClassLifecycle = semantics.findClassLifecycle(stmt);
     currentClassGeneralInitializers = initializers;
-    emitTemplateDeclaration(stmt.genericParameters());
+    if (classInfo != nullptr && classInfo->exactSpecializationPrimary != 0) {
+      writeIndent();
+      output << "template <>\n";
+    } else {
+      emitTemplateDeclaration(stmt.genericParameters());
+    }
     writeIndent();
     output << (stmt.kind() == ClassKind::Struct  ? "struct "
                : stmt.kind() == ClassKind::Union ? "union "
                                                  : "class ")
            << stmt.name().lexeme;
+    if (classInfo != nullptr && classInfo->exactSpecializationPrimary != 0) {
+      emitExactClassSpecializationArguments(*classInfo);
+    }
     if (!stmt.bases().empty()) {
       output << " : ";
       for (std::size_t index = 0; index < stmt.bases().size(); ++index) {
@@ -1814,9 +1822,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     std::vector<const VariableDecl *> staticFields;
     collectStaticFields(stmt.members(), staticFields);
     for (const VariableDecl *field : staticFields) {
-      deferredStaticFields.push_back({.declaration = field,
-                                      .namespaceScope = sourceNamespaces,
-                                      .owner = stmt.name().lexeme});
+      deferredStaticFields.push_back(
+          {.declaration = field,
+           .namespaceScope = sourceNamespaces,
+           .owner = classInfo != nullptr &&
+                            classInfo->exactSpecializationPrimary != 0
+                        ? exactClassOwnerSpelling(*classInfo)
+                        : stmt.name().lexeme});
     }
     currentClassLifecycle = enclosingLifecycle;
     currentClass = enclosingClass;
@@ -3463,7 +3475,7 @@ private:
       const std::size_t index = classDefinitions.size();
       classDefinitions.push_back({.declaration = classDeclaration,
                                   .id = info->id,
-                                  .namespaceScope = scope,
+                                  .namespaceScope = info->namespaceScope,
                                   .sourceOrder = nextTypeSourceOrder++});
       classSchedule.emplace(info->id, index);
     }
@@ -3505,6 +3517,9 @@ private:
     if (scheduled.declaration != nullptr) {
       if (const ClassTypeInfo *info =
               semantics.findClassType(*scheduled.declaration)) {
+        if (info->exactSpecializationPrimary != 0) {
+          result.push_back(info->exactSpecializationPrimary);
+        }
         for (const ClassBaseTypeInfo &base : info->bases) {
           collectRepresentationDependencies(base.type, result);
         }
@@ -4432,10 +4447,13 @@ private:
   void emitForwardDeclarations(const Program &program) {
     const bool emittedTypes =
         emitTypeForwardDeclarations(program.declarations());
+    const bool emittedExactSpecializations =
+        emitExactClassSpecializationForwardDeclarations(program.declarations());
     const bool emittedAliases = emitAliasDeclarations(program.declarations());
     const bool emittedFunctions =
         emitFunctionForwardDeclarations(program.declarations());
-    if (emittedTypes || emittedAliases || emittedFunctions) {
+    if (emittedTypes || emittedExactSpecializations || emittedAliases ||
+        emittedFunctions) {
       output << '\n';
     }
   }
@@ -4652,6 +4670,10 @@ private:
                      dynamic_cast<const ClassDecl *>(declaration.get())) {
         const ClassTypeInfo *classInfo = semantics.findClassType(*classDecl);
         if (classInfo != nullptr &&
+            classInfo->exactSpecializationPrimary != 0) {
+          continue;
+        }
+        if (classInfo != nullptr &&
             classInfo->compilerCapability != CompilerCapabilityTypeKind::None) {
           continue;
         }
@@ -4705,6 +4727,46 @@ private:
         output << "}\n";
         emitted = true;
       }
+    }
+    return emitted;
+  }
+
+  bool emitExactClassSpecializationForwardDeclarations(
+      const StmtList &declarations) {
+    bool emitted = false;
+    for (const StmtPtr &declaration : declarations) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(declaration.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          emitted = emitExactClassSpecializationForwardDeclarations(*branch) ||
+                    emitted;
+        }
+        continue;
+      }
+      if (const auto *namespaceDecl =
+              dynamic_cast<const NamespaceDecl *>(declaration.get())) {
+        emitted = emitExactClassSpecializationForwardDeclarations(
+                      namespaceDecl->declarations()) ||
+                  emitted;
+        continue;
+      }
+      const auto *classDecl =
+          dynamic_cast<const ClassDecl *>(declaration.get());
+      const ClassTypeInfo *info =
+          classDecl == nullptr ? nullptr : semantics.findClassType(*classDecl);
+      if (info == nullptr || info->exactSpecializationPrimary == 0) {
+        continue;
+      }
+      emitInNamespace(info->namespaceScope, [&] {
+        writeIndent();
+        output << "template <>\n";
+        writeIndent();
+        output << (info->kind == ClassKind::Struct ? "struct " : "class ")
+               << classDecl->name().lexeme;
+        emitExactClassSpecializationArguments(*info);
+        output << ";\n";
+      });
+      emitted = true;
     }
     return emitted;
   }
@@ -10894,6 +10956,11 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
       return;
     }
     output << currentClass->name().lexeme;
+    if (const ClassTypeInfo *info = semantics.findClassType(*currentClass);
+        info != nullptr && info->exactSpecializationPrimary != 0) {
+      emitExactClassSpecializationArguments(*info);
+      return;
+    }
     if (currentClass->genericParameters().empty()) {
       return;
     }
@@ -10911,6 +10978,36 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
       }
     }
     output << '>';
+  }
+
+  void emitExactClassSpecializationArguments(const ClassTypeInfo &info) {
+    output << '<';
+    bool separator = false;
+    for (const SemanticType &argument : info.exactTypeArguments) {
+      if (separator) {
+        output << ", ";
+      }
+      emitSemanticType(argument);
+      separator = true;
+    }
+    for (const CompileTimeValue &argument : info.exactValueArguments) {
+      if (separator) {
+        output << ", ";
+      }
+      if (argument.kind != CompileTimeValue::UInt64) {
+        throw std::logic_error(
+            "exact class specialization retained a symbolic value argument");
+      }
+      output << argument.value;
+      separator = true;
+    }
+    output << '>';
+  }
+
+  [[nodiscard]] std::string
+  exactClassOwnerSpelling(const ClassTypeInfo &info) const {
+    return cppSemanticTypeSpelling(semantics, standard,
+                                   SemanticType::classType(info.id));
   }
 
   void

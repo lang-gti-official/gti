@@ -142,8 +142,8 @@ compiler-constraint-binding
    An application supplies the referenced concept's exact arity and may map,
    reorder, or reuse the enclosing parameters. Concepts may be referenced
    before their declaration; cycles are invalid. Disjunction, negation,
-   expression requirements, specialization, and constraint-based overload
-   ranking are not part of this layer.
+   expression requirements, concept specialization, and constraint-based
+   overload ranking are not part of this layer.
 
    `@compiler_constraint` is reserved syntax. Semantic analysis accepts it only
    for compiler-owned concepts in the trusted prelude's `gti_internal`
@@ -244,9 +244,21 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 *)
 
 class-declaration      = [ class-attributes ]
-                         class-key IDENTIFIER [ generic-parameter-clause ]
-                         [ base-clause ]
+                         ( ordinary-class-declaration
+                         | exact-class-specialization ) ;
+
+ordinary-class-declaration
+                       = class-key IDENTIFIER
+                         [ generic-parameter-clause ] [ base-clause ]
                          ( "{" { class-member } "}" ";" | ";" ) ;
+
+exact-class-specialization
+                       = class-key qualified-specialization-name
+                         generic-argument-clause [ base-clause ]
+                         "{" { class-member } "}" ";" ;
+
+qualified-specialization-name
+                       = IDENTIFIER "::" qualified-name ;
 
 class-attributes       = "[[" class-attribute
                          { "," class-attribute } "]]" ;
@@ -1078,7 +1090,8 @@ pack-expansion         = IDENTIFIER "..." ;
    specializations. A trailing clause is semantically rejected on an operator
    or a virtual, pure, overriding, or interface method. Concept disjunction,
    negation, general requires-expressions, arbitrary expression requirements,
-   and specialization are not implemented.
+   and concept, partial, or constraint-selected specialization are not
+   implemented.
 
    A class or struct may follow its type parameters with immutable `uint64_t`
    value parameters, such as `class array<T, uint64_t N>`. Every class value
@@ -1143,7 +1156,16 @@ pack-expansion         = IDENTIFIER "..." ;
    error. Copyable packs may be expanded more than once. User generic type
    arguments cannot be void. Pack indexing, partial pack movement, general
    iteration beyond the bounded call fold, and `auto`-driven generic deduction
-   are not implemented. *)
+   are not implemented.
+
+   An exact class or struct specialization is instead written at package scope
+   with a qualified primary and a complete concrete argument list, such as
+   `class std::hash<Widget> { ... };`. It declares no generic parameters and
+   supplies a complete body. Semantic analysis canonicalizes aliases and value
+   arguments, selects the specialization independently of source order, and
+   applies the package-coherence rule. Interfaces, unions, partial patterns,
+   symbolic arguments, forward specializations, and constraint-based
+   specialization selection are not implemented. *)
 
 (* `std::unique_ptr<T>` is a nominal standard-library class over the
    compiler-private `gti_internal::unique_owner<T>` capability.

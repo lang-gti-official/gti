@@ -2407,7 +2407,8 @@ name recognition.
 - **Scope:** Extend the existing evaluator to concrete generic functions and
   supported aggregate values, then enum values/library constants. Default
   generic arguments are a separate final slice with declaration-owned exact
-  identity. Do not introduce specialization or a bytecode interpreter.
+  identity. Do not widen exact qualified specialization into partial
+  specialization or introduce a bytecode interpreter.
 - **Exit gate:** the selected constant family has constexpr/runtime parity,
   deterministic identity, recursion/resource limits, and diagnostics that do
   not depend on emitted C++ evaluation.
@@ -2475,8 +2476,9 @@ name recognition.
 
 ### L-CONT-02: Associative Containers
 
-- **State/role:** blocked; prerequisites are `L-CONT-01`, the hash/equality/
-  ordering dispositions in `D-LANG-01`, and accepted `S-ALLOC-01`;
+- **State/role:** blocked; ADR 020's exact `std::hash<AppType>` customization
+  mechanism is complete, while the remaining prerequisites are `L-CONT-01`,
+  the hash/equality/ordering capability contracts, and accepted `S-ALLOC-01`;
   systems-readiness work for one demonstrated associative container.
 - **Scope:** Specify exact hasher, equality, ordering, invalidation, allocation,
   and deterministic-iteration contracts before adding one hash or tree map.
@@ -2721,7 +2723,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, input-iterator/sentinel accumulation, and confined exact-result numeric operations are implemented; public callable, complete-range, and hash capabilities remain client work | ADR 009; `D-CALL-01` done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, specialization, subsumption, and ranking remain later breadth |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, input-iterator/sentinel accumulation, confined exact-result numeric operations, and exact qualified class specialization are implemented; public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; `D-CALL-01` done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

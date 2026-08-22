@@ -87,6 +87,10 @@ for the current implementation when a document is stale or ambiguous.
   — converges executable C++ generation on one immutable lowered-program
   input (verified MIR bodies plus deterministic representation tables) and
   ends per-body AST/HIR consultation at the backend boundary.
+- [019: Generic-owner transformed-member boundary](decisions/019-generic-owner-transformed-members.md)
+- [020: Exact qualified class specializations](decisions/020-exact-qualified-class-specializations.md)
+  — defines exact source syntax, canonical semantic selection, package
+  coherence, and backend/tooling preservation without partial specialization.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

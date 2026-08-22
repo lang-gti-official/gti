@@ -365,8 +365,16 @@ module.exports = grammar({
           field("attributes", $.class_attribute_list),
         ),
         field("kind", choice("class", "struct", "interface", "union")),
-        field("name", $.identifier),
-        optional(field("type_parameters", $.generic_parameter_clause)),
+        choice(
+          seq(
+            field("name", $.identifier),
+            optional(field("type_parameters", $.generic_parameter_clause)),
+          ),
+          seq(
+            field("name", $.scoped_identifier),
+            field("type_arguments", $.type_argument_clause),
+          ),
+        ),
         optional(field("bases", $.base_clause)),
         choice(
           seq(field("body", $.class_body), ";"),

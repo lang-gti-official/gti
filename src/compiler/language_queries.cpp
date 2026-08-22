@@ -166,11 +166,15 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
 [[nodiscard]] std::string
 SignaturePrinter::constructor(const ClassTypeInfo &owner,
                               const ConstructorInfo &info) const {
+  const std::string ownerName =
+      owner.exactSpecializationPrimary == 0
+          ? owner.qualifiedName
+          : types.print(SemanticType::classType(owner.id));
   if (info.kind != ConstructorKind::Ordinary) {
-    return owner.qualifiedName + "(" + owner.qualifiedName +
+    return ownerName + "(" + ownerName +
            (info.kind == ConstructorKind::Move ? "&&)" : "&)");
   }
-  std::string result = owner.qualifiedName;
+  std::string result = ownerName;
   if (!info.genericParameters.empty()) {
     result += '<';
     appendGenericParameters(result, info.genericParameters);
@@ -206,8 +210,12 @@ SignaturePrinter::classType(const ClassTypeInfo &info) const {
     result += "union ";
     break;
   }
-  result += info.qualifiedName;
-  if (!info.genericParameters.empty()) {
+  if (info.exactSpecializationPrimary != 0) {
+    result += types.print(SemanticType::classType(info.id));
+  } else {
+    result += info.qualifiedName;
+  }
+  if (info.exactSpecializationPrimary == 0 && !info.genericParameters.empty()) {
     result += '<';
     appendGenericParameters(result, info.genericParameters);
     result += '>';
@@ -278,8 +286,11 @@ SignaturePrinter::destructor(const DestructorInfo &info) const {
   if (owner == nullptr || owner->declaration == nullptr) {
     return "destructor";
   }
-  return owner->qualifiedName + "::~" + owner->declaration->name().lexeme +
-         "()";
+  const std::string ownerName =
+      owner->exactSpecializationPrimary == 0
+          ? owner->qualifiedName
+          : types.print(SemanticType::classType(owner->id));
+  return ownerName + "::~" + owner->declaration->name().lexeme + "()";
 }
 
 [[nodiscard]] std::string SignaturePrinter::path(const NamePath &name) {
@@ -295,15 +306,23 @@ SignaturePrinter::destructor(const DestructorInfo &info) const {
 
 [[nodiscard]] std::string
 SignaturePrinter::functionName(const FunctionInfo &info) const {
+  const ClassTypeInfo *owner =
+      info.ownerClass == 0 ? nullptr : semantics.findClassType(info.ownerClass);
+  const std::string exactOwner =
+      owner != nullptr && owner->exactSpecializationPrimary != 0
+          ? types.print(SemanticType::classType(owner->id)) + "::"
+          : std::string{};
   if (info.declaration == nullptr || !info.declaration->operatorName()) {
-    return info.qualifiedName;
+    return exactOwner.empty() ? info.qualifiedName
+                              : exactOwner + info.declaration->name().lexeme;
   }
   const std::size_t separator = info.qualifiedName.rfind("::");
   const std::string scope = separator == std::string::npos
                                 ? std::string{}
                                 : info.qualifiedName.substr(0, separator + 2);
-  return scope + std::string(operatorSourceSpelling(
-                     info.declaration->operatorName()->kind));
+  return (exactOwner.empty() ? scope : exactOwner) +
+         std::string(
+             operatorSourceSpelling(info.declaration->operatorName()->kind));
 }
 
 void SignaturePrinter::appendTypes(
@@ -571,6 +590,17 @@ public:
         result.signature = signatures.conceptSignature(
             *symbol, findConceptDeclaration(snapshot.program.declarations(),
                                             symbol->nameSpan));
+        break;
+      case SymbolKind::Class:
+      case SymbolKind::Struct:
+        if (occurrence->type.kind == SemanticType::Class) {
+          if (const ClassTypeInfo *type =
+                  semantics.findClassType(occurrence->type.classId)) {
+            result.signature = signatures.classType(*type);
+            break;
+          }
+        }
+        result.signature = types.print(symbol->type);
         break;
       case SymbolKind::Enumerator:
         if (symbol->type.kind == SemanticType::Enum) {
@@ -1439,6 +1469,13 @@ private:
       std::optional<DocumentSymbolInfo> info =
           makeInfo(classDecl->name(), kind);
       if (info) {
+        if (classDecl->isExactSpecialization()) {
+          if (const ClassTypeInfo *classType =
+                  snapshot.semantics.findClassType(*classDecl)) {
+            info->name = SemanticTypePrinter(snapshot.semantics)
+                             .print(SemanticType::classType(classType->id));
+          }
+        }
         appendOutline(snapshot, sourceUnit, unitPath, target,
                       classDecl->members(), true, info->children);
       }

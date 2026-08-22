@@ -567,6 +567,9 @@ private:
             .sourceUnit = info->sourceUnit,
             .qualifiedName = info->qualifiedName,
             .kind = info->kind,
+            .exactSpecializationPrimary = info->exactSpecializationPrimary,
+            .exactTypeArguments = info->exactTypeArguments,
+            .exactValueArguments = info->exactValueArguments,
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
             .traits = info->traits,
@@ -1519,11 +1522,28 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
   case LoweredDeclarationKind::Class: {
     const auto *payload =
         std::get_if<LoweredClassDeclaration>(&declaration.payload);
+    const bool exactSpecialization =
+        payload != nullptr && payload->exactSpecializationPrimary != 0;
     if (payload == nullptr || payload->id == 0 ||
         declaration.semanticIdentity != payload->id ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
         declaration.generic != !payload->genericParameters.empty() ||
         !validGenericParameters(payload->genericParameters) ||
+        (exactSpecialization &&
+         (!payload->genericParameters.empty() ||
+          (payload->exactTypeArguments.empty() &&
+           payload->exactValueArguments.empty()) ||
+          payload->forwardDeclaration || payload->cAbiRecord ||
+          payload->cOpaqueHandle)) ||
+        (!exactSpecialization && (!payload->exactTypeArguments.empty() ||
+                                  !payload->exactValueArguments.empty())) ||
+        !std::all_of(payload->exactTypeArguments.begin(),
+                     payload->exactTypeArguments.end(), resolvedType) ||
+        std::any_of(payload->exactValueArguments.begin(),
+                    payload->exactValueArguments.end(),
+                    [](const CompileTimeValue &value) {
+                      return value.kind != CompileTimeValue::UInt64;
+                    }) ||
         !std::all_of(payload->bases.begin(), payload->bases.end(),
                      [](const LoweredClassBase &base) {
                        return resolvedType(base.type) &&
@@ -2169,6 +2189,43 @@ verifyLoweredProgram(const LoweredProgram &program) {
     } else if (const auto *payload = std::get_if<LoweredStorageDeclaration>(
                    &declaration.payload)) {
       recordIdentity(storageDeclarations, payload->symbol, "storage");
+    }
+  }
+
+  for (const LoweredDeclaration &declaration : program.declarations_) {
+    const auto *specialization =
+        std::get_if<LoweredClassDeclaration>(&declaration.payload);
+    if (specialization == nullptr ||
+        specialization->exactSpecializationPrimary == 0) {
+      continue;
+    }
+    const LoweredClassDeclaration *primary = program.findClassDeclaration(
+        specialization->exactSpecializationPrimary);
+    const std::size_t primaryTypeParameters =
+        primary == nullptr ? 0
+                           : static_cast<std::size_t>(std::count_if(
+                                 primary->genericParameters.begin(),
+                                 primary->genericParameters.end(),
+                                 [](const LoweredGenericParameter &parameter) {
+                                   return !parameter.value;
+                                 }));
+    const std::size_t primaryValueParameters =
+        primary == nullptr ? 0
+                           : static_cast<std::size_t>(std::count_if(
+                                 primary->genericParameters.begin(),
+                                 primary->genericParameters.end(),
+                                 [](const LoweredGenericParameter &parameter) {
+                                   return parameter.value;
+                                 }));
+    if (primary == nullptr || primary->exactSpecializationPrimary != 0 ||
+        primary->kind != specialization->kind ||
+        primary->qualifiedName != specialization->qualifiedName ||
+        primaryTypeParameters != specialization->exactTypeArguments.size() ||
+        primaryValueParameters != specialization->exactValueArguments.size()) {
+      addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+               "exact class specialization does not match one lowered "
+               "generic primary",
+               std::nullopt, declaration.id);
     }
   }
 

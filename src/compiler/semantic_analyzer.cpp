@@ -115,6 +115,7 @@ public:
     genericConstraints.clear();
     requirementScopes.clear();
     classes.clear();
+    exactClassSpecializations.clear();
     enums.clear();
     typeParameterScopes.clear();
     valueParameterScopes.clear();
@@ -181,6 +182,7 @@ public:
     resolveConcepts();
     registerClasses(program.declarations(), {});
     resolveTypeAliases();
+    registerClassSpecializations(program.declarations(), {});
     resolveEnumPayloads();
     resolveClassInheritance();
     registerFunctionGenericParameters(program.declarations(), {}, false);
@@ -249,6 +251,7 @@ public:
     genericConstraints.clear();
     requirementScopes.clear();
     classes.clear();
+    exactClassSpecializations.clear();
     enums.clear();
     typeParameterScopes.clear();
     valueParameterScopes.clear();
@@ -608,15 +611,25 @@ public:
     }
 
     const std::optional<ClassId> enclosingClass = currentClass;
+    const std::vector<std::string> enclosingNamespace = currentNamespace;
     currentClass = registered->second;
     const ClassInfo &info = classInfo(*currentClass);
-    const SemanticType type = SemanticType::classType(info.id);
+    const SemanticType type = openClassType(info.id);
+    if (stmt.exactSpecialization() &&
+        stmt.exactSpecialization()->name.segments.size() > 1) {
+      const NamePath namespacePath(std::vector<Token>(
+          stmt.exactSpecialization()->name.segments.begin(),
+          stmt.exactSpecialization()->name.segments.end() - 1));
+      recordQualifiedPathUses(namespacePath, true);
+    }
     const SymbolId symbol = recordToolingSymbol(
         stmt.name(),
         stmt.kind() == ClassKind::Struct ? SymbolKind::Struct
                                          : SymbolKind::Class,
-        qualifiedName(info.namespaceScope, stmt.name().lexeme), type, false,
-        !stmt.isForwardDeclaration());
+        stmt.isExactSpecialization()
+            ? typeSpelling(type)
+            : qualifiedName(info.namespaceScope, stmt.name().lexeme),
+        type, false, !stmt.isForwardDeclaration());
     OccurrenceRole roles = OccurrenceRole::Declaration;
     if (!stmt.isForwardDeclaration()) {
       roles |= OccurrenceRole::Definition;
@@ -630,6 +643,7 @@ public:
                                     .type = type,
                                     .traits = typeTraits(type),
                                     .classType = &stmt});
+    currentNamespace = info.namespaceScope;
     beginTypeParameterScope(info.genericParameters);
     for (const BaseSpecifier &base : stmt.bases()) {
       validateType(base.type);
@@ -656,6 +670,7 @@ public:
     analyze(stmt.members());
     endScope();
     endTypeParameterScope();
+    currentNamespace = enclosingNamespace;
     currentClass = enclosingClass;
   }
 
@@ -6459,6 +6474,9 @@ private:
     Token name;
     ClassKind kind = ClassKind::Class;
     std::vector<std::string> namespaceScope;
+    ClassId exactSpecializationPrimary = 0;
+    std::vector<SemanticType> exactTypeArguments;
+    std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
     std::unordered_map<std::string, MemberInfo> members;
     std::vector<FieldInfo> fields;
@@ -6486,6 +6504,13 @@ private:
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
+  };
+
+  struct ExactClassSpecialization {
+    ClassId primary = 0;
+    ClassId specialization = 0;
+    std::vector<SemanticType> typeArguments;
+    std::vector<CompileTimeValue> valueArguments;
   };
 
   struct CapabilityPolicyRegistration {
@@ -16257,7 +16282,8 @@ private:
 
   ResolvedClassArguments
   resolveClassArguments(ClassId classId, const std::vector<TypeRef> &arguments,
-                        const Token &site) {
+                        const Token &site,
+                        std::string diagnosticCode = "GTI-S2026") {
     ResolvedClassArguments result;
     if (classId == 0 || classId > classes.size()) {
       result.valid = false;
@@ -16275,7 +16301,7 @@ private:
                  std::to_string(owner.genericParameters.size()) +
                  (typeOnly ? " generic type argument" : " generic argument") +
                  (owner.genericParameters.size() == 1 ? "." : "s."),
-             "GTI-S2026");
+             diagnosticCode);
       result.valid = false;
     }
 
@@ -16291,7 +16317,7 @@ private:
           report(argument.name.last(),
                  "Generic parameter '" + parameter.name.lexeme +
                      "' requires a uint64_t compile-time value.",
-                 "GTI-S2026");
+                 diagnosticCode);
           result.values.emplace_back();
           result.valid = false;
         } else {
@@ -16304,7 +16330,7 @@ private:
         report(argument.name.last(),
                "Generic parameter '" + parameter.name.lexeme +
                    "' requires a type argument.",
-               "GTI-S2026");
+               diagnosticCode);
         result.types.emplace_back(SemanticType::Unknown);
         result.valid = false;
         continue;
@@ -16312,7 +16338,8 @@ private:
       validateType(argument);
       const SemanticType type = typeOf(argument);
       if (type == SemanticType::Void) {
-        report(argument.name.last(), "Generic type arguments cannot be void.");
+        report(argument.name.last(), "Generic type arguments cannot be void.",
+               diagnosticCode);
         result.valid = false;
       } else if (const std::optional<GenericConstraintKind> failed =
                      firstUnsatisfiedConstraint(type, parameter.constraints)) {
@@ -16376,6 +16403,9 @@ private:
       const std::vector<CompileTimeValue> &valueArguments,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter = false) {
+    const SemanticType selectedClass = selectExactClassSpecialization(
+        SemanticType::classType(classId, typeArguments, valueArguments));
+    classId = selectedClass.classId;
     if (classId == 0 || classId > classes.size()) {
       currentType = SemanticType::Unknown;
       return;
@@ -16387,16 +16417,16 @@ private:
     std::size_t valueIndex = 0;
     for (const GenericParameterInfo &parameter : owner.genericParameters) {
       if (parameter.value) {
-        if (valueIndex < valueArguments.size()) {
-          substitution.values.emplace(parameter.id,
-                                      valueArguments[valueIndex++]);
+        if (valueIndex < selectedClass.valueArguments.size()) {
+          substitution.values.emplace(
+              parameter.id, selectedClass.valueArguments[valueIndex++]);
         }
-      } else if (typeIndex < typeArguments.size()) {
-        substitution.types.emplace(parameter.id, typeArguments[typeIndex++]);
+      } else if (typeIndex < selectedClass.arguments.size()) {
+        substitution.types.emplace(parameter.id,
+                                   selectedClass.arguments[typeIndex++]);
       }
     }
-    const SemanticType constructedType =
-        SemanticType::classType(classId, typeArguments, valueArguments);
+    const SemanticType constructedType = selectedClass;
     if (owner.abstract) {
       report(paren,
              "Cannot construct abstract " +
@@ -18418,12 +18448,14 @@ private:
     return std::nullopt;
   }
 
-  [[nodiscard]] static SemanticType
+  [[nodiscard]] SemanticType
   substituteType(const SemanticType &type,
-                 const GenericSubstitution &substitution) {
+                 const GenericSubstitution &substitution) const {
     if (type.kind == SemanticType::TypeParameter) {
       const auto found = substitution.types.find(type.genericParameterId);
-      return found == substitution.types.end() ? type : found->second;
+      return found == substitution.types.end()
+                 ? type
+                 : selectExactClassSpecialization(found->second);
     }
 
     SemanticType result = type;
@@ -18470,12 +18502,12 @@ private:
         result.arrayLengthParameterId = found->second.parameterId;
       }
     }
-    return result;
+    return selectExactClassSpecialization(std::move(result));
   }
 
-  [[nodiscard]] static SemanticType
+  [[nodiscard]] SemanticType
   substituteType(const SemanticType &type,
-                 const TypeSubstitution &substitution) {
+                 const TypeSubstitution &substitution) const {
     return substituteType(type, GenericSubstitution{.types = substitution});
   }
 
@@ -18522,8 +18554,8 @@ private:
                                  ? SemanticType::typeParameter(parameter.id)
                                  : concrete->second);
     }
-    return SemanticType::classType(id, std::move(arguments),
-                                   std::move(valueArguments));
+    return selectExactClassSpecialization(SemanticType::classType(
+        id, std::move(arguments), std::move(valueArguments)));
   }
 
   std::vector<AppliedConceptRequirement>
@@ -21094,6 +21126,9 @@ private:
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
+        if (classDecl->isExactSpecialization()) {
+          continue;
+        }
         const std::string qualified =
             qualifiedName(scope, classDecl->name().lexeme);
         if (namespaces.contains(qualified) ||
@@ -21206,6 +21241,362 @@ private:
         scope.pop_back();
       }
     }
+  }
+
+  [[nodiscard]] SemanticType
+  canonicalExactSpecializationType(SemanticType type) const {
+    for (SemanticType &argument : type.arguments) {
+      argument = canonicalExactSpecializationType(std::move(argument));
+    }
+    for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
+      argument = canonicalExactSpecializationType(std::move(argument));
+    }
+    for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+      argument = canonicalExactSpecializationType(std::move(argument));
+    }
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size()) {
+      return type;
+    }
+    const ClassInfo &owner = classInfo(type.classId);
+    if (owner.exactSpecializationPrimary == 0) {
+      return type;
+    }
+    return canonicalExactSpecializationType(SemanticType::classType(
+        owner.exactSpecializationPrimary, owner.exactTypeArguments,
+        owner.exactValueArguments));
+  }
+
+  [[nodiscard]] SemanticType
+  selectExactClassSpecialization(SemanticType type) const {
+    for (SemanticType &argument : type.arguments) {
+      argument = selectExactClassSpecialization(std::move(argument));
+    }
+    for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
+      argument = selectExactClassSpecialization(std::move(argument));
+    }
+    for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
+      argument = selectExactClassSpecialization(std::move(argument));
+    }
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size() ||
+        classInfo(type.classId).exactSpecializationPrimary != 0) {
+      return type;
+    }
+    const SemanticType key = canonicalExactSpecializationType(type);
+    const auto found = std::find_if(
+        exactClassSpecializations.begin(), exactClassSpecializations.end(),
+        [&](const ExactClassSpecialization &candidate) {
+          return candidate.primary == key.classId &&
+                 candidate.typeArguments == key.arguments &&
+                 candidate.valueArguments == key.valueArguments;
+        });
+    return found == exactClassSpecializations.end()
+               ? type
+               : SemanticType::classType(found->specialization);
+  }
+
+  [[nodiscard]] static bool
+  isConcreteExactSpecializationType(const SemanticType &type) {
+    if (type.kind == SemanticType::Unknown ||
+        type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::TypePack ||
+        type.kind == SemanticType::TypeName ||
+        type.arrayLengthParameterId != 0) {
+      return false;
+    }
+    if (std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                    [](const CompileTimeValue &value) {
+                      return value.kind != CompileTimeValue::UInt64;
+                    })) {
+      return false;
+    }
+    return std::all_of(type.arguments.begin(), type.arguments.end(),
+                       isConcreteExactSpecializationType) &&
+           std::all_of(type.lambdaEnclosingClassTypes.begin(),
+                       type.lambdaEnclosingClassTypes.end(),
+                       isConcreteExactSpecializationType) &&
+           std::all_of(type.lambdaEnclosingFunctionTypes.begin(),
+                       type.lambdaEnclosingFunctionTypes.end(),
+                       isConcreteExactSpecializationType);
+  }
+
+  [[nodiscard]] bool samePackageOwnershipDomain(SourceUnitId left,
+                                                SourceUnitId right) const {
+    if (sourceGraph == nullptr || left == right) {
+      return true;
+    }
+    const SourceUnit *leftUnit = sourceGraph->findUnit(left);
+    const SourceUnit *rightUnit = sourceGraph->findUnit(right);
+    if (leftUnit == nullptr || rightUnit == nullptr) {
+      return false;
+    }
+    if (leftUnit->role == SourceUnitRole::StandardLibrary &&
+        rightUnit->role == SourceUnitRole::StandardLibrary) {
+      return true;
+    }
+    if ((leftUnit->prelude || leftUnit->role == SourceUnitRole::Prelude) &&
+        (rightUnit->prelude || rightUnit->role == SourceUnitRole::Prelude)) {
+      return true;
+    }
+    if (leftUnit->packageIdentity && rightUnit->packageIdentity) {
+      return leftUnit->packageIdentity == rightUnit->packageIdentity;
+    }
+    return leftUnit->role == SourceUnitRole::Application &&
+           rightUnit->role == SourceUnitRole::Application &&
+           !leftUnit->packageIdentity && !rightUnit->packageIdentity;
+  }
+
+  [[nodiscard]] bool
+  ownsNominalSpecializationArgument(SourceUnitId sourceUnit,
+                                    const SemanticType &argument) const {
+    const SemanticType canonical = canonicalExactSpecializationType(argument);
+    if (canonical.kind == SemanticType::Class && canonical.classId != 0 &&
+        canonical.classId <= classes.size()) {
+      return samePackageOwnershipDomain(
+          sourceUnit, classInfo(canonical.classId).sourceUnit);
+    }
+    if (canonical.kind == SemanticType::Enum && canonical.enumId != 0 &&
+        canonical.enumId <= enums.size()) {
+      return samePackageOwnershipDomain(sourceUnit,
+                                        enums[canonical.enumId - 1].sourceUnit);
+    }
+    return false;
+  }
+
+  void reportExactSpecializationError(const ClassDecl &declaration,
+                                      std::string message,
+                                      const ClassInfo *primary = nullptr) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2078", DiagnosticPhase::Semantics,
+                       declaration.name(), std::move(message));
+    if (primary != nullptr) {
+      diagnostic.related.push_back(
+          {tokenSpan(primary->name), "Primary class declared here."});
+    }
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  void registerClassSpecializations(const StmtList &statements,
+                                    std::vector<std::string> scope) {
+    const std::vector<std::string> enclosingNamespace = currentNamespace;
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerClassSpecializations(*branch, scope);
+        }
+        continue;
+      }
+      if (const auto *namespaceDecl =
+              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        scope.emplace_back(namespaceDecl->name().lexeme);
+        registerClassSpecializations(namespaceDecl->declarations(), scope);
+        scope.pop_back();
+        continue;
+      }
+      const auto *declaration =
+          dynamic_cast<const ClassDecl *>(statement.get());
+      if (declaration == nullptr) {
+        continue;
+      }
+      if (!declaration->exactSpecialization()) {
+        continue;
+      }
+
+      currentSourceUnit = sourceUnitFor(declaration->name());
+      currentNamespace = scope;
+      const TypeRef &targetType = *declaration->exactSpecialization();
+      bool valid = true;
+      if (!scope.empty()) {
+        reportExactSpecializationError(
+            *declaration,
+            "An exact class specialization must be declared at package "
+            "scope with a qualified primary name.");
+        valid = false;
+      }
+      if (declaration->kind() != ClassKind::Class &&
+          declaration->kind() != ClassKind::Struct) {
+        reportExactSpecializationError(
+            *declaration, "Only class and struct primaries support exact "
+                          "specialization.");
+        valid = false;
+      }
+      if (declaration->isForwardDeclaration()) {
+        reportExactSpecializationError(
+            *declaration,
+            "An exact class specialization must provide a complete "
+            "definition.");
+        valid = false;
+      }
+      if (!declaration->genericParameters().empty()) {
+        reportExactSpecializationError(
+            *declaration,
+            "An exact class specialization cannot declare generic "
+            "parameters.");
+        valid = false;
+      }
+      if (targetType.name.segments.size() < 2) {
+        reportExactSpecializationError(
+            *declaration,
+            "An exact class specialization must use a qualified primary "
+            "name.");
+        valid = false;
+      }
+      if (reportCompilerPrivatePath(targetType.name)) {
+        valid = false;
+      }
+
+      const std::optional<ClassId> primaryId =
+          resolveClassPath(targetType.name, {});
+      if (!primaryId || *primaryId == 0 || *primaryId > classes.size()) {
+        reportExactSpecializationError(
+            *declaration, "Unknown or invisible generic primary '" +
+                              pathSpelling(targetType.name) + "'.");
+        continue;
+      }
+      ClassInfo &primary = classInfo(*primaryId);
+      if (primary.compilerPrivate) {
+        reportExactSpecializationError(
+            *declaration,
+            "Compiler-private classes cannot be specialized by source "
+            "code.",
+            &primary);
+        valid = false;
+      }
+      if (primary.genericParameters.empty()) {
+        reportExactSpecializationError(
+            *declaration,
+            "Class '" + pathSpelling(targetType.name) +
+                "' is not generic and cannot be specialized.",
+            &primary);
+        valid = false;
+      }
+      if ((primary.kind != ClassKind::Class &&
+           primary.kind != ClassKind::Struct) ||
+          declaration->kind() != primary.kind) {
+        reportExactSpecializationError(
+            *declaration,
+            "The specialization must use the primary declaration's '" +
+                std::string(classKindSpelling(primary.kind)) + "' kind.",
+            &primary);
+        valid = false;
+      }
+
+      const ResolvedClassArguments resolved = resolveClassArguments(
+          *primaryId, targetType.arguments, declaration->name(), "GTI-S2078");
+      valid = resolved.valid && valid;
+      if (!resolved.valid) {
+        continue;
+      }
+      std::vector<SemanticType> typeArguments = resolved.types;
+      for (SemanticType &argument : typeArguments) {
+        argument = canonicalExactSpecializationType(std::move(argument));
+        if (!isConcreteExactSpecializationType(argument)) {
+          reportExactSpecializationError(
+              *declaration,
+              "Exact specialization arguments must be fully concrete.",
+              &primary);
+          valid = false;
+          break;
+        }
+      }
+      std::vector<CompileTimeValue> valueArguments = resolved.values;
+      if (std::any_of(valueArguments.begin(), valueArguments.end(),
+                      [](const CompileTimeValue &value) {
+                        return value.kind != CompileTimeValue::UInt64;
+                      })) {
+        reportExactSpecializationError(
+            *declaration,
+            "Exact specialization value arguments must be concrete uint64_t "
+            "constants.",
+            &primary);
+        valid = false;
+      }
+
+      const bool ownsPrimary =
+          samePackageOwnershipDomain(currentSourceUnit, primary.sourceUnit);
+      const bool ownsArgument =
+          std::any_of(typeArguments.begin(), typeArguments.end(),
+                      [&](const SemanticType &argument) {
+                        return ownsNominalSpecializationArgument(
+                            currentSourceUnit, argument);
+                      });
+      if (!ownsPrimary && !ownsArgument) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2078", DiagnosticPhase::Semantics, declaration->name(),
+            "This package cannot define the exact specialization '" +
+                typeRefSpelling(targetType) +
+                "'; it owns neither the primary nor a top-level nominal "
+                "type argument.");
+        diagnostic.related.push_back(
+            {tokenSpan(primary.name), "Primary class declared here."});
+        diagnostic.hints.emplace_back(
+            "Define the specialization in the primary's package or use a "
+            "nominal argument type owned by this package.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        valid = false;
+      }
+
+      const auto duplicate = std::find_if(
+          exactClassSpecializations.begin(), exactClassSpecializations.end(),
+          [&](const ExactClassSpecialization &candidate) {
+            return candidate.primary == *primaryId &&
+                   candidate.typeArguments == typeArguments &&
+                   candidate.valueArguments == valueArguments;
+          });
+      if (duplicate != exactClassSpecializations.end()) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2078", DiagnosticPhase::Semantics, declaration->name(),
+            "Duplicate exact specialization of '" +
+                typeRefSpelling(targetType) + "'.");
+        if (duplicate->specialization != 0 &&
+            duplicate->specialization <= classes.size()) {
+          diagnostic.related.push_back(
+              {tokenSpan(classInfo(duplicate->specialization).name),
+               "Previous exact specialization is here."});
+        }
+        diagnostics.emplace_back(std::move(diagnostic));
+        valid = false;
+      }
+      if (!valid) {
+        continue;
+      }
+
+      const CapabilityPolicyRegistration capabilityPolicies =
+          registerClassAttributes(*declaration);
+      if (capabilityPolicies.cAbiRecord || capabilityPolicies.cOpaqueHandle) {
+        reportExactSpecializationError(
+            *declaration,
+            "Exact specializations cannot declare native-record "
+            "representation attributes.",
+            &primary);
+        continue;
+      }
+
+      const ClassId specializationId = classes.size() + 1;
+      classDeclIds.emplace(declaration, specializationId);
+      classes.push_back(
+          ClassInfo{.id = specializationId,
+                    .sourceUnit = currentSourceUnit,
+                    .declaration = declaration,
+                    .name = declaration->name(),
+                    .kind = declaration->kind(),
+                    .namespaceScope = primary.namespaceScope,
+                    .exactSpecializationPrimary = *primaryId,
+                    .exactTypeArguments = typeArguments,
+                    .exactValueArguments = valueArguments,
+                    .transferPolicy = capabilityPolicies.transfer,
+                    .sharePolicy = capabilityPolicies.share,
+                    .transferPolicySource = capabilityPolicies.transferSource,
+                    .sharePolicySource = capabilityPolicies.shareSource});
+      exactClassSpecializations.push_back(
+          {.primary = *primaryId,
+           .specialization = specializationId,
+           .typeArguments = std::move(typeArguments),
+           .valueArguments = std::move(valueArguments)});
+    }
+    currentNamespace = enclosingNamespace;
   }
 
   void resolveClassInheritance() {
@@ -21405,8 +21796,13 @@ private:
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
-        std::vector<std::string> memberScope = scope;
-        memberScope.emplace_back(classDecl->name().lexeme);
+        const auto registered = classDeclIds.find(classDecl);
+        if (registered == classDeclIds.end()) {
+          continue;
+        }
+        const ClassInfo &owner = classInfo(registered->second);
+        std::vector<std::string> memberScope = owner.namespaceScope;
+        memberScope.emplace_back(owner.name.lexeme);
         registerFunctionGenericParameters(classDecl->members(),
                                           std::move(memberScope), true);
       } else if (const auto *namespaceDecl =
@@ -21461,6 +21857,9 @@ private:
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
+        if (classDecl->isExactSpecialization()) {
+          continue;
+        }
         if (const auto found = classDeclIds.find(classDecl);
             found != classDeclIds.end()) {
           declareNamespaceSymbol(scope, classDecl->name(),
@@ -23896,29 +24295,39 @@ private:
       }
       semanticModel.recordClassType(
           *owner.declaration,
-          ClassTypeInfo{.id = owner.id,
-                        .sourceUnit = owner.sourceUnit,
-                        .declaration = owner.declaration,
-                        .qualifiedName = qualifiedName(owner.namespaceScope,
-                                                       owner.name.lexeme),
-                        .namespaceScope = owner.namespaceScope,
-                        .genericParameters = owner.genericParameters,
-                        .fields = std::move(fields),
-                        .staticFields = std::move(staticFields),
-                        .storedReference = owner.storedReference,
-                        .kind = owner.kind,
-                        .bases = owner.bases,
-                        .abstract = owner.abstract,
-                        .polymorphic = owner.polymorphic,
-                        .cAbiRecord = owner.cAbiRecord,
-                        .cOpaqueHandle = owner.cOpaqueHandle,
-                        .cAbiLayout = owner.cAbiLayout,
-                        .unionLayout = owner.unionLayout,
-                        .traits = typeTraits(openClassType(owner.id)),
-                        .transferPolicy = owner.transferPolicy,
-                        .sharePolicy = owner.sharePolicy,
-                        .compilerPrivate = owner.compilerPrivate,
-                        .compilerCapability = owner.compilerCapability});
+          ClassTypeInfo{
+              .id = owner.id,
+              .sourceUnit = owner.sourceUnit,
+              .declaration = owner.declaration,
+              .qualifiedName =
+                  qualifiedName(owner.namespaceScope, owner.name.lexeme),
+              .namespaceScope = owner.namespaceScope,
+              .exactSpecializationPrimary = owner.exactSpecializationPrimary,
+              .exactTypeArguments = owner.exactTypeArguments,
+              .exactValueArguments = owner.exactValueArguments,
+              .genericParameters = owner.genericParameters,
+              .fields = std::move(fields),
+              .staticFields = std::move(staticFields),
+              .storedReference = owner.storedReference,
+              .kind = owner.kind,
+              .bases = owner.bases,
+              .abstract = owner.abstract,
+              .polymorphic = owner.polymorphic,
+              .cAbiRecord = owner.cAbiRecord,
+              .cOpaqueHandle = owner.cOpaqueHandle,
+              .cAbiLayout = owner.cAbiLayout,
+              .unionLayout = owner.unionLayout,
+              .traits = typeTraits(openClassType(owner.id)),
+              .transferPolicy = owner.transferPolicy,
+              .sharePolicy = owner.sharePolicy,
+              .compilerPrivate = owner.compilerPrivate,
+              .compilerCapability = owner.compilerCapability});
+    }
+    for (const ExactClassSpecialization &specialization :
+         exactClassSpecializations) {
+      semanticModel.recordExactClassSpecialization(
+          specialization.primary, specialization.specialization,
+          specialization.typeArguments, specialization.valueArguments);
     }
   }
 
@@ -26361,14 +26770,22 @@ private:
       }
     } else if (const std::optional<ClassId> classId =
                    resolveClassPath(type.name, currentNamespace)) {
-      const ClassInfo &owner = classInfo(*classId);
+      ClassId occurrenceClass = *classId;
+      const SemanticType selectedBase = baseTypeOf(type, currentNamespace);
+      if (selectedBase.kind == SemanticType::Class &&
+          selectedBase.classId != 0) {
+        occurrenceClass = selectedBase.classId;
+      }
+      const ClassInfo &owner = classInfo(occurrenceClass);
       symbol = symbolForDeclaration(owner.name);
       if (symbol == 0) {
         symbol = recordToolingSymbol(
             owner.name,
             owner.kind == ClassKind::Struct ? SymbolKind::Struct
                                             : SymbolKind::Class,
-            qualifiedName(owner.namespaceScope, owner.name.lexeme),
+            owner.exactSpecializationPrimary == 0
+                ? qualifiedName(owner.namespaceScope, owner.name.lexeme)
+                : typeSpelling(SemanticType::classType(owner.id)),
             SemanticType::classType(owner.id));
       }
     }
@@ -29815,7 +30232,7 @@ private:
         }
         const RegisteredTypeAlias &declaration = typeAliases[*alias - 1];
         return declaration.resolution == TypeAliasResolution::Resolved
-                   ? declaration.type
+                   ? selectExactClassSpecialization(declaration.type)
                    : SemanticType::Unknown;
       }
       if (const std::optional<EnumId> id =
@@ -29844,8 +30261,8 @@ private:
             arguments.emplace_back(typeOf(argument, fromScope));
           }
         }
-        return SemanticType::classType(*id, std::move(arguments),
-                                       std::move(valueArguments));
+        return selectExactClassSpecialization(SemanticType::classType(
+            *id, std::move(arguments), std::move(valueArguments)));
       }
       return SemanticType::Unknown;
     }
@@ -29874,7 +30291,7 @@ private:
     if (type.reference) {
       result = SemanticType::referenceTo(std::move(result));
     }
-    return result;
+    return selectExactClassSpecialization(std::move(result));
   }
 
   [[nodiscard]] SemanticType typeOf(const TypeRef &type) const {
@@ -30095,6 +30512,7 @@ private:
   std::unordered_map<GenericParameterId, GenericConstraintSet>
       genericConstraints;
   std::vector<ClassInfo> classes;
+  std::vector<ExactClassSpecialization> exactClassSpecializations;
   std::vector<EnumInfo> enums;
   std::vector<std::unordered_map<std::string, SemanticType>>
       typeParameterScopes;

@@ -79,6 +79,12 @@ Processing a field, call, operator, constructor, destructor, lambda, return, or
 parameter type can discover another concrete instance. A fixed pass over the
 initial declarations is therefore incorrect.
 
+Before a class type enters the worklist, lowering asks the semantic model for
+its exact-specialization identity recursively. A matching primary application
+therefore enqueues the specialization's distinct `ClassId`; a nonmatching
+application enqueues the primary plus its concrete arguments. HIR does not
+compare specialization syntax, rank candidates, or defer selection to C++.
+
 `HirInstanceIndex` (`include/gti/hir_instance_index.h`, compiled in
 `src/compiler/hir.cpp`) answers "has this instance already been discovered?"
 in constant time. It is a lookup structure only: the ordered instance vectors

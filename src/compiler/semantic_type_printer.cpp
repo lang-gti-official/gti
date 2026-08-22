@@ -125,19 +125,25 @@ private:
       return "unknown class";
     }
     std::string result = info->qualifiedName;
-    if (type.arguments.empty() && type.valueArguments.empty()) {
+    const std::vector<SemanticType> &typeArguments =
+        info->exactSpecializationPrimary == 0 ? type.arguments
+                                              : info->exactTypeArguments;
+    const std::vector<CompileTimeValue> &valueArguments =
+        info->exactSpecializationPrimary == 0 ? type.valueArguments
+                                              : info->exactValueArguments;
+    if (typeArguments.empty() && valueArguments.empty()) {
       return result;
     }
     result += '<';
     bool first = true;
-    for (const SemanticType &argument : type.arguments) {
+    for (const SemanticType &argument : typeArguments) {
       if (!first) {
         result += ", ";
       }
       first = false;
       result += print(argument);
     }
-    for (const CompileTimeValue &argument : type.valueArguments) {
+    for (const CompileTimeValue &argument : valueArguments) {
       if (!first) {
         result += ", ";
       }

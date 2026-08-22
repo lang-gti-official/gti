@@ -30,6 +30,9 @@
 
 (class_declaration
   name: (identifier) @type.definition)
+(class_declaration
+  name: (scoped_identifier
+    name: (identifier) @type.definition))
 (class_attribute_list
   attribute: (identifier) @attribute)
 (native_c_array_attribute

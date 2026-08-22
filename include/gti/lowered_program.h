@@ -178,6 +178,9 @@ struct LoweredClassDeclaration {
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
   ClassKind kind = ClassKind::Class;
+  ClassId exactSpecializationPrimary = 0;
+  std::vector<SemanticType> exactTypeArguments;
+  std::vector<CompileTimeValue> exactValueArguments;
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<LoweredClassBase> bases;
   SemanticTypeTraits traits;
