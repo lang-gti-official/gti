@@ -7,7 +7,7 @@ namespace std {
       // using value_type = char;
 
       path() {}
-      path(std::string path) : internal_path(path.clone()) {}
+      path(std::string path) : internal_path(std::move(path)) {}
 
       void clear() mut {
         internal_path.clear();
@@ -63,9 +63,25 @@ namespace std {
 
         return std::move(name);
       }
+    private:
+      // not possible until strings can be mutated
+      void normalise() {
+        // mut std::size_t write = 0;
+        // mut bool previous_slash = false;
+        // for (mut std::size_t index = 0; index < internal_path.size(); index++) {
+        //   char c = internal_path[index];
+        //
+        //   if (c == preferred_separator && previous_slash) {
+        //     continue;
+        //   }
+        //
+        //   internal_path.at(write++) = c;
+        //   previous_slash = (c == preferred_separator);
+      }
 
     private:
       mut std::string internal_path = std::string("");
+      mut std::string normalised_internal_path = std::string("");
 #if target.os == "apple"
       constexpr char preferred_separator = '/';
 #elif target.os == "windows"
