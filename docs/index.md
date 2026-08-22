@@ -110,6 +110,9 @@ description of the implementation.
 - [Optimization architecture](plans/optimization.md)
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
+- [Mutable field groups](plans/mutable-field-groups.md) — proposes the bounded
+  `mut { ... }` shorthand for consecutive mutable class and struct fields while
+  preserving immutable defaults and existing receiver/write rules
 - [LSP evolution](plans/lsp-evolution.md)
 - [C interop target surface](plans/c-interop-target-surface.md) — the
   completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
