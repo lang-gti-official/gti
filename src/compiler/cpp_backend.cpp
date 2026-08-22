@@ -66,10 +66,15 @@ BackendArtifact CppBackend::generate(const BackendInput &input) {
         snapshotMismatch);
   }
 
+  // Driver-backed compilation plans exclusively from LoweredProgram. The
+  // frontend tuple remains only for the not-yet-migrated declaration emitter
+  // and legacy direct backend tests; it no longer owns production planning.
   CppMirRepresentationSnapshotBuild snapshot =
-      buildCppMirRepresentationSnapshot(input.program, input.semantics,
-                                        input.hir, input.mir, input.target,
-                                        standard);
+      input.loweredProgram != nullptr
+          ? buildCppMirRepresentationSnapshot(*input.loweredProgram, standard)
+          : buildCppMirRepresentationSnapshot(input.program, input.semantics,
+                                              input.hir, input.mir,
+                                              input.target, standard);
   if (!snapshot.valid()) {
     const std::string detail = snapshot.issues.empty()
                                    ? "unknown snapshot-builder failure"

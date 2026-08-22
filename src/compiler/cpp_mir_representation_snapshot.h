@@ -19,6 +19,7 @@ namespace lang {
 // Private C++-representation boundary. Public backend callers provide only
 // frontend snapshots; they cannot author body/data/thunk support claims.
 enum class CppMirRepresentationSnapshotIssueKind {
+  InvalidLoweredProgram,
   CrossPhaseMismatch,
   MissingProgramDeclaration,
   MissingSemanticDeclaration,
@@ -64,6 +65,13 @@ buildCppMirRepresentationSnapshot(const Program &program,
                                   const TargetInfo &target,
                                   CppStandard standard = CppStandard::Cpp23);
 
+// Builds the same C++-private planning inventory from the compiler's sealed
+// backend boundary. This is the production route; the frontend overload is
+// retained temporarily as a migration oracle for exact equivalence tests.
+[[nodiscard]] CppMirRepresentationSnapshotBuild
+buildCppMirRepresentationSnapshot(const LoweredProgram &program,
+                                  CppStandard standard = CppStandard::Cpp23);
+
 // Builds the deterministic copied representation rows the generic MIR body
 // emitter consumes (ADR 016 phase 4). Spellings come only from the extracted
 // cpp_representation authorities, so a row can never drift from an emitted
@@ -93,10 +101,22 @@ cppMirApplyCallableTemplateTypeOverlays(CppMirBodyEmissionMapRows &rows,
                                         const MirFunctionInstance &instance);
 
 [[nodiscard]] std::optional<std::size_t>
+cppMirApplyCallableTemplateTypeOverlays(
+    CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
+    CppStandard standard, const LoweredFunctionDeclaration &declaration,
+    const MirFunctionInstance &instance);
+
+[[nodiscard]] std::optional<std::size_t>
 cppMirApplyGenericOwnerConstructorTypeOverlays(
     CppMirBodyEmissionMapRows &rows, const SemanticModel &semantics,
     const HirProgram &hir, const MirProgram &mir,
     const ConstructorDecl &declaration, const MirConstructorInstance &instance);
+
+[[nodiscard]] std::optional<std::size_t>
+cppMirApplyGenericOwnerConstructorTypeOverlays(
+    CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
+    const LoweredConstructorDeclaration &declaration,
+    const MirConstructorInstance &instance);
 
 enum class CppMirBackendProgramRoute {
   VerifiedMir,

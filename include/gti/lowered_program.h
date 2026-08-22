@@ -568,11 +568,23 @@ public:
   findEnumDeclaration(EnumId id) const;
   [[nodiscard]] const LoweredFunctionDeclaration *
   findFunctionDeclaration(FunctionId id) const;
+  [[nodiscard]] const LoweredConstructorDeclaration *
+  findConstructorDeclaration(ConstructorId id) const;
   [[nodiscard]] const LoweredStorageDeclaration *
   findStorageDeclaration(SymbolId id) const;
   [[nodiscard]] const LoweredGenericParameter *
   findGenericParameter(GenericParameterId id) const;
   [[nodiscard]] const LoweredSymbol *findSymbol(SymbolId id) const;
+  [[nodiscard]] const LoweredClassInstance *
+  findClassInstance(HirClassInstanceId id) const;
+  [[nodiscard]] const LoweredFunctionInstance *
+  findFunctionInstance(HirFunctionInstanceId id) const;
+  [[nodiscard]] const LoweredConstructorInstance *
+  findConstructorInstance(HirConstructorInstanceId id) const;
+  [[nodiscard]] const LoweredDestructorInstance *
+  findDestructorInstance(HirDestructorInstanceId id) const;
+  [[nodiscard]] const LoweredLambdaInstance *
+  findLambdaInstance(HirLambdaId id) const;
   [[nodiscard]] const LoweredGeneratedItem *
   findGeneratedItem(const LoweredGeneratedItemIdentity &identity) const;
 

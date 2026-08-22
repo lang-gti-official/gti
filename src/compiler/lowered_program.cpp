@@ -1421,6 +1421,18 @@ LoweredProgram::findFunctionDeclaration(FunctionId id) const {
   return nullptr;
 }
 
+const LoweredConstructorDeclaration *
+LoweredProgram::findConstructorDeclaration(ConstructorId id) const {
+  for (const LoweredDeclaration &declaration : declarations_) {
+    if (const auto *payload =
+            std::get_if<LoweredConstructorDeclaration>(&declaration.payload);
+        payload != nullptr && payload->id == id) {
+      return payload;
+    }
+  }
+  return nullptr;
+}
+
 const LoweredStorageDeclaration *
 LoweredProgram::findStorageDeclaration(SymbolId id) const {
   for (const LoweredDeclaration &declaration : declarations_) {
@@ -1470,6 +1482,39 @@ const LoweredSymbol *LoweredProgram::findSymbol(SymbolId id) const {
       symbols_.begin(), symbols_.end(),
       [id](const LoweredSymbol &symbol) { return symbol.id == id; });
   return found == symbols_.end() ? nullptr : &*found;
+}
+
+const LoweredClassInstance *
+LoweredProgram::findClassInstance(HirClassInstanceId id) const {
+  return id == 0 || id > classInstances_.size() ? nullptr
+                                                : &classInstances_[id - 1];
+}
+
+const LoweredFunctionInstance *
+LoweredProgram::findFunctionInstance(HirFunctionInstanceId id) const {
+  return id == 0 || id > functionInstances_.size()
+             ? nullptr
+             : &functionInstances_[id - 1];
+}
+
+const LoweredConstructorInstance *
+LoweredProgram::findConstructorInstance(HirConstructorInstanceId id) const {
+  return id == 0 || id > constructorInstances_.size()
+             ? nullptr
+             : &constructorInstances_[id - 1];
+}
+
+const LoweredDestructorInstance *
+LoweredProgram::findDestructorInstance(HirDestructorInstanceId id) const {
+  return id == 0 || id > destructorInstances_.size()
+             ? nullptr
+             : &destructorInstances_[id - 1];
+}
+
+const LoweredLambdaInstance *
+LoweredProgram::findLambdaInstance(HirLambdaId id) const {
+  return id == 0 || id > lambdaInstances_.size() ? nullptr
+                                                 : &lambdaInstances_[id - 1];
 }
 
 const LoweredGeneratedItem *LoweredProgram::findGeneratedItem(

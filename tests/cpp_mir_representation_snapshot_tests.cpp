@@ -158,6 +158,45 @@ void expectLoweredRowsMatch(const lang::FrontendResult &frontend,
              semanticRows.capabilities == loweredRows.capabilities,
          std::string(fixture) +
              " should build byte-identical C++ rows from LoweredProgram");
+
+  const lang::CppMirRepresentationSnapshotBuild frontendSnapshot =
+      lang::buildCppMirRepresentationSnapshot(
+          frontend.program, frontend.semantics, frontend.hir, optimized.mir,
+          lang::TargetInfo::host(), lang::CppStandard::Cpp23);
+  const lang::CppMirRepresentationSnapshotBuild loweredSnapshot =
+      lang::buildCppMirRepresentationSnapshot(*lowered.program,
+                                              lang::CppStandard::Cpp23);
+  expect(frontendSnapshot.valid() && loweredSnapshot.valid(),
+         std::string(fixture) +
+             " should build valid frontend and lowered planning snapshots");
+  if (!frontendSnapshot.valid() || !loweredSnapshot.valid()) {
+    for (const lang::CppMirRepresentationSnapshotIssue &issue :
+         loweredSnapshot.issues) {
+      std::cerr << "  lowered snapshot issue: " << issue.detail << '\n';
+    }
+    return;
+  }
+  expect(
+      frontendSnapshot.snapshot->mir == loweredSnapshot.snapshot->mir &&
+          frontendSnapshot.snapshot->bodies ==
+              loweredSnapshot.snapshot->bodies &&
+          frontendSnapshot.snapshot->data == loweredSnapshot.snapshot->data &&
+          frontendSnapshot.snapshot->thunks == loweredSnapshot.snapshot->thunks,
+      std::string(fixture) +
+          " should build an exact C++ plan inventory from LoweredProgram");
+
+  const lang::CppMirProgramPlan frontendPlan =
+      lang::planCppMirProgram(optimized.mir, *frontendSnapshot.snapshot);
+  const lang::CppMirProgramPlan loweredPlan =
+      lang::planCppMirProgram(optimized.mir, *loweredSnapshot.snapshot);
+  expect(frontendPlan.status == loweredPlan.status &&
+             frontendPlan.bodies == loweredPlan.bodies &&
+             frontendPlan.data == loweredPlan.data &&
+             frontendPlan.thunks == loweredPlan.thunks &&
+             frontendPlan.issues.size() == loweredPlan.issues.size() &&
+             frontendPlan.unsupported.size() == loweredPlan.unsupported.size(),
+         std::string(fixture) +
+             " should produce the same sealed C++ whole-program plan");
 }
 
 void testExhaustiveSealedInventory() {
@@ -290,6 +329,8 @@ int main() {
       frontend.mir.nativeCallbackAdapters().size() != 2) {
     return;
   }
+
+  expectLoweredRowsMatch(frontend, "the native callback fixture");
 
   lang::CppMirRepresentationSnapshotBuild build = buildSnapshot(frontend);
   expect(build.valid() &&

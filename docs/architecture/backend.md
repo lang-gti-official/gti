@@ -72,9 +72,11 @@ type and value substitutions, constructor declaration identity, instantiation
 sites, and lambda parameter/capture contracts. Verification exact-checks those
 tables against optimized MIR and rejects missing or duplicate identities.
 
-The remaining C++ cutover work is to consume these tables, finish every
-generated-item family, and remove the transitional tuple. C++ and native-header
-emission still use that tuple until their consumers migrate.
+The C++ row builder and whole-program planner now consume these tables in
+production. The remaining C++ cutover work is declaration/source assembly,
+the unfinished generated-item families, and removal of the transitional tuple.
+Native-header emission also still uses that tuple until it is migrated or
+formally classified as a frontend artifact.
 
 ## C++ Backend Ingress
 
@@ -89,7 +91,8 @@ emission still use that tuple until their consumers migrate.
 5. verify source-to-optimized MIR coherence;
 6. prove that optimized MIR, semantics, and HIR still describe the same
    frontend analysis;
-7. build a sealed C++ representation snapshot;
+7. verify the supplied `LoweredProgram` and adapt its value-owned inventory
+   into the sealed C++-private representation plan;
 8. build a complete whole-program representation plan; and
 9. require the single `VerifiedMir` route.
 
@@ -104,20 +107,23 @@ until their contracts are explicit.
 
 ## Representation Snapshot
 
-`CppMirRepresentationSnapshot` is the copied, pointer-free contract between
-frontend representation facts and C++ emission. Its production builder is the
-only component permitted to seal a snapshot. Public backend callers cannot
-claim that a body, declaration, or thunk is supported.
+`CppMirRepresentationSnapshot` is now a C++-private planning form adapted from
+`LoweredProgram`. Its production builder is the only component permitted to
+seal a snapshot. Public backend callers cannot claim that a body, declaration,
+or thunk is supported. The older frontend-tuple builder remains temporarily as
+an exact migration oracle and for direct tests; the reusable driver does not
+select it.
 
 The generic MIR body representation-row builder has crossed the new boundary:
-production C++ compilation now derives type, field, storage, capture, enum, and
-body-name rows from `LoweredProgram`. C++ type/function spelling remains
-backend policy. A temporary semantic-input overload is retained only for
-direct migration tests, which exact-compare both row inventories; it is not
+production C++ compilation now derives type, field, storage, capture, enum,
+body-name, declaration-inventory, body-role, and generated-thunk planning rows
+from `LoweredProgram`. C++ type/function spelling remains backend policy.
+Temporary frontend-input overloads are retained only for direct migration
+tests, which exact-compare both inventories and final plans; they are not
 selected by the reusable driver.
 
-The builder checks the exact `Program`/semantic/HIR/MIR/target tuple and then
-inventories:
+The production builder independently verifies `LoweredProgram` and then
+adapts:
 
 - every MIR body and its role;
 - all active declaration and data surfaces emitted outside body text;
@@ -189,8 +195,9 @@ weaken the MIR-owned containment policy.
 
 ## Declaration And ABI Emission
 
-The C++ backend still uses the active AST, semantic model, typed HIR, and the
-sealed representation inventory for non-body surfaces including:
+The C++ emitter still uses the active AST, semantic model, typed HIR, and the
+sealed lowered-derived representation plan while assembling non-body surfaces
+including:
 
 - namespaces and aliases;
 - type aliases, class and enum definitions, access sections, and templates;

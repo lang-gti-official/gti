@@ -10,12 +10,12 @@ contract. It currently owns optimized MIR, target layout, an active declaration
 tree with resolved declaration payloads, a complete semantic symbol vocabulary,
 concrete class/function/constructor/destructor/lambda instance metadata,
 source/body identities, and the exact hosted-entry, program-initialization, and
-native-callback generated-item graph. The C++ representation consumer,
-remaining generated-item families, and native-header cutover remain in
-progress; transitional `BackendInput` fields are therefore still present.
-The production generic-MIR representation-row builder already consumes this
-contract, with semantic-vs-lowered equality tests retained as migration
-evidence.
+native-callback generated-item graph. The production C++ generic-MIR row
+builder and whole-program planner consume this contract;
+frontend-vs-lowered exact inventory and plan comparisons remain as migration
+evidence. C++ declaration assembly, remaining generated-item families, and
+native-header cutover remain in progress, so transitional `BackendInput`
+fields are still present.
 
 ## Context
 

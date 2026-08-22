@@ -1443,6 +1443,50 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
   return overlays.size();
 }
 
+std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
+    CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
+    CppStandard standard, const LoweredFunctionDeclaration &declaration,
+    const MirFunctionInstance &instance) {
+  if (declaration.id == 0 || instance.declaration != declaration.id ||
+      instance.parameterTypes.size() != declaration.parameters.size()) {
+    return std::nullopt;
+  }
+
+  std::vector<std::pair<SemanticType, std::string>> overlays;
+  for (std::size_t index = 0; index < declaration.parameters.size(); ++index) {
+    const SemanticType &declared = declaration.parameters[index].type;
+    const SemanticType &concrete = instance.parameterTypes[index];
+    if (declared.kind == SemanticType::TypeParameter) {
+      const LoweredGenericParameter *parameter =
+          program.findGenericParameter(declared.genericParameterId);
+      if (parameter == nullptr ||
+          !applyTemplateTypeOverlay(rows, overlays, concrete,
+                                    parameter->name)) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (declared != concrete && containsTemplateTypeParameter(declared) &&
+        (concrete.kind == SemanticType::Lambda ||
+         concrete.kind == SemanticType::Class) &&
+        !applyTemplateTypeOverlay(
+            rows, overlays, concrete,
+            cppSemanticTypeSpelling(program, standard, declared))) {
+      return std::nullopt;
+    }
+  }
+  if (declaration.returnType != instance.returnType &&
+      containsTemplateTypeParameter(declaration.returnType) &&
+      (instance.returnType.kind == SemanticType::Lambda ||
+       instance.returnType.kind == SemanticType::Class) &&
+      !applyTemplateTypeOverlay(
+          rows, overlays, instance.returnType,
+          cppSemanticTypeSpelling(program, standard, declaration.returnType))) {
+    return std::nullopt;
+  }
+  return overlays.size();
+}
+
 std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
     CppMirBodyEmissionMapRows &rows, const SemanticModel &semantics,
     const HirProgram &hir, const MirProgram &mir,
@@ -1486,6 +1530,51 @@ std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
     lambdaArgument = lambdaArgument || containsLambdaType(argument);
     if (!applyTemplateTypeOverlay(rows, overlays, argument,
                                   parameter.name.lexeme)) {
+      return std::nullopt;
+    }
+  }
+  if (!lambdaArgument || typeIndex != owner->typeArguments.size() ||
+      overlays.empty()) {
+    return std::nullopt;
+  }
+  return overlays.size();
+}
+
+std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
+    CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
+    const LoweredConstructorDeclaration &declaration,
+    const MirConstructorInstance &instance) {
+  const LoweredConstructorInstance *source =
+      program.findConstructorInstance(instance.id);
+  const LoweredClassInstance *owner = program.findClassInstance(instance.owner);
+  const LoweredClassDeclaration *ownerInfo =
+      owner == nullptr ? nullptr
+                       : program.findClassDeclaration(owner->declaration);
+  const MirClassInstance *mirOwner =
+      program.mir().findClassInstance(instance.owner);
+  if (source == nullptr || source->declaration != declaration.id ||
+      source->owner != instance.owner || owner == nullptr ||
+      ownerInfo == nullptr || mirOwner == nullptr ||
+      owner->id != mirOwner->id ||
+      owner->declaration != mirOwner->declaration ||
+      declaration.owner != ownerInfo->id ||
+      ownerInfo->genericParameters.empty() || owner->typeArguments.empty() ||
+      !owner->valueArguments.empty()) {
+    return std::nullopt;
+  }
+
+  std::vector<std::pair<SemanticType, std::string>> overlays;
+  std::size_t typeIndex = 0;
+  bool lambdaArgument = false;
+  for (const LoweredGenericParameter &parameter :
+       ownerInfo->genericParameters) {
+    if (parameter.pack || parameter.value ||
+        typeIndex >= owner->typeArguments.size()) {
+      return std::nullopt;
+    }
+    const SemanticType &argument = owner->typeArguments[typeIndex++];
+    lambdaArgument = lambdaArgument || containsLambdaType(argument);
+    if (!applyTemplateTypeOverlay(rows, overlays, argument, parameter.name)) {
       return std::nullopt;
     }
   }
@@ -1566,6 +1655,80 @@ specializedBodyTextIsReady(const SemanticModel &semantics,
     }
     const CppMirBodyEmissionMap overlay(std::move(rows));
     const CppMirBodyEmitter emitter(mir, overlay);
+    return emitter.analyze(analysis.body).ready() &&
+           emitter.supportsFailureBodyText(analysis.body);
+  }
+  case MirBodyKind::Module:
+  case MirBodyKind::FieldInitializers:
+  case MirBodyKind::StaticFieldInitializers:
+  case MirBodyKind::Destructor:
+  case MirBodyKind::Lambda:
+  case MirBodyKind::HostedStartup:
+    return false;
+  }
+  return false;
+}
+
+[[nodiscard]] bool
+specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
+                           const CppMirBodyEmissionMapRows &baseRows,
+                           const CppMirBodyEmissionAnalysis &analysis) {
+  if (!hasOnlyUnsupportedTextVocabulary(analysis)) {
+    return false;
+  }
+
+  CppMirBodyEmissionMapRows rows = baseRows;
+  std::optional<std::size_t> overlayCount;
+  switch (analysis.body.kind) {
+  case MirBodyKind::Function: {
+    const MirFunctionInstance *instance =
+        program.mir().findFunctionInstance(analysis.body.owner);
+    const LoweredFunctionDeclaration *declaration =
+        instance == nullptr
+            ? nullptr
+            : program.findFunctionDeclaration(instance->declaration);
+    if (instance == nullptr || declaration == nullptr ||
+        instance->definitionKind != MirDefinitionKind::Source) {
+      return false;
+    }
+    overlayCount = cppMirApplyCallableTemplateTypeOverlays(
+        rows, program, standard, *declaration, *instance);
+    if (!overlayCount || *overlayCount == 0) {
+      return false;
+    }
+    const CppMirBodyEmissionMap overlay(std::move(rows));
+    const CppMirBodyEmitter emitter(program.mir(), overlay);
+    const CppMirBodyEmissionAnalysis overlayAnalysis =
+        emitter.analyze(analysis.body);
+    if (!overlayAnalysis.ready()) {
+      return false;
+    }
+    const bool failure = emitter.supportsFailureBodyText(analysis.body);
+    const bool plain = emitter.supportsBodyText(analysis.body);
+    return instance->mayRaiseDefinedFailure ? failure || plain : plain;
+  }
+  case MirBodyKind::Constructor: {
+    const MirConstructorInstance *instance =
+        program.mir().findConstructorInstance(analysis.body.owner);
+    const LoweredConstructorInstance *source =
+        instance == nullptr ? nullptr
+                            : program.findConstructorInstance(instance->id);
+    const LoweredConstructorDeclaration *declaration =
+        source == nullptr
+            ? nullptr
+            : program.findConstructorDeclaration(source->declaration);
+    if (instance == nullptr || declaration == nullptr ||
+        instance->definitionKind != MirDefinitionKind::Source ||
+        !instance->mayRaiseDefinedFailure) {
+      return false;
+    }
+    overlayCount = cppMirApplyGenericOwnerConstructorTypeOverlays(
+        rows, program, *declaration, *instance);
+    if (!overlayCount || *overlayCount == 0) {
+      return false;
+    }
+    const CppMirBodyEmissionMap overlay(std::move(rows));
+    const CppMirBodyEmitter emitter(program.mir(), overlay);
     return emitter.analyze(analysis.body).ready() &&
            emitter.supportsFailureBodyText(analysis.body);
   }
@@ -2046,6 +2209,321 @@ CppMirRepresentationSnapshotBuild buildCppMirRepresentationSnapshot(
         detail += ": " + issue.detail + " (body-kind " +
                   std::to_string(static_cast<std::size_t>(issue.body.kind)) +
                   " owner " + std::to_string(issue.body.owner) + ')';
+      }
+      addIssue(build,
+               CppMirRepresentationSnapshotIssueKind::UnsupportedMirEmission,
+               std::move(detail));
+    }
+  }
+
+  if (build.issues.empty()) {
+    CppMirRepresentationSnapshotBuilderAccess::seal(snapshot);
+    build.snapshot = std::move(snapshot);
+  }
+  return build;
+}
+
+namespace {
+
+[[nodiscard]] CppMirBodyDefinitionKind
+cppBodyDefinition(LoweredBodyDefinitionKind definition) {
+  switch (definition) {
+  case LoweredBodyDefinitionKind::ImplicitSource:
+    return CppMirBodyDefinitionKind::ImplicitSource;
+  case LoweredBodyDefinitionKind::Source:
+    return CppMirBodyDefinitionKind::Source;
+  case LoweredBodyDefinitionKind::CompilerGenerated:
+    return CppMirBodyDefinitionKind::CompilerGenerated;
+  case LoweredBodyDefinitionKind::RuntimeBinding:
+    return CppMirBodyDefinitionKind::RuntimeBinding;
+  case LoweredBodyDefinitionKind::Declaration:
+    return CppMirBodyDefinitionKind::Declaration;
+  case LoweredBodyDefinitionKind::Count:
+    return CppMirBodyDefinitionKind::Count;
+  }
+  return CppMirBodyDefinitionKind::Count;
+}
+
+[[nodiscard]] CppMirBodyRole cppBodyRole(LoweredBodyRole role) {
+  switch (role) {
+  case LoweredBodyRole::SourceExecutable:
+    return CppMirBodyRole::SourceExecutable;
+  case LoweredBodyRole::AbiDeclaration:
+    return CppMirBodyRole::AbiDeclaration;
+  case LoweredBodyRole::DataOnly:
+    return CppMirBodyRole::DataOnly;
+  case LoweredBodyRole::Count:
+    return CppMirBodyRole::Count;
+  }
+  return CppMirBodyRole::Count;
+}
+
+[[nodiscard]] CppMirThunkKind cppThunkKind(LoweredGeneratedItemKind kind) {
+  switch (kind) {
+  case LoweredGeneratedItemKind::ProgramInitialization:
+    return CppMirThunkKind::ProgramInitialization;
+  case LoweredGeneratedItemKind::HostedEntry:
+    return CppMirThunkKind::HostedEntry;
+  case LoweredGeneratedItemKind::StructuralOperatorAdapter:
+    return CppMirThunkKind::StructuralOperatorAdapter;
+  case LoweredGeneratedItemKind::CallableAdapter:
+    return CppMirThunkKind::CallableAdapter;
+  case LoweredGeneratedItemKind::LifecycleCleanup:
+    return CppMirThunkKind::LifecycleCleanup;
+  case LoweredGeneratedItemKind::NativeInteropAdapter:
+    return CppMirThunkKind::NativeInteropAdapter;
+  case LoweredGeneratedItemKind::ConcreteInstanceAdapter:
+    return CppMirThunkKind::ConcreteInstanceAdapter;
+  case LoweredGeneratedItemKind::Count:
+    return CppMirThunkKind::Count;
+  }
+  return CppMirThunkKind::Count;
+}
+
+[[nodiscard]] CppMirThunkIdentity
+cppThunkIdentity(const LoweredGeneratedItemIdentity &identity) {
+  return {.kind = cppThunkKind(identity.kind),
+          .owner = identity.owner,
+          .ordinal = identity.ordinal};
+}
+
+[[nodiscard]] std::optional<CppMirDataKind>
+cppSourceDataKind(LoweredDeclarationKind kind) {
+  switch (kind) {
+  case LoweredDeclarationKind::Namespace:
+    return CppMirDataKind::NamespaceDeclaration;
+  case LoweredDeclarationKind::NamespaceAlias:
+    return CppMirDataKind::NamespaceAliasDeclaration;
+  case LoweredDeclarationKind::TypeAlias:
+    return CppMirDataKind::TypeAliasDeclaration;
+  case LoweredDeclarationKind::Class:
+    return CppMirDataKind::ClassDeclaration;
+  case LoweredDeclarationKind::Function:
+  case LoweredDeclarationKind::Constructor:
+  case LoweredDeclarationKind::Destructor:
+    return CppMirDataKind::CallableDeclaration;
+  case LoweredDeclarationKind::Storage:
+    return CppMirDataKind::StorageDeclaration;
+  case LoweredDeclarationKind::Access:
+    return CppMirDataKind::AccessDeclaration;
+  case LoweredDeclarationKind::LanguageLinkage:
+    return CppMirDataKind::LanguageLinkageDeclaration;
+  case LoweredDeclarationKind::Empty:
+    return CppMirDataKind::EmptyDeclaration;
+  case LoweredDeclarationKind::Concept:
+  case LoweredDeclarationKind::Other:
+    return CppMirDataKind::OtherDeclaration;
+  case LoweredDeclarationKind::Enum:
+  case LoweredDeclarationKind::Count:
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+void appendLoweredDeclarationRows(const LoweredProgram &program,
+                                  CppMirRepresentationSnapshot &snapshot,
+                                  CppMirRepresentationSnapshotBuild &build) {
+  std::size_t sourceOrdinal = 0;
+  std::vector<const LoweredEnumDeclaration *> enums;
+  std::vector<const LoweredClassDeclaration *> classes;
+  std::vector<const LoweredStorageDeclaration *> constexprBindings;
+
+  for (const LoweredDeclaration &declaration : program.declarations()) {
+    if (const auto *enumeration =
+            std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
+      enums.push_back(enumeration);
+    }
+    if (const auto *classDeclaration =
+            std::get_if<LoweredClassDeclaration>(&declaration.payload)) {
+      classes.push_back(classDeclaration);
+    }
+    if (const auto *storage =
+            std::get_if<LoweredStorageDeclaration>(&declaration.payload);
+        storage != nullptr && storage->constexprStorage) {
+      constexprBindings.push_back(storage);
+    }
+
+    const std::optional<CppMirDataKind> kind =
+        cppSourceDataKind(declaration.kind);
+    if (!kind) {
+      if (declaration.kind == LoweredDeclarationKind::Count) {
+        addIssue(build,
+                 CppMirRepresentationSnapshotIssueKind::InvalidLoweredProgram,
+                 "lowered declaration inventory contains a sentinel kind");
+      }
+      continue;
+    }
+    ++sourceOrdinal;
+    const std::size_t identity = declaration.semanticIdentity == 0
+                                     ? sourceOrdinal
+                                     : declaration.semanticIdentity;
+    snapshot.data.push_back({.identity = {.kind = *kind,
+                                          .declaration = identity,
+                                          .owner = declaration.ownerClass,
+                                          .ordinal = sourceOrdinal},
+                             .support = CppMirSurfaceSupport::Supported});
+
+    bool callableTemplate = false;
+    if (const auto *function =
+            std::get_if<LoweredFunctionDeclaration>(&declaration.payload)) {
+      callableTemplate = !function->genericParameters.empty();
+    } else if (const auto *constructor =
+                   std::get_if<LoweredConstructorDeclaration>(
+                       &declaration.payload)) {
+      callableTemplate = !constructor->genericParameters.empty();
+    }
+    if (callableTemplate) {
+      snapshot.data.push_back(
+          {.identity = {.kind = CppMirDataKind::CallableTemplateDeclaration,
+                        .declaration = identity,
+                        .owner = declaration.ownerClass,
+                        .ordinal = sourceOrdinal},
+           .support = CppMirSurfaceSupport::Supported});
+    }
+  }
+
+  for (const LoweredEnumDeclaration *enumeration : enums) {
+    if (enumeration == nullptr || enumeration->id == 0) {
+      addIssue(build,
+               CppMirRepresentationSnapshotIssueKind::InvalidLoweredProgram,
+               "lowered enum declaration lacks an exact identity");
+      continue;
+    }
+    snapshot.data.push_back(
+        {.identity = {.kind = CppMirDataKind::EnumDefinition,
+                      .declaration = enumeration->id},
+         .support = CppMirSurfaceSupport::Supported});
+  }
+
+  for (const LoweredClassDeclaration *classDeclaration : classes) {
+    if (classDeclaration == nullptr || classDeclaration->id == 0) {
+      addIssue(build,
+               CppMirRepresentationSnapshotIssueKind::InvalidLoweredProgram,
+               "lowered class declaration lacks an exact identity");
+      continue;
+    }
+    const bool abi = classDeclaration->cAbiRecord ||
+                     classDeclaration->cOpaqueHandle ||
+                     classDeclaration->kind == ClassKind::Union ||
+                     classDeclaration->unionLayout.has_value();
+    if (abi) {
+      snapshot.data.push_back(
+          {.identity = {.kind = CppMirDataKind::AbiTypeDeclaration,
+                        .declaration = classDeclaration->id},
+           .support = CppMirSurfaceSupport::Supported});
+    } else if (!classDeclaration->genericParameters.empty()) {
+      snapshot.data.push_back(
+          {.identity = {.kind = CppMirDataKind::ClassTemplateDeclaration,
+                        .declaration = classDeclaration->id},
+           .support = CppMirSurfaceSupport::Supported});
+    }
+  }
+
+  for (std::size_t index = 0; index < constexprBindings.size(); ++index) {
+    const LoweredStorageDeclaration &storage = *constexprBindings[index];
+    snapshot.data.push_back(
+        {.identity = {.kind = CppMirDataKind::ConstexprBinding,
+                      .declaration = storage.symbol,
+                      .owner = storage.ownerClass,
+                      .ordinal = index + 1},
+         .support = CppMirSurfaceSupport::Supported});
+  }
+}
+
+} // namespace
+
+CppMirRepresentationSnapshotBuild
+buildCppMirRepresentationSnapshot(const LoweredProgram &program,
+                                  CppStandard standard) {
+  CppMirRepresentationSnapshotBuild build;
+  const std::vector<LoweredProgramIssue> loweredIssues =
+      verifyLoweredProgram(program);
+  if (!loweredIssues.empty()) {
+    addIssue(build,
+             CppMirRepresentationSnapshotIssueKind::InvalidLoweredProgram,
+             "invalid LoweredProgram: " + loweredIssues.front().detail);
+    return build;
+  }
+
+  CppMirRepresentationSnapshot snapshot;
+  snapshot.mir = program.mir();
+  for (const LoweredBody &body : program.bodies()) {
+    // The C++-private plan predates constructor declaration identities in the
+    // shared lowered boundary. Preserve its established identity contract
+    // until the private plan itself is retired.
+    const std::size_t declaration =
+        body.identity.address.kind == MirBodyKind::Constructor
+            ? 0
+            : body.identity.declaration;
+    CppMirBodyRepresentation row{
+        .identity = {.address = body.identity.address,
+                     .placeDomain = body.identity.placeDomain,
+                     .definition = cppBodyDefinition(body.identity.definition),
+                     .declaration = declaration,
+                     .concreteOwner = body.identity.concreteOwner},
+        .role = cppBodyRole(body.role),
+        .family = body.role == LoweredBodyRole::SourceExecutable
+                      ? CppMirExecutionFamily::GeneralV1
+                      : CppMirExecutionFamily::None};
+    row.requiredThunks.reserve(body.requiredGeneratedItems.size());
+    for (const LoweredGeneratedItemIdentity &required :
+         body.requiredGeneratedItems) {
+      row.requiredThunks.push_back(cppThunkIdentity(required));
+    }
+    snapshot.bodies.push_back(std::move(row));
+  }
+
+  appendLoweredDeclarationRows(program, snapshot, build);
+  for (const LoweredGeneratedItem &item : program.generatedItems()) {
+    CppMirGeneratedThunk thunk{.identity = cppThunkIdentity(item.identity),
+                               .sourceBody = item.sourceBody,
+                               .support = CppMirSurfaceSupport::Supported};
+    thunk.dependencies.reserve(item.dependencies.size());
+    for (const LoweredGeneratedItemIdentity &dependency : item.dependencies) {
+      thunk.dependencies.push_back(cppThunkIdentity(dependency));
+    }
+    if (const auto *callback =
+            std::get_if<LoweredNativeCallbackItem>(&item.payload)) {
+      thunk.payload = CppMirNativeCallbackThunk{.adapter = callback->adapter};
+    }
+    snapshot.thunks.push_back(std::move(thunk));
+  }
+
+  if (build.issues.empty()) {
+    const CppMirBodyEmissionMapRows emissionRows =
+        buildCppMirBodyEmissionMapRows(program, standard);
+    const CppMirBodyEmissionMap emissionMap(emissionRows);
+    const CppMirProgramEmissionAnalysis emission =
+        CppMirBodyEmitter(program.mir(), emissionMap).analyzeProgram();
+    bool emissionReady = emission.ready();
+    const CppMirBodyEmissionIssue *unresolvedIssue = nullptr;
+    if (!emissionReady) {
+      emissionReady = emission.issues.empty();
+      for (const CppMirBodyEmissionAnalysis &body : emission.bodies) {
+        if (body.ready()) {
+          continue;
+        }
+        if (!specializedBodyTextIsReady(program, standard, emissionRows,
+                                        body)) {
+          emissionReady = false;
+          if (!body.issues.empty()) {
+            unresolvedIssue = &body.issues.front();
+          }
+          break;
+        }
+      }
+    }
+    if (!emissionReady) {
+      std::string detail =
+          "verified MIR program is outside the complete C++ text vocabulary";
+      if (unresolvedIssue == nullptr && !emission.issues.empty()) {
+        unresolvedIssue = &emission.issues.front();
+      }
+      if (unresolvedIssue != nullptr) {
+        detail += ": " + unresolvedIssue->detail + " (body-kind " +
+                  std::to_string(
+                      static_cast<std::size_t>(unresolvedIssue->body.kind)) +
+                  " owner " + std::to_string(unresolvedIssue->body.owner) + ')';
       }
       addIssue(build,
                CppMirRepresentationSnapshotIssueKind::UnsupportedMirEmission,
