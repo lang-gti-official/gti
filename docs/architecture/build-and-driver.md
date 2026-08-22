@@ -12,7 +12,9 @@ gti build|check|run|test|clean|metadata project mode
                  \                /
                   gti_driver requests
                          -> Frontend
-                         -> optimization/backend
+                         -> optimization
+                         -> LoweredProgramBuilder
+                         -> backend
                          -> native toolchain when required
 ```
 
@@ -22,8 +24,8 @@ gti build|check|run|test|clean|metadata project mode
   and compiler-owned language queries. It does not depend on manifests, TOML,
   native processes, or project output policy.
 - `gti_cpp_backend` contains the compiled C++ emitter and consumes the immutable
-  compiler-owned `BackendInput` contract. It depends on `gti_compiler`; the LSP
-  never invokes it.
+  compiler-owned `LoweredProgram` contract plus explicit C++ standard policy.
+  It depends on `gti_compiler`; the LSP never invokes it.
 - `gti_driver` in `include/gti/driver/` and `src/driver/` owns immutable
   compilation/build requests, resources, manifests, project plans, artifacts,
   native command construction, and process execution.
@@ -37,10 +39,11 @@ gti build|check|run|test|clean|metadata project mode
   json-c library.
 
 `gti_driver` exposes `compileWithBackend` as the generic whole-program backend
-seam. The driver runs the same frontend, optimization, and verified-MIR gates
-before invoking a caller-provided `Backend`. If artifact generation throws, the
-driver returns `CompilationStatus::BackendFailure` with a structured
-entry-anchored diagnostic and the retained frontend source/diagnostic snapshot.
+seam. The driver runs the same frontend and optimization gates, constructs and
+verifies one `LoweredProgram`, and then invokes a caller-provided `Backend`
+with only that value. If construction or artifact generation fails, the driver
+returns `CompilationStatus::BackendFailure` with a structured entry-anchored
+diagnostic and the retained frontend source/diagnostic snapshot.
 The CLI renders that diagnostic and returns its ordinary compilation-failure
 status; it does not depend on an exception escaping to a CLI-only handler.
 

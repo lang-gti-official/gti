@@ -2,12 +2,12 @@
 
 Status: implemented structural CFG, ownership/effect, synchronization,
 lifecycle, defined-failure control flow, and sole production executable-body
-authority. Generated target-representation inventory remains a backend-layer
-boundary.
+authority.
 
 MIR lowers each concrete HIR body into body-local control flow, values, places,
-resolved calls, ownership operations, and cleanup. It is the intended
-transformation and future-backend IR.
+resolved calls, ownership operations, and cleanup. Verified optimized MIR is
+the executable component of the backend-neutral `LoweredProgram`; `MirProgram`
+alone is not the complete backend API.
 
 ## Representation
 
@@ -23,24 +23,22 @@ for the module; a zero, out-of-range, or owner absent from the addressed kind
 resolves to no body. Optimizers and coherence checks use this shared navigation
 authority rather than maintaining their own body-family switches.
 
-The private C++ whole-program planner consumes that same exhaustive
+`LoweredProgramBuilder` consumes that exhaustive inventory exactly once after
+optimization. It verifies source-to-optimized coherence and publishes each
+address, place domain, definition provenance, body role, source identity, and
+generated-item requirement beside the optimized MIR. The resulting value has
+no AST or HIR pointer. An implicit initializer is data-only only for the exact
+empty one-block `Exit` shape, except `Module/0`: its verified implicit-zero or
+constant storage stages remain `DataOnly`, while any merged `Initializer` step
+makes the module row executable.
+
+The private C++ whole-program planner subsequently consumes the sealed lowered
 inventory. Its representation snapshot owns an exact canonical `MirProgram`
 copy, so planning checks structural equality rather than treating the
-deliberately normalized/partial MIR printer as an identity hash. Each planning
-row copies its address, place domain, definition provenance, and concrete
-declaration/owner identity; no AST or HIR body pointer crosses the boundary.
-The private builder also copies an immutable seal over the exact MIR, body,
-declaration-data, and thunk inventory. Planning checks that seal before sorting
-or moving rows, so coordinated omission or staleness is incoherent even when
-the remaining copied graph is internally consistent.
-This adds a fail-closed pre-emission inventory, not a new semantic authority.
-`CppBackend` runs it before constructing the verified-MIR representation
-emitter. An implicit initializer is data-only only
-for the exact empty one-block `Exit` shape, except `Module/0`: its verified
-implicit-zero/constant storage stages remain `DataOnly`, while any merged
-`Initializer` step makes the Module row executable. Temporary
-production-family labels are inventory only and cannot establish generic-
-emitter coverage.
+deliberately normalized MIR printer as an identity hash. Coordinated omission
+or staleness is incoherent even when the remaining copied graph is internally
+consistent. This is a fail-closed representation plan, not a new semantic
+authority.
 
 The generic body emitter is the production text step established by
 ADR 016. `buildCppMirBodyEmissionMapRows` copies deterministic
@@ -57,44 +55,21 @@ writer. Receiver-place handling and operation order are derived from MIR, and
 the body-emitter suite requires every reviewed corpus identity to be text-
 ready.
 
-The sealed private builder derives hosted-entry thunks from the exact MIR entry
-function. It derives one `ProgramInitialization` owner marker exactly when the
-verified merged Module plan contains an `Initializer` step. Exact `Module/0`
-is its sole direct body root and the marker has no dependencies. Field
-initializer bodies are per-construction; a legacy executable generic
-static-field initializer remains independent unsupported inventory and cannot
-infer the merged marker. The planner independently re-derives that complete
-contracted graph: each exact MIR entry body directly roots one hosted-entry
-thunk, and that thunk depends on the marker if and only if executable merged
-program initialization exists. Enum, `constexpr`,
-ABI/opaque/union, and otherwise-unused generic class-template declarations do
-not live in the MIR body inventory, so the builder copies them from exact
-Program/semantic/HIR identity. It also walks every active source declaration
-emitted outside an executable body and records namespace/alias, class,
-callable, storage, access, language-linkage, and empty-declaration rows with a
-stable traversal ordinal and semantic declaration/owner identity where
-available. An otherwise
-unclassified scope-level statement receives a conservative declaration row,
-so new source surface cannot become invisible evidence for `Complete`. This
-keeps unused generic free/member/operator/constructor templates visible even
-when HIR has no concrete instance. Public backend callers cannot supply these
-rows or a trusted support claim. Any incoherence rejects before emission,
-while a coherent unsupported row rejects the program before emission.
+The lowered-program builder derives one `ProgramInitialization` item exactly
+when the verified merged module plan contains executable initializer work;
+exact `Module/0` is its body root. Each exact entry body roots one hosted-entry
+item, which depends on program initialization when required. Declarations that
+do not live in MIR body inventory, including enums, aliases, ABI/opaque/union
+types, and unused generic templates, are copied into the active lowered
+declaration tree before the builder seals the whole contract. Public backend
+callers cannot supply individual rows or claim support.
 
-Before collecting those rows, the builder requires the semantic and HIR
-analysis seals to agree and exact-compares the seal with the supplied Program
-and full backend `TargetInfo`. The seal records the Program snapshot, active
-statement preorder under target-conditional selection, and exact ordered
-source-unit/dependency/prelude provenance, so a separately parsed passive-only
-Program, a different source graph, and a target selecting a different passive
-branch are rejected even when there is no executable body whose owner would
-otherwise expose the mismatch. The shared HIR-plan verifier additionally
-requires semantic/HIR agreement for program initialization and hosted entry,
-including exact module bindings, values, roots, and program-constant
-substitution provenance. The backend snapshot gate then requires a valid MIR
-program and exact-compares HIR with the merged MIR unit/step order, complete
-storage-place metadata, zero/constant data provenance, dynamic statement/
-initializer/full-expression identities, and substitution inventory.
+Before publication, construction requires semantic and HIR analysis seals to
+agree with the supplied `Program` and target, validates ordered source-unit and
+active-declaration provenance, verifies program initialization and hosted
+entry, exact-compares HIR/MIR storage and initializer plans, and verifies the
+optimized MIR. This coherence evidence is not retained as backend input; a
+successfully constructed `LoweredProgram` is the backend frontier.
 
 `MirProgram` copies the selected execution profile from `HirProgram` as
 immutable program metadata. Body lowering and optimization do not rediscover
@@ -713,10 +688,12 @@ represents CFG, scalar and aggregate operations, places, calls, moves, loans,
 raw-memory operations, drops, construction metadata, exclusive-reborrow
 parent/child transitions, full-expression/lexical obligations, normal and
 defined-failure edges, and use-def relationships. It does not own object or
-vtable layout, calling conventions, native ABI spelling, or the complete
-inventory of generated representation adapters. Some operation families also
-retain bounded verifier contracts rather than one uniform materialization
-model; that is verification debt, not an executable AST/HIR fallback.
+vtable layout, calling conventions, native ABI spelling, or declaration and
+generated-representation inventory. The `LoweredProgram` frontier combines
+optimized MIR with those complete backend-neutral facts before any backend
+runs. Some operation families also retain bounded verifier contracts rather
+than one uniform materialization model; that is verification debt, not an
+executable AST/HIR fallback.
 
 It also does not yet completely implement
 [Execution Section 4.2](../language/execution.md#42-evaluation-order). For the
@@ -904,12 +881,12 @@ not separate executable authorities.
 MIR retains explicit source or identity-fold provenance for every rewritten
 `Compute`/`Literal`. The verifier requires a rewritten literal to retain an
 exact dominating, same-typed MIR identity chain to its original literal.
-`CppBackend` therefore consumes the MIR proof rather than a HIR replacement
-table and exact-checks source-to-optimized coherence before emission.
+`LoweredProgramBuilder` therefore consumes the MIR proof rather than a HIR
+replacement table and exact-checks source-to-optimized coherence before
+publishing the backend contract.
 
-The remaining architecture work is to strengthen bounded verifier contracts
-and to describe generated representation adapters independently of the C++
-backend. It must not reintroduce semantic inference or executable source-tree
-walking in the emitter. See
-[`backend.md`](backend.md#remaining-boundary) and
+The remaining MIR architecture work is to strengthen bounded verifier
+contracts and operation materialization. It must not reintroduce semantic
+inference or executable source-tree walking in a backend. See
+[`backend.md`](backend.md) and
 [`docs/plans/implementation-sequence.md`](../plans/implementation-sequence.md).

@@ -2,46 +2,41 @@
 
 Status: Accepted
 
-Implementation note (2026-08-22): the source-body portion is complete and the
-first production `LoweredProgram` boundary is implemented. The reusable driver
-constructs and verifies that immutable, pointer-free value after MIR
-optimization, and `MirBackend` is the first client that reads only this
-contract. It currently owns optimized MIR, target layout, an active declaration
-tree with resolved declaration payloads, a complete semantic symbol vocabulary,
-concrete class/function/constructor/destructor/lambda instance metadata,
-source/body identities, and the exact hosted-entry, program-initialization,
-structural-operator, callable, lifecycle-cleanup, and native-callback
-generated-item graph. It also owns one exact declaration-rooted requirement for
-every concrete generic function and constructor instance. Ordinary C/runtime
-boundaries are resolved ABI declaration/body rows rather than a second hidden
-native-wrapper family, so the callback inventory exhausts generated native
-interoperability. The production C++ generic-MIR row builder and whole-program
-planner consume this
-contract; structural and callable adapter eligibility is now read only from
-its declaration-rooted rows, and generic specialization eligibility is read
-from the concrete-instance rows, while spelling remains in the transitional
-declaration emitter. The frontend-vs-lowered exact inventory and plan
-comparisons remain as migration
-evidence. `NativeHeaderBackend` also consumes only this contract. C++
-declaration assembly and the final production API cutover remain in progress,
-so transitional `BackendInput` fields are still present.
+Implementation note (2026-08-22): implemented. The reusable driver constructs
+and verifies one immutable, pointer-free `LoweredProgram` after MIR
+optimization. `Backend::generate` accepts only that value; `CppBackend`,
+`MirBackend`, and `NativeHeaderBackend` do not receive the AST, semantic model,
+HIR, source MIR, optimization result, or generated C++. `LoweredProgram` owns
+optimized MIR, target facts, the active resolved declaration tree, symbols,
+concrete class/function/constructor/destructor/lambda instances, source/body
+identities, and the exhaustive hosted-entry, program-initialization,
+structural-operator, callable, lifecycle-cleanup, native-callback, and concrete-
+instance generated-item graph. Ordinary C/runtime boundaries remain resolved
+ABI declaration/body rows rather than a duplicate generated-wrapper family.
+
+`LoweredProgramBuilder` is the only frontend-aware construction boundary. It
+proves source/optimized coherence and exact declaration, symbol, instance, body,
+and generated-item inventories before publication. The consumer header exposes
+no frontend representation or builder API. C++ declaration/source assembly,
+private representation snapshots, whole-program planning, and body emission
+all derive from the lowered value; C++ spellings and helper choices remain
+backend policy. `BackendInput`, frontend-backed snapshot overloads, and the old
+AST/HIR emitter routes have been removed.
 
 ## Context
 
-`BackendInput` currently carries six coupled representations: the AST
-`Program`, the `SemanticModel`, the `HirProgram`, the optimized `MirProgram`,
-the pre-optimization source `MirProgram`, and the HIR optimization
-replacement table. `CppBackend` verifies their mutual coherence on every run
-and the transitional `CppEmitter` consults all of them during emission. This
-was the correct shape while AST/HIR body emission was the production
-authority and MIR families were being proven one at a time, but it leaves the
-backend with multiple executable authorities: a body's meaning can still be
-re-derived from AST or HIR at emission time, which is exactly the phase
-violation the architecture table in
+Before this decision was implemented, `BackendInput` carried six coupled
+representations: the AST `Program`, the `SemanticModel`, the `HirProgram`, the
+optimized `MirProgram`, the pre-optimization source `MirProgram`, and the HIR
+optimization replacement table. `CppBackend` re-verified their mutual
+coherence on every run and `CppEmitter` consulted all of them during emission.
+That shape was useful while AST/HIR body emission was production authority and
+MIR families were being proven one at a time, but it left the backend with
+multiple authorities: meaning could be re-derived from AST or HIR at emission
+time. That is exactly the phase violation the architecture table in
 [`overview.md`](../architecture/overview.md) forbids, and every new
-representation surface (naming, layout, declaration ordering) is currently
-rediscovered inside the 15,000-line compatibility emitter rather than stated
-once.
+representation surface was rediscovered inside the compatibility emitter
+rather than stated once.
 
 The backend-authority migration needs a stated end state so that emission
 work converges instead of accreting more cross-representation consultation.
@@ -65,34 +60,26 @@ Executable C++ generation converges on one immutable lowered-program input.
   ownership: syntax, resolved meaning, and concrete instance discovery. They
   stop being consulted by executable body emission. HIR is not deleted; it
   stops being a backend execution authority.
-- During the migration, `BackendInput` keeps its transitional fields, and the
-  compatibility emitter remains the authority for bodies MIR does not yet
-  own. Every migrated surface must move consultation out of AST/HIR and into
-  the lowered tables; new emission code must not add AST/HIR consultation.
-- At cutover, the backend API narrows to the lowered program plus target
-  policy, and the coherence seals that currently guard six representations
-  reduce to the frontier between the frontend and the lowered program.
-
-Whether the lowered program is realized by extending `MirProgram` with the
-representation tables or by a thin `LoweredProgram` aggregate that owns them
-beside the `MirProgram` is a naming decision deferred to the first change
-that materializes the tables in production; this ADR fixes the boundary, not
-the spelling.
+- The compiler realizes the boundary as a `LoweredProgram` aggregate that owns
+  optimized MIR beside backend-neutral representation tables. Construction is
+  separate from consumption: frontend-aware declarations live in
+  `lowered_program_builder.h`, while backends include only the consumer
+  contract.
+- The backend API is the lowered program plus explicit backend policy. The
+  coherence seal guards the frontier between frontend construction and the
+  backend rather than requiring each backend to reconcile upstream phases.
 
 ## Consequences
 
-- Emission progress is measured against one convergence target: the set of
-  facts a body's emission still reads from AST/semantics/HIR is its remaining
-  migration debt.
-- The differential oracle against the compatibility emitter remains
-  regression evidence only. The compatibility emitter knowingly violates
-  evaluation-order, temporary-cleanup, initialization, and defined-failure
-  contracts, so agreement with it cannot be the primary correctness proof;
-  specification traces, MIR mutation tests, cleanup and failure invariants,
-  and the runtime matrices stay primary.
-- Representation-table extraction is ordinary refactoring of the
-  compatibility emitter and must not change emitted bytes while both paths
-  coexist; the oracle and the family runtime gates hold that line.
-- The multi-representation coherence checks in `CppBackend` are retained
-  until cutover: they are the guard that the transitional inputs agree, not a
-  design goal of their own.
+- A future backend can inspect the complete lowered contract without linking
+  frontend representations or parsing generated C++.
+- Unsupported or incomplete lowered representation fails before emission.
+  Backends verify the construction seal and inventory but do not reconstruct
+  frontend coherence.
+- Deterministic printing, verifier mutations, a complete shipped-corpus census,
+  backend rejection tests, and an independent contract client guard the
+  boundary. Existing MIR, native, runtime, FFI, C++20/C++23, and installed-
+  toolchain matrices remain the behavioral proof.
+- Internal compatibility with the deleted multi-representation route is not a
+  constraint. New target-independent emission facts belong in
+  `LoweredProgram`; C++ spelling and ABI syntax belong in the C++ backend.

@@ -26,8 +26,8 @@ Concrete generic validity is obtained through semantic instance reanalysis.
 - executable `HirBody` values, bindings, statements, and root statements;
 - snapshot-local full-expression identities plus typed lexical/value drop
   obligations for values that require structural cleanup;
-- source-expression to concrete-value mappings used by the transitional
-  optimizer/backend.
+- source-expression to concrete-value mappings used by optimization analysis
+  and cross-phase verification.
 
 IDs are stable only inside one `HirProgram`; zero means no identity.
 
@@ -275,10 +275,12 @@ read/move/reinitialization facts. Dynamic-index precision and general lifetime
 epochs remain future proof work; they are separate from the explicit
 normal-exit temporary/drop obligations.
 
-HIR retains syntax provenance needed for diagnostics and transitional C++
-emission. `HirProgram::sourceValueIds` may map one source expression to several
-concrete generic values; a source-level optimization replacement is valid only
-when all concrete instances agree.
+HIR retains syntax provenance needed for diagnostics, lowering, and
+optimization-coherence checks. `HirProgram::sourceValueIds` may map one source
+expression to several concrete generic values; a source-level optimization
+replacement is valid only when all concrete instances agree. Backends do not
+receive this map: `LoweredProgramBuilder` consumes any required construction
+evidence before publishing the backend contract.
 
 Function and constructor instance keys retain type arguments and `uint64_t`
 value arguments separately. Contextual braces have already become a concrete
@@ -332,7 +334,8 @@ HIR owns concrete identity and typed executable structure. It does not decide
 source validity, repeat overload resolution, own body-local CFG repair, define
 object ABI/layout, or choose a backend representation. New syntax reaches HIR
 only after semantics owns its meaning. New body-local dataflow generally
-belongs in MIR.
+belongs in MIR. HIR is an input to `LoweredProgramBuilder`, not an input to a
+production backend.
 
 Current gaps and future instance/backend work are tracked in
 [`docs/plans/compiler-roadmap-status.md`](../plans/compiler-roadmap-status.md)

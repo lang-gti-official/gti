@@ -64,14 +64,14 @@ remain invalid. The complete 124-function GLFW 3.4 surface, including all five
 records and Vulkan-facing declarations, passes generated C17/C++20/C++23 and
 linked O0/O3 oracles.
 
-The generated representation boundary is complete. Hosted entry, program
+ADR 016's backend representation boundary is complete. Hosted entry, program
 initialization, native callbacks, structural operators, callable adapters,
 lifecycle cleanup, and concrete generic function/constructor instances have
 exact generated-item contracts. Ordinary C/runtime boundaries are resolved ABI
 declaration/body rows rather than generated wrappers. C++ declaration and
-template spelling still uses the transitional frontend tuple; migrating that
-assembly and deleting the tuple is the remaining second-backend boundary, not a
-source-body compatibility route.
+template assembly now consumes the immutable `LoweredProgram`; `BackendInput`
+and the frontend-backed emitter/snapshot routes are removed. A future backend
+can be an independent lowered-contract client.
 
 ### Historical backend campaign notes
 
@@ -1045,24 +1045,23 @@ parser and position-sensitive editor-query gates. Larger MIR dataflow and
 verification work remains explicitly staged rather than being folded into
 these corrections.
 
-The compiler is transitional rather than backend-independent:
+At that historical checkpoint, the compiler was transitional rather than
+backend-independent:
 
-- semantics owns language validity, HIR owns concrete instances, and MIR owns
+- semantics owned language validity, HIR owned concrete instances, and MIR owned
   its implemented body-local CFG, value, place, call, move, loan, drop,
   lifecycle, ordered-input, and bounded failure-edge families;
-- MIR still lacks complete receiver/argument/result materialization,
+- MIR still lacked complete receiver/argument/result materialization,
   partial-constructor rollback, containment, and program initialization;
-- constant folding still controls C++ emission through the compatibility HIR
+- constant folding still controlled C++ emission through the compatibility HIR
   replacement table;
-- the C++ emitter still walks checked AST and HIR side data rather than
+- the C++ emitter still walked checked AST and HIR side data rather than
   emitting complete bodies from optimized MIR.
 
-The immediate compiler critical path is therefore **backend-authority
-recovery**, not additional shadow MIR breadth. M-LIFE-01's normal-exit
-temporary/drop substrate and several ordered/failure families are already
-verified; the next credibility result is to execute the largest sound body set
-from those facts. Remaining lifetime, ordering, rollback, and containment work
-is co-delivered by the production migration phase that consumes it.
+The critical path at that checkpoint was therefore **backend-authority
+recovery**, not additional shadow MIR breadth. The completed MIR and
+`LoweredProgram` cutovers supersede that position; the bullets remain a release
+history rather than current architecture.
 
 Compiler operations that ordinary GTI cannot yet express now enter semantics
 through trusted bodyless declarations in the implicit prelude. Calls bind the
@@ -1082,7 +1081,8 @@ semantic publication prevent application access to the surrounding namespace.
 | Typed HIR | Concrete-instance authority | Owns concrete generic, class, callable, and entry instances; resolved calls; typed values and places; constants; ownership, borrow, lifecycle, cleanup, failure, native-linkage, payload, storage, pack, and ordered-input facts; and the target-independent program-initialization plan. HIR remains immutable and does not own backend spelling. Some expression families still need more uniform destination/materialization schedules, but that gap cannot move executable authority back from MIR. |
 | MIR | Sole executable-body authority with bounded verifier gaps | Owns every body CFG and identity, values, places, calls, moves, loans, raw-memory and synchronization operations, construction/drop/cleanup schedules, failure metadata and propagation, program initialization, hosted startup, and source/optimized provenance. Verification rejects malformed ownership, effects, schedules, and rewrites. Remaining work includes a uniform materialization model for all operation families and double failure; the exhaustive generated-item and target-resolved ABI contracts now publish at the `LoweredProgram` frontier. |
 | Optimizer | Bounded verified production transforms | Backend-neutral constant evaluation, HIR constant analysis, MIR dominance, controlled atomic editing, repair/invalidation, and source-to-optimized coherence are implemented. Every executable body consumes optimized MIR; only transformations replayed and accepted by the coherence verifier can change emitted behavior. General pass management, cached analyses, loop infrastructure, and broader folds remain client-gated. |
-| C++ backend | Source-body and generated-item cutovers complete; declaration representation transitional | `CppBackend` requires coherent source and optimized MIR, builds and seals a complete body/data/generated-item representation inventory, and accepts only the `VerifiedMir` whole-program route. All 2,601 reviewed body identities emit through `CppMirBodyEmitter`; executable AST visitors and the public no-MIR emitter are removed. Hosted entry, program initialization, structural/callable adapters, lifecycle cleanup, native callbacks, and concrete generic function/constructor instances now have exhaustive lowered contracts. AST, semantics, and HIR still supply C++ declaration/template spelling; moving that assembly onto lowered declarations and removing the transitional backend tuple is the remaining ADR 016 boundary. |
+| Lowered backend frontier | ADR 016 complete | `LoweredProgramBuilder` proves frontend/source/optimized coherence once and publishes immutable optimized MIR, declarations, symbols, concrete instances, target/ABI facts, and the exhaustive generated-item graph. Deterministic printing, verifier mutations, a complete corpus census, backend rejection tests, an independent contract client, and a structural dependency gate guard the boundary. |
+| C++ backend | Lowered-program-only production backend | `CppBackend` accepts only `LoweredProgram` plus C++ standard policy, seals a complete body/data/generated-item representation plan, and accepts only the `VerifiedMir` whole-program route. All 2,601 reviewed body identities emit through `CppMirBodyEmitter`; declaration/source assembly uses lowered declarations, symbols, instances, and generated items. Executable AST visitors, frontend snapshot overloads, and the public no-MIR emitter are removed. |
 | Compiler library boundary | Migration complete | Frontend, semantic model/analysis, HIR/MIR lowering and queries, optimization, formatting/language queries, and support algorithms compile in `gti_compiler`; C++ emission compiles in `gti_cpp_backend`, and native/project orchestration compiles in `gti_driver`. Public headers retain records, templates, `constexpr` values, trivial accessors, and exact-version facades. |
 | Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `test`, `clean`, and schema-9 `metadata` are implemented. Valueless source/CLI/manifest configuration flags select parsed conditional branches and participate in project/cache identity; the LSP consumes manifest flags and marks inactive tokens. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Test targets build and execute independently in deterministic order. Project build/run/test requests use a verified content-addressed whole-program cache. Canonical workspaces and source-only path dependencies now provide deterministic package selection, direct package aliases, graph diagnostics, shared outputs, and cache provenance without network access. Broader LSP workspace/profile facts and symbol operations remain incomplete. |
 

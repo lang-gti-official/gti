@@ -915,13 +915,13 @@ propagation drift. Broader double-failure, embedding, task, and callback
 containment remain explicit feature work rather than retroactive claims of the
 hosted boundary.
 
-The generated-item inventory is now target-independent and exhaustive for
-hosted entry, program initialization, structural/callable adapters, lifecycle
-cleanup, native callbacks, and concrete generic functions/constructors. The
-remaining second-backend boundary is C++ declaration/template assembly over the
-lowered declaration, symbol, instance, layout, and ABI tables, followed by
-removal of the transitional frontend tuple. It must not restore executable AST
-or HIR authority.
+The generated-item inventory is target-independent and exhaustive for hosted
+entry, program initialization, structural/callable adapters, lifecycle cleanup,
+native callbacks, and concrete generic functions/constructors. ADR 016 is
+complete: C++ declaration/template assembly consumes the immutable lowered
+declaration, symbol, instance, layout, ABI, MIR, and generated-item tables, and
+the transitional frontend tuple has been removed. A future backend starts from
+that same self-contained `LoweredProgram` contract.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

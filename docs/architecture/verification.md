@@ -29,6 +29,10 @@ assertions.
 | `runtime_failure_subprocess` | exact ordinary/emergency escaped report bytes, status 70, observer once-only behavior, original-record firewalling, closed/broken-pipe write failure, and process-wide terminal arbitration |
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
 | `optimizer_foundation` | MIR verification/printing/effects; MIR v20 function provenance/effects retained in MIR v21's three-kind definition and defined-failure result; bounded closure and exact call propagation; dominance; controlled editor atomicity, repair, and invalidation; retained canonical source MIR; exact structural optimization-coherence replay; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
+| `lowered_program_contract` | deterministic independent construction; complete declaration, symbol, body, instance, and generated-family inventory; standalone contract-client printing; and missing, duplicate, stale, reordered, unrooted, cyclic, or forged-record rejection |
+| `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
+| `backend_lowered_program_boundary` | structural prohibition on frontend includes/types, `BackendInput`, source-MIR/optimizer inputs, and builder leakage across production backend files and the standalone contract client |
+| `lowered_program_corpus_census` | exact per-example declaration, body, generated-item, and generated-family counts across the complete shipped corpus |
 | `mir_backend_first_family` | verified source/optimized MIR handoff, ordinary and failure-form general emission, optimized instruction control, and missing, stale, duplicated, or unauthorized snapshot rejection |
 | `mir_backend_first_family_runtime` | general verified-MIR execution at O0/O1/O3 under C++20/C++23, including body-identity markers and optimized-MIR artifact differences |
 | `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
@@ -114,7 +118,8 @@ archives.
 For a syntax or semantic feature, consider only applicable layers:
 
 ```text
-tokens -> parser/AST -> semantics -> HIR -> MIR -> optimizer/backend
+tokens -> parser/AST -> semantics -> HIR -> MIR -> optimizer
+       -> LoweredProgram -> backend
        -> runtime/stdlib -> formatter/Tree-sitter/LSP -> docs/examples
 ```
 
@@ -285,7 +290,19 @@ and a forged-return-place verifier mutation. `lsp_protocol` owns publication
 and clearing of the shared `GTI-S2017` overlap diagnostic with its related
 origin and hint. No LSP-specific borrow inference is permitted.
 
-The MIR optimizer/backend boundary is split by authority.
+The lowered-program boundary has direct architectural gates. The contract test
+constructs equivalent values from independent frontend snapshots, compares the
+deterministic full printer, and has a separate translation unit inspect every
+top-level table without including frontend representations. Verifier mutations
+cover malformed declaration, symbol, instance, body, and all seven generated-
+item families. Backend mutations prove all shipped `Backend` implementations
+fail before producing artifacts. The structural source test prevents old
+frontend types or signatures from re-entering backend code, while the corpus
+census makes omissions across passive declarations and generated-only surfaces
+observable. C++20/C++23 corpus, FFI, runtime, and installed-toolchain gates then
+prove that the cutover preserved accepted-program behavior.
+
+The MIR optimizer/lowered-program boundary is split by authority.
 `optimizer_foundation` proves that primitive literal grouping identities
 produce the same constant by `HirValueId`, preserve instruction/result/
 provenance identity, rebuild removed uses, preserve CFG dominance, and are
@@ -295,7 +312,8 @@ dynamic, and computed groupings remain untouched. The
 `mir_backend_first_family` gates prove that the optimized instruction controls
 general emitted body text, reject invalid MIR, cross-frontend snapshots, and
 structurally valid unauthorized rewrites, and compile/run the boundary at
-O0/O1/O3 under C++20/C++23. There is no no-MIR emitter control path.
+O0/O1/O3 under C++20/C++23. Coherence is proven while constructing
+`LoweredProgram`; there is no no-MIR emitter control path.
 
 The same optimizer gate owns the MIR v20 function-effect foundation retained
 by MIR v21's canonical three-kind effect result. It proves that source

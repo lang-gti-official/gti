@@ -9,6 +9,13 @@ shadow proof sufficient, Milestone 3 `scalar-leaf-v1`, `scalar-cfg-v1`, and
 `scalar-direct-call-v1` plus `class-default-cleanup-v1` and
 `owned-lifecycle-call-v1` cutovers complete, failure-capable closure active
 
+Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
+in this proposal. `BackendInput`, HIR replacement-table emission, mixed AST/HIR
+body routes, and frontend-aware backend snapshots have been removed. The
+driver now constructs one verified `LoweredProgram` after optimization, and
+all production backends consume only that value. References below to those
+deleted routes describe historical milestones, not current architecture.
+
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). In particular, the
 first transforming slice must bring only the MIR editor and invalidation it
@@ -684,8 +691,9 @@ Status: complete for source executable bodies.
 
 Acceptance criteria:
 
-- `BackendInput::mir` is observably consumed;
-- one optimized MIR snapshot drives every executable-body backend;
+- the optimized MIR owned by `LoweredProgram` drives every executable-body
+  backend;
+- source/optimized coherence is proven once at lowered-program construction;
 - no pass queries AST shape or C++ spelling;
 - bodies have no AST/HIR execution fallback;
 - the exact census and `-O0`/C++20 versus `-O3`/C++23 corpus oracle pass, with

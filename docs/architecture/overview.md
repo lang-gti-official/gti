@@ -11,6 +11,7 @@ SourceLoader -> per-unit Lexer/Parser -> Program
              -> HirLowerer      -> HirProgram
              -> MirLowerer      -> MirProgram
              -> OptimizationPipeline
+             -> LoweredProgramBuilder -> LoweredProgram
              -> Backend (CppBackend today)
              -> BackendArtifact
              -> gti_driver/native compiler
@@ -31,30 +32,29 @@ validity together, which keeps AST-address semantic side tables alive.
 | Typed HIR | concrete generic/class/callable instances, executable typed value graphs, full-expression/drop obligations, and preserved semantic place/ownership events | a second type system or a different place relation |
 | MIR | body-local CFG, mapped places, values, resolved calls, moves, loans, typed lifecycle cleanup, ownership/lifecycle fixed-point verification, and structural verification | language rules missing from semantics/HIR |
 | Optimization | proven transformations over authoritative IR | host-C++ behavior as a proof |
+| Lowered program | immutable complete backend-neutral declarations, symbols, concrete instances, optimized bodies, target/ABI facts, and generated-item graph | frontend analysis or target-specific spelling |
 | Backend | representation and artifact generation | name/type/overload/lifetime inference |
 | Driver | requests, resources, manifests, artifacts, native tools, processes | GTI parsing or semantics |
 | CLI/LSP | presentation or protocol conversion | independent language analysis |
 
-## Current Transition Points
+## Backend Boundary
 
-- HIR remains the concrete-instance and target-independent representation
-  authority. Verified optimized MIR is now the sole production authority for
-  executable source bodies. The C++ backend has no AST/HIR body fallback and
-  its AST statement visitor rejects executable statements that reach it.
-- `BackendInput` carries both source and optimized MIR. `CppBackend` verifies
-  their frontend identity and permits only optimizer changes accepted by the
-  MIR coherence contract before it constructs the private emitter.
-- A sealed C++ representation snapshot inventories every body, declaration,
-  data surface, and generated thunk before emission. The only production
-  whole-program route is `VerifiedMir`; missing or unsupported inventory fails
-  before output.
-- MIR owns source control flow, operations, failure edges, loans, moves, and
-  cleanup schedules. `LoweredProgram` now owns the exhaustive generated-item
-  inventory for hosted entry, program initialization, structural/callable
-  adapters, lifecycle cleanup, native callbacks, and concrete generic
-  functions/constructors. C++ declaration/template spelling still consults
-  sealed AST/semantic/HIR facts; that is the remaining backend-separation
-  boundary, not permission to restore executable HIR emission.
+- HIR remains concrete-instance authority and optimized MIR remains sole
+  executable-body authority. `LoweredProgramBuilder` proves upstream coherence
+  once and publishes a value-owned declaration, symbol, instance, body, ABI,
+  and generated-item contract.
+- `Backend::generate` accepts only `const LoweredProgram &`. `CppBackend`,
+  `MirBackend`, and `NativeHeaderBackend` have no AST, semantic, HIR, source-MIR,
+  or optimization-table input. `BackendInput` and frontend emitter fallbacks
+  are removed.
+- A sealed C++-private representation snapshot inventories every body,
+  declaration, data surface, and generated item from the lowered contract. The
+  only production whole-program route is `VerifiedMir`; missing or unsupported
+  inventory fails before output.
+- C++ declaration/template spelling, helper naming, ABI syntax, and source
+  assembly are backend policy. Their resolved language and target-independent
+  inputs come from lowered declarations, symbols, instances, MIR, and
+  generated-item payloads.
 - The post-cutover example corpus contains 2,601 reviewed MIR body identities
   across 57 examples. An exact census and two native endpoint builds guard the
   cutover; focused structural and runtime fixtures cover shapes outside that
@@ -98,10 +98,14 @@ must store durable summaries rather than pointers into a discarded snapshot.
   plus compiled query operations, HIR/MIR lowering, and MIR verification.
 - `include/gti/optimizer.h`, `src/compiler/optimizer.cpp`: current optimizer
   entry points.
+- `include/gti/{lowered_program,lowered_program_builder}.h`,
+  `src/compiler/lowered_program.cpp`: complete backend-neutral consumer
+  contract, frontend-aware construction frontier, deterministic printing, and
+  verification.
 - `include/gti/{constant_evaluator,formatter,language_queries}.h`,
   `src/compiler/{constant_evaluator,formatter,language_queries}.cpp`: shared
   constant evaluation and editor-facing formatting/query implementations.
-- `include/gti/{backend,cpp_backend,cpp_emitter}.h`,
+- `include/gti/{backend,cpp_backend,cpp_emitter,native_header,mir_backend}.h`,
   `src/compiler/{cpp_backend,cpp_emitter}.cpp`: backend contracts and compiled
   C++ representation.
 - `include/gti/driver/`, `src/driver/`: build and native orchestration.

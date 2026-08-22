@@ -6,6 +6,11 @@
 
 Status: implemented; phases 1 through 7 are complete
 
+Implementation update (2026-08-22): later ADR 016 work replaced the historical
+`BackendInput` named below with the immutable `LoweredProgram` consumer
+contract. The separate `gti_cpp_backend` library boundary remains; its
+production API no longer exposes frontend representations.
+
 Prompt-sized migration ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below
 own the mechanical subsystem design; they must not be combined with semantic

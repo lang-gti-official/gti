@@ -215,14 +215,14 @@ removed, or changed body count must be reviewed and the corpus oracle rerun
 before its baseline is refreshed. Generated C++ text is not a public contract;
 marker rows are only an ownership witness.
 
-The generated-item boundary is complete. Hosted entry, program initialization,
-structural operators, callable invocation, lifecycle cleanup, same-thread native
-callbacks, and concrete generic function/constructor instances all have exact
-target-independent identities, payloads, dependencies, and roots. Ordinary
-C/runtime boundaries remain ABI declaration/body rows rather than generated
-wrappers. The active backend architecture work is the AST-free C++ declaration
-emitter and final `BackendInput` cutover; it must not restore source-body
-execution from AST or HIR.
+ADR 016 is complete. Hosted entry, program initialization, structural
+operators, callable invocation, lifecycle cleanup, same-thread native callbacks,
+and concrete generic function/constructor instances all have exact target-
+independent identities, payloads, dependencies, and roots. Ordinary C/runtime
+boundaries remain ABI declaration/body rows rather than generated wrappers.
+`BackendInput` and the AST/semantic/HIR C++ declaration route are removed; all
+production backends receive only an immutable `LoweredProgram` plus explicit
+backend policy.
 
 ## Systems-Readiness Outcome Lanes
 
@@ -271,17 +271,12 @@ start a later phase:
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. Landed M-FAIL-01 slices provide exact outcome/propagation identity, deterministic artifact descriptors and detector sites, plus verified fixed-record failure edges and cleanup for eligible full-expression-root scalar operations and exact later local-detector or static direct-call arguments after prepared owners. |
 
-MIR is not yet the sole executable authority. It owns the supported
-failure-free temporary/drop slice, bounded ordinary call/constructor/concrete
-call-operator input schedules, defined-failure identity, and bounded
-full-expression-root plus exact prepared-call-argument scalar `Invoke`/cleanup
-families, including ownership-free static direct-call propagation. It does not
-yet own complete ordered parameter/result materialization, other nested or
-owning failure edges, partial-constructor rollback, object layout, ABI, runtime
-containment, or executable failure handling. Production `CppBackend` now emits
-the exact `scalar-leaf-v1`, `scalar-cfg-v1`, `scalar-direct-call-v1`, and
-`class-default-cleanup-v1` families from verified optimized MIR; bodies outside
-those families still emit from checked AST/semantic/HIR compatibility facts.
+MIR is the sole executable-body authority. It still has bounded verifier gaps
+around complete ordered parameter/result materialization, additional nested or
+owning failure edges, partial-constructor rollback, and double failure, but
+those gaps cannot select another executable route. Object layout, ABI, and
+generated representation are combined with optimized MIR at the complete
+`LoweredProgram` frontier. Unsupported contracts fail before backend emission.
 
 ## Dependency Map
 
@@ -987,12 +982,11 @@ analysis, HIR, MIR, and the backend.
   native boundary shell is preflighted and emitted from MIR. The public no-MIR
   emitter and executable AST statement route are gone. Program initialization
   executes through its verified `Module/0` schedule and planned hosted adapter.
-- **Current follow-up boundary:** Generated structural, callable, lifecycle,
-  native-callback, and concrete-instance families now have exhaustive lowered
-  contracts. C++ declaration spelling still derives from sealed frontend facts;
-  it must move to the lowered declaration/symbol/instance tables before the
-  transitional backend tuple is deleted, without restoring executable HIR
-  emission.
+- **Completed backend frontier:** Generated structural, callable, lifecycle,
+  native-callback, and concrete-instance families have exhaustive lowered
+  contracts. C++ declaration/source assembly consumes lowered declarations,
+  symbols, instances, MIR, and generated items. The transitional backend tuple
+  and frontend-backed snapshot/emitter routes are deleted.
 - **Historical migration ledger:** The checkpoints below explain how the
   general route was reached. Counts and compatibility references describe the
   state at each named release and are not current architecture.
@@ -2728,7 +2722,7 @@ owned by the rows and domain plans above.
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
 | MIR transformations | first client required | bounded editor in `O-MIR-01`, not framework-first |
-| MIR-backed C++ emission | **source-body cutover complete** | 2,601/2,601 reviewed corpus bodies use the verified-MIR route; generated-adapter inventory remains a backend-separation follow-up |
+| MIR-backed C++ emission | **ADR 016 complete** | 2,601/2,601 reviewed corpus bodies use the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
 | `LoopInfo`/incremental dominance | **measured defer** | stable editor, invalidation, concrete loop client |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |
@@ -2783,13 +2777,11 @@ then stop. Reviewable commits are encouraged; an IR-only checkpoint is not a
 phase exit when the matching production cutover is in scope.
 ```
 
-`M-BACK-02` is complete for source executable bodies, and the generated-item
-campaign below is complete. A future backend task should start from the exact
-post-cutover census, exhaustive lowered generated graph, and sealed
-whole-program plan. The nearest architectural follow-up is C++ declaration and
-template assembly from `LoweredProgram`, followed by deletion of the
-transitional frontend tuple. It must preserve MIR body authority and must not
-recreate the retired no-MIR emitter as a comparison, fallback, or legacy mode.
+`M-BACK-02` and ADR 016 are complete. A future backend task starts from the
+immutable `LoweredProgram` consumer contract, exact corpus census, exhaustive
+generated graph, and sealed whole-program plan. It must not link frontend
+representations, parse generated C++, or recreate the retired no-MIR emitter as
+a comparison, fallback, or legacy mode.
 
 ### Completed migration campaign: generated-item inventory
 
