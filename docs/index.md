@@ -112,8 +112,8 @@ description of the implementation.
 - [Iterator and range completion](plans/iterators-and-ranges.md)
 - [LSP evolution](plans/lsp-evolution.md)
 - [C interop target surface](plans/c-interop-target-surface.md) — the
-  GLFW-shaped surface `S-FFI-02` F1/F2/F3 and `S-CALL-01` are built
-  against; a design artifact, not implemented behavior
+  completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
+  F1/F2/F3 and the same-thread `S-CALL-01` callback boundary
 - [Performance tooling](plans/performance-tooling.md)
 - [Conditional compilation and configuration flags](plans/conditional-compilation.md)
   — proposed `#define`/`#ifdef` flag axis over the existing target conditional,

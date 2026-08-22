@@ -2383,12 +2383,19 @@ public:
            classInfo(*currentClass).kind == ClassKind::Union);
       if (stmt.isConstexpr()) {
         // The constexpr contract reports its more specific initializer error.
-      } else if (declaredType.kind == SemanticType::RawPointer &&
+      } else if ((declaredType.kind == SemanticType::RawPointer ||
+                  declaredType.kind == SemanticType::NativeFunction) &&
                  !passiveStorageField) {
         report(stmt.name(),
-               "Raw pointer bindings and fields require an explicit "
-               "initializer; use 'nullptr' when no address is available.",
-               "GTI-S2056");
+               declaredType.kind == SemanticType::NativeFunction
+                   ? "Native function bindings and fields require an "
+                     "explicit initializer; use 'nullptr' when no callback "
+                     "is installed."
+                   : "Raw pointer bindings and fields require an explicit "
+                     "initializer; use 'nullptr' when no address is "
+                     "available.",
+               declaredType.kind == SemanticType::NativeFunction ? "GTI-S2076"
+                                                                 : "GTI-S2056");
       } else if (stmt.isStatic() && currentClass) {
         report(stmt.name(),
                "Static class and struct fields require an in-class "
@@ -4627,6 +4634,7 @@ public:
     case SemanticType::Double:
       return TargetScalarKind::Float64;
     case SemanticType::RawPointer:
+    case SemanticType::NativeFunction:
       return TargetScalarKind::Pointer;
     default:
       return std::nullopt;
@@ -5272,9 +5280,16 @@ public:
       }
     }
     if (symbol->type == SemanticType::Function && !analyzingCallCallee) {
+      if (contextualInitializerType &&
+          contextualInitializerType->kind == SemanticType::NativeFunction) {
+        currentType = analyzeNativeFunctionItem(
+            expr, *symbol, *contextualInitializerType, expr.name().last());
+        return;
+      }
       report(expr.name().last(),
              "Function names must be called; function values are not "
-             "supported yet.");
+             "supported outside an exact named native-function context.",
+             "GTI-S2076");
     }
     currentType = symbol->type;
   }
@@ -5668,9 +5683,16 @@ public:
       return;
     }
     if (symbol->type == SemanticType::Function && !analyzingCallCallee) {
+      if (contextualInitializerType &&
+          contextualInitializerType->kind == SemanticType::NativeFunction) {
+        currentType = analyzeNativeFunctionItem(
+            expr, *symbol, *contextualInitializerType, expr.name());
+        return;
+      }
       report(expr.name(),
              "Function names must be called; function values are not "
-             "supported yet.");
+             "supported outside an exact named native-function context.",
+             "GTI-S2076");
     }
     if (symbol->type.kind == SemanticType::TypePack &&
         !analyzingPackFoldElement) {
@@ -7939,6 +7961,7 @@ private:
     case SemanticType::TypePack:
     case SemanticType::TypeName:
     case SemanticType::Function:
+    case SemanticType::NativeFunction:
       return {};
     }
 
@@ -11825,6 +11848,7 @@ private:
     case SemanticType::PrefixStorage:
     case SemanticType::TypeName:
     case SemanticType::Function:
+    case SemanticType::NativeFunction:
     case SemanticType::Lambda:
     case SemanticType::Unexpected:
       return false;
@@ -15161,7 +15185,8 @@ private:
   [[nodiscard]] bool
   containsCAbiRawPointer(const SemanticType &type,
                          std::unordered_set<ClassId> &visiting) const {
-    if (type.kind == SemanticType::RawPointer) {
+    if (type.kind == SemanticType::RawPointer ||
+        type.kind == SemanticType::NativeFunction) {
       return true;
     }
     if (type.kind == SemanticType::Class) {
@@ -15394,6 +15419,126 @@ private:
            dynamic_cast<const ArrayInitializer *>(expression.get()) != nullptr;
   }
 
+  [[nodiscard]] static bool
+  nativeFunctionCandidateIsEligible(const FunctionCandidate &candidate) {
+    if (candidate.ownerClass != 0 || candidate.declaration == nullptr ||
+        candidate.id == 0 || !candidate.genericParameters.empty() ||
+        candidate.parameterPack || !candidate.requirements.empty() ||
+        candidate.virtualMethod || candidate.pureVirtual ||
+        candidate.overrideMethod ||
+        candidate.intrinsic != IntrinsicKind::None) {
+      return false;
+    }
+    const FunctionDecl &declaration = *candidate.declaration;
+    return declaration.body() != nullptr && !declaration.runtimeBinding() &&
+           !declaration.hasCLinkage() && !declaration.operatorName();
+  }
+
+  [[nodiscard]] bool
+  nativeFunctionCandidateMatches(const FunctionCandidate &candidate,
+                                 const SemanticType &expectedType) const {
+    if (!nativeFunctionCandidateIsEligible(candidate) ||
+        !expectedType.hasNativeFunctionShape()) {
+      return false;
+    }
+    const FunctionInfo *function = semanticModel.findFunction(candidate.id);
+    if (function == nullptr && instanceBaseModel != nullptr) {
+      function = instanceBaseModel->findFunction(candidate.id);
+    }
+    if (function == nullptr || function->entryPoint ||
+        function->linkage != LanguageLinkage::Gti) {
+      return false;
+    }
+    const SemanticType *returnType = expectedType.nativeFunctionReturnType();
+    const std::span<const SemanticType> parameterTypes =
+        expectedType.nativeFunctionParameterTypes();
+    return returnType != nullptr && candidate.returnType == *returnType &&
+           candidate.parameterTypes.size() == parameterTypes.size() &&
+           std::equal(candidate.parameterTypes.begin(),
+                      candidate.parameterTypes.end(), parameterTypes.begin());
+  }
+
+  [[nodiscard]] std::vector<const FunctionCandidate *>
+  matchingNativeFunctionCandidates(const Symbol &symbol,
+                                   const SemanticType &expectedType) const {
+    std::vector<const FunctionCandidate *> matches;
+    for (const FunctionCandidate &candidate : symbol.overloads) {
+      if (nativeFunctionCandidateMatches(candidate, expectedType)) {
+        matches.push_back(&candidate);
+      }
+    }
+    return matches;
+  }
+
+  [[nodiscard]] SemanticType
+  analyzeNativeFunctionItem(const Expr &expression, const Symbol &symbol,
+                            const SemanticType &expectedType,
+                            const Token &location) {
+    if (target.executionProfile == ExecutionProfile::Concurrent) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2076", DiagnosticPhase::Semantics, location,
+          "GTI function callbacks are not available in the concurrent "
+          "execution profile yet.");
+      diagnostic.hints.emplace_back(
+          "Use the single-threaded execution profile until callback thread "
+          "entry and synchronization semantics are defined.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return SemanticType::Unknown;
+    }
+
+    const std::vector<const FunctionCandidate *> matches =
+        matchingNativeFunctionCandidates(symbol, expectedType);
+    if (matches.size() != 1) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2076", DiagnosticPhase::Semantics, location,
+          matches.empty()
+              ? "No eligible free GTI function exactly matches native "
+                "function type '" +
+                    typeSpelling(expectedType) + "'."
+              : "Function conversion is ambiguous; " +
+                    std::to_string(matches.size()) +
+                    " overloads exactly match native function type '" +
+                    typeSpelling(expectedType) + "'.");
+      diagnostic.hints.emplace_back(
+          "Callback targets must be non-generic namespace-scope GTI "
+          "functions with bodies and an exact parameter and return type "
+          "match.");
+      for (const FunctionCandidate &candidate : symbol.overloads) {
+        if (candidate.declaration != nullptr) {
+          diagnostic.related.push_back(
+              {tokenSpan(candidate.declaration->name()),
+               "Candidate: " + functionSignatureSpelling(candidate)});
+        }
+      }
+      diagnostics.emplace_back(std::move(diagnostic));
+      return SemanticType::Unknown;
+    }
+
+    const FunctionCandidate &selected = *matches.front();
+    semanticModel.recordNativeFunctionConversion(
+        expression,
+        NativeFunctionConversionInfo{.function = selected.id,
+                                     .declaration = selected.declaration,
+                                     .type = expectedType});
+    return expectedType;
+  }
+
+  [[nodiscard]] bool
+  isContextualNativeFunctionArgument(const ExprPtr &expression) const {
+    if (!expression) {
+      return false;
+    }
+    const Symbol *symbol = nullptr;
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      symbol = resolve(variable->name());
+    } else if (const auto *qualified =
+                   dynamic_cast<const QualifiedName *>(expression.get())) {
+      symbol = resolveQualified(qualified->name());
+    }
+    return symbol != nullptr && symbol->type == SemanticType::Function;
+  }
+
   [[nodiscard]] ContextualCallArguments
   analyzeContextualCallArguments(const ExprList &arguments) {
     ContextualCallArguments result;
@@ -15401,7 +15546,8 @@ private:
     result.deferred.reserve(arguments.size());
     bool deferred = false;
     for (const ExprPtr &argument : arguments) {
-      deferred = deferred || isContextualArrayArgument(argument);
+      deferred = deferred || isContextualArrayArgument(argument) ||
+                 isContextualNativeFunctionArgument(argument);
       result.deferred.emplace_back(deferred);
       result.types.emplace_back(deferred ? SemanticType::Unknown
                                          : analyze(argument));
@@ -15422,6 +15568,14 @@ private:
              parameter.arrayLengthParameterId == 0 &&
              (initializer == nullptr || initializer->elements().empty() ||
               initializer->elements().size() == parameter.arrayLength);
+    }
+    if (isContextualNativeFunctionArgument(expression)) {
+      if (parameter.kind != SemanticType::NativeFunction) {
+        return false;
+      }
+      const std::optional<Symbol> symbol = resolveExpressionSymbol(expression);
+      return symbol &&
+             matchingNativeFunctionCandidates(*symbol, parameter).size() == 1;
     }
     return true;
   }
@@ -15448,6 +15602,17 @@ private:
                  "A brace argument requires one exact fixed-array parameter "
                  "type from the selected callable.",
                  "GTI-S2015");
+          analysis.types[index] = SemanticType::Unknown;
+          valid = false;
+          continue;
+        }
+        analysis.types[index] = analyzeInitializer(arguments[index], parameter);
+      } else if (isContextualNativeFunctionArgument(arguments[index])) {
+        if (parameter.kind != SemanticType::NativeFunction) {
+          report(expressionToken(arguments[index]),
+                 "A function item argument requires one exact named native "
+                 "function parameter type from the selected callable.",
+                 "GTI-S2076");
           analysis.types[index] = SemanticType::Unknown;
           valid = false;
           continue;
@@ -15484,6 +15649,9 @@ private:
                argument == SemanticType::NullPtr;
       }
       if (parameter.kind == SemanticType::RawPointer) {
+        return isAssignable(parameter, argument, expression.get());
+      }
+      if (parameter.kind == SemanticType::NativeFunction) {
         return isAssignable(parameter, argument, expression.get());
       }
       if (parameter == argument && expression &&
@@ -16591,7 +16759,57 @@ private:
   }
 
   void validateType(const TypeRef &type,
-                    bool allowNativeCArrayOuterPointer = false) {
+                    bool allowNativeCArrayOuterPointer = false,
+                    bool allowNativeFunctionType = false) {
+    if (type.isNativeFunction()) {
+      const Token &location = type.name.last();
+      if (!allowNativeFunctionType) {
+        report(location,
+               "A native function type must be named by a namespace-scope "
+               "'using' declaration before it is used.",
+               "GTI-S2076");
+      }
+      const std::size_t parameterCount =
+          type.nativeFunctionParameterCount.value_or(0);
+      const bool exactShape = type.arguments.size() == parameterCount + 1;
+      if (!exactShape) {
+        report(location, "Malformed native function type.", "GTI-S2076");
+        return;
+      }
+      if (type.pointeeConst || type.pointer || type.outerPointer ||
+          !type.arrayExtents.empty() || type.reference) {
+        report(location,
+               "A native function type cannot carry pointer, array, "
+               "reference, or const suffixes; the type already represents "
+               "a nullable C function pointer.",
+               "GTI-S2076");
+      }
+      for (std::size_t index = 0; index < parameterCount; ++index) {
+        validateType(type.arguments[index]);
+      }
+      validateType(type.arguments.back());
+      const SemanticType resolved = baseTypeOf(type, currentNamespace);
+      const SemanticType *returnType = resolved.nativeFunctionReturnType();
+      if (returnType == nullptr ||
+          !nativeFunctionBoundaryTypeAllowed(*returnType, true)) {
+        report(type.arguments.back().name.last(),
+               "A native function return must be void, a fixed-width C ABI "
+               "value, c_string, a passive [[c_abi]] record, or one raw "
+               "pointer to an admitted C ABI pointee.",
+               "GTI-S2076");
+      }
+      const auto parameters = resolved.nativeFunctionParameterTypes();
+      for (std::size_t index = 0; index < parameters.size(); ++index) {
+        if (!nativeFunctionBoundaryTypeAllowed(parameters[index], false)) {
+          report(type.arguments[index].name.last(),
+                 "A native function parameter must be an immutable "
+                 "fixed-width C ABI value, c_string, a passive [[c_abi]] "
+                 "record, or one raw pointer to an admitted C ABI pointee.",
+                 "GTI-S2076");
+        }
+      }
+      return;
+    }
     if (type.name.last().kind == TokenKind::AUTO) {
       report(type.name.last(),
              "'auto' is only valid for an initialized local binding.",
@@ -16622,6 +16840,7 @@ private:
           pointee == SemanticType::NullPtr ||
           pointee.kind == SemanticType::TypeName ||
           pointee.kind == SemanticType::Function ||
+          pointee.kind == SemanticType::NativeFunction ||
           pointee.kind == SemanticType::TypePack ||
           pointee.kind == SemanticType::RawPointer ||
           pointee.kind == SemanticType::Array) {
@@ -18544,6 +18763,62 @@ private:
             isCOpaqueHandleType(type.arguments.front()));
   }
 
+  [[nodiscard]] bool
+  nativeFunctionBoundaryTypeAllowed(const SemanticType &type,
+                                    bool returnPosition) const {
+    if (returnPosition && type == SemanticType::Void) {
+      return true;
+    }
+    if (isCAbiScalar(type) || type == SemanticType::CString ||
+        type == SemanticType::StringView) {
+      return true;
+    }
+    if (type.kind == SemanticType::NativeFunction) {
+      if (!type.hasNativeFunctionShape()) {
+        return false;
+      }
+      const SemanticType *returnType = type.nativeFunctionReturnType();
+      return returnType != nullptr &&
+             nativeFunctionBoundaryTypeAllowed(*returnType, true) &&
+             std::all_of(type.nativeFunctionParameterTypes().begin(),
+                         type.nativeFunctionParameterTypes().end(),
+                         [this](const SemanticType &parameter) {
+                           return nativeFunctionBoundaryTypeAllowed(parameter,
+                                                                    false);
+                         });
+    }
+    if (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) {
+      const SemanticType &pointee = type.arguments.front();
+      if (pointee == SemanticType::Void || isCAbiScalar(pointee) ||
+          pointee == SemanticType::CString) {
+        return true;
+      }
+      if (pointee.kind != SemanticType::Class || pointee.classId == 0 ||
+          pointee.classId > classes.size()) {
+        return false;
+      }
+      const ClassInfo &owner = classInfo(pointee.classId);
+      return owner.cAbiRecord || owner.cOpaqueHandle;
+    }
+    return type.kind == SemanticType::Class && type.classId != 0 &&
+           type.classId <= classes.size() && classInfo(type.classId).cAbiRecord;
+  }
+
+  [[nodiscard]] bool isCAbiNativeFunction(const SemanticType &type) const {
+    if (!type.hasNativeFunctionShape()) {
+      return false;
+    }
+    const SemanticType *returnType = type.nativeFunctionReturnType();
+    return returnType != nullptr &&
+           nativeFunctionBoundaryTypeAllowed(*returnType, true) &&
+           std::all_of(type.nativeFunctionParameterTypes().begin(),
+                       type.nativeFunctionParameterTypes().end(),
+                       [this](const SemanticType &parameter) {
+                         return nativeFunctionBoundaryTypeAllowed(parameter,
+                                                                  false);
+                       });
+  }
+
   [[nodiscard]] bool isCAbiArrayReturnPointer(const SemanticType &type) const {
     if (isCAbiRawPointer(type)) {
       return true;
@@ -18663,12 +18938,12 @@ private:
          returnType != SemanticType::CString && !isCAbiScalar(returnType) &&
          !isCAbiRawPointer(returnType) &&
          !isCAbiArrayReturnPointer(returnType) &&
-         !isCAbiRecordType(returnType))) {
+         !isCAbiRecordType(returnType) && !isCAbiNativeFunction(returnType))) {
       fail(function.returnType().name.last(),
            "extern \"C\" return types are limited to void, fixed-width "
            "integer or float scalars, c_string, valid [[c_abi]] records, and "
-           "one-level raw pointers to those types, opaque C handles, or "
-           "void.");
+           "one-level raw pointers to those types, opaque C handles, void, "
+           "or an exact named native function type.");
     }
 
     for (const Parameter &parameter : function.parameters()) {
@@ -18683,7 +18958,8 @@ private:
            parameterType != SemanticType::StringView &&
            parameterType != SemanticType::CString &&
            !isCAbiRawPointer(parameterType) &&
-           !isCAbiRecordType(parameterType))) {
+           !isCAbiRecordType(parameterType) &&
+           !isCAbiNativeFunction(parameterType))) {
         const Token &location = parameter.name.lexeme.empty()
                                     ? parameter.type.name.last()
                                     : parameter.name;
@@ -18692,7 +18968,7 @@ private:
              "fixed-width scalars, valid [[c_abi]] records, std::string_view "
              "counted buffers, c_string NUL-terminated pointers, and "
              "one-level raw pointers to those record or scalar types, opaque "
-             "C handles, or void.");
+             "C handles, void, or exact named native function types.");
       }
     }
 
@@ -19750,7 +20026,7 @@ private:
       targetFormValid = false;
     }
     if (targetFormValid) {
-      validateType(target);
+      validateType(target, false, target.isNativeFunction());
     }
     const SemanticType resolved = typeOf(target, alias.namespaceScope);
     if (targetFormValid && !isCompilerTrustedUnit(alias.sourceUnit) &&
@@ -21549,7 +21825,7 @@ private:
   }
 
   [[nodiscard]] bool cAbiFieldTypeAllowed(const SemanticType &type) const {
-    if (isCAbiScalar(type)) {
+    if (isCAbiScalar(type) || isCAbiNativeFunction(type)) {
       return true;
     }
     if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
@@ -21784,6 +22060,7 @@ private:
       std::uint32_t fieldAlignment = 0;
       if (isCAbiScalar(fieldType) ||
           fieldType.kind == SemanticType::RawPointer ||
+          fieldType.kind == SemanticType::NativeFunction ||
           fieldType.kind == SemanticType::Array) {
         const LayoutEvaluation fieldLayout = evaluateLayout(fieldType);
         if (!fieldLayout) {
@@ -28815,6 +29092,10 @@ private:
     if (target == SemanticType::CString && value == SemanticType::NullPtr) {
       return true;
     }
+    if (target.kind == SemanticType::NativeFunction &&
+        value == SemanticType::NullPtr) {
+      return true;
+    }
     if (target.kind == SemanticType::RawPointer) {
       if (value == SemanticType::NullPtr) {
         return true;
@@ -28870,6 +29151,12 @@ private:
         (right == SemanticType::CString && left == SemanticType::NullPtr)) {
       return true;
     }
+    if ((left.kind == SemanticType::NativeFunction &&
+         right == SemanticType::NullPtr) ||
+        (right.kind == SemanticType::NativeFunction &&
+         left == SemanticType::NullPtr)) {
+      return true;
+    }
     return isAssignable(left, right, rightExpression) ||
            isAssignable(right, left, leftExpression);
   }
@@ -28877,6 +29164,20 @@ private:
   [[nodiscard]] SemanticType
   baseTypeOf(const TypeRef &type,
              const std::vector<std::string> &fromScope) const {
+    if (type.isNativeFunction()) {
+      const std::size_t parameterCount =
+          type.nativeFunctionParameterCount.value_or(0);
+      if (type.arguments.size() != parameterCount + 1) {
+        return SemanticType::Unknown;
+      }
+      std::vector<SemanticType> parameters;
+      parameters.reserve(parameterCount);
+      for (std::size_t index = 0; index < parameterCount; ++index) {
+        parameters.emplace_back(typeOf(type.arguments[index], fromScope));
+      }
+      return SemanticType::nativeFunctionType(
+          typeOf(type.arguments.back(), fromScope), parameters);
+    }
     const CompilerCapabilityTypeKind compilerCapability =
         compilerCapabilityType(type, fromScope);
     if (compilerCapability == CompilerCapabilityTypeKind::TextView) {

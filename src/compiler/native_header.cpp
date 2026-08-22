@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iomanip>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -27,6 +28,13 @@ struct NativeFunction {
   const FunctionInfo *info = nullptr;
 };
 
+struct NativeCallbackAlias {
+  const TypeAliasDecl *declaration = nullptr;
+  const TypeAliasInfo *info = nullptr;
+  std::vector<std::string> namespaceScope;
+  std::string cName;
+};
+
 std::string emittedScope(std::string_view scope, std::size_t index) {
   return index == 0 && scope == "std" ? "__gti_std" : std::string(scope);
 }
@@ -48,6 +56,16 @@ std::string qualifiedCppName(const ClassTypeInfo &info) {
 std::string encodedCRecordName(const ClassTypeInfo &info) {
   std::ostringstream output;
   output << "gti_cabi_";
+  for (const unsigned char byte : info.qualifiedName) {
+    output << std::hex << std::setw(2) << std::setfill('0')
+           << static_cast<unsigned int>(byte);
+  }
+  return output.str();
+}
+
+std::string encodedCCallbackName(const TypeAliasInfo &info) {
+  std::ostringstream output;
+  output << "gti_cabi_callback_";
   for (const unsigned char byte : info.qualifiedName) {
     output << std::hex << std::setw(2) << std::setfill('0')
            << static_cast<unsigned int>(byte);
@@ -100,6 +118,7 @@ public:
   std::string emit() {
     collect(program.declarations());
     assignCNames();
+    orderCallbackAliases();
     orderRecords();
 
     std::ostringstream body;
@@ -136,18 +155,33 @@ public:
   }
 
 private:
-  void collect(const StmtList &declarations) {
+  void collect(const StmtList &declarations,
+               std::vector<std::string> namespaceScope = {}) {
     for (const StmtPtr &statement : declarations) {
       if (const auto *conditional =
               dynamic_cast<const ConditionalStmt *>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
-          collect(*branch);
+          collect(*branch, namespaceScope);
         }
         continue;
       }
       if (const auto *namespaceDeclaration =
               dynamic_cast<const NamespaceDecl *>(statement.get())) {
-        collect(namespaceDeclaration->declarations());
+        namespaceScope.push_back(namespaceDeclaration->name().lexeme);
+        collect(namespaceDeclaration->declarations(), namespaceScope);
+        namespaceScope.pop_back();
+        continue;
+      }
+      if (const auto *alias =
+              dynamic_cast<const TypeAliasDecl *>(statement.get())) {
+        const TypeAliasInfo *info = semantics.findTypeAlias(*alias);
+        if (info != nullptr &&
+            info->type.kind == SemanticType::NativeFunction &&
+            !info->compilerPrivate) {
+          callbackAliases.push_back({.declaration = alias,
+                                     .info = info,
+                                     .namespaceScope = namespaceScope});
+        }
         continue;
       }
       if (const auto *classDeclaration =
@@ -206,8 +240,23 @@ private:
     };
     assignRoots(records);
     assignRoots(opaqueHandles);
+    for (NativeCallbackAlias &alias : callbackAliases) {
+      if (alias.namespaceScope.empty() &&
+          used.insert(alias.declaration->name().lexeme).second) {
+        alias.cName = alias.declaration->name().lexeme;
+      }
+    }
     assignNamespaced(records);
     assignNamespaced(opaqueHandles);
+    for (NativeCallbackAlias &alias : callbackAliases) {
+      if (!alias.cName.empty()) {
+        continue;
+      }
+      alias.cName = encodedCCallbackName(*alias.info);
+      while (!used.insert(alias.cName).second) {
+        alias.cName += '_';
+      }
+    }
   }
 
   void orderRecord(ClassId id, std::unordered_set<ClassId> &visiting) {
@@ -242,6 +291,56 @@ private:
     }
   }
 
+  [[nodiscard]] std::size_t callbackAliasIndex(const SemanticType &type) const {
+    const auto found =
+        std::find_if(callbackAliases.begin(), callbackAliases.end(),
+                     [&](const NativeCallbackAlias &alias) {
+                       return alias.info->type == type;
+                     });
+    if (found == callbackAliases.end()) {
+      throw std::logic_error(
+          "checked native function type has no public named alias");
+    }
+    return static_cast<std::size_t>(
+        std::distance(callbackAliases.begin(), found));
+  }
+
+  void orderCallbackAlias(std::size_t index, std::vector<std::uint8_t> &state) {
+    if (index >= callbackAliases.size()) {
+      throw std::logic_error(
+          "checked native callback alias dependency is unavailable");
+    }
+    if (state[index] == 2) {
+      return;
+    }
+    if (state[index] == 1) {
+      throw std::logic_error(
+          "checked native callback aliases contain a dependency cycle");
+    }
+    state[index] = 1;
+    const SemanticType &type = callbackAliases[index].info->type;
+    const auto orderDependency = [&](const SemanticType &dependency) {
+      if (dependency.kind == SemanticType::NativeFunction) {
+        orderCallbackAlias(callbackAliasIndex(dependency), state);
+      }
+    };
+    if (const SemanticType *returnType = type.nativeFunctionReturnType()) {
+      orderDependency(*returnType);
+    }
+    for (const SemanticType &parameter : type.nativeFunctionParameterTypes()) {
+      orderDependency(parameter);
+    }
+    state[index] = 2;
+    orderedCallbackAliases.push_back(index);
+  }
+
+  void orderCallbackAliases() {
+    std::vector<std::uint8_t> state(callbackAliases.size(), 0);
+    for (std::size_t index = 0; index < callbackAliases.size(); ++index) {
+      orderCallbackAlias(index, state);
+    }
+  }
+
   const NativeRecord &nativeTypeFor(ClassId id) const {
     if (const auto found = recordByClass.find(id);
         found != recordByClass.end()) {
@@ -253,6 +352,29 @@ private:
     }
     throw std::logic_error(
         "checked native C type is unavailable to native header");
+  }
+
+  const NativeCallbackAlias &nativeCallbackFor(const SemanticType &type) const {
+    const auto found =
+        std::find_if(callbackAliases.begin(), callbackAliases.end(),
+                     [&](const NativeCallbackAlias &alias) {
+                       return alias.info->type == type;
+                     });
+    if (found == callbackAliases.end()) {
+      throw std::logic_error(
+          "checked native function type has no public named alias");
+    }
+    return *found;
+  }
+
+  std::string qualifiedCppCallbackName(const NativeCallbackAlias &alias) const {
+    std::string result = "::__gti_program::";
+    for (std::size_t index = 0; index < alias.namespaceScope.size(); ++index) {
+      result += emittedScope(alias.namespaceScope[index], index);
+      result += "::";
+    }
+    result += alias.declaration->name().lexeme;
+    return result;
   }
 
   std::string cppType(const SemanticType &type) const {
@@ -283,6 +405,8 @@ private:
       return "::gti_c_string_view";
     case SemanticType::CString:
       return "const char*";
+    case SemanticType::NativeFunction:
+      return qualifiedCppCallbackName(nativeCallbackFor(type));
     case SemanticType::Class:
       return qualifiedCppName(*nativeTypeFor(type.classId).info);
     case SemanticType::RawPointer: {
@@ -328,6 +452,8 @@ private:
       return "gti_c_string_view";
     case SemanticType::CString:
       return "const char*";
+    case SemanticType::NativeFunction:
+      return nativeCallbackFor(type).cName;
     case SemanticType::Class:
       return nativeTypeFor(type.classId).cName;
     case SemanticType::RawPointer: {
@@ -389,6 +515,50 @@ private:
     }
     output << "};\n";
     closeCppNamespaces(output, record.info->namespaceScope);
+  }
+
+  void emitCppCallbackAlias(std::ostream &output,
+                            const NativeCallbackAlias &alias) const {
+    const SemanticType *returnType =
+        alias.info->type.nativeFunctionReturnType();
+    if (returnType == nullptr) {
+      throw std::logic_error("checked native callback alias is malformed");
+    }
+    openCppNamespaces(output, alias.namespaceScope);
+    output << "using " << alias.declaration->name().lexeme << " = "
+           << cppType(*returnType) << " (*)(";
+    const std::span<const SemanticType> parameters =
+        alias.info->type.nativeFunctionParameterTypes();
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << cppType(parameters[index]);
+    }
+    output << ");\n";
+    closeCppNamespaces(output, alias.namespaceScope);
+  }
+
+  void emitCCallbackAlias(std::ostream &output,
+                          const NativeCallbackAlias &alias) const {
+    const SemanticType *returnType =
+        alias.info->type.nativeFunctionReturnType();
+    if (returnType == nullptr) {
+      throw std::logic_error("checked native callback alias is malformed");
+    }
+    output << "typedef " << cType(*returnType) << " (*" << alias.cName << ")(";
+    const std::span<const SemanticType> parameters =
+        alias.info->type.nativeFunctionParameterTypes();
+    if (parameters.empty()) {
+      output << "void";
+    }
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << cType(parameters[index]);
+    }
+    output << ");\n";
   }
 
   void emitCppAssertions(std::ostream &output,
@@ -461,13 +631,24 @@ private:
     closePublicCppNamespaces(output, record.info->namespaceScope);
   }
 
+  void emitCppCallbackSourceAlias(std::ostream &output,
+                                  const NativeCallbackAlias &alias) const {
+    openPublicCppNamespaces(output, alias.namespaceScope);
+    output << "using " << alias.declaration->name().lexeme << " = "
+           << qualifiedCppCallbackName(alias) << ";\n";
+    closePublicCppNamespaces(output, alias.namespaceScope);
+  }
+
   void emitCppSourceNameAliases(std::ostream &output) const {
-    if (records.empty()) {
+    if (records.empty() && callbackAliases.empty()) {
       return;
     }
     output << "#ifndef GTI_NATIVE_HEADER_NO_SOURCE_NAMES\n";
     for (const NativeRecord &record : records) {
       emitCppTypeAlias(output, record);
+    }
+    for (const NativeCallbackAlias &alias : callbackAliases) {
+      emitCppCallbackSourceAlias(output, alias);
     }
     output << "#endif /* GTI_NATIVE_HEADER_NO_SOURCE_NAMES */\n\n";
   }
@@ -503,6 +684,12 @@ private:
     if (!records.empty() || !opaqueHandles.empty()) {
       output << '\n';
     }
+    for (const std::size_t index : orderedCallbackAliases) {
+      emitCppCallbackAlias(output, callbackAliases[index]);
+    }
+    if (!callbackAliases.empty()) {
+      output << '\n';
+    }
     for (const std::size_t index : orderedRecords) {
       emitCppRecord(output, records[index]);
       output << '\n';
@@ -530,6 +717,12 @@ private:
              << ";\n";
     }
     if (!records.empty() || !opaqueHandles.empty()) {
+      output << '\n';
+    }
+    for (const std::size_t index : orderedCallbackAliases) {
+      emitCCallbackAlias(output, callbackAliases[index]);
+    }
+    if (!callbackAliases.empty()) {
       output << '\n';
     }
     for (const std::size_t index : orderedRecords) {
@@ -591,6 +784,8 @@ private:
   std::unordered_map<ClassId, std::size_t> opaqueByClass;
   std::vector<std::size_t> orderedRecords;
   std::unordered_set<ClassId> orderedRecordIds;
+  std::vector<NativeCallbackAlias> callbackAliases;
+  std::vector<std::size_t> orderedCallbackAliases;
   std::vector<NativeFunction> functions;
 };
 

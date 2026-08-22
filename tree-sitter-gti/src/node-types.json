@@ -561,6 +561,10 @@
             "named": true
           },
           {
+            "type": "native_function_type",
+            "named": true
+          },
+          {
             "type": "nullptr_t",
             "named": false
           },
@@ -1465,6 +1469,10 @@
           },
           {
             "type": "expected_type",
+            "named": true
+          },
+          {
+            "type": "native_function_type",
             "named": true
           },
           {
@@ -2853,6 +2861,32 @@
     }
   },
   {
+    "type": "native_function_type",
+    "named": true,
+    "fields": {
+      "parameter": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "nullptr_literal",
     "named": true,
     "fields": {}
@@ -3818,6 +3852,10 @@
         },
         {
           "type": "expected_type",
+          "named": true
+        },
+        {
+          "type": "native_function_type",
           "named": true
         },
         {

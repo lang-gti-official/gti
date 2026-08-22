@@ -1,21 +1,19 @@
 # C Interop Target Surface
 
-> **Plan status:** active implementation artifact. F1 fixed-array native fields,
-> the bounded F2 `c_string` boundary, and F3 pointer-plus-count returns compile
-> and pass the independent C oracle; dynamic owner borrowing and `S-CALL-01`
-> remain. This
-> is the surface `S-FFI-02` families F1/F2/F3 and `S-CALL-01` are built
-> against, kept here rather than under `examples/` because CMake globs
-> `examples/*.gti` into
-> the MIR differential corpus and a new file there would move the body count
-> the backend-authority campaign is measured against.
+> **Plan status:** completed acceptance artifact. F1 fixed-array native fields,
+> the bounded F2 `c_string` boundary, F3 pointer-plus-count returns, and the
+> same-thread `S-CALL-01` callback boundary compile and pass independent C and
+> C++ oracles. Dynamic owner borrowing remains separate work. The complete
+> binding lives in `tests/fixtures/glfw_3_4_surface.gti` rather than
+> `examples/`, because the examples directory is part of the MIR census.
 
 GLFW 3.4 is the named acceptance client for
 [`S-FFI-02`](implementation-sequence.md). A binding attempt at 0.199.0 bound
 3 of 5 records and roughly 90 functions using only the earlier boundary. GLFW
-3.4 declares 120 public functions; this document shows the same header once the
-remaining pieces land, so an implementer has a concrete target rather than a
-prose description.
+3.4 declares 124 public `GLFWAPI` functions. The completed fixture declares all
+124, all five public records, every callback typedef, the three GLFW opaque
+handles, and the Vulkan-facing opaque/value/function types without a
+GTI-caused omission.
 
 ## What each piece contributes
 
@@ -61,8 +59,26 @@ wrapper written in ordinary GTI over this surface.
   int32_t refreshRate;
 };
 
+[[c_abi]] struct GLFWgammaramp {
+  uint16_t* red;
+  uint16_t* green;
+  uint16_t* blue;
+  uint32_t size;
+};
+
+using GLFWallocatefun = (uint64_t, void*) -> void*;
+using GLFWreallocatefun = (void*, uint64_t, void*) -> void*;
+using GLFWdeallocatefun = (void*, void*) -> void;
+
+[[c_abi]] struct GLFWallocator {
+  GLFWallocatefun allocate;
+  GLFWreallocatefun reallocate;
+  GLFWdeallocatefun deallocate;
+  void* user;
+};
+
 // S-CALL-01: the header's `typedef void (*GLFWkeyfun)(...)` maps onto GTI's
-// existing `using` once a function type is spellable.
+// `using` names the exact nullable native function-pointer type.
 using GLFWkeyfun = (GLFWwindow*, int32_t, int32_t, int32_t, int32_t) -> void;
 using GLFWerrorfun = (int32_t, c_string) -> void;
 
@@ -83,7 +99,7 @@ extern "C" {
   [[c_array(count)]] GLFWmonitor** glfwGetMonitors(int32_t* count);
   int32_t glfwGetError(c_string* description);
 
-  // S-CALL-01: callbacks become ordinary parameters.
+  // S-CALL-01: named callbacks become ordinary boundary parameters/results.
   GLFWkeyfun glfwSetKeyCallback(GLFWwindow* window, GLFWkeyfun callback);
   GLFWerrorfun glfwSetErrorCallback(GLFWerrorfun callback);
 
@@ -151,7 +167,8 @@ int main() {
   std::string title = "GTI + GLFW";
   mut Window window = Window(800, 600, title);
 
-  // A named non-capturing function passed directly: no thunk, no userdata.
+  // A named non-capturing function receives one verified, process-lifetime
+  // compiler adapter. No capture or userdata is inferred.
   unsafe { glfwSetKeyCallback(window.raw(), on_key); }
 
   while (!window.should_close()) {
@@ -164,10 +181,19 @@ int main() {
 }
 ```
 
-The row exit gate is this program building and running: a window opens, input
-polls, and it exits cleanly under the sanitized build, with no declaration
-commented out except the Vulkan entry points, which depend on Vulkan types
-rather than on any GTI gap.
+The automated row exit gate is `glfw_3_4_c_oracle`. It emits the bridge header,
+exact-compares its 124 function names with GLFW 3.4, compiles the complete
+declaration surface as C17, checks callback and record types/layout from
+C++20/C++23, and links representative GTI calls against a C implementation at
+O0/O3. It includes `glfwInitVulkanLoader`, `glfwGetInstanceProcAddress`,
+`glfwGetPhysicalDevicePresentationSupport`, and `glfwCreateWindowSurface`;
+Vulkan is no longer an omitted tail. The native test uses a deterministic C
+harness rather than opening a platform window, so headless CI verifies ABI
+coverage without a display server.
+
+The fixture is a callable ABI mirror, not a C-preprocessor importer. GLFW's
+constants, version tests, and platform-selection macros remain ordinary GTI
+`constexpr` declarations and target conditionals in a real binding.
 
 ## Constants
 

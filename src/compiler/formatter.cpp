@@ -231,7 +231,9 @@ public:
         }
         break;
       case Kind::Dot:
-        if (lexeme.text == "->" && isLambdaReturnArrow(lexemes, index)) {
+        if (lexeme.text == "->" &&
+            (isLambdaReturnArrow(lexemes, index) ||
+             isNativeFunctionTypeArrow(lexemes, index))) {
           state.binaryOperator(lexeme.text);
         } else {
           state.trimSpaces();
@@ -1675,6 +1677,34 @@ private:
       } else if (lexemes[current].kind == Kind::LeftParen && --depth == 0) {
         const Lexeme *before = previousSignificant(lexemes, current);
         return before != nullptr && before->kind == Kind::RightBracket;
+      }
+    }
+    return false;
+  }
+
+  static bool isNativeFunctionTypeArrow(const std::vector<Lexeme> &lexemes,
+                                        std::size_t index) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    if (previous == nullptr || previous->kind != Kind::RightParen) {
+      return false;
+    }
+
+    bool afterAliasAssignment = false;
+    for (std::size_t current = index; current-- > 0;) {
+      const Lexeme &candidate = lexemes[current];
+      if (candidate.kind == Kind::Semicolon ||
+          candidate.kind == Kind::LeftBrace ||
+          candidate.kind == Kind::RightBrace ||
+          candidate.kind == Kind::Directive) {
+        return false;
+      }
+      if (candidate.kind == Kind::Operator && candidate.text == "=") {
+        afterAliasAssignment = true;
+        continue;
+      }
+      if (afterAliasAssignment && candidate.kind == Kind::Word &&
+          candidate.text == "using") {
+        return true;
       }
     }
     return false;

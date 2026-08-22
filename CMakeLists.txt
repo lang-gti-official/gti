@@ -569,6 +569,11 @@ if(BUILD_TESTING)
   target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend)
   add_test(NAME native_header_pipeline COMMAND gti_native_header_tests)
 
+  add_executable("gti_native_callback_tests"
+                 "tests/native_callback_tests.cpp")
+  target_link_libraries("gti_native_callback_tests" PRIVATE gti_cpp_backend)
+  add_test(NAME native_callback_pipeline COMMAND gti_native_callback_tests)
+
   add_executable("gti_defined_integer_tests"
                  "tests/defined_integer_tests.cpp")
   target_link_libraries("gti_defined_integer_tests" PRIVATE gti_cpp_backend)
@@ -865,6 +870,14 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>" "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     set_tests_properties(native_header_c_cpp_oracle PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME glfw_3_4_c_oracle
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/glfw_3_4_c_oracle_test.py"
+              "$<TARGET_FILE:gti>" "${CMAKE_CURRENT_SOURCE_DIR}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/glfw_3_4_surface.gti"
+    )
+    set_tests_properties(glfw_3_4_c_oracle PROPERTIES TIMEOUT 300)
     add_test(
       NAME llvm_link_surface
       COMMAND "${Python3_EXECUTABLE}"

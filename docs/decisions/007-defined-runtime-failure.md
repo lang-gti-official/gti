@@ -160,10 +160,14 @@ environment action:
   model; a later detach design must choose an explicit observation/escalation
   rule before it becomes safe.
 
-A future generated callback wrapper entered from C or a native thread is also
-a containment boundary and must use an explicitly selected host/task policy.
-An ordinary outbound `extern "C"` call is not a boundary. A native function
-that throws, long-jumps, aborts, or violates its declared contract does not
+The current generated callback wrapper entered from C under the single-threaded
+profile is a terminating containment boundary. It completes the selected GTI
+target's verified cleanup, forwards an original failure record to the runtime
+terminal primitive with no callback-local observer, and never returns failure
+through C. Its `noexcept` adapter catches a native exception and terminates
+rather than translating it. An ordinary outbound `extern "C"` call is not a
+boundary. Foreign/native-thread callback entry and a host/task callback policy
+remain future work. A native long-jump, abort, or contract violation does not
 thereby create a GTI defined-failure record.
 
 Direct calls to generated C++ symbols are not embedding boundaries. GTI does
@@ -282,15 +286,13 @@ to clean; it is not a catch-all internal-error category.
   semantics, caller cleanup, or embedding handoff policy.
 
 M-FAIL-01 and its co-delivered Q-FAIL-01 runtime/reporting slice implement the
-current hosted-program portion of this decision after ordered MIR evaluation
-and active-drop authority exist. M-FAIL-01 must add failure-aware
-call/constructor/virtual edges, rollback for the supported partially
-initialized shapes, the hosted program boundary, and reusable
-record/handoff/firewall machinery; a runtime-call replacement alone does not
-pass the decision. Future task and callback rows, plus E-EMBED-01, integrate and
-test their own concrete boundaries against that machinery. Until then, the
-emitter's duplicated `abort()` helpers and native expected observers are
-documented nonconformities, not alternative language behavior.
+current hosted-program portion of this decision over ordered MIR evaluation,
+active-drop authority, failure-aware calls, rollback for supported partial
+initialization, and reusable record/firewall machinery. The bounded
+same-thread callback row integrates its verified failure sibling and
+terminating firewall with that machinery. Future task, foreign-thread callback,
+and E-EMBED-01 rows must test their own concrete boundaries against it; a
+runtime-call replacement alone does not pass this decision.
 
 ## Alternatives
 

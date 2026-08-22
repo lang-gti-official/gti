@@ -110,8 +110,8 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
     if (
         # file_handle's computed negate(1) default joined the verified
         # initializer schedule as a terminally-contained expression.
-        generated.count(f"{MARKER} field-initializers-instance") != 3
-        or generated.count(f"{MARKER} static-field-initializers-instance") != 3
+        generated.count(f"{MARKER} field-initializers-instance") != 4
+        or generated.count(f"{MARKER} static-field-initializers-instance") != 4
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(

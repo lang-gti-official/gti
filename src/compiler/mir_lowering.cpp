@@ -2652,6 +2652,8 @@ private:
       return MirOperation::Index;
     case HirValueKind::Lambda:
       return MirOperation::Closure;
+    case HirValueKind::NativeCallback:
+      return MirOperation::NativeCallback;
     case HirValueKind::LayoutQuery:
       return MirOperation::Literal;
     case HirValueKind::Literal:
@@ -4601,6 +4603,8 @@ private:
                                .payloadIndex = value->payloadIndex,
                                .intrinsic = value->intrinsic,
                                .definedFailure = value->definedFailure,
+                               .nativeCallbackAdapter =
+                                   value->nativeCallbackAdapter,
                                .lambdaTarget = value->lambdaTarget,
                                .info = value->info};
     if (instruction.operation == MirOperation::Literal) {
@@ -6391,6 +6395,25 @@ MirLowerer::lowerProgram(const HirProgram &source,
                            MirBodyKind::Function, instance.returnType, {},
                            definedFailureEffects, valid, implicitZeroReturn,
                            nullptr, &instance, nullptr)});
+  }
+
+  result.program.nativeCallbacks.reserve(
+      source.nativeCallbackAdapters().size());
+  for (const HirNativeCallbackAdapter &adapter :
+       source.nativeCallbackAdapters()) {
+    const MirFunctionInstance *target =
+        result.program.findFunctionInstance(adapter.target);
+    if (target == nullptr) {
+      valid = false;
+      continue;
+    }
+    result.program.nativeCallbacks.push_back(
+        {.id = adapter.id,
+         .target = adapter.target,
+         .type = adapter.type,
+         .targetMayRaiseDefinedFailure = target->mayRaiseDefinedFailure,
+         .failurePolicy = MirNativeCallbackFailurePolicy::TerminateInvocation,
+         .catchesNativeExceptions = true});
   }
 
   result.program.constructors.reserve(source.constructorInstances().size());

@@ -18,6 +18,8 @@ assertions.
 | `native_record_pipeline` | `[[c_abi]]` declaration rules, computed field layout, diagnostics, extern-C signatures, unsafe classification, HIR/MIR retention, formatter, and backend assertions |
 | `native_header_pipeline` | deterministic compiler-owned C/C++ header shape, canonical record definitions, namespaces, flattened C names, and layout assertions |
 | `native_record_c_oracle` | generated record layout and by-value/one-level-pointer calls against an independently compiled C translation unit at O0/O3 and C++20/C++23 |
+| `native_callback_pipeline` | named callback syntax and exact conversion, null state, passive-record/C-boundary admission, HIR/MIR adapter identity and containment, formatter, diagnostics, generated thunk/header shape, and malformed-adapter rejection |
+| `glfw_3_4_c_oracle` | exact 124-function GLFW 3.4 inventory, all five records and callback/Vulkan types, generated C17/C++20/C++23 header checks, linked representative calls at O0/O3, and failing-callback containment |
 | `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, exact integer and checked-result constexpr constants, HIR/MIR intrinsic identity, effects, diagnostics, and backend helper selection |
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
@@ -153,6 +155,16 @@ layout. `native_record_pipeline` owns `GTI-S2065`, pointer-only semantic
 identity, formatter shape, and the absence of an emitted GTI body.
 The installed-library smoke compiles `NativeHeaderBackend` from the exported
 compiler package.
+
+For native callbacks, `native_callback_pipeline` is the owning cross-phase
+test. It proves that semantics alone selects an eligible exact free function,
+HIR and MIR retain one adapter identity, MIR fixes the failure/exception
+firewall, and forged adapter metadata fails closed. `glfw_3_4_c_oracle`
+independently compares the generated function-name set with GLFW 3.4's 124
+`GLFWAPI` declarations, compiles all declarations from C17, checks callback
+and record types/layout from C++20/C++23, and links representative GTI calls at
+O0/O3. The LSP smoke test publishes `GTI-S2076`, hover, and formatting for the
+same syntax; Tree-sitter corpus and highlight tests own editor parsing.
 
 For sum types, `sum_type_pipeline` owns union/payload parsing, passive union
 layout, unsafe member diagnostics, payload metadata, exact construction,

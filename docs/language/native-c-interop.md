@@ -23,9 +23,11 @@ This is a bounded C ABI rather than a general foreign-definition facility. It
 supports fixed-width values, passive `[[c_abi]]` records, nominal pointer-only
 `[[c_opaque]]` handles, bounded one-level raw pointers, NUL-terminated
 `c_string` values, and annotated native pointer-plus-count returns behind
-lexical `unsafe`. It does not expose native variables, callbacks, variadic
-calls, C++ linkage, annotated ownership transfer, or a stable binary ABI for
-ordinary GTI-defined types.
+lexical `unsafe`. It also supports named exact native callback types and
+same-thread adapters for eligible GTI free functions. It does not expose
+native variables, variadic calls, C++ linkage, annotated ownership transfer,
+foreign-thread GTI callback entry, or a stable binary ABI for ordinary
+GTI-defined types.
 
 The compiler can emit one native bridge header for this bounded surface. The
 header is valid C17 and C++20/C++23: C sees deterministic C record names, while
@@ -98,7 +100,8 @@ follows the same rule as its canonical allowed type:
 
 - returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
   `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, valid `[[c_abi]]`
-  records, `c_string`, and one-level raw pointers whose pointee is `void`, one
+  records, `c_string`, exact named native function types, and one-level raw
+  pointers whose pointee is `void`, one
   of those scalar types, `c_string`, a valid C ABI record, or a
   `[[c_opaque]]` handle. A `[[c_array(count)]]` declaration may additionally
   return the exact bounded two-level form whose inner pointer satisfies this
@@ -107,7 +110,7 @@ follows the same rule as its canonical allowed type:
   valid C ABI records passed immutably by value, one-level raw pointers with
   immutable bindings and the same permitted pointees, plus
   `std::string_view` as the counted input-buffer case and `c_string` as the
-  NUL-terminated input-pointer case; and
+  NUL-terminated input-pointer case, and exact named native function types; and
 - compatibility spellings `int`, `uint`, `int8` through `int64`, and `uint8`
   through `uint64` resolve to their documented fixed-width types and therefore
   follow the corresponding scalar rule.
@@ -121,16 +124,71 @@ local parameter binding, not the C ABI.
 their source meaning should not inherit platform C representation choices.
 Enums, ordinary complete classes/structs/interfaces, `expected`, owners,
 references, arrays, mutable parameters, packs, string-view returns,
-general pointer-to-pointer types, function pointers, and pointers to non-ABI
-pointees are also rejected. The two bounded exceptions do not create general
+general pointer-to-pointer types, anonymous or general function-pointer
+declarators, and pointers to non-ABI pointees are also rejected. The bounded
+exceptions do not create general
 nested pointer types: `c_string*` spells `const char**` for a C out parameter,
 and a `[[c_array(count)]]` return may add one outer pointer to an otherwise
-admitted one-level C pointer. The allowlist does not define array parameters,
-callbacks, opaque ownership transfer, or direct C++ linkage.
+admitted one-level C pointer. A named native function type recursively uses the
+same ABI-safe parameter/result family. The allowlist does not define array
+parameters, captured callbacks, opaque ownership transfer, or direct C++
+linkage.
 
 Every C ABI call is conservatively effectful. A successful declaration says
 only how GTI calls the symbol; it does not make the native implementation safe,
 portable, available on every target, or linked into the executable.
+
+## Native Callback Types
+
+A native callback type is named by a namespace-scope alias:
+
+```gti
+using ErrorCallback = (int32_t, c_string) -> void;
+using Resolver = (void*, c_string) -> ErrorCallback;
+
+extern "C" {
+  ErrorCallback set_error_callback(ErrorCallback callback);
+  Resolver set_resolver(Resolver resolver);
+}
+```
+
+The anonymous `(parameters...) -> result` spelling is accepted only as the
+direct target of that `using` declaration. Every later use names the alias.
+Its parameters are immutable and its complete shape must recursively use the
+bounded C ABI family described above. A callback alias may be stored in a
+passive `[[c_abi]]` record or used as an `extern "C"` parameter or result. It
+is nullable: initialization, assignment, and comparison with `nullptr` are
+valid. A callback binding requires an explicit initializer.
+
+This is not a general first-class GTI function-pointer facility. GTI callback
+values cannot be invoked directly, arithmetically manipulated, cast, or formed
+from lambdas, methods, generic functions, declarations without bodies, or
+inexact overloads. In an exact callback context, one non-generic
+namespace-scope GTI function with a body may convert to the alias:
+
+```gti
+void report_error(int32_t code, c_string message) {}
+
+unsafe {
+  [[discard]] set_error_callback(report_error);
+  [[discard]] set_error_callback(nullptr);
+}
+```
+
+Semantics selects the function identity and exact signature. HIR and MIR carry
+one stable adapter row, and the backend emits an `extern "C" noexcept` thunk.
+The thunk has process lifetime, so a same-thread C library may retain its
+address. It captures no GTI state and provides no implicit userdata lifetime.
+If the GTI target reports a defined failure, the thunk completes the target's
+verified cleanup and terminates through the runtime failure boundary; a native
+exception is caught and terminates rather than crossing C.
+
+The first callback profile is deliberately single-threaded. A concurrent
+program may describe and transport callback values received from C, but it may
+not expose a GTI function through an adapter. Native/foreign-thread entry needs
+runtime attachment, synchronization, observer, and thread-owned cleanup rules
+before it can be enabled. `GTI-S2076` owns invalid callback type shapes and
+conversions.
 
 ## NUL-Terminated C Strings
 

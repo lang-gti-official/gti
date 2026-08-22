@@ -836,10 +836,16 @@ There are three containment policies:
   from the first task model and requires its own later observation/escalation
   rule.
 
-A future generated callback entered from C or a native thread is a containment
-boundary with an explicitly selected host/task policy. An ordinary outbound
-`extern "C"` call is not. Native throw, long-jump, abort, or contract violation
-does not become a GTI defined-failure record.
+The current generated callback entered from C under the single-threaded
+profile is a terminating containment boundary. It completes the selected GTI
+target's verified cleanup and passes an original defined-failure record to the
+runtime terminal boundary with no callback-local observer; it never returns
+failure through C. Its `noexcept` adapter catches a native exception and
+terminates rather than translating it into a GTI record. An ordinary outbound
+`extern "C"` call is not a containment boundary. Foreign/native-thread callback
+entry and a host/task callback policy remain future concurrent-profile work.
+Native long-jump, abort, or contract violation does not become a GTI
+defined-failure record.
 
 An execution environment may select one observer plus host context before an
 invocation. That pair is captured immutably for the invocation and the host

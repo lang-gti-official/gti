@@ -5,8 +5,9 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.289.0 plus the completed hard-cutover audit and bounded
-F1/F2/F3 C-interoperation families. The backend-authority campaign's
+Checkpoint version: 0.290.0 plus the completed hard-cutover audit, bounded
+F1/F2/F3 C-interoperation families, and same-thread native callback boundary.
+The backend-authority campaign's
 per-release record lives in
 [`implementation-sequence.md`](implementation-sequence.md).
 
@@ -35,8 +36,9 @@ not a boundary for postponing essential capabilities. The former version
 horizon has been replaced in the maintained ledger by durable-rule,
 systems-ready, bounded-first, design-first, and later-breadth roles.
 
-This promoted bounded native records and pointer-only opaque handles (now
-complete), the remaining callback boundary, an application-visible allocator and arena/pool client, payload
+This promoted bounded native records, pointer-only opaque handles, and the
+same-thread callback boundary (now complete), an application-visible allocator
+and arena/pool client, payload
 enums and exhaustive matching,
 cleanup-correct error propagation, exact domain operators, one associative
 container, and the minimal public concurrency profile into systems-readiness
@@ -53,12 +55,14 @@ oracle, structural mutation tests, and focused runtime matrices guard the
 cutover.
 
 The current C-interoperation checkpoint admits direct fixed arrays in passive
-native records, an exact NUL-terminated `c_string` boundary, and
-`[[c_array(count)]]` returned pointer-plus-count declarations. The latter may
-spell one bounded `T**` return while ordinary nested pointer types remain
-invalid. All three families retain semantic facts through HIR/MIR and pass the
-generated C17/C++20/C++23 oracle. Native function/callback types remain the
-next GLFW blocker.
+native records, an exact NUL-terminated `c_string` boundary,
+`[[c_array(count)]]` returned pointer-plus-count declarations, and named exact
+native callback types. The latter may be fields, parameters, or results and may
+receive one exact non-generic namespace free GTI function through a verified
+same-thread adapter. Ordinary nested pointers and general function pointers
+remain invalid. The complete 124-function GLFW 3.4 surface, including all five
+records and Vulkan-facing declarations, passes generated C17/C++20/C++23 and
+linked O0/O3 oracles.
 
 The remaining backend boundary is generated representation. Hosted entry and
 program initialization have explicit thunk contracts; some structural,
@@ -921,8 +925,9 @@ L-CALL-01 now implements that vocabulary for confined boundaries, exact
 context-supplied confined-safe value results, repeatable read/mut invocation,
 consuming once-callable cardinality, local copy/move closure environments,
 exact same-type generic return, and the bounded one-field generic owner.
-Broader owned wrappers and extraction remain behind demonstrated clients,
-while C-CALL-01 and S-CALL-01 keep their failure, concurrency, and ABI gates.
+Broader owned wrappers and extraction remain behind demonstrated clients.
+S-CALL-01 now supplies the exact same-thread native adapter; C-CALL-01 and
+foreign-thread callback entry retain their concurrency/runtime gates.
 
 Design-only D-FAIL-01 is complete in
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure), with

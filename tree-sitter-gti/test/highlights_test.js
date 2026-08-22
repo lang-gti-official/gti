@@ -90,6 +90,13 @@ const nativeArrayRow = fixtureLines.findIndex((line) =>
 );
 requireCapture(nativeArrayRow, "c_array", "attribute");
 requireCapture(nativeArrayRow, "count", "variable.parameter");
+const nativeCallbackRow = fixtureLines.findIndex((line) =>
+  line.includes("using NativeCallback"),
+);
+requireCapture(nativeCallbackRow, "NativeCallback", "type.definition");
+requireCapture(nativeCallbackRow, "int32_t", "type.builtin");
+requireCapture(nativeCallbackRow, "c_string", "type");
+requireCapture(nativeCallbackRow, "->", "operator");
 requireCapture(33, "this", "variable.builtin");
 requireCapture(33, "self", "variable");
 requireCapture(36, "Counter", "type");

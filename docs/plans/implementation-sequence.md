@@ -230,7 +230,7 @@ infrastructure project.
 
 | Outcome lane | First dependency path | Acceptance signal |
 | --- | --- | --- |
-| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02/03` -> opaque-handle sub-slice of `S-FFI-02` -> `S-FFI-02` families F1/F2/F3; independently `M-LIFE/M-FAIL/M-BACK` -> `S-CALL-01` | Layout-stable records, exact symbols, and nominal pointer-only handles share one generated C/C++ adapter header. A wrapper can now hide C structs or C++ classes behind ordinary GTI RAII; callbacks retain their executable-lifetime prerequisites. The named acceptance client is GLFW 3.4: the header binds with no GTI-caused omission and an example opens a window and polls input. |
+| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02/03` -> opaque-handle sub-slice of `S-FFI-02` -> `S-FFI-02` families F1/F2/F3; independently `M-LIFE/M-FAIL/M-BACK` -> `S-CALL-01` | Layout-stable records, exact symbols, nominal pointer-only handles, and named same-thread callbacks share one generated C/C++ adapter header. A wrapper can hide C structs or C++ classes behind ordinary GTI RAII. The named acceptance client is GLFW 3.4: all 124 functions, all five records, callback typedefs, opaque handles, and Vulkan-facing declarations bind with no GTI-caused omission and cross a deterministic C harness. |
 | Arena or pool allocator | `M-LIFE-01` + failure/layout facts -> `S-ALLOC-01/02` -> one `S-ALLOC-03` client | Application GTI owns allocation policy and one container/value family proves initialization, failure, and cleanup. |
 | Multithreaded work queue | `M-LIFE/M-EXEC/M-FAIL` -> `C-MIR/RUNTIME/CALL` -> `C-ATOM/THREAD/SYNC` -> `C-CONFORM` | Owned tasks, SC atomics, mutex-guard access, join, and worker failure work through public GTI. |
 | Renderer/game update loop | mutable ranges/views + completed vector/string + exact domain operators + time/files/allocation | A frame/update workload mutates collections and domain values without raw-pointer escape hatches. |
@@ -1721,29 +1721,37 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-CALL-01: Function Items And C Callback Boundary
 
-- **State/role:** blocked; `D-CALL-01` and `M-LIFE-01` are done; remaining
-  prerequisites are `M-FAIL-01` and the matching closed-call-graph `M-BACK-02`
-  slice; systems-readiness implementation for the C-library wrapper.
-- **Scope:** First represent non-capturing function items with exact signatures
-  and stable C callback trampolines. Define callback lifetime, failure
-  containment, native retention, and userdata ownership. The first slice is
-  same-thread only and consumes M-FAIL-01's record/firewall machinery so no
-  GTI failure or native exception crosses C. Add capturing/escaping callables
-  only through the later owned-callable row.
-- **Initial boundary:** fixed-width scalar/pointer and passive native-record
-  signatures from the bounded C ABI.
-- **Non-goals:** C varargs, arbitrary casts, closure-to-`void*` erasure, or
-  foreign/native-thread entry. A later thread-entry slice requires
-  `D-MEM-02`, `C-TYPE-01`, and `C-RUNTIME-01`.
-- **Exit gate:** register/call/unregister positive and use-after-lifetime
-  negative tests cross a same-thread C harness with sanitizer coverage; a
-  failing callback follows its selected containment policy without crossing C.
+- **State/role:** done for the bounded same-thread C-library client.
+- **Scope:** A namespace-scope `using` declaration names an exact nullable
+  native function type. The type may appear in passive native records and C
+  parameters/results. Contextual conversion selects exactly one non-generic,
+  non-member namespace GTI function with a body and exact parameter/result
+  types. Semantics owns selection, HIR owns concrete target identity, and MIR
+  owns adapter identity, target failure effect, `TerminateInvocation` policy,
+  and native-exception firewall. The backend emits one process-lifetime
+  `extern "C" noexcept` thunk, so same-thread native retention cannot outlive
+  code or captured state.
+- **Initial boundary:** the complete recursively bounded C ABI family,
+  including fixed-width scalar/pointer, `c_string`, passive native records,
+  and nested named callback aliases.
+- **Non-goals:** direct callback-value invocation, C varargs, arbitrary casts,
+  lambdas/captures, closure-to-`void*` erasure, inferred userdata ownership, or
+  foreign/native-thread GTI entry. The latter still requires runtime attachment
+  and the adopted concurrency capability rows.
+- **Completion evidence:** `native_callback_pipeline` covers syntax,
+  contextual exactness, null state, record fields, callback returns, HIR/MIR
+  adapter verification, failure containment, C/C++ header shape, formatter,
+  and negative forms. `glfw_3_4_c_oracle` exercises retained same-thread
+  callbacks and the complete GLFW callback surface. A failing callback exits
+  through status 70 without returning across C; LSP and Tree-sitter gates cover
+  the same syntax and diagnostic.
 
 ### S-FFI-02: Additional C ABI Families
 
-- **State/role:** in progress; the independent pointer-only opaque-handle
-  family is complete in 0.119.0. The demonstrated C-library API this row's
-  remaining families are selected against is **GLFW 3.4**: a real, widely used
+- **State/role:** done for the selected bounded families and GLFW 3.4
+  acceptance client. The independent pointer-only opaque-handle family landed
+  in 0.119.0. The demonstrated C-library API this row's families are selected
+  against is **GLFW 3.4**: a real, widely used
   C library whose surface is broad enough to exercise records, strings,
   out-parameters, and callbacks, and small enough to bind completely.
   Callbacks remain owned by `S-CALL-01` rather than blocking handle identity.
@@ -1761,10 +1769,10 @@ do not expose C++ object layout as GTI semantics.
   declaration can be spelled exactly and its obligations stated, not when the
   declaration is provably safe. Restricting what may be *declared* pushes the
   problem outside the language, where GTI can say nothing about it at all.
-- **Remaining families, ordered against the GLFW binding.** A binding attempt
-  at 0.199.0 bound 3 of 5 records and roughly 90 functions; GLFW 3.4 has 120
-  public function declarations. The
-  measured blockers below are what the remainder needs. Each family must state
+- **Completed families, ordered against the GLFW binding.** A binding attempt
+  at 0.199.0 bound 3 of 5 records and roughly 90 functions; GLFW 3.4 has 124
+  public `GLFWAPI` declarations. The measured blockers below are now complete.
+  Each family states
   initialization, retention, aliasing, nullability, cleanup, and unsafe
   obligations. A selected ownership family must build on the opaque identity
   rather than retroactively making raw handle pointers owners.
@@ -1865,23 +1873,26 @@ do not expose C++ object layout as GTI semantics.
       header generation, formatter, Tree-sitter, LSP hover/definition/tokens,
       and C17/C++20/C++23 oracle coverage agree. Explicit nested-pointer locals,
       parameters, fields, and unannotated returns remain rejected.
-  - Callbacks are **not** in this row. `S-CALL-01` owns them and gates the
-    remaining ~20 GLFW entry points.
+  - Callback semantics remain owned by completed `S-CALL-01`; this row consumes
+    that type family when exact callback aliases occur in records and C
+    parameters/results.
   - The surface these families are built against is written out in
     [`c-interop-target-surface.md`](c-interop-target-surface.md): the raw
     mirror, the safe wrapper, and the acceptance program.
 - **Later breadth:** C varargs, unions, bit-fields, and packed records remain
   separate proposals. `printf` alone is not sufficient justification for
   importing C's least checkable call surface.
-- **Exit gate for each remaining family:** the selected family passes a real C oracle across supported
+- **Exit gate for each family:** the selected family passes a real C oracle across supported
   targets, has explicit initialization/retention/cleanup diagnostics, and adds
   no backend-derived type or ownership authority.
-- **Row exit gate:** with F1 through F3 and `S-CALL-01` complete, the GLFW 3.4
-  header binds with no declaration commented out except the Vulkan entry
-  points, which depend on Vulkan types rather than on any GTI gap. An example
-  program opens a window, polls input, and exits cleanly under the sanitized
-  build. Record the binding under `examples/` so the surface is regression
-  covered rather than reconstructed by hand each time.
+- **Row exit gate:** complete. With F1 through F3 and `S-CALL-01`, the GLFW 3.4
+  header binds all 124 functions, all five records, every callback typedef, and
+  the Vulkan-facing declarations without omission. The generated header
+  compiles as C17 and C++20/C++23, all 124 function names are exact-compared
+  with the official header inventory, representative calls link and run at
+  O0/O3, and callback failure is contained. The fixture is regression-covered
+  under `tests/fixtures/`; a real display/window smoke belongs to a downstream
+  GLFW package because headless CI should not define language correctness.
 
 ### S-ALLOC-01: Allocator, Provenance, And Initialization Proposal
 
@@ -2668,7 +2679,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `Q-DIAG-01` | ready | Add one generated diagnostic table with enum identity, default severity, group, and format contract; migrate one subsystem per bounded sub-slice while preserving current spans/messages unless intentionally changed. |
-| `Q-FAIL-01` | bounded hosted consumer complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, and terminal arbitration are implemented and focused tests pass. `scalar-failure-callgraph-v1` is the first generated hosted M-BACK-02 consumer. Double-failure cleanup, general initialization, embedding/task/callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
+| `Q-FAIL-01` | bounded hosted consumer and same-thread native-callback firewall complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, and callback termination adapter are implemented and focused tests pass. `scalar-failure-callgraph-v1` is the first generated hosted M-BACK-02 consumer. Double-failure cleanup, general initialization, embedding/task/foreign-thread-callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
 | `Q-DEPRECATION-01` | blocked | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
 | `Q-FUZZ-01` | blocked | After `C-MIG-02` stabilizes the owning seams, add lexer/parser/source-loader/formatter/protocol fuzz targets with bounded inputs, deterministic reproducers, and sanitizer jobs. |
 
@@ -2697,8 +2708,8 @@ owned by the rows and domain plans above.
 | Temporary/active-drop authority | **complete normal-exit lifecycle substrate** | `M-LIFE-01` done; failure rollback and full ordered materialization remain downstream |
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | systems-readiness library critical path | `L-RANGE-01` -> `L-RANGE-03` |
-| Native C records/handles/callbacks | records, adapter, and pointer-only opaque identity complete; callback work remains systems-readiness | `S-ABI-01/02/03` + first `S-FFI-02` sub-slice done; callable lifetime/failure/executable authority -> `S-CALL-01` |
-| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return, and one-field generic owner implemented; broader owner/extraction/concept work remains systems-readiness work shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> remaining `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
+| Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
+| Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return, one-field generic owner, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work shared by algorithms and tasks | `D-CALL-01` and `S-CALL-01` done -> remaining `L-CALL-01`; thread-task extension is `C-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **in progress:** passive exact construction and exhaustive copied matching complete; ownership, generics, and stable layout remain | `L-SUM-01` |
@@ -2776,6 +2787,11 @@ frontend facts. It must preserve MIR body authority and must not recreate the
 retired no-MIR emitter as a comparison, fallback, or legacy mode.
 
 ### Next migration campaign: generated-item inventory
+
+The completed native-callback adapter is the first concrete audit client: it
+already has semantic selection, concrete HIR identity, verified MIR policy,
+and backend-only C++ spelling, but it still needs an inventory row shared with
+the other generated adapters.
 
 1. Give every hosted-entry, program-initialization, native-boundary,
    lifecycle, and concrete-instance adapter a stable generated-item identity

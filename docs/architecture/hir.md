@@ -20,6 +20,8 @@ Concrete generic validity is obtained through semantic instance reanalysis.
 - the semantic analysis seal, exact program-initialization plan, hosted-entry
   plan, and merged module initialization body;
 - concrete class, function, constructor, destructor, and lambda instances;
+- exact native callback adapter identities linking a callback type to one
+  concrete free-function instance;
 - enums and resolved class/base/lifecycle metadata;
 - executable `HirBody` values, bindings, statements, and root statements;
 - snapshot-local full-expression identities plus typed lexical/value drop
@@ -130,6 +132,16 @@ edge even though the user `main` body contains no source call to it.
 A concrete `[[c_abi]]` class instance additionally retains its semantic record
 marker and ordered field-layout facts. HIR does not recompute padding, consult
 LLVM, or infer C ABI eligibility from the emitted C++ representation.
+
+An exact contextual conversion from a GTI function to a named native callback
+becomes `HirValueKind::NativeCallback` plus one interned
+`HirNativeCallbackAdapter`. The adapter contains only the concrete function
+instance and complete `SemanticType`; it contains no C++ name, calling-
+convention spelling, or executable thunk body. `verifyHirProgramPlans`
+exact-checks the source conversion, function declaration/instance, ownership,
+linkage, parameters, result, and every value-to-adapter reference. This makes
+callback reachability a concrete-instance edge rather than a backend lookup by
+function spelling.
 
 ## Executable Values
 

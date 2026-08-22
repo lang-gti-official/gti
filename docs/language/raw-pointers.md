@@ -39,11 +39,18 @@ Use `nullptr` when no address is available yet.
 
 The ordinary type surface has exactly one pointer level. Pointer-to-pointer
 locals, parameters, fields, aliases, and unannotated returns, references to raw
-pointers, function pointers, pointer-to-array types, and implicit
+pointers, anonymous/general function-pointer declarators, pointer-to-array
+types, and implicit
 array-to-pointer decay are rejected. The only written `T**` form is an
 `extern "C"` return carrying valid `[[c_array(count)]]` metadata. A fixed array
 may contain one-level pointer values, but the array itself does not become a
 pointer.
+
+A named native callback alias such as `using Callback = (int32_t) -> void;`
+is a separate bounded C-interoperation type. It has pointer representation but
+does not add another raw-pointer spelling, dereference operation, cast, or
+general function-value model. See
+[`native-c-interop.md`](native-c-interop.md#native-callback-types).
 
 Raw pointers are nullable, trivially copyable and movable, and non-owning. A
 raw-pointer value does not keep its pointee alive, arrange destruction, or
@@ -239,8 +246,9 @@ exposing it has a separately documented contract.
 
 This feature does not add:
 
-- general pointer-to-pointer types or callbacks beyond the bounded annotated
-  C-array return;
+- general pointer-to-pointer types beyond the bounded annotated C-array return;
+- anonymous/general function pointers, captured callbacks, or foreign-thread
+  GTI callback entry beyond the named exact native callback family;
 - implicit fixed-array decay;
 - typed-pointer/`void*` conversions or raw casts;
 - general C arrays, unions, bit-fields, packing, or platform-layout imports;

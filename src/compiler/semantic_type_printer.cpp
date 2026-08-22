@@ -86,6 +86,24 @@ public:
       return "type";
     case SemanticType::Function:
       return "function";
+    case SemanticType::NativeFunction: {
+      if (!type.hasNativeFunctionShape()) {
+        return "native function";
+      }
+      std::string result = "(";
+      bool separator = false;
+      for (const SemanticType &parameter :
+           type.nativeFunctionParameterTypes()) {
+        if (separator) {
+          result += ", ";
+        }
+        result += print(parameter);
+        separator = true;
+      }
+      result += ") -> ";
+      result += print(*type.nativeFunctionReturnType());
+      return result;
+    }
     case SemanticType::Lambda:
       return "lambda";
     case SemanticType::Expected:

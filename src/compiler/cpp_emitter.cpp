@@ -83,6 +83,7 @@ public:
               "#include <cstdint>\n"
               "#include <cstdio>\n"
               "#include <cstdlib>\n"
+              "#include <exception>\n"
               "#include <iterator>\n"
               "#include <limits>\n"
               "#include <memory>\n"
@@ -1601,6 +1602,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     ++indentation;
     collectScheduledTypes(program.declarations(), {});
     emitForwardDeclarations(program);
+    emitNativeCallbackAdapterDeclarations();
     emitGlobalVariableForwardDeclarations(program.declarations());
     emitScheduledTypeDefinitions();
     for (const StmtPtr &declaration : program.declarations()) {
@@ -1609,6 +1611,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     emitDeferredStaticFieldDefinitions();
     emitDeferredMemberDefinitions();
+    emitNativeCallbackAdapterDefinitions();
     emitRuntimeModuleInitializer();
     // The module body owns program-scope dynamic initialization. When its
     // verified schedule is passive and stages nothing, the program text
@@ -4432,6 +4435,190 @@ private:
     }
   }
 
+  [[nodiscard]] const MirFunctionInstance &
+  nativeCallbackTarget(const MirNativeCallbackAdapter &adapter) const {
+    const MirFunctionInstance *target =
+        mir == nullptr ? nullptr : mir->findFunctionInstance(adapter.target);
+    const HirFunctionInstance *hirTarget =
+        hir.findFunctionInstance(adapter.target);
+    const FunctionInfo *declaration =
+        target == nullptr ? nullptr
+                          : semantics.findFunction(target->declaration);
+    if (target == nullptr || hirTarget == nullptr || declaration == nullptr ||
+        hirTarget->source == nullptr ||
+        declaration->declaration != hirTarget->source || target->owner ||
+        target->linkage != LanguageLinkage::Gti ||
+        target->definitionKind != MirDefinitionKind::Source ||
+        adapter.targetMayRaiseDefinedFailure !=
+            target->mayRaiseDefinedFailure) {
+      throw std::logic_error(
+          "verified native callback adapter lost its exact function target");
+    }
+    return *target;
+  }
+
+  void
+  emitNativeCallbackAdapterSignature(const MirNativeCallbackAdapter &adapter,
+                                     bool parameterNames) {
+    const SemanticType *returnType = adapter.type.nativeFunctionReturnType();
+    if (returnType == nullptr) {
+      throw std::logic_error(
+          "verified native callback adapter has no return type");
+    }
+    output << "extern \"C\" ";
+    emitSemanticType(*returnType);
+    output << " __gti_native_callback_" << adapter.id << '(';
+    const std::span<const SemanticType> parameters =
+        adapter.type.nativeFunctionParameterTypes();
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      emitSemanticType(parameters[index]);
+      if (parameterNames) {
+        output << " __gti_callback_arg_" << index;
+      }
+    }
+    output << ") noexcept";
+  }
+
+  void emitNativeCallbackTargetName(const MirNativeCallbackAdapter &adapter,
+                                    bool failureForm = false) {
+    const MirFunctionInstance &target = nativeCallbackTarget(adapter);
+    const FunctionInfo *declaration =
+        semantics.findFunction(target.declaration);
+    output << "::__gti_program::";
+    for (const std::string &scope : declaration->namespaceScope) {
+      output << (scope == "std" ? emittedStandardNamespace
+                                : std::string_view(scope))
+             << "::";
+    }
+    const std::string name = emittedFunctionName(*declaration->declaration);
+    output << (failureForm ? cppMirFailureSiblingSpelling(name) : name);
+    if (target.typeArguments.size() != 0) {
+      throw std::logic_error(
+          "native callback target unexpectedly retained generic arguments");
+    }
+  }
+
+  void emitNativeCallbackArguments(const MirNativeCallbackAdapter &adapter) {
+    const std::size_t count =
+        adapter.type.nativeFunctionParameterTypes().size();
+    for (std::size_t index = 0; index < count; ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << "__gti_callback_arg_" << index;
+    }
+  }
+
+  void emitNativeCallbackAdapterDeclarations() {
+    if (mir == nullptr || mir->nativeCallbackAdapters().empty()) {
+      return;
+    }
+    for (const MirNativeCallbackAdapter &adapter :
+         mir->nativeCallbackAdapters()) {
+      (void)nativeCallbackTarget(adapter);
+      writeIndent();
+      emitNativeCallbackAdapterSignature(adapter, false);
+      output << ";\n";
+    }
+    output << '\n';
+  }
+
+  void emitNativeCallbackAdapterDefinitions() {
+    if (mir == nullptr || mir->nativeCallbackAdapters().empty()) {
+      return;
+    }
+    for (const MirNativeCallbackAdapter &adapter :
+         mir->nativeCallbackAdapters()) {
+      const MirFunctionInstance &target = nativeCallbackTarget(adapter);
+      const SemanticType &returnType = *adapter.type.nativeFunctionReturnType();
+      if (adapter.failurePolicy !=
+              MirNativeCallbackFailurePolicy::TerminateInvocation ||
+          !adapter.catchesNativeExceptions ||
+          (target.mayRaiseDefinedFailure &&
+           !generalFailureBodyAdmitted(target.id))) {
+        throw std::logic_error(
+            "verified native callback adapter has no admitted containment "
+            "path");
+      }
+
+      writeIndent();
+      emitNativeCallbackAdapterSignature(adapter, true);
+      output << " {\n";
+      ++indentation;
+      writeIndent();
+      output << "try {\n";
+      ++indentation;
+      if (target.mayRaiseDefinedFailure) {
+        writeIndent();
+        output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+        if (returnType != SemanticType::Void) {
+          writeIndent();
+          emitSemanticType(returnType);
+          output << " __gti_result{};\n";
+        }
+        writeIndent();
+        output << "if (!";
+        emitNativeCallbackTargetName(adapter, true);
+        output << '(';
+        emitNativeCallbackArguments(adapter);
+        if (!adapter.type.nativeFunctionParameterTypes().empty()) {
+          output << ", ";
+        }
+        if (returnType != SemanticType::Void) {
+          output << "&__gti_result, ";
+        }
+        output << "&__gti_failure_record)) {\n";
+        ++indentation;
+        writeIndent();
+        output << "::gti_rt_failure_terminate_v1(\n";
+        ++indentation;
+        writeIndent();
+        output << "&__gti_failure_record,\n";
+        writeIndent();
+        output << "&::gti_internal::backend::"
+                  "__gti_failure_artifact_descriptor_v1,\n";
+        writeIndent();
+        output << "nullptr, nullptr);\n";
+        --indentation;
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        if (returnType != SemanticType::Void) {
+          writeIndent();
+          output << "return __gti_result;\n";
+        }
+      } else {
+        writeIndent();
+        if (returnType != SemanticType::Void) {
+          output << "return ";
+        }
+        emitNativeCallbackTargetName(adapter);
+        output << '(';
+        emitNativeCallbackArguments(adapter);
+        output << ");\n";
+        if (returnType == SemanticType::Void) {
+          writeIndent();
+          output << "return;\n";
+        }
+      }
+      --indentation;
+      writeIndent();
+      output << "} catch (...) {\n";
+      ++indentation;
+      writeIndent();
+      output << "std::terminate();\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      --indentation;
+      writeIndent();
+      output << "}\n\n";
+    }
+  }
+
   bool emitTypeForwardDeclarations(const StmtList &declarations) {
     bool emitted = false;
     for (const StmtPtr &declaration : declarations) {
@@ -5679,6 +5866,8 @@ private:
   // value-semantic C-ABI view whose representation row spells
   // std::string_view, so parameters and returns copy freely and the general
   // vocabulary already spells its loads, copies, and native-call operands.
+  // A named native function type is likewise one passive ABI function
+  // pointer; its exact callback adapter remains MIR-owned.
   // Owning class types stay outside the signature boundary.
   [[nodiscard]] static bool
   isMirScalarCfgSignatureType(const SemanticType &type) {
@@ -5710,6 +5899,8 @@ private:
            type == SemanticType::Double ||
            type.kind == SemanticType::StringView ||
            type.kind == SemanticType::CString ||
+           (type.kind == SemanticType::NativeFunction &&
+            type.hasNativeFunctionShape()) ||
            type.kind == SemanticType::Enum ||
            type.kind == SemanticType::NullPtr || scalarExpected ||
            referenceParameter;
@@ -6911,6 +7102,8 @@ private:
            info.returnType.kind == SemanticType::Enum ||
            info.returnType.kind == SemanticType::StringView ||
            info.returnType.kind == SemanticType::CString ||
+           (info.returnType.kind == SemanticType::NativeFunction &&
+            info.returnType.hasNativeFunctionShape()) ||
            isMirPassiveFixedArrayType(info.returnType) ||
            (info.returnType.kind == SemanticType::Expected &&
             isMirScalarCfgSignatureType(info.returnType)) ||

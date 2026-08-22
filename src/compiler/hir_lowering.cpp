@@ -269,6 +269,49 @@ private:
     return id;
   }
 
+  [[nodiscard]] HirNativeCallbackAdapterId
+  enqueueNativeCallback(const NativeFunctionConversionInfo &conversion) {
+    if (!conversion.type.hasNativeFunctionShape()) {
+      lifecycleValid = false;
+      return 0;
+    }
+    const FunctionInfo *target = baseModel->findFunction(conversion.function);
+    const SemanticType *returnType = conversion.type.nativeFunctionReturnType();
+    const std::span<const SemanticType> parameters =
+        conversion.type.nativeFunctionParameterTypes();
+    if (target == nullptr || target->declaration != conversion.declaration ||
+        target->ownerClass != 0 || target->linkage != LanguageLinkage::Gti ||
+        !target->genericParameters.empty() || target->parameterPack ||
+        returnType == nullptr || target->returnType != *returnType ||
+        target->parameterTypes.size() != parameters.size() ||
+        !std::equal(target->parameterTypes.begin(),
+                    target->parameterTypes.end(), parameters.begin())) {
+      lifecycleValid = false;
+      return 0;
+    }
+    const HirFunctionInstanceId function = enqueueFunction(
+        *target, {}, {}, {}, {}, *returnType,
+        std::vector<SemanticType>(parameters.begin(), parameters.end()));
+    if (function == 0) {
+      lifecycleValid = false;
+      return 0;
+    }
+    const auto existing = std::find_if(
+        output.program.nativeCallbacks.begin(),
+        output.program.nativeCallbacks.end(),
+        [&](const HirNativeCallbackAdapter &adapter) {
+          return adapter.target == function && adapter.type == conversion.type;
+        });
+    if (existing != output.program.nativeCallbacks.end()) {
+      return existing->id;
+    }
+    const HirNativeCallbackAdapterId id =
+        output.program.nativeCallbacks.size() + 1;
+    output.program.nativeCallbacks.push_back(
+        {.id = id, .target = function, .type = conversion.type});
+    return id;
+  }
+
   [[nodiscard]] HirConstructorInstanceId
   enqueueConstructor(const ResolvedConstructionInfo &construction,
                      std::optional<SourceSpan> site = std::nullopt) {
@@ -1361,6 +1404,7 @@ private:
     case HirValueKind::Call:
     case HirValueKind::Conditional:
     case HirValueKind::Move:
+    case HirValueKind::NativeCallback:
     case HirValueKind::Conversion:
     case HirValueKind::DirectInitializer:
     case HirValueKind::Grouping:
@@ -2206,6 +2250,7 @@ private:
     std::optional<Literal> literal;
     std::optional<HirValueId> receiver;
     std::optional<HirLambdaId> lambdaTarget;
+    std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
     std::optional<std::size_t> enumVariant;
@@ -2458,6 +2503,16 @@ private:
       }
     }
 
+    if (const NativeFunctionConversionInfo *conversion =
+            model.findNativeFunctionConversion(*raw)) {
+      kind = HirValueKind::NativeCallback;
+      const HirNativeCallbackAdapterId adapter =
+          enqueueNativeCallback(*conversion);
+      if (adapter != 0) {
+        nativeCallbackAdapter = adapter;
+      }
+    }
+
     HirValue value{.id = nextValueId++,
                    .kind = kind,
                    .source = raw,
@@ -2470,6 +2525,7 @@ private:
                    .programConstantSubstitution =
                        model.isProgramConstantSubstitution(*raw),
                    .receiver = receiver,
+                   .nativeCallbackAdapter = nativeCallbackAdapter,
                    .lambdaTarget = lambdaTarget,
                    .enumOwner = enumOwner,
                    .enumValue = enumValue,

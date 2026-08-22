@@ -855,6 +855,16 @@ SemanticModel::findCall(const Call &call) const {
   return base == nullptr ? nullptr : base->findCall(call);
 }
 
+[[nodiscard]] const NativeFunctionConversionInfo *
+SemanticModel::findNativeFunctionConversion(const Expr &expression) const {
+  const auto found = nativeFunctionConversions.find(&expression);
+  if (found != nativeFunctionConversions.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr
+                         : base->findNativeFunctionConversion(expression);
+}
+
 [[nodiscard]] const ResolvedPackFoldInfo *
 SemanticModel::findPackFold(const PackFold &fold) const {
   const auto found = packFolds.find(&fold);
@@ -1519,6 +1529,11 @@ void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
   calls.insert_or_assign(&call, std::move(info));
 }
 
+void SemanticModel::recordNativeFunctionConversion(
+    const Expr &expression, NativeFunctionConversionInfo info) {
+  nativeFunctionConversions.insert_or_assign(&expression, std::move(info));
+}
+
 void SemanticModel::suppressInheritedCall(const Call &call) {
   calls.erase(&call);
   suppressedInheritedCalls.insert(&call);
@@ -2047,6 +2062,7 @@ semanticFloatFormat(const SemanticType &type) {
     traits.shareCapable = false;
     return traits;
   case SemanticType::RawPointer:
+  case SemanticType::NativeFunction:
   case SemanticType::StringView:
   case SemanticType::CString:
     traits.transferCapable = false;

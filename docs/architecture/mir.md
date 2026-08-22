@@ -751,6 +751,16 @@ call conservative effects: it is not speculatable, removable, or reorderable.
 This metadata does not introduce general MIR pack iteration or ask a backend to
 perform semantic instantiation.
 
+Native callback conversion has one program-level representation contract.
+Each `MirNativeCallbackAdapter` copies the exact HIR adapter identity and adds
+the concrete target's defined-failure effect, the
+`TerminateInvocation` containment policy, and the requirement to catch native
+exceptions. The producing MIR value references that row. Verification rejects
+a missing, stale, reordered, owner/member, external, signature-mismatched, or
+non-single-threaded GTI adapter before a backend sees it. Callback thunk text
+and calling-convention spelling remain backend representation choices; MIR
+owns the executable target and containment decision.
+
 M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
 reparenting, active drop, and LIFO full-expression obligations. MIR v18 added
 caller-owned ordinary-call parameter stages and an edge-initialized cleanup-
@@ -855,9 +865,10 @@ partially initialized shapes to the hosted-program boundary. The future
 double-failure extension must construct the fixed emergency envelope when a
 second origin occurs during primary-record cleanup; current MIR does not yet
 represent that path.
-The same representation supplies reusable boundary primitives that later task
-and callback rows plus E-EMBED-01 can integrate without changing the failure
-effect. The verifier must reject missing/forged sites, origin-incompatible
+The same representation supplies reusable boundary primitives consumed by the
+same-thread native callback adapter. Later task, foreign-thread callback, and
+E-EMBED-01 rows can integrate without changing the failure effect. The
+verifier must reject missing/forged sites, origin-incompatible
 categories, a propagating edge that re-sites or rewrites the record, a normal
 result used on the failure edge, and cleanup/control-flow joins with mismatched
 record state. Optimizers preserve the first observable origin, site, cleanup,

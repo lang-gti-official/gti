@@ -99,6 +99,8 @@ namespace-alias        = "=" qualified-name ";" ;
 
 type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
 
+native-function-type   = "(" [ type { "," type } ] ")" "->" type ;
+
 concept-declaration    = "concept" IDENTIFIER
                          "<" concept-parameter-list ">" "="
                          concept-application
@@ -163,7 +165,13 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    Alias cycles and aliases whose target contains a reference are invalid;
    keeping `&` at each use site preserves explicit borrow syntax. The standard
    prelude defines `std::size_t` as `uint64_t`, `std::ptrdiff_t` as `int64_t`,
-   and `std::string_view` as the compiler-defined counted text-view type. *)
+   and `std::string_view` as the compiler-defined counted text-view type.
+
+   `(P...) -> R` names a nullable native C function-pointer shape only when it
+   is the direct target of a namespace-scope `using` declaration. Later uses
+   name that alias; anonymous callback parameters, returns, locals, and fields
+   are semantically invalid. Its recursively admitted ABI family and exact
+   GTI-function conversion rules are specified in `native-c-interop.md`. *)
 
 extern-c-declaration   = "extern" STRING_LITERAL "{"
                          { extern-c-function-declaration } "}" ;
@@ -184,8 +192,9 @@ native-c-array-attribute
    type outside the bounded native ABI.
 
    Returns are limited to `void`, the fixed-width signed and unsigned integer
-   types, `float`, `double`, valid `[[c_abi]]` records, `c_string`, and
-   one-level raw pointers whose pointee is `void`, one of those scalar types,
+   types, `float`, `double`, valid `[[c_abi]]` records, `c_string`, exact named
+   native function types, and one-level raw pointers whose pointee is `void`,
+   one of those scalar types,
    `c_string`, a valid native record, or a `[[c_opaque]]` handle. A
    `[[c_array(count)]]` declaration may add one outer pointer to an otherwise
    admitted one-level pointer return. Its named parameter must be an immutable
@@ -198,8 +207,9 @@ native-c-array-attribute
    their resolved fixed-width type. Bool, char, enums, ordinary complete
    classes, expected,
    references, arrays, packs, string-view returns, native variables, general
-   pointer-to-pointer types, and function pointers are not part of this
-   contract. `GTI-S2073` owns malformed C-array pairs and `GTI-S2074` owns a
+   pointer-to-pointer types, and anonymous/general function pointers are not
+   part of this contract. `GTI-S2073` owns malformed C-array pairs and
+   `GTI-S2074` owns a
    second pointer level outside that annotated return. Calling a
    pointer-bearing C declaration requires an `unsafe`
    block; scalar-only calls and the counted string-view case remain safe. The
@@ -553,6 +563,7 @@ raw-pointer-base       = [ "const" ] base-type "*" [ "*" ] ;
 base-type              = primitive-type
                        | user-type
                        | expected-type
+                       | native-function-type
                        | "auto"
                        | "nullptr_t"
                        | "void" ;

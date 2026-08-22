@@ -69,6 +69,20 @@ struct TypeRef {
   TypeRef(NamePath name, std::vector<TypeRef> arguments)
       : name(std::move(name)), arguments(std::move(arguments)) {}
 
+  [[nodiscard]] static TypeRef nativeFunction(Token arrow,
+                                              std::vector<TypeRef> parameters,
+                                              TypeRef returnType) {
+    TypeRef type(std::move(arrow));
+    type.nativeFunctionParameterCount = parameters.size();
+    type.arguments = std::move(parameters);
+    type.arguments.emplace_back(std::move(returnType));
+    return type;
+  }
+
+  [[nodiscard]] bool isNativeFunction() const {
+    return nativeFunctionParameterCount.has_value();
+  }
+
   NamePath name;
   std::vector<TypeRef> arguments;
   std::optional<Token> pointeeConst;
@@ -76,6 +90,10 @@ struct TypeRef {
   std::optional<Token> outerPointer;
   std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
+  // A native C function type stores its parameter types followed by its
+  // return type in `arguments`. It is admitted only as a named `using` target;
+  // ordinary function declarations continue to use FunctionDecl.
+  std::optional<std::size_t> nativeFunctionParameterCount;
   GenericArgumentSyntax genericArgumentSyntax = GenericArgumentSyntax::Type;
 };
 

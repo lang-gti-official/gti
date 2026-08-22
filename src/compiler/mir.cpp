@@ -3813,6 +3813,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::Convert:
     case MirOperation::ExpectedHasValue:
     case MirOperation::Closure:
+    case MirOperation::NativeCallback:
     case MirOperation::PayloadConstruct:
     case MirOperation::PayloadExtract:
     case MirOperation::Unexpected:
@@ -3975,6 +3976,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return instruction.operands.size() == 1;
     }
     switch (instruction.operation) {
+    case MirOperation::NativeCallback:
+      return instruction.nativeCallbackAdapter &&
+             *instruction.nativeCallbackAdapter != 0 &&
+             instruction.operands.empty() &&
+             resultType.kind == SemanticType::NativeFunction;
     case MirOperation::Literal: {
       const MirLiteralProvenance &provenance = instruction.literalProvenance;
       const MirValue *source = provenance.sourceValue == 0
@@ -4083,6 +4089,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (instruction.operation != MirOperation::Closure &&
          (!instruction.closureCaptureTypes.empty() ||
           !instruction.closureCaptureModes.empty())) ||
+        ((instruction.operation == MirOperation::NativeCallback) !=
+         instruction.nativeCallbackAdapter.has_value()) ||
         (instruction.operation != MirOperation::Literal &&
          instruction.literal.has_value()) ||
         (instruction.operation != MirOperation::Literal &&
@@ -8834,6 +8842,8 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
   const auto passiveType = [&](const SemanticType &type) {
     return scalarType(type) || type.kind == SemanticType::StringView ||
            type.kind == SemanticType::CString || rawPointerType(type) ||
+           (type.kind == SemanticType::NativeFunction &&
+            type.hasNativeFunctionShape()) ||
            passiveCAbiRecordType(type);
   };
   const auto passiveInfo = [&](const ExpressionInfo &info) {
@@ -9417,6 +9427,29 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         return false;
       }
     };
+    const auto exactNativeCallbackCompute =
+        [&](const MirInstruction &instruction) {
+          const MirNativeCallbackAdapter *adapter =
+              instruction.nativeCallbackAdapter
+                  ? program.findNativeCallbackAdapter(
+                        *instruction.nativeCallbackAdapter)
+                  : nullptr;
+          const MirFunctionInstance *target =
+              adapter == nullptr
+                  ? nullptr
+                  : program.findFunctionInstance(adapter->target);
+          return instruction.kind == MirInstructionKind::Compute &&
+                 instruction.operation == MirOperation::NativeCallback &&
+                 instruction.result && !instruction.destination &&
+                 !instruction.receiver && instruction.callSite == 0 &&
+                 !instruction.callInputRole &&
+                 instruction.parameterTypes.empty() &&
+                 !instruction.functionTarget &&
+                 !instruction.constructorTarget &&
+                 instruction.operands.empty() && !instruction.literal &&
+                 passiveInfo(instruction.info) && adapter != nullptr &&
+                 target != nullptr && adapter->type == instruction.info.type;
+        };
     const auto exactRawMemoryInstruction =
         [&](const MirInstruction &instruction) {
           const MirPlace *place = nullptr;
@@ -9561,6 +9594,8 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
           break;
         }
         const bool exactRawComputeInstruction = exactRawCompute(instruction);
+        const bool exactNativeCallbackInstruction =
+            exactNativeCallbackCompute(instruction);
         const bool exactRawMemory = exactRawMemoryInstruction(instruction);
         const bool exactRawBoundary = exactRawLifecycle(instruction);
         const bool exactForeignPointer =
@@ -9607,32 +9642,35 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         switch (instruction.kind) {
         case MirInstructionKind::Compute:
           // Literals and identity copies may carry any passive value. Other
-          // ordinary operations stay scalar; raw compute shapes are checked
-          // independently above.
-          valid = instruction.callSite == 0 && !instruction.callInputRole &&
-                  !instruction.destination && !instruction.receiver &&
-                  instruction.parameterTypes.empty() &&
-                  !instruction.functionTarget && instruction.result &&
-                  (exactRawComputeInstruction ||
-                   ((instruction.operation == MirOperation::Literal ||
-                     instruction.operation == MirOperation::Identity)
-                        ? passiveInfo(instruction.info)
-                        : scalarInfo(instruction.info))) &&
-                  (scalarOperation(instruction.operation) ||
-                   exactRawComputeInstruction) &&
-                  instruction.definedFailure.empty() &&
-                  instruction.fullExpressionEnd == 0 &&
-                  (instruction.operation == MirOperation::Literal
-                       ? instruction.operands.empty() &&
-                             instruction.literal.has_value()
-                       : !instruction.literal &&
-                             (exactRawComputeInstruction ||
-                              std::all_of(instruction.operands.begin(),
-                                          instruction.operands.end(),
-                                          [](const MirOperand &operand) {
-                                            return operand.kind ==
-                                                   MirOperandKind::Value;
-                                          })));
+          // ordinary operations stay scalar. Raw operations and native
+          // callback address formation are admitted only by their exact,
+          // verifier-backed shapes above.
+          valid =
+              instruction.callSite == 0 && !instruction.callInputRole &&
+              !instruction.destination && !instruction.receiver &&
+              instruction.parameterTypes.empty() &&
+              !instruction.functionTarget && instruction.result &&
+              (exactRawComputeInstruction || exactNativeCallbackInstruction ||
+               ((instruction.operation == MirOperation::Literal ||
+                 instruction.operation == MirOperation::Identity)
+                    ? passiveInfo(instruction.info)
+                    : scalarInfo(instruction.info))) &&
+              (scalarOperation(instruction.operation) ||
+               exactRawComputeInstruction || exactNativeCallbackInstruction) &&
+              instruction.definedFailure.empty() &&
+              instruction.fullExpressionEnd == 0 &&
+              (instruction.operation == MirOperation::Literal
+                   ? instruction.operands.empty() &&
+                         instruction.literal.has_value()
+                   : !instruction.literal &&
+                         (exactRawComputeInstruction ||
+                          exactNativeCallbackInstruction ||
+                          std::all_of(instruction.operands.begin(),
+                                      instruction.operands.end(),
+                                      [](const MirOperand &operand) {
+                                        return operand.kind ==
+                                               MirOperandKind::Value;
+                                      })));
           break;
         case MirInstructionKind::Load:
           valid = instruction.callSite == 0 && !instruction.callInputRole &&
@@ -9915,6 +9953,17 @@ private:
            !traits.containsBorrowedState;
   }
 
+  [[nodiscard]] static bool callbackType(const SemanticType &type) {
+    return type.kind == SemanticType::NativeFunction &&
+           type.hasNativeFunctionShape();
+  }
+
+  [[nodiscard]] static bool passiveValueTraits(const SemanticTypeTraits &traits,
+                                               const SemanticType &type) {
+    return (scalarType(type) || callbackType(type)) &&
+           traits.drop == DropKind::Trivial && !traits.containsBorrowedState;
+  }
+
   [[nodiscard]] static bool
   passiveConstructorValueType(const SemanticType &type) {
     if (scalarType(type)) {
@@ -10005,7 +10054,7 @@ private:
   }
 
   [[nodiscard]] bool eligibleType(const SemanticType &type) const {
-    if (type == SemanticType::Void || scalarType(type) ||
+    if (type == SemanticType::Void || scalarType(type) || callbackType(type) ||
         classForType(type) != nullptr) {
       return true;
     }
@@ -10125,6 +10174,8 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
   }
   for (const MirValue &value : body.values) {
     if (!eligibleBodyType(value.info.type) ||
+        (callbackType(value.info.type) &&
+         !passiveValueTraits(value.info.traits, value.info.type)) ||
         (passiveConstructorValueType(value.info.type) &&
          !passiveConstructorValueTraits(value.info.traits, value.info.type))) {
       return false;
@@ -10168,6 +10219,19 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
         const bool scalar =
             scalarTraits(instruction.info.traits, instruction.info.type) &&
             scalarOperation(instruction.operation);
+        const MirNativeCallbackAdapter *callbackAdapter =
+            instruction.nativeCallbackAdapter
+                ? program.findNativeCallbackAdapter(
+                      *instruction.nativeCallbackAdapter)
+                : nullptr;
+        const bool nativeCallback =
+            instruction.operation == MirOperation::NativeCallback &&
+            passiveValueTraits(instruction.info.traits,
+                               instruction.info.type) &&
+            callbackAdapter != nullptr &&
+            callbackAdapter->type == instruction.info.type &&
+            program.findFunctionInstance(callbackAdapter->target) != nullptr &&
+            instruction.operands.empty() && !instruction.literal;
         if (!instruction.result || instruction.destination ||
             instruction.receiver || instruction.callSite != 0 ||
             instruction.callInputRole || instruction.functionTarget ||
@@ -10176,7 +10240,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             !instruction.lifecycle.empty() ||
             instruction.definedFailure.propagation !=
                 FailurePropagationKind::None ||
-            (!scalar && !passiveAggregate) ||
+            (!scalar && !passiveAggregate && !nativeCallback) ||
             (instruction.operation == MirOperation::Literal
                  ? !instruction.literal || !instruction.operands.empty()
                  : instruction.literal.has_value())) {
@@ -10222,7 +10286,8 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             instruction.operation != MirOperation::Assign ||
             instruction.literal || instruction.operands.size() != 1 ||
             instruction.operands.front().kind != MirOperandKind::Value ||
-            !scalarTraits(instruction.info.traits, instruction.info.type)) {
+            !passiveValueTraits(instruction.info.traits,
+                                instruction.info.type)) {
           return false;
         }
         break;
@@ -10240,7 +10305,8 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
         }
         break;
       case MirInstructionKind::CallInput: {
-        const bool scalar = scalarType(instruction.info.type);
+        const bool scalar = scalarType(instruction.info.type) ||
+                            callbackType(instruction.info.type);
         const bool owned = classForType(instruction.info.type) != nullptr;
         const MirDropObligation *prepared =
             instruction.preparedParameterDrop
@@ -10824,10 +10890,11 @@ bool MirOwnedFailureClosure::proveFunction(HirFunctionInstanceId id) {
       std::all_of(function.parameterTypes.begin(),
                   function.parameterTypes.end(),
                   [&](const SemanticType &type) {
-                    return scalarType(type) || classForType(type) != nullptr;
+                    return scalarType(type) || callbackType(type) ||
+                           classForType(type) != nullptr;
                   }) &&
       (function.returnType == SemanticType::Void ||
-       scalarType(function.returnType)) &&
+       scalarType(function.returnType) || callbackType(function.returnType)) &&
       proveBody(function.body, MirBodyKind::Function, function.id, nullptr);
   state = State::Complete;
   effects.functions[id - 1] = !valid;
@@ -12806,6 +12873,7 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
     case SemanticType::CString:
     case SemanticType::NullPtr:
     case SemanticType::RawPointer:
+    case SemanticType::NativeFunction:
     case SemanticType::Enum:
     case SemanticType::Reference:
       return true;
@@ -12920,6 +12988,22 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     }
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.nativeCallbackAdapter) {
+          const MirNativeCallbackAdapter *adapter =
+              program.findNativeCallbackAdapter(
+                  *instruction.nativeCallbackAdapter);
+          if (adapter == nullptr ||
+              instruction.operation != MirOperation::NativeCallback ||
+              instruction.info.type != adapter->type) {
+            result.errors.push_back(
+                {.bodyKind = body.kind,
+                 .owner = owner,
+                 .block = block.id,
+                 .instruction = instruction.id,
+                 .message = "native callback instruction has no exact "
+                            "program adapter"});
+          }
+        }
         for (std::size_t originIndex = 0;
              originIndex < instruction.definedFailure.localOrigins.size();
              ++originIndex) {
@@ -12959,6 +13043,35 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
       }
     }
   };
+
+  for (std::size_t index = 0; index < program.nativeCallbackAdapters().size();
+       ++index) {
+    const MirNativeCallbackAdapter &adapter =
+        program.nativeCallbackAdapters()[index];
+    const MirFunctionInstance *target =
+        program.findFunctionInstance(adapter.target);
+    const SemanticType *returnType = adapter.type.nativeFunctionReturnType();
+    const std::span<const SemanticType> parameters =
+        adapter.type.nativeFunctionParameterTypes();
+    if (adapter.id != index + 1 || target == nullptr || target->owner ||
+        target->definitionKind != MirDefinitionKind::Source ||
+        target->linkage != LanguageLinkage::Gti || returnType == nullptr ||
+        target->returnType != *returnType ||
+        target->parameterTypes.size() != parameters.size() ||
+        !std::equal(target->parameterTypes.begin(),
+                    target->parameterTypes.end(), parameters.begin()) ||
+        adapter.targetMayRaiseDefinedFailure !=
+            target->mayRaiseDefinedFailure ||
+        adapter.failurePolicy !=
+            MirNativeCallbackFailurePolicy::TerminateInvocation ||
+        !adapter.catchesNativeExceptions ||
+        program.executionProfile() != ExecutionProfile::SingleThreaded) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = adapter.target,
+           .message = "native callback adapter contract is invalid"});
+    }
+  }
 
   append(result, verifyMirProgramInitialization(program));
   append(result, verifyMirHostedStartup(program));

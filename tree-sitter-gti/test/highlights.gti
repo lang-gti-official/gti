@@ -230,3 +230,5 @@ void call_member_generic<Owner, Base>(Owner& owner) {
 extern "C" {
   [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
 }
+
+using NativeCallback = (int32_t, c_string) -> int32_t;

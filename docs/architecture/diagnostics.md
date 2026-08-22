@@ -118,6 +118,16 @@ diagnostics or letting a backend message choose either identity.
 - `GTI-S2074` owns a written second raw-pointer level outside an exact
   `[[c_array(count)]] extern "C"` return. Point at the outer `*`, explain the
   bounded exception, and do not suggest general nested-pointer syntax.
+- `GTI-S2076` owns the named native callback boundary. Point at the anonymous
+  type spelling, invalid ABI component, missing initializer, inexact function
+  item, or concurrent-profile conversion that the user can change. State that
+  callback types must be named by namespace-scope `using`, and that an exposed
+  GTI target must be one exact non-generic namespace free function with a body.
+  Relate all overload candidates when exact conversion is absent or ambiguous.
+  Do not suggest a cast, lambda, member thunk, or signature-changing fix-it;
+  those choices require intent. Foreign callback values remain valid in the
+  concurrent profile, so this code applies there only when GTI code is exposed
+  through an adapter.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

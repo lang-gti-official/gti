@@ -129,6 +129,15 @@ use C++ exceptions to reconstruct GTI semantics. Native/runtime declarations
 are accepted only through their verified MIR boundary shells and explicit
 runtime bindings.
 
+For each verified `MirNativeCallbackAdapter`, the C++ backend emits one typed
+`extern "C" noexcept` thunk. A non-failing target is called directly. A target
+whose MIR effect may raise defined failure is called through its verified
+failure sibling; a false result is forwarded to
+`gti_rt_failure_terminate_v1` with the original record and artifact descriptor.
+The outer thunk catches every native exception and terminates. The emitter may
+choose the C++ spelling, but it may not select a target, infer a signature, or
+weaken the MIR-owned containment policy.
+
 ## Declaration And ABI Emission
 
 The C++ backend still uses the active AST, semantic model, typed HIR, and the
@@ -157,6 +166,11 @@ complete inventory and semantic description for every generated adapter.
 structural-operator, callable, lifecycle-cleanup, native-interop, and
 concrete-instance adapters still derive part of their shape from sealed
 frontend representation facts.
+
+Native callbacks are the first generated-adapter family with explicit
+semantic, HIR, and MIR rows, but they are not yet part of one uniform generated-
+item inventory shared by all adapters. They are therefore evidence for the
+next campaign, not a reason to put C++ ABI spelling into MIR.
 
 That boundary is the next architectural target if GTI needs a second native
 backend. It should be addressed by adding explicit target-independent

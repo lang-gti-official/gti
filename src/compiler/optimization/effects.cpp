@@ -60,6 +60,7 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
     harmless(), // ExpectedHasValue
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
+    harmless(), // NativeCallback
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
     MirEffectTraits{.copiesValue = true}, // PayloadExtract
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
@@ -320,6 +321,7 @@ constexpr auto operationNames = std::to_array<std::string_view>({
     "convert",
     "expected-value",
     "closure",
+    "native-callback",
     "payload-construct",
     "payload-extract",
     "unexpected",

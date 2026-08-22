@@ -265,6 +265,7 @@ struct SemanticType {
     TypePack,
     TypeName,
     Function,
+    NativeFunction,
     Lambda,
     Expected,
     Unexpected,
@@ -314,6 +315,32 @@ struct SemanticType {
     SemanticType type(TypeName);
     type.classId = id;
     return type;
+  }
+
+  [[nodiscard]] static SemanticType
+  nativeFunctionType(SemanticType returnType,
+                     std::span<const SemanticType> parameterTypes) {
+    SemanticType type(NativeFunction);
+    type.arguments.reserve(parameterTypes.size() + 1);
+    type.arguments.emplace_back(std::move(returnType));
+    type.arguments.insert(type.arguments.end(), parameterTypes.begin(),
+                          parameterTypes.end());
+    return type;
+  }
+
+  [[nodiscard]] bool hasNativeFunctionShape() const {
+    return kind == NativeFunction && !arguments.empty();
+  }
+
+  [[nodiscard]] const SemanticType *nativeFunctionReturnType() const {
+    return hasNativeFunctionShape() ? &arguments.front() : nullptr;
+  }
+
+  [[nodiscard]] std::span<const SemanticType>
+  nativeFunctionParameterTypes() const {
+    return hasNativeFunctionShape()
+               ? std::span<const SemanticType>(arguments).subspan(1)
+               : std::span<const SemanticType>{};
   }
 
   [[nodiscard]] static SemanticType
@@ -1174,6 +1201,12 @@ struct ResolvedCallInfo {
   std::vector<CallableArgumentBoundary> callableArguments;
 };
 
+struct NativeFunctionConversionInfo {
+  FunctionId function = 0;
+  const FunctionDecl *declaration = nullptr;
+  SemanticType type = SemanticType::Unknown;
+};
+
 // A deliberately bounded comma-pack fold. The frontend retains the one
 // declaration selected by the symbolic pattern and, for concrete generic
 // instances, every exact element specialization in source-pack order.
@@ -1738,6 +1771,9 @@ public:
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const;
 
+  [[nodiscard]] const NativeFunctionConversionInfo *
+  findNativeFunctionConversion(const Expr &expression) const;
+
   [[nodiscard]] const ResolvedPackFoldInfo *
   findPackFold(const PackFold &fold) const;
 
@@ -1934,6 +1970,9 @@ private:
 
   void record(const Call &call, ResolvedCallInfo info);
 
+  void recordNativeFunctionConversion(const Expr &expression,
+                                      NativeFunctionConversionInfo info);
+
   // Concrete instance analysis may replace a declaration-time call with a
   // different expression kind. Keep that replacement from falling through
   // to the superseded call record in the base model.
@@ -2052,6 +2091,8 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const Expr *, NativeFunctionConversionInfo>
+      nativeFunctionConversions;
   std::unordered_set<const Call *> suppressedInheritedCalls;
   std::unordered_map<const PackFold *, ResolvedPackFoldInfo> packFolds;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;

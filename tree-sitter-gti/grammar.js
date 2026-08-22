@@ -602,7 +602,7 @@ module.exports = grammar({
         ),
       ),
 
-    pointer_declarator: () => seq("*", optional("*")),
+    pointer_declarator: () => prec.right(seq("*", optional("*"))),
 
     reference_declarator: () => choice("&", "&&"),
 
@@ -610,6 +610,7 @@ module.exports = grammar({
       choice(
         $.primitive_type,
         $.expected_type,
+        $.native_function_type,
         $.user_type,
         "auto",
         "nullptr_t",
@@ -643,6 +644,15 @@ module.exports = grammar({
       ),
 
     expected_type: ($) => seq("expected", "<", $.type, ",", $.type, ">"),
+
+    native_function_type: ($) =>
+      seq(
+        "(",
+        optional(commaSep1(field("parameter", $.type))),
+        ")",
+        "->",
+        field("return_type", $.type),
+      ),
 
     user_type: ($) =>
       seq(

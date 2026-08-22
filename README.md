@@ -100,7 +100,9 @@ int main() {
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
   integer and floating scalars, layout-stable `[[c_abi]]` records by value,
   nominal pointer-only `[[c_opaque]]` handles, one-level
-  scalar/record/`void` pointers, and non-retained counted text inputs, plus a
+  scalar/record/`void` pointers, NUL-terminated `c_string`, bounded
+  pointer-plus-count returns, exact named same-thread callbacks, and
+  non-retained counted text inputs, plus a
   compiler-generated bridge header usable unchanged from C17 or C++20/C++23
   adapter sources. Native C++ classes and RAII may stay behind that C-linkage
   adapter without becoming GTI ABI types.

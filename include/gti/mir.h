@@ -24,6 +24,7 @@ using MirTemporaryId = std::size_t;
 using MirDropObligationId = std::size_t;
 using MirFailureRecordId = std::size_t;
 using MirHostedStartupOperationId = std::size_t;
+using MirNativeCallbackAdapterId = std::size_t;
 
 struct MirFullExpression {
   HirFullExpressionId id = 0;
@@ -265,6 +266,7 @@ enum class MirOperation {
   Convert,
   ExpectedHasValue,
   Closure,
+  NativeCallback,
   PayloadConstruct,
   PayloadExtract,
   Unexpected,
@@ -388,6 +390,7 @@ struct MirInstruction {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
@@ -754,6 +757,23 @@ struct MirFunctionInstance {
                          const MirFunctionInstance &) = default;
 };
 
+enum class MirNativeCallbackFailurePolicy {
+  TerminateInvocation,
+};
+
+struct MirNativeCallbackAdapter {
+  MirNativeCallbackAdapterId id = 0;
+  HirFunctionInstanceId target = 0;
+  SemanticType type = SemanticType::Unknown;
+  bool targetMayRaiseDefinedFailure = true;
+  MirNativeCallbackFailurePolicy failurePolicy =
+      MirNativeCallbackFailurePolicy::TerminateInvocation;
+  bool catchesNativeExceptions = true;
+
+  friend bool operator==(const MirNativeCallbackAdapter &,
+                         const MirNativeCallbackAdapter &) = default;
+};
+
 struct MirConstructorInitializer {
   ConstructorInitializerTargetKind kind =
       ConstructorInitializerTargetKind::Field;
@@ -1021,6 +1041,11 @@ public:
     return functions;
   }
 
+  [[nodiscard]] const std::vector<MirNativeCallbackAdapter> &
+  nativeCallbackAdapters() const {
+    return nativeCallbacks;
+  }
+
   [[nodiscard]] const std::vector<MirConstructorInstance> &
   constructorInstances() const {
     return constructors;
@@ -1038,6 +1063,12 @@ public:
   [[nodiscard]] const MirFunctionInstance *
   findFunctionInstance(HirFunctionInstanceId id) const {
     return id == 0 || id > functions.size() ? nullptr : &functions[id - 1];
+  }
+
+  [[nodiscard]] const MirNativeCallbackAdapter *
+  findNativeCallbackAdapter(MirNativeCallbackAdapterId id) const {
+    return id == 0 || id > nativeCallbacks.size() ? nullptr
+                                                  : &nativeCallbacks[id - 1];
   }
 
   [[nodiscard]] const MirClassInstance *
@@ -1079,6 +1110,7 @@ private:
   MirBody moduleBody;
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
+  std::vector<MirNativeCallbackAdapter> nativeCallbacks;
   std::vector<MirConstructorInstance> constructors;
   std::vector<MirDestructorInstance> destructors;
   std::vector<MirLambdaInstance> lambdas;

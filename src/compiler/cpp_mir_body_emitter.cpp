@@ -584,6 +584,8 @@ expectedTypeRepresentation(const SemanticType &type) {
     return CppMirTypeRepresentationKind::NullPointer;
   case SemanticType::RawPointer:
     return CppMirTypeRepresentationKind::RawPointer;
+  case SemanticType::NativeFunction:
+    return CppMirTypeRepresentationKind::RawPointer;
   case SemanticType::Array:
     return CppMirTypeRepresentationKind::FixedArray;
   case SemanticType::Class:
@@ -8610,6 +8612,23 @@ private:
             block.id, instruction.id);
       }
       break;
+    case MirOperation::NativeCallback: {
+      const MirNativeCallbackAdapter *adapter =
+          instruction.nativeCallbackAdapter
+              ? program.findNativeCallbackAdapter(
+                    *instruction.nativeCallbackAdapter)
+              : nullptr;
+      const MirFunctionInstance *target =
+          adapter == nullptr ? nullptr
+                             : program.findFunctionInstance(adapter->target);
+      if (adapter == nullptr || target == nullptr ||
+          adapter->type != instruction.info.type) {
+        add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, block.id,
+            instruction.id,
+            "native callback compute has no exact verified adapter row");
+      }
+      break;
+    }
     case MirOperation::PayloadConstruct:
     case MirOperation::PayloadExtract: {
       requireCapability(CppMirEmissionCapabilityKind::Payload, block.id,
@@ -9201,6 +9220,7 @@ CppMirEmissionEncoding classifyCppMirOperation(MirOperation operation) {
   case MirOperation::Index:
   case MirOperation::ExpectedHasValue:
   case MirOperation::Closure:
+  case MirOperation::NativeCallback:
   case MirOperation::PayloadConstruct:
   case MirOperation::PayloadExtract:
   case MirOperation::Unexpected:
@@ -10747,7 +10767,8 @@ public:
     if (std::holds_alternative<std::nullptr_t>(literal)) {
       return type.kind == SemanticType::NullPtr ||
              type.kind == SemanticType::RawPointer ||
-             type.kind == SemanticType::CString;
+             type.kind == SemanticType::CString ||
+             type.kind == SemanticType::NativeFunction;
     }
     if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
       return integerFitsType(*integer, type);
@@ -12148,7 +12169,8 @@ private:
       // for a pointer-typed use of it.
       if (type.kind != SemanticType::NullPtr &&
           type.kind != SemanticType::RawPointer &&
-          type.kind != SemanticType::CString) {
+          type.kind != SemanticType::CString &&
+          type.kind != SemanticType::NativeFunction) {
         throw std::logic_error(
             "verified MIR null literal is not pointer-typed");
       }
@@ -12419,6 +12441,15 @@ private:
     if (instruction.operation == MirOperation::Identity) {
       emitOperand(instruction.operands.front());
       output << ";\n";
+      return;
+    }
+    if (instruction.operation == MirOperation::NativeCallback) {
+      if (!instruction.nativeCallbackAdapter) {
+        throw std::logic_error(
+            "verified MIR native callback lost its adapter identity");
+      }
+      output << "(&::__gti_program::__gti_native_callback_"
+             << *instruction.nativeCallbackAdapter << ");\n";
       return;
     }
     if (instruction.operation == MirOperation::AddressOf) {
@@ -18308,6 +18339,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                       });
       const bool exactExpectedClassResult = expectedClassPlacementResultType(
           program_, representations_, function->returnType);
+      const bool exactNativeCallbackResult =
+          returnKind &&
+          *returnKind == CppMirTypeRepresentationKind::RawPointer &&
+          function->returnType.kind == SemanticType::NativeFunction &&
+          function->returnType.hasNativeFunctionShape();
       const bool failureFreeVirtualOverride =
           !function->mayRaiseDefinedFailure && function->virtualMethod &&
           function->overrideMethod &&
@@ -18315,6 +18351,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if ((!function->mayRaiseDefinedFailure && !failureFreeVirtualOverride) ||
           !returnKind ||
           (*returnKind != CppMirTypeRepresentationKind::Scalar &&
+           !exactNativeCallbackResult &&
            // The passive string view publishes by value through the
            // ordinary out-parameter exactly like a scalar.
            *returnKind != CppMirTypeRepresentationKind::StringView &&
@@ -18442,6 +18479,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           returnKind &&
           (*returnKind == CppMirTypeRepresentationKind::Void ||
            *returnKind == CppMirTypeRepresentationKind::Scalar ||
+           (*returnKind == CppMirTypeRepresentationKind::RawPointer &&
+            lambda->returnType.kind == SemanticType::NativeFunction &&
+            lambda->returnType.hasNativeFunctionShape()) ||
            *returnKind == CppMirTypeRepresentationKind::StringView ||
            (*returnKind == CppMirTypeRepresentationKind::Enum &&
             cppMirEnumBoundaryRow(representations_, lambda->returnType)) ||
@@ -19945,6 +19985,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         }
         switch (instruction.operation) {
+        case MirOperation::NativeCallback: {
+          const MirNativeCallbackAdapter *adapter =
+              instruction.nativeCallbackAdapter
+                  ? program_.findNativeCallbackAdapter(
+                        *instruction.nativeCallbackAdapter)
+                  : nullptr;
+          const MirFunctionInstance *target =
+              adapter == nullptr
+                  ? nullptr
+                  : program_.findFunctionInstance(adapter->target);
+          if (adapter == nullptr || target == nullptr ||
+              adapter->type != instruction.info.type ||
+              !instruction.operands.empty() ||
+              !instruction.localFailureSites.empty() ||
+              !instruction.definedFailure.empty() ||
+              !typeRow(instruction.info.type)) {
+            return false;
+          }
+          continue;
+        }
         case MirOperation::Literal:
           if (!literalSupported(instruction.literal, instruction.info.type)) {
             {
@@ -21275,6 +21335,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               case CppMirTypeRepresentationKind::FixedArray:
                 returnReady = typeRow(target->returnType);
                 break;
+              case CppMirTypeRepresentationKind::RawPointer:
+                returnReady =
+                    target->returnType.kind == SemanticType::NativeFunction &&
+                    target->returnType.hasNativeFunctionShape() &&
+                    typeRow(target->returnType);
+                break;
               case CppMirTypeRepresentationKind::Expected:
                 if (expectedClassPlacementResultType(program_, representations_,
                                                      target->returnType)) {
@@ -22108,7 +22174,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         const std::optional<CppMirTypeRepresentationKind> kind =
             expectedTypeRepresentation(block.terminator.value->type);
-        if (!kind || *kind != CppMirTypeRepresentationKind::Scalar ||
+        const bool nativeCallback =
+            kind && *kind == CppMirTypeRepresentationKind::RawPointer &&
+            block.terminator.value->type.kind == SemanticType::NativeFunction &&
+            block.terminator.value->type.hasNativeFunctionShape();
+        if (!kind ||
+            (*kind != CppMirTypeRepresentationKind::Scalar &&
+             !nativeCallback) ||
             !typeRow(block.terminator.value->type)) {
           return false;
         }

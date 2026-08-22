@@ -226,11 +226,14 @@ records by value and one-level raw pointers whose pointee is `void`, one of
 those scalar types, `c_string`, a valid `[[c_abi]]` record, or a
 `[[c_opaque]]` handle; the pointee may be qualified with `const`. An exact
 `[[c_array(count)]]` return may add one outer pointer and pairs that result
-with an immutable writable fixed-width integer out pointer. Scalar, record,
-and raw-pointer parameters are immutable bindings passed by value. `bool`,
-`char`, enums, references, arrays,
+with an immutable writable fixed-width integer out pointer. A namespace-scope
+`using` declaration may name one exact native function type whose parameter
+and result shape recursively uses this ABI family. Scalar, record,
+raw-pointer, and callback parameters are immutable bindings passed by value.
+`bool`, `char`, enums, references, arrays,
 ordinary classes and structs, generics, owners, recoverable-result types,
-general pointer-to-pointer types, and function pointers do not have C ABI forms.
+general pointer-to-pointer types, and anonymous/general function-pointer
+declarators do not have C ABI forms.
 `std::string_view` is additionally permitted as a parameter only and lowers to
 the explicit record:
 
@@ -247,11 +250,11 @@ or read beyond `length`. This compiler-private record does not opt into source
 `[[c_abi]]` record rules or make its private pointer source-accessible.
 
 Calling a C-linkage function whose return type or any parameter type contains a
-raw pointer, including an opaque-handle pointer or one nested in a `[[c_abi]]`
-record, requires lexical unsafe context. The caller shall meet the pointer
-validity conditions and the native function's nullability, bounds, retention,
-aliasing, initialization, and ownership contract. A declaration itself is not
-unsafe. A call whose
+raw pointer or native callback, including an opaque-handle pointer or either
+kind nested in a `[[c_abi]]` record, requires lexical unsafe context. The
+caller shall meet the pointer/callback validity conditions and the native
+function's nullability, bounds, retention, aliasing, initialization, and
+ownership contract. A declaration itself is not unsafe. A call whose
 source signature contains only the scalar allowlist, pointer-free `[[c_abi]]`
 records, or the special counted string-view parameter remains valid in safe
 code.
@@ -273,10 +276,11 @@ claim that current artifacts can be safely embedded and resumed. E-EMBED-01
 owns the first explicit wrapper, context-validity/poisoning rule, descriptor
 lifetime, and same-process re-entry evidence.
 
-**Specification gap:** Annotated opaque-handle ownership transfer, callbacks
-and function-pointer types, array parameters at the C boundary, C enums,
-alternate calling conventions, casts, native error conventions, allocation,
-packing, unions, bit-fields, and manual lifetime remain to be designed. The
+**Specification gap:** Annotated opaque-handle ownership transfer, captured or
+userdata callbacks, foreign-thread GTI callback entry, array parameters at the
+C boundary, C enums, alternate calling conventions, casts, native error
+conventions, allocation, packing, C ABI unions, bit-fields, and manual lifetime
+remain to be designed. The
 returned pointer-plus-count idiom is the one implemented bounded nested-pointer
 form; it is not a general pointer-to-pointer facility.
 

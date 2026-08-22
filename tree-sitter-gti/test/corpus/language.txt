@@ -1315,6 +1315,48 @@ extern "C" {
           (identifier))))))
 
 ==================
+Named native function types
+==================
+
+using Unary = (int32_t) -> int32_t;
+using Factory = () -> Unary;
+using Nested = (Factory, c_string) -> (int32_t) -> void;
+
+---
+
+(source_file
+  (type_alias_declaration
+    (identifier)
+    (type
+      (native_function_type
+        (type
+          (primitive_type))
+        (type
+          (primitive_type)))))
+  (type_alias_declaration
+    (identifier)
+    (type
+      (native_function_type
+        (type
+          (user_type
+            (identifier))))))
+  (type_alias_declaration
+    (identifier)
+    (type
+      (native_function_type
+        (type
+          (user_type
+            (identifier)))
+        (type
+          (user_type
+            (identifier)))
+        (type
+          (native_function_type
+            (type
+              (primitive_type))
+            (type)))))))
+
+==================
 Compound assignments
 ==================
 

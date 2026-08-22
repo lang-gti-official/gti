@@ -116,6 +116,78 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");
   }
+  for (std::size_t index = 0; index < program.nativeCallbackAdapters().size();
+       ++index) {
+    const HirNativeCallbackAdapter &adapter =
+        program.nativeCallbackAdapters()[index];
+    const HirFunctionInstance *target =
+        program.findFunctionInstance(adapter.target);
+    const FunctionInfo *declaration =
+        target == nullptr ? nullptr
+                          : semantics.findFunction(target->declaration);
+    const SemanticType *returnType = adapter.type.nativeFunctionReturnType();
+    const std::span<const SemanticType> parameterTypes =
+        adapter.type.nativeFunctionParameterTypes();
+    if (adapter.id != index + 1 || target == nullptr ||
+        target->owner.has_value() || target->source == nullptr ||
+        target->linkage != LanguageLinkage::Gti || declaration == nullptr ||
+        declaration->ownerClass != 0 || returnType == nullptr ||
+        target->returnType != *returnType ||
+        target->parameterTypes.size() != parameterTypes.size() ||
+        !std::equal(target->parameterTypes.begin(),
+                    target->parameterTypes.end(), parameterTypes.begin())) {
+      result.errors.emplace_back(
+          "native callback adapter has no exact free-function target");
+    }
+  }
+  const auto verifyNativeCallbackValues = [&](const HirBody &body) {
+    for (const HirValue &value : body.values) {
+      if (value.kind != HirValueKind::NativeCallback) {
+        if (value.nativeCallbackAdapter) {
+          result.errors.emplace_back(
+              "non-callback HIR value carries callback adapter metadata");
+        }
+        continue;
+      }
+      const HirNativeCallbackAdapter *adapter =
+          value.nativeCallbackAdapter
+              ? program.findNativeCallbackAdapter(*value.nativeCallbackAdapter)
+              : nullptr;
+      const NativeFunctionConversionInfo *conversion =
+          value.source == nullptr
+              ? nullptr
+              : semantics.findNativeFunctionConversion(*value.source);
+      const HirFunctionInstance *target =
+          adapter == nullptr ? nullptr
+                             : program.findFunctionInstance(adapter->target);
+      if (adapter == nullptr || conversion == nullptr || target == nullptr ||
+          !value.operands.empty() || value.info.type != adapter->type ||
+          conversion->type != adapter->type ||
+          conversion->function != target->declaration ||
+          conversion->declaration != target->source) {
+        result.errors.emplace_back(
+            "native callback HIR value differs from semantic conversion");
+      }
+    }
+  };
+  verifyNativeCallbackValues(program.module());
+  for (const HirClassInstance &instance : program.classInstances()) {
+    verifyNativeCallbackValues(instance.fieldInitializers);
+    verifyNativeCallbackValues(instance.staticFieldInitializers);
+  }
+  for (const HirFunctionInstance &instance : program.functionInstances()) {
+    verifyNativeCallbackValues(instance.body);
+  }
+  for (const HirConstructorInstance &instance :
+       program.constructorInstances()) {
+    verifyNativeCallbackValues(instance.body);
+  }
+  for (const HirDestructorInstance &instance : program.destructorInstances()) {
+    verifyNativeCallbackValues(instance.body);
+  }
+  for (const HirLambda &instance : program.lambdaInstances()) {
+    verifyNativeCallbackValues(instance.body);
+  }
   const ProgramInitializationPlan &semanticInitialization =
       semantics.programInitializationPlan();
   const HirProgramInitializationPlan &initialization =
@@ -316,7 +388,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            value.packFoldParameter == 0 && value.packFoldFunction == 0 &&
            value.packFoldArgument == 0 && value.packFoldElements.empty() &&
            value.packExpansionElements.empty() && !value.functionTarget &&
-           !value.contextualBoolTarget && !value.constructorTarget &&
+           !value.nativeCallbackAdapter && !value.contextualBoolTarget &&
+           !value.constructorTarget &&
            value.constructorKind == ConstructorKind::Ordinary &&
            !value.lambdaTarget && value.callableArguments.empty() &&
            !value.callableBoundary && !value.callableInvocation &&

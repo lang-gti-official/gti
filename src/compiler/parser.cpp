@@ -945,6 +945,21 @@ private:
   }
 
   TypeRef parseBaseType() {
+    if (match({TokenKind::LEFT_PAREN})) {
+      std::vector<TypeRef> parameters;
+      if (!check(TokenKind::RIGHT_PAREN)) {
+        do {
+          parameters.emplace_back(parseType());
+        } while (match({TokenKind::COMMA}));
+      }
+      consume(TokenKind::RIGHT_PAREN,
+              "Expect ')' after native function parameter types.");
+      Token arrow = consume(TokenKind::ARROW,
+                            "Expect '->' before native function return type.");
+      TypeRef returnType = parseType();
+      return TypeRef::nativeFunction(std::move(arrow), std::move(parameters),
+                                     std::move(returnType));
+    }
     if (match({TokenKind::EXPECTED})) {
       Token expected = previous();
       consume(TokenKind::LESS, "Expect '<' after 'expected'.");

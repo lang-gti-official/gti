@@ -98,12 +98,15 @@ ownership, or control-flow checking.
 
 The ordinary type surface supports exactly one pointer level. Pointer-to-pointer
 locals, parameters, fields, aliases, and unannotated returns, references to raw
-pointers, function pointers, pointer-to-array types, implicit fixed-array
+pointers, anonymous/general function-pointer declarators, pointer-to-array
+types, implicit fixed-array
 decay, casts, and source allocation/deallocation expressions are ill-formed.
 An exact `[[c_array(count)]] extern "C"` return may add one outer pointer when
 the named parameter is a writable fixed-width integer out pointer; this does
 not admit nested pointers elsewhere. `void*` is opaque and cannot be
 dereferenced, indexed, used for member access, or used in pointer arithmetic.
+Namespace-scope aliases may name the distinct bounded native callback type
+specified by [`native-c-interop.md`](native-c-interop.md#native-callback-types).
 
 The complete programmer obligations are incorporated from
 [`raw-pointers.md`](raw-pointers.md).
@@ -571,10 +574,12 @@ current implementation:
   move-capture;
 - generic and aggregate constexpr evaluation plus compile-time assertions;
 - audited expansion beyond the bounded scalar, counted-text-input,
-  `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, and one-level
-  raw-pointer C call surface, including callbacks, out parameters, casts, and
-  annotated ownership transfer; and
-- native record field families beyond the closed scalar, nested-record, and
-  one-level-pointer set, including fixed arrays, unions, packing, and
-  bit-fields; record initialization policy remains in safe wrappers or native
-  factory functions rather than in the representation declaration.
+  `[[c_abi]]` record, pointer-only `[[c_opaque]]` handle, one-level raw-pointer,
+  pointer-plus-count, and exact same-thread callback C surface, including
+  array parameters, casts, foreign-thread callbacks, and annotated ownership
+  transfer; and
+- native record field families beyond the closed scalar, nested-record,
+  one-level-pointer, direct-fixed-array, and callback-field set, including C
+  ABI unions, packing, and bit-fields; record initialization policy remains in
+  safe wrappers or native factory functions rather than in the representation
+  declaration.

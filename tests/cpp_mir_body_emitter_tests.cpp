@@ -87,6 +87,7 @@ representationKind(const lang::SemanticType &type) {
   case lang::SemanticType::NullPtr:
     return lang::CppMirTypeRepresentationKind::NullPointer;
   case lang::SemanticType::RawPointer:
+  case lang::SemanticType::NativeFunction:
     return lang::CppMirTypeRepresentationKind::RawPointer;
   case lang::SemanticType::Reference:
     return lang::CppMirTypeRepresentationKind::Reference;
@@ -5418,6 +5419,101 @@ int main() {
          "inventing either discarded SSA lifetime");
 }
 
+void testNativeCallbackFactoryBody() {
+  lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("native_callback_factory.gti", R"(
+[[c_opaque]] struct NativeHandle;
+
+using callback = (int32_t) -> int32_t;
+using notification = (NativeHandle*) -> void;
+using callback_factory = () -> callback;
+
+[[c_abi]] struct NativeCallbacks {
+  callback unary;
+  notification notify;
+  void* user;
+};
+
+extern "C" {
+  callback set_callback(callback value);
+  callback_factory set_factory(callback_factory value);
+  void install_callbacks(const NativeCallbacks* callbacks);
+}
+
+int32_t add_one(int32_t value) {
+  return value + 1;
+}
+
+callback make_callback() {
+  return add_one;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the native callback factory should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O0,
+                                        .compatibility = &compatibility});
+  expect(optimized.valid(),
+         "the callback factory should preserve a valid optimized MIR program");
+  if (!optimized.valid()) {
+    return;
+  }
+  const lang::MirProgram &mir = optimized.mir;
+
+  const auto selected = std::find_if(
+      mir.functionInstances().begin(), mir.functionInstances().end(),
+      [](const lang::MirFunctionInstance &function) {
+        return function.definitionKind == lang::MirDefinitionKind::Source &&
+               function.returnType.kind == lang::SemanticType::NativeFunction;
+      });
+  expect(selected != mir.functionInstances().end(),
+         "the fixture should lower a callback-valued source function");
+  if (selected == mir.functionInstances().end()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+      frontend.semantics, mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(mir, map);
+  const lang::CppMirProgramEmissionAnalysis programAnalysis =
+      emitter.analyzeProgram();
+  for (const lang::CppMirBodyEmissionIssue &issue : programAnalysis.issues) {
+    std::cerr << "native callback program issue: " << issue.detail << '\n';
+  }
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = selected->id};
+  const lang::CppMirBodyEmissionAnalysis analysis = emitter.analyze(address);
+  for (const lang::CppMirBodyEmissionIssue &issue : analysis.issues) {
+    std::cerr << "native callback body issue: " << issue.detail << '\n';
+  }
+  expect(!selected->mayRaiseDefinedFailure,
+         "forming and returning a native callback should not raise a defined "
+         "failure");
+  expect(analysis.ready(),
+         "the callback factory should have complete MIR representation rows");
+  expect(programAnalysis.issues.empty(),
+         "nested callback aliases should preserve a coherent representation "
+         "map");
+  expect(emitter.supportsBodyText(address),
+         "the callback factory should support plain verified-MIR emission");
+  if (!analysis.ready() || !emitter.supportsBodyText(address)) {
+    return;
+  }
+  const std::string text =
+      emitter.emitBodyText(address, "native-callback-factory-test-v0", 1).text;
+  expect(text.find("__gti_native_callback_") != std::string::npos,
+         "the callback factory should return its exact adapter thunk");
+}
+
 int main() {
   testExhaustiveEnumClassification();
   testReadyBodyAndRepresentationFailures();
@@ -5470,6 +5566,7 @@ int main() {
   testSingleUseClassSsaRepresentationSlot();
   testFailureCapableClassReturnTemporaryReceiver();
   testAdjacentClassCopyAssignmentFusion();
+  testNativeCallbackFactoryBody();
   testDeducedCallableTemplateEmission();
   testReferenceReturnFailureAbi();
   testGenericOwnerReferenceReturnFailureAbi();

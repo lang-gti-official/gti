@@ -79,11 +79,11 @@ def main() -> int:
                 generated = emitted.read_text(encoding="utf8")
                 if (
                     generated.count(f"{marker} field-initializers-instance")
-                    != 2
+                    != 3
                     or generated.count(
                         f"{marker} static-field-initializers-instance"
                     )
-                    != 2
+                    != 3
                     or generated.count(f"{marker} module-instance") != 1
                     or generated.count(
                         "// GTI verified-MIR body: native-boundary-v1 "

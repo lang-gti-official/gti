@@ -171,6 +171,23 @@ void AstPrinter::visitVariableExpr(const Variable &expr) {
 }
 
 std::string AstPrinter::typeToString(const TypeRef &type) {
+  if (type.isNativeFunction()) {
+    std::string text = "(";
+    const std::size_t parameterCount =
+        type.nativeFunctionParameterCount.value_or(0);
+    for (std::size_t index = 0;
+         index < parameterCount && index < type.arguments.size(); ++index) {
+      if (index != 0) {
+        text += ",";
+      }
+      text += typeToString(type.arguments[index]);
+    }
+    text += ") -> ";
+    text += type.arguments.size() == parameterCount + 1
+                ? typeToString(type.arguments.back())
+                : "?";
+    return text;
+  }
   std::string text;
   for (std::size_t index = 0; index < type.name.segments.size(); ++index) {
     if (index != 0) {

@@ -383,16 +383,19 @@ target identity, and invocation count.
 
 ### Native Callbacks
 
-`S-CALL-01` starts with a non-capturing exact function item and a same-thread C
-callback boundary. The function item uses the same signature/target descriptor
-but adds an ABI-specific trampoline. A later capturing registration owns one
-exact callable plus explicit userdata and registration lifetime; it is not an
+`S-CALL-01` implements a non-capturing exact function item and a same-thread C
+callback boundary. The function item uses semantic target selection, a concrete
+HIR identity, and a MIR-owned containment record; only the typed trampoline's
+spelling is ABI-specific. A later capturing registration must own one exact
+callable plus explicit userdata and registration lifetime; it is not an
 implicit conversion to `void*` or an erased C++ closure.
 
-Failure containment, unregister behavior, native retention, foreign-thread
-entry, and permitted C signature families remain client-specific gates. A
-callback adapter may have a different layout while still consuming the one
-GTI callable identity and lifecycle contract.
+Defined failure and native exceptions are contained by the implemented
+terminating adapter, and its code address has process lifetime. Userdata
+ownership, unregister policy for captured state, and foreign-thread entry
+remain client-specific follow-on gates. A callback adapter may have a different
+layout while still consuming the one GTI callable identity and lifecycle
+contract.
 
 ## Cross-Phase Representation Contract
 
@@ -520,12 +523,11 @@ C-THREAD-01 work.
 
 ### S-CALL-01: Native Function Item Adapter
 
-With M-LIFE-01 complete, after M-FAIL-01 and the matching closed-call-graph
-M-BACK-02 slice, add the exact non-capturing function item and one same-thread
-callback
-trampoline over the already accepted C signature family. Capturing callbacks,
-foreign-thread entry, and general function values require their separately
-named follow-ons.
+Complete. The exact non-capturing function item and one same-thread callback
+trampoline use the recursively bounded C signature family. Semantic, HIR, MIR,
+backend, C/C++ header, formatter, Tree-sitter, LSP, and GLFW 3.4 oracle evidence
+are shipped. Capturing callbacks, userdata ownership, foreign-thread entry, and
+general function values require separately named follow-ons.
 
 ## Verification Matrix
 
@@ -566,8 +568,8 @@ named follow-ons.
 - move-captured resources clean up exactly once, including moved-from storage;
 - algorithms never retain a confined callable;
 - a task adapter transfers/drops once when that later row lands;
-- a C harness validates callback registration/call/unregister when S-CALL-01
-  lands; and
+- a C harness validates callback registration/call/unregister and failure
+  containment for completed S-CALL-01; and
 - hover/signature help describes exact signature, capture modes, capability,
   and confinement without C++ implementation names.
 

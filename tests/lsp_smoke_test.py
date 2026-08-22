@@ -3706,6 +3706,120 @@ def test_native_record_tooling(executable, root):
         session.close()
 
 
+def test_native_callback_tooling(executable, root):
+    source = (
+        "[[c_opaque]] struct NativeWindow;\n"
+        "using Callback=(NativeWindow*,int32_t)->void;\n"
+        "extern \"C\" { Callback set_callback(Callback callback); }\n"
+        "void on_event(NativeWindow* window, int32_t event) {}\n"
+        "int main() { unsafe { [[discard]] set_callback(on_event); } "
+        "return 0; }\n"
+    )
+    path = root / "native-callback-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        assert publication["params"]["diagnostics"] == [], publication
+
+        alias_use = source.index("Callback set_callback")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, alias_use + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert hover and "Callback" in json.dumps(hover), hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        formatting = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        assert formatting and (
+            "using Callback = (NativeWindow*, int32_t) -> void;"
+            in formatting[0]["newText"]
+        ), formatting
+
+        invalid_source = (
+            "using Callback = (int32_t) -> void;\n"
+            "void wrong(c_string value) {}\n"
+            "int main() { Callback callback = wrong; return 0; }\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]["diagnostics"]
+        assert any(item.get("code") == "GTI-S2076" for item in invalid), invalid
+    finally:
+        session.close()
+
+
 def test_protocol_input_validation(executable):
     for header in (
         b"Content-Length: -1\r\n\r\n",
@@ -5020,6 +5134,7 @@ def main():
     test_contextual_signed_integer_diagnostic(sys.argv[1], root)
     test_layout_query_tooling(sys.argv[1], root)
     test_native_record_tooling(sys.argv[1], root)
+    test_native_callback_tooling(sys.argv[1], root)
     test_integer_arithmetic_tooling(sys.argv[1], root)
     test_owned_move_capture_tooling(sys.argv[1], root)
     test_pack_fold_tooling(sys.argv[1], root)

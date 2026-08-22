@@ -54,6 +54,24 @@ std::string cppSemanticTypeSpelling(const SemanticModel &semantics,
     result += '*';
     return result;
   }
+  case SemanticType::NativeFunction: {
+    if (!type.hasNativeFunctionShape()) {
+      return "void";
+    }
+    std::string result = "std::add_pointer_t<";
+    result += spell(*type.nativeFunctionReturnType());
+    result += '(';
+    bool separator = false;
+    for (const SemanticType &parameter : type.nativeFunctionParameterTypes()) {
+      if (separator) {
+        result += ", ";
+      }
+      result += spell(parameter);
+      separator = true;
+    }
+    result += ")>";
+    return result;
+  }
   case SemanticType::Array: {
     std::string result = "std::array<";
     result += type.arguments.empty() ? "void" : spell(type.arguments.front());
