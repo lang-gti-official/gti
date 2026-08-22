@@ -272,6 +272,14 @@ escape, plus conservative handling of indexed/raw/opaque source provenance.
 suspension and reactivation, use of a suspended parent, balanced child endings,
 and predecessor-state agreement.
 
+Receiver-return provenance is covered across the same frontend boundary.
+`compiler_pipeline` proves that explicit and unqualified instance-field
+spellings retain the same receiver root for a direct reference return, a
+stored-reference carrier construction, and a carrier returned from a method
+called on an owning field. A same-named local remains a negative case, and MIR
+verification requires every receiver-dependent return loan to originate from a
+concrete `This` place.
+
 The example and emitted C++ confirm composition but do not replace either
 layer's assertions.
 

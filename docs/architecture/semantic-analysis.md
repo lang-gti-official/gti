@@ -435,6 +435,15 @@ recovery and is converted to the shared value before it becomes durable
 semantic data. Raw addresses and opaque results still receive no guessed
 provenance.
 
+A resolved non-static instance field always forms a receiver-rooted `PlaceKey`
+with a field projection, whether the source spells `field` or `this.field`.
+Borrow-return validation consumes that resolved identity, so lexical locals and
+parameters that shadow a field remain symbol-rooted and independent. HIR
+canonicalizes the unqualified field value to the same implicit-receiver member
+access used by the explicit spelling; MIR therefore retains a `This` root for
+direct reference returns, stored-reference construction, and calls made on the
+field.
+
 Addressable namespace bindings and non-generic static data members use the
 same symbol-rooted place whether their source spelling is qualified or
 unqualified. Function-local borrows from that storage therefore participate in

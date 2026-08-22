@@ -8292,8 +8292,8 @@ class InvalidReferences {
 
 public:
   int& local() {
-    int temporary = 2;
-    return temporary;
+    int value = 2;
+    return value;
   }
 
   int& parameter(int& value) {
@@ -8375,7 +8375,7 @@ class BorrowingIterator<T> {
 public:
   BorrowingIterator(T& source) : value(source) {}
 
-  T& operator*() { return this.value; }
+  T& operator*() { return value; }
   void operator++() mut { this.position++; }
   bool operator!=(SingleSentinel& sentinel) { return this.position == 0; }
 };
@@ -8387,12 +8387,23 @@ public:
   SingleRange(T initial) : value(initial) {}
 
   BorrowingIterator<T> begin() {
-    return BorrowingIterator<T>(this.value);
+    return BorrowingIterator<T>(value);
   }
 
   SingleSentinel end() { return SingleSentinel(); }
 
   void replace(T next) mut { this.value = next; }
+};
+
+class WrappedRange<T> {
+  SingleRange<T>& internal;
+
+public:
+  WrappedRange(SingleRange<T>& source) : internal(source) {}
+
+  BorrowingIterator<T> begin() {
+    return internal.begin();
+  }
 };
 
 int main() {
@@ -8404,7 +8415,11 @@ int main() {
   ++moved;
   mut int total = 0;
   for (int& item : range) { total += item; }
-  return value + total - 14;
+  mut SingleRange<int> wrapped_range = SingleRange<int>(7);
+  WrappedRange<int> wrapped = WrappedRange<int>(wrapped_range);
+  mut BorrowingIterator<int> wrapped_iterator = wrapped.begin();
+  int& wrapped_value = *wrapped_iterator;
+  return value + total + wrapped_value - 21;
 }
 )";
 
@@ -8417,7 +8432,8 @@ int main() {
     }
   }
   expect(frontend.canGenerateCode(),
-         "a read-only stored reference should support an owner-tied iterator");
+         "unqualified instance fields should retain receiver provenance for "
+         "reference and stored-reference returns");
 
   const lang::FunctionDecl *storedReferenceMain =
       findTopLevelFunction(frontend.program, "main");
@@ -8449,8 +8465,14 @@ int main() {
   const lang::FrontendResult standardStringRange = lang::Frontend().analyze(
       "standard-string-range.gti",
       "#include <std/string>\n"
+      "class PathRange { std::string internal_path; public: "
+      "PathRange(std::string value) : internal_path(std::move(value)) {} "
+      "std::detail::storage_iterator<char> begin() { return "
+      "internal_path.begin(); } };\n"
       "int main() { std::string value = std::string(\"gti\"); "
       "mut uint64_t count = 0; for (char character : value) { count++; } "
+      "PathRange path = PathRange(std::string(\"gti\")); "
+      "mut auto iterator = path.begin(); char first = *iterator; "
       "return int(count) - 3; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!standardStringRange.canGenerateCode()) {
