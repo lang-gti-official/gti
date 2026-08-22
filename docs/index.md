@@ -117,6 +117,9 @@ description of the implementation.
 - [Mutable field groups](plans/mutable-field-groups.md) — proposes the bounded
   `mut { ... }` shorthand for consecutive mutable class and struct fields while
   preserving immutable defaults and existing receiver/write rules
+- [Static assertions](plans/static-assertions.md) — proposes frontend-owned
+  exact-`bool` `static_assert`, erased before HIR, with a non-dependent first
+  slice and per-concrete-instance generic evaluation as a follow-on
 - [LSP evolution](plans/lsp-evolution.md)
 - [C interop target surface](plans/c-interop-target-surface.md) — the
   completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
