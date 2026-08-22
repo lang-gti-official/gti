@@ -110,6 +110,9 @@ description of the implementation.
 - [Optimization architecture](plans/optimization.md)
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
+- [Mutable temporary receivers](plans/mutable-temporary-receivers.md) — proposes
+  a bounded ephemeral mutable-receiver capability for fresh, self-contained
+  class-value temporaries without making temporaries general mutable places
 - [LSP evolution](plans/lsp-evolution.md)
 - [C interop target surface](plans/c-interop-target-surface.md) — the
   completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
