@@ -122,8 +122,9 @@ description of the implementation.
   generic evaluation and erasure before HIR
 - [Mutable temporary receivers](plans/mutable-temporary-receivers.md) — records
   the implemented bounded ephemeral receiver capability for fresh,
-  self-contained class-value temporaries without making temporaries general
-  mutable places
+  self-contained class-value temporaries and the planned fallback-only
+  one-call read-only argument-borrow follow-on, without making temporaries
+  general places
 - [Read-only receiver diagnostic precision](plans/read-only-receiver-diagnostics.md)
   — records the implemented cause-specific assignment and mutable-reference
   diagnostics when a method lacks the trailing `mut` receiver qualifier

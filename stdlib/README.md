@@ -12,11 +12,14 @@ or call-site spelling recognized by the compiler.
 GTI loads `prelude.gti` automatically. Its public API lives under `std`, while
 compiler-owned declarations under `gti_internal` bind to the native runtime.
 `std::print` and `std::println` accept `std::string_view`, `char`, and every
-fixed-width integer type. `<std/string>` adds read-only owning-string
-overloads. These operations are implemented in GTI and end at the exact C
-symbols `gti_rt_write_stdout` and `gti_rt_write_stdout_byte`; integer output is
-ordinary source-defined base-10 conversion rather than a compiler or native
-formatting shortcut. The
+fixed-width integer type. `<std/string>` adds a read-only `std::string&`
+overload for named owners and an owning `std::string` overload for fresh
+results. The latter transfers a temporary directly into the call, so an
+expression such as `std::println(path.string())` needs neither a named local
+nor a reference bound to temporary storage. These operations are implemented
+in GTI and end at the exact C symbols `gti_rt_write_stdout` and
+`gti_rt_write_stdout_byte`; integer output is ordinary source-defined base-10
+conversion rather than a compiler or native formatting shortcut. The
 prelude's `std::string_view` is a transparent alias for a compiler-defined
 counted view; a C-linkage call lowers it to the public `gti_c_string_view`
 record from `<gti/c_abi.h>`. The native callee receives immutable bytes and an

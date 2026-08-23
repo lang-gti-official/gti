@@ -32,6 +32,7 @@ assertions.
 | `returned_class_field_runtime` | free-function and method class results can be projected directly in initializers and larger expressions at O0/O3 under C++20/C++23 |
 | `reference_parameter_range_runtime` | range iteration through a class reference parameter uses the MIR referent carrier and runs at O0/O3 under C++20/C++23 |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
+| `string_owned_output_runtime` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
 | `optimizer_foundation` | MIR verification/printing/effects; MIR v20 function provenance/effects retained in MIR v21's three-kind definition and defined-failure result; bounded closure and exact call propagation; dominance; controlled editor atomicity, repair, and invalidation; retained canonical source MIR; exact structural optimization-coherence replay; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
 | `lowered_program_contract` | deterministic independent construction; complete declaration, symbol, body, instance, and generated-family inventory; standalone contract-client printing; and missing, duplicate, stale, reordered, unrooted, cyclic, or forged-record rejection |
 | `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
@@ -49,7 +50,7 @@ assertions.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_census_regression` | exact reviewed per-example MIR body ownership for all 2,867 identities across 62 examples |
+| `mir_census_regression` | exact reviewed per-example MIR body ownership for all 2,875 identities across 62 examples |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
 | `cpp_mir_body_emitter` | generic MIR body-emission classification and a corpus sweep requiring every frontend-produced body to be coherent and text-ready |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
@@ -132,6 +133,16 @@ new construct, concrete generic composition, ownership/move-only interaction,
 target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
+
+For owning-string output, `string_owned_output_runtime` is the focused
+source-defined-library gate. It keeps the existing named-owner `string&`
+selection live while proving that a fresh move-only string result directly
+initializes the by-value overload, including the motivating
+`std::println(path.string())` call. The four endpoint configurations require
+identical bytes and successful cleanup without changing reference binding,
+syntax, or compiler semantics. The MIR census and cutover corpus oracle review
+the two additional ordinary GTI bodies wherever `<std/string>` enters the
+example graph.
 
 For exact qualified class specializations, `compiler_pipeline` owns qualified
 syntax, canonical type/value keys, declaration-order independence, primary

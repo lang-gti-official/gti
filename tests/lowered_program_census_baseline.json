@@ -253,8 +253,8 @@
       }
     },
     "20-strings.gti": {
-      "declarations": 186,
-      "bodies": 76,
+      "declarations": 188,
+      "bodies": 78,
       "generated_items": 7,
       "generated_kinds": {
         "program_initialization": 0,
@@ -533,8 +533,8 @@
       }
     },
     "40-loan-flow-edges.gti": {
-      "declarations": 186,
-      "bodies": 77,
+      "declarations": 188,
+      "bodies": 79,
       "generated_items": 8,
       "generated_kinds": {
         "program_initialization": 0,
@@ -575,8 +575,8 @@
       }
     },
     "43-program-arguments.gti": {
-      "declarations": 237,
-      "bodies": 87,
+      "declarations": 239,
+      "bodies": 89,
       "generated_items": 16,
       "generated_kinds": {
         "program_initialization": 0,
@@ -785,8 +785,8 @@
       }
     },
     "58-formatted-output.gti": {
-      "declarations": 199,
-      "bodies": 93,
+      "declarations": 201,
+      "bodies": 95,
       "generated_items": 20,
       "generated_kinds": {
         "program_initialization": 0,
@@ -870,8 +870,8 @@
     }
   },
   "totals": {
-    "declarations": 9078,
-    "bodies": 2867,
+    "declarations": 9086,
+    "bodies": 2875,
     "generated_items": 353
   }
 }

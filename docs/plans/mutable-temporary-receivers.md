@@ -1,6 +1,7 @@
 # Mutable Temporary Receivers
 
-Status: Implemented in GTI 0.294.0 (Slice A).
+Status: Direct-receiver Slice A implemented in GTI 0.294.0;
+`M-TEMP-ARG-01`, the one-call read-only argument follow-on, is planned below.
 
 ## Summary
 
@@ -523,3 +524,179 @@ Slice A was accepted and implemented with these criteria:
 8. the LSP consumes compiler-selected facts without a parallel receiver rule;
    and
 9. implementation updates canonical semantics and advances the minor version.
+
+## Planned Follow-On: One-Call Read-Only Temporary Arguments
+
+Status: **ready design, not implemented** (`M-TEMP-ARG-01`).
+
+Classification: **prepare for**. The owning-string `print`/`println` overloads
+provide the immediate `std::println(path.string())` client without changing
+language semantics. This follow-on preserves a coherent extension seam for
+ordinary read-only APIs that should observe a fresh value without taking
+ownership or forcing an otherwise unnecessary local.
+
+### User-Facing Outcome
+
+The first bounded slice should accept an exact read-only reference parameter
+from a fresh, self-contained class or struct result for one call:
+
+```gti
+class Report {
+public:
+  int code() { return 0; }
+};
+
+Report make_report();
+void inspect(Report& report);
+
+int main() {
+  inspect(make_report());
+  return 0;
+}
+```
+
+`make_report()` remains the owner. The call borrows its materialized result;
+the borrow ends after invocation and the result is destroyed at the enclosing
+full-expression boundary. There is no reference lifetime extension beyond the
+statement and no ownership transfer into `inspect`.
+
+### Proposed Static-Semantic Contract
+
+An argument is eligible only when all of the following are true:
+
+- its exact resolved type is a concrete class or struct value;
+- it is produced directly by an ordinary constructor or ordinary GTI call
+  returning that value by value, allowing transparent parentheses only;
+- the value is self-contained and contains no tracked borrowed state;
+- its ownership and cleanup obligation belong to the current full expression;
+- the selected parameter is the exact read-only reference `T&`, not
+  `mut T&`, a raw pointer, or a view/conversion target;
+- the argument is used directly at that one call site rather than through a
+  reference binding, field, address, or stored carrier; and
+- in the first slice, the selected callable returns `void`, an ordinary scalar,
+  or an owned value containing no tracked borrowed state.
+
+An explicit `std::move(named)` is existing source storage, not a fresh
+temporary. Conditional, comma, payload, range, borrowed-state, native-call,
+callback, and unresolved callable producers remain outside the first slice.
+Concrete generic calls use the same rule only after substitution and ordinary
+concrete-instance reanalysis.
+
+The existing non-escape contract for reference parameters remains mandatory.
+A result tied to the temporary parameter, directly or through a borrowed-state
+carrier, is rejected before HIR. Later breadth may admit a result proven to
+derive exclusively from another stable argument, but the first slice does not
+need that distinction.
+
+### Exact Overload Selection
+
+This extension must not introduce C++ conversion ranking or make an owning
+overload ambiguous with its borrowed counterpart. Candidate resolution uses
+two bounded viability tiers:
+
+1. Resolve the existing exact candidates that require no ephemeral argument
+   borrow. If this tier is non-empty, discard every candidate that would need
+   the new capability and apply ADR 003 unchanged within the tier.
+2. Only when tier one is empty, admit candidates whose otherwise-exact match
+   fails solely because one or more eligible fresh values target exact
+   read-only `T&` parameters. Apply the ordinary unique-candidate rule within
+   this tier; do not rank by the number of ephemeral borrows, generic status,
+   defaults, or return type.
+
+Consequently a future overload set such as this remains deterministic:
+
+```gti
+void render(Document& value);
+void render(Document value);
+
+render(make_document()); // selects the owning value overload
+```
+
+The borrowed overload is a fallback for APIs that do not accept ownership.
+Implementation of this tier must amend ADR 003 and the canonical static
+semantics in the same change; this plan is not current overload-resolution
+authority.
+
+### Lifetime And Failure Schedule
+
+For an admitted argument, evaluation follows the existing strict left-to-right
+call and full-expression rules:
+
+1. evaluate earlier arguments and stabilize their parameters;
+2. evaluate the fresh producer at its written argument position;
+3. materialize exactly one owned temporary place and activate its drop
+   obligation after successful production;
+4. begin one read-only loan used to initialize the exact `T&` parameter;
+5. evaluate and stabilize later arguments;
+6. invoke the already selected callable;
+7. end the ephemeral loan; and
+8. destroy the temporary at the enclosing full-expression boundary.
+
+Producer failure activates neither a loan nor a drop. Failure in a later
+argument or in the call ends the loan and destroys the active temporary exactly
+once while preserving the original failure record. Optimization may elide
+representation copies but may not shorten the language lifetime, erase the
+loan/drop obligations, or reorder the written arguments.
+
+### Phase Ownership
+
+| Layer | Required fact and owner |
+| --- | --- |
+| Parser/AST | No syntax change; retain the written argument and full-expression source identities. |
+| Semantics | Prove freshness, self-containment, exact tier selection, parameter access, non-escaping result shape, and the full-expression owner. |
+| HIR | Preserve an explicit ephemeral read-only temporary-argument role, concrete producer/type, selected parameter index, and full-expression identity. |
+| MIR | Materialize one place, register one drop, schedule `BorrowRead` at the written argument position, retain the loan through invocation, then end it before cleanup. |
+| Verification/effects | Reject forged freshness, wrong access/type/index, an escaping result, use before production, call bypass, missing/duplicate loan ending or drop, and reordered arguments. |
+| Backend | Consume only the verified MIR place/loan/drop schedule; never infer permission from a C++ prvalue or emit native lifetime extension as semantic authority. |
+| LSP | Publish and clear compiler-owned diagnostics and selected signature information; no parallel lifetime rule. |
+
+Any MIR editor that changes the producer, call-input order, full-expression
+boundary, result provenance, or cleanup edges must rebuild and reverify the
+complete affected schedule.
+
+### Diagnostics And Tooling
+
+`GTI-S2017` remains correct for a local reference binding, mutable reference,
+explicit move, borrowed-state producer, or unsupported expression family. An
+otherwise eligible call should no longer report the blanket “cannot bind a
+reference to a temporary” diagnostic after this slice lands.
+
+When a call-like form is ineligible, diagnostics should name the blocking
+reason: mutable access requested, producer not fresh, tracked borrowed state,
+result may retain the loan, or unsupported producer/call family. The primary
+span belongs on the argument, with related information on a result parameter
+dependency when escape is the reason. Syntax highlighting, Tree-sitter, and
+formatting need no changes because the spelling already parses.
+
+### Verification And Exit Gate
+
+Focused positive coverage must include direct construction, ordinary
+class-returning calls, transparent parentheses, nested calls, multiple
+left-to-right arguments, cleanup-owning move-only values, and concrete generic
+instances. It must prove that an existing exact by-value overload wins over
+the fallback borrowed tier.
+
+Focused negative coverage must retain rejection of local reference bindings,
+`mut T&`, explicit moves from named storage, borrowed-state values, escaping
+reference/carrier results, unsupported compound producers, and ambiguity
+within either tier. Verifier mutations must cover every producer/place/type,
+loan, call-input, result-provenance, full-expression, and drop invariant above.
+
+The production matrix must run successful and defined-failure cases at O0 and
+O3 under C++20 and C++23, including failure before production, in a later
+argument, and in the selected body. LSP tests must prove diagnostic clearing
+and exact signature selection.
+
+The slice exits only when semantics, HIR, verified MIR, effects, production
+emission, canonical language/architecture documentation, ADR 003, the
+restriction ledger, and the runtime/tooling matrix agree. Landing it advances
+the minor version because previously rejected source becomes executable.
+
+### Explicit Non-Goals
+
+This plan does not add general rvalue references, implicit `string`-to-view
+conversion, mutable references to temporaries, stored temporary references,
+reference-member lifetime extension, address formation, lifetime extension
+beyond one full expression, C++ overload ranking, or backend-selected native
+reference binding. Scalar/array temporaries and broader compound producers are
+separate client-driven breadth after the class/struct slice is proven.
