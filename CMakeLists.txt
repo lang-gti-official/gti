@@ -789,6 +789,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/07-generics.gti"
     )
     add_test(
+      NAME compiler_debug_tooling
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_debug_tooling_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(
       NAME defined_integer_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/defined_integer_runtime_test.py"
@@ -990,6 +997,7 @@ if(BUILD_TESTING)
         mir_class_value_lifecycle_runtime mutable_temporary_receiver_runtime
         mir_backend_scalar_failure_callgraph_runtime
         random_engine_runtime default_parameters_runtime
+        compiler_debug_tooling
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )
