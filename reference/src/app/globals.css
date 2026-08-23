@@ -308,3 +308,29 @@ h2 {
   padding: 0.1rem 1rem;
   color: var(--text-muted);
 }
+
+/* --- Shiki (build-time syntax highlighting) ----------------------------- */
+
+pre.shiki {
+  background: var(--code-background) !important;
+}
+
+pre.shiki code span {
+  color: var(--shiki-light);
+}
+
+@media (prefers-color-scheme: dark) {
+  pre.shiki code span {
+    color: var(--shiki-dark);
+  }
+}
+
+.member-table code {
+  background: none;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.member-table td:first-child {
+  padding-right: 1.25rem;
+}
