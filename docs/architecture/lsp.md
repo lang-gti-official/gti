@@ -214,10 +214,14 @@ Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
 requests without adopting clangd's per-translation-unit scheduler complexity.
 
-Editor analysis requests `FrontendOptions::stopAfter = Semantics`: no LSP
-feature reads HIR or MIR, so those phases are not lowered per change. The
-validity flags of skipped phases stay false and code generation remains
-disabled, which is already the LSP contract. Before analysis, the LSP uses the
+Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
+compiler-owned discovery point for concrete generic instances, so stopping at
+symbolic semantics made valid editor snapshots omit diagnostics that
+`gti check` reports for instantiated generic bodies and dependent
+`static_assert` declarations. The LSP does not query HIR directly, and it still
+does not build failure metadata or MIR; retaining the HIR result is the current
+cost of publishing the compiler's complete source-level semantic diagnostic
+set. Code generation remains disabled. Before analysis, the LSP uses the
 driver's canonical nearest-manifest discovery and parser to seed
 `FrontendOptions::configurationFlags` from `[build].defines`; it does not
 reimplement TOML or manifest validation. Analysis work additionally runs
@@ -279,6 +283,11 @@ Diagnostic serialization preserves compiler codes, severities, phases, hints,
 related locations, and fix-its while respecting the client's
 `publishDiagnostics` capabilities. Hints stay in the plain-text message for
 universal display and are also exposed as structured data when supported.
+When several open roots diagnose the same dependency span, publication merges
+their related information instead of selecting one root arbitrarily; distinct
+include and instantiation locations therefore remain visible on the one
+deduplicated diagnostic. Diagnostics with different hints or fixes remain
+distinct.
 Quick fixes come only from compiler `Diagnostic::fixes` associated with the
 current source/generation, an intersecting request range, and an exact
 client-provided diagnostic. Position conversion is tested at the protocol
@@ -297,17 +306,12 @@ meaning from punctuation.
 
 - Documentation comments are not retained by the compiler, so hover's optional
   Markdown documentation field is normally empty.
-- Editor snapshots stop after symbolic semantic analysis. Diagnostics that
-  require concrete generic instantiation during HIR lowering are therefore
-  reported by a full compile, not by the current LSP snapshot. Moving concrete
-  instance checking into an editor-safe compiler query is future work; the LSP
-  must not reproduce it independently.
 - Definition, references, document highlights, and rename are implemented
   from exact resolved symbols. Rename is deliberately limited to
   function-local names: identities visible outside the entry document's
   source graph may have references in unopened dependants the snapshot cannot
   see, so the compiler query rejects them instead of producing an incomplete
-  edit. Signature help and a project symbol index are not implemented.
+  edit. A project symbol index is not implemented.
 - `SymbolId` is snapshot-local. There is no durable cross-analysis identity.
 - Document/scheduling state is not yet extracted from the protocol class.
 - `Frontend`/`LanguageQueries` can consume the same explicit

@@ -17839,13 +17839,12 @@ private:
           type.name.last().lexeme == "string") {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2033", DiagnosticPhase::Semantics, type.name.last(),
-            "'string' is no longer a built-in type; use 'std::string_view' "
-            "for non-owning text.");
-        diagnostic.fixes.push_back(
-            {tokenSpan(type.name.last()), "std::string_view",
-             "Replace 'string' with 'std::string_view'."});
+            "'string' is not a built-in GTI type; choose 'std::string' for "
+            "owning text or 'std::string_view' for a non-owning view.");
         diagnostic.hints.push_back(
-            "An owning std::string type is not available yet.");
+            "Use '#include <std/string>' before naming 'std::string'.");
+        diagnostic.hints.push_back(
+            "'std::string_view' is available from the standard prelude.");
         diagnostics.emplace_back(std::move(diagnostic));
         return;
       }

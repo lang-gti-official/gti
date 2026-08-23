@@ -425,6 +425,95 @@ def test_unsaved_dependency_reanalysis(executable, root):
         session.close()
 
 
+def test_duplicate_dependency_diagnostics_keep_include_context(executable, root):
+    dependency_path = root / "shared-invalid-dependency.gti"
+    first_path = root / "first-diagnostic-root.gti"
+    second_path = root / "second-diagnostic-root.gti"
+    dependency_source = "int shared_value() { return 1 }\n"
+    first_source = (
+        '#include "shared-invalid-dependency.gti"\n'
+        "int first_root() { return 1; }\n"
+    )
+    second_source = (
+        '#include "shared-invalid-dependency.gti"\n'
+        "int second_root() { return 2; }\n"
+    )
+    dependency_path.write_text(dependency_source, encoding="utf-8")
+    first_path.write_text(first_source, encoding="utf-8")
+    second_path.write_text(second_source, encoding="utf-8")
+    dependency_uri = dependency_path.resolve().as_uri()
+    first_uri = first_path.resolve().as_uri()
+    second_uri = second_path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"relatedInformation": True}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+
+        def open_document(uri, source):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "gti",
+                            "version": 1,
+                            "text": source,
+                        }
+                    },
+                }
+            )
+
+        open_document(first_uri, first_source)
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == dependency_uri
+            and bool(message["params"]["diagnostics"])
+        )
+
+        open_document(second_uri, second_source)
+        merged = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == dependency_uri
+            and any(
+                diagnostic.get("code") == "GTI-P0001"
+                and len(diagnostic.get("relatedInformation", [])) == 2
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )
+        diagnostic = next(
+            item
+            for item in merged["params"]["diagnostics"]
+            if item.get("code") == "GTI-P0001"
+        )
+        include_uris = {
+            related["location"]["uri"]
+            for related in diagnostic["relatedInformation"]
+            if related["message"] == "Included from here."
+        }
+        assert include_uris == {first_uri, second_uri}, diagnostic
+    finally:
+        session.close()
+
+
 def test_direct_dependency_visibility(executable, root):
     leaf_path = root / "visibility-leaf.gti"
     branch_path = root / "visibility-branch.gti"
@@ -2390,9 +2479,8 @@ def test_diagnostic_capability_negotiation(executable, root):
         )
         assert "relatedInformation" not in duplicate
         assert "data" not in legacy_string
-        assert "help: An owning std::string type is not available yet." in legacy_string[
-            "message"
-        ]
+        assert "choose 'std::string' for owning text" in legacy_string["message"]
+        assert "help: Use '#include <std/string>'" in legacy_string["message"]
     finally:
         session.close()
 
@@ -2484,7 +2572,11 @@ def test_current_language_diagnostics(executable, root):
             if diagnostic.get("code") == "GTI-S2033"
         )
         assert legacy_string["data"]["phase"] == "semantics"
-        assert legacy_string["data"]["fixes"]
+        assert "fixes" not in legacy_string["data"]
+        assert legacy_string["data"]["hints"] == [
+            "Use '#include <std/string>' before naming 'std::string'.",
+            "'std::string_view' is available from the standard prelude.",
+        ]
 
         entry_diagnostic = next(
             diagnostic
@@ -2539,8 +2631,7 @@ def test_current_language_diagnostics(executable, root):
         actions = session.receive_until(lambda message: message.get("id") == 2)[
             "result"
         ]
-        assert len(actions) == 1, actions
-        assert "isPreferred" not in actions[0]
+        assert actions == [], actions
     finally:
         session.close()
 
@@ -2743,6 +2834,101 @@ def test_static_assertion_tooling(executable, root):
         assert [symbol["name"] for symbol in outline] == ["main"], outline
 
         valid_source = source.replace("false", "true")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        cleared = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        assert cleared["diagnostics"] == [], cleared
+    finally:
+        session.close()
+
+
+def test_concrete_generic_diagnostics(executable, root):
+    source = (
+        "class Bound<T, uint64_t N> {\n"
+        '  static_assert(N <= uint64_t(4), "capacity too large");\n'
+        "};\n"
+        "int main() {\n"
+        "  Bound<int32_t, 5> value{};\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "concrete-generic-diagnostics.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and any(
+                diagnostic.get("code") == "GTI-S2079"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2079"
+        )
+        assert diagnostic["data"] == {"phase": "semantics"}, diagnostic
+        assert "capacity too large" in diagnostic["message"], diagnostic
+        related_messages = {
+            related["message"] for related in diagnostic["relatedInformation"]
+        }
+        assert "Concrete substitution: 'T' = 'int32_t'." in related_messages
+        assert "Concrete substitution: 'N' = '5'." in related_messages
+        assert "Concrete generic instance requested here." in related_messages
+
+        valid_source = source.replace("Bound<int32_t, 5>", "Bound<int32_t, 4>")
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -6013,6 +6199,7 @@ def main():
     test_current_language_diagnostics(sys.argv[1], root)
     test_recursive_layout_diagnostic(sys.argv[1], root)
     test_static_assertion_tooling(sys.argv[1], root)
+    test_concrete_generic_diagnostics(sys.argv[1], root)
     test_constructor_ownership_diagnostic(sys.argv[1], root)
     test_read_only_receiver_diagnostic(sys.argv[1], root)
     test_unique_ptr_null_state_tooling(sys.argv[1], root)
@@ -6883,6 +7070,7 @@ def main():
     assert by_id[4]["result"] is None
 
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
+    test_duplicate_dependency_diagnostics_keep_include_context(sys.argv[1], root)
     test_direct_dependency_visibility(sys.argv[1], root)
     test_missing_include_and_format_config(sys.argv[1], root)
     test_inheritance_tooling(sys.argv[1], root)

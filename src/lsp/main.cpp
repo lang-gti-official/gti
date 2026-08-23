@@ -647,6 +647,23 @@ std::string diagnosticMessage(const lang::Diagnostic &diagnostic) {
   return message;
 }
 
+void mergeDiagnosticRelatedInformation(LspDiagnostic &target,
+                                       const LspDiagnostic &additional) {
+  for (const LspRelatedDiagnostic &related : additional.related) {
+    const bool duplicate = std::any_of(
+        target.related.begin(), target.related.end(),
+        [&](const LspRelatedDiagnostic &existing) {
+          return existing.uri == related.uri &&
+                 existing.related.span == related.related.span &&
+                 existing.related.message == related.related.message;
+        });
+    if (!duplicate) {
+      target.related.push_back(related);
+      target.diagnostic.related.push_back(related.related);
+    }
+  }
+}
+
 JsonValue diagnosticJson(const LspDiagnostic &published,
                          bool includeRelatedInformation, bool includeData) {
   const lang::Diagnostic &diagnostic = published.diagnostic;
@@ -2541,9 +2558,10 @@ private:
     result.rootPath = rootPath;
     lang::FrontendOptions frontendOptions;
     frontendOptions.analyzeRecoveredProgram = true;
-    // Editor features read only the recovered program, semantic model, and
-    // diagnostics; HIR/MIR lowering is codegen-path work the LSP never uses.
-    frontendOptions.stopAfter = lang::FrontendPhase::Semantics;
+    // HIR performs the compiler's concrete generic-instance reanalysis. The
+    // LSP retains it only so editor diagnostics agree with `gti check`; MIR
+    // remains code-generation work and is not built for editor snapshots.
+    frontendOptions.stopAfter = lang::FrontendPhase::Hir;
     const lang::driver::ManifestDiscoveryResult discovery =
         lang::driver::discoverProjectManifest(filePath->parent_path());
     if (discovery.succeeded()) {
@@ -3107,23 +3125,47 @@ private:
           version != documentVersions.end()) {
         publication.version = version->second;
       }
-      std::unordered_set<std::string> seen;
-      for (const auto &[_, diagnostics] : diagnosticsByRoot) {
+      std::unordered_map<std::string, std::size_t> diagnosticIndexes;
+      std::vector<std::string> roots;
+      roots.reserve(diagnosticsByRoot.size());
+      for (const auto &[root, _] : diagnosticsByRoot) {
+        roots.push_back(root);
+      }
+      std::sort(roots.begin(), roots.end());
+      for (const std::string &root : roots) {
+        const std::vector<LspDiagnostic> &diagnostics =
+            diagnosticsByRoot.at(root);
         for (const LspDiagnostic &diagnostic : diagnostics) {
           if (diagnostic.uri != uri) {
             continue;
           }
           const lang::SourceSpan &span = diagnostic.diagnostic.primary;
-          const std::string key = diagnostic.diagnostic.code + '\n' +
-                                  std::to_string(span.start) + ':' +
-                                  std::to_string(span.end) + '\n' +
-                                  diagnostic.diagnostic.message;
-          if (seen.insert(key).second) {
+          std::string key =
+              diagnostic.diagnostic.code + '\n' +
+              std::to_string(static_cast<int>(diagnostic.diagnostic.phase)) +
+              ':' +
+              std::to_string(static_cast<int>(diagnostic.diagnostic.severity)) +
+              '\n' + std::to_string(span.start) + ':' +
+              std::to_string(span.end) + '\n' +
+              diagnosticMessage(diagnostic.diagnostic);
+          for (const LspFixIt &fix : diagnostic.fixes) {
+            key += '\n' + fix.uri + ':' + std::to_string(fix.fix.span.start) +
+                   ':' + std::to_string(fix.fix.span.end) + ':' +
+                   fix.fix.replacement + ':' + fix.fix.message;
+          }
+          const auto [found, inserted] =
+              diagnosticIndexes.emplace(key, publication.diagnostics.size());
+          if (inserted) {
             LspDiagnostic published = diagnostic;
-            useClientUrisLocked(published);
             publication.diagnostics.push_back(std::move(published));
+          } else {
+            mergeDiagnosticRelatedInformation(
+                publication.diagnostics[found->second], diagnostic);
           }
         }
+      }
+      for (LspDiagnostic &diagnostic : publication.diagnostics) {
+        useClientUrisLocked(diagnostic);
       }
       publications.push_back(std::move(publication));
     }

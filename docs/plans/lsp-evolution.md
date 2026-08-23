@@ -53,13 +53,15 @@ highlights over the same query, and fail-closed rename (function-local
 identities, lambda-capture closure, reserved-name and visibility-collision
 validation, source-verified edits) are implemented in `LanguageQueries`.
 
+Concrete generic-instance diagnostics are now published by stopping editor
+frontend snapshots after HIR. This deliberately reuses canonical instance
+discovery and reanalysis rather than reproducing it in the protocol layer;
+failure metadata and MIR remain skipped.
+
 Still extend `LanguageQueries` and `SemanticDatabase` rather than adding LSP
 tables:
 
-- expose concrete generic-instance diagnostics through an editor-safe compiler
-  query without requiring the protocol layer to run or reproduce HIR lowering;
 - preferred declaration/definition and overload-set queries;
-- signature help from the selected overload and argument position;
 - rename beyond function-local scope once reverse-dependency coverage exists
   (a project index or workspace-wide analysis), keeping the fail-closed rule;
 - source-unit/default-library/internal visibility as semantic properties.

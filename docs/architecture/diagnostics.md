@@ -74,6 +74,10 @@ diagnostics or letting a backend message choose either identity.
   token, retain a negative sign in the message, and emit only the range
   diagnostic rather than cascading with unary-unsigned or mixed-operand
   errors. No replacement is universally correct, so do not attach a fix-it.
+- `GTI-S2033` owns the obsolete unqualified `string` spelling. Explain the
+  implemented ownership choice: `std::string` after `#include <std/string>` is
+  owning, while prelude-provided `std::string_view` is non-owning. Do not offer
+  a replacement fix-it because changing ownership is not mechanically safe.
 - `GTI-S2015` owns a brace call argument that has no one exact by-value
   fixed-array context, has the wrong written extent, or cannot empty-initialize
   its selected element type. Point at the opening brace and do not suggest an
