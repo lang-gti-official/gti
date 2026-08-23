@@ -7514,6 +7514,8 @@ void testNonNullReferences() {
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "restricted operator calls should retain verified MIR authority");
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find(
@@ -18055,11 +18057,105 @@ public:
   operator bool() { return true; }
 };
 
+class Number {
+  mut int value = 0;
+
+public:
+  Number(int initial) : value(initial) {}
+
+  Number operator+() { return Number(this.value); }
+  Number operator-() { return Number(0 - this.value); }
+  Number operator+(int other) { return Number(this.value + other); }
+  Number operator-(int other) { return Number(this.value - other); }
+  Number operator*(int other) { return Number(this.value * other); }
+  Number operator/(int other) { return Number(this.value / other); }
+  Number operator%(int other) { return Number(this.value % other); }
+  Number operator~() { return Number(~this.value); }
+  Number operator&(int other) { return Number(this.value & other); }
+  Number operator|(int other) { return Number(this.value | other); }
+  Number operator^(int other) { return Number(this.value ^ other); }
+  Number operator<<(int amount) { return Number(this.value << amount); }
+  Number operator>>(int amount) { return Number(this.value >> amount); }
+
+  void operator+=(int other) mut { this.value += other; }
+  void operator-=(int other) mut { this.value -= other; }
+  void operator*=(int other) mut { this.value *= other; }
+  void operator/=(int other) mut { this.value /= other; }
+  void operator%=(int other) mut { this.value %= other; }
+  void operator&=(int other) mut { this.value &= other; }
+  void operator|=(int other) mut { this.value |= other; }
+  void operator^=(int other) mut { this.value ^= other; }
+  void operator<<=(int amount) mut { this.value <<= amount; }
+  void operator>>=(int amount) mut { this.value >>= amount; }
+  void operator--() mut { this.value--; }
+
+  int get() { return this.value; }
+};
+
+struct NumberHolder {
+  mut Number value = Number(1);
+};
+
+class NumberIndex {
+  mut Number value = Number(2);
+
+public:
+  mut Number& operator[](int index) mut { return this.value; }
+};
+
+class NumberOwner {
+  mut Number value = Number(3);
+
+public:
+  mut Number& operator*() mut { return this.value; }
+};
+
+class NumberArrow {
+  mut NumberHolder holder = NumberHolder();
+
+public:
+  mut NumberHolder& operator->() mut { return this.holder; }
+};
+
 int main() {
   mut Handle handle = Handle();
   handle->increment();
   *handle = 7;
   handle[uint64_t(1)] += 3;
+  mut Number number = Number(9);
+  Number unaryPositive = +number;
+  Number unaryNegative = -number;
+  mut Number sum = number + 2;
+  Number difference = number - 2;
+  Number product = number * 2;
+  Number quotient = number / 3;
+  Number remainder = number % 4;
+  Number conjunction = number & 7;
+  Number disjunction = number | 2;
+  Number exclusive = number ^ 3;
+  Number shiftedLeft = number << 1;
+  Number shiftedRight = number >> 1;
+  sum += 3;
+  --sum;
+  Number inverted = ~sum;
+  mut Number mutations = Number(60);
+  mutations -= 1;
+  mutations *= 2;
+  mutations /= 3;
+  mutations %= 17;
+  mutations &= 15;
+  mutations |= 16;
+  mutations ^= 3;
+  mutations <<= 1;
+  mutations >>= 1;
+  mut NumberHolder holder = NumberHolder();
+  holder.value += 2;
+  mut NumberIndex indexed = NumberIndex();
+  indexed[0] += 2;
+  mut NumberOwner owner = NumberOwner();
+  *owner += 2;
+  mut NumberArrow arrow = NumberArrow();
+  arrow->value += 2;
   if (handle and handle != nullptr) {
     return *handle + handle[uint64_t(1)] - 12;
   }
@@ -18102,11 +18198,16 @@ int main() {
 
   const lang::FunctionDecl *operatorMain =
       findTopLevelFunction(frontend.program, "main");
-  const auto *conditional =
-      operatorMain == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::IfStmt *>(
-                operatorMain->body()->statements().at(4).get());
+  const lang::IfStmt *conditional = nullptr;
+  if (operatorMain != nullptr) {
+    for (const lang::StmtPtr &statement : operatorMain->body()->statements()) {
+      if (const auto *candidate =
+              dynamic_cast<const lang::IfStmt *>(statement.get())) {
+        conditional = candidate;
+        break;
+      }
+    }
+  }
   const auto *logical =
       conditional == nullptr
           ? nullptr
@@ -18127,6 +18228,21 @@ int main() {
              contextual->borrowAccess == contextualTarget->returnBorrowAccess,
          "contextual conversion resolution should retain the selected "
          "declaration's owner-dependency summary");
+
+  const auto *number = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(2).get());
+  std::size_t arithmeticOperatorCount = 0;
+  if (number != nullptr) {
+    for (const lang::StmtPtr &member : number->members()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(member.get());
+      arithmeticOperatorCount +=
+          function != nullptr && function->operatorName() ? 1 : 0;
+    }
+  }
+  expect(arithmeticOperatorCount == 24,
+         "the AST should retain every restricted arithmetic, bitwise, "
+         "compound-assignment, and prefix-decrement operator identity");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -18152,6 +18268,12 @@ int main() {
                  "__gti_mir_loan_") != std::string::npos &&
              artifact.contents.find("___gti_operator_bool()") !=
                  std::string::npos &&
+             artifact.contents.find("___gti_operator_plus") !=
+                 std::string::npos &&
+             artifact.contents.find("___gti_operator_add_assign") !=
+                 std::string::npos &&
+             artifact.contents.find("___gti_operator_pre_decrement") !=
+                 std::string::npos &&
              artifact.contents.find(" operator*(") == std::string::npos,
          "the backend should retain selected method calls while exposing only "
          "validated comparisons as C++ operators for generic representation");
@@ -18159,10 +18281,17 @@ int main() {
   const std::string formatted = lang::Formatter().format(
       "class Handle{public:mut int& operator*()mut{return this.value;}"
       "bool operator<(Handle& other){return false;}"
+      "Handle operator+(int other){return Handle();}"
+      "void operator+=(int other)mut{}void operator--()mut{}"
       "operator bool(){return true;}};");
   expect(formatted.find("mut int& operator*() mut {") != std::string::npos &&
              formatted.find("bool operator<(Handle& other) {") !=
                  std::string::npos &&
+             formatted.find("Handle operator+(int other) {") !=
+                 std::string::npos &&
+             formatted.find("void operator+=(int other) mut {") !=
+                 std::string::npos &&
+             formatted.find("void operator--() mut {") != std::string::npos &&
              formatted.find("operator bool() {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "operator declarations should format with stable C++-style layout");
@@ -18177,6 +18306,11 @@ public:
   int& operator[](uint64_t first, uint64_t second) { return this.value; }
   bool operator==(nullptr_t other) mut { return true; }
   int operator<(InvalidOperators& other) { return 0; }
+  int operator+(int other) mut { return this.value + other; }
+  int& operator-(int other) { return this.value; }
+  int operator+=(int other) { return this.value + other; }
+  void operator--() {}
+  int operator~(int other) { return other; }
   operator bool() mut { return true; }
 };
 int main() { return 0; }
@@ -18191,6 +18325,18 @@ int main() { return 0; }
                            "operator[] expects 1 parameter") &&
              hasDiagnostic(invalidContracts.diagnostics,
                            "operator< must return bool") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator+ must use a read-only receiver") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator- must return an owned value") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator+= must return void") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator+= must use a mutable receiver") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator-- must use a mutable receiver") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator~ expects 0 parameters") &&
              hasDiagnostic(invalidContracts.diagnostics,
                            "must use a read-only receiver"),
          "operator declarations should enforce the restricted contracts");
@@ -18221,18 +18367,80 @@ int main() {
          "operator use should require mutable access, exact operands, and an "
          "explicit contextual conversion");
 
+  const lang::FrontendResult exactArithmetic =
+      lang::Frontend().analyze("exact-arithmetic-operator.gti", R"(
+class ExactArithmetic {
+public:
+  ExactArithmetic operator+(int64_t other) { return ExactArithmetic(); }
+};
+int main() {
+  ExactArithmetic value = ExactArithmetic();
+  ExactArithmetic result = value + int32_t(1);
+  return 0;
+}
+)");
+  expect(!exactArithmetic.canGenerateCode() &&
+             hasDiagnostic(exactArithmetic.diagnostics,
+                           "No exact overload of operator+ for argument "
+                           "types (int32_t)") &&
+             hasRelatedDiagnostic(exactArithmetic.diagnostics,
+                                  "Candidate: operator+") &&
+             hasDiagnosticHint(exactArithmetic.diagnostics,
+                               "do not perform implicit conversions"),
+         "arithmetic operator resolution should reject implicit operand "
+         "conversions and list the exact candidates");
+
+  const lang::FrontendResult noReversedOperands =
+      lang::Frontend().analyze("no-reversed-arithmetic-operator.gti", R"(
+class RightHandOnly {
+public:
+  RightHandOnly operator+(int other) { return RightHandOnly(); }
+};
+int main() {
+  RightHandOnly value = RightHandOnly();
+  RightHandOnly result = 1 + value;
+  return 0;
+}
+)");
+  expect(!noReversedOperands.canGenerateCode() &&
+             hasDiagnostic(noReversedOperands.diagnostics,
+                           "requires numeric operands"),
+         "operator resolution should not reverse operands or search a "
+         "right-hand class for a member operator");
+
+  const lang::FrontendResult noOperatorSynthesis =
+      lang::Frontend().analyze("no-operator-synthesis.gti", R"(
+class PlusOnly {
+public:
+  PlusOnly operator+(int other) { return PlusOnly(); }
+};
+int main() {
+  mut PlusOnly value = PlusOnly();
+  value += 1;
+  return 0;
+}
+)");
+  expect(!noOperatorSynthesis.canGenerateCode() &&
+             hasDiagnostic(noOperatorSynthesis.diagnostics,
+                           "does not define operator+=") &&
+             hasDiagnosticHint(noOperatorSynthesis.diagnostics,
+                               "does not synthesize compound operators"),
+         "operator+= should require its own declaration instead of being "
+         "synthesized from operator+");
+
   lang::Lexer lexer;
   lang::Parser unsupportedParser(lexer.scan(R"(
 class Unsupported {
 public:
-  int operator+(int other) { return other; }
+  bool operator!() { return false; }
 };
 int main() { return 0; }
 )"));
   const lang::Program recovered = unsupportedParser.parse();
   expect(unsupportedParser.hadError() &&
              hasDiagnostic(unsupportedParser.errors(),
-                           "Supported overloads are operator*") &&
+                           "operator spelling is not supported for "
+                           "overloading") &&
              !recovered.declarations().empty(),
          "unsupported operators should receive a focused parser diagnostic "
          "and recover to later declarations");
@@ -29367,6 +29575,10 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && std::string(argv[1]) == "receiver-diagnostics") {
     testReadOnlyReceiverDiagnostics();
+    return failures == 0 ? 0 : 1;
+  }
+  if (argc == 2 && std::string(argv[1]) == "operators") {
+    testRestrictedMemberOperators();
     return failures == 0 ? 0 : 1;
   }
   testConstructorPartialRollbackRepresentation();

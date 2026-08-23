@@ -17,8 +17,8 @@
 //
 // Member type aliases (`value_type`, `string_type`) are not declared: GTI
 // currently limits `using` to namespace scope. `operator+=` and `operator/=`
-// are likewise absent — GTI has no overloadable compound assignment — so the
-// named C++ members concat() and append() carry that behaviour alone.
+// have not yet been added to this class, so the named C++ members concat() and
+// append() currently carry that behaviour alone.
 
 #include <std/string>
 

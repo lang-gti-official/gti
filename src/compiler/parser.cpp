@@ -582,6 +582,11 @@ private:
       std::optional<Token> constexprKeyword = std::nullopt,
       std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
+    if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
+        !parameters.empty()) {
+      operatorName->kind = OverloadedOperator::Multiply;
+      name.lexeme = std::string(operatorFunctionName(operatorName->kind));
+    }
 
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
     if (match({TokenKind::MUT})) {
@@ -715,8 +720,79 @@ private:
     if (match({TokenKind::PLUS_PLUS})) {
       return {OverloadedOperator::PreIncrement, std::move(keyword), previous()};
     }
+    if (match({TokenKind::MINUS_MINUS})) {
+      return {OverloadedOperator::PreDecrement, std::move(keyword), previous()};
+    }
     if (match({TokenKind::EQUAL})) {
       return {OverloadedOperator::Assignment, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::PLUS})) {
+      return {OverloadedOperator::Plus, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::MINUS})) {
+      return {OverloadedOperator::Minus, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::SLASH})) {
+      return {OverloadedOperator::Divide, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::PERCENT})) {
+      return {OverloadedOperator::Remainder, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::PLUS_EQUAL})) {
+      return {OverloadedOperator::AddAssign, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::MINUS_EQUAL})) {
+      return {OverloadedOperator::SubtractAssign, std::move(keyword),
+              previous()};
+    }
+    if (match({TokenKind::STAR_EQUAL})) {
+      return {OverloadedOperator::MultiplyAssign, std::move(keyword),
+              previous()};
+    }
+    if (match({TokenKind::SLASH_EQUAL})) {
+      return {OverloadedOperator::DivideAssign, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::PERCENT_EQUAL})) {
+      return {OverloadedOperator::RemainderAssign, std::move(keyword),
+              previous()};
+    }
+    if (match({TokenKind::TILDE})) {
+      return {OverloadedOperator::BitwiseNot, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::AMPERSAND})) {
+      return {OverloadedOperator::BitwiseAnd, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::PIPE})) {
+      return {OverloadedOperator::BitwiseOr, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::CARET})) {
+      return {OverloadedOperator::BitwiseXor, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::AMPERSAND_EQUAL})) {
+      return {OverloadedOperator::BitwiseAndAssign, std::move(keyword),
+              previous()};
+    }
+    if (match({TokenKind::PIPE_EQUAL})) {
+      return {OverloadedOperator::BitwiseOrAssign, std::move(keyword),
+              previous()};
+    }
+    if (match({TokenKind::CARET_EQUAL})) {
+      return {OverloadedOperator::BitwiseXorAssign, std::move(keyword),
+              previous()};
+    }
+    if (match({TokenKind::SHIFT_LEFT_EQUAL})) {
+      return {OverloadedOperator::ShiftLeftAssign, std::move(keyword),
+              previous()};
+    }
+    if (match({TokenKind::SHIFT_RIGHT_EQUAL})) {
+      return {OverloadedOperator::ShiftRightAssign, std::move(keyword),
+              previous()};
+    }
+    if (const std::optional<Token> shift = matchShiftOperator()) {
+      return {shift->kind == TokenKind::SHIFT_LEFT
+                  ? OverloadedOperator::ShiftLeft
+                  : OverloadedOperator::ShiftRight,
+              std::move(keyword), *shift};
     }
     if (match({TokenKind::EQUAL_EQUAL})) {
       return {OverloadedOperator::Equal, std::move(keyword), previous()};
@@ -749,10 +825,8 @@ private:
               std::move(parenthesis)};
     }
     throw error(peek(),
-                "Supported overloads are operator*, operator->, prefix "
-                "operator++, operator=, operator[], operator(), operator==, "
-                "operator!=, operator<, operator<=, operator>, operator>=, "
-                "and operator bool.");
+                "This operator spelling is not supported for overloading in "
+                "GTI.");
   }
 
   static Token syntheticOperatorName(const OperatorName &operatorName) {

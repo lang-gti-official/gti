@@ -2861,6 +2861,26 @@ public:
       targetStateValid = false;
     }
     SemanticType valueType;
+    const std::optional<OverloadedOperator> mutationOperator =
+        compoundOperator(expr.oper().kind);
+    if (!simpleAssignment && mutationOperator &&
+        targetType.kind == SemanticType::Class) {
+      valueType = analyze(expr.value());
+      ExprPtr receiver;
+      if (expr.path().segments.size() == 1) {
+        receiver = std::make_unique<Variable>(expr.name());
+      } else {
+        receiver =
+            std::make_unique<QualifiedName>(NamePath(expr.path().segments));
+      }
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, *mutationOperator, receiver, targetType, expr.oper(),
+          std::span<const SemanticType>(&valueType, 1),
+          std::span<const ExprPtr>(&expr.value(), 1));
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
+      return;
+    }
     if (simpleAssignment && targetType.kind == SemanticType::Class) {
       valueType = analyze(expr.value());
       if (hasExactOperatorCandidate(OverloadedOperator::Assignment, targetType,
@@ -3096,42 +3116,20 @@ public:
       return;
     }
 
-    std::optional<OverloadedOperator> comparisonOperator;
-    switch (expr.oper().kind) {
-    case TokenKind::EQUAL_EQUAL:
-      comparisonOperator = OverloadedOperator::Equal;
-      break;
-    case TokenKind::BANG_EQUAL:
-      comparisonOperator = OverloadedOperator::NotEqual;
-      break;
-    case TokenKind::LESS:
-      comparisonOperator = OverloadedOperator::Less;
-      break;
-    case TokenKind::LESS_EQUAL:
-      comparisonOperator = OverloadedOperator::LessEqual;
-      break;
-    case TokenKind::GREATER:
-      comparisonOperator = OverloadedOperator::Greater;
-      break;
-    case TokenKind::GREATER_EQUAL:
-      comparisonOperator = OverloadedOperator::GreaterEqual;
-      break;
-    default:
-      break;
-    }
-
-    const bool constrainedComparison =
-        comparisonOperator && leftType.kind == SemanticType::TypeParameter &&
+    const std::optional<OverloadedOperator> sourceOperator =
+        binaryOperator(expr.oper().kind);
+    const bool constrainedOperator =
+        sourceOperator && leftType.kind == SemanticType::TypeParameter &&
         hasSymbolicOperatorRequirement(
-            *comparisonOperator, leftType,
+            *sourceOperator, leftType,
             std::span<const SemanticType>(&rightType, 1));
-    if ((leftType.kind == SemanticType::Class || constrainedComparison) &&
-        comparisonOperator) {
+    if ((leftType.kind == SemanticType::Class || constrainedOperator) &&
+        sourceOperator) {
       const std::optional<FunctionCandidate> selected = resolveOperator(
-          expr, *comparisonOperator, expr.left(), leftType, expr.oper(),
+          expr, *sourceOperator, expr.left(), leftType, expr.oper(),
           std::span<const SemanticType>(&rightType, 1),
           std::span<const ExprPtr>(&expr.right(), 1));
-      if (selected && *comparisonOperator == OverloadedOperator::NotEqual &&
+      if (selected && *sourceOperator == OverloadedOperator::NotEqual &&
           expr.oper().generated &&
           (selected->parameterTypes.size() != 1 ||
            selected->parameterTypes.front().kind != SemanticType::Reference ||
@@ -4083,6 +4081,7 @@ public:
 
   void visitDereferenceSetExpr(const DereferenceSet &expr) override {
     const SemanticType ownerType = analyzeProjectionBase(expr.object());
+    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     SemanticType valueTarget = SemanticType::Unknown;
     bool mutableTarget = isMutableObject(expr.object());
     if (ownerType.kind == SemanticType::RawPointer) {
@@ -4107,7 +4106,8 @@ public:
     } else if (ownerType.kind == SemanticType::Class) {
       const std::optional<FunctionCandidate> selected =
           resolveOperator(expr, OverloadedOperator::Dereference, expr.object(),
-                          ownerType, expr.dereference());
+                          ownerType, expr.dereference(), {}, {}, false,
+                          std::nullopt, std::nullopt, !simpleAssignment);
       if (selected) {
         valueTarget = callExpressionType(selected->returnType);
         mutableTarget =
@@ -4121,7 +4121,15 @@ public:
              "GTI-S2022");
     }
 
-    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
+    SemanticPlace targetPlace = semanticPlace(expr.object());
+    if (targetPlace.root != nullptr) {
+      targetPlace.projections.push_back(
+          {.kind = PlaceProjectionKind::Dereference});
+    }
+    const std::optional<OverloadedOperator> mutationOperator =
+        compoundOperator(expr.oper().kind);
+    const bool overloadedMutation = !simpleAssignment && mutationOperator &&
+                                    valueTarget.kind == SemanticType::Class;
     const SemanticType valueType =
         simpleAssignment ? analyzeInitializer(expr.value(), valueTarget)
                          : analyze(expr.value());
@@ -4133,11 +4141,8 @@ public:
                  : "Dereference assignment requires "
                    "mutable access.",
              "GTI-S2002");
-    } else {
-      SemanticPlace targetPlace = semanticPlace(expr.object());
+    } else if (!overloadedMutation) {
       if (targetPlace.root != nullptr) {
-        targetPlace.projections.push_back(
-            {.kind = PlaceProjectionKind::Dereference});
         reportLoanPlaceConflict(
             expr.dereference(), targetPlace, AccessMode::Mutable,
             "Cannot write through a dereference while an overlapping borrow "
@@ -4152,7 +4157,17 @@ public:
                  typeSpelling(valueTarget) + "'.",
              "GTI-S2003");
     }
-    if (!simpleAssignment) {
+    if (overloadedMutation && mutableTarget) {
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, *mutationOperator, expr.object(), valueTarget, expr.oper(),
+          std::span<const SemanticType>(&valueType, 1),
+          std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
+          OperatorReceiverState{.place = targetPlace, .mutableReceiver = true});
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
+      return;
+    }
+    if (!simpleAssignment && !overloadedMutation) {
       validateCompoundAssignment(expr.oper(), valueTarget, valueType,
                                  expr.value().get());
     }
@@ -4315,11 +4330,11 @@ public:
   void visitIndexSetExpr(const IndexSet &expr) override {
     const SemanticType objectType = analyzeProjectionBase(expr.object());
     const SemanticType indexType = analyze(expr.index());
+    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
     if (objectType.kind == SemanticType::StringView) {
       const SemanticType elementType = analyzeStringViewIndexAfterOperands(
           expr.object(), expr.index(), indexType, expr.bracket());
-      const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
       const SemanticType valueType =
           simpleAssignment ? analyzeInitializer(expr.value(), elementType)
                            : analyze(expr.value());
@@ -4369,17 +4384,23 @@ public:
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
-          std::span<const ExprPtr>(&expr.index(), 1));
+          std::span<const ExprPtr>(&expr.index(), 1), false, std::nullopt,
+          std::nullopt, !simpleAssignment);
       if (selected) {
         elementType = callExpressionType(selected->returnType);
-        resolvedOperator = semanticModel.findOperator(expr);
+        resolvedOperator = simpleAssignment
+                               ? semanticModel.findOperator(expr)
+                               : semanticModel.findProjectionOperator(expr);
       }
     } else {
       elementType = analyzeArrayIndexAfterOperands(objectType, expr.index(),
                                                    indexType, expr.bracket());
     }
-    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     SemanticPlace targetPlace = semanticPlace(expr);
+    const std::optional<OverloadedOperator> mutationOperator =
+        compoundOperator(expr.oper().kind);
+    const bool overloadedMutation = !simpleAssignment && mutationOperator &&
+                                    elementType.kind == SemanticType::Class;
     const bool trackedFixedArrayElement =
         objectType.kind == SemanticType::Array && targetPlace.root != nullptr &&
         !targetPlace.projections.empty() &&
@@ -4447,7 +4468,7 @@ public:
                "Cannot assign through an immutable fixed array binding.",
                "GTI-S2002");
       }
-    } else {
+    } else if (!overloadedMutation) {
       reportLoanPlaceConflict(
           expr.bracket(),
           trackedFixedArrayElement ? targetPlace : semanticPlace(expr.object()),
@@ -4465,7 +4486,17 @@ public:
                  "'.",
              "GTI-S2003");
     }
-    if (!simpleAssignment) {
+    if (overloadedMutation && mutableElement) {
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, *mutationOperator, expr.object(), elementType, expr.oper(),
+          std::span<const SemanticType>(&valueType, 1),
+          std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
+          OperatorReceiverState{.place = targetPlace, .mutableReceiver = true});
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
+      return;
+    }
+    if (!simpleAssignment && !overloadedMutation) {
       if (elementType.kind == SemanticType::RawPointer &&
           (expr.oper().kind == TokenKind::PLUS_EQUAL ||
            expr.oper().kind == TokenKind::MINUS_EQUAL) &&
@@ -5610,17 +5641,19 @@ public:
   void visitSetExpr(const Set &expr) override {
     SemanticType objectType = analyzeProjectionBase(expr.object());
     const SemanticType receiverType = objectType;
+    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     bool mutableReceiver = isMutableObject(expr.object());
     if (expr.access().kind == TokenKind::ARROW) {
-      objectType =
-          arrowTargetType(expr, expr.object(), objectType, expr.access());
+      objectType = arrowTargetType(expr, expr.object(), objectType,
+                                   expr.access(), !simpleAssignment);
       if (objectType == SemanticType::Unknown) {
         analyze(expr.value());
         currentType = SemanticType::Unknown;
         return;
       }
       if (const ResolvedOperatorInfo *resolved =
-              semanticModel.findOperator(expr)) {
+              simpleAssignment ? semanticModel.findOperator(expr)
+                               : semanticModel.findProjectionOperator(expr)) {
         mutableReceiver =
             resolved->returnType.kind == SemanticType::Reference &&
             resolved->returnType.referenceAccess == AccessMode::Mutable;
@@ -5651,8 +5684,12 @@ public:
       return;
     }
     const Symbol resolvedMember = substituteSymbol(member->symbol, objectType);
-    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     SemanticPlace targetPlace = semanticPlace(expr);
+    const std::optional<OverloadedOperator> mutationOperator =
+        compoundOperator(expr.oper().kind);
+    const bool overloadedMutation =
+        !simpleAssignment && mutationOperator &&
+        resolvedMember.type.kind == SemanticType::Class;
     bool targetStateValid = true;
     if (!simpleAssignment) {
       if (const ProjectedValueState *state =
@@ -5683,7 +5720,7 @@ public:
       if (!root || !reportReceiverRestrictedMutation(expr.name(), *root)) {
         report(expr.name(), "Cannot mutate through a read-only receiver.");
       }
-    } else {
+    } else if (!overloadedMutation) {
       reportLoanPlaceConflict(
           expr.name(), targetPlace, AccessMode::Mutable,
           "Cannot assign to a field while an overlapping borrow may still be "
@@ -5697,7 +5734,17 @@ public:
                  typeSpelling(resolvedMember.type) + "'.",
              "GTI-S2003");
     }
-    if (!simpleAssignment) {
+    if (overloadedMutation && resolvedMember.assignable && mutableReceiver) {
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, *mutationOperator, expr.object(), resolvedMember.type,
+          expr.oper(), std::span<const SemanticType>(&valueType, 1),
+          std::span<const ExprPtr>(&expr.value(), 1), false, std::nullopt,
+          OperatorReceiverState{.place = targetPlace, .mutableReceiver = true});
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
+      return;
+    }
+    if (!simpleAssignment && !overloadedMutation) {
       if (resolvedMember.type.kind == SemanticType::RawPointer &&
           (expr.oper().kind == TokenKind::PLUS_EQUAL ||
            expr.oper().kind == TokenKind::MINUS_EQUAL) &&
@@ -5845,14 +5892,20 @@ public:
       return;
     }
 
-    if (expr.oper().kind == TokenKind::PLUS_PLUS &&
+    const std::optional<OverloadedOperator> mutationOperator =
+        expr.oper().kind == TokenKind::PLUS_PLUS
+            ? std::optional<
+                  OverloadedOperator>{OverloadedOperator::PreIncrement}
+        : expr.oper().kind == TokenKind::MINUS_MINUS
+            ? std::optional<
+                  OverloadedOperator>{OverloadedOperator::PreDecrement}
+            : std::nullopt;
+    if (mutationOperator &&
         (rightType.kind == SemanticType::Class ||
          (rightType.kind == SemanticType::TypeParameter &&
-          hasSymbolicOperatorRequirement(OverloadedOperator::PreIncrement,
-                                         rightType)))) {
-      const std::optional<FunctionCandidate> selected =
-          resolveOperator(expr, OverloadedOperator::PreIncrement, expr.right(),
-                          rightType, expr.oper());
+          hasSymbolicOperatorRequirement(*mutationOperator, rightType)))) {
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, *mutationOperator, expr.right(), rightType, expr.oper());
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
       return;
@@ -5888,6 +5941,19 @@ public:
                "GTI-S2022");
         currentType = SemanticType::Unknown;
       }
+      return;
+    }
+
+    const std::optional<OverloadedOperator> valueOperator =
+        unaryValueOperator(expr.oper().kind);
+    if (valueOperator &&
+        (rightType.kind == SemanticType::Class ||
+         (rightType.kind == SemanticType::TypeParameter &&
+          hasSymbolicOperatorRequirement(*valueOperator, rightType)))) {
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, *valueOperator, expr.right(), rightType, expr.oper());
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
       return;
     }
 
@@ -6049,6 +6115,126 @@ public:
 
 private:
   using ValueState = OwnershipStateSet;
+
+  [[nodiscard]] static std::optional<OverloadedOperator>
+  binaryOperator(TokenKind kind) {
+    switch (kind) {
+    case TokenKind::PLUS:
+      return OverloadedOperator::Plus;
+    case TokenKind::MINUS:
+      return OverloadedOperator::Minus;
+    case TokenKind::STAR:
+      return OverloadedOperator::Multiply;
+    case TokenKind::SLASH:
+      return OverloadedOperator::Divide;
+    case TokenKind::PERCENT:
+      return OverloadedOperator::Remainder;
+    case TokenKind::AMPERSAND:
+      return OverloadedOperator::BitwiseAnd;
+    case TokenKind::PIPE:
+      return OverloadedOperator::BitwiseOr;
+    case TokenKind::CARET:
+      return OverloadedOperator::BitwiseXor;
+    case TokenKind::SHIFT_LEFT:
+      return OverloadedOperator::ShiftLeft;
+    case TokenKind::SHIFT_RIGHT:
+      return OverloadedOperator::ShiftRight;
+    case TokenKind::EQUAL_EQUAL:
+      return OverloadedOperator::Equal;
+    case TokenKind::BANG_EQUAL:
+      return OverloadedOperator::NotEqual;
+    case TokenKind::LESS:
+      return OverloadedOperator::Less;
+    case TokenKind::LESS_EQUAL:
+      return OverloadedOperator::LessEqual;
+    case TokenKind::GREATER:
+      return OverloadedOperator::Greater;
+    case TokenKind::GREATER_EQUAL:
+      return OverloadedOperator::GreaterEqual;
+    default:
+      return std::nullopt;
+    }
+  }
+
+  [[nodiscard]] static std::optional<OverloadedOperator>
+  compoundOperator(TokenKind kind) {
+    switch (kind) {
+    case TokenKind::PLUS_EQUAL:
+      return OverloadedOperator::AddAssign;
+    case TokenKind::MINUS_EQUAL:
+      return OverloadedOperator::SubtractAssign;
+    case TokenKind::STAR_EQUAL:
+      return OverloadedOperator::MultiplyAssign;
+    case TokenKind::SLASH_EQUAL:
+      return OverloadedOperator::DivideAssign;
+    case TokenKind::PERCENT_EQUAL:
+      return OverloadedOperator::RemainderAssign;
+    case TokenKind::AMPERSAND_EQUAL:
+      return OverloadedOperator::BitwiseAndAssign;
+    case TokenKind::PIPE_EQUAL:
+      return OverloadedOperator::BitwiseOrAssign;
+    case TokenKind::CARET_EQUAL:
+      return OverloadedOperator::BitwiseXorAssign;
+    case TokenKind::SHIFT_LEFT_EQUAL:
+      return OverloadedOperator::ShiftLeftAssign;
+    case TokenKind::SHIFT_RIGHT_EQUAL:
+      return OverloadedOperator::ShiftRightAssign;
+    default:
+      return std::nullopt;
+    }
+  }
+
+  [[nodiscard]] static std::optional<OverloadedOperator>
+  unaryValueOperator(TokenKind kind) {
+    switch (kind) {
+    case TokenKind::PLUS:
+      return OverloadedOperator::Plus;
+    case TokenKind::MINUS:
+      return OverloadedOperator::Minus;
+    case TokenKind::TILDE:
+      return OverloadedOperator::BitwiseNot;
+    default:
+      return std::nullopt;
+    }
+  }
+
+  [[nodiscard]] static bool isCompoundOperator(OverloadedOperator kind) {
+    switch (kind) {
+    case OverloadedOperator::AddAssign:
+    case OverloadedOperator::SubtractAssign:
+    case OverloadedOperator::MultiplyAssign:
+    case OverloadedOperator::DivideAssign:
+    case OverloadedOperator::RemainderAssign:
+    case OverloadedOperator::BitwiseAndAssign:
+    case OverloadedOperator::BitwiseOrAssign:
+    case OverloadedOperator::BitwiseXorAssign:
+    case OverloadedOperator::ShiftLeftAssign:
+    case OverloadedOperator::ShiftRightAssign:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  [[nodiscard]] static bool
+  isArithmeticOrBitwiseValueOperator(OverloadedOperator kind) {
+    switch (kind) {
+    case OverloadedOperator::Plus:
+    case OverloadedOperator::Minus:
+    case OverloadedOperator::Multiply:
+    case OverloadedOperator::Divide:
+    case OverloadedOperator::Remainder:
+    case OverloadedOperator::BitwiseNot:
+    case OverloadedOperator::BitwiseAnd:
+    case OverloadedOperator::BitwiseOr:
+    case OverloadedOperator::BitwiseXor:
+    case OverloadedOperator::ShiftLeft:
+    case OverloadedOperator::ShiftRight:
+      return true;
+    default:
+      return false;
+    }
+  }
 
   struct ProjectedValueState {
     std::vector<PlaceProjection> projections;
@@ -6578,6 +6764,11 @@ private:
     SymbolId rootIdentity = 0;
     std::vector<PlaceProjection> projections;
     bool receiver = false;
+  };
+
+  struct OperatorReceiverState {
+    SemanticPlace place;
+    bool mutableReceiver = false;
   };
 
   struct ResolvedFieldUse {
@@ -15356,24 +15547,27 @@ private:
                 .empty();
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate>
-  resolveSymbolicOperator(const Expr &site, OverloadedOperator kind,
-                          const ExprPtr &receiver,
-                          const SemanticType &receiverType, const Token &token,
-                          std::span<const SemanticType> argumentTypes,
-                          std::span<const ExprPtr> arguments, bool contextual,
-                          std::optional<CallableBoundary> boundary) {
+  [[nodiscard]] std::optional<FunctionCandidate> resolveSymbolicOperator(
+      const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
+      const SemanticType &receiverType, const Token &token,
+      std::span<const SemanticType> argumentTypes,
+      std::span<const ExprPtr> arguments, bool contextual,
+      std::optional<CallableBoundary> boundary,
+      const std::optional<OperatorReceiverState> &receiverState,
+      bool projection) {
     std::vector<FunctionCandidate> viable =
         symbolicOperatorRequirements(kind, receiverType, argumentTypes);
-    const bool mutableReceiver = isMutableObject(receiver);
+    const bool mutableReceiver = receiverState ? receiverState->mutableReceiver
+                                               : isMutableObject(receiver);
     std::erase_if(viable, [&](const FunctionCandidate &candidate) {
       if (candidate.parameterTypes.size() != argumentTypes.size() ||
           arguments.size() != argumentTypes.size()) {
         return true;
       }
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-        if (!callArgumentMatches(candidate.parameterTypes[index],
-                                 argumentTypes[index], arguments[index])) {
+        if (!exactOperatorArgumentMatches(candidate.parameterTypes[index],
+                                          argumentTypes[index],
+                                          arguments[index])) {
           return true;
         }
       }
@@ -15398,7 +15592,8 @@ private:
         receiverAllowsMutation(selected.receiverMutability)
             ? AccessMode::Mutable
             : AccessMode::ReadOnly;
-    const SemanticLoanPlace receiverPlace = loanPlace(receiver);
+    const SemanticLoanPlace receiverPlace =
+        receiverState ? loanPlace(receiverState->place) : loanPlace(receiver);
     reportLoanPlaceConflict(
         token, receiverPlace, receiverAccess,
         selected.receiverMutability == ReceiverMutability::Mutable
@@ -15406,7 +15601,8 @@ private:
               "may still be live."
             : "Read-only constrained operator receiver overlaps a mutable "
               "borrow that may still be live.",
-        accessLoan(receiver));
+        receiverState ? accessLoan(receiverState->place)
+                      : accessLoan(receiver));
     validateMutableCallArgumentLoans(selected.parameterTypes, arguments, token);
     validateCallPlaceExclusivity(selected.parameterTypes, arguments, token,
                                  receiverPlace, receiverAccess, false);
@@ -15427,6 +15623,8 @@ private:
         .boundary = boundary};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
+    } else if (projection) {
+      semanticModel.recordProjectionOperator(site, std::move(resolved));
     } else {
       semanticModel.recordOperator(site, std::move(resolved));
     }
@@ -15457,16 +15655,37 @@ private:
         });
   }
 
+  [[nodiscard]] bool
+  exactOperatorArgumentMatches(const SemanticType &parameterType,
+                               const SemanticType &argumentType,
+                               const ExprPtr &argument) const {
+    if (parameterType == SemanticType::Unknown ||
+        argumentType == SemanticType::Unknown) {
+      return true;
+    }
+    if (parameterType.kind == SemanticType::Reference) {
+      if (parameterType.arguments.size() != 1 ||
+          parameterType.arguments.front() != argumentType) {
+        return false;
+      }
+    } else if (parameterType != argumentType) {
+      return false;
+    }
+    return callArgumentMatches(parameterType, argumentType, argument);
+  }
+
   [[nodiscard]] std::optional<FunctionCandidate> resolveOperator(
       const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
       const SemanticType &receiverType, const Token &token,
       std::span<const SemanticType> argumentTypes = {},
       std::span<const ExprPtr> arguments = {}, bool contextual = false,
-      std::optional<CallableBoundary> boundary = std::nullopt) {
+      std::optional<CallableBoundary> boundary = std::nullopt,
+      std::optional<OperatorReceiverState> receiverState = std::nullopt,
+      bool projection = false) {
     if (receiverType.kind == SemanticType::TypeParameter) {
       return resolveSymbolicOperator(site, kind, receiver, receiverType, token,
                                      argumentTypes, arguments, contextual,
-                                     boundary);
+                                     boundary, receiverState, projection);
     }
     const ClassInfo *owner = classInfo(receiverType);
     if (owner == nullptr) {
@@ -15477,10 +15696,26 @@ private:
     const auto found = owner->members.find(memberName);
     if (found == owner->members.end() ||
         found->second.symbol.type != SemanticType::Function) {
-      report(token,
-             "Type '" + typeSpelling(receiverType) + "' does not define " +
-                 std::string(operatorSourceSpelling(kind)) + ".",
-             "GTI-S2022");
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2022", DiagnosticPhase::Semantics, token,
+          "Type '" + typeSpelling(receiverType) + "' does not define " +
+              std::string(operatorSourceSpelling(kind)) + ".");
+      if (isCompoundOperator(kind)) {
+        diagnostic.hints.emplace_back(
+            "GTI does not synthesize compound operators from related value "
+            "operators; declare this operator as a void member with one "
+            "exact parameter and a trailing 'mut' receiver qualifier.");
+      } else if (isArithmeticOrBitwiseValueOperator(kind)) {
+        diagnostic.hints.emplace_back(
+            "Declare this operator on the left operand type as a read-only "
+            "member returning an owned value; binary parameters match "
+            "exactly.");
+      } else if (kind == OverloadedOperator::PreDecrement) {
+        diagnostic.hints.emplace_back(
+            "Declare 'void operator--() mut'; postfix decrement overloading "
+            "is not available.");
+      }
+      diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
 
@@ -15507,8 +15742,9 @@ private:
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
         if (argumentTypes[index] != SemanticType::Unknown &&
             candidate.parameterTypes[index] != SemanticType::Unknown &&
-            !callArgumentMatches(candidate.parameterTypes[index],
-                                 argumentTypes[index], arguments[index])) {
+            !exactOperatorArgumentMatches(candidate.parameterTypes[index],
+                                          argumentTypes[index],
+                                          arguments[index])) {
           exact = false;
           break;
         }
@@ -15528,8 +15764,13 @@ private:
       const bool allowFreshTemporary =
           kind == OverloadedOperator::Call ||
           candidate.receiverMutability == ReceiverMutability::ReadOnly;
-      const CallReceiverMode receiverMode = receiverModeForObject(
-          receiver, candidate, allowFreshTemporary, consumingReceiver);
+      const CallReceiverMode receiverMode =
+          receiverState
+              ? (receiverState->mutableReceiver
+                     ? CallReceiverMode::MutablePlace
+                     : CallReceiverMode::ReadOnlyPlace)
+              : receiverModeForObject(receiver, candidate, allowFreshTemporary,
+                                      consumingReceiver);
       if (candidate.receiverMutability == ReceiverMutability::Mutable &&
           !receiverModeAllowsMutation(receiverMode) && !consumingReceiver) {
         rejectedMutableReceiver = true;
@@ -15570,12 +15811,6 @@ private:
       });
     }
 
-    retainBestCallConversionMatches(viable, argumentTypes,
-                                    [](const ViableOperator &candidate)
-                                        -> const std::vector<SemanticType> & {
-                                      return candidate.function.parameterTypes;
-                                    });
-
     if (viable.size() != 1) {
       if (viable.empty() && rejectedCompilerPrivate) {
         reportCompilerPrivateAccess(token,
@@ -15603,7 +15838,7 @@ private:
         if (call != nullptr && boundary) {
           (void)validateCallableCapability(
               *call, CallableInvocationCapability::Mutable);
-        } else if (rejectedMutableFunction) {
+        } else if (rejectedMutableFunction && !receiverState) {
           reportMutableReceiverFailure(
               receiver, token, *rejectedMutableFunction,
               std::string(operatorSourceSpelling(kind)));
@@ -15634,6 +15869,10 @@ private:
             "GTI-S2022", DiagnosticPhase::Semantics, token,
             "No exact overload of " +
                 std::string(operatorSourceSpelling(kind)) + received + ".");
+        diagnostic.hints.emplace_back(
+            "GTI operator calls do not perform implicit conversions, rank "
+            "candidates, reverse operands, or use ADL; convert the operand "
+            "explicitly when that conversion is intentional.");
         for (const FunctionCandidate &candidate : overloadSet.overloads) {
           if (candidate.declaration != nullptr &&
               (isCompilerTrustedRequester(token) ||
@@ -15679,7 +15918,9 @@ private:
         selectedReceiverMode == CallReceiverMode::FreshTemporaryMutable;
     std::optional<TransientBorrowProduction> receiverProduction;
     std::optional<SemanticLoanPlace> receiverPlace;
-    if (!temporaryReceiver) {
+    if (receiverState) {
+      receiverPlace = loanPlace(receiverState->place);
+    } else if (!temporaryReceiver) {
       receiverProduction = transientBorrowProduction(receiver);
       receiverPlace = receiverProduction
                           ? std::optional<SemanticLoanPlace>{std::move(
@@ -15701,7 +15942,8 @@ private:
                        "still be live.")
               : "Read-only operator receiver overlaps a mutable borrow or "
                 "child reborrow that may still be live.",
-          accessLoan(receiver));
+          receiverState ? accessLoan(receiverState->place)
+                        : accessLoan(receiver));
     }
     validateMutableCallArgumentLoans(selected.parameterTypes, arguments, token);
     validateCallPlaceExclusivity(selected.parameterTypes, arguments, token,
@@ -15726,6 +15968,8 @@ private:
         .boundary = boundary};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
+    } else if (projection) {
+      semanticModel.recordProjectionOperator(site, std::move(resolved));
     } else {
       semanticModel.recordOperator(site, std::move(resolved));
     }
@@ -15734,7 +15978,7 @@ private:
 
   SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
                                const SemanticType &receiverType,
-                               const Token &token) {
+                               const Token &token, bool projection = false) {
     if (receiverType.kind == SemanticType::RawPointer) {
       if (rejectCOpaquePointeeOperation(receiverType, token,
                                         "raw-pointer member access")) {
@@ -15757,7 +16001,8 @@ private:
     }
     if (receiverType.kind == SemanticType::Class) {
       const std::optional<FunctionCandidate> selected = resolveOperator(
-          site, OverloadedOperator::Arrow, receiver, receiverType, token);
+          site, OverloadedOperator::Arrow, receiver, receiverType, token, {},
+          {}, false, std::nullopt, std::nullopt, projection);
       if (!selected || selected->returnType.kind != SemanticType::Reference ||
           selected->returnType.arguments.size() != 1) {
         return SemanticType::Unknown;
@@ -19586,9 +19831,30 @@ private:
         name.kind == OverloadedOperator::LessEqual ||
         name.kind == OverloadedOperator::Greater ||
         name.kind == OverloadedOperator::GreaterEqual;
+    const bool valueOperator = isArithmeticOrBitwiseValueOperator(name.kind);
+    const bool mutationOperator = isCompoundOperator(name.kind) ||
+                                  name.kind == OverloadedOperator::PreDecrement;
     std::optional<std::size_t> expectedArity = 0;
     switch (name.kind) {
     case OverloadedOperator::Assignment:
+    case OverloadedOperator::Multiply:
+    case OverloadedOperator::Divide:
+    case OverloadedOperator::Remainder:
+    case OverloadedOperator::AddAssign:
+    case OverloadedOperator::SubtractAssign:
+    case OverloadedOperator::MultiplyAssign:
+    case OverloadedOperator::DivideAssign:
+    case OverloadedOperator::RemainderAssign:
+    case OverloadedOperator::BitwiseAnd:
+    case OverloadedOperator::BitwiseOr:
+    case OverloadedOperator::BitwiseXor:
+    case OverloadedOperator::ShiftLeft:
+    case OverloadedOperator::ShiftRight:
+    case OverloadedOperator::BitwiseAndAssign:
+    case OverloadedOperator::BitwiseOrAssign:
+    case OverloadedOperator::BitwiseXorAssign:
+    case OverloadedOperator::ShiftLeftAssign:
+    case OverloadedOperator::ShiftRightAssign:
     case OverloadedOperator::Subscript:
     case OverloadedOperator::Equal:
     case OverloadedOperator::NotEqual:
@@ -19601,9 +19867,20 @@ private:
     case OverloadedOperator::Call:
       expectedArity = std::nullopt;
       break;
+    case OverloadedOperator::Plus:
+    case OverloadedOperator::Minus:
+      if (function.parameters().size() > 1) {
+        fail(std::string(operatorSourceSpelling(name.kind)) +
+             " expects zero parameters for its unary form or one parameter "
+             "for its binary form.");
+      }
+      expectedArity = std::nullopt;
+      break;
     case OverloadedOperator::Dereference:
     case OverloadedOperator::Arrow:
     case OverloadedOperator::PreIncrement:
+    case OverloadedOperator::PreDecrement:
+    case OverloadedOperator::BitwiseNot:
     case OverloadedOperator::ContextualBool:
       break;
     }
@@ -19654,6 +19931,27 @@ private:
     if (name.kind == OverloadedOperator::PreIncrement &&
         function.receiverMutability() != ReceiverMutability::Mutable) {
       fail("Prefix operator++ must use a mutable receiver.");
+    }
+    if (valueOperator && (returnType == SemanticType::Void ||
+                          returnType.kind == SemanticType::Reference ||
+                          typeTraits(returnType).containsBorrowedState)) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " must return an owned value, not void, a reference, or "
+           "receiver-tied borrowed state.");
+    }
+    if (valueOperator &&
+        function.receiverMutability() != ReceiverMutability::ReadOnly) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " must use a read-only receiver because it produces a value.");
+    }
+    if (mutationOperator && returnType != SemanticType::Void) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " must return void in GTI.");
+    }
+    if (mutationOperator &&
+        function.receiverMutability() != ReceiverMutability::Mutable) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " must use a mutable receiver with trailing 'mut'.");
     }
     if (name.kind == OverloadedOperator::Assignment &&
         function.receiverMutability() != ReceiverMutability::Mutable) {
@@ -26446,8 +26744,9 @@ private:
           dynamic_cast<const IndexSet *>(&expr) != nullptr ||
           dynamic_cast<const DereferenceSet *>(&expr) != nullptr;
       const bool loweredAssignmentCall =
-          dynamic_cast<const Assign *>(&expr) != nullptr &&
-          resolved->kind == OverloadedOperator::Assignment;
+          assignmentExpression &&
+          (resolved->kind == OverloadedOperator::Assignment ||
+           isCompoundOperator(resolved->kind));
       if (resolved->function != 0 &&
           (!assignmentExpression || loweredAssignmentCall)) {
         operation.propagation = failurePropagation(resolved->dispatch);
@@ -29292,7 +29591,11 @@ private:
         objectType->arguments.size() == 1) {
       return objectType->arguments.front();
     }
-    const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
+    const ResolvedOperatorInfo *resolved =
+        semanticModel.findProjectionOperator(member);
+    if (resolved == nullptr || resolved->kind != OverloadedOperator::Arrow) {
+      resolved = semanticModel.findOperator(member);
+    }
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
         resolved->returnType.arguments.size() == 1) {
@@ -29313,7 +29616,11 @@ private:
         objectType->arguments.size() == 1) {
       return objectType->arguments.front();
     }
-    const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
+    const ResolvedOperatorInfo *resolved =
+        semanticModel.findProjectionOperator(member);
+    if (resolved == nullptr || resolved->kind != OverloadedOperator::Arrow) {
+      resolved = semanticModel.findOperator(member);
+    }
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
         resolved->returnType.arguments.size() == 1) {

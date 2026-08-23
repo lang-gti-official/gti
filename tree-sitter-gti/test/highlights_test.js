@@ -488,6 +488,14 @@ requireRainbowDelimiter(foldLine, "(");
 requireRainbowDelimiter(exactSpecializationLine, "<");
 requireRainbowDelimiter(staticAssertLine, "(");
 
+for (const spelling of ["+", "~", "+=", "--"]) {
+  const row = fixtureLines.findIndex((line) =>
+    line.includes(`operator${spelling}(`),
+  );
+  requireCapture(row, "operator", "keyword.operator");
+  requireCapture(row, spelling, "operator");
+}
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

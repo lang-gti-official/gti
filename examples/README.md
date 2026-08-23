@@ -163,6 +163,11 @@ namespace-scope GTI function with a body.
 corpus remains reproducible. `<std/random>` also provides `std::random_device`
 for fallible host entropy when a program explicitly needs nondeterminism.
 
+`64-restricted-arithmetic-operators.gti` defines read-only value-producing
+arithmetic and bitwise members alongside mutable compound assignment and
+prefix decrement. Selection is member-only and exact; each related operator
+is declared independently rather than synthesized by the compiler.
+
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
 [`gti-vs-cpp/`](gti-vs-cpp/README.md).

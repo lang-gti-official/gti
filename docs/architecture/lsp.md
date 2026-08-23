@@ -45,6 +45,13 @@ classification, while invalid operands publish the shared `GTI-S2063`
 diagnostic. The LSP does not evaluate layout or maintain a second supported-type
 list.
 
+Restricted arithmetic, remainder, bitwise, shift, compound-assignment, and
+prefix-decrement overloads follow the same boundary. Tree-sitter and the LSP
+classify their written punctuation as operators, while declaration contracts,
+exact member selection, candidate locations, and no-synthesis diagnostics come
+from the compiler snapshot. The protocol layer does not emulate C++ overload
+lookup or maintain its own overloadable-operator list.
+
 C++ core keyword spellings likewise use compiler lexical classification. An
 invalid identifier use is published as the shared parser diagnostic
 `GTI-P0002`, and the spelling remains a semantic `keyword` token while the

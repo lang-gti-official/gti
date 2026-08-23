@@ -1,0 +1,25 @@
+class Number {
+  mut int value = 0;
+
+public:
+  Number(int initial) : value(initial) {}
+
+  Number operator+(int other) { return Number(this.value + other); }
+  Number operator~() { return Number(~this.value); }
+
+  void operator*=(int other) mut { this.value *= other; }
+  void operator&=(int other) mut { this.value &= other; }
+  void operator--() mut { this.value--; }
+
+  int get() { return this.value; }
+};
+
+int main() {
+  Number base = Number(5);
+  mut Number result = base + 3;
+  result *= 2;
+  result &= 15;
+  --result;
+  Number inverted = ~result;
+  return inverted.get();
+}

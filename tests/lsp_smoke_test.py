@@ -6162,6 +6162,149 @@ def test_configuration_flag_inactive_tokens(executable, root):
         session.close()
 
 
+def test_restricted_arithmetic_operator_tooling(executable, root):
+    source = (
+        "class Number { mut int value = 0; public: "
+        "Number(int initial) : value(initial) {} "
+        "Number operator+(int other) { return Number(this.value + other); } "
+        "void operator+=(int other) mut { this.value += other; } "
+        "void operator--() mut { this.value--; } "
+        "int get() { return this.value; } };\n"
+        "int main() { mut Number value = Number(1); "
+        "mut Number sum = value + 2; sum += 3; --sum; return sum.get(); }\n"
+    )
+    path = root / "restricted-arithmetic-operators.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"]["semanticTokensProvider"][
+            "legend"
+        ]["tokenTypes"]
+        operator_type = token_types.index("operator")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        assert publication["params"]["diagnostics"] == [], publication
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        token_data = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]["data"]
+        tokens = semantic_tokens_by_position(token_data)
+        for spelling in ("+", "+=", "--"):
+            declaration = source.index(f"operator{spelling}") + len("operator")
+            position = lsp_position(source, declaration)
+            token = tokens[(position["line"], position["character"])]
+            assert token["type"] == operator_type, (spelling, token)
+            assert token["length"] == len(spelling), (spelling, token)
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        formatting = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        formatted = formatting[0]["newText"]
+        assert "Number operator+(int other) {" in formatted, formatted
+        assert "void operator+=(int other) mut {" in formatted, formatted
+        assert "void operator--() mut {" in formatted, formatted
+
+        invalid_source = (
+            "class Exact { public: Exact operator+(int64_t other) { "
+            "return Exact(); } };\n"
+            "int main() { Exact value = Exact(); "
+            "[[discard]] value + int32_t(1); return 0; }\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]["diagnostics"]
+        diagnostic = next(
+            item
+            for item in diagnostics
+            if item.get("code") == "GTI-S2022"
+            and "No exact overload of operator+" in item.get("message", "")
+        )
+        use = invalid_source.index("+ int32_t")
+        assert diagnostic["range"] == {
+            "start": lsp_position(invalid_source, use),
+            "end": lsp_position(invalid_source, use + 1),
+        }, diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert "implicit conversions" in diagnostic["data"]["hints"][0], diagnostic
+        assert diagnostic["relatedInformation"], diagnostic
+        assert "fixes" not in diagnostic["data"], diagnostic
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -6207,6 +6350,7 @@ def main():
     test_cpp_reserved_identifier_diagnostic(sys.argv[1], root)
     test_contextual_signed_integer_diagnostic(sys.argv[1], root)
     test_layout_query_tooling(sys.argv[1], root)
+    test_restricted_arithmetic_operator_tooling(sys.argv[1], root)
     test_native_record_tooling(sys.argv[1], root)
     test_native_callback_tooling(sys.argv[1], root)
     test_integer_arithmetic_tooling(sys.argv[1], root)
