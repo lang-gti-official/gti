@@ -1,0 +1,40 @@
+mut int global_total = 0;
+
+mut int& total() {
+  return global_total;
+}
+
+class Metrics {
+public:
+  static mut int value = 0;
+
+  static mut int& current() {
+    return Metrics::value;
+  }
+};
+
+int main() {
+  {
+    mut int& borrowed_total = total();
+    borrowed_total += 1;
+  }
+
+  // The nested scope ends the retained mutable loan before the same accessor
+  // creates another checked loan against global_total.
+  {
+    mut int& borrowed_total = total();
+    borrowed_total += 1;
+  }
+
+  // Static fields use the same bounded global-borrow rule.
+  {
+    mut int& borrowed_metric = Metrics::current();
+    borrowed_metric += 2;
+  }
+
+  if (global_total != 2 || Metrics::value != 2) {
+    return 1;
+  }
+  std::println("global borrow accessors remain checked at each call");
+  return 0;
+}

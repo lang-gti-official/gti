@@ -66,6 +66,13 @@ through the public wrapper; the `gti_internal` declarations remain
 compiler-private implementation details. See
 [`docs/language/tcp.md`](../docs/language/tcp.md) for the exact contract.
 
+`<std/random>` provides a deterministic source-defined `std::random_engine`
+initialized from an explicit `uint64_t` seed and a fallible
+`std::random_device` for nondeterministic host entropy. The engine owns and
+advances its four-word state in GTI; only `random_device` crosses the bounded
+`gti_rt_random_bytes` C boundary to refill its private fixed buffer. Its call
+returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
+
 Optional facilities live under `stdlib/std/` and are imported through logical
 standard-library paths such as `#include <std/array>`. These imports resolve
 against the compiler installation, not relative to the application or through

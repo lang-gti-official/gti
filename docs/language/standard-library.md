@@ -109,6 +109,9 @@ The current implemented foundation includes:
   `std::format`, `std::try_print`, and `std::try_println`. The grammar is
   limited to `{}`, `{{`, and `}}`; pattern and argument-count errors return
   `expected<..., std::format_errc>` before output begins; and
+- `<std/random>` source-defined deterministic `std::random_engine` sequences
+  from an explicit `uint64_t` seed, plus fallible `std::random_device` draws
+  backed by bounded host entropy; and
 - `<std/tcp>` POSIX IPv4 stream-socket creation and close through a move-only
   `std::tcp::socket` owner with typed creation and close errors.
 
@@ -246,8 +249,8 @@ The following component families remain planned or incomplete:
   generic-capability families;
 - indexed/named/specifier-based and floating-point formatting, formatter
   customization, buffered streams, file writes, seeking, and structured I/O;
-- general filesystem operations, time, randomness, connected networking,
-  traffic buffers, and threading;
+- general filesystem operations, time, random distributions and engine
+  breadth, connected networking, traffic buffers, and threading;
 - recoverable allocation factories;
 - allocator-aware containers and safe pools/arenas; and
 - broader native interoperability beyond the current call-only fixed-scalar

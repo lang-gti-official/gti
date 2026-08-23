@@ -21,6 +21,11 @@ The current implemented syntax remains documented in
 and compiler phase authority in
 [`docs/architecture/overview.md`](../architecture/overview.md). This proposal
 extends those contracts; it does not describe already shipped behavior.
+The separate
+[`constructor-local type generics and constraints proposal`](constructor-local-type-generics.md)
+defines the inferred iterator/sentinel constructor surface needed to construct
+an owning `std::string` from this protocol. It does not add a complete-range
+object constructor or change the range protocol described here.
 
 Implementation progress includes prefix `operator++`, range-for
 syntax, the nominal member protocol, source-mapped generated core operations,

@@ -1,0 +1,41 @@
+mut int sequence = 0;
+
+int next_value() {
+  sequence += 1;
+  return sequence;
+}
+
+int encode(int leading, int first = next_value(),
+           int second = next_value()) {
+  return leading * 100 + first * 10 + second;
+}
+
+class Counter {
+  mut int value;
+
+public:
+  Counter(int initial = 0) : value(initial) {}
+
+  int add(int amount = 1) mut {
+    this.value += amount;
+    return this.value;
+  }
+};
+
+T value_or<T>(T value = 7) {
+  return value;
+}
+
+int main() {
+  int ordered = encode(4);
+  mut Counter counter = Counter();
+  int first = counter.add();
+  int second = counter.add(4);
+  int generic = value_or<int>();
+
+  if (ordered != 412 || first != 1 || second != 5 || generic != 7) {
+    return 1;
+  }
+  std::println("default arguments are expanded at each call");
+  return 0;
+}

@@ -702,7 +702,7 @@ Add narrow, versioned runtime operations and source-defined wrappers for:
   seeking, and buffered streams remain;
 - monotonic and wall-clock time;
 - deterministic pseudo-random engines plus an explicitly nondeterministic seed
-  source;
+  source are implemented in `<std/random>`; distribution APIs remain;
 - process arguments are implemented through the owned
   `int main(int, std::vector<std::string>)` entry form; environment access and
   any owner-tied process views remain;
@@ -910,8 +910,8 @@ standard-library need, and tooling impact.
 
 The maintained sequence, blockers, parallel lanes, and current ready queue live
 in [`implementation-sequence.md`](implementation-sequence.md). At this
-checkpoint the source executable-body cutover is complete. All 2,601 reviewed
-body identities across 57 examples use verified optimized MIR and the general
+checkpoint the source executable-body cutover is complete. All 2,867 reviewed
+body identities across 62 examples use verified optimized MIR and the general
 C++ body emitter. The no-MIR emitter and executable AST statement route are
 gone; the exact census and two-endpoint corpus oracle guard that result.
 

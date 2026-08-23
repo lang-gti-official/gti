@@ -1,0 +1,222 @@
+name: Nightly
+
+# GitHub remains the source of truth for this pull mirror. The upstream nightly
+# workflow moves the `nightly` tag only after its own build succeeds; mirror
+# synchronization of that tag is therefore the safe trigger for the local build.
+on:
+  push:
+    tags:
+      - nightly
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    name: Resolve mirrored nightly
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.nightly.outputs.sha }}
+      version: ${{ steps.nightly.outputs.version }}
+
+    steps:
+      - name: Check out mirrored nightly tag
+        uses: https://gitea.com/actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/nightly
+
+      - name: Resolve nightly metadata
+        id: nightly
+        shell: bash
+        run: |
+          sha="$(git rev-parse 'refs/tags/nightly^{commit}')"
+          if [[ "$(git rev-parse HEAD)" != "${sha}" ]]; then
+            echo "Checked-out commit does not match the mirrored nightly tag" >&2
+            exit 1
+          fi
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must contain a semantic version" >&2
+            exit 1
+          fi
+          echo "sha=${sha}" >> "${GITEA_OUTPUT}"
+          echo "version=${version}" >> "${GITEA_OUTPUT}"
+
+  package:
+    name: Build and test nightly
+    needs: metadata
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out exact nightly commit
+        uses: https://gitea.com/actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.sha }}
+
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+        run: |
+          jobs="${GTI_CONFIGURED_JOBS:-}"
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+          fi
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            jobs=4
+          fi
+          echo "GTI_JOBS=${jobs}" >> "${GITEA_ENV}"
+          if command -v sccache >/dev/null 2>&1; then
+            echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
+            if [[ -n "${ACTIONS_CACHE_URL:-}" && -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
+              echo "SCCACHE_GHA_ENABLED=true" >> "${GITEA_ENV}"
+            fi
+          fi
+
+      - name: Resolve package platform
+        id: platform
+        shell: bash
+        run: |
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            Linux-X64) platform=linux-x64 ;;
+            Linux-ARM64) platform=linux-arm64 ;;
+            macOS-X64) platform=darwin-x64 ;;
+            macOS-ARM64) platform=darwin-arm64 ;;
+            *)
+              echo "Unsupported release runner ${RUNNER_OS}-${RUNNER_ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          echo "platform=${platform}" >> "${GITEA_OUTPUT}"
+
+      - name: Configure release build
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel "${GTI_JOBS}"
+
+      - name: Test build tree
+        run: >-
+          ctest --test-dir build -C Release
+          --parallel "${GTI_JOBS}" --output-on-failure
+
+      - name: Stage toolchain
+        run: >-
+          cmake --install build --config Release
+          --prefix "${{ runner.temp }}/gti-stage"
+          --component gti_toolchain
+
+      - name: Test installed toolchain
+        run: |
+          export PATH="${{ runner.temp }}/gti-stage/bin:${PATH}"
+          cd "${{ runner.temp }}"
+          python3 "${{ gitea.workspace }}/tests/lsp_smoke_test.py" gti_lsp
+          python3 "${{ gitea.workspace }}/tests/cli_smoke_test.py" gti
+          python3 "${{ gitea.workspace }}/tests/project_cli_smoke_test.py" gti
+          cmake \
+            -S "${{ gitea.workspace }}/tests/installed_library_smoke" \
+            -B "${{ runner.temp }}/gti-installed-library-smoke" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${{ runner.temp }}/gti-stage"
+          cmake --build \
+            "${{ runner.temp }}/gti-installed-library-smoke" \
+            --config Release --parallel "${GTI_JOBS}"
+          ctest \
+            --test-dir "${{ runner.temp }}/gti-installed-library-smoke" \
+            -C Release --parallel "${GTI_JOBS}" --output-on-failure
+
+      - name: Create nightly archive
+        run: >-
+          cmake
+          -DGTI_SOURCE_DIR=${{ gitea.workspace }}
+          -DGTI_STAGE_DIR=${{ runner.temp }}/gti-stage
+          -DGTI_OUTPUT_DIR=${{ gitea.workspace }}/dist
+          -DGTI_PLATFORM=${{ steps.platform.outputs.platform }}
+          -DGTI_CHANNEL=nightly
+          -DGTI_EXPECTED_TAG=nightly
+          -DGTI_BUILD_ID=${{ needs.metadata.outputs.sha }}
+          -P cmake/PackageRelease.cmake
+
+      - name: Record nightly build identity
+        run: printf '%s\n' '${{ needs.metadata.outputs.sha }}' > dist/BUILD_ID
+
+      - name: Upload nightly archive
+        uses: https://gitea.com/actions/upload-artifact@v3
+        with:
+          name: gti-nightly-package
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish Gitea nightly release
+    needs:
+      - metadata
+      - package
+    runs-on: ubuntu-latest
+    permissions:
+      code: read
+      releases: write
+
+    steps:
+      - name: Check out packaged commit
+        uses: https://gitea.com/actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.sha }}
+
+      - name: Refuse to publish a superseded nightly
+        shell: bash
+        run: |
+          git fetch --force origin '+refs/tags/nightly:refs/tags/nightly'
+          current="$(git rev-parse 'refs/tags/nightly^{commit}')"
+          if [[ "${current}" != '${{ needs.metadata.outputs.sha }}' ]]; then
+            echo "Nightly moved to ${current}; refusing to publish stale artifacts" >&2
+            exit 1
+          fi
+
+      - name: Download nightly archive
+        uses: https://gitea.com/actions/download-artifact@v3
+        with:
+          name: gti-nightly-package
+          path: dist
+
+      - name: Verify downloaded assets
+        shell: bash
+        run: |
+          shopt -s nullglob
+          assets=(dist/*)
+          if (( ${#assets[@]} == 0 )); then
+            echo "No nightly assets were downloaded" >&2
+            exit 1
+          fi
+
+      - name: Publish nightly release
+        uses: https://gitea.com/actions/gitea-release-action@v1
+        with:
+          server_url: ${{ gitea.server_url }}
+          repository: ${{ gitea.repository }}
+          token: ${{ gitea.token }}
+          tag_name: nightly
+          target_commitish: ${{ needs.metadata.outputs.sha }}
+          name: GTI nightly
+          prerelease: true
+          body: |
+            Rolling local build of the mirrored `nightly` tag.
+
+            - commit: `${{ needs.metadata.outputs.sha }}`
+            - version at build: `${{ needs.metadata.outputs.version }}`
+
+            Use a versioned release for anything that needs to stay put.
+          files: |
+            dist/*

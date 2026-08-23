@@ -1,0 +1,226 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ gitea.ref }}
+  cancel-in-progress: true
+
+jobs:
+  formatting:
+    name: Formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@v4
+
+      - name: Install pinned clang-format
+        run: |
+          python3 -m venv .format-tools
+          .format-tools/bin/pip install "clang-format==$(cat .clang-format-version)"
+
+      - name: Verify first-party C and C++ formatting
+        env:
+          GTI_CLANG_FORMAT: .format-tools/bin/clang-format
+        run: python3 scripts/clang_format.py --check
+
+  release-version:
+    name: Release version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a version bump for shipped tooling changes
+        env:
+          GTI_BASE_SHA: ${{ gitea.event_name == 'pull_request' && gitea.event.pull_request.base.sha || gitea.event.before }}
+        run: |
+          base="${GTI_BASE_SHA}"
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          python3 scripts/check_release_version.py "${base}" "${GITHUB_SHA}"
+
+  tree-sitter:
+    name: Tree-sitter grammar
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@v4
+
+      - name: Install grammar tooling
+        run: npm ci
+        working-directory: tree-sitter-gti
+
+      - name: Verify generated parser and corpus
+        working-directory: tree-sitter-gti
+        run: |
+          npm run generate
+          npm test
+          npm run test:highlights
+          npm run test:shipped
+          git diff --exit-code -- src
+
+  build-and-test:
+    name: Native toolchain
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@v4
+
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+        run: |
+          jobs="${GTI_CONFIGURED_JOBS:-}"
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+          fi
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            jobs=4
+          fi
+          echo "GTI_JOBS=${jobs}" >> "${GITEA_ENV}"
+          if command -v sccache >/dev/null 2>&1; then
+            echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
+            if [[ -n "${ACTIONS_CACHE_URL:-}" && -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
+              echo "SCCACHE_GHA_ENABLED=true" >> "${GITEA_ENV}"
+            fi
+          fi
+
+      - name: Install LLVM 18
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          apt=(apt-get)
+          if command -v sudo >/dev/null 2>&1; then
+            apt=(sudo apt-get)
+          fi
+          "${apt[@]}" update
+          "${apt[@]}" install --no-install-recommends llvm-18-dev
+          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
+
+      - name: Install LLVM 22
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@22
+          echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITEA_ENV}"
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel "${GTI_JOBS}"
+
+      - name: Test
+        run: >-
+          ctest --test-dir build -C Release
+          --parallel "${GTI_JOBS}" --output-on-failure
+
+      - name: Stage system-LLVM toolchain
+        run: >-
+          cmake --install build --config Release
+          --prefix "${{ runner.temp }}/gti-system-stage"
+          --component gti_toolchain
+
+      - name: Test installed libraries with system LLVM
+        run: |
+          cmake \
+            -S tests/installed_library_smoke \
+            -B "${{ runner.temp }}/gti-system-library-smoke" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${{ runner.temp }}/gti-system-stage"
+          cmake --build \
+            "${{ runner.temp }}/gti-system-library-smoke" \
+            --config Release --parallel "${GTI_JOBS}"
+          ctest \
+            --test-dir "${{ runner.temp }}/gti-system-library-smoke" \
+            -C Release --parallel "${GTI_JOBS}" --output-on-failure
+
+  compiler-sanitizers:
+    name: Compiler sanitizers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out GTI
+        uses: https://gitea.com/actions/checkout@v4
+
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+        run: |
+          jobs="${GTI_CONFIGURED_JOBS:-}"
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+          fi
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            jobs=4
+          fi
+          echo "GTI_JOBS=${jobs}" >> "${GITEA_ENV}"
+          if command -v sccache >/dev/null 2>&1; then
+            echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> "${GITEA_ENV}"
+            if [[ -n "${ACTIONS_CACHE_URL:-}" && -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
+              echo "SCCACHE_GHA_ENABLED=true" >> "${GITEA_ENV}"
+            fi
+          fi
+
+      - name: Install LLVM 18 and Clang
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          apt=(apt-get)
+          if command -v sudo >/dev/null 2>&1; then
+            apt=(sudo apt-get)
+          fi
+          "${apt[@]}" update
+          "${apt[@]}" install --no-install-recommends clang llvm-18-dev
+          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITEA_ENV}"
+
+      - name: Install LLVM 22
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@22
+          echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITEA_ENV}"
+          echo "$(brew --prefix llvm@22)/bin" >> "${GITEA_PATH}"
+
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: >-
+          cmake -S . -B build-sanitized
+          -DCMAKE_BUILD_TYPE=Debug
+          -DGTI_BUILD_LSP=OFF
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build-sanitized --parallel "${GTI_JOBS}"
+
+      - name: Test compiler and driver libraries
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >-
+          ctest --test-dir build-sanitized --output-on-failure
+          --parallel "${GTI_JOBS}"
+          -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|failure_metadata|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter|cpp_mir_program_plan|cpp_mir_representation_snapshot'

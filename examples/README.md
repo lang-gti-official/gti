@@ -64,6 +64,11 @@ own `main` function.
 | `56-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive matching |
 | `57-contextual-array-arguments.gti` | generic brace arguments as exact fixed-array values, including `std::vector<int>({1, 2, 3})` |
 | `58-formatted-output.gti` | sequential integral `{}` formatting with owned results and recoverable pattern errors |
+| `59-default-parameters.gti` | caller-side defaults for functions, constructors, methods, and concrete generic calls |
+| `60-configuration-and-comments.gti` | source-ordered valueless configuration flags and preserved block comments |
+| `61-global-borrow-returns.gti` | checked mutable borrows returned from exact global and static storage |
+| `62-native-c-boundaries.gti` | fixed-array C records, NUL-terminated strings, pointer-count results, and exact callbacks |
+| `63-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
 
 Build and run an example from the repository root:
 
@@ -146,6 +151,17 @@ nothing in GTI. A production binding puts it behind an ordinary move-only GTI
 class whose destructor calls the declared native destroy function exactly once.
 Callbacks, pointer-to-pointer output, and annotated ownership transfer remain
 separate capability slices.
+
+`62-native-c-boundaries.gti` covers the bounded follow-on slices without
+calling an unavailable external library. Native record arrays keep direct C
+array representation, `c_string` is a nullable non-owning NUL-terminated
+boundary pointer, `[[c_array(count)]]` pairs a borrowed result with its exact
+integer out-count parameter, and a named callback accepts only an exact
+namespace-scope GTI function with a body.
+
+`63-random-engine.gti` uses only the deterministic seeded engine so the example
+corpus remains reproducible. `<std/random>` also provides `std::random_device`
+for fallible host entropy when a program explicitly needs nondeterminism.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
