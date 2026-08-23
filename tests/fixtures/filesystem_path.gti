@@ -1,0 +1,341 @@
+// Behavioural fixture for <std/filesystem>'s path.
+//
+// Expectations are the documented C++ std::filesystem::path results for the
+// same inputs, including the awkward cases that separate a real
+// implementation from a plausible one: a trailing separator makes filename()
+// empty, a leading period does not begin an extension, "." and ".." have
+// neither stem nor extension, parent_path() of "/" is "/", and
+// lexically_normal() leaves a trailing separator behind a resolved dot-dot.
+
+#include <std/filesystem>
+#include <std/string>
+
+mut uint64_t failures = 0;
+
+void report(std::string_view label, std::string& actual, std::string_view wanted) {
+  failures = failures + uint64_t(1);
+  std::print("FAIL ");
+  std::print(label);
+  std::print("\n  wanted [");
+  std::print(wanted);
+  std::print("]\n  actual [");
+  std::print(actual);
+  std::print("]\n");
+}
+
+// Builds a path without relying on the converting constructor.
+std::filesystem::path make(std::string_view text) {
+  mut std::filesystem::path result = std::filesystem::path();
+  result.assign(text);
+  return std::move(result);
+}
+
+void check(std::string_view label, std::filesystem::path& actual,
+           std::string_view wanted) {
+  if (actual != wanted) {
+    mut std::string rendered = actual.string();
+    report(label, rendered, wanted);
+  }
+}
+
+void check_text(std::string_view label, std::string& actual,
+                std::string_view wanted) {
+  if (actual != wanted) {
+    report(label, actual, wanted);
+  }
+}
+
+void check_flag(std::string_view label, bool actual, bool wanted) {
+  if (actual == wanted) {
+    return;
+  }
+  mut std::string rendered = std::string("");
+  if (actual) {
+    rendered.append("true");
+  } else {
+    rendered.append("false");
+  }
+  if (wanted) {
+    report(label, rendered, "true");
+  } else {
+    report(label, rendered, "false");
+  }
+}
+
+// --- Decomposition ------------------------------------------------------
+
+void decomposition() {
+  mut std::filesystem::path full = make("/alpha/beta/gamma.tar.gz");
+  mut std::filesystem::path name = full.filename();
+  check("filename of /alpha/beta/gamma.tar.gz", name, "gamma.tar.gz");
+  mut std::filesystem::path base = full.stem();
+  check("stem keeps inner periods", base, "gamma.tar");
+  mut std::filesystem::path suffix = full.extension();
+  check("extension is the last suffix", suffix, ".gz");
+  mut std::filesystem::path parent = full.parent_path();
+  check("parent_path drops the filename", parent, "/alpha/beta");
+  mut std::filesystem::path relative = full.relative_path();
+  check("relative_path drops the root", relative, "alpha/beta/gamma.tar.gz");
+  mut std::filesystem::path rootDirectory = full.root_directory();
+  check("root_directory is the leading separator", rootDirectory, "/");
+  mut std::filesystem::path rootPath = full.root_path();
+  check("root_path on POSIX is the separator", rootPath, "/");
+  mut std::filesystem::path rootName = full.root_name();
+  check("root_name is empty on POSIX", rootName, "");
+
+  // A trailing separator means there is no filename at all.
+  mut std::filesystem::path directory = make("/alpha/beta/");
+  mut std::filesystem::path directoryName = directory.filename();
+  check("trailing separator yields an empty filename", directoryName, "");
+  mut std::filesystem::path directoryParent = directory.parent_path();
+  check("parent_path of a trailing separator", directoryParent, "/alpha/beta");
+
+  // The root is its own parent.
+  mut std::filesystem::path root = make("/");
+  mut std::filesystem::path rootParent = root.parent_path();
+  check("parent_path of / is /", rootParent, "/");
+  mut std::filesystem::path rootFilename = root.filename();
+  check("filename of / is empty", rootFilename, "");
+
+  // A bare relative name has no parent.
+  mut std::filesystem::path bare = make("gamma.txt");
+  mut std::filesystem::path bareParent = bare.parent_path();
+  check("parent_path of a bare name is empty", bareParent, "");
+  mut std::filesystem::path bareStem = bare.stem();
+  check("stem of a bare name", bareStem, "gamma");
+
+  // A leading period names the file; it does not open an extension.
+  mut std::filesystem::path hidden = make("/home/user/.profile");
+  mut std::filesystem::path hiddenExtension = hidden.extension();
+  check("a leading period is not an extension", hiddenExtension, "");
+  mut std::filesystem::path hiddenStem = hidden.stem();
+  check("stem of a dotfile is the whole name", hiddenStem, ".profile");
+
+  mut std::filesystem::path hiddenBackup = make("/home/user/.profile.bak");
+  mut std::filesystem::path hiddenBackupExtension = hiddenBackup.extension();
+  check("a later period does open an extension", hiddenBackupExtension, ".bak");
+  mut std::filesystem::path hiddenBackupStem = hiddenBackup.stem();
+  check("stem of a suffixed dotfile", hiddenBackupStem, ".profile");
+
+  // Dot and dot-dot are filenames with no extension and no stem split.
+  mut std::filesystem::path dot = make(".");
+  mut std::filesystem::path dotStem = dot.stem();
+  check("stem of . is .", dotStem, ".");
+  mut std::filesystem::path dotExtension = dot.extension();
+  check("extension of . is empty", dotExtension, "");
+
+  mut std::filesystem::path dotDot = make("..");
+  mut std::filesystem::path dotDotStem = dotDot.stem();
+  check("stem of .. is ..", dotDotStem, "..");
+  mut std::filesystem::path dotDotExtension = dotDot.extension();
+  check("extension of .. is empty", dotDotExtension, "");
+
+  // A trailing period is an empty extension, not no extension.
+  mut std::filesystem::path trailingPeriod = make("archive.");
+  mut std::filesystem::path trailingPeriodExtension = trailingPeriod.extension();
+  check("a trailing period is the extension", trailingPeriodExtension, ".");
+  mut std::filesystem::path trailingPeriodStem = trailingPeriod.stem();
+  check("stem before a trailing period", trailingPeriodStem, "archive");
+}
+
+// --- Queries -------------------------------------------------------------
+
+void queries() {
+  mut std::filesystem::path absolute = make("/alpha/beta.txt");
+  check_flag("absolute is absolute", absolute.is_absolute(), true);
+  check_flag("absolute is not relative", absolute.is_relative(), false);
+  check_flag("absolute has a root directory", absolute.has_root_directory(), true);
+  check_flag("absolute has a root path", absolute.has_root_path(), true);
+  check_flag("POSIX has no root name", absolute.has_root_name(), false);
+  check_flag("absolute has a relative path", absolute.has_relative_path(), true);
+  check_flag("absolute has a filename", absolute.has_filename(), true);
+  check_flag("absolute has a stem", absolute.has_stem(), true);
+  check_flag("absolute has an extension", absolute.has_extension(), true);
+  check_flag("absolute has a parent path", absolute.has_parent_path(), true);
+
+  mut std::filesystem::path relative = make("alpha/beta.txt");
+  check_flag("relative is relative", relative.is_relative(), true);
+  check_flag("relative is not absolute", relative.is_absolute(), false);
+  check_flag("relative has no root directory", relative.has_root_directory(), false);
+
+  mut std::filesystem::path root = make("/");
+  check_flag("/ has no relative path", root.has_relative_path(), false);
+  check_flag("/ has no filename", root.has_filename(), false);
+
+  mut std::filesystem::path blank = std::filesystem::path();
+  check_flag("a default path is empty", blank.empty(), true);
+  check_flag("a default path is relative", blank.is_relative(), true);
+  check_flag("a default path has no parent", blank.has_parent_path(), false);
+
+  mut std::filesystem::path dotfile = make(".profile");
+  check_flag("a dotfile has no extension", dotfile.has_extension(), false);
+  check_flag("a dotfile has a stem", dotfile.has_stem(), true);
+}
+
+// --- Modifiers -----------------------------------------------------------
+
+void modifiers() {
+  // remove_filename keeps the separator that preceded the filename.
+  mut std::filesystem::path removed = make("/alpha/beta");
+  removed.remove_filename();
+  check("remove_filename keeps the separator", removed, "/alpha/");
+
+  mut std::filesystem::path removedTwice = make("/alpha/");
+  removedTwice.remove_filename();
+  check("remove_filename on a directory is idempotent", removedTwice, "/alpha/");
+
+  mut std::filesystem::path replaced = make("/alpha/beta.txt");
+  replaced.replace_filename("gamma.md");
+  check("replace_filename swaps the last element", replaced, "/alpha/gamma.md");
+
+  mut std::filesystem::path retyped = make("/alpha/beta.txt");
+  retyped.replace_extension(".md");
+  check("replace_extension with a period", retyped, "/alpha/beta.md");
+
+  mut std::filesystem::path retypedBare = make("/alpha/beta.txt");
+  retypedBare.replace_extension("md");
+  check("replace_extension supplies the period", retypedBare, "/alpha/beta.md");
+
+  mut std::filesystem::path stripped = make("/alpha/beta.txt");
+  stripped.replace_extension("");
+  check("an empty replacement removes the extension", stripped, "/alpha/beta");
+
+  mut std::filesystem::path cleared = make("/alpha/beta");
+  cleared.clear();
+  check_flag("clear empties the path", cleared.empty(), true);
+
+  // swap exchanges both directions.
+  mut std::filesystem::path left = make("/left");
+  mut std::filesystem::path right = make("/right/side");
+  left.swap(right);
+  check("swap moves the right value left", left, "/right/side");
+  check("swap moves the left value right", right, "/left");
+}
+
+// --- Concatenation -------------------------------------------------------
+
+void concatenation() {
+  mut std::filesystem::path joined = make("/alpha");
+  joined.append("beta");
+  check("append inserts a separator", joined, "/alpha/beta");
+
+  mut std::filesystem::path alreadySeparated = make("/alpha/");
+  alreadySeparated.append("beta");
+  check("append does not double the separator", alreadySeparated, "/alpha/beta");
+
+  // An absolute argument replaces the receiver outright.
+  mut std::filesystem::path replacedByAbsolute = make("/alpha");
+  replacedByAbsolute.append("/gamma");
+  check("an absolute append replaces", replacedByAbsolute, "/gamma");
+
+  mut std::filesystem::path fromEmpty = std::filesystem::path();
+  fromEmpty.append("alpha");
+  check("append to an empty path adds no separator", fromEmpty, "alpha");
+
+  // concat joins without a separator.
+  mut std::filesystem::path glued = make("/alpha/beta");
+  glued.concat(".txt");
+  check("concat does not insert a separator", glued, "/alpha/beta.txt");
+}
+
+// --- Comparison ----------------------------------------------------------
+
+void comparison() {
+  // Element-wise comparison makes redundant separators immaterial.
+  mut std::filesystem::path plain = make("/alpha/beta");
+  mut std::filesystem::path doubled = make("/alpha//beta");
+  check_flag("redundant separators compare equal", plain == doubled, true);
+
+  mut std::filesystem::path trailing = make("/alpha/beta/");
+  check_flag("a trailing separator adds an empty element",
+             plain == trailing, false);
+
+  mut std::filesystem::path shorter = make("/alpha");
+  check_flag("a prefix orders first", shorter < plain, true);
+  check_flag("the longer path orders after", plain > shorter, true);
+
+  mut std::filesystem::path same = make("/alpha/beta");
+  check_flag("equal paths are not less", same < plain, false);
+  check_flag("equal paths compare <=", same <= plain, true);
+
+  // An absolute path sorts after a relative one with the same elements.
+  mut std::filesystem::path rooted = make("/alpha");
+  mut std::filesystem::path unrooted = make("alpha");
+  check_flag("a rooted path orders after an unrooted one",
+             unrooted < rooted, true);
+}
+
+// --- Generation ----------------------------------------------------------
+
+void generation() {
+  mut std::filesystem::path dotted = make("foo/./bar/..");
+  mut std::filesystem::path dottedNormal = dotted.lexically_normal();
+  check("a resolved dot-dot leaves a trailing separator",
+        dottedNormal, "foo/");
+
+  mut std::filesystem::path messy = make("foo/.///bar/../");
+  mut std::filesystem::path messyNormal = messy.lexically_normal();
+  check("duplicate separators and dots collapse", messyNormal, "foo/");
+
+  mut std::filesystem::path exhausted = make("a/b/../..");
+  mut std::filesystem::path exhaustedNormal = exhausted.lexically_normal();
+  check("a fully cancelled path normalizes to a dot",
+        exhaustedNormal, ".");
+
+  mut std::filesystem::path aboveRoot = make("/a/..");
+  mut std::filesystem::path aboveRootNormal = aboveRoot.lexically_normal();
+  check("dot-dot at the root leaves the root", aboveRootNormal, "/");
+
+  mut std::filesystem::path climbing = make("..");
+  mut std::filesystem::path climbingNormal = climbing.lexically_normal();
+  check("a relative dot-dot is preserved", climbingNormal, "..");
+
+  mut std::filesystem::path here = make("./");
+  mut std::filesystem::path hereNormal = here.lexically_normal();
+  check("a lone dot normalizes to a dot", hereNormal, ".");
+
+  mut std::filesystem::path deep = make("/a/b/../c/./d/");
+  mut std::filesystem::path deepNormal = deep.lexically_normal();
+  check("a mixed path normalizes", deepNormal, "/a/c/d/");
+
+  mut std::filesystem::path blank = std::filesystem::path();
+  mut std::filesystem::path blankNormal = blank.lexically_normal();
+  check("an empty path normalizes to empty", blankNormal, "");
+
+  // Normalization is not applied at construction.
+  mut std::filesystem::path preserved = make("/alpha//beta/./gamma");
+  check("construction preserves the pathname as written",
+        preserved, "/alpha//beta/./gamma");
+}
+
+// --- Observers -----------------------------------------------------------
+
+void observers() {
+  mut std::filesystem::path value = make("/alpha/beta.txt");
+  mut std::string rendered = value.string();
+  check_text("string() renders the pathname", rendered, "/alpha/beta.txt");
+
+  mut std::filesystem::path copied = value.clone();
+  check("clone reproduces the pathname", copied, "/alpha/beta.txt");
+  copied.append("gamma");
+  check("a clone is independent", value, "/alpha/beta.txt");
+}
+
+int main() {
+  decomposition();
+  queries();
+  modifiers();
+  concatenation();
+  comparison();
+  generation();
+  observers();
+
+  if (failures != uint64_t(0)) {
+    std::print("filesystem path: ");
+    std::print(failures);
+    std::print(" checks failed\n");
+    return 1;
+  }
+  std::print("filesystem path: all checks passed\n");
+  return 0;
+}

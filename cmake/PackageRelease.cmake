@@ -63,6 +63,7 @@ foreach(required_file
           "share/gti/parser/gti.so"
           "share/gti/stdlib/prelude.gti"
           "share/gti/stdlib/std/array.gti"
+          "share/gti/stdlib/std/filesystem.gti"
           "share/gti/stdlib/std/random.gti"
           "share/gti/stdlib/std/string.gti"
           "share/gti/stdlib/std/tcp.gti"
