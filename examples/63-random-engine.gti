@@ -1,0 +1,16 @@
+#include <std/random>
+
+int main() {
+  mut std::random_engine left{uint64_t(42)};
+  mut std::random_engine right{uint64_t(42)};
+
+  for (mut uint64_t draw = uint64_t(0); draw < uint64_t(8);
+       draw = draw + uint64_t(1)) {
+    if (left() != right()) {
+      return 1;
+    }
+  }
+
+  std::println("equal seeds produce equal random-engine sequences");
+  return 0;
+}

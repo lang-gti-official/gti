@@ -1,0 +1,34 @@
+using ErrorCallback = (int32_t, c_string) -> void;
+
+[[c_opaque]]
+struct NativeHandle;
+
+[[c_abi]]
+struct NativeSnapshot {
+  mut uint8_t buttons[4];
+  mut float axes[2];
+  ErrorCallback on_error;
+};
+
+// A binding can attach these declarations to a native library. They remain
+// unused here so the example has no external link dependency.
+extern "C" {
+  c_string native_version();
+  [[c_array(count)]] const NativeSnapshot* native_snapshots(uint32_t* count);
+  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
+  ErrorCallback native_set_error_callback(ErrorCallback callback);
+}
+
+void report_error(int32_t code, c_string message) {}
+
+int main() {
+  ErrorCallback callback = report_error;
+  c_string version = nullptr;
+
+  if (callback == nullptr || version != nullptr ||
+      sizeof(NativeSnapshot) == uint64_t(0)) {
+    return 1;
+  }
+  std::println("native C boundary types are explicit and bounded");
+  return 0;
+}

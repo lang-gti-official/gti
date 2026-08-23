@@ -127,11 +127,17 @@ description of the implementation.
 - [Read-only receiver diagnostic precision](plans/read-only-receiver-diagnostics.md)
   — records the implemented cause-specific assignment and mutable-reference
   diagnostics when a method lacks the trailing `mut` receiver qualifier
+- [Constructor-local type generics and constraints](plans/constructor-local-type-generics.md)
+  — proposes inferred constructor type parameters, bounded constructor
+  requirements, and the iterator/sentinel `std::string` construction client
 - [LSP evolution](plans/lsp-evolution.md)
 - [C interop target surface](plans/c-interop-target-surface.md) — the
   completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
   F1/F2/F3 and the same-thread `S-CALL-01` callback boundary
 - [Performance tooling](plans/performance-tooling.md)
+- [Compiler bug-finding and triage tooling](plans/compiler-bug-finding-and-triage.md)
+  — proposes replayable failure bundles, coverage-guided compiler fuzzers, a
+  lightweight reducer, and a bounded typed differential generator
 - [Conditional compilation and configuration flags](plans/conditional-compilation.md)
   — implemented `#define`/`#ifdef` flag axis over target conditionals, its
   design rationale, and LSP inactive-region rendering

@@ -173,8 +173,8 @@ shadow infrastructure:
    gate covers O0/O1/O3 and C++20/C++23; broader signatures, lifecycle failure,
    initialization, double failure, embedding, and callbacks remain separate
    work rather than implied completion of M-FAIL-01.
-7. **Final authority cutover — done (`M-BACK-02`).** All 2,601 reviewed source
-   body identities across 57 examples emit through `CppMirBodyEmitter` from
+7. **Final authority cutover — done (`M-BACK-02`).** All 2,867 reviewed source
+   body identities across 62 examples emit through `CppMirBodyEmitter` from
    verified optimized MIR and copied representation rows. Functions,
    constructors, destructors, lambdas, class initializers, module
    initialization, hosted startup, generic specializations, ownership,
@@ -892,8 +892,8 @@ analysis, HIR, MIR, and the backend.
 
 ### M-BACK-02: Complete MIR Body-Family Migration
 
-- **State/role:** complete for source executable bodies. All 2,601 reviewed
-  body identities across 57 examples use the verified-MIR production route.
+- **State/role:** complete for source executable bodies. All 2,867 reviewed
+  body identities across 62 examples use the verified-MIR production route.
   The named families below are historical migration stages, not current
   selectors or fallback authorities.
 - **Completed scalar-CFG scope:** `scalar-cfg-v1` admits fixed-width integers,
@@ -2687,7 +2687,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | `Q-DIAG-01` | ready | Add one generated diagnostic table with enum identity, default severity, group, and format contract; migrate one subsystem per bounded sub-slice while preserving current spans/messages unless intentionally changed. |
 | `Q-FAIL-01` | bounded hosted consumer and same-thread native-callback firewall complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, and callback termination adapter are implemented and focused tests pass. `scalar-failure-callgraph-v1` is the first generated hosted M-BACK-02 consumer. Double-failure cleanup, general initialization, embedding/task/foreign-thread-callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
 | `Q-DEPRECATION-01` | blocked | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
-| `Q-FUZZ-01` | blocked | After `C-MIG-02` stabilizes the owning seams, add lexer/parser/source-loader/formatter/protocol fuzz targets with bounded inputs, deterministic reproducers, and sanitizer jobs. |
+| `Q-FUZZ-01` | ready | `C-MIG-02` is complete. Implement the bounded [compiler bug-finding and triage tooling](compiler-bug-finding-and-triage.md) slices: replayable failure bundles, parser/formatter/whole-pipeline libFuzzer targets, a lightweight reducer, and a typed differential generator. Source-loader and protocol fuzzing remain later sub-slices after the first capture and harness seams are proven. |
 
 Examples, sanitizers, installed-library consumers, release packaging,
 deterministic output, and the local language audit are standing release
@@ -2730,7 +2730,7 @@ owned by the rows and domain plans above.
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
 | MIR transformations | first client required | bounded editor in `O-MIR-01`, not framework-first |
-| MIR-backed C++ emission | **ADR 016 complete** | 2,601/2,601 reviewed corpus bodies use the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
+| MIR-backed C++ emission | **ADR 016 complete** | 2,867/2,867 reviewed corpus bodies use the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
 | `LoopInfo`/incremental dominance | **measured defer** | stable editor, invalidation, concrete loop client |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |

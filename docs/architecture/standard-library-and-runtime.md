@@ -119,6 +119,13 @@ lossless `uint8_t(char)` code-unit extraction. Neither entry knows about
 and the scalar entry preserves byte zero rather than relying on C-string
 termination.
 
+`<std/random>` keeps seeded pseudo-random state and sequence policy in ordinary
+GTI source. Its `std::random_device` crosses the bounded runtime entry
+`gti_rt_random_bytes` only when it refills an internal fixed array; the caller
+supplies the checked buffer and count inside the lexical raw-pointer `unsafe`
+boundary. The runtime contributes host entropy and a status code, not an
+engine algorithm or public-library object representation.
+
 `@runtime` remains a closed compiler-validated compatibility surface. New host
 APIs should prefer ordinary GTI wrappers over the bounded native boundary when
 the existing ABI can express them. Neither mechanism turns a public GTI class

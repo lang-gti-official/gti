@@ -1,13 +1,33 @@
 #include <std/string>
 
 namespace std {
+  namespace detail {
+    struct filesystem_component {
+      mut size_t offset = 0;
+      mut size_t length = 0;
+    };
+
+    struct filesystem_components {
+      mut filesystem_component root_name{};
+      mut filesystem_component root_directory{};
+      mut filesystem_component root_path{};
+      mut filesystem_component relative_path{};
+      mut filesystem_component parent_path{};
+      mut filesystem_component filename{};
+      mut filesystem_component stem{};
+      mut filesystem_component extension{};
+    };
+  }
   namespace filesystem {
     class path {
     public:
       // using value_type = char;
 
       path() {}
-      path(std::string path) : internal_path(std::move(path)) {}
+      path(std::string path) : internal_path(path.clone()), initialised_with_path(std::move(path)) {
+        normalise();
+        set_filename_offsets();
+      }
 
       void clear() mut {
         internal_path.clear();
@@ -17,11 +37,81 @@ namespace std {
         return internal_path.empty();
       }
 
+      detail::storage_iterator<char> begin() {
+        return this.internal_path.begin();
+      }
+
+      detail::storage_sentinel end() {
+        return internal_path.end();
+      }
+
       bool operator!=(std::string_view other) {
         return internal_path != other;
       }
 
+      bool operator==(std::string_view other) {
+        return internal_path == other;
+      }
+
+      bool is_absolute() {
+#if target.os == "macos"
+        return internal_path[0] == '/';
+#elif target.os == "windows"
+        return false;
+#endif
+      }
+
+      bool is_relative() {
+        return !is_absolute();
+      }
+
       std::string filename() {
+        mut std::string ret = std::string("");
+        auto offset = fs_components.filename.offset;
+        auto length = fs_components.filename.length;
+
+        for (mut std::size_t index = offset; index < length; index++) {
+          ret.push_back(internal_path[index]);
+        }
+        return std::move(ret);
+      }
+
+      std::string extension() {
+        mut std::string ext = std::string("");
+        auto offset = fs_components.extension.offset;
+        auto length = fs_components.extension.length;
+
+        if (offset == 0 && length == 0) {
+          return std::string("");
+        }
+
+        for (mut std::size_t index = offset; index < length; index++) {
+          ext.push_back(internal_path[index]);
+        }
+
+        return std::move(ext);
+      }
+
+    private:
+      void normalise() mut {
+        mut std::size_t write = 0;
+        mut bool previous_slash = false;
+
+        for (mut std::size_t index = 0; index < internal_path.size(); index++) {
+          char c = internal_path[index];
+
+          if (c == preferred_separator && previous_slash) {
+            continue;
+          }
+
+          internal_path[write++] = c;
+          previous_slash = c == preferred_separator;
+        }
+
+        internal_path.resize(write);
+      }
+
+      void set_filename_offsets() mut {
         mut std::size_t last_separator = 0;
         for (mut std::size_t index = 0; index < internal_path.size(); index++) {
           if (internal_path[index] == preferred_separator) {
@@ -29,19 +119,11 @@ namespace std {
           }
         }
 
-        if (last_separator == internal_path.size()) {
-          return std::string("");
-        }
-
-        mut std::string name = std::string("");
-        for (mut std::size_t index = last_separator + 1; index < internal_path.size(); index++) {
-          name.push_back(internal_path[index]);
-        }
-
-        return std::move(name);
+        fs_components.filename.offset = last_separator;
+        fs_components.filename.length = internal_path.size();
       }
 
-      std::string extension() {
+      void set_extension_offsets() mut {
         mut std::size_t last_separator = 0;
         mut bool contains_dot = false;
 
@@ -52,40 +134,30 @@ namespace std {
           }
         }
 
+        mut auto offset = fs_components.extension.offset;
+        mut auto length = fs_components.extension.length;
+
         if (!contains_dot) {
-          return std::string("");
+          offset = 0;
+          length = 0;
+        } else {
+          offset = last_separator;
+          length = internal_path.size();
         }
 
-        mut std::string name = std::string("");
-        for (mut std::size_t index = last_separator; index < internal_path.size(); index++) {
-          name.push_back(internal_path[index]);
-        }
-
-        return std::move(name);
-      }
-    private:
-      // not possible until strings can be mutated
-      void normalise() {
-        // mut std::size_t write = 0;
-        // mut bool previous_slash = false;
-        // for (mut std::size_t index = 0; index < internal_path.size(); index++) {
-        //   char c = internal_path[index];
-        //
-        //   if (c == preferred_separator && previous_slash) {
-        //     continue;
-        //   }
-        //
-        //   internal_path.at(write++) = c;
-        //   previous_slash = (c == preferred_separator);
+        fs_components.extension.offset = offset;
+        fs_components.extension.length = length;
       }
 
-    private:
       mut std::string internal_path = std::string("");
-      mut std::string normalised_internal_path = std::string("");
-#if target.os == "apple"
-      constexpr char preferred_separator = '/';
+      mut std::string initialised_with_path = std::string("");
+
+      mut detail::filesystem_components fs_components{};
+      bool fs_components_dirty = true;
+#if target.os == "macos"
+      static constexpr char preferred_separator = '/';
 #elif target.os == "windows"
-      constexpr char preferred_separator = '\\';
+      static constexpr char preferred_separator = '\\';
 #endif
     };
   }

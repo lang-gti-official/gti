@@ -1,0 +1,37 @@
+/*
+ * Configuration flags are source-ordered, valueless feature switches. They
+ * select source before semantic analysis; they are not text macros.
+ */
+#define FAST_PATH
+
+#if defined(FAST_PATH)
+int selected_value() {
+  return 40;
+}
+#else
+int selected_value() {
+  return 0;
+}
+#endif
+
+#undef FAST_PATH
+
+#ifndef FAST_PATH
+int final_bias() {
+  return 2;
+}
+#else
+int final_bias() {
+  return 0;
+}
+#endif
+
+int main() {
+  int answer = selected_value() /* comments can sit inside expressions */ +
+               final_bias();
+  if (answer != 42) {
+    return 1;
+  }
+  std::println("configuration selected the active source");
+  return 0;
+}
