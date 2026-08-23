@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gti-reference",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "reference", "dev"],
+      "port": 3000
+    }
+  ]
+}
