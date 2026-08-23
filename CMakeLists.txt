@@ -810,6 +810,30 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/56-sum-types.gti"
     )
     add_test(
+      NAME expected_wrong_state_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/expected_wrong_state_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    add_test(
+      NAME returned_class_field_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/returned_class_field_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    add_test(
+      NAME reference_parameter_range_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_parameter_range_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    add_test(
+      NAME evaluation_order_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/evaluation_order_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    add_test(
       NAME default_parameters_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/default_parameter_runtime_test.py"
@@ -981,6 +1005,8 @@ if(BUILD_TESTING)
       set_tests_properties(
         driver_pipeline
         output_determinism defined_integer_runtime binary64_runtime sum_types_runtime
+        expected_wrong_state_runtime returned_class_field_runtime
+        reference_parameter_range_runtime evaluation_order_runtime
         native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle
         cli_workflow project_cli_workflow
         mir_backend_first_family_runtime failure_descriptor_backend_compile

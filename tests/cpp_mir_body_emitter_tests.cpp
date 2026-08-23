@@ -5541,6 +5541,209 @@ int32_t main() {
          "verified MIR");
 }
 
+void testFailureCapableClassReturnFieldRead() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-class-return-field-read.gti", R"(
+struct Packet {
+  int32_t value;
+  Packet(int32_t initial) : value(initial) {}
+};
+
+Packet make_packet() {
+  return Packet(7);
+}
+
+int32_t main() { return make_packet().value - 7; }
+)");
+  expect(frontend.canGenerateCode(),
+         "a field read from a returned class value should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the returned-field fixture should lower its entry function");
+  if (entry == frontend.mir.functionInstances().end()) {
+    return;
+  }
+
+  lang::MirValueId classResult = 0;
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.functionTarget && instruction.result &&
+          instruction.info.type.kind == lang::SemanticType::Class) {
+        classResult = *instruction.result;
+      }
+    }
+  }
+  expect(classResult != 0,
+         "the returned-field fixture should retain its class call result");
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "the returned class field read should enter transformed MIR "
+         "emission");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      emitter.emitFailureBodyText(address, "class-return-field-read-v0", 1)
+          .text;
+  const std::string slot = "__gti_mir_v_" + std::to_string(classResult);
+  expect(text.find("mir_lifetime_slot<") != std::string::npos &&
+             text.find(slot + ".construction_address()") != std::string::npos &&
+             text.find(slot + ".mark_constructed()") != std::string::npos &&
+             text.find(slot + ".get().") != std::string::npos,
+         "the returned class should be constructed into one representation "
+         "slot and projected from that slot");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(!artifact.contents.empty(),
+         "the complete backend should emit a returned-class field read");
+
+  lang::MirProgram duplicateProjectionUse = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      duplicateProjectionUse.functionInstances());
+  lang::MirFunctionInstance *mutatedEntry = nullptr;
+  for (lang::MirFunctionInstance &function : functions) {
+    if (function.id == entry->id) {
+      mutatedEntry = &function;
+    }
+  }
+  lang::MirPlace *projection = nullptr;
+  if (mutatedEntry != nullptr) {
+    for (lang::MirPlace &place : mutatedEntry->body.places) {
+      if (place.root == lang::MirPlaceRootKind::Value &&
+          place.value == classResult && !place.projections.empty()) {
+        projection = &place;
+      }
+    }
+  }
+  bool replacedReturn = false;
+  if (mutatedEntry != nullptr && projection != nullptr) {
+    for (lang::MirBlock &block : mutatedEntry->body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Return) {
+        continue;
+      }
+      block.terminator.value =
+          lang::MirOperand{.kind = lang::MirOperandKind::Copy,
+                           .place = projection->id,
+                           .type = projection->type};
+      replacedReturn = true;
+    }
+    (void)lang::rebuildMirValueUses(mutatedEntry->body);
+  }
+  expect(replacedReturn &&
+             lang::verifyMirProgram(duplicateProjectionUse).valid(),
+         "the returned-field near miss should remain structurally valid MIR");
+  if (replacedReturn &&
+      lang::verifyMirProgram(duplicateProjectionUse).valid()) {
+    const lang::CppMirBodyEmissionMap duplicateMap(
+        completeRows(duplicateProjectionUse));
+    const lang::CppMirBodyEmitter duplicateEmitter(duplicateProjectionUse,
+                                                   duplicateMap);
+    expect(!duplicateEmitter.supportsFailureBodyText(address),
+           "the class lifetime-slot selector should reject a projected place "
+           "with a second direct consumer");
+  }
+}
+
+void testReferenceParameterBorrowUsesReferentCarrier() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-reference-parameter-range.gti", R"(
+#include <std/vector>
+
+int32_t sum(std::vector<int32_t>& values) {
+  mut int32_t total = 0;
+  for (int32_t value : values) {
+    total += value;
+  }
+  return total;
+}
+
+int32_t main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  return sum(values) - 3;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "a range over a reference parameter should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirFunctionInstance *selected = nullptr;
+  const lang::MirLoan *borrow = nullptr;
+  const lang::MirPlace *source = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirLoan &candidate : function.body.loans) {
+      const lang::MirPlace *candidateSource =
+          function.body.findPlace(candidate.source);
+      if (candidateSource != nullptr &&
+          candidateSource->type.kind == lang::SemanticType::Reference &&
+          candidateSource->root == lang::MirPlaceRootKind::Binding &&
+          candidateSource->projections.empty()) {
+        selected = &function;
+        borrow = &candidate;
+        source = candidateSource;
+        break;
+      }
+    }
+    if (selected != nullptr) {
+      break;
+    }
+  }
+  expect(selected != nullptr && borrow != nullptr && source != nullptr,
+         "the range fixture should retain a borrow sourced by its reference "
+         "parameter carrier");
+  if (selected == nullptr || borrow == nullptr || source == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = selected->id};
+  expect(emitter.supportsFailureBodyText(address),
+         "the reference-parameter range should enter transformed MIR "
+         "emission");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      emitter.emitFailureBodyText(address, "reference-parameter-range-v0", 1)
+          .text;
+  const std::string assignment =
+      "__gti_mir_loan_" + std::to_string(borrow->id) + " = __gti_mir_p_" +
+      std::to_string(source->id) + ";";
+  expect(text.find(assignment) != std::string::npos &&
+             text.find("__gti_mir_loan_" + std::to_string(borrow->id) +
+                       " = &__gti_mir_p_" + std::to_string(source->id)) ==
+                 std::string::npos,
+         "borrowing a reference parameter should copy its referent pointer "
+         "carrier rather than take the carrier's address");
+}
+
 void testAdjacentClassCopyAssignmentFusion() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-class-copy-assignment.gti", R"(
@@ -5780,6 +5983,8 @@ int main() {
   testContextualSignedMinimumInFailureCaller();
   testSingleUseClassSsaRepresentationSlot();
   testFailureCapableClassReturnTemporaryReceiver();
+  testFailureCapableClassReturnFieldRead();
+  testReferenceParameterBorrowUsesReferentCarrier();
   testAdjacentClassCopyAssignmentFusion();
   testNativeCallbackFactoryBody();
   testDeducedCallableTemplateEmission();

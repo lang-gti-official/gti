@@ -140,6 +140,13 @@ materialization query. The corresponding MIR drop remains the only destruction
 authority on normal and defined-failure paths. The backend does not infer
 mutability from a C++ rvalue or reselect the native member overload.
 
+A cleanup-free class result with one exact value-rooted field projection and
+one scalar `Load` uses the same uninitialized lifetime-slot representation.
+The call constructs the slot, and the load spells through its verified field
+chain. Additional consumers, non-field projections, active cleanup, or
+incoherent type rows reject body emission rather than falling back to native
+temporary behavior.
+
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
 effects come from the lowered MIR and generated-item contracts. Generic source
