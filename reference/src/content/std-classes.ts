@@ -20,6 +20,8 @@ export interface MemberCategory {
 export interface ClassDoc {
   brief: string;
   description?: string[];
+  /** What a C++ reader must unlearn or relearn, one bullet each. */
+  cppDifferences?: string[];
   categories: MemberCategory[];
 }
 
@@ -30,6 +32,12 @@ export const classDocs: Record<string, ClassDoc> = {
     description: [
       "path stores its pathname exactly as supplied; construction never collapses separators or resolves dot elements. lexically_normal() is the explicit normalizer, matching the C++ rule.",
       "The class is move-only, like the rest of the GTI standard library; a duplicate is an explicit clone(). Comparison is element-wise, which is why \"/a/b\" and \"/a//b\" compare equal while \"/a/b/\" differs from both — a trailing separator contributes an empty final element.",
+    ],
+    cppDifferences: [
+      "Copying is never implicit: where C++ copies a path, GTI requires an explicit clone().",
+      "operator/= and operator+= do not exist; spell them append() and concat().",
+      "begin()/end() element iteration is not yet available.",
+      "There are no wide/UTF conversions or locale hooks; a pathname is bytes.",
     ],
     categories: [
       {
@@ -125,6 +133,12 @@ export const classDocs: Record<string, ClassDoc> = {
     description: [
       "Copying is explicit through clone(); passing a string transfers or borrows it. Indexed access is bounds-checked: out of range is a defined runtime failure, never undefined behaviour.",
     ],
+    cppDifferences: [
+      "Move-only: assignment and construction from another string transfer ownership; a duplicate is clone().",
+      "operator[] and at() are both bounds-checked; C++'s unchecked operator[] does not exist.",
+      "No c_str(): crossing a C boundary is an explicit, separate contract.",
+      "No small-string-optimization guarantees are documented; capacity behaviour is explicit.",
+    ],
     categories: [
       {
         title: "Construction",
@@ -180,6 +194,11 @@ export const classDocs: Record<string, ClassDoc> = {
       "A move-only dynamic array with checked indexing and explicit copying.",
     description: [
       "The element type must be movable; cloning the vector requires copyable elements. Indexed access is bounds-checked: out of range is a defined runtime failure.",
+    ],
+    cppDifferences: [
+      "Move-only: no implicit copy construction or copy assignment.",
+      "operator[] is bounds-checked; out of range is a defined runtime failure, not undefined behaviour.",
+      "Iteration is read-only today; mutable iteration awaits stronger owner-loan invalidation.",
     ],
     categories: [
       {

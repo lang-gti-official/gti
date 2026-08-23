@@ -5,6 +5,7 @@ import classes from "@/generated/classes.json";
 import examples from "@/generated/examples.json";
 import { classDocs } from "@/content/std-classes";
 import Code from "@/components/Code";
+import Breadcrumbs from "@/components/Breadcrumbs";
 
 // One page per public standard-library class, in the cppreference shape:
 // header line, description, then member tables grouped by category. Member
@@ -69,12 +70,13 @@ export default async function ClassPage({
 
   return (
     <article>
-      <p className="muted" style={{ fontSize: "0.8125rem", margin: 0 }}>
-        <Link href={`/std/${unit}/`}>
-          <code>&lt;std/{unit}&gt;</code>
-        </Link>{" "}
-        · class
-      </p>
+      <Breadcrumbs
+        trail={[
+          { label: "std", href: "/std/" },
+          { label: unit, href: `/std/${unit}/` },
+          { label: cls },
+        ]}
+      />
       <h1>
         <code>{entry.qualified}</code>
       </h1>
@@ -95,6 +97,17 @@ export default async function ClassPage({
           below are quoted from the shipped source and are current.
         </div>
       )}
+
+      {doc?.cppDifferences ? (
+        <aside className="cpp-differences">
+          <h2 id="differences-from-c">Differences from C++</h2>
+          <ul>
+            {doc.cppDifferences.map((difference) => (
+              <li key={difference.slice(0, 24)}>{difference}</li>
+            ))}
+          </ul>
+        </aside>
+      ) : null}
 
       {(doc?.categories ?? []).map((category) => (
         <section key={category.title}>

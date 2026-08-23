@@ -4,6 +4,7 @@ import diagnostics from "@/generated/diagnostics.json";
 import reproducers from "@/generated/diagnostic-examples.json";
 import { diagnosticProse } from "@/content/diagnostics";
 import Code from "@/components/Code";
+import Breadcrumbs from "@/components/Breadcrumbs";
 
 // One page per diagnostic code — every code the compiler can publish gets a
 // stable URL from day one, which is the contract that lets the compiler emit
@@ -44,6 +45,12 @@ export default async function DiagnosticPage({
 
   return (
     <article>
+      <Breadcrumbs
+        trail={[
+          { label: "diagnostics", href: "/diagnostics/" },
+          { label: code },
+        ]}
+      />
       <h1>
         <code>{diagnostic.code}</code>
         {prose ? <> — {prose.summary}</> : null}
