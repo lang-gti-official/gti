@@ -17945,6 +17945,61 @@ int main() { return 0; }
          "source identifiers must not collide with generated lifecycle names");
 }
 
+void testRecursiveClassLayouts() {
+  const std::string directSource = R"(
+struct Cell {
+  int value;
+  Cell inner;
+
+public:
+  Cell(int value, Cell cell) : value(value), inner(cell) {}
+};
+)";
+  const lang::FrontendResult direct =
+      lang::Frontend().analyze("recursive-class-layout.gti", directSource);
+  const lang::Diagnostic *directDiagnostic =
+      findDiagnosticByCode(direct.diagnostics, "GTI-S2082");
+  const std::size_t fieldType = directSource.find("Cell inner");
+  expect(!direct.canGenerateCode() && directDiagnostic != nullptr &&
+             directDiagnostic->primary.start == fieldType &&
+             directDiagnostic->primary.end == fieldType + 4 &&
+             countDiagnosticCode(direct.diagnostics, "GTI-S2082") == 1 &&
+             countDiagnosticCode(direct.diagnostics, "GTI-S2003") == 0 &&
+             hasRelatedDiagnostic(direct.diagnostics,
+                                  "recursively contained type") &&
+             hasDiagnosticHint(direct.diagnostics, "std::unique_ptr<Cell>"),
+         "ordinary classes should reject direct by-value recursion at the "
+         "field without cascading into constructor conversion diagnostics");
+
+  const lang::FrontendResult generic =
+      lang::Frontend().analyze("recursive-generic-layout.gti", R"(
+class Node<T> {
+  T value;
+  Node<T> next;
+
+public:
+  Node(T value, Node<T> next) : value(value), next(next) {}
+};
+)");
+  expect(!generic.canGenerateCode() &&
+             countDiagnosticCode(generic.diagnostics, "GTI-S2082") == 1 &&
+             countDiagnosticCode(generic.diagnostics, "GTI-S2003") == 0 &&
+             hasDiagnosticHint(generic.diagnostics, "std::unique_ptr<Node<T>>"),
+         "generic self-layout diagnostics should preserve the written owner "
+         "type in their indirection hint");
+
+  const lang::FrontendResult fixedArray =
+      lang::Frontend().analyze("recursive-array-layout.gti", R"(
+struct Branch {
+  Branch children[2];
+};
+)");
+  expect(!fixedArray.canGenerateCode() &&
+             countDiagnosticCode(fixedArray.diagnostics, "GTI-S2082") == 1 &&
+             hasDiagnostic(fixedArray.diagnostics, "through field 'children'"),
+         "fixed arrays should preserve their by-value recursive layout edge");
+}
+
 void testRestrictedMemberOperators() {
   const std::string source = R"(
 struct Payload {
@@ -28929,6 +28984,7 @@ int main(int argc, char **argv) {
   testInheritedGenericTargetInstances();
   testDirectBraceConstruction();
   testDestructorsAndActiveDropState();
+  testRecursiveClassLayouts();
   testRestrictedMemberOperators();
   testCallableMemberOperators();
   testConsumingCallableOperators();

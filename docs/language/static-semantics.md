@@ -411,6 +411,12 @@ identity, and return type exactly. Abstract values cannot be directly
 constructed. GTI does not permit object slicing. Polymorphic destruction is
 derived by the compiler from lifecycle metadata.
 
+An ordinary class or struct cannot contain itself transitively by value. Fixed
+arrays preserve the by-value edge, while references, raw pointers, and owning
+standard-library wrappers form indirection boundaries. `GTI-S2082` diagnoses
+the field that would make the containing object layout infinite before
+lifecycle inference or constructor-body analysis.
+
 Default, copy, and move construction; copy and move assignment; and destruction
 are generated from structural field traits. Declaring an ordinary constructor
 does not suppress otherwise valid generated lifecycle operations.

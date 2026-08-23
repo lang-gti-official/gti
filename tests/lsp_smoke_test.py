@@ -2545,6 +2545,80 @@ def test_current_language_diagnostics(executable, root):
         session.close()
 
 
+def test_recursive_layout_diagnostic(executable, root):
+    source = (
+        "struct Cell {\n"
+        "  int value;\n"
+        "  Cell inner;\n"
+        "public:\n"
+        "  Cell(int value, Cell cell) : value(value), inner(cell) {}\n"
+        "};\n"
+    )
+    path = root / "recursive-layout.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "dataSupport": True,
+                                "relatedInformation": True,
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and any(
+                diagnostic.get("code") == "GTI-S2082"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2082"
+        )
+        field = source.index("Cell inner")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, field),
+            "end": lsp_position(source, field + len("Cell")),
+        }, diagnostic
+        assert diagnostic["relatedInformation"], diagnostic
+        assert "std::unique_ptr<Cell>" in diagnostic["data"]["hints"][0]
+    finally:
+        session.close()
+
+
 def test_static_assertion_tooling(executable, root):
     source = (
         "int main() {\n"
@@ -5937,6 +6011,7 @@ def main():
     test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
+    test_recursive_layout_diagnostic(sys.argv[1], root)
     test_static_assertion_tooling(sys.argv[1], root)
     test_constructor_ownership_diagnostic(sys.argv[1], root)
     test_read_only_receiver_diagnostic(sys.argv[1], root)

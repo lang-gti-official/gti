@@ -10321,6 +10321,7 @@ enum class ClassSsaSlotConsumerKind {
   None,
   Return,
   CallArgument,
+  FieldRead,
 };
 
 struct ClassSsaLifetimeSlot {
@@ -10386,6 +10387,92 @@ classSsaLifetimeSlot(const MirProgram &program,
       classInstance->destructor || classInstance->requiresActiveCleanup ||
       !classInstance->traits.movable) {
     return {};
+  }
+
+  // A cleanup-free class result may be observed through one exact field
+  // projection before the full expression ends. The transformed callee still
+  // needs uninitialized representation storage; the projected place is only
+  // an lvalue view over that slot and owns no independent lifetime.
+  const std::vector<MirValueUse> allUses = body.usesOf(valueId);
+  if (allUses.size() == 1 &&
+      allUses.front().kind == MirValueUseKind::PlaceRoot &&
+      allUses.front().place != 0 &&
+      !std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                   [&](const MirDropObligation &drop) {
+                     return drop.generatedValue == valueId;
+                   })) {
+    const MirPlace *projection = body.findPlace(allUses.front().place);
+    const bool exactProjection =
+        projection != nullptr && projection->root == MirPlaceRootKind::Value &&
+        projection->value == valueId && !projection->projections.empty() &&
+        std::all_of(projection->projections.begin(),
+                    projection->projections.end(),
+                    [](const MirPlaceProjection &item) {
+                      return item.kind == MirProjectionKind::Field;
+                    }) &&
+        exactFieldProjectionRows(program, representations, value->info.type,
+                                 projection->projections, 0, projection->type);
+    const MirInstruction *consumer = nullptr;
+    if (exactProjection) {
+      if (std::any_of(body.loans.begin(), body.loans.end(),
+                      [&](const MirLoan &loan) {
+                        return loan.source == projection->id;
+                      }) ||
+          std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                      [&](const MirDropObligation &drop) {
+                        return drop.place == projection->id;
+                      })) {
+        return {};
+      }
+      for (const MirBlock &block : body.blocks) {
+        if (block.terminator.value &&
+            block.terminator.value->place == projection->id) {
+          return {};
+        }
+        for (const MirInstruction &instruction : block.instructions) {
+          const bool destinationUse =
+              instruction.destination &&
+              *instruction.destination == projection->id;
+          const bool successDestinationUse =
+              instruction.successResultDestination &&
+              *instruction.successResultDestination == projection->id;
+          const bool receiverUse =
+              instruction.receiver &&
+              instruction.receiver->place == projection->id;
+          const std::size_t operandUses =
+              static_cast<std::size_t>(std::count_if(
+                  instruction.operands.begin(), instruction.operands.end(),
+                  [&](const MirOperand &operand) {
+                    return operand.place == projection->id;
+                  }));
+          if (!destinationUse && !successDestinationUse && !receiverUse &&
+              operandUses == 0) {
+            continue;
+          }
+          if (consumer != nullptr || destinationUse || successDestinationUse ||
+              receiverUse || operandUses != 1 ||
+              instruction.kind != MirInstructionKind::Load ||
+              instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Copy ||
+              instruction.operands.front().place != projection->id ||
+              !instruction.result || instruction.receiver ||
+              instruction.destination ||
+              instruction.info.type != projection->type ||
+              !instruction.localFailureSites.empty() ||
+              !instruction.definedFailure.empty() ||
+              !instruction.lifecycle.empty()) {
+            return {};
+          }
+          consumer = &instruction;
+        }
+      }
+    }
+    if (consumer != nullptr) {
+      return {.value = value,
+              .producer = producer,
+              .consumer = consumer,
+              .consumerKind = ClassSsaSlotConsumerKind::FieldRead};
+    }
   }
 
   // A value-root place or drop obligation would make this semantic storage;
@@ -11051,6 +11138,15 @@ public:
       if (copyStageForTemporary(facts.body, place) != nullptr) {
         continue;
       }
+      if (place.root == MirPlaceRootKind::Value) {
+        const ClassSsaLifetimeSlot slot = classSsaLifetimeSlot(
+            program, representations, facts.body, place.value);
+        if (slot.consumerKind == ClassSsaSlotConsumerKind::FieldRead &&
+            slot.consumer != nullptr && slot.consumer->operands.size() == 1 &&
+            slot.consumer->operands.front().place == place.id) {
+          continue;
+        }
+      }
       if (place.root == MirPlaceRootKind::Value &&
           expectedClassResultDestinationSlot(program, facts.body,
                                              place.value) != nullptr) {
@@ -11657,7 +11753,15 @@ public:
                << " *__gti_mir_loan_" << loan.id << "{};\n";
         continue;
       }
-      output << typeSpelling(source->type) << " *__gti_mir_loan_" << loan.id
+      const SemanticType *loanedType = &source->type;
+      if (source->type.kind == SemanticType::Reference) {
+        if (source->type.arguments.size() != 1) {
+          throw std::logic_error(
+              "verified MIR reference loan lost its referent type");
+        }
+        loanedType = &source->type.arguments.front();
+      }
+      output << typeSpelling(*loanedType) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
     }
     if (failureForm) {
@@ -13070,6 +13174,16 @@ private:
         output << ", ";
         emitOperand(read->operands.back());
         output << ");\n";
+        return;
+      }
+      if (source->type.kind == SemanticType::Reference &&
+          source->root == MirPlaceRootKind::Binding &&
+          source->projections.empty()) {
+        // A reference binding is represented by a pointer carrier. Borrowing
+        // its referent copies that carrier; taking the carrier's address would
+        // create a pointer-to-pointer and change the borrow target.
+        output << "__gti_mir_loan_" << loan->id << " = __gti_mir_p_"
+               << source->id << ";\n";
         return;
       }
       output << "__gti_mir_loan_" << loan->id << " = &";
@@ -16861,6 +16975,18 @@ private:
       output << "(*__gti_mir_ref_v_" << place.value << ')';
       return;
     }
+    if (place.root == MirPlaceRootKind::Value) {
+      const ClassSsaLifetimeSlot slot = classSsaLifetimeSlot(
+          program, representations, facts.body, place.value);
+      if (slot.consumerKind == ClassSsaSlotConsumerKind::FieldRead &&
+          slot.consumer != nullptr && slot.value != nullptr &&
+          slot.consumer->operands.size() == 1 &&
+          slot.consumer->operands.front().place == place.id) {
+        output << "__gti_mir_v_" << place.value << ".get()";
+        emitFieldProjectionChain(slot.value->info.type, place.projections, 0);
+        return;
+      }
+    }
     if (const std::optional<ArrayElementAccess> access =
             arrayElementAccess(facts.body, place)) {
       emitArrayElement(facts, *access);
@@ -19224,6 +19350,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // consuming call spells the source place and C++ performs the copy
       // at the call boundary.
       continue;
+    }
+    if (place.root == MirPlaceRootKind::Value) {
+      const ClassSsaLifetimeSlot slot =
+          classSsaLifetimeSlot(program_, representations_, body, place.value);
+      if (slot.consumerKind == ClassSsaSlotConsumerKind::FieldRead &&
+          slot.consumer != nullptr && slot.consumer->operands.size() == 1 &&
+          slot.consumer->operands.front().place == place.id) {
+        continue;
+      }
     }
     if (place.root == MirPlaceRootKind::Value &&
         expectedClassResultDestinationSlot(program_, body, place.value) !=

@@ -51,6 +51,9 @@ types at ABI boundaries, pointer values inside lowered bodies:
    reborrow of a parent loan copies the parent's pointer (narrowed by the
    child's projection path). Access mode maps to constness exactly:
    read-only loans bind `const T *`, mutable loans `T *`.
+   A binding whose semantic type is already a reference is the ABI pointer
+   carrier for its referent, so a body-local borrow copies that carrier rather
+   than taking the carrier's address.
 
 3. **`EndBorrow` erases to a boundary comment.** The verifier has already
    proven every endpoint; emitting runtime bookkeeping would contradict
