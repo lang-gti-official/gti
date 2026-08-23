@@ -1740,7 +1740,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   void emitLoweredParameter(const LoweredParameter &parameter,
                             std::string_view name) {
     const bool reference = parameter.type.kind == SemanticType::Reference;
-    const bool rawPointer = parameter.type.kind == SemanticType::RawPointer;
+    const bool pointerRepresentation =
+        parameter.type.kind == SemanticType::RawPointer ||
+        parameter.type.kind == SemanticType::CString;
     const LoweredSymbol *symbol =
         parameter.symbol == 0 ? nullptr
                               : loweredProgram.findSymbol(parameter.symbol);
@@ -1752,7 +1754,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
     if (!reference && parameter.mutability == Mutability::Immutable &&
-        !parameter.pack && !moveOnly && !rawPointer &&
+        !parameter.pack && !moveOnly && !pointerRepresentation &&
         !parameter.explicitlyMoved) {
       output << "const ";
     }
@@ -3846,7 +3848,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           self(self, found->second);
         }
       }
+      const std::size_t firstDeferredMember = loweredDeferredMembers.size();
+      const std::size_t firstDeferredLifecycleClass =
+          loweredDeferredLifecycleClasses.size();
       emitLoweredScheduledTypeDefinition(row);
+      emitLoweredMemberSpecializationDeclarations(firstDeferredMember,
+                                                  firstDeferredLifecycleClass);
       state[index] = 2;
     };
     for (std::size_t index = 0; index < classes.size(); ++index) {
@@ -4252,8 +4259,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     loweredDeferredStaticFields.clear();
   }
 
-  void emitLoweredMemberSpecializationDeclarations() {
-    for (const LoweredDeclaration *row : loweredDeferredMembers) {
+  void emitLoweredMemberSpecializationDeclarations(
+      std::size_t firstDeferredMember,
+      std::size_t firstDeferredLifecycleClass) {
+    for (std::size_t index = firstDeferredMember;
+         index < loweredDeferredMembers.size(); ++index) {
+      const LoweredDeclaration *row = loweredDeferredMembers[index];
       const LoweredDeclaration *owner = loweredClassRow(row->ownerClass);
       if (owner == nullptr ||
           (!loweredOwnerIsGeneric(*owner) && !row->generic)) {
@@ -4349,7 +4360,10 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       emitLoweredNamespaceClose(namespaceCount);
     }
 
-    for (const LoweredDeclaration *classRow : loweredDeferredLifecycleClasses) {
+    for (std::size_t index = firstDeferredLifecycleClass;
+         index < loweredDeferredLifecycleClasses.size(); ++index) {
+      const LoweredDeclaration *classRow =
+          loweredDeferredLifecycleClasses[index];
       const auto *declaration =
           std::get_if<LoweredClassDeclaration>(&classRow->payload);
       if (declaration == nullptr || !loweredOwnerIsGeneric(*classRow)) {
@@ -4969,7 +4983,6 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     emitNativeCallbackAdapterDeclarations();
     emitLoweredGlobalStorageForwardDeclarations(0);
     emitLoweredTypeDefinitions();
-    emitLoweredMemberSpecializationDeclarations();
     emitLoweredSourceDeclarations(0);
     emitLoweredStaticFieldDefinitions();
     emitLoweredMemberDefinitions();

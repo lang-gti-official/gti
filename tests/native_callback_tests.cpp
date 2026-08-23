@@ -150,6 +150,11 @@ int main() {
                  std::string::npos,
          "the C++ backend should emit typed noexcept adapters that contain "
          "both defined failure and native exceptions without pointer casts");
+  expect(cpp.find("_resolve_callback(void* instance, const char* name);") !=
+                 std::string::npos &&
+             cpp.find("const const char*") == std::string::npos,
+         "c_string parameters should retain their pointee constness without "
+         "adding a duplicate top-level const qualifier");
   expect(
       header.find("typedef int32_t (*Unary)(int32_t);") != std::string::npos &&
           header.find("typedef Unary (*Factory)(void);") != std::string::npos &&

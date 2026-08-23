@@ -987,7 +987,7 @@ if(BUILD_TESTING)
         mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
         mir_backend_class_default_cleanup_runtime
         mir_backend_owned_lifecycle_runtime
-        mir_class_value_lifecycle_runtime
+        mir_class_value_lifecycle_runtime mutable_temporary_receiver_runtime
         mir_backend_scalar_failure_callgraph_runtime
         random_engine_runtime default_parameters_runtime
         PROPERTIES ENVIRONMENT
