@@ -1,0 +1,16 @@
+concept signed_value<T> =
+    std::signed_numeric<T> && std::copyable<T>;
+
+T absolute<signed_value T>(T value) {
+  if (value < T(0)) {
+    return T(-value);
+  }
+  return value;
+}
+
+int main() {
+  if (absolute(-4) == 4) {
+    return 0;
+  }
+  return 1;
+}

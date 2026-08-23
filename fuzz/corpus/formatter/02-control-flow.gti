@@ -1,0 +1,27 @@
+// `mut` opts a binding into assignment and increment/decrement operations.
+int main() {
+  mut int total = 0;
+
+  // A for loop has an initializer, condition, and increment expression.
+  for (mut int number = 0; number < 8; number++) {
+    if (number == 3) {
+      continue;
+    }
+    if (number == 7) {
+      break;
+    }
+    total += number;
+  }
+
+  // A while loop is useful when the update belongs in the body.
+  while (total < 20) {
+    total++;
+  }
+
+  if (total == 20) {
+    std::println("loops and branches completed");
+    return 0;
+  } else {
+    return 1;
+  }
+}
