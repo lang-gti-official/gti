@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import diagnostics from "@/generated/diagnostics.json";
 import { diagnosticProse } from "@/content/diagnostics";
+import { Page, Descriptions } from "@/components/Cpp";
 
-export const metadata: Metadata = {
-  title: "Diagnostics",
-  description: "Every stable GTI diagnostic code.",
-};
+export const metadata: Metadata = { title: "Diagnostics" };
 
+// cppreference.com/w/cpp/error shape: description tables grouped by family.
+// All codes the compiler can publish are listed — extracted from src/ at
+// build time — so an undocumented code is visible rather than invisible.
 export default function DiagnosticsIndex() {
   const families = new Map<string, typeof diagnostics.diagnostics>();
   for (const diagnostic of diagnostics.diagnostics) {
@@ -17,53 +17,35 @@ export default function DiagnosticsIndex() {
   }
 
   return (
-    <>
-      <h1>Diagnostics</h1>
-      <p className="lede">
-        GTI diagnostic codes are stable identifiers. This census is extracted
-        from the compiler source at build time — all{" "}
-        <strong>{diagnostics.count}</strong> codes the implementation can
-        publish are listed, so an undocumented diagnostic is visible here
-        rather than invisible.
+    <Page title="Diagnostics">
+      <p>
+        GTI diagnostic codes are stable identifiers of the form{" "}
+        <code>GTI-XNNNN</code>, where the letter names the compiler phase. All{" "}
+        {diagnostics.count} codes the current compiler can publish are listed;
+        each has a page, which is the target the compiler can cite in its
+        output.
       </p>
-
       {[...families.entries()].map(([family, codes]) => (
-        <section key={family}>
-          <h2 id={family.toLowerCase().replace(/[^a-z]+/g, "-")}>
-            {family}{" "}
-            <span className="muted" style={{ fontWeight: 400 }}>
-              ({codes.length})
-            </span>
-          </h2>
-          <table className="reference-table">
-            <tbody>
-              {codes.map((diagnostic) => (
-                <tr key={diagnostic.code} id={diagnostic.code}>
-                  <td style={{ width: "9rem" }}>
-                    <Link href={`/diagnostics/${diagnostic.code}/`}>
-                      <code>{diagnostic.code}</code>
-                    </Link>
-                  </td>
-                  <td className="muted">
-                    {diagnosticProse[diagnostic.code] ? (
-                      diagnosticProse[diagnostic.code].summary
-                    ) : (
-                      <span className="badge">to be documented</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+        <div key={family}>
+          <h3 id={family.toLowerCase().replace(/[^a-z]+/g, "-")}>{family}</h3>
+          <Descriptions
+            groups={[
+              {
+                rows: codes.map((diagnostic) => ({
+                  name: diagnostic.code,
+                  href: `/diagnostics/${diagnostic.code}/`,
+                  description:
+                    diagnosticProse[diagnostic.code]?.summary ??
+                    "not yet described",
+                  kind: diagnosticProse[diagnostic.code]
+                    ? "diagnostic"
+                    : "diagnostic, undocumented",
+                })),
+              },
+            ]}
+          />
+        </div>
       ))}
-
-      <div className="stub-notice">
-        Every code has a stable page — the target of the{" "}
-        <code>error[GTI-…]: see &lt;url&gt;</code> link the compiler will
-        emit. Documented pages carry the rule, its rationale, and a
-        reproducer verified at build time to fail with exactly that code.
-      </div>
-    </>
+    </Page>
   );
 }
