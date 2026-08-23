@@ -339,6 +339,7 @@ for (const entry of readdirSync(stdlibDirectory).sort()) {
         current = {
           name: classMatch[1],
           qualified: [...namespaces.map((n) => n.name), classMatch[1]].join("::"),
+          declaration: line.replace(/\s*\{$/, ";"),
           hidden,
           members: [],
           relativeDepth: 1,
@@ -366,6 +367,7 @@ for (const entry of readdirSync(stdlibDirectory).sort()) {
             unit: unitName,
             name: current.name,
             qualified: current.qualified,
+            declaration: current.declaration,
             members: current.members,
           });
         }
@@ -620,3 +622,33 @@ const sections = readdirSync(languageDirectory)
   });
 
 write("language.json", { generatedFrom: "docs/language", sections });
+
+// --- Search index ---------------------------------------------------------------
+
+const searchIndex = [];
+for (const section of sections) {
+  searchIndex.push({ title: section.title, href: `/language/${section.slug}/`, kind: "language" });
+}
+for (const unit of units) {
+  searchIndex.push({ title: `<std/${unit.name}>`, href: `/std/${unit.name}/`, kind: "header" });
+}
+for (const entry of classes) {
+  searchIndex.push({ title: entry.qualified, href: `/std/${entry.unit}/${entry.name}/`, kind: "class" });
+  for (const memberName of new Set(entry.members.map((m) => m.name))) {
+    searchIndex.push({
+      title: `${entry.qualified}::${memberName}`,
+      href: `/std/${entry.unit}/${entry.name}/`,
+      anchor: memberName,
+      kind: "member",
+    });
+  }
+}
+for (const unit of unitFunctions) {
+  for (const functionName of new Set(unit.functions.map((f) => f.name))) {
+    searchIndex.push({ title: `std::${functionName}`, href: `/std/${unit.unit}/${functionName}/`, kind: "function" });
+  }
+}
+for (const diagnostic of diagnostics) {
+  searchIndex.push({ title: diagnostic.code, href: `/diagnostics/${diagnostic.code}/`, kind: "diagnostic" });
+}
+write("search-index.json", { entries: searchIndex });
