@@ -1922,12 +1922,83 @@ private:
           body);
     }
     if (const auto *rangeFor = dynamic_cast<const RangeForStmt *>(statement)) {
-      return appendStatement(
-          {.kind = HirStatementKind::RangeFor,
-           .source = statement,
-           .body = lowerStatement(rangeFor->lowered().get(), model,
-                                  classArguments, classValueArguments, body)},
-          body);
+      const std::optional<HirStatementId> loweredBody =
+          lowerStatement(rangeFor->lowered().get(), model, classArguments,
+                         classValueArguments, body);
+      const ResolvedRangeIterationInfo *resolved =
+          model.findRangeIteration(*rangeFor);
+      const auto bindingFor = [&](const VariableDecl *declaration) {
+        const auto found =
+            std::find_if(body.bindings.begin(), body.bindings.end(),
+                         [&](const HirBinding &binding) {
+                           return binding.variable == declaration;
+                         });
+        return found == body.bindings.end() ? HirBindingId{0} : found->id;
+      };
+      const auto valueFor = [&](const ExprPtr &expression) {
+        if (!expression) {
+          return HirValueId{0};
+        }
+        const auto found = std::find_if(
+            body.values.begin(), body.values.end(), [&](const HirValue &value) {
+              return value.source == expression.get();
+            });
+        return found == body.values.end() ? HirValueId{0} : found->id;
+      };
+      const auto statementFor = [&](const Stmt *source) {
+        const auto found =
+            std::find_if(body.statements.begin(), body.statements.end(),
+                         [&](const HirStatement &candidate) {
+                           return candidate.source == source;
+                         });
+        return found == body.statements.end() ? HirStatementId{0} : found->id;
+      };
+      HirRangeIteration range;
+      if (resolved != nullptr) {
+        range.strategy = resolved->strategy;
+        range.rangeType = resolved->rangeType;
+        range.iteratorType = resolved->iteratorType;
+        range.sentinelType = resolved->sentinelType;
+        range.elementType = resolved->elementType;
+        range.elementAccess = resolved->elementAccess;
+        range.rangeLoan = resolved->rangeLoan;
+        range.elementLoan = resolved->elementLoan;
+        range.beginFunction = resolved->beginFunction;
+        range.endFunction = resolved->endFunction;
+        range.compareFunction = resolved->compareFunction;
+        range.dereferenceFunction = resolved->dereferenceFunction;
+        range.incrementFunction = resolved->incrementFunction;
+        range.arrayLength = resolved->arrayLength;
+        range.ownsRangeTemporary = resolved->ownsRangeTemporary;
+      }
+      range.owner = bindingFor(rangeFor->ownerBinding());
+      range.rangeCarrier = bindingFor(rangeFor->rangeBinding());
+      range.iterator = bindingFor(rangeFor->iteratorBinding());
+      range.sentinel = bindingFor(rangeFor->sentinelBinding());
+      range.element = bindingFor(rangeFor->elementBinding());
+      range.source = rangeFor->ownerBinding() == nullptr
+                         ? 0
+                         : valueFor(rangeFor->ownerBinding()->initializer());
+      range.begin = rangeFor->iteratorBinding() == nullptr
+                        ? 0
+                        : valueFor(rangeFor->iteratorBinding()->initializer());
+      range.end = rangeFor->sentinelBinding() == nullptr
+                      ? 0
+                      : valueFor(rangeFor->sentinelBinding()->initializer());
+      range.elementAccessValue =
+          rangeFor->elementBinding() == nullptr
+              ? 0
+              : valueFor(rangeFor->elementBinding()->initializer());
+      range.coreLoop = statementFor(rangeFor->coreLoop());
+      if (rangeFor->coreLoop() != nullptr) {
+        range.comparison = valueFor(rangeFor->coreLoop()->condition());
+        range.increment = valueFor(rangeFor->coreLoop()->increment());
+      }
+      return appendStatement({.kind = HirStatementKind::RangeFor,
+                              .source = statement,
+                              .body = loweredBody,
+                              .rangeIteration = std::move(range)},
+                             body);
     }
     if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
       if (ifStatement->isConstexpr()) {
@@ -3025,9 +3096,25 @@ private:
         lowerOperand(set->value());
       }
     } else if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
-      kind = HirValueKind::Unary;
-      operation = unary->oper().kind;
-      lowerOperand(unary->right());
+      const SemanticType *rangeType =
+          unary->rangeObject() ? model.findType(*unary->rangeObject())
+                               : nullptr;
+      const SemanticType *concreteRangeType = rangeType;
+      if (concreteRangeType != nullptr &&
+          concreteRangeType->kind == SemanticType::Reference &&
+          concreteRangeType->arguments.size() == 1) {
+        concreteRangeType = &concreteRangeType->arguments.front();
+      }
+      if (concreteRangeType != nullptr &&
+          concreteRangeType->kind == SemanticType::Array) {
+        kind = HirValueKind::Index;
+        lowerOperand(unary->rangeObject());
+        lowerOperand(unary->right());
+      } else {
+        kind = HirValueKind::Unary;
+        operation = unary->oper().kind;
+        lowerOperand(unary->right());
+      }
     } else if (const auto *unexpected = dynamic_cast<const Unexpected *>(raw)) {
       kind = HirValueKind::Unexpected;
       lowerOperand(unexpected->error());

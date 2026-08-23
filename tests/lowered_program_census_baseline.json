@@ -867,11 +867,25 @@
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0
       }
+    },
+    "64-restricted-arithmetic-operators.gti": {
+      "declarations": 133,
+      "bodies": 39,
+      "generated_items": 2,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 1,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 0
+      }
     }
   },
   "totals": {
-    "declarations": 9166,
-    "bodies": 2923,
-    "generated_items": 353
+    "declarations": 9299,
+    "bodies": 2962,
+    "generated_items": 355
   }
 }

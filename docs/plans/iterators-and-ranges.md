@@ -5,8 +5,8 @@
 
 Status: implementation proposal
 
-The prerequisite order for the remaining fixed-array, temporary-range,
-element-loan, and mutable-iteration work is maintained in
+The prerequisite order for the remaining mutable-iteration, invalidation, and
+dynamic-view work is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below
 remain the detailed range design and include already implemented foundations.
 
@@ -27,10 +27,11 @@ defines the inferred iterator/sentinel constructor surface needed to construct
 an owning `std::string` from this protocol. It does not add a complete-range
 object constructor or change the range protocol described here.
 
-Implementation progress includes prefix `operator++`, range-for
-syntax, the nominal member protocol, source-mapped generated core operations,
-`RangeFor` HIR provenance, normal MIR loop control flow, and one confined
-read-only stored-reference carrier for owner-tied iterators. The first
+Implementation progress includes prefix `operator++`, range-for syntax, the
+nominal member protocol, fixed-array indexed traversal, owned temporary ranges,
+source-mapped generated core operations, exact semantic/HIR/MIR range and
+read-only element-loan plans, exit/failure cleanup, and one confined read-only
+stored-reference carrier for owner-tied iterators. The first
 source-defined `std::vector<T>` slice uses that carrier for read-only iteration
 without exposing a pointer. One pre-existing unshared retained carrier can now
 remain active over ordinary loop backedges and end at the unified loop exit.
@@ -661,9 +662,10 @@ protocol.
 
 This is a container milestone checkpoint rather than completion of the range
 proposal. Indexed insertion and erasure use checked private slot shifts, while
-mutable iteration, precise structural-invalidation effects, nested readers,
-owned temporary ranges, and dedicated range/element loan scopes remain
-required before vector can claim the full iteration contract below.
+mutable iteration, precise structural-invalidation effects, broader nested
+stored readers, and dynamic views remain required before vector can claim the
+full iteration contract below. Range statements themselves now carry the
+dedicated read-only range/element loan scopes and may own a temporary vector.
 
 `std::array<T, N>`, `std::string`, and `std::string_view` should adopt the same
 protocol where their ownership permits it. Mutable iterators are unavailable

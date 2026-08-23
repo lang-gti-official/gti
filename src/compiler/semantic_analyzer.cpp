@@ -1361,7 +1361,125 @@ public:
   }
 
   void visitRangeForStmt(const RangeForStmt &stmt) override {
+    if (stmt.bindingMutability() == Mutability::Mutable &&
+        stmt.bindingType().reference) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2083", DiagnosticPhase::Semantics, stmt.bindingName(),
+          "Mutable element loans are not available in read-only range "
+          "iteration.");
+      diagnostic.hints.emplace_back(
+          "Use a read-only 'T&' or 'auto&' element binding, or copy each "
+          "element into a mutable by-value binding; mutable range loans are "
+          "reserved for L-RANGE-02.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
     analyze(stmt.lowered());
+
+    const BindingInfo *owner =
+        stmt.ownerBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.ownerBinding());
+    const BindingInfo *range =
+        stmt.rangeBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.rangeBinding());
+    const BindingInfo *iterator =
+        stmt.iteratorBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.iteratorBinding());
+    const BindingInfo *sentinel =
+        stmt.sentinelBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.sentinelBinding());
+    const BindingInfo *element =
+        stmt.elementBinding() == nullptr
+            ? nullptr
+            : semanticModel.findBinding(*stmt.elementBinding());
+
+    SemanticType rangeType =
+        range == nullptr ? SemanticType::Unknown : range->type;
+    if (rangeType.kind == SemanticType::Reference &&
+        rangeType.arguments.size() == 1) {
+      SemanticType referent = rangeType.arguments.front();
+      rangeType = std::move(referent);
+    }
+    if (rangeType != SemanticType::Unknown &&
+        rangeType.kind != SemanticType::Array &&
+        rangeType.kind != SemanticType::Class) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
+          "Read-only range iteration requires a fixed array or a class "
+          "implementing the exact structural iterator protocol; found '" +
+              typeSpelling(rangeType) + "'.");
+      diagnostic.hints.emplace_back(
+          "Provide exact read-only begin()/end(), comparison, dereference, "
+          "and prefix-increment operations, or iterate a fixed array.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+
+    const auto selectedCall = [&](const ExprPtr &expression) -> FunctionId {
+      const auto *call = dynamic_cast<const Call *>(expression.get());
+      const ResolvedCallInfo *resolved =
+          call == nullptr ? nullptr : semanticModel.findCall(*call);
+      return resolved == nullptr ? 0 : resolved->function;
+    };
+    const auto selectedOperator = [&](const ExprPtr &expression) -> FunctionId {
+      const ResolvedOperatorInfo *resolved =
+          expression ? semanticModel.findOperator(*expression) : nullptr;
+      return resolved == nullptr ? 0 : resolved->function;
+    };
+
+    SemanticType elementType =
+        element == nullptr ? SemanticType::Unknown : element->type;
+    AccessMode elementAccess = AccessMode::ReadOnly;
+    if (elementType.kind == SemanticType::Reference &&
+        elementType.arguments.size() == 1) {
+      elementAccess = elementType.referenceAccess;
+      SemanticType referent = elementType.arguments.front();
+      elementType = std::move(referent);
+    }
+    const ForStmt *core = stmt.coreLoop();
+    semanticModel.record(
+        stmt,
+        {.strategy = rangeType.kind == SemanticType::Array
+                         ? RangeIterationStrategy::FixedArray
+                         : RangeIterationStrategy::Structural,
+         .rangeType = rangeType,
+         .iteratorType =
+             iterator == nullptr ? SemanticType::Unknown : iterator->type,
+         .sentinelType =
+             sentinel == nullptr ? SemanticType::Unknown : sentinel->type,
+         .elementType = elementType,
+         .elementAccess = elementAccess,
+         .owner = owner == nullptr ? 0 : owner->symbol,
+         .rangeCarrier = range == nullptr ? 0 : range->symbol,
+         .iterator = iterator == nullptr ? 0 : iterator->symbol,
+         .sentinel = sentinel == nullptr ? 0 : sentinel->symbol,
+         .element = element == nullptr ? 0 : element->symbol,
+         .rangeLoan = range == nullptr ? 0 : range->retainedLoan,
+         .elementLoan = element == nullptr ? 0 : element->retainedLoan,
+         .beginFunction =
+             stmt.iteratorBinding() == nullptr
+                 ? 0
+                 : selectedCall(stmt.iteratorBinding()->initializer()),
+         .endFunction =
+             stmt.sentinelBinding() == nullptr
+                 ? 0
+                 : selectedCall(stmt.sentinelBinding()->initializer()),
+         .compareFunction =
+             core == nullptr ? 0 : selectedOperator(core->condition()),
+         .dereferenceFunction =
+             stmt.elementBinding() == nullptr
+                 ? 0
+                 : selectedOperator(stmt.elementBinding()->initializer()),
+         .incrementFunction =
+             core == nullptr ? 0 : selectedOperator(core->increment()),
+         .arrayLength = rangeType.kind == SemanticType::Array &&
+                                rangeType.arrayLengthParameterId == 0
+                            ? rangeType.arrayLength
+                            : 0,
+         .ownsRangeTemporary =
+             owner != nullptr && owner->type.kind != SemanticType::Reference});
   }
 
   void visitFunctionDecl(const FunctionDecl &stmt) override {
@@ -4203,7 +4321,10 @@ public:
       return;
     }
     if (objectType.kind == SemanticType::Array) {
-      if (expr.name().lexeme == "size") {
+      const bool generatedRangeEndpoint =
+          expr.name().generated &&
+          (expr.name().lexeme == "begin" || expr.name().lexeme == "end");
+      if (expr.name().lexeme == "size" || generatedRangeEndpoint) {
         if (!analyzingCallCallee) {
           report(expr.name(),
                  "Function names must be called; function values are not "
@@ -5806,6 +5927,27 @@ public:
           currentType = SemanticType::Int64;
           return;
         }
+      }
+    }
+    if (expr.oper().kind == TokenKind::STAR && expr.rangeObject()) {
+      const auto *rangeVariable =
+          dynamic_cast<const Variable *>(expr.rangeObject().get());
+      const Symbol *rangeSymbol =
+          rangeVariable == nullptr ? nullptr : resolve(rangeVariable->name());
+      SemanticType rangeType =
+          rangeSymbol == nullptr ? SemanticType::Unknown : rangeSymbol->type;
+      if (rangeType.kind == SemanticType::Reference &&
+          rangeType.arguments.size() == 1) {
+        SemanticType referent = rangeType.arguments.front();
+        rangeType = std::move(referent);
+      }
+      if (rangeType.kind == SemanticType::Array) {
+        (void)analyzeProjectionBase(expr.rangeObject());
+        const SemanticType indexType = analyze(expr.right());
+        semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
+        currentType = analyzeArrayIndexAfterOperands(rangeType, expr.right(),
+                                                     indexType, expr.oper());
+        return;
       }
     }
     const bool mutating = expr.oper().kind == TokenKind::PLUS_PLUS ||
@@ -8356,6 +8498,18 @@ private:
                                             SemanticType::Unknown)
             : SemanticType::Unknown;
     SemanticType inferredType = initializerType;
+    const ExpressionInfo *initializerInfo =
+        declaration.initializer()
+            ? semanticModel.findExpression(*declaration.initializer())
+            : nullptr;
+    const bool rangeOwnerReference =
+        declaration.isRangeOwner() && initializerInfo != nullptr &&
+        initializerInfo->category == ValueCategory::Place &&
+        initializerType != SemanticType::Unknown;
+    if (rangeOwnerReference) {
+      inferredType =
+          SemanticType::referenceTo(initializerType, AccessMode::ReadOnly);
+    }
     if (initializerType == SemanticType::Void ||
         initializerType == SemanticType::Function ||
         initializerType.kind == SemanticType::TypeName ||
@@ -8365,7 +8519,8 @@ private:
              "GTI-S2028");
       inferredType = SemanticType::Unknown;
     }
-    if (!type.reference && inferredType.kind == SemanticType::Reference) {
+    if (!type.reference && !declaration.isRangeOwner() &&
+        inferredType.kind == SemanticType::Reference) {
       report(declaration.name(),
              "'auto' does not infer references; declare the reference type "
              "explicitly.",
@@ -8381,6 +8536,10 @@ private:
                                  declaration.initializer());
       }
     }
+    if (rangeOwnerReference && declaration.initializer()) {
+      validateReferenceBinding(inferredType, initializerType,
+                               declaration.initializer());
+    }
     if (inferredType.kind == SemanticType::Lambda && declaration.isMutable()) {
       report(declaration.name(),
              "Lambda bindings are immutable; captured snapshots cannot be "
@@ -8388,7 +8547,7 @@ private:
              "GTI-S2027");
     }
     const bool initializerAssignable =
-        type.reference || !declaration.initializer() ||
+        type.reference || rangeOwnerReference || !declaration.initializer() ||
         inferredType == SemanticType::Unknown ||
         initializerType == SemanticType::Unknown ||
         isOwnershipAssignable(inferredType, initializerType,
@@ -8403,7 +8562,7 @@ private:
           "Move-only owners cannot be copied; transfer ownership explicitly "
           "with std::move(owner).");
     }
-    if (!type.reference && declaration.initializer() &&
+    if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
         typeTraits(inferredType).containsBorrowedState) {
       validateStoredBorrowInitialization(inferredType,
                                          declaration.initializer());
@@ -8447,10 +8606,11 @@ private:
                                &declaration, constant);
       }
     }
-    const bool retainedReference =
-        type.reference && !isDirectOwnerType(initializerType);
+    const bool retainedReference = (type.reference || rangeOwnerReference) &&
+                                   !isDirectOwnerType(initializerType);
     const bool retainedStoredValue =
-        !type.reference && typeTraits(inferredType).containsBorrowedState;
+        !type.reference && !rangeOwnerReference &&
+        typeTraits(inferredType).containsBorrowedState;
     if (local && declaration.initializer() &&
         (retainedReference || retainedStoredValue)) {
       recordRetainedBorrow(declaration, declaration.initializer());
@@ -17765,19 +17925,27 @@ private:
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren) {
-    if (member.name().lexeme != "size") {
+    const bool generatedBegin =
+        member.name().generated && member.name().lexeme == "begin";
+    const bool generatedEnd =
+        member.name().generated && member.name().lexeme == "end";
+    if (member.name().lexeme != "size" && !generatedBegin && !generatedEnd) {
       currentType = SemanticType::Unknown;
       return;
     }
     if (!argumentTypes.empty()) {
-      report(paren, "Fixed array 'size' expects no arguments.", "GTI-S2016");
+      report(paren,
+             "Fixed array '" + member.name().lexeme + "' expects no arguments.",
+             "GTI-S2016");
     }
     currentType = SemanticType::UInt64;
     // The builtin member carries its identity to MIR as an intrinsic: the
     // call names no declaration, so without the record the lowered Call
     // would be target-less and unnameable by a backend.
     ResolvedCallInfo resolved{.returnType = currentType,
-                              .intrinsic = IntrinsicKind::ArraySize};
+                              .intrinsic = generatedBegin
+                                               ? IntrinsicKind::ArrayRangeBegin
+                                               : IntrinsicKind::ArraySize};
     semanticModel.record(call, resolved);
     recordSelectedCallOccurrence(call, std::move(resolved));
   }
@@ -26717,6 +26885,14 @@ private:
     }
     if (const auto *unary = dynamic_cast<const Unary *>(&expr);
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      if (unary->rangeObject()) {
+        const SemanticType *rangeType =
+            semanticModel.findType(*unary->rangeObject());
+        if (rangeType != nullptr && rangeType->kind == SemanticType::Array) {
+          return expressionInfo(std::move(type), ValueCategory::Place,
+                                AccessMode::ReadOnly);
+        }
+      }
       if (const ResolvedOperatorInfo *resolved =
               semanticModel.findOperator(expr);
           resolved != nullptr &&
@@ -27155,6 +27331,7 @@ private:
           case IntrinsicKind::ExpectedValue:
           case IntrinsicKind::ExpectedError:
           case IntrinsicKind::ExpectedValueOr:
+          case IntrinsicKind::ArrayRangeBegin:
           case IntrinsicKind::ArraySize:
           case IntrinsicKind::ExpectedHasValue:
             break;
@@ -30396,6 +30573,20 @@ private:
     }
     if (const auto *unary = dynamic_cast<const Unary *>(expression);
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      if (unary->rangeObject()) {
+        SemanticPlace place = semanticPlace(unary->rangeObject().get());
+        const SemanticType *objectType =
+            semanticModel.findType(*unary->rangeObject());
+        if (place.root != nullptr && objectType != nullptr &&
+            objectType->kind == SemanticType::Array) {
+          if (const std::optional<PlaceProjection> projection =
+                  fixedArrayIndexProjection(*objectType, unary->right(),
+                                            *unary)) {
+            place.projections.push_back(*projection);
+          }
+          return place;
+        }
+      }
       SemanticPlace place = semanticPlace(unary->right().get());
       if (place.root != nullptr) {
         place.projections.push_back({.kind = PlaceProjectionKind::Dereference});

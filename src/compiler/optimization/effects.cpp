@@ -247,6 +247,8 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true},
     // ExpectedValueOr: observes state and copies the selected value.
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
+    // ArrayRangeBegin: a pure compiler-generated zero endpoint.
+    MirEffectTraits{},
     // ArraySize: a pure read of the fixed extent.
     MirEffectTraits{},
     // ExpectedHasValue: a pure state observer.
@@ -410,6 +412,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "expected-value",
     "expected-error",
     "expected-value-or",
+    "array-range-begin",
     "array-size",
     "expected-has-value",
 });

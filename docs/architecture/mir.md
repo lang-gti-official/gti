@@ -78,9 +78,10 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v40`/`mir-body-v39`
-(program v40 adds ordered constructor-local type/value arguments to concrete
-MIR constructor identities; body v39 is unchanged. Program/body v39 added
+The deterministic serialization is currently `mir-v41`/`mir-body-v40`.
+Program/body v41/v40 add the verified read-only range-iteration inventory;
+program v40 added ordered constructor-local type/value arguments to concrete
+MIR constructor identities while body v39 was unchanged. Program/body v39 added
 verified call-scoped loans for fresh read-only temporary arguments;
 v38 added caller-expanded default-argument provenance to ordered call inputs
 and explicit-argument counts to constructor initializers; v31 added the

@@ -208,6 +208,14 @@ renders the exact selected borrowed overload when the fallback tier is active
 and the exact by-value overload when the ordinary tier wins. The protocol
 layer does not classify producers, rank candidates, or extend lifetimes.
 
+Range-for diagnostics follow the same boundary. A mutable element-reference
+request or unsupported range publishes compiler-owned `GTI-S2083`; changing to
+a valid read-only fixed-array or structural range clears it on the next
+document version. Incomplete range syntax publishes recovered parser
+diagnostics without retaining stale semantic range errors. The protocol layer
+does not infer a range protocol, loan lifetime, array strategy, or temporary
+ownership from punctuation.
+
 ## Document State
 
 `LanguageServer` currently owns protocol handling and document lifecycle in one

@@ -55,8 +55,8 @@ validity together, which keeps AST-address semantic side tables alive.
   assembly are backend policy. Their resolved language and target-independent
   inputs come from lowered declarations, symbols, instances, MIR, and
   generated-item payloads.
-- The post-cutover example corpus contains 2,867 reviewed MIR body identities
-  across 62 examples. An exact census and two native endpoint builds guard the
+- The post-cutover example corpus contains 2,962 reviewed MIR body identities
+  across 63 examples. An exact census and two native endpoint builds guard the
   cutover; focused structural and runtime fixtures cover shapes outside that
   corpus.
 - Substantial compiler algorithms compile behind public declarations.
