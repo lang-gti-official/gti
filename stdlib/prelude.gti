@@ -1,360 +1,308 @@
 namespace gti_internal {
-// Compiler capability type declarations are deliberately empty. Semantics
-// binds their trusted declaration identities to private representations;
-// application declarations with the same spelling remain ordinary types.
-class unique_owner<T> {};
-class storage<T> {};
-// Prefix-initialized storage (P-STORAGE-01): the live elements always form
-// the prefix [0, length). Construction appends exactly at the live length,
-// destruction removes exactly the last live element, relocation transfers
-// the complete prefix, and reads check the logical prefix.
-class prefix_storage<T> {};
-class text_view {};
-class c_string {};
+  // Compiler capability type declarations are deliberately empty. Semantics
+  // binds their trusted declaration identities to private representations;
+  // application declarations with the same spelling remain ordinary types.
+  class unique_owner<T> {};
+  class storage<T> {}; // Prefix-initialized storage (P-STORAGE-01): the live elements always form
+  // the prefix [0, length). Construction appends exactly at the live length,
+  // destruction removes exactly the last live element, relocation transfers
+  // the complete prefix, and reads check the logical prefix.
+  class prefix_storage<T> {};
+  class text_view {};
+  class c_string {};
 
-@compiler_constraint("numeric")
-concept numeric_capability<T>;
-@compiler_constraint("signed_numeric")
-concept signed_numeric_capability<T>;
-@compiler_constraint("integral")
-concept integral_capability<T>;
-@compiler_constraint("signed_integral")
-concept signed_integral_capability<T>;
-@compiler_constraint("unsigned_integral")
-concept unsigned_integral_capability<T>;
-@compiler_constraint("floating_point")
-concept floating_point_capability<T>;
-@compiler_constraint("copyable")
-concept copyable_capability<T>;
-@compiler_constraint("movable")
-concept movable_capability<T>;
-@compiler_constraint("transferable")
-concept transferable_capability<T>;
-@compiler_constraint("shareable")
-concept shareable_capability<T>;
-@compiler_constraint("default_initializable")
-concept default_initializable_capability<T>;
-@compiler_constraint("equality_comparable")
-concept equality_comparable_capability<T>;
-@compiler_constraint("relationally_ordered")
-concept relationally_ordered_capability<T>;
-@compiler_constraint("input_iterator")
-concept input_iterator_capability<I>;
-@compiler_constraint("sentinel_for")
-concept sentinel_for_capability<S, I>;
-@compiler_constraint("accumulates_into")
-concept accumulates_into_capability<I, T>;
+  @compiler_constraint("numeric") concept numeric_capability<T>;
+  @compiler_constraint("signed_numeric") concept signed_numeric_capability<T>;
+  @compiler_constraint("integral") concept integral_capability<T>;
+  @compiler_constraint("signed_integral") concept signed_integral_capability<T>;
+  @compiler_constraint("unsigned_integral") concept unsigned_integral_capability<T>;
+  @compiler_constraint("floating_point") concept floating_point_capability<T>;
+  @compiler_constraint("copyable") concept copyable_capability<T>;
+  @compiler_constraint("movable") concept movable_capability<T>;
+  @compiler_constraint("transferable") concept transferable_capability<T>;
+  @compiler_constraint("shareable") concept shareable_capability<T>;
+  @compiler_constraint("default_initializable") concept default_initializable_capability<T>;
+  @compiler_constraint("equality_comparable") concept equality_comparable_capability<T>;
+  @compiler_constraint("relationally_ordered") concept relationally_ordered_capability<T>;
+  @compiler_constraint("input_iterator") concept input_iterator_capability<I>;
+  @compiler_constraint("sentinel_for") concept sentinel_for_capability<S, I>;
+  @compiler_constraint("accumulates_into") concept accumulates_into_capability<I, T>;
 
-gti_internal::unique_owner<T>
-allocate_unique_owner<T, Args...>(Args... args);
-T& unique_owner_borrow<T>(gti_internal::unique_owner<T>& owner);
-mut T& unique_owner_borrow_mut<T>(mut gti_internal::unique_owner<T>& owner);
-bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
-gti_internal::unique_owner<Base>
-unique_owner_upcast<Base, Derived>(
-    gti_internal::unique_owner<Derived> owner);
+  gti_internal::unique_owner<T> allocate_unique_owner<T, Args...>(Args... args);
+  T & unique_owner_borrow<T>(gti_internal::unique_owner<T>& owner);
+  mut T & unique_owner_borrow_mut<T>(mut gti_internal::unique_owner<T>& owner);
+  bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
+  gti_internal::unique_owner<Base> unique_owner_upcast<Base, Derived>(gti_internal::unique_owner<Derived> owner);
 
-gti_internal::storage<T> allocate_storage<T>(uint64_t count);
-void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage,
-                                   uint64_t index, Args... args);
-T& storage_read<T>(gti_internal::storage<T>& storage, uint64_t index);
-mut T& storage_read_mut<T>(mut gti_internal::storage<T>& storage,
-                           uint64_t index);
-void storage_destroy<T>(mut gti_internal::storage<T>& storage,
-                        uint64_t index);
-void storage_relocate<T>(mut gti_internal::storage<T>& source,
-                         mut gti_internal::storage<T>& destination,
-                         uint64_t count);
-void storage_shift_right<T>(mut gti_internal::storage<T>& storage,
-                            uint64_t first, uint64_t last);
-void storage_shift_left<T>(mut gti_internal::storage<T>& storage,
-                           uint64_t first, uint64_t last);
-// The identity-bound public logical-size check: raises index_out_of_bounds
-// when `index >= size`, so container indexing reports the logical bound
-// rather than leaking the private storage invariant.
-void index_bounds_check(uint64_t index, uint64_t size);
+  gti_internal::storage<T> allocate_storage<T>(uint64_t count);
+  void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage, uint64_t index, Args... args);
+  T & storage_read<T>(gti_internal::storage<T>& storage, uint64_t index);
+  mut T & storage_read_mut<T>(mut gti_internal::storage<T>& storage, uint64_t index);
+  void storage_destroy<T>(mut gti_internal::storage<T>& storage, uint64_t index);
+  void storage_relocate<T>(mut gti_internal::storage<T>& source, mut gti_internal::storage<T>& destination, uint64_t count);
+  void storage_shift_right<T>(mut gti_internal::storage<T>& storage, uint64_t first, uint64_t last);
+  void storage_shift_left<T>(mut gti_internal::storage<T>& storage, uint64_t first, uint64_t last); // The identity-bound public logical-size check: raises index_out_of_bounds
+  // when `index >= size`, so container indexing reports the logical bound
+  // rather than leaking the private storage invariant.
+  void index_bounds_check(uint64_t index, uint64_t size);
 
-gti_internal::prefix_storage<T> allocate_prefix_storage<T>(uint64_t count);
-void prefix_storage_append<T, Args...>(
-    mut gti_internal::prefix_storage<T>& storage, Args... args);
-void prefix_storage_pop<T>(mut gti_internal::prefix_storage<T>& storage);
-T& prefix_storage_read<T>(gti_internal::prefix_storage<T>& storage,
-                          uint64_t index);
-mut T& prefix_storage_read_mut<T>(
-    mut gti_internal::prefix_storage<T>& storage, uint64_t index);
-uint64_t prefix_storage_length<T>(gti_internal::prefix_storage<T>& storage);
-void prefix_storage_relocate<T>(
-    mut gti_internal::prefix_storage<T>& source,
-    mut gti_internal::prefix_storage<T>& destination);
-// Insert and erase preserve the prefix invariant atomically: the element
-// shift and the construction or destruction happen inside one sealed
-// operation, so no partially initialized slot is ever observable.
-void prefix_storage_insert<T, Args...>(
-    mut gti_internal::prefix_storage<T>& storage, uint64_t index,
-    Args... args);
-void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage,
-                             uint64_t index);
+  gti_internal::prefix_storage<T> allocate_prefix_storage<T>(uint64_t count);
+  void prefix_storage_append<T, Args...>(mut gti_internal::prefix_storage<T>& storage, Args... args);
+  void prefix_storage_pop<T>(mut gti_internal::prefix_storage<T>& storage);
+  T & prefix_storage_read<T>(gti_internal::prefix_storage<T>& storage, uint64_t index);
+  mut T & prefix_storage_read_mut<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
+  uint64_t prefix_storage_length<T>(gti_internal::prefix_storage<T>& storage);
+  void prefix_storage_relocate<T>(mut gti_internal::prefix_storage<T>& source, mut gti_internal::prefix_storage<T>& destination); // Insert and erase preserve the prefix invariant atomically: the element
+  // shift and the construction or destruction happen inside one sealed
+  // operation, so no partially initialized slot is ever observable.
+  void prefix_storage_insert<T, Args...>(mut gti_internal::prefix_storage<T>& storage, uint64_t index, Args... args);
+  void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
 
-T integer_wrapping_add<T>(T left, T right);
-T integer_wrapping_sub<T>(T left, T right);
-T integer_wrapping_mul<T>(T left, T right);
-T integer_saturating_add<T>(T left, T right);
-T integer_saturating_sub<T>(T left, T right);
-T integer_saturating_mul<T>(T left, T right);
-Result integer_checked_add<Result, T>(T left, T right);
-Result integer_checked_sub<Result, T>(T left, T right);
-Result integer_checked_mul<Result, T>(T left, T right);
+  T integer_wrapping_add<T>(T left, T right);
+  T integer_wrapping_sub<T>(T left, T right);
+  T integer_wrapping_mul<T>(T left, T right);
+  T integer_saturating_add<T>(T left, T right);
+  T integer_saturating_sub<T>(T left, T right);
+  T integer_saturating_mul<T>(T left, T right);
+  Result integer_checked_add<Result, T>(T left, T right);
+  Result integer_checked_sub<Result, T>(T left, T right);
+  Result integer_checked_mul<Result, T>(T left, T right);
 
-[[no_transfer, no_share]] class file_handle {
-  mut int64_t descriptor = -1;
+  [[no_transfer, no_share]] class file_handle {
+    mut int64_t descriptor = -1;
 
-public:
-  file_handle(int64_t value) : descriptor(value) {}
+  public:
+    file_handle(int64_t value) : descriptor(value) {}
 
-  bool is_valid() {
-    return this.descriptor >= 0;
+    bool is_valid() {
+      return this.descriptor >= 0;
+    }
+
+    int64_t get() {
+      return this.descriptor;
+    }
+
+    int64_t release() mut {
+      int64_t value = this.descriptor;
+      this.descriptor = -1;
+      return value;
+    }
+  };
+
+  namespace runtime {
+    extern "C" {
+      int32_t gti_rt_write_stdout(gti_internal::text_view value);
+      int32_t gti_rt_write_stdout_byte(uint8_t value);
+      int32_t gti_rt_read_stdin_byte();
+      int64_t gti_rt_open_file_read(gti_internal::text_view path);
+      int32_t gti_rt_read_file_byte(int64_t descriptor);
+      int32_t gti_rt_close_file(int64_t descriptor);
+    }
+
+    void write_stdout(gti_internal::text_view value) {
+      [[discard]] gti_rt_write_stdout(value);
+    }
+
+    int32_t write_stdout_byte(uint8_t value) {
+      return gti_rt_write_stdout_byte(value);
+    }
+
+    int32_t read_stdin_byte() {
+      return gti_rt_read_stdin_byte();
+    }
+
+    int64_t open_file_read(gti_internal::text_view path) {
+      return gti_rt_open_file_read(path);
+    }
+
+    int32_t read_file_byte(int64_t descriptor) {
+      return gti_rt_read_file_byte(descriptor);
+    }
+
+    int32_t close_file(int64_t descriptor) {
+      return gti_rt_close_file(descriptor);
+    }
   }
-
-  int64_t get() {
-    return this.descriptor;
-  }
-
-  int64_t release() mut {
-    int64_t value = this.descriptor;
-    this.descriptor = -1;
-    return value;
-  }
-};
-
-namespace runtime {
-extern "C" {
-int32_t gti_rt_write_stdout(gti_internal::text_view value);
-int32_t gti_rt_write_stdout_byte(uint8_t value);
-int32_t gti_rt_read_stdin_byte();
-int64_t gti_rt_open_file_read(gti_internal::text_view path);
-int32_t gti_rt_read_file_byte(int64_t descriptor);
-int32_t gti_rt_close_file(int64_t descriptor);
-}
-
-void write_stdout(gti_internal::text_view value) {
-  [[discard]] gti_rt_write_stdout(value);
-}
-
-int32_t write_stdout_byte(uint8_t value) {
-  return gti_rt_write_stdout_byte(value);
-}
-
-int32_t read_stdin_byte() { return gti_rt_read_stdin_byte(); }
-
-int64_t open_file_read(gti_internal::text_view path) {
-  return gti_rt_open_file_read(path);
-}
-
-int32_t read_file_byte(int64_t descriptor) {
-  return gti_rt_read_file_byte(descriptor);
-}
-
-int32_t close_file(int64_t descriptor) {
-  return gti_rt_close_file(descriptor);
-}
-}
 }
 
 using c_string = gti_internal::c_string;
 
 namespace std {
-concept movable<T> = gti_internal::movable_capability<T>;
-concept transferable<T> = gti_internal::transferable_capability<T>;
-concept shareable<T> = gti_internal::shareable_capability<T>;
-concept copyable<T> =
-    gti_internal::copyable_capability<T> && std::movable<T>;
-concept default_initializable<T> =
-    gti_internal::default_initializable_capability<T>;
-concept equality_comparable<T> =
-    gti_internal::equality_comparable_capability<T>;
-concept totally_ordered<T> =
-    std::equality_comparable<T> &&
-    gti_internal::relationally_ordered_capability<T>;
-concept ordered<T> = std::totally_ordered<T>;
-concept numeric<T> =
-    gti_internal::numeric_capability<T> && std::totally_ordered<T> &&
-    std::copyable<T> && std::default_initializable<T>;
-concept signed_numeric<T> =
-    gti_internal::signed_numeric_capability<T> && std::numeric<T>;
-concept integral<T> =
-    gti_internal::integral_capability<T> && std::numeric<T>;
-concept signed_integral<T> =
-    gti_internal::signed_integral_capability<T> && std::integral<T> &&
-    std::signed_numeric<T>;
-concept unsigned_integral<T> =
-    gti_internal::unsigned_integral_capability<T> && std::integral<T>;
-concept floating_point<T> =
-    gti_internal::floating_point_capability<T> && std::signed_numeric<T>;
+  concept movable<T> = gti_internal::movable_capability<T>;
+  concept transferable<T> = gti_internal::transferable_capability<T>;
+  concept shareable<T> = gti_internal::shareable_capability<T>;
+  concept copyable<T> = gti_internal::copyable_capability<T> && std::movable<T>;
+  concept default_initializable<T> = gti_internal::default_initializable_capability<T>;
+  concept equality_comparable<T> = gti_internal::equality_comparable_capability<T>;
+  concept totally_ordered<T> = std::equality_comparable<T> && gti_internal::relationally_ordered_capability<T>;
+  concept ordered<T> = std::totally_ordered<T>;
+  concept numeric<T> = gti_internal::numeric_capability<T> && std::totally_ordered<T> && std::copyable<T> && std::default_initializable<T>;
+  concept signed_numeric<T> = gti_internal::signed_numeric_capability<T> && std::numeric<T>;
+  concept integral<T> = gti_internal::integral_capability<T> && std::numeric<T>;
+  concept signed_integral<T> = gti_internal::signed_integral_capability<T> && std::integral<T> && std::signed_numeric<T>;
+  concept unsigned_integral<T> = gti_internal::unsigned_integral_capability<T> && std::integral<T>;
+  concept floating_point<T> = gti_internal::floating_point_capability<T> && std::signed_numeric<T>;
 
-using string_view = gti_internal::text_view;
-using size_t = uint64_t;
-using ptrdiff_t = int64_t;
+  using string_view = gti_internal::text_view;
+  using size_t = uint64_t;
+  using ptrdiff_t = int64_t;
 
-T move<T>(T& value);
+  T move<T>(T& value);
 
-class unique_ptr<T> {
-  mut gti_internal::unique_owner<T> owner = nullptr;
+  class unique_ptr<T> {
+    mut gti_internal::unique_owner<T> owner = nullptr;
 
-public:
-  unique_ptr(nullptr_t empty) : owner(nullptr) {}
+  public:
+    unique_ptr(nullptr_t empty) : owner(nullptr) {}
 
-  unique_ptr(gti_internal::unique_owner<T> value)
-      : owner(std::move(value)) {}
+    unique_ptr(gti_internal::unique_owner<T> value) : owner(std::move(value)) {}
 
-  void reset() mut {
-    this.owner = nullptr;
+    void reset() mut {
+      this.owner = nullptr;
+    }
+
+    void operator=(nullptr_t empty) mut {
+      this.reset();
+    }
+
+    unique_ptr<Base> upcast<Base>() mut {
+      mut gti_internal::unique_owner<Base> converted = gti_internal::unique_owner_upcast<Base>(std::move(this.owner));
+      this.owner = nullptr;
+      return unique_ptr<Base>(std::move(converted));
+    }
+
+    T& operator*() {
+      return gti_internal::unique_owner_borrow(this.owner);
+    }
+
+    mut T& operator*() mut {
+      return gti_internal::unique_owner_borrow_mut(this.owner);
+    }
+
+    T& operator->() {
+      return gti_internal::unique_owner_borrow(this.owner);
+    }
+
+    mut T& operator->() mut {
+      return gti_internal::unique_owner_borrow_mut(this.owner);
+    }
+
+    operator bool() {
+      return !gti_internal::unique_owner_is_null(this.owner);
+    }
+
+    bool operator==(nullptr_t other) {
+      return gti_internal::unique_owner_is_null(this.owner);
+    }
+
+    bool operator!=(nullptr_t other) {
+      return !gti_internal::unique_owner_is_null(this.owner);
+    }
+  };
+
+  unique_ptr<T> make_unique<T, Args...>(Args... args) {
+    return unique_ptr<T>(gti_internal::allocate_unique_owner<T>(args...));
   }
 
-  void operator=(nullptr_t empty) mut {
-    this.reset();
+  unique_ptr<Base> upcast_unique<Base, Derived>(mut unique_ptr<Derived> owner) {
+    return owner.upcast<Base>();
   }
 
-  unique_ptr<Base> upcast<Base>() mut {
-    mut gti_internal::unique_owner<Base> converted =
-        gti_internal::unique_owner_upcast<Base>(std::move(this.owner));
-    this.owner = nullptr;
-    return unique_ptr<Base>(std::move(converted));
+  void print(string_view value) {
+    gti_internal::runtime::write_stdout(value);
   }
 
-  T& operator*() {
-    return gti_internal::unique_owner_borrow(this.owner);
+  void print(char value) {
+    [[discard]] gti_internal::runtime::write_stdout_byte(uint8_t(value));
   }
 
-  mut T& operator*() mut {
-    return gti_internal::unique_owner_borrow_mut(this.owner);
+  void println(string_view value) {
+    print(value);
+    print("\n");
   }
 
-  T& operator->() {
-    return gti_internal::unique_owner_borrow(this.owner);
+  void println(char value) {
+    print(value);
+    print("\n");
   }
-
-  mut T& operator->() mut {
-    return gti_internal::unique_owner_borrow_mut(this.owner);
-  }
-
-  operator bool() {
-    return !gti_internal::unique_owner_is_null(this.owner);
-  }
-
-  bool operator==(nullptr_t other) {
-    return gti_internal::unique_owner_is_null(this.owner);
-  }
-
-  bool operator!=(nullptr_t other) {
-    return !gti_internal::unique_owner_is_null(this.owner);
-  }
-};
-
-unique_ptr<T> make_unique<T, Args...>(Args... args) {
-  return unique_ptr<T>(
-      gti_internal::allocate_unique_owner<T>(args...));
-}
-
-unique_ptr<Base> upcast_unique<Base, Derived>(
-    mut unique_ptr<Derived> owner) {
-  return owner.upcast<Base>();
-}
-
-void print(string_view value) {
-  gti_internal::runtime::write_stdout(value);
-}
-
-void print(char value) {
-  [[discard]] gti_internal::runtime::write_stdout_byte(uint8_t(value));
-}
-
-void println(string_view value) {
-  print(value);
-  print("\n");
-}
-
-void println(char value) {
-  print(value);
-  print("\n");
-}
 }
 
 namespace gti_internal {
-void print_decimal_digit(uint8_t digit) {
-  switch (digit) {
-  case uint8_t(0):
-    runtime::write_stdout("0");
-    break;
-  case uint8_t(1):
-    runtime::write_stdout("1");
-    break;
-  case uint8_t(2):
-    runtime::write_stdout("2");
-    break;
-  case uint8_t(3):
-    runtime::write_stdout("3");
-    break;
-  case uint8_t(4):
-    runtime::write_stdout("4");
-    break;
-  case uint8_t(5):
-    runtime::write_stdout("5");
-    break;
-  case uint8_t(6):
-    runtime::write_stdout("6");
-    break;
-  case uint8_t(7):
-    runtime::write_stdout("7");
-    break;
-  case uint8_t(8):
-    runtime::write_stdout("8");
-    break;
-  case uint8_t(9):
-    runtime::write_stdout("9");
-    break;
-  default:
-    runtime::write_stdout("?");
-    break;
-  }
-}
-
-void print_integral<std::integral T>(T value) {
-  if (value == T(0)) {
-    runtime::write_stdout("0");
-    return;
-  }
-
-  if (value < T(0)) {
-    runtime::write_stdout("-");
-  }
-
-  mut uint8_t[20] digits = {};
-  mut std::size_t count = 0;
-  mut T remaining = value;
-  while (remaining != T(0)) {
-    mut int64_t digit = int64_t(remaining % T(10));
-    if (digit < 0) {
-      digit = -digit;
+  void print_decimal_digit(uint8_t digit) {
+    switch (digit) {
+    case uint8_t(0):
+      runtime::write_stdout("0");
+      break;
+    case uint8_t(1):
+      runtime::write_stdout("1");
+      break;
+    case uint8_t(2):
+      runtime::write_stdout("2");
+      break;
+    case uint8_t(3):
+      runtime::write_stdout("3");
+      break;
+    case uint8_t(4):
+      runtime::write_stdout("4");
+      break;
+    case uint8_t(5):
+      runtime::write_stdout("5");
+      break;
+    case uint8_t(6):
+      runtime::write_stdout("6");
+      break;
+    case uint8_t(7):
+      runtime::write_stdout("7");
+      break;
+    case uint8_t(8):
+      runtime::write_stdout("8");
+      break;
+    case uint8_t(9):
+      runtime::write_stdout("9");
+      break;
+    default:
+      runtime::write_stdout("?");
+      break;
     }
-    digits[count] = uint8_t(digit);
-    count++;
-    remaining = T(remaining / T(10));
   }
 
-  while (count > 0) {
-    count--;
-    print_decimal_digit(digits[count]);
+  void print_integral<std::integral T>(T value) {
+    if (value == T(0)) {
+      runtime::write_stdout("0");
+      return;
+    }
+
+    if (value < T(0)) {
+      runtime::write_stdout("-");
+    }
+
+    mut uint8_t[20] digits = {};
+    mut std::size_t count = 0;
+    mut T remaining = value;
+    while (remaining != T(0)) {
+      mut int64_t digit = int64_t(remaining % T(10));
+      if (digit < 0) {
+        digit = -digit;
+      }
+      digits[count] = uint8_t(digit);
+      count++;
+      remaining = T(remaining / T(10));
+    }
+
+    while (count > 0) {
+      count--;
+      print_decimal_digit(digits[count]);
+    }
   }
-}
 }
 
 namespace std {
-void print<std::integral T>(T value) {
-  gti_internal::print_integral(value);
-}
+  void print<std::integral T>(T value) {
+    gti_internal::print_integral(value);
+  }
 
-void println<std::integral T>(T value) {
-  print(value);
-  print("\n");
-}
+  void println<std::integral T>(T value) {
+    print(value);
+    print("\n");
+  }
 }
