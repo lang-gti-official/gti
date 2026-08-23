@@ -269,6 +269,24 @@ expressions, value-parameter defaults, and value packs are not implemented. A
 constructor-local value parameter cannot shadow an enclosing class or struct
 generic parameter.
 
+An ordinary constructor may also declare constructor-local type parameters.
+They are inferred only from supplied, already typed call arguments using the
+same exact structural inference as a generic function; there is no written
+constructor-local argument list. The result context, omitted defaults,
+requirements, and untyped braces do not supply deductions. Repeated
+occurrences must infer one canonical type, and every local type parameter must
+occur in an inferable parameter position. A local parameter is visible only in
+that constructor's parameters, requirements, defaults, initializer list, and
+body and cannot shadow an owner parameter. Constructor-local packs remain
+unsupported.
+
+The selected constructor declaration, concrete owner, and ordered local
+type/value arguments form one concrete constructor identity. Distinct local
+arguments therefore remain distinct even when their native representation or
+substituted parameter layout happens to match. Constructor generics do not add
+CTAD, partial specialization, implicit conversion, or a concrete-over-generic
+preference.
+
 Omitted default arguments do not participate in generic inference. A generic
 call must infer or explicitly supply its generic arguments from the written
 arguments and context already admitted by GTI. After selection, semantic
@@ -343,16 +361,18 @@ explicitly. Generic classes and structs provide all arguments explicitly.
 The current standard constraints describe frontend-owned primitive, lifecycle,
 and exact structural capabilities. Namespace-scoped user concepts may declare
 one or more type parameters and compose existing concepts with conjunction.
-Each concept application supplies identifiers naming the enclosing concept's
-type parameters and must match the referenced declaration's arity.
+Each concept application supplies visible non-pack type parameters or closed
+exact types containing no unresolved generic parameter and must match the
+referenced declaration's arity. A dependent compound type such as
+`Wrapper<T>` is not a closed exact type in this bounded form.
 
 An inline constraint such as `std::numeric T` remains unary and
-non-structural. A generic free function or non-polymorphic method may instead
-use a trailing clause of the form
+non-structural. A generic free function, non-polymorphic method, or ordinary
+generic constructor may instead use a trailing clause of the form
 `requires Concept<Parameter...> && Concept<Parameter...>`. Clause arguments
-must be visible non-pack generic type parameters. These requirements provide
-exact facts while the symbolic body is checked and are substituted and
-revalidated for every concrete call.
+must be visible non-pack generic type parameters or closed exact types. These
+requirements provide exact facts while the symbolic body is checked and are
+substituted and revalidated for every concrete call.
 
 Operators and virtual, pure, overriding, or interface methods cannot carry a
 trailing clause in the bounded first version. Operator availability and

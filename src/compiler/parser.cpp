@@ -301,11 +301,9 @@ private:
   ConceptApplication conceptApplication() {
     NamePath name = parseNamePath();
     consume(TokenKind::LESS, "Expect '<' after concept name.");
-    std::vector<Token> arguments;
+    std::vector<TypeRef> arguments;
     do {
-      arguments.emplace_back(
-          consume(TokenKind::IDENTIFIER,
-                  "Expect a type argument in concept application."));
+      arguments.emplace_back(parseType());
     } while (match({TokenKind::COMMA}));
     consume(TokenKind::GREATER, "Expect '>' after concept arguments.");
     return {std::move(name), std::move(arguments)};
@@ -884,6 +882,22 @@ private:
                   "Constructors do not have receiver mutability qualifiers.");
     }
 
+    std::optional<RequiresClause> requiresClause;
+    if (match({TokenKind::REQUIRES})) {
+      Token keyword = previous();
+      std::vector<ConceptApplication> requirements;
+      do {
+        requirements.emplace_back(conceptApplication());
+      } while (match({TokenKind::AND}));
+      if (check(TokenKind::OR)) {
+        throw error(peek(),
+                    "Requires clauses currently support conjunction only; "
+                    "'||' and 'or' are not supported.");
+      }
+      requiresClause =
+          RequiresClause{std::move(keyword), std::move(requirements)};
+    }
+
     std::vector<ConstructorInitializer> initializers;
     if (match({TokenKind::COLON})) {
       do {
@@ -924,7 +938,7 @@ private:
               "Expect ';' after special constructor declaration.");
       return std::make_unique<ConstructorDecl>(
           std::move(name), std::move(genericParameters), std::move(parameters),
-          std::move(initializers),
+          std::move(requiresClause), std::move(initializers),
           SpecialMemberSpecifier{.equal = std::move(equal),
                                  .keyword = std::move(keyword),
                                  .kind = kind},
@@ -935,7 +949,8 @@ private:
     auto body = std::make_unique<BlockStmt>(blockItems());
     return std::make_unique<ConstructorDecl>(
         std::move(name), std::move(genericParameters), std::move(parameters),
-        std::move(initializers), std::nullopt, std::move(body));
+        std::move(requiresClause), std::move(initializers), std::nullopt,
+        std::move(body));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {

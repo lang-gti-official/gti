@@ -715,6 +715,7 @@ private:
             .access = info->access,
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
+            .requirements = lowerRequirements(info->requirements),
             .parameters = lowerParameters(declaration->parameters(),
                                           info->parameterTypes, semantics_),
             .requiredParameterCount = info->requiredParameterCount,
@@ -726,6 +727,7 @@ private:
                           SpecialMemberSpecifierKind>{declaration->specifier()
                                                           ->kind}
                     : std::nullopt,
+            .hasRequiresClause = declaration->requiresClause().has_value(),
             .compilerPrivate = info->compilerPrivate};
       }
     } else if (const auto *declaration =
@@ -1277,6 +1279,8 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
     const HirConstructorInstance &source = hir.constructorInstances()[index];
     const MirConstructorInstance &lowered = mir.constructorInstances()[index];
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.typeArguments != lowered.typeArguments ||
+        source.valueArguments != lowered.valueArguments ||
         source.parameterTypes != lowered.parameterTypes ||
         source.parameterBindings != lowered.parameterBindings ||
         source.body.placeDomain != lowered.body.placeDomain) {
@@ -1667,6 +1671,17 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
         !validGenericParameters(payload->genericParameters)) {
       return invalid("constructor declaration has invalid generic metadata");
     }
+    if (std::any_of(payload->requirements.begin(), payload->requirements.end(),
+                    [](const LoweredConceptRequirement &requirement) {
+                      return requirement.conceptId == 0 ||
+                             !std::all_of(requirement.arguments.begin(),
+                                          requirement.arguments.end(),
+                                          resolvedType);
+                    }) ||
+        payload->hasRequiresClause != !payload->requirements.empty()) {
+      return invalid(
+          "constructor declaration has invalid concept requirements");
+    }
     if (const std::optional<std::string> error =
             parameterMetadataError(payload->parameters)) {
       return invalid("constructor declaration " + *error);
@@ -2000,6 +2015,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .owner = instance.owner,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
+         .parameterTypes = instance.parameterTypes,
          .instantiationSource = instance.instantiationSite,
          .source = instance.source == nullptr
                        ? SourceSpan{}
@@ -2380,7 +2396,10 @@ verifyLoweredProgram(const LoweredProgram &program) {
     const MirConstructorInstance &mir =
         program.mir_.constructorInstances()[index];
     if (instance.id != index + 1 || instance.id != mir.id ||
-        instance.owner != mir.owner || instance.owner == 0 ||
+        instance.owner != mir.owner ||
+        instance.typeArguments != mir.typeArguments ||
+        instance.valueArguments != mir.valueArguments || instance.owner == 0 ||
+        instance.parameterTypes != mir.parameterTypes ||
         instance.owner > program.classInstances_.size() ||
         !resolvedTypes(instance.typeArguments) ||
         !resolvedValues(instance.valueArguments) ||

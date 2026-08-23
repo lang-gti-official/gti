@@ -284,11 +284,13 @@ struct LoweredConstructorDeclaration {
   ConstructorKind kind = ConstructorKind::Ordinary;
   AccessModifier access = AccessModifier::Public;
   std::vector<LoweredGenericParameter> genericParameters;
+  std::vector<LoweredConceptRequirement> requirements;
   std::vector<LoweredParameter> parameters;
   std::size_t requiredParameterCount = 0;
   std::optional<std::size_t> borrowParameter;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::optional<SpecialMemberSpecifierKind> specifier;
+  bool hasRequiresClause = false;
   bool compilerPrivate = false;
 
   friend bool operator==(const LoweredConstructorDeclaration &,
@@ -435,6 +437,7 @@ struct LoweredConstructorInstance {
   LoweredClassInstanceId owner = 0;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
+  std::vector<SemanticType> parameterTypes;
   std::optional<SourceSpan> instantiationSource;
   SourceSpan source;
 

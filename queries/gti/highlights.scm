@@ -73,7 +73,9 @@
   name: (scoped_identifier
     name: (identifier) @type))
 (concept_application
-  argument: (identifier) @type.parameter)
+  argument: (type
+    (user_type
+      name: (identifier) @type.parameter)))
 
 (function_declaration
   name: (identifier) @function)

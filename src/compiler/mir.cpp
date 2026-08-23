@@ -2879,6 +2879,15 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.borrowOrigin != BorrowOriginKind::None &&
       !instruction.successResultDrop &&
       instruction.definedFailure.propagation != FailurePropagationKind::None;
+  const bool transferredBorrowedCallResult =
+      instruction.kind == MirInstructionKind::Call && instruction.loan &&
+      instruction.borrowOrigin != BorrowOriginKind::None &&
+      instruction.successResultDrop && instruction.result &&
+      instruction.info.type.kind == SemanticType::Class &&
+      instruction.info.category == ValueCategory::Value &&
+      instruction.info.traits.movable &&
+      instruction.info.traits.containsBorrowedState &&
+      instruction.definedFailure.propagation != FailurePropagationKind::None;
   const bool directInitializationResult =
       (instruction.kind == MirInstructionKind::Call ||
        instruction.kind == MirInstructionKind::Construct) &&
@@ -2888,7 +2897,9 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.info.traits.drop == DropKind::Lexical;
   if (instruction.definedFailure.empty() ||
       (instruction.destination && !trivialCommitDestination) ||
-      (instruction.loan && !borrowedCallResult) || !statePreservingOwnership ||
+      (instruction.loan && !borrowedCallResult &&
+       !transferredBorrowedCallResult) ||
+      !statePreservingOwnership ||
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
   }
@@ -2913,6 +2924,9 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   }
   if (borrowedCallResult) {
     return true;
+  }
+  if (transferredBorrowedCallResult) {
+    return instruction.info.traits.drop == DropKind::Lexical;
   }
   if (directInitializationResult) {
     return true;
@@ -4340,6 +4354,77 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              input.lifecycle.front().target == 0 &&
              !input.lifecycle.front().conditional;
     };
+    const auto validBorrowedTemporaryMoveInput =
+        [&](const MirInstruction &input, const MirOperand &operand) {
+          if (input.callInputRole != MirCallInputRole::Argument ||
+              input.preparedParameterDrop || input.destination || input.loan ||
+              input.info.type.kind != SemanticType::Class ||
+              !input.info.traits.movable ||
+              !input.info.traits.containsBorrowedState ||
+              operand.kind != MirOperandKind::Value) {
+            return false;
+          }
+          const MirValue *source = body.findValue(operand.value);
+          const MirInstruction *producer =
+              source == nullptr ? nullptr
+                                : linearValueDefinition(body, operand.value);
+          if (source == nullptr || producer == nullptr ||
+              source->sourceValue != input.hirValue ||
+              source->info.type != input.info.type ||
+              source->info.category != ValueCategory::Value ||
+              !source->info.traits.containsBorrowedState ||
+              !sameCallInputTraits(source->info.traits, input.info.traits) ||
+              producer->kind != MirInstructionKind::Call ||
+              !producer->functionTarget || producer->constructorTarget ||
+              producer->lambdaTarget || producer->bodyTarget ||
+              producer->callableInvocation ||
+              producer->intrinsic != IntrinsicKind::None || !producer->result ||
+              *producer->result != source->id ||
+              producer->hirValue != input.hirValue || !producer->loan ||
+              producer->borrowOrigin == BorrowOriginKind::None ||
+              producer->successResultDrop == std::nullopt ||
+              !sameCallInputTraits(producer->info.traits, input.info.traits)) {
+            return false;
+          }
+          const MirLoan *retained = body.findLoan(*producer->loan);
+          const MirPlace *loanSource =
+              retained == nullptr ? nullptr : body.findPlace(retained->source);
+          if (retained == nullptr || loanSource == nullptr ||
+              retained->kind != MirLoanKind::Stored || retained->entry ||
+              retained->escapes || retained->storedField != 0 ||
+              !retained->carriers.empty() ||
+              retained->producedBy != input.hirValue) {
+            return false;
+          }
+
+          const MirDropObligation *drop = nullptr;
+          const MirPlace *slot = nullptr;
+          for (const MirDropObligation &candidate : body.dropObligations) {
+            if (candidate.kind != MirDropObligationKind::Value ||
+                candidate.value != source->sourceValue ||
+                candidate.dropType.type != input.info.type) {
+              continue;
+            }
+            if (drop != nullptr) {
+              return false;
+            }
+            drop = &candidate;
+            slot = body.findPlace(candidate.place);
+          }
+          return drop != nullptr && slot != nullptr &&
+                 producer->successResultDrop == drop->id &&
+                 slot->root == MirPlaceRootKind::Value &&
+                 slot->value == source->id && slot->projections.empty() &&
+                 slot->type == input.info.type &&
+                 slot->traits.containsBorrowedState &&
+                 input.lifecycle.size() == 1 &&
+                 input.lifecycle.front().kind ==
+                     MirLifecycleEventKind::TransferOut &&
+                 input.lifecycle.front().source == drop->id &&
+                 input.lifecycle.front().target == 0 &&
+                 !input.lifecycle.front().conditional &&
+                 !input.lifecycle.front().failureCleanup;
+        };
     const auto validTemporaryReceiverInput =
         [&](const MirInstruction &input, const MirOperand &operand,
             MirOperandKind expectedOperand) {
@@ -4607,6 +4692,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return validClassCopyInput(instruction, operand);
       case HirCallInputKind::MoveValue:
         return validClassMoveInput(instruction, operand);
+      case HirCallInputKind::MoveBorrowedTemporary:
+        return validBorrowedTemporaryMoveInput(instruction, operand);
       case HirCallInputKind::ReadBorrow:
         return !instruction.preparedParameterDrop &&
                instruction.lifecycle.empty() &&
@@ -5052,8 +5139,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                               SemanticType::Reference;
               break;
             case MirInstructionKind::CallInput:
-              consuming = index == 0 && instruction.callInputKind ==
-                                            HirCallInputKind::MoveValue;
+              consuming =
+                  index == 0 &&
+                  (instruction.callInputKind == HirCallInputKind::MoveValue ||
+                   instruction.callInputKind ==
+                       HirCallInputKind::MoveBorrowedTemporary);
               break;
             case MirInstructionKind::Compute:
               consuming = instruction.operation == MirOperation::Aggregate ||
@@ -6693,7 +6783,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             (mutableStorageInput || temporaryReadArgument ||
              (parameter.kind == SemanticType::Class
                   ? (argument->callInputKind == HirCallInputKind::CopyValue ||
-                     argument->callInputKind == HirCallInputKind::MoveValue)
+                     argument->callInputKind == HirCallInputKind::MoveValue ||
+                     (invocation.kind == MirInstructionKind::Construct &&
+                      parameter == argument->info.type &&
+                      parameter == argument->operands.front().type &&
+                      argument->info.traits.containsBorrowedState &&
+                      argument->callInputKind ==
+                          HirCallInputKind::MoveBorrowedTemporary))
                   : argument->callInputKind ==
                         (parameter.kind != SemanticType::Reference
                              ? HirCallInputKind::Value
@@ -6747,7 +6843,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }
         const bool owningInput =
             input->callInputKind == HirCallInputKind::CopyValue ||
-            input->callInputKind == HirCallInputKind::MoveValue;
+            input->callInputKind == HirCallInputKind::MoveValue ||
+            input->callInputKind == HirCallInputKind::MoveBorrowedTemporary;
         if (invocation.kind == MirInstructionKind::Call && owningInput) {
           if (!input->preparedParameterDrop ||
               !preparedDrops.insert(*input->preparedParameterDrop).second) {
@@ -8348,8 +8445,10 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          return prepared != nullptr &&
                                 prepared->kind ==
                                     MirInstructionKind::CallInput &&
-                                prepared->callInputKind ==
-                                    HirCallInputKind::MoveValue &&
+                                (prepared->callInputKind ==
+                                     HirCallInputKind::MoveValue ||
+                                 prepared->callInputKind ==
+                                     HirCallInputKind::MoveBorrowedTemporary) &&
                                 transfersOut(*prepared);
                        }));
       const bool transfersOwnership =

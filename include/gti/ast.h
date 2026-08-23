@@ -352,7 +352,7 @@ struct CompilerConstraintBinding {
 
 struct ConceptApplication {
   NamePath name;
-  std::vector<Token> arguments;
+  std::vector<TypeRef> arguments;
 };
 
 struct RequiresClause {
@@ -1421,12 +1421,14 @@ class ConstructorDecl final : public Stmt {
 public:
   ConstructorDecl(Token name, std::vector<GenericParameter> genericParameters,
                   std::vector<Parameter> parameters,
+                  std::optional<RequiresClause> requiresClause,
                   std::vector<ConstructorInitializer> initializers,
                   std::optional<SpecialMemberSpecifier> specifier,
                   std::unique_ptr<BlockStmt> body)
       : name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)),
+        requiresClause_(std::move(requiresClause)),
         initializers_(std::move(initializers)),
         specifier_(std::move(specifier)), body_(std::move(body)) {}
 
@@ -1441,6 +1443,9 @@ public:
   [[nodiscard]] const std::vector<Parameter> &parameters() const {
     return parameters_;
   }
+  [[nodiscard]] const std::optional<RequiresClause> &requiresClause() const {
+    return requiresClause_;
+  }
   [[nodiscard]] const std::vector<ConstructorInitializer> &
   initializers() const {
     return initializers_;
@@ -1454,6 +1459,7 @@ private:
   Token name_;
   std::vector<GenericParameter> genericParameters_;
   std::vector<Parameter> parameters_;
+  std::optional<RequiresClause> requiresClause_;
   std::vector<ConstructorInitializer> initializers_;
   std::optional<SpecialMemberSpecifier> specifier_;
   std::unique_ptr<BlockStmt> body_;

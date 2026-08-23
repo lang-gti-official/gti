@@ -1157,7 +1157,7 @@
         "required": true,
         "types": [
           {
-            "type": "identifier",
+            "type": "type",
             "named": true
           }
         ]
@@ -1576,6 +1576,16 @@
         "types": [
           {
             "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "constraints": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "requires_clause",
             "named": true
           }
         ]

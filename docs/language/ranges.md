@@ -162,7 +162,9 @@ borrowed state or lambda identity, and proven forwarding through other
 confined callable parameters are available for algorithm callbacks. Result
 inference through `auto`, borrowed results, and owned escape remain
 unavailable. The bounded input-iterator, sentinel, and exact
-accumulation capabilities are implemented, but complete-range,
+`dereferences_to` capability are implemented. `std::string(first, last)` uses
+them in an ordinary constructor-local generic declaration and copies the
+selected character range without retaining either iterator. Complete-range,
 readable/writable element, sized, and multi-pass capabilities are still
 missing. A public `std::for_each` over arbitrary structural ranges should wait
 for those capabilities instead of teaching the compiler a public container or

@@ -74,9 +74,11 @@ Declaration hover retains the symbolic generic
 contract, while
 selected-call hover applies the compiler-recorded generic type and value
 arguments so the same contract is rendered with concrete types and inferred
-fixed-array extents. Generic-constructor declaration hover retains its
-constructor-local `uint64_t` parameter, while selected construction hover uses
-the exact value and parameter array type from `ResolvedConstructionInfo`. Method
+fixed-array extents. Generic-constructor declaration hover retains its symbolic
+local type/value parameters and requirements, while selected construction
+hover substitutes the exact inferred arguments, requirements, and parameter
+types from `ResolvedConstructionInfo`. Definition, references, and signature
+help keep the generic constructor declaration's semantic identity. Method
 calls also apply the concrete receiver specialization retained in
 `ResolvedCallInfo::dispatchOwner`, including generic class type arguments.
 Forwarding-only parameters are identified without inventing a signature. The
