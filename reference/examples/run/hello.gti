@@ -1,0 +1,8 @@
+// title: Hello, GTI
+// unit: prelude
+// Printing is part of the prelude; no include is required.
+
+int main() {
+  std::println("Hello from GTI");
+  return 0;
+}

@@ -1,0 +1,8 @@
+// Calls require exact argument types; conversions are spelled explicitly.
+void takes_wide(uint64_t value) {}
+
+int main() {
+  uint8_t narrow = 7;
+  takes_wide(narrow);
+  return 0;
+}

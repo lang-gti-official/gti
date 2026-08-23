@@ -2,6 +2,7 @@ import Link from "next/link";
 import units from "@/generated/units.json";
 import diagnostics from "@/generated/diagnostics.json";
 import language from "@/generated/language.json";
+import version from "@/generated/version.json";
 
 export default function Home() {
   return (
@@ -57,9 +58,11 @@ export default function Home() {
       </ul>
 
       <div className="stub-notice">
-        Scaffold status: structure and generated indexes are live; per-entity
-        pages and authored prose land next. The layout under{" "}
-        <code>reference/</code> is ready to populate.
+        Every example on this site was compiled and executed by{" "}
+        <strong>{version.gtiVersion}</strong> (commit{" "}
+        <code>{version.commit}</code>) when the site was built; every
+        diagnostic reproducer was verified to fail with exactly the code its
+        page documents. A stale page fails the build instead of shipping.
       </div>
     </>
   );

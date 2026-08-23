@@ -43,5 +43,8 @@ the compiler's CMake build depends on this directory.
 1. Find the entity in the generated index (`/std/` or `/diagnostics/`).
 2. Add an MDX prose file for it; the surrounding structure — signature,
    header, membership — comes from generated data.
-3. Examples must come from sources the test suite compiles; a snippet that
-   cannot build does not ship.
+3. Examples live under `reference/examples/`. Every runnable example is
+   compiled **and executed** by the repository's own compiler during
+   `pnpm generate`, and its captured output is what the page shows; every
+   diagnostic reproducer must fail with exactly the code its page documents.
+   A snippet that cannot build fails the build — it cannot ship.

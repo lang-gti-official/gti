@@ -35,8 +35,12 @@ reference/
   hand-copied. Descriptions and examples are MDX.
 - **Nothing here touches the compiler build.** CMake does not know this
   directory exists; a broken site build must never block the toolchain.
-- **Examples must compile.** Snippets come from sources the test suite
-  builds; nothing unverified ships.
+- **Examples are verified, not trusted.** `scripts/generate.mjs` compiles
+  and runs every example under `examples/run/` with the repository's compiler
+  (`$GTI` or `build/gti`) and captures the real output; each
+  `examples/diagnostics/GTI-XXXXX.gti` must fail with exactly that code.
+  Any mismatch aborts the build, so a stale page cannot ship. Building the
+  site therefore requires a built compiler.
 - The full entity graph (one page per class/member) arrives with
   `gti --emit-api-json`; `scripts/generate.mjs` deliberately stops at lexical
   extraction because the compiler owns the grammar.
