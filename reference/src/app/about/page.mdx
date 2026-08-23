@@ -1,0 +1,47 @@
+export const metadata = {
+  title: "About this reference",
+};
+
+# About this reference
+
+This site is the user-facing reference for the GTI language and standard
+library, in the spirit of cppreference: one page per entity, quick to scan,
+every fact trustworthy.
+
+## What is generated, what is authored
+
+Two kinds of content, with different rules:
+
+- **Facts are generated.** Signatures, unit lists, diagnostic codes, grammar
+  productions, and version markers are extracted from the repository at build
+  time by `scripts/generate.mjs` (and, later, by `gti --emit-api-json`). A
+  generated fact cannot disagree with the compiler without the build
+  noticing.
+- **Prose is authored.** Descriptions, notes, and worked examples are written
+  by people as MDX — this page is one — and reviewed as ordinary prose
+  diffs.
+
+The working record of the project — architecture, plans, decisions — stays in
+`docs/` and is deliberately **not** published here. The normative language
+text lives in `docs/language/` and is rendered by this site rather than
+duplicated.
+
+## Running locally
+
+```sh
+cd reference
+pnpm install
+pnpm dev        # http://localhost:3000, regenerates facts first
+pnpm build      # static export to out/
+```
+
+The site is a static export: any file host can serve `out/`, and nothing in
+the compiler's CMake build depends on this directory.
+
+## Contributing a page
+
+1. Find the entity in the generated index (`/std/` or `/diagnostics/`).
+2. Add an MDX prose file for it; the surrounding structure — signature,
+   header, membership — comes from generated data.
+3. Examples must come from sources the test suite compiles; a snippet that
+   cannot build does not ship.
