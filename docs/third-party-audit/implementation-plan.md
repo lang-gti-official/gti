@@ -45,7 +45,7 @@ system installation or the pinned bundle
 | 0.6 determinism tests | **done** | `output_determinism` (two-process `--emit-cpp` byte compare) + cross-analysis MIR-print test in `optimizer_foundation` |
 | 0.7 SYSTEM includes / no flag import | **done** | LLVM include directories stay private/system on `gti_compiler`; LLVM flags are never imported |
 | 0.8 README | **done** | build-requirements note |
-| 1.1 `stopAfter` + LSP semantics-only | **done** | `FrontendPhase` in `FrontendOptions`; LSP requests `Semantics`; focused tests |
+| 1.1 `stopAfter` + bounded LSP lowering | **done, revised** | `FrontendPhase` remains the boundary; the LSP now requests `Hir` so concrete generic diagnostics match compilation while failure metadata and MIR stay skipped |
 | 1.2 SourceManager line index | **done** | binary-search `locate()`, allocation-free lookup. Error-path benchmark: **10.17 s → 1.29 s** at 25.6k lines/12.8k errors; scaling is now linear in diagnostics |
 | 1.3 model move | **done** | deep copy replaced by `takeModel()` after HIR reanalysis finishes |
 | 1.4 emitter type recognition | **investigated, deferred** | The spelling recognition is not emitter-local: semantics itself classifies `gti_internal::{unique_owner,storage,text_view}` by qualified name, and a user-declared `namespace gti_internal { class unique_owner<T> }` is accepted and then subjected to compiler-private rules. An emitter-only `ClassId` fix would desynchronize the two layers. Correct fix is semantics-layer: reserve the `gti_internal` namespace in ordinary units (as `__gti_` identifiers already are in the lexer), then bind these types by trusted declaration identity like intrinsics. Filed as a follow-up task |

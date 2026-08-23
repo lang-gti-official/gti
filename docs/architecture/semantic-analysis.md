@@ -457,8 +457,8 @@ directional-prefix, disjoint, or may-alias relation in
 [`place-and-ownership-state.md`](../plans/place-and-ownership-state.md).
 Semantics owns source place formation, call-origin substitution, ownership
 events, source control-flow state, and diagnostics. This preserves ADR 001 and
-keeps ownership diagnostics available to semantics-only LSP analysis. HIR must
-carry the accepted concrete key/event; MIR later verifies the same finite
+keeps ownership diagnostics available before concrete-instance lowering. HIR
+must carry the accepted concrete key/event; MIR later verifies the same finite
 ownership-state transfer over executable CFG joins and backedges.
 
 M-OWN-02 implements the directly owned fixed-array slice. The semantic model

@@ -14220,11 +14220,13 @@ int main() {
   const lang::Diagnostic *migration =
       findDiagnosticByCode(obsolete.diagnostics, "GTI-S2033");
   expect(!obsolete.canGenerateCode() && migration != nullptr &&
-             migration->fixes.size() == 1 &&
-             migration->fixes.front().replacement == "std::string_view" &&
-             !migration->hints.empty(),
-         "obsolete string declarations should receive a mechanical migration "
-         "diagnostic");
+             migration->fixes.empty() && migration->hints.size() == 2 &&
+             migration->message.find("std::string") != std::string::npos &&
+             migration->message.find("std::string_view") != std::string::npos &&
+             migration->hints.front().find("#include <std/string>") !=
+                 std::string::npos,
+         "obsolete string declarations should explain the owning and "
+         "non-owning replacements without guessing ownership intent");
 
   const std::string formatted = lang::Formatter().format(
       "int main(){char quote='\\\'';char newline='\\n';return 0;}");
