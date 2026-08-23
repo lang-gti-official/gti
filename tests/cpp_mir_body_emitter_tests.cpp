@@ -1179,12 +1179,18 @@ public:
 
 struct Marker {};
 
+struct Component {
+  mut uint64_t offset = 0;
+  mut uint64_t length = 0;
+};
+
 class Dashboard {
   Mode mode = Mode::Ready;
   int32_t baseline_copy = baseline;
   Reading initial{7};
   int32_t samples[2] = {2, 3};
   Marker marker{};
+  Component component{};
 };
 
 int main() {
@@ -1206,14 +1212,14 @@ int main() {
   for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
     lang::CppMirInitializerScheduleText candidate = emitter.initializerSchedule(
         {.kind = lang::MirBodyKind::FieldInitializers, .owner = instance.id});
-    if (candidate.supported && candidate.fields.size() == 5) {
+    if (candidate.supported && candidate.fields.size() == 6) {
       schedule = std::move(candidate);
       selected = &*schedule;
       break;
     }
   }
   expect(selected != nullptr,
-         "the dashboard initializer body should expose its five-field MIR "
+         "the dashboard initializer body should expose its six-field MIR "
          "schedule");
   if (selected == nullptr) {
     return;
@@ -1244,6 +1250,9 @@ int main() {
   expect(hasSpelling("Marker{}"),
          "a targetless default Construct should publish an empty class field "
          "initializer from verified MIR");
+  expect(hasSpelling("Component{}"),
+         "a targetless generated default Construct should publish a non-empty "
+         "class field initializer from verified MIR");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -1251,9 +1260,12 @@ int main() {
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   expect(artifact.contents.find("Marker marker =") != std::string::npos &&
-             artifact.contents.find("Marker{}") != std::string::npos,
-         "the complete C++ backend should emit the verified targetless class "
-         "field initializer without a vocabulary error");
+             artifact.contents.find("Marker{}") != std::string::npos &&
+             artifact.contents.find("Component component =") !=
+                 std::string::npos &&
+             artifact.contents.find("Component{}") != std::string::npos,
+         "the complete C++ backend should emit verified targetless empty and "
+         "non-empty class field initializers without a vocabulary error");
 }
 
 void testDependentFieldInitializerSchedule() {
@@ -1420,11 +1432,12 @@ public:
   StringHolder() {}
 
   std::size_t size() {
-    return text.size();
+    return text.size() + shadow.size();
   }
 
 private:
   mut std::string text = std::string("");
+  mut std::string shadow = std::string("");
 };
 
 int main() {
@@ -1463,7 +1476,7 @@ int main() {
         continue;
       }
       ++fieldConstructs;
-      if (fieldConstructs == 1) {
+      if (fieldConstruct == nullptr) {
         fieldConstruct = &instruction;
       }
     }
@@ -1472,15 +1485,33 @@ int main() {
       fieldConstruct == nullptr ? nullptr
                                 : frontend.mir.findConstructorInstance(
                                       *fieldConstruct->constructorTarget);
-  expect(fieldConstructs == 1 && fieldConstruct != nullptr &&
+  expect(fieldConstructs == 2 && fieldConstruct != nullptr &&
              fieldConstructor != nullptr &&
              fieldConstructor->mayRaiseDefinedFailure,
-         "std::string's field construction should retain its exact checked "
-         "constructor target");
-  if (fieldConstructs != 1 || fieldConstruct == nullptr ||
+         "both std::string field constructions should retain their exact "
+         "checked constructor target");
+  if (fieldConstructs != 2 || fieldConstruct == nullptr ||
       fieldConstructor == nullptr) {
     return;
   }
+  expect(owner->fieldInitializers.dropObligations.size() == 4 &&
+             owner->fieldInitializers.failureRecords.size() == 2 &&
+             owner->fieldInitializers.cleanupBoundaries.size() == 1 &&
+             std::any_of(
+                 owner->fieldInitializers.blocks.begin(),
+                 owner->fieldInitializers.blocks.end(),
+                 [](const lang::MirBlock &block) {
+                   return std::any_of(
+                       block.instructions.begin(), block.instructions.end(),
+                       [](const lang::MirInstruction &instruction) {
+                         return instruction.kind ==
+                                    lang::MirInstructionKind::Drop &&
+                                instruction.lifecycle.size() == 1 &&
+                                instruction.lifecycle.front().failureCleanup;
+                       });
+                 }),
+         "the second owning field should retain exact rollback MIR for the "
+         "first completed field");
 
   lang::CppMirBodyEmissionMapRows rows =
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
@@ -1520,13 +1551,18 @@ int main() {
   const lang::CppMirInitializerScheduleText schedule =
       emitter.initializerSchedule(
           {.kind = lang::MirBodyKind::FieldInitializers, .owner = owner->id});
-  expect(schedule.supported && schedule.fields.size() == 1 &&
-             schedule.fields.front().spelling.find(tagSpelling) !=
-                 std::string::npos &&
-             schedule.fields.front().spelling.find(stateSpelling) !=
-                 std::string::npos,
-         "the field schedule should select the exact terminal-containment "
-         "constructor overload");
+  expect(
+      schedule.supported && schedule.fields.size() == 2 &&
+          std::all_of(schedule.fields.begin(), schedule.fields.end(),
+                      [&](const lang::CppMirFieldInitializerSpelling &field) {
+                        return field.spelling.find(tagSpelling) !=
+                                   std::string::npos &&
+                               field.spelling.find(stateSpelling) !=
+                                   std::string::npos;
+                      }),
+      "the field schedule should select the exact terminal-containment "
+      "constructor overload for both owning fields and prove the retained "
+      "cleanup-only failure branch");
 
   std::erase_if(rows.containedConstructors,
                 [&](const lang::CppMirContainedConstructorRepresentation &row) {
@@ -1553,6 +1589,224 @@ int main() {
                  std::string::npos,
          "the C++ artifact should emit the contained overload, delegate to "
          "the exact failure constructor, and terminate with its record");
+}
+
+void testBodyOrderedOwnedParameterConstructor() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-body-ordered-owned-parameter-constructor.gti", R"(
+#include <std/string>
+
+class OrderedPath {
+public:
+  OrderedPath(std::string value)
+      : first(value.clone()), second(std::move(value)) {
+    first.append("!");
+  }
+
+  std::size_t first_size() {
+    return first.size();
+  }
+
+  std::size_t second_size() {
+    return second.size();
+  }
+
+private:
+  mut std::string first = std::string("");
+  mut std::string second = std::string("");
+};
+
+int main() {
+  mut OrderedPath path = OrderedPath(std::string("hello"));
+  if (path.first_size() != 6 || path.second_size() != 5) {
+    return 1;
+  }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the body-ordered owned-parameter constructor should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirConstructorInstance *constructor = nullptr;
+  for (const lang::MirConstructorInstance &candidate :
+       frontend.mir.constructorInstances()) {
+    if (candidate.initializers.size() == 2 &&
+        !candidate.initializers.front().ownedParameter &&
+        candidate.initializers.back().ownedParameter) {
+      constructor = &candidate;
+      break;
+    }
+  }
+  expect(constructor != nullptr && constructor->mayRaiseDefinedFailure,
+         "the ordered constructor should retain its clone, move, and body "
+         "failure schedule");
+  if (constructor == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = constructor->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "the transformed constructor should preserve body-ordered clone and "
+         "owned-parameter publication");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const std::string text =
+      emitter
+          .emitFailureBodyText(address,
+                               "body-ordered-owned-parameter-constructor-v0", 1)
+          .text;
+  const std::size_t clone = text.find("clone__gti_mir_failure");
+  const std::size_t parameterMove = text.find("std::move(__gti_mir_p_", clone);
+  expect(clone != std::string::npos && parameterMove != std::string::npos &&
+             clone < parameterMove &&
+             text.find("construction rollback deferred") != std::string::npos,
+         "the emitted constructor should clone before moving the parameter "
+         "and retain exact later-failure rollback");
+
+  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
+  expect(!artifact.contents.empty() &&
+             artifact.contents.find("mir_failure_constructor_tag_v1") !=
+                 std::string::npos &&
+             artifact.contents.find("mir_empty_state_v1") != std::string::npos,
+         "production emission should build the transformed initializer list "
+         "without dereferencing absent native owned-field bindings");
+
+  lang::MirProgram mismatchedReceiver = frontend.mir;
+  auto &constructors = const_cast<std::vector<lang::MirConstructorInstance> &>(
+      mismatchedReceiver.constructorInstances());
+  bool mutated = false;
+  for (lang::MirConstructorInstance &candidate : constructors) {
+    if (candidate.id != constructor->id) {
+      continue;
+    }
+    for (lang::MirBlock &block : candidate.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Receiver) {
+          instruction.callInputRole = lang::MirCallInputRole::Argument;
+          mutated = true;
+          break;
+        }
+      }
+      if (mutated) {
+        break;
+      }
+    }
+  }
+  expect(mutated,
+         "the near-miss fixture should expose the clone receiver stage");
+  if (mutated) {
+    const lang::CppMirBodyEmitter mismatchedEmitter(mismatchedReceiver, map);
+    expect(!mismatchedEmitter.supportsFailureBodyText(address),
+           "member-call field publication should fail closed when its exact "
+           "receiver schedule is absent");
+  }
+}
+
+void testNestedReceiverFieldProjection() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-body-nested-receiver-field.gti", R"(
+#include <std/string>
+
+struct Component {
+  mut std::size_t offset = 0;
+  mut std::size_t length = 0;
+};
+
+class Path {
+public:
+  std::string filename() {
+    mut std::string result = std::string("");
+    auto offset = this.component.offset;
+    return std::move(result);
+  }
+
+private:
+  mut std::string text = std::string("");
+  mut Component component{};
+};
+
+int main() {
+  mut Path path = Path();
+  std::string name = path.filename();
+  return int32_t(name.size());
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the nested receiver-field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirFunctionInstance *filename = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    const lang::HirFunctionInstance *hir =
+        frontend.hir.findFunctionInstance(function.id);
+    if (hir != nullptr && hir->source != nullptr && function.owner &&
+        hir->source->name().lexeme == "filename") {
+      filename = &function;
+      break;
+    }
+  }
+  expect(filename != nullptr && filename->mayRaiseDefinedFailure,
+         "filename should retain its owning local's exact failure effect");
+  if (filename == nullptr) {
+    return;
+  }
+
+  const lang::MirPlace *nested = nullptr;
+  for (const lang::MirPlace &place : filename->body.places) {
+    if (place.root == lang::MirPlaceRootKind::This &&
+        place.projections.size() == 2 &&
+        std::all_of(place.projections.begin(), place.projections.end(),
+                    [](const lang::MirPlaceProjection &projection) {
+                      return projection.kind == lang::MirProjectionKind::Field;
+                    })) {
+      nested = &place;
+      break;
+    }
+  }
+  expect(nested != nullptr,
+         "filename MIR should retain the component.offset projection chain");
+  if (nested == nullptr) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = filename->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "a failure-form method should admit an exact nested receiver-field "
+         "projection");
+  if (!emitter.supportsFailureBodyText(address)) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionText text =
+      emitter.emitFailureBodyText(address, "nested-receiver-field-test-v0", 1);
+  expect(text.emitted() && text.text.find(" = (*this).") != std::string::npos,
+         "the emitted method should bind the nested receiver field from the "
+         "live object");
+
+  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
+  expect(artifact.contents.find(" = (*this).") != std::string::npos,
+         "production C++ emission should retain the verified nested field "
+         "chain without a vocabulary error");
 }
 
 void testContainedAbstractBaseConstructor() {
@@ -6054,6 +6308,8 @@ int main() {
   testDependentFieldInitializerSchedule();
   testContainedOwningFieldConstructor();
   testContainedOwningStringFieldConstructor();
+  testBodyOrderedOwnedParameterConstructor();
+  testNestedReceiverFieldProjection();
   testContainedAbstractBaseConstructor();
   testExampleCorpusEmissionReadiness();
   testGeneralTextStepMatchesProductionEmission();

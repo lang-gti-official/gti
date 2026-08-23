@@ -198,10 +198,11 @@ void expectRejectedVerified(const lang::FrontendResult &frontend,
 }
 
 void testFamily(const std::filesystem::path &fixture) {
+  const std::filesystem::path standardLibrary =
+      fixture.parent_path().parent_path().parent_path() / "stdlib";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      fixture.string(), readFile(fixture),
-      {fixture.parent_path().parent_path().parent_path() / "stdlib" /
-       "prelude.gti"});
+      fixture.string(), readFile(fixture), {standardLibrary / "prelude.gti"},
+      {}, {standardLibrary});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
