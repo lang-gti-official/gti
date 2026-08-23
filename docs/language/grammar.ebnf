@@ -433,7 +433,12 @@ call-receiver-qualifier
                        = "mut" | "&&" ;
 
 non-call-overloadable-operator
-                       = "*" | "->" | "++" | "=" | "[" "]"
+                       = "*" | "->" | "++" | "--" | "="
+                       | "+" | "-" | "/" | "%"
+                       | "+=" | "-=" | "*=" | "/=" | "%="
+                       | "~" | "&" | "|" | "^" | "<<" | ">>"
+                       | "&=" | "|=" | "^=" | "<<=" | ">>="
+                       | "[" "]"
                        | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 
 function-declaration   = [ "static" ] [ "constexpr" ] [ "mut" ] type IDENTIFIER
@@ -548,12 +553,23 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    destruction. *)
 
 (* Operator overloads are class or struct members and cannot have method type
-   parameters or runtime bindings. `operator*` and `operator->` take no
-   parameters and return checked references. `operator=`, `operator[]`, and
-   the comparison operators `==`, `!=`, `<`, `<=`, `>`, and `>=` take one
-   exact-match parameter. `operator=` requires a mutable receiver. Prefix
-   `operator++` takes no parameters, returns void, and requires a mutable
-   receiver; postfix overloading is not provided.
+   parameters or runtime bindings. `operator*` with no parameters is checked
+   dereference and `operator->` takes no parameters; both return checked
+   references. Unary `operator+`, `operator-`, and `operator~` take no
+   parameters. Binary `operator+`, `operator-`, `operator*`, `operator/`,
+   `operator%`, `operator&`, `operator|`, `operator^`, `operator<<`, and
+   `operator>>` take one exact-match parameter. These value-producing
+   operators use a read-only receiver and return an owned non-void value, not
+   a reference or receiver-tied borrowed state.
+
+   `operator=`, `operator[]`, the compound operators `+=`, `-=`, `*=`, `/=`,
+   `%=`, `&=`, `|=`, `^=`, `<<=`, and `>>=`, and comparisons `==`, `!=`, `<`,
+   `<=`, `>`, and `>=` take one exact-match parameter. Compound operators
+   return void and use a mutable receiver with trailing `mut`; GTI never
+   synthesizes one from a related value operator. `operator=` also requires a
+   mutable receiver. Prefix `operator++` and `operator--` take no parameters,
+   return void, and require a mutable receiver; postfix overloading is not
+   provided.
    `operator()` takes any number of exact-match parameters and may return any
    otherwise-valid function return type. In addition to the
    ordinary read-only and trailing-`mut` forms, it may use trailing `&&` to
@@ -567,8 +583,10 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `operator->`
    performs one checked reference step; recursive proxy lookup is not provided.
    `operator bool` participates only in conditions, logical `and`/`or`
-   (`&&`/`||`), and `!`. No free operators, implicit conversions,
-   argument-dependent lookup, or synthesized equality candidates are provided.
+   (`&&`/`||`), and `!`. Operator operands are evaluated left to right. No free
+   operators, implicit conversions, argument-dependent lookup, reversed-
+   operand search, conversion ranking, or synthesized related candidates are
+   provided.
    Read-only, mutable, and consuming `operator()` overloads may coexist when
    their exact signatures and receiver qualifiers distinguish them. Other
    operators retain only their admitted read-only or mutable forms. *)

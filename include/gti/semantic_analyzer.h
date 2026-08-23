@@ -1830,6 +1830,9 @@ public:
   findOperator(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedOperatorInfo *
+  findProjectionOperator(const Expr &expression) const;
+
+  [[nodiscard]] const ResolvedOperatorInfo *
   findContextualConversion(const Expr &expression) const;
 
   [[nodiscard]] bool isContextualIntegerOperand(const Expr &expression) const;
@@ -2049,6 +2052,9 @@ private:
 
   void recordOperator(const Expr &expression, ResolvedOperatorInfo info);
 
+  void recordProjectionOperator(const Expr &expression,
+                                ResolvedOperatorInfo info);
+
   void recordContextualConversion(const Expr &expression,
                                   ResolvedOperatorInfo info);
 
@@ -2160,6 +2166,7 @@ private:
       deferredCallableCalls;
   std::vector<PendingCallableForwarding> pendingCallableForwardings;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
+  std::unordered_map<const Expr *, ResolvedOperatorInfo> projectionOperators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;

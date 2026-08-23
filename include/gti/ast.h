@@ -122,7 +122,29 @@ enum class OverloadedOperator {
   Dereference,
   Arrow,
   PreIncrement,
+  PreDecrement,
   Assignment,
+  Plus,
+  Minus,
+  Multiply,
+  Divide,
+  Remainder,
+  AddAssign,
+  SubtractAssign,
+  MultiplyAssign,
+  DivideAssign,
+  RemainderAssign,
+  BitwiseNot,
+  BitwiseAnd,
+  BitwiseOr,
+  BitwiseXor,
+  ShiftLeft,
+  ShiftRight,
+  BitwiseAndAssign,
+  BitwiseOrAssign,
+  BitwiseXorAssign,
+  ShiftLeftAssign,
+  ShiftRightAssign,
   Subscript,
   Call,
   Equal,
@@ -149,8 +171,52 @@ operatorFunctionName(OverloadedOperator kind) {
     return "__gti_operator_arrow";
   case OverloadedOperator::PreIncrement:
     return "__gti_operator_pre_increment";
+  case OverloadedOperator::PreDecrement:
+    return "__gti_operator_pre_decrement";
   case OverloadedOperator::Assignment:
     return "__gti_operator_assignment";
+  case OverloadedOperator::Plus:
+    return "__gti_operator_plus";
+  case OverloadedOperator::Minus:
+    return "__gti_operator_minus";
+  case OverloadedOperator::Multiply:
+    return "__gti_operator_multiply";
+  case OverloadedOperator::Divide:
+    return "__gti_operator_divide";
+  case OverloadedOperator::Remainder:
+    return "__gti_operator_remainder";
+  case OverloadedOperator::AddAssign:
+    return "__gti_operator_add_assign";
+  case OverloadedOperator::SubtractAssign:
+    return "__gti_operator_subtract_assign";
+  case OverloadedOperator::MultiplyAssign:
+    return "__gti_operator_multiply_assign";
+  case OverloadedOperator::DivideAssign:
+    return "__gti_operator_divide_assign";
+  case OverloadedOperator::RemainderAssign:
+    return "__gti_operator_remainder_assign";
+  case OverloadedOperator::BitwiseNot:
+    return "__gti_operator_bitwise_not";
+  case OverloadedOperator::BitwiseAnd:
+    return "__gti_operator_bitwise_and";
+  case OverloadedOperator::BitwiseOr:
+    return "__gti_operator_bitwise_or";
+  case OverloadedOperator::BitwiseXor:
+    return "__gti_operator_bitwise_xor";
+  case OverloadedOperator::ShiftLeft:
+    return "__gti_operator_shift_left";
+  case OverloadedOperator::ShiftRight:
+    return "__gti_operator_shift_right";
+  case OverloadedOperator::BitwiseAndAssign:
+    return "__gti_operator_bitwise_and_assign";
+  case OverloadedOperator::BitwiseOrAssign:
+    return "__gti_operator_bitwise_or_assign";
+  case OverloadedOperator::BitwiseXorAssign:
+    return "__gti_operator_bitwise_xor_assign";
+  case OverloadedOperator::ShiftLeftAssign:
+    return "__gti_operator_shift_left_assign";
+  case OverloadedOperator::ShiftRightAssign:
+    return "__gti_operator_shift_right_assign";
   case OverloadedOperator::Subscript:
     return "__gti_operator_subscript";
   case OverloadedOperator::Call:
@@ -182,8 +248,52 @@ operatorSourceSpelling(OverloadedOperator kind) {
     return "operator->";
   case OverloadedOperator::PreIncrement:
     return "operator++";
+  case OverloadedOperator::PreDecrement:
+    return "operator--";
   case OverloadedOperator::Assignment:
     return "operator=";
+  case OverloadedOperator::Plus:
+    return "operator+";
+  case OverloadedOperator::Minus:
+    return "operator-";
+  case OverloadedOperator::Multiply:
+    return "operator*";
+  case OverloadedOperator::Divide:
+    return "operator/";
+  case OverloadedOperator::Remainder:
+    return "operator%";
+  case OverloadedOperator::AddAssign:
+    return "operator+=";
+  case OverloadedOperator::SubtractAssign:
+    return "operator-=";
+  case OverloadedOperator::MultiplyAssign:
+    return "operator*=";
+  case OverloadedOperator::DivideAssign:
+    return "operator/=";
+  case OverloadedOperator::RemainderAssign:
+    return "operator%=";
+  case OverloadedOperator::BitwiseNot:
+    return "operator~";
+  case OverloadedOperator::BitwiseAnd:
+    return "operator&";
+  case OverloadedOperator::BitwiseOr:
+    return "operator|";
+  case OverloadedOperator::BitwiseXor:
+    return "operator^";
+  case OverloadedOperator::ShiftLeft:
+    return "operator<<";
+  case OverloadedOperator::ShiftRight:
+    return "operator>>";
+  case OverloadedOperator::BitwiseAndAssign:
+    return "operator&=";
+  case OverloadedOperator::BitwiseOrAssign:
+    return "operator|=";
+  case OverloadedOperator::BitwiseXorAssign:
+    return "operator^=";
+  case OverloadedOperator::ShiftLeftAssign:
+    return "operator<<=";
+  case OverloadedOperator::ShiftRightAssign:
+    return "operator>>=";
   case OverloadedOperator::Subscript:
     return "operator[]";
   case OverloadedOperator::Call:

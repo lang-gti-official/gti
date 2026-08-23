@@ -977,6 +977,15 @@ SemanticModel::findOperator(const Expr &expression) const {
 }
 
 [[nodiscard]] const ResolvedOperatorInfo *
+SemanticModel::findProjectionOperator(const Expr &expression) const {
+  const auto found = projectionOperators.find(&expression);
+  if (found != projectionOperators.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findProjectionOperator(expression);
+}
+
+[[nodiscard]] const ResolvedOperatorInfo *
 SemanticModel::findContextualConversion(const Expr &expression) const {
   const auto found = contextualConversions.find(&expression);
   if (found != contextualConversions.end()) {
@@ -1183,6 +1192,7 @@ void SemanticModel::clear() {
   deferredCallableCalls.clear();
   pendingCallableForwardings.clear();
   operators.clear();
+  projectionOperators.clear();
   contextualConversions.clear();
   contextualIntegerOperands.clear();
   classLifecycles.clear();
@@ -1720,6 +1730,11 @@ void SemanticModel::recordCallableForwarding(
 void SemanticModel::recordOperator(const Expr &expression,
                                    ResolvedOperatorInfo info) {
   operators.insert_or_assign(&expression, std::move(info));
+}
+
+void SemanticModel::recordProjectionOperator(const Expr &expression,
+                                             ResolvedOperatorInfo info) {
+  projectionOperators.insert_or_assign(&expression, std::move(info));
 }
 
 void SemanticModel::recordContextualConversion(const Expr &expression,

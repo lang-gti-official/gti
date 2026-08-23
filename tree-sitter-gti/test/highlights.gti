@@ -254,3 +254,11 @@ struct GroupedState {
 };
 
 static_assert(scalar_layout == uint64_t(4), "scalar layout");
+
+class HighlightOperators {
+public:
+  int operator+(int value) { return value; }
+  int operator~() { return 0; }
+  void operator+=(int value) mut {}
+  void operator--() mut {}
+};

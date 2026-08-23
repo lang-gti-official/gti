@@ -569,6 +569,16 @@ semantic resolution. The backend does not perform GTI operator lookup.
 same-type assignment with no exact user operator continues to use the class's
 generated copy or move assignment policy.
 
+Unary `+`, `-`, and `~`, and binary arithmetic, remainder, bitwise, and shift
+operators are read-only member calls returning owned values. Binary forms take
+one exact argument. Compound arithmetic, remainder, bitwise, and shift
+operators take one exact argument, return `void`, and require trailing `mut`.
+Prefix `--` has the same `void` and mutable-receiver contract as prefix `++`;
+postfix overloading is unavailable. Related operators are never synthesized,
+operands are not reversed, and ADL or conversion ranking cannot add a
+candidate. Receiver/projection evaluation precedes the right operand exactly
+once under the ordinary left-to-right and target-first execution rules.
+
 Contextual `operator bool` participates only in the contexts enumerated by the
 language contract. Logical `and`/`or` and `&&`/`||` are equivalent spellings
 with identical short-circuit semantics.

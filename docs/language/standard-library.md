@@ -124,9 +124,9 @@ The current implemented foundation includes:
   ordering and equality operators, and `lexically_normal`. The unit performs no
   filesystem access: it is pure pathname manipulation. Three departures from
   C++ are deliberate — a pathname is stored exactly as supplied rather than
-  normalized at construction, `operator+=`/`operator/=` are absent because GTI
-  has no overloadable compound assignment, and `begin`/`end` are absent because
-  a C++ path iterator walks elements rather than characters and GTI's element
+  normalized at construction, `operator+=`/`operator/=` have not yet been
+  added to this source-defined class, and `begin`/`end` are absent because a
+  C++ path iterator walks elements rather than characters and GTI's element
   iterator awaits the generic iterator work. Copying is explicit through
   `clone()`. The converting constructor `path(std::string_view)` is declared
   and checked but not yet callable; see `R-CLASS-VALUE-EMISSION`.

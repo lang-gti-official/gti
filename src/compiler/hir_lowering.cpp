@@ -2438,6 +2438,86 @@ private:
             .traits = analyzer->traitsFor(type)};
   }
 
+  [[nodiscard]] static bool isAssignmentOperator(OverloadedOperator kind) {
+    switch (kind) {
+    case OverloadedOperator::Assignment:
+    case OverloadedOperator::AddAssign:
+    case OverloadedOperator::SubtractAssign:
+    case OverloadedOperator::MultiplyAssign:
+    case OverloadedOperator::DivideAssign:
+    case OverloadedOperator::RemainderAssign:
+    case OverloadedOperator::BitwiseAndAssign:
+    case OverloadedOperator::BitwiseOrAssign:
+    case OverloadedOperator::BitwiseXorAssign:
+    case OverloadedOperator::ShiftLeftAssign:
+    case OverloadedOperator::ShiftRightAssign:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  void configureOperatorCall(HirValue &value,
+                             const ResolvedOperatorInfo &resolved,
+                             HirBody &body) {
+    value.info = operatorResultInfo(resolved);
+    value.parameterTypes = resolved.parameterTypes;
+    value.dispatch = resolved.dispatch;
+    value.dispatchOwner = resolved.dispatchOwner;
+    value.borrowOrigin = resolved.borrowOrigin;
+    value.borrowArgument = resolved.borrowArgument;
+    value.borrowAccess = resolved.borrowAccess;
+    value.callableBoundary = resolved.boundary;
+    value.definedFailure.propagation =
+        resolved.dispatch == CallDispatch::Virtual
+            ? FailurePropagationKind::VirtualCall
+            : FailurePropagationKind::DirectCall;
+    if (value.operands.empty()) {
+      lifecycleValid = false;
+      return;
+    }
+
+    const HirValueId receiverValue = value.operands.front();
+    value.receiver = receiverValue;
+    if (const FunctionInfo *target =
+            baseModel->findFunction(resolved.function)) {
+      SemanticType ownerType = resolved.dispatchOwner;
+      if (ownerType.kind != SemanticType::Class ||
+          ownerType.classId != target->ownerClass) {
+        if (const HirValue *receiver = body.findValue(receiverValue)) {
+          ownerType = receiver->info.type;
+        }
+      }
+      value.functionTarget = enqueueFunction(
+          *target,
+          ownerType.kind == SemanticType::Class ? ownerType.arguments
+                                                : std::vector<SemanticType>{},
+          ownerType.kind == SemanticType::Class
+              ? ownerType.valueArguments
+              : std::vector<CompileTimeValue>{},
+          {}, {}, resolved.returnType, resolved.parameterTypes);
+    }
+
+    if (!value.functionTarget ||
+        value.operands.size() != resolved.parameterTypes.size() + 1) {
+      lifecycleValid = false;
+      return;
+    }
+    std::vector<HirValueId> arguments(value.operands.begin() + 1,
+                                      value.operands.end());
+    const std::optional<HirCallReceiver> plannedReceiver =
+        orderedReceiver(receiverValue, resolved.receiverMutability,
+                        resolved.receiverMode, body);
+    const std::optional<std::vector<HirCallArgument>> plannedArguments =
+        orderedArguments(arguments, resolved.parameterTypes, body);
+    if (!plannedReceiver || !plannedArguments) {
+      lifecycleValid = false;
+      return;
+    }
+    value.callPlan = HirCallPlan{.receiver = *plannedReceiver,
+                                 .arguments = *plannedArguments};
+  }
+
   [[nodiscard]] HirValueId splitOverloadedArrowProjection(
       HirValue value, const ResolvedOperatorInfo &resolved, HirBody &body) {
     const HirValueId receiver = value.operands.front();
@@ -2557,8 +2637,7 @@ private:
 
     if (const auto *assign = dynamic_cast<const Assign *>(raw)) {
       const ResolvedOperatorInfo *resolved = model.findOperator(*assign);
-      if (resolved != nullptr &&
-          resolved->kind == OverloadedOperator::Assignment) {
+      if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
         kind = HirValueKind::Call;
         const SymbolId symbol = model.findResolvedSymbol(*assign);
         const SymbolRecord *record = model.database().findSymbol(symbol);
@@ -2666,10 +2745,43 @@ private:
         lowerOperand(argument);
       }
     } else if (const auto *set = dynamic_cast<const DereferenceSet *>(raw)) {
-      kind = HirValueKind::DereferenceSet;
-      operation = set->oper().kind;
-      lowerOperand(set->object());
-      lowerOperand(set->value());
+      const ResolvedOperatorInfo *resolved = model.findOperator(*set);
+      if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
+        kind = HirValueKind::Call;
+        lowerOperand(set->object());
+        if (!operands.empty()) {
+          HirValue target{
+              .id = nextValueId++,
+              .kind = HirValueKind::Unary,
+              .source = raw,
+              .info = ExpressionInfo{.type = resolved->dispatchOwner,
+                                     .category = ValueCategory::Place,
+                                     .access = AccessMode::Mutable,
+                                     .traits = semanticTraits(
+                                         resolved->dispatchOwner)},
+              .unsafeOperation = model.unsafeOperation(*raw),
+              .operands = {operands.front()},
+              .operation = TokenKind::STAR,
+          };
+          if (const PlaceKey *place = model.findPlace(*raw)) {
+            target.place = qualifyPlace(*place, body.placeDomain);
+          }
+          if (const ResolvedOperatorInfo *projection =
+                  model.findProjectionOperator(*set)) {
+            configureOperatorCall(target, *projection, body);
+          }
+          const HirValueId targetId = target.id;
+          body.values.push_back(std::move(target));
+          operands = {targetId};
+          receiver = targetId;
+        }
+        lowerOperand(set->value());
+      } else {
+        kind = HirValueKind::DereferenceSet;
+        operation = set->oper().kind;
+        lowerOperand(set->object());
+        lowerOperand(set->value());
+      }
     } else if (const auto *get = dynamic_cast<const Get *>(raw)) {
       kind = HirValueKind::MemberAccess;
       operation = get->access().kind;
@@ -2682,11 +2794,44 @@ private:
       lowerOperand(index->object());
       lowerOperand(index->index());
     } else if (const auto *set = dynamic_cast<const IndexSet *>(raw)) {
-      kind = HirValueKind::IndexSet;
-      operation = set->oper().kind;
-      lowerOperand(set->object());
-      lowerOperand(set->index());
-      lowerOperand(set->value());
+      const ResolvedOperatorInfo *resolved = model.findOperator(*set);
+      if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
+        kind = HirValueKind::Call;
+        lowerOperand(set->object());
+        lowerOperand(set->index());
+        if (operands.size() == 2) {
+          HirValue target{
+              .id = nextValueId++,
+              .kind = HirValueKind::Index,
+              .source = raw,
+              .info = ExpressionInfo{.type = resolved->dispatchOwner,
+                                     .category = ValueCategory::Place,
+                                     .access = AccessMode::Mutable,
+                                     .traits = semanticTraits(
+                                         resolved->dispatchOwner)},
+              .unsafeOperation = model.unsafeOperation(*raw),
+              .operands = operands,
+          };
+          if (const PlaceKey *place = model.findPlace(*raw)) {
+            target.place = qualifyPlace(*place, body.placeDomain);
+          }
+          if (const ResolvedOperatorInfo *projection =
+                  model.findProjectionOperator(*set)) {
+            configureOperatorCall(target, *projection, body);
+          }
+          const HirValueId targetId = target.id;
+          body.values.push_back(std::move(target));
+          operands = {targetId};
+          receiver = targetId;
+        }
+        lowerOperand(set->value());
+      } else {
+        kind = HirValueKind::IndexSet;
+        operation = set->oper().kind;
+        lowerOperand(set->object());
+        lowerOperand(set->index());
+        lowerOperand(set->value());
+      }
     } else if (const auto *lambda = dynamic_cast<const Lambda *>(raw)) {
       kind = HirValueKind::Lambda;
       const HirLambdaId target =
@@ -2767,10 +2912,49 @@ private:
     } else if (dynamic_cast<const This *>(raw) != nullptr) {
       kind = HirValueKind::This;
     } else if (const auto *set = dynamic_cast<const Set *>(raw)) {
-      kind = HirValueKind::MemberSet;
-      operation = set->oper().kind;
-      lowerOperand(set->object());
-      lowerOperand(set->value());
+      const ResolvedOperatorInfo *resolved = model.findOperator(*set);
+      if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
+        kind = HirValueKind::Call;
+        lowerOperand(set->object());
+        if (!operands.empty()) {
+          HirValue target{
+              .id = nextValueId++,
+              .kind = HirValueKind::MemberAccess,
+              .source = raw,
+              .info = ExpressionInfo{.type = resolved->dispatchOwner,
+                                     .category = ValueCategory::Place,
+                                     .access = AccessMode::Mutable,
+                                     .traits = semanticTraits(
+                                         resolved->dispatchOwner)},
+              .unsafeOperation = model.unsafeOperation(*raw),
+              .symbol = model.findResolvedSymbol(*raw),
+              .operands = {operands.front()},
+              .operation = set->access().kind,
+          };
+          HirValueId targetId = target.id;
+          if (const ResolvedOperatorInfo *projection =
+                  model.findProjectionOperator(*set)) {
+            const ExpressionInfo projectedFieldInfo = target.info;
+            configureOperatorCall(target, *projection, body);
+            target.info = projectedFieldInfo;
+            targetId = splitOverloadedArrowProjection(std::move(target),
+                                                      *projection, body);
+          } else {
+            if (const PlaceKey *place = model.findPlace(*raw)) {
+              target.place = qualifyPlace(*place, body.placeDomain);
+            }
+            body.values.push_back(std::move(target));
+          }
+          operands = {targetId};
+          receiver = targetId;
+        }
+        lowerOperand(set->value());
+      } else {
+        kind = HirValueKind::MemberSet;
+        operation = set->oper().kind;
+        lowerOperand(set->object());
+        lowerOperand(set->value());
+      }
     } else if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
       kind = HirValueKind::Unary;
       operation = unary->oper().kind;
@@ -2870,8 +3054,15 @@ private:
         }
       }
     }
-    if (const PlaceKey *place = model.findPlace(*raw)) {
-      value.place = qualifyPlace(*place, body.placeDomain);
+    const ResolvedOperatorInfo *resolvedValueOperator =
+        model.findOperator(*raw);
+    const bool loweredAssignmentCall =
+        value.kind == HirValueKind::Call && resolvedValueOperator != nullptr &&
+        isAssignmentOperator(resolvedValueOperator->kind);
+    if (!loweredAssignmentCall) {
+      if (const PlaceKey *place = model.findPlace(*raw)) {
+        value.place = qualifyPlace(*place, body.placeDomain);
+      }
     }
     if (const OwnershipEvent *event = model.findOwnershipEvent(*raw)) {
       value.ownership = qualifyOwnershipEvent(*event, body.placeDomain);
@@ -3077,7 +3268,7 @@ private:
       value.borrowArgument = resolved->borrowArgument;
       value.borrowAccess = resolved->borrowAccess;
       if ((resolved->kind == OverloadedOperator::Call ||
-           resolved->kind == OverloadedOperator::Assignment) &&
+           isAssignmentOperator(resolved->kind)) &&
           !value.operands.empty()) {
         value.receiver = value.operands.front();
       }

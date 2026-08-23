@@ -243,6 +243,28 @@ std::string cppFunctionSpelling(const LoweredFunctionDeclaration &function,
       return std::string(operatorSourceSpelling(*function.overloadedOperator));
     case OverloadedOperator::Dereference:
     case OverloadedOperator::PreIncrement:
+    case OverloadedOperator::PreDecrement:
+    case OverloadedOperator::Plus:
+    case OverloadedOperator::Minus:
+    case OverloadedOperator::Multiply:
+    case OverloadedOperator::Divide:
+    case OverloadedOperator::Remainder:
+    case OverloadedOperator::AddAssign:
+    case OverloadedOperator::SubtractAssign:
+    case OverloadedOperator::MultiplyAssign:
+    case OverloadedOperator::DivideAssign:
+    case OverloadedOperator::RemainderAssign:
+    case OverloadedOperator::BitwiseNot:
+    case OverloadedOperator::BitwiseAnd:
+    case OverloadedOperator::BitwiseOr:
+    case OverloadedOperator::BitwiseXor:
+    case OverloadedOperator::ShiftLeft:
+    case OverloadedOperator::ShiftRight:
+    case OverloadedOperator::BitwiseAndAssign:
+    case OverloadedOperator::BitwiseOrAssign:
+    case OverloadedOperator::BitwiseXorAssign:
+    case OverloadedOperator::ShiftLeftAssign:
+    case OverloadedOperator::ShiftRightAssign:
     case OverloadedOperator::Arrow:
     case OverloadedOperator::Subscript:
     case OverloadedOperator::Call:
