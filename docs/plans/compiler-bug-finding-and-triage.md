@@ -7,8 +7,12 @@
 Status: `Q-FUZZ-01A` capture/replay implemented (bundle schema, direct and
 project stage ladders, normalized signatures, replay with
 reproduced/disappeared/replaced discrimination, `compiler_debug_tooling`
-ctest). Local-audit `--keep-failures` integration and slices B-D remain
-ready for bounded implementation.
+ctest). `Q-FUZZ-01B` implemented: opt-in parser/formatter/pipeline libFuzzer
+harnesses under `GTI_BUILD_FUZZERS=ON` with tree-wide ASan/UBSan+coverage
+instrumentation, seed corpora, a token dictionary, span/idempotence/
+artifact-or-rejection assertions, and the `fuzzer_smoke` fixed-corpus ctest.
+Local-audit `--keep-failures` integration and slices C-D remain ready for
+bounded implementation.
 
 This proposal selects a small set of high-yield tools for finding, preserving,
 and reducing GTI compiler failures. It deliberately builds on the compiler
