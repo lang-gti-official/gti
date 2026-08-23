@@ -271,6 +271,22 @@ receiver cleanup and that producer failure does not activate a receiver drop.
 The LSP smoke matrix owns `GTI-S2081` publication and clearing plus
 hover/signature selection.
 
+`temporary-arguments` covers direct construction, by-value GTI producers,
+transparent grouping, nested and multiple left-to-right arguments,
+cleanup-owning move-only values, concrete generics, `void` and owned results,
+and ordinary by-value-over-fallback selection. It exact-compares semantic
+argument indices with HIR roles and verifies each MIR producer, mutable
+value-rooted place, `BorrowRead`, `CallArgument` loan, invocation, immediate
+reverse loan end, and full-expression drop. Mutations forge argument indices,
+place/loan access, producer identity, full-expression identity, and loan
+ending. Negative cases retain rejection of mutable references, local bindings,
+explicit moves, compound and borrowed-state producers, escaping results, and
+fallback-tier ambiguity. `temporary_argument_borrow_runtime` runs successful
+and defined-failure cases at O0/O3 under C++20/C++23, including failure before
+production, in a later argument, and in the selected body. The LSP smoke gate
+proves `GTI-S2017` publication/clearing and exact borrowed versus by-value
+signature selection.
+
 The bounded M-FAIL-01 control-flow gate is owned by `failure_metadata`. It
 independently derives the exact local outcome set for fixed-width-integer
 `Add`, `Subtract`, `Multiply`, `Divide`, `Remainder`, `ShiftLeft`, `ShiftRight`,

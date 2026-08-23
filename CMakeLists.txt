@@ -955,6 +955,14 @@ if(BUILD_TESTING)
     set_tests_properties(mutable_temporary_receiver_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME temporary_argument_borrow_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/temporary_argument_borrow_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(temporary_argument_borrow_runtime
+                         PROPERTIES TIMEOUT 300)
+    add_test(
       NAME mir_backend_scalar_failure_callgraph_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_scalar_failure_callgraph_runtime_test.py"
@@ -1079,6 +1087,7 @@ if(BUILD_TESTING)
         mir_backend_class_default_cleanup_runtime
         mir_backend_owned_lifecycle_runtime
         mir_class_value_lifecycle_runtime mutable_temporary_receiver_runtime
+        temporary_argument_borrow_runtime
         mir_backend_scalar_failure_callgraph_runtime
         random_engine_runtime default_parameters_runtime
         compiler_debug_tooling filesystem_path_runtime

@@ -269,7 +269,9 @@ void update(mut Entity& entity);
 
 `T&` is a non-null, read-only borrow. `mut T&` is a non-null, writable borrow.
 A reference does not own its referent and cannot be reseated. References cannot
-bind to temporaries or outlive the storage they borrow.
+generally bind to temporaries or outlive the storage they borrow. The bounded
+call-only read borrow below is not a local or stored reference binding and does
+not extend the temporary's lifetime.
 
 References may be parameters and non-escaping local bindings. They require an
 addressable initializer, and mutable references require a mutable place.
@@ -294,6 +296,18 @@ does not authorize a stored reference, address, field-assignment target, or
 mutable-reference argument. It is unavailable to a temporary containing
 tracked borrowed state, an explicit move from named storage, a virtual method,
 or a method whose result may carry receiver-tied borrowed state.
+
+A direct ordinary constructor or by-value GTI call may also produce a fresh,
+self-contained class or struct value for one exact read-only `T&` argument of
+an ordinary GTI function or non-operator method. The compiler materializes the
+owned value at its written argument position, begins one read loan, evaluates
+later arguments, invokes the selected callable, ends the loan immediately
+afterward, and retains the value's drop obligation until the enclosing
+full-expression boundary. A by-value exact overload remains preferred because
+this borrowed form is a fallback viability tier. The permission does not apply
+to `mut T&`, local or stored bindings, explicit moves, compound or native
+producers, borrowed-state values, or a callable result that can retain the
+loan.
 
 An unqualified non-static field denotes the same receiver-rooted place as an
 explicit `this` projection. Consequently, both `return field;` and

@@ -1,7 +1,8 @@
 # Mutable Temporary Receivers
 
 Status: Direct-receiver Slice A implemented in GTI 0.294.0;
-`M-TEMP-ARG-01`, the one-call read-only argument follow-on, is planned below.
+`M-TEMP-ARG-01`, the one-call read-only argument follow-on, is implemented in
+GTI 0.297.0.
 
 ## Summary
 
@@ -525,20 +526,20 @@ Slice A was accepted and implemented with these criteria:
    and
 9. implementation updates canonical semantics and advances the minor version.
 
-## Planned Follow-On: One-Call Read-Only Temporary Arguments
+## Implemented Follow-On: One-Call Read-Only Temporary Arguments
 
-Status: **ready design, not implemented** (`M-TEMP-ARG-01`).
+Status: **implemented in GTI 0.297.0** (`M-TEMP-ARG-01`).
 
-Classification: **prepare for**. The owning-string `print`/`println` overloads
-provide the immediate `std::println(path.string())` client without changing
-language semantics. This follow-on preserves a coherent extension seam for
-ordinary read-only APIs that should observe a fresh value without taking
-ownership or forcing an otherwise unnecessary local.
+Classification: **systems-ready**. The owning-string `print`/`println`
+overloads provide the immediate `std::println(path.string())` client, while
+this slice supplies the general language rule for ordinary read-only APIs that
+observe a fresh value without taking ownership or forcing an otherwise
+unnecessary local.
 
 ### User-Facing Outcome
 
-The first bounded slice should accept an exact read-only reference parameter
-from a fresh, self-contained class or struct result for one call:
+The bounded slice accepts an exact read-only reference parameter from a fresh,
+self-contained class or struct result for one call:
 
 ```gti
 class Report {
@@ -560,7 +561,7 @@ the borrow ends after invocation and the result is destroyed at the enclosing
 full-expression boundary. There is no reference lifetime extension beyond the
 statement and no ownership transfer into `inspect`.
 
-### Proposed Static-Semantic Contract
+### Static-Semantic Contract
 
 An argument is eligible only when all of the following are true:
 
@@ -603,7 +604,7 @@ two bounded viability tiers:
    this tier; do not rank by the number of ephemeral borrows, generic status,
    defaults, or return type.
 
-Consequently a future overload set such as this remains deterministic:
+Consequently an overload set such as this remains deterministic:
 
 ```gti
 void render(Document& value);
@@ -613,9 +614,8 @@ render(make_document()); // selects the owning value overload
 ```
 
 The borrowed overload is a fallback for APIs that do not accept ownership.
-Implementation of this tier must amend ADR 003 and the canonical static
-semantics in the same change; this plan is not current overload-resolution
-authority.
+ADR 003 and the canonical static semantics own this implemented
+overload-resolution rule.
 
 ### Lifetime And Failure Schedule
 
@@ -640,7 +640,7 @@ loan/drop obligations, or reorder the written arguments.
 
 ### Phase Ownership
 
-| Layer | Required fact and owner |
+| Layer | Implemented fact and owner |
 | --- | --- |
 | Parser/AST | No syntax change; retain the written argument and full-expression source identities. |
 | Semantics | Prove freshness, self-containment, exact tier selection, parameter access, non-escaping result shape, and the full-expression owner. |
@@ -658,10 +658,10 @@ complete affected schedule.
 
 `GTI-S2017` remains correct for a local reference binding, mutable reference,
 explicit move, borrowed-state producer, or unsupported expression family. An
-otherwise eligible call should no longer report the blanket “cannot bind a
-reference to a temporary” diagnostic after this slice lands.
+otherwise eligible call no longer reports the blanket “cannot bind a reference
+to a temporary” diagnostic.
 
-When a call-like form is ineligible, diagnostics should name the blocking
+When a call-like form is ineligible, diagnostics name the blocking
 reason: mutable access requested, producer not fresh, tracked borrowed state,
 result may retain the loan, or unsupported producer/call family. The primary
 span belongs on the argument, with related information on a result parameter
@@ -670,27 +670,27 @@ formatting need no changes because the spelling already parses.
 
 ### Verification And Exit Gate
 
-Focused positive coverage must include direct construction, ordinary
+Focused positive coverage includes direct construction, ordinary
 class-returning calls, transparent parentheses, nested calls, multiple
 left-to-right arguments, cleanup-owning move-only values, and concrete generic
-instances. It must prove that an existing exact by-value overload wins over
+instances. It proves that an existing exact by-value overload wins over
 the fallback borrowed tier.
 
-Focused negative coverage must retain rejection of local reference bindings,
+Focused negative coverage retains rejection of local reference bindings,
 `mut T&`, explicit moves from named storage, borrowed-state values, escaping
 reference/carrier results, unsupported compound producers, and ambiguity
-within either tier. Verifier mutations must cover every producer/place/type,
+within either tier. Verifier mutations cover every producer/place/type,
 loan, call-input, result-provenance, full-expression, and drop invariant above.
 
-The production matrix must run successful and defined-failure cases at O0 and
+The production matrix runs successful and defined-failure cases at O0 and
 O3 under C++20 and C++23, including failure before production, in a later
-argument, and in the selected body. LSP tests must prove diagnostic clearing
+argument, and in the selected body. LSP tests prove diagnostic clearing
 and exact signature selection.
 
-The slice exits only when semantics, HIR, verified MIR, effects, production
+The slice exited after semantics, HIR, verified MIR, effects, production
 emission, canonical language/architecture documentation, ADR 003, the
-restriction ledger, and the runtime/tooling matrix agree. Landing it advances
-the minor version because previously rejected source becomes executable.
+restriction ledger, and the runtime/tooling matrix agreed. It advances the
+minor version because previously rejected source becomes executable.
 
 ### Explicit Non-Goals
 

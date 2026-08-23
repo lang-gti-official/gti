@@ -205,6 +205,12 @@ An admitted direct class-value temporary instead uses
 `ReadTemporaryBorrow` or `MutableTemporaryBorrow`; the input names the
 unwrapped producer value and copies semantic access rather than rediscovering
 freshness from `HirValueKind`.
+For an ordinary call, each index recorded by semantic analysis as an ephemeral
+argument borrow is likewise lowered as `ReadTemporaryBorrow`, with the
+unwrapped producer, exact read-only parameter type, written parameter index,
+and enclosing full-expression identity. HIR rejects duplicate, omitted, or
+out-of-range semantic indices and never infers this role from a class-shaped
+argument on its own.
 This preserves a once-callable requirement even when exact overload selection
 legitimately falls back to a read or mutable target. Ordinary constructors
 require an exact constructor target and at least one parameter;

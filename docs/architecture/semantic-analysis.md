@@ -355,7 +355,7 @@ error. Both stop before HIR because the language has no accepted cleanup
 schedule for that moved receiver across the enclosing full expression; this is
 a semantic/lowering restriction, not a backend fallback.
 
-## Temporary Receiver Capability
+## Temporary Value Call Capabilities
 
 Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes
@@ -369,6 +369,16 @@ not fresh. Concrete generic reanalysis repeats these checks using substituted
 type and lifecycle traits. Expression value category and access remain
 unchanged, preventing the receiver-only capability from authorizing general
 mutable-place operations.
+
+`ResolvedCallInfo::ephemeralBorrowArguments` separately records the exact
+written argument indices that use the bounded call-only read-borrow fallback.
+Candidate selection first resolves the ordinary exact tier and admits this
+fallback tier only when the first is empty. Each recorded argument must be a
+direct ordinary construction or by-value GTI call producing a concrete,
+self-contained class/struct value; the selected parameter is exact read-only
+`T&`, and the selected GTI definition's result cannot retain the loan. This
+metadata authorizes only the selected invocation and leaves general expression
+value category, access, and reference-binding rules unchanged.
 
 ## Concepts And Requirement Contracts
 

@@ -155,6 +155,10 @@ enum class MirLoanKind {
   Stored,
   Return,
   Parameter,
+  // A verifier-owned read-only loan from one materialized fresh value into
+  // one ordered call argument. Backends erase its representation, and every
+  // path ends it immediately after that invocation.
+  CallArgument,
 };
 
 struct MirLoan {
