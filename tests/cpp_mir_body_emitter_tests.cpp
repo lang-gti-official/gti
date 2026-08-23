@@ -3044,10 +3044,27 @@ public:
   T read() { return this.target; }
 };
 
+class reading<T> {
+  T value;
+
+public:
+  reading(T initial) : value(initial) {}
+
+  T read() { return this.value; }
+};
+
+class dashboard {
+  reading<int> initial{7};
+
+public:
+  int read() { return this.initial.read(); }
+};
+
 int main() {
   mut int cell = 7;
   wrapper<int> bound = wrapper<int>(cell);
-  return bound.read() - 7;
+  dashboard display{};
+  return bound.read() + display.read() - 14;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -3066,6 +3083,15 @@ int main() {
   expect(contains("template <> __gti_program::wrapper<std::int32_t>::"
                   "wrapper(const std::int32_t & __gti_mir_arg_0);"),
          "the specialization should declare after the class definition");
+  const std::size_t readingSpecialization = artifact.contents.find(
+      "template <> __gti_program::reading<std::int32_t>::reading(");
+  const std::size_t dashboardDefinition =
+      artifact.contents.find("class dashboard {");
+  expect(readingSpecialization != std::string::npos &&
+             dashboardDefinition != std::string::npos &&
+             readingSpecialization < dashboardDefinition,
+         "a generic constructor specialization should be declared before a "
+         "later class initializer can instantiate the primary template");
   expect(contains(" : target(__gti_mir_arg_0) "),
          "the specialization should bind the reference field in its member "
          "initializer list");
