@@ -14506,6 +14506,35 @@ int main() {
          "formatted symbolic logical aliases should be idempotent");
 }
 
+void testComparisonOperatorFormattingStability() {
+  const std::string source = R"(
+bool compare(uint64_t left, uint64_t right, uint64_t limit) {
+  return left < right && right >= limit && limit > (0);
+}
+)";
+  const std::string formatted = lang::Formatter().format(source);
+  expect(
+      formatted.find("return left < right && right >= limit && limit > (0);") !=
+              std::string::npos &&
+          formatted.find("> =") == std::string::npos,
+      "formatter should not treat comparisons as generic angle lists or "
+      "split '>='");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted comparison chains should be idempotent");
+
+  const lang::FrontendResult analyzed =
+      lang::Frontend().analyze("formatter-comparisons.gti", formatted);
+  expect(analyzed.canGenerateCode(),
+         "formatted comparison chains should remain valid GTI source");
+
+  const std::string formattedConcept = lang::Formatter().format(
+      "concept sortable<T>=std::totally_ordered<T>&&std::movable<T>;");
+  expect(formattedConcept == "concept sortable<T> = std::totally_ordered<T> && "
+                             "std::movable<T>;\n",
+         "formatter should still disambiguate a compact concept generic close "
+         "from its assignment token");
+}
+
 void testIntegerBitwiseAndModuloOperators() {
   lang::Lexer lexer;
 
@@ -28963,6 +28992,7 @@ int main(int argc, char **argv) {
   testCharactersAndStringViews();
   testStandardString();
   testLogicalOperatorSpellings();
+  testComparisonOperatorFormattingStability();
   testIntegerBitwiseAndModuloOperators();
   testCheckedArithmeticAndCompoundAssignments();
   testParserRecovery();

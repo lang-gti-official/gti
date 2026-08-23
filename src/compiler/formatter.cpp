@@ -273,6 +273,7 @@ public:
         break;
       case Kind::Semicolon:
         state.endRequiresClause();
+        state.templateDepth = 0;
         state.trimSpaces();
         state.append(";");
         if (state.parenthesisDepth == 0 &&
@@ -340,7 +341,8 @@ public:
         if (state.includeLine && lexeme.text == "/") {
           state.trimSpaces();
           state.append("/");
-        } else if (lexeme.text == ">=" && state.templateDepth > 0) {
+        } else if (lexeme.text == ">=" && state.templateDepth > 0 &&
+                   isConceptGenericCloseAssignment(lexemes, index)) {
           state.trimSpaces();
           state.append(">");
           --state.templateDepth;
@@ -1382,14 +1384,60 @@ private:
   static std::optional<std::size_t>
   matchingGenericClose(const std::vector<Lexeme> &lexemes, std::size_t left) {
     std::size_t depth = 0;
+    std::size_t parenthesisDepth = 0;
+    std::size_t bracketDepth = 0;
     for (std::size_t index = left; index < lexemes.size(); ++index) {
-      if (lexemes[index].kind == Kind::Less) {
+      const Lexeme &candidate = lexemes[index];
+      if (candidate.kind == Kind::Semicolon ||
+          candidate.kind == Kind::LeftBrace ||
+          candidate.kind == Kind::RightBrace) {
+        return std::nullopt;
+      }
+      if (candidate.kind == Kind::LeftParen) {
+        ++parenthesisDepth;
+        continue;
+      }
+      if (candidate.kind == Kind::RightParen) {
+        if (parenthesisDepth == 0) {
+          return std::nullopt;
+        }
+        --parenthesisDepth;
+        continue;
+      }
+      if (candidate.kind == Kind::LeftBracket) {
+        ++bracketDepth;
+        continue;
+      }
+      if (candidate.kind == Kind::RightBracket) {
+        if (bracketDepth == 0) {
+          return std::nullopt;
+        }
+        --bracketDepth;
+        continue;
+      }
+      if (candidate.kind == Kind::Operator) {
+        const Lexeme *next = nextSyntaxLexeme(lexemes, index);
+        const bool referenceSuffix =
+            (candidate.text == "&" || candidate.text == "&&") &&
+            next != nullptr &&
+            (next->kind == Kind::Comma || next->kind == Kind::Greater ||
+             next->kind == Kind::ShiftRight);
+        if (!referenceSuffix &&
+            (candidate.text == "&" || candidate.text == "&&" ||
+             candidate.text == "||" || candidate.text == "==" ||
+             candidate.text == "!=" || candidate.text == "<=" ||
+             candidate.text == ">=" ||
+             (bracketDepth == 0 && isAssignmentOperator(candidate.text)))) {
+          return std::nullopt;
+        }
+      }
+      if (candidate.kind == Kind::Less) {
         ++depth;
-      } else if (lexemes[index].kind == Kind::Greater) {
+      } else if (candidate.kind == Kind::Greater) {
         if (--depth == 0) {
           return index;
         }
-      } else if (lexemes[index].kind == Kind::ShiftRight) {
+      } else if (candidate.kind == Kind::ShiftRight) {
         for (std::size_t close = 0; close < 2; ++close) {
           if (--depth == 0) {
             return index;
@@ -1398,6 +1446,13 @@ private:
       }
     }
     return std::nullopt;
+  }
+
+  static bool
+  isConceptGenericCloseAssignment(const std::vector<Lexeme> &lexemes,
+                                  std::size_t index) {
+    return lexemes[index].kind == Kind::Operator &&
+           lexemes[index].text == ">=" && isConceptGenericAngle(lexemes, index);
   }
 
   static bool isConceptGenericAngle(const std::vector<Lexeme> &lexemes,

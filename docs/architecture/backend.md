@@ -163,6 +163,19 @@ failure record when construction fails. The emitter rejects missing,
 duplicated, or mismatched rows; no C++ spelling or containment policy enters
 `LoweredProgram`.
 
+A failure-form constructor may publish owned fields from its MIR body instead
+of the native C++ member-initializer list when native initialization would
+reorder an earlier operation after a later parameter move. This route requires
+an exact move, obligation reparenting, full-expression, recursive private
+empty-state, and construction-rollback proof. A failure-capable class temporary
+passed to another constructor likewise remains in its verified value-rooted
+lifetime slot until the consuming construction finishes. Only fields named by
+the explicit constructor-initializer schedule are replaced with private empty
+state; unrelated in-class initializers retain their source-defined value.
+Nested receiver-field access is emitted only when every projection resolves
+through an exact class field and representation row. Missing or additional
+lifecycle uses reject the body rather than changing source evaluation order.
+
 ### Declarations And ABI
 
 `CppEmitter` walks `LoweredDeclaration` rows to assemble namespaces, aliases,

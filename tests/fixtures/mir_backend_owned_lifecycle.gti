@@ -1,3 +1,5 @@
+#include <std/string>
+
 mut int32_t close_bits = 0;
 mut int32_t first_close = 0;
 
@@ -60,6 +62,47 @@ int32_t compatibility_checked(int32_t value) {
   return value + 1;
 }
 
+static int32_t body_ordered_seed = 7;
+
+class BodyOrderedOwner {
+public:
+  BodyOrderedOwner(std::string value)
+      : first(value.clone()), second(std::move(value)) {
+    first.append("!");
+  }
+
+  std::size_t first_size() {
+    return first.size();
+  }
+
+  std::size_t second_size() {
+    return second.size();
+  }
+
+  int32_t preserved_value() {
+    return preserved;
+  }
+
+private:
+  mut std::string first = std::string("");
+  mut std::string second = std::string("");
+  int32_t preserved = body_ordered_seed;
+};
+
+int32_t body_ordered_owner() {
+  mut BodyOrderedOwner value = BodyOrderedOwner(std::string("hello"));
+  if (value.first_size() != std::size_t(6)) {
+    return 1;
+  }
+  if (value.second_size() != std::size_t(5)) {
+    return 2;
+  }
+  if (value.preserved_value() != 7) {
+    return 3;
+  }
+  return 0;
+}
+
 int main() {
   if (run_scopes() != 0) {
     return 1;
@@ -69,6 +112,9 @@ int main() {
   }
   if (compatibility_checked(4) != 5) {
     return 3;
+  }
+  if (body_ordered_owner() != 0) {
+    return 4;
   }
   return 0;
 }

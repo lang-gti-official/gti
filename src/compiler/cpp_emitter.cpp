@@ -6247,6 +6247,7 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
   }
   void emitGeneralMirConstructorInitializerList(
       const MirConstructorInstance &constructor, bool failureForm = false) {
+    const MirClassInstance *owner = mir.findClassInstance(constructor.owner);
     const std::optional<std::vector<CppMirStoredReferenceBinding>> bindings =
         cppMirStoredReferenceBindings(constructor);
     const std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
@@ -6255,7 +6256,13 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
         ownedBindings = cppMirOwnedParameterFieldBindings(mir, constructor);
     const std::optional<std::vector<CppMirCopyParameterFieldBinding>>
         copiedBindings = cppMirCopyParameterFieldBindings(mir, constructor);
-    if (!bindings || !baseBindings || !ownedBindings || !copiedBindings) {
+    const bool bodyStagedOwnedParameters =
+        failureForm && owner != nullptr &&
+        cppMirFailureConstructorEmptyStateEligible(mir, owner->id) &&
+        bindings && bindings->empty() && baseBindings &&
+        baseBindings->empty() && copiedBindings && copiedBindings->empty();
+    if (!bindings || !baseBindings || !copiedBindings ||
+        (!ownedBindings && !bodyStagedOwnedParameters)) {
       return;
     }
     enum class BindingKind { Base, Field, EmptyField };
@@ -6271,7 +6278,8 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
     };
     std::vector<InitializerBinding> initializers;
     initializers.reserve(baseBindings->size() + bindings->size() +
-                         copiedBindings->size() + ownedBindings->size());
+                         copiedBindings->size() +
+                         (ownedBindings ? ownedBindings->size() : 0));
     for (const CppMirBaseParameterInitializerBinding &binding : *baseBindings) {
       initializers.push_back({.kind = BindingKind::Base,
                               .initializer = binding.initializer,
@@ -6288,38 +6296,52 @@ GTI_MIR_CHECKED_SHIFT_COMPOUND_V1(mir_checked_compound_shift_right_v1,
                               .field = binding.field,
                               .parameter = binding.parameter});
     }
-    for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
-      if (binding.initializer >= constructor.initializers.size() ||
-          std::any_of(initializers.begin(), initializers.end(),
-                      [&](const InitializerBinding &candidate) {
-                        return candidate.kind == BindingKind::Field &&
-                               candidate.field == binding.field;
-                      })) {
-        continue;
-      }
-      initializers.push_back({.initializer = binding.initializer,
-                              .field = binding.field,
-                              .parameter = binding.parameter,
-                              .moved = true});
-    }
-    const MirClassInstance *owner = mir.findClassInstance(constructor.owner);
-    if (failureForm && owner != nullptr &&
-        cppMirFailureConstructorEmptyStateEligible(mir, owner->id)) {
-      for (std::size_t index = 0; index < owner->declaredFields.size();
-           ++index) {
-        const MirClassFieldInfo &field = owner->declaredFields[index];
-        if (std::any_of(initializers.begin(), initializers.end(),
+    if (ownedBindings) {
+      for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
+        if (binding.initializer >= constructor.initializers.size() ||
+            std::any_of(initializers.begin(), initializers.end(),
                         [&](const InitializerBinding &candidate) {
-                          return candidate.kind != BindingKind::Base &&
-                                 candidate.field == field.symbol;
+                          return candidate.kind == BindingKind::Field &&
+                                 candidate.field == binding.field;
                         })) {
           continue;
         }
-        initializers.push_back(
-            {.kind = BindingKind::EmptyField,
-             .initializer = constructor.initializers.size() + index,
-             .field = field.symbol,
-             .fieldType = field.type});
+        initializers.push_back({.initializer = binding.initializer,
+                                .field = binding.field,
+                                .parameter = binding.parameter,
+                                .moved = true});
+      }
+    }
+    if (failureForm && owner != nullptr &&
+        cppMirFailureConstructorEmptyStateEligible(mir, owner->id)) {
+      for (std::size_t index = 0; index < constructor.initializers.size();
+           ++index) {
+        const MirConstructorInitializer &initializer =
+            constructor.initializers[index];
+        if (initializer.kind != ConstructorInitializerTargetKind::Field) {
+          continue;
+        }
+        const auto field = std::find_if(
+            owner->declaredFields.begin(), owner->declaredFields.end(),
+            [&](const MirClassFieldInfo &candidate) {
+              return candidate.symbol == initializer.field &&
+                     candidate.type == initializer.targetType;
+            });
+        if (field == owner->declaredFields.end()) {
+          throw std::logic_error(
+              "failure constructor lost an explicit field initializer");
+        }
+        if (std::any_of(initializers.begin(), initializers.end(),
+                        [&](const InitializerBinding &candidate) {
+                          return candidate.kind != BindingKind::Base &&
+                                 candidate.field == field->symbol;
+                        })) {
+          continue;
+        }
+        initializers.push_back({.kind = BindingKind::EmptyField,
+                                .initializer = index,
+                                .field = field->symbol,
+                                .fieldType = field->type});
       }
     }
     if (initializers.empty()) {
