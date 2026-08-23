@@ -22918,14 +22918,21 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
           instruction->constructorTarget ? program_.findConstructorInstance(
                                                *instruction->constructorTarget)
                                          : nullptr;
-      const MirClassInstance *owner =
+      const MirClassInstance *targetOwner =
           target == nullptr ? nullptr
                             : program_.findClassInstance(target->owner);
+      const MirClassInstance *constructed =
+          uniqueClassInstanceForType(program_, instruction->info.type);
       const auto row = std::find_if(
           representations_.types().begin(), representations_.types().end(),
           [&](const CppMirTypeRepresentation &candidate) {
             return candidate.type == instruction->info.type;
           });
+      const bool generatedDefault =
+          !instruction->constructorTarget && constructed != nullptr &&
+          constructed->declaredFields.empty() &&
+          instruction->parameterTypes.empty() &&
+          instruction->operands.empty() && instruction->definedFailure.empty();
       const bool ordinaryContainedFailure =
           target != nullptr && target->mayRaiseDefinedFailure &&
           plainConstructorBodyContainsFailure(program_, representations_,
@@ -22939,12 +22946,14 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
       if (!instruction->result || instruction->receiver ||
           instruction->destination ||
           instruction->constructorKind != ConstructorKind::Ordinary ||
-          target == nullptr || owner == nullptr ||
-          owner->type != instruction->info.type ||
-          (target->mayRaiseDefinedFailure && !ordinaryContainedFailure &&
-           containedFailure == nullptr) ||
-          target->parameterTypes != instruction->parameterTypes ||
-          instruction->operands.size() != target->parameterTypes.size() ||
+          constructed == nullptr ||
+          (!generatedDefault &&
+           (target == nullptr || targetOwner == nullptr ||
+            targetOwner != constructed ||
+            (target->mayRaiseDefinedFailure && !ordinaryContainedFailure &&
+             containedFailure == nullptr) ||
+            target->parameterTypes != instruction->parameterTypes ||
+            instruction->operands.size() != target->parameterTypes.size())) ||
           !instruction->localFailureSites.empty() ||
           row == representations_.types().end() ||
           row->kind != CppMirTypeRepresentationKind::Class ||
@@ -22954,6 +22963,11 @@ CppMirBodyEmitter::initializerSchedule(MirBodyAddress address) const {
       const std::string *dependent =
           dependentFieldTypeSpelling(*instruction->result);
       std::string spelled = dependent == nullptr ? row->spelling : *dependent;
+      if (generatedDefault) {
+        spelled += "{}";
+        spellings.emplace(*instruction->result, std::move(spelled));
+        continue;
+      }
       spelled += '(';
       if (containedFailure != nullptr) {
         spelled += containedFailure->tagSpelling;
