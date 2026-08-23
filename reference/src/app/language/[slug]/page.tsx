@@ -30,7 +30,7 @@ export default async function LanguageSection({
   const section = language.sections.find((s) => s.slug === slug);
   if (!section) notFound();
 
-  const html = renderMarkdown(section.markdown);
+  const html = await renderMarkdown(section.markdown);
 
   return (
     <article className="spec-section">

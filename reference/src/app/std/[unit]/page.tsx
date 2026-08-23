@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import units from "@/generated/units.json";
+import classes from "@/generated/classes.json";
 import examples from "@/generated/examples.json";
+import Code from "@/components/Code";
 
 // One page per standard-library unit. The synopsis is quoted verbatim from
 // the shipped stdlib source at build time, and every example shown was
@@ -42,12 +45,23 @@ export default async function UnitPage({
       {unit.types.length > 0 ? (
         <p>
           Public types:{" "}
-          {unit.types.map((typeName, index) => (
-            <span key={typeName}>
-              {index > 0 ? ", " : ""}
-              <code>{typeName}</code>
-            </span>
-          ))}
+          {unit.types.map((typeName, index) => {
+            const hasPage = classes.classes.some(
+              (entry) => entry.unit === unit.name && entry.name === typeName,
+            );
+            return (
+              <span key={typeName}>
+                {index > 0 ? ", " : ""}
+                {hasPage ? (
+                  <Link href={`/std/${unit.name}/${typeName}/`}>
+                    <code>{typeName}</code>
+                  </Link>
+                ) : (
+                  <code>{typeName}</code>
+                )}
+              </span>
+            );
+          })}
         </p>
       ) : null}
 
@@ -58,18 +72,14 @@ export default async function UnitPage({
             Public declarations quoted from{" "}
             <code>stdlib/std/{unit.name}.gti</code> at build time.
           </p>
-          <pre>
-            <code>{unit.synopsis}</code>
-          </pre>
+          <Code code={unit.synopsis} lang="gti" />
         </>
       ) : null}
 
       {related.map((example) => (
         <section key={example.name}>
           <h2 id={example.name}>Example: {example.title}</h2>
-          <pre>
-            <code>{example.source}</code>
-          </pre>
+          <Code code={example.source} lang="gti" />
           <p className="muted" style={{ fontSize: "0.8125rem", marginBottom: "0.25rem" }}>
             Output ({examples.verifiedWith}):
           </p>
