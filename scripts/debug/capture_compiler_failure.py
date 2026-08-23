@@ -269,17 +269,23 @@ def signatures_match(original: dict, observed: dict) -> bool:
     return original == observed
 
 
-def collect_source_graph(entry: Path) -> list[Path]:
+def collect_source_graph(
+        entry: Path, package_root: Path | None = None) -> list[Path]:
     """Resolve the local-include graph from an entry unit, bounded.
 
-    Follows only `#include "relative"` edges, stays inside the entry's
-    directory subtree, and never copies the surrounding repository. Standard
-    library includes (`<...>`) resolve through the toolchain and are not part
-    of the bundle.
+    Follows only `#include "relative"` edges and stays inside the supplied
+    package root. Direct mode defaults that root to the entry's directory;
+    project mode supplies the manifest directory so sibling source trees are
+    retained without copying the surrounding repository. Standard-library
+    includes (`<...>`) resolve through the toolchain and are not part of the
+    bundle.
     """
-    root = entry.parent.resolve()
+    root = (package_root or entry.parent).resolve()
+    resolved_entry = entry.resolve()
+    if not resolved_entry.is_relative_to(root):
+        raise CaptureError(f"source entry {resolved_entry} escapes {root}")
     seen: list[Path] = []
-    pending = [(entry.resolve(), 0)]
+    pending = [(resolved_entry, 0)]
     total_bytes = 0
     while pending:
         current, depth = pending.pop()
@@ -307,6 +313,7 @@ def collect_source_graph(entry: Path) -> list[Path]:
 
 
 def copy_project_sources(project: Path, destination: Path) -> list[Path]:
+    project = project.resolve()
     manifest = project / "gti.toml"
     if not manifest.is_file():
         raise CaptureError(f"no gti.toml in {project}")
@@ -323,11 +330,13 @@ def copy_project_sources(project: Path, destination: Path) -> list[Path]:
     if not roots:
         raise CaptureError("gti.toml declares no target roots")
     for root in roots:
-        entry = project / root
+        entry = (project / root).resolve()
+        if not entry.is_relative_to(project):
+            raise CaptureError(f"target root {root} escapes the project")
         if not entry.is_file():
             raise CaptureError(f"target root {root} does not exist")
-        for unit in collect_source_graph(entry):
-            relative = unit.relative_to(project.resolve())
+        for unit in collect_source_graph(entry, project):
+            relative = unit.relative_to(project)
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(unit, target)
@@ -396,6 +405,7 @@ def capture(arguments: argparse.Namespace) -> int:
             units = collect_source_graph(entry)
             source_dir.mkdir()
             base = entry.parent
+            source_manifest_root = base
             for unit in units:
                 relative = unit.relative_to(base)
                 target = source_dir / relative
@@ -408,6 +418,7 @@ def capture(arguments: argparse.Namespace) -> int:
             project = Path(arguments.project).resolve()
             mode = "project"
             units = copy_project_sources(project, source_dir)
+            source_manifest_root = project
             entry_relative = "gti.toml"
             probes = project_ladder()
             probe_cwd = source_dir
@@ -434,9 +445,7 @@ def capture(arguments: argparse.Namespace) -> int:
             "timeout_seconds": arguments.timeout,
             "probes": strip_private(records),
             "source_files": [
-                {"path": str(path.name if mode == "direct"
-                             else path.relative_to(
-                                 Path(arguments.project).resolve())),
+                {"path": str(path.relative_to(source_manifest_root)),
                  "sha256": sha256_file(path), "bytes": path.stat().st_size}
                 for path in units
             ],
