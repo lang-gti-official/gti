@@ -132,6 +132,9 @@ description of the implementation.
   completed 124-function GLFW 3.4 acceptance surface for `S-FFI-02`
   F1/F2/F3 and the same-thread `S-CALL-01` callback boundary
 - [Performance tooling](plans/performance-tooling.md)
+- [Compiler bug-finding and triage tooling](plans/compiler-bug-finding-and-triage.md)
+  — failure bundles/replay (implemented as `Q-FUZZ-01A`), then fuzzers,
+  reduction, and typed differential generation
 - [Conditional compilation and configuration flags](plans/conditional-compilation.md)
   — implemented `#define`/`#ifdef` flag axis over target conditionals, its
   design rationale, and LSP inactive-region rendering
