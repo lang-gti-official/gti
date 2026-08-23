@@ -1,0 +1,13 @@
+int main() {
+  int offset = 3;
+  auto add_offset = [offset](int value) -> int {
+    return offset + value;
+  };
+
+  auto copied = add_offset;
+  int doubled = [](int value) -> int {
+    return value * 2;
+  }(4);
+
+  return copied(doubled) - 11;
+}

@@ -113,7 +113,22 @@ The current implemented foundation includes:
   from an explicit `uint64_t` seed, plus fallible `std::random_device` draws
   backed by bounded host entropy; and
 - `<std/tcp>` POSIX IPv4 stream-socket creation and close through a move-only
-  `std::tcp::socket` owner with typed creation and close errors.
+  `std::tcp::socket` owner with typed creation and close errors; and
+- `<std/filesystem>` a move-only `std::filesystem::path` giving C++'s
+  decomposition (`root_name`, `root_directory`, `root_path`, `relative_path`,
+  `parent_path`, `filename`, `stem`, `extension`), the matching `has_*`
+  queries, `is_absolute`/`is_relative`, the `clear`, `make_preferred`,
+  `remove_filename`, `replace_filename`, `replace_extension`, and `swap`
+  modifiers, `assign`/`append`/`concat`, element-wise `compare` with the
+  ordering and equality operators, and `lexically_normal`. The unit performs no
+  filesystem access: it is pure pathname manipulation. Three departures from
+  C++ are deliberate — a pathname is stored exactly as supplied rather than
+  normalized at construction, `operator+=`/`operator/=` are absent because GTI
+  has no overloadable compound assignment, and `begin`/`end` are absent because
+  a C++ path iterator walks elements rather than characters and GTI's element
+  iterator awaits the generic iterator work. Copying is explicit through
+  `clone()`. The converting constructor `path(std::string_view)` is declared
+  and checked but not yet callable; see `R-CLASS-VALUE-EMISSION`.
 
 Detailed API contracts remain in source and `stdlib/README.md` until migrated
 into per-component specification sections.

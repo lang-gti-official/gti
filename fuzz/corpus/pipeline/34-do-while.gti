@@ -1,0 +1,17 @@
+int main() {
+  mut int attempts = 0;
+  mut int accepted = 0;
+
+  do {
+    attempts++;
+    if (attempts < 3) {
+      continue;
+    }
+    accepted = attempts;
+  } while (accepted == 0);
+
+  if (attempts == 3 and accepted == 3) {
+    return 0;
+  }
+  return 1;
+}

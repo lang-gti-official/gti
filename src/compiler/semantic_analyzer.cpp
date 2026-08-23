@@ -3311,7 +3311,8 @@ public:
     SemanticType deferredCalleeType = calleeType;
     if (deferredCalleeType.kind == SemanticType::Reference &&
         deferredCalleeType.arguments.size() == 1) {
-      deferredCalleeType = deferredCalleeType.arguments.front();
+      SemanticType referent = deferredCalleeType.arguments.front();
+      deferredCalleeType = std::move(referent);
     }
     if (deferredCalleeType.kind == SemanticType::TypeParameter) {
       if (argumentAnalysis.hasDeferred()) {
@@ -5780,7 +5781,8 @@ public:
       SemanticType pointee = rightType;
       if (pointee.kind == SemanticType::Reference &&
           pointee.arguments.size() == 1) {
-        pointee = pointee.arguments.front();
+        SemanticType referent = pointee.arguments.front();
+        pointee = std::move(referent);
       }
       currentType = SemanticType::rawPointerTo(
           std::move(pointee), info->access == AccessMode::Mutable
