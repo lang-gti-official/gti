@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import diagnostics from "@/generated/diagnostics.json";
 import reproducers from "@/generated/diagnostic-examples.json";
 import { diagnosticProse } from "@/content/diagnostics";
+import Code from "@/components/Code";
 
 // One page per diagnostic code — every code the compiler can publish gets a
 // stable URL from day one, which is the contract that lets the compiler emit
@@ -81,9 +82,7 @@ export default async function DiagnosticPage({
             Verified at build time to fail with exactly this code (
             {reproducers.verifiedWith}).
           </p>
-          <pre>
-            <code>{reproducer.source}</code>
-          </pre>
+          <Code code={reproducer.source} lang="gti" />
           <pre>
             <code>{reproducer.firstLine}</code>
           </pre>
