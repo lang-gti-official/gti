@@ -89,6 +89,71 @@ def main() -> int:
               "boundary names the frontend ladder rung",
               manifest["boundary"])
 
+        # --- direct bundles retain relative source-graph paths.
+        nested = temp / "nested"
+        nested.mkdir()
+        nested_bad = nested / "bad.gti"
+        nested_bad.write_text(
+            "int nested_failure() { return missing_nested_name; }\n",
+            encoding="utf-8")
+        include_entry = temp / "include-entry.gti"
+        include_entry.write_text(
+            '#include "nested/bad.gti"\nint main() { return 0; }\n',
+            encoding="utf-8")
+        include_bundle = temp / "include-bundle"
+        included = run_tool(script, "capture", "--gti", str(gti),
+                            "--source", str(include_entry),
+                            "--out", str(include_bundle))
+        include_manifest = manifest_of(include_bundle)
+        include_paths = {
+            record["path"] for record in include_manifest["source_files"]
+        }
+        check(included.returncode == 0
+              and "nested/bad.gti" in include_paths
+              and (include_bundle / "source/nested/bad.gti").is_file(),
+              "direct bundle records nested source paths",
+              included.stdout + included.stderr)
+
+        # --- project bundles are bounded by the package, not each target's
+        # directory. This is the common src/tests -> ../core layout.
+        project = temp / "project"
+        (project / "src/tests").mkdir(parents=True)
+        (project / "src/core").mkdir(parents=True)
+        (project / "gti.toml").write_text(
+            """manifest-version = 1
+
+[package]
+name = "debug-capture-project"
+version = "0.1.0"
+
+[targets.app]
+kind = "executable"
+root = "src/tests/main.gti"
+""",
+            encoding="utf-8")
+        (project / "src/tests/main.gti").write_text(
+            '#include "../core/helper.gti"\nint main() { return helper(); }\n',
+            encoding="utf-8")
+        (project / "src/core/helper.gti").write_text(
+            "int helper() { return missing_project_name; }\n",
+            encoding="utf-8")
+        project_bundle = temp / "project-bundle"
+        project_capture = run_tool(
+            script, "capture", "--gti", str(gti), "--project", str(project),
+            "--out", str(project_bundle))
+        project_manifest = manifest_of(project_bundle)
+        project_paths = {
+            record["path"] for record in project_manifest["source_files"]
+        }
+        project_signature = project_manifest["signature"]
+        check(project_capture.returncode == 0
+              and project_signature["kind"] == "diagnostic"
+              and project_signature["code"].startswith("GTI-S")
+              and "src/core/helper.gti" in project_paths
+              and (project_bundle / "source/src/core/helper.gti").is_file(),
+              "project bundle retains sibling includes inside the package",
+              project_capture.stdout + project_capture.stderr)
+
         # --- exit gate: replay from a different root reproduces.
         moved = temp / "elsewhere" / "bundle"
         moved.parent.mkdir()
