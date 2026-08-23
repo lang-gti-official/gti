@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import language from "@/generated/language.json";
 import { renderMarkdown } from "@/lib/markdown";
+import Breadcrumbs from "@/components/Breadcrumbs";
 
 // Every section page renders the normative markdown from docs/language/ as
 // captured at build time — the text is quoted, never paraphrased, so the
@@ -34,6 +35,9 @@ export default async function LanguageSection({
 
   return (
     <article className="spec-section">
+      <Breadcrumbs
+        trail={[{ label: "language", href: "/language/" }, { label: slug }]}
+      />
       <p className="muted" style={{ fontSize: "0.8125rem", margin: 0 }}>
         Normative source: <code>docs/language/{section.file}</code>
         {section.status ? (
