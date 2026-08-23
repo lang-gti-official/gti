@@ -1177,12 +1177,20 @@ public:
   Reading(int32_t initial) : value(initial) {}
 };
 
+struct Marker {};
+
 class Dashboard {
   Mode mode = Mode::Ready;
   int32_t baseline_copy = baseline;
   Reading initial{7};
   int32_t samples[2] = {2, 3};
+  Marker marker{};
 };
+
+int main() {
+  Dashboard dashboard = Dashboard();
+  return 0;
+}
 )");
   expect(frontend.canGenerateCode(),
          "the rich field-initializer fixture should pass the frontend");
@@ -1198,14 +1206,14 @@ class Dashboard {
   for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
     lang::CppMirInitializerScheduleText candidate = emitter.initializerSchedule(
         {.kind = lang::MirBodyKind::FieldInitializers, .owner = instance.id});
-    if (candidate.supported && candidate.fields.size() == 4) {
+    if (candidate.supported && candidate.fields.size() == 5) {
       schedule = std::move(candidate);
       selected = &*schedule;
       break;
     }
   }
   expect(selected != nullptr,
-         "the dashboard initializer body should expose its four-field MIR "
+         "the dashboard initializer body should expose its five-field MIR "
          "schedule");
   if (selected == nullptr) {
     return;
@@ -1233,6 +1241,19 @@ class Dashboard {
                      "static_cast<std::int32_t>(3)}"),
          "the fixed-array field aggregate should preserve its staged element "
          "order");
+  expect(hasSpelling("Marker{}"),
+         "a targetless default Construct should publish an empty class field "
+         "initializer from verified MIR");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find("Marker marker =") != std::string::npos &&
+             artifact.contents.find("Marker{}") != std::string::npos,
+         "the complete C++ backend should emit the verified targetless class "
+         "field initializer without a vocabulary error");
 }
 
 void testDependentFieldInitializerSchedule() {
