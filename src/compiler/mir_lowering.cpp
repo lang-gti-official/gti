@@ -1925,6 +1925,23 @@ private:
             {.kind = MirProjectionKind::Field, .field = value->symbol});
       } else if (!value->operands.empty()) {
         place = clonePlace(placeForValue(value->operands.front()), *value);
+        // A class-valued temporary is an SSA value, not a pre-existing place.
+        // Project from that value after emitPlaceDependencies() materializes
+        // it. Rooting this place at the member result would make the following
+        // Load read its own result before definition.
+        if (place == 0) {
+          const HirValue *receiver = findValue(value->operands.front());
+          if (receiver != nullptr &&
+              receiver->info.category == ValueCategory::Value &&
+              receiver->info.type.kind == SemanticType::Class) {
+            place = appendPlace({.root = MirPlaceRootKind::Value,
+                                 .value = mirValueFor(*receiver),
+                                 .type = value->info.type,
+                                 .access = value->info.access,
+                                 .traits = value->info.traits,
+                                 .sourceValue = value->id});
+          }
+        }
         if (place != 0) {
           if (value->operation == TokenKind::ARROW) {
             output.places[place - 1].projections.push_back(
