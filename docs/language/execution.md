@@ -238,15 +238,19 @@ A control condition is stabilized to its bool or switch value, then its
 full-expression cleanup completes before the selected body or arm begins. A
 classic `for` initializer completes once; its condition is a new
 full-expression on each test and its increment is a new full-expression after
-each body/`continue`. A range-for evaluates its range once. A future permitted
-temporary range is transferred into a hidden owner lasting for the complete
-range statement. The iterator and sentinel are then initialized, in that
-order. On each iteration the comparison condition completes before the body,
-the element binding is initialized before the body and cleaned at the end of
-that iteration, and the increment completes before the next condition. On
-loop exit the sentinel, iterator, and hidden range owner are cleaned in reverse
-initialization order. The current implementation still requires a stable
-addressable range until its dedicated temporary-range lowering lands.
+each body/`continue`. A range-for evaluates its range once. An addressable range
+is retained through a read-only hidden owner reference; an owned temporary is
+transferred into a hidden owner lasting for the complete range statement. For
+a nominal range, the iterator and sentinel are then initialized in that order.
+A fixed array uses an exact index and extent instead. On each iteration the
+comparison condition completes before the body, the element binding and its
+read-only loan are initialized before the body and ended at the end of that
+iteration, and the increment completes before the next condition. On loop exit
+the sentinel, iterator, range carrier, and hidden owner are cleaned in reverse
+initialization order. `break`, `return`, and defined-failure edges converge
+through the same active-obligation plan; `continue` ends the current element
+loan before increment. An owned range is therefore destroyed exactly once
+without relying on C++ temporary lifetime extension.
 
 Lexical scope cleanup destroys successfully initialized locals in reverse
 successful-initialization order. Array elements, fields, captures, parameters,

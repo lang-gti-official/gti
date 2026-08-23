@@ -4301,14 +4301,16 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                                          ownerSpelling);
             output << ";\n";
           }
-          const bool failureFreeBoundaryWrapper =
+          const bool ordinaryBoundaryWrapper =
               loweredFailureBodySupported(*instance) &&
               !loweredNormalBodySupported(*instance) &&
-              cppMirBodyStatusCannotFail(instance->body) &&
-              cppMirNeedsFailureFreeBoundaryWrapper(mir, *generalEmissionMap,
-                                                    instance->id);
+              ((cppMirBodyStatusCannotFail(instance->body) &&
+                cppMirNeedsFailureFreeBoundaryWrapper(mir, *generalEmissionMap,
+                                                      instance->id)) ||
+               cppMirNeedsTerminalSubscriptBoundaryWrapper(
+                   mir, *generalEmissionMap, instance->id));
           if (loweredNormalBodySupported(*instance) ||
-              failureFreeBoundaryWrapper) {
+              ordinaryBoundaryWrapper) {
             writeIndent();
             output << "template <> ";
             emitLoweredFunctionSignature(*row, *function, instance, false,
@@ -4542,14 +4544,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     output << "}\n";
   }
 
-  // A source member can conservatively retain the defined-failure flag even
-  // when its concrete verified MIR has no failure-producing path.  Such a
-  // member may still be needed as an ordinary nested expression (for example,
-  // a sentinel returned directly into a constructor argument).  Publish the
-  // ordinary signature as a narrow adapter over the admitted transformed
-  // body.  The MIR proof makes the failure arm unreachable; terminating if a
-  // stale backend violates that proof keeps the adapter fail-closed.
-  void emitLoweredFailureFreeBoundaryWrapper(
+  // A source member can need an ordinary signature even when only its failure
+  // body is directly representable. This covers both a proven failure-free
+  // nested producer and the class-subscript place compatibility path, which
+  // has no call result on which to encode a failure edge. Publish a narrow
+  // adapter over the admitted transformed body and contain any failure
+  // terminally; the caller never observes an invented success value.
+  void emitLoweredOrdinaryFailureBoundaryWrapper(
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
       const MirFunctionInstance &instance, std::string_view ownerSpelling,
       bool explicitSpecialization) {
@@ -4668,11 +4669,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
           emitLoweredVirtualFailureBoundaryWrapper(row, function, *instance,
                                                    ownerSpelling, generic);
         } else if (!loweredNormalBodySupported(*instance) &&
-                   cppMirBodyStatusCannotFail(instance->body) &&
-                   cppMirNeedsFailureFreeBoundaryWrapper(
-                       mir, *generalEmissionMap, instance->id)) {
-          emitLoweredFailureFreeBoundaryWrapper(row, function, *instance,
-                                                ownerSpelling, generic);
+                   ((cppMirBodyStatusCannotFail(instance->body) &&
+                     cppMirNeedsFailureFreeBoundaryWrapper(
+                         mir, *generalEmissionMap, instance->id)) ||
+                    cppMirNeedsTerminalSubscriptBoundaryWrapper(
+                        mir, *generalEmissionMap, instance->id))) {
+          emitLoweredOrdinaryFailureBoundaryWrapper(row, function, *instance,
+                                                    ownerSpelling, generic);
         }
       }
       if (loweredNormalBodySupported(*instance) &&

@@ -27,6 +27,7 @@ namespace {
 struct ArrayElementAccess {
   MirPlaceId array = 0;
   std::vector<MirPlaceProjection> indices;
+  bool dereferenceArray = false;
 
   [[nodiscard]] const MirPlaceProjection &terminalIndex() const {
     return indices.back();
@@ -36,8 +37,15 @@ struct ArrayElementAccess {
 [[nodiscard]] inline std::optional<ArrayElementAccess>
 arrayElementAccess(const MirBody &body, const MirPlace &place) {
   if (place.root != MirPlaceRootKind::Binding || place.binding == 0 ||
-      place.projections.empty() ||
-      !std::all_of(place.projections.begin(), place.projections.end(),
+      place.projections.empty()) {
+    return std::nullopt;
+  }
+  const bool dereferenceArray =
+      place.projections.front().kind == MirProjectionKind::Dereference;
+  const auto firstIndex =
+      place.projections.begin() + static_cast<std::ptrdiff_t>(dereferenceArray);
+  if (firstIndex == place.projections.end() ||
+      !std::all_of(firstIndex, place.projections.end(),
                    [](const MirPlaceProjection &projection) {
                      return projection.kind == MirProjectionKind::Index &&
                             (projection.index != 0 ||
@@ -48,19 +56,31 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
   for (const MirPlace &candidate : body.places) {
     if (candidate.id != place.id &&
         candidate.root == MirPlaceRootKind::Binding &&
-        candidate.binding == place.binding && candidate.projections.empty() &&
-        candidate.type.kind == SemanticType::Array) {
-      SemanticType current = candidate.type;
+        candidate.binding == place.binding && candidate.projections.empty()) {
+      const SemanticType *arrayType = &candidate.type;
+      if (dereferenceArray) {
+        if (candidate.type.kind != SemanticType::Reference ||
+            candidate.type.arguments.size() != 1 ||
+            candidate.type.arguments.front().kind != SemanticType::Array) {
+          continue;
+        }
+        arrayType = &candidate.type.arguments.front();
+      } else if (candidate.type.kind != SemanticType::Array) {
+        continue;
+      }
+      SemanticType current = *arrayType;
       bool valid = true;
-      for (std::size_t index = 0; index < place.projections.size(); ++index) {
+      const std::vector<MirPlaceProjection> indices(firstIndex,
+                                                    place.projections.end());
+      for (std::size_t index = 0; index < indices.size(); ++index) {
         if (current.kind != SemanticType::Array ||
             current.arguments.size() != 1) {
           valid = false;
           break;
         }
-        if (index + 1 < place.projections.size()) {
+        if (index + 1 < indices.size()) {
           const std::optional<std::uint64_t> constant =
-              place.projections[index].constantIndex;
+              indices[index].constantIndex;
           if (!constant || current.arrayLengthParameterId != 0 ||
               *constant >= current.arrayLength) {
             valid = false;
@@ -73,7 +93,8 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
         current = std::move(element);
       }
       if (valid && current == place.type) {
-        return ArrayElementAccess{candidate.id, place.projections};
+        return ArrayElementAccess{candidate.id, std::move(indices),
+                                  dereferenceArray};
       }
     }
   }
@@ -433,22 +454,26 @@ struct ClassSubscriptAccess {
   SemanticType indexType = SemanticType::Unknown;
 };
 
-// A class-subscription place: an Index projection over a sibling
-// class-typed local. The compatibility path spells it as the class's
-// subscript member call, so the access carries the member-resolution
-// facts: the base place, its class instance, and the index identity.
+// A class-subscription place: a terminal Index projection over a sibling
+// class-typed place. The shared prefix may include the Dereference projection
+// of a reference parameter. The compatibility path spells it as the class's
+// subscript member call, so the access carries the member-resolution facts:
+// the base place, its class instance, and the index identity.
 [[nodiscard]] std::optional<ClassSubscriptAccess>
 classSubscriptAccess(const MirProgram &program, const MirBody &body,
                      const MirPlace &place) {
   if (place.root != MirPlaceRootKind::Binding || place.binding == 0 ||
-      place.projections.size() != 1 ||
-      place.projections[0].kind != MirProjectionKind::Index) {
+      place.projections.empty() ||
+      place.projections.back().kind != MirProjectionKind::Index) {
     return std::nullopt;
   }
   for (const MirPlace &candidate : body.places) {
     if (candidate.id == place.id ||
         candidate.root != MirPlaceRootKind::Binding ||
-        candidate.binding != place.binding || !candidate.projections.empty() ||
+        candidate.binding != place.binding ||
+        candidate.projections.size() + 1 != place.projections.size() ||
+        !std::equal(candidate.projections.begin(), candidate.projections.end(),
+                    place.projections.begin()) ||
         candidate.type.kind != SemanticType::Class) {
       continue;
     }
@@ -456,13 +481,13 @@ classSubscriptAccess(const MirProgram &program, const MirBody &body,
       if (instance.type != candidate.type) {
         continue;
       }
-      const MirValue *index = body.findValue(place.projections[0].index);
+      const MirPlaceProjection &projection = place.projections.back();
+      const MirValue *index = body.findValue(projection.index);
       if (index == nullptr) {
         return std::nullopt;
       }
-      return ClassSubscriptAccess{
-          candidate.id, instance.id, place.projections[0].index,
-          place.projections[0].constantIndex, index->info.type};
+      return ClassSubscriptAccess{candidate.id, instance.id, projection.index,
+                                  projection.constantIndex, index->info.type};
     }
     return std::nullopt;
   }
@@ -14357,18 +14382,6 @@ private:
           return;
         }
       }
-      if (source != nullptr &&
-          (source->root == MirPlaceRootKind::Loan ||
-           (source->root == MirPlaceRootKind::This &&
-            source->projections.size() == 2) ||
-           (source->root == MirPlaceRootKind::Binding &&
-            !source->projections.empty() &&
-            source->projections[0].kind == MirProjectionKind::Dereference))) {
-        output << "__gti_mir_v_" << *instruction.result << " = ";
-        emitPlaceExpression(facts, *source);
-        output << ";\n";
-        return;
-      }
       if (source != nullptr) {
         if (const std::optional<ClassSubscriptAccess> access =
                 classSubscriptAccess(program, facts.body, *source)) {
@@ -14389,6 +14402,20 @@ private:
           output << ");\n";
           return;
         }
+      }
+      if (source != nullptr &&
+          (source->root == MirPlaceRootKind::Loan ||
+           (source->root == MirPlaceRootKind::This &&
+            source->projections.size() == 2) ||
+           (source->root == MirPlaceRootKind::Binding &&
+            !source->projections.empty() &&
+            source->projections[0].kind == MirProjectionKind::Dereference))) {
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+        emitPlaceExpression(facts, *source);
+        output << ";\n";
+        return;
+      }
+      if (source != nullptr) {
         if (const std::optional<ArrayElementAccess> access =
                 viewElementAccess(facts.body, *source)) {
           // The terminal helper reports the defined bound contract and
@@ -14872,19 +14899,49 @@ private:
           throw std::logic_error(
               "verified MIR subscript store lost its contained member");
         }
-        output << '(';
-        emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
-        output << ")." << bodySpelling(member->id) << '(';
-        emitSubscriptIndex(*access);
-        output << ") = ";
-        emitOperand(instruction.operands.front());
-        output << ";\n";
+        const auto emitElement = [&] {
+          output << '(';
+          emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
+          output << ")." << bodySpelling(member->id) << '(';
+          emitSubscriptIndex(*access);
+          output << ')';
+        };
+        const std::string_view checkedCompound =
+            cppMirCompoundCheckedHelperSpelling(instruction.operation);
+        const std::string_view terminalCompound =
+            cppMirCompoundAssignHelperSpelling(instruction.operation);
+        if (failureForm && !instruction.localFailureSites.empty() &&
+            !checkedCompound.empty()) {
+          output << "__gti_mir_failure_status_" << instruction.id << " = "
+                 << checkedCompound << '(';
+          emitElement();
+          output << ", ";
+          emitOperand(instruction.operands.front());
+          output << ");\n";
+        } else if (!terminalCompound.empty()) {
+          if (instruction.kind == MirInstructionKind::Assign &&
+              instruction.result &&
+              !nonRootRecordUses(facts.body, *instruction.result).empty()) {
+            output << "__gti_mir_v_" << *instruction.result << " = ";
+          }
+          output << terminalCompound << '(';
+          emitElement();
+          output << ", ";
+          emitOperand(instruction.operands.front());
+          output << ");\n";
+          return;
+        } else {
+          emitElement();
+          output << " = ";
+          emitOperand(instruction.operands.front());
+          output << ";\n";
+        }
         if (instruction.kind == MirInstructionKind::Assign &&
             instruction.result &&
             !nonRootRecordUses(facts.body, *instruction.result).empty()) {
           writeIndent();
           output << "__gti_mir_v_" << *instruction.result << " = ";
-          emitOperand(instruction.operands.front());
+          emitElement();
           output << ";\n";
         }
         return;
@@ -16418,6 +16475,7 @@ private:
     if (instruction.kind == MirInstructionKind::Call && instruction.receiver &&
         (instruction.intrinsic == IntrinsicKind::StringViewSize ||
          instruction.intrinsic == IntrinsicKind::StringViewEmpty ||
+         instruction.intrinsic == IntrinsicKind::ArrayRangeBegin ||
          instruction.intrinsic == IntrinsicKind::ArraySize ||
          instruction.intrinsic == IntrinsicKind::ExpectedValue ||
          instruction.intrinsic == IntrinsicKind::ExpectedError)) {
@@ -16456,6 +16514,10 @@ private:
           expectedClassExtractionPlace(facts.body, *instruction.result);
       output << "__gti_mir_" << (classExtraction != nullptr ? "ref_v_" : "v_")
              << *instruction.result << " = ";
+      if (instruction.intrinsic == IntrinsicKind::ArrayRangeBegin) {
+        output << "std::uint64_t{0};\n";
+        return;
+      }
       if (classExtraction != nullptr) {
         output << "std::addressof(";
       }
@@ -18121,9 +18183,15 @@ private:
   void emitArrayParent(const ScalarBodyFacts &facts,
                        const ArrayElementAccess &access) {
     const MirPlace *array = facts.body.findPlace(access.array);
+    if (access.dereferenceArray) {
+      output << "(*";
+    }
     output << "__gti_mir_p_" << access.array;
     if (array != nullptr && slotPlace(facts.body, *array)) {
       output << ".get()";
+    }
+    if (access.dereferenceArray) {
+      output << ')';
     }
     for (std::size_t index = 0; index + 1 < access.indices.size(); ++index) {
       output << '[';
@@ -19560,6 +19628,54 @@ bool cppMirNeedsFailureFreeBoundaryWrapper(
         }
         if (inlineNestedCallResult(program, representations, *body,
                                    *instruction.result) == &instruction) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+bool cppMirNeedsTerminalSubscriptBoundaryWrapper(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    HirFunctionInstanceId function) {
+  if (function == 0) {
+    return false;
+  }
+  const auto selectsFunction = [&](const MirBody &body, const MirPlace *place,
+                                   ReceiverMutability mutability) {
+    if (place == nullptr) {
+      return false;
+    }
+    const std::optional<ClassSubscriptAccess> access =
+        classSubscriptAccess(program, body, *place);
+    if (!access) {
+      return false;
+    }
+    const MirFunctionInstance *member = containedSubscriptMember(
+        program, representations, access->owner, mutability, access->indexType);
+    return member != nullptr && member->id == function;
+  };
+
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const MirBlock &block : body->blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == MirInstructionKind::Load &&
+            instruction.operands.size() == 1 &&
+            selectsFunction(*body,
+                            body->findPlace(instruction.operands.front().place),
+                            ReceiverMutability::ReadOnly)) {
+          return true;
+        }
+        if ((instruction.kind == MirInstructionKind::Initialize ||
+             instruction.kind == MirInstructionKind::Assign) &&
+            instruction.destination &&
+            selectsFunction(*body, body->findPlace(*instruction.destination),
+                            ReceiverMutability::Mutable)) {
           return true;
         }
       }
@@ -22381,6 +22497,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (instruction.receiver &&
             (instruction.intrinsic == IntrinsicKind::StringViewSize ||
              instruction.intrinsic == IntrinsicKind::StringViewEmpty ||
+             instruction.intrinsic == IntrinsicKind::ArrayRangeBegin ||
              instruction.intrinsic == IntrinsicKind::ArraySize ||
              instruction.intrinsic == IntrinsicKind::ExpectedValue ||
              instruction.intrinsic == IntrinsicKind::ExpectedError)) {

@@ -553,10 +553,12 @@ nominal operators remain distinct from built-in raw-pointer `*`, `->`, and
 `[]`, which require an unsafe block and create no borrow or loan.
 
 Range-based `for` uses `operator*` through the same receiver-tied rules and
-holds a stable borrow of the range for the loop. Both self-contained iterators
-and the confined owner-tied iterator form above are supported. The compiler
-does not invent a raw pointer or public intrinsic for iteration; see
-[`ranges.md`](ranges.md).
+records a dedicated read-only range loan plus a loop-bounded read-only element
+loan. Both self-contained iterators and the confined owner-tied iterator form
+above are supported. Fixed arrays use an indexed place rather than a pointer;
+an owned nominal temporary is transferred into loop storage and destroyed once
+after all range and element loans end. The compiler does not expose a raw
+pointer or public intrinsic for iteration; see [`ranges.md`](ranges.md).
 
 ## Raw Pointers And Ownership
 
@@ -996,14 +998,14 @@ behavior; copyable arguments may be copied at the method boundary, while a
 move-only pack is consumed once.
 
 The first iterator is read-only and retains one checked read-only reference to
-the backing storage. It supports the existing structural range protocol for a
-stable vector lvalue, and an active iterator prevents mutation, replacement, or
-movement of the vector. This is the same conservative one-owner carrier used by
-`std::string`, not complete iterator invalidation semantics. Mutable iteration,
-owned temporary ranges, nested/shared readers, precise per-element loans,
-iterator categories, iterator-position insertion/erasure, allocator policy,
-and owner-tied `span` remain future work. Indexed insertion and erasure are
-implemented without granting mutable iteration.
+the backing storage. It supports the existing structural range protocol, and
+an active iterator prevents mutation, replacement, or movement of the vector.
+The range statement adds its dedicated range and per-iteration element loans;
+an owned vector temporary may be transferred into its hidden loop owner.
+Mutable iteration and invalidation rules, iterator categories,
+iterator-position insertion/erasure, allocator policy, and owner-tied `span`
+remain future work. Indexed insertion and erasure are implemented without
+granting mutable iteration.
 
 ## Owning Text
 

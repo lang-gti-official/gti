@@ -536,6 +536,37 @@ struct MirValueUse {
   friend bool operator==(const MirValueUse &, const MirValueUse &) = default;
 };
 
+struct MirRangeIteration {
+  std::size_t id = 0;
+  HirStatementId hirStatement = 0;
+  HirStatementId coreLoop = 0;
+  RangeIterationStrategy strategy = RangeIterationStrategy::Structural;
+  SemanticType rangeType = SemanticType::Unknown;
+  SemanticType iteratorType = SemanticType::Unknown;
+  SemanticType sentinelType = SemanticType::Unknown;
+  SemanticType elementType = SemanticType::Unknown;
+  AccessMode elementAccess = AccessMode::ReadOnly;
+  MirPlaceId owner = 0;
+  MirPlaceId rangeCarrier = 0;
+  MirPlaceId iterator = 0;
+  MirPlaceId sentinel = 0;
+  MirPlaceId element = 0;
+  MirLoanId rangeLoan = 0;
+  MirLoanId elementLoan = 0;
+  MirDropObligationId ownerDrop = 0;
+  MirBlockId conditionEntryBlock = 0;
+  MirBlockId conditionBlock = 0;
+  MirBlockId bodyBlock = 0;
+  MirBlockId incrementBlock = 0;
+  MirBlockId cleanupBlock = 0;
+  MirBlockId exitBlock = 0;
+  std::uint64_t arrayLength = 0;
+  bool ownsRangeTemporary = false;
+
+  friend bool operator==(const MirRangeIteration &,
+                         const MirRangeIteration &) = default;
+};
+
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
   PlaceDomain placeDomain;
@@ -549,6 +580,7 @@ struct MirBody {
   std::vector<MirDropObligation> dropObligations;
   std::vector<MirFailureRecord> failureRecords;
   std::vector<MirProgramConstantSubstitution> programConstantSubstitutions;
+  std::vector<MirRangeIteration> rangeIterations;
   std::vector<MirValue> values;
   std::vector<std::vector<MirValueUse>> valueUses;
 

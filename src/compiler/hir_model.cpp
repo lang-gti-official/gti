@@ -188,6 +188,133 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const HirLambda &instance : program.lambdaInstances()) {
     verifyNativeCallbackValues(instance.body);
   }
+  const auto verifyRangeIterations = [&](const HirBody &body) {
+    for (const HirStatement &statement : body.statements) {
+      const auto *source = dynamic_cast<const RangeForStmt *>(statement.source);
+      if (statement.kind != HirStatementKind::RangeFor) {
+        if (statement.rangeIteration) {
+          result.errors.emplace_back(
+              "non-range HIR statement carries range iteration metadata");
+        }
+        continue;
+      }
+      const ResolvedRangeIterationInfo *semantic =
+          source == nullptr ? nullptr : semantics.findRangeIteration(*source);
+      const HirRangeIteration *range =
+          statement.rangeIteration ? &*statement.rangeIteration : nullptr;
+      const auto bindingFor = [&](HirBindingId id) -> const HirBinding * {
+        const auto found = std::find_if(
+            body.bindings.begin(), body.bindings.end(),
+            [&](const HirBinding &binding) { return binding.id == id; });
+        return found == body.bindings.end() ? nullptr : &*found;
+      };
+      const HirBinding *owner =
+          range == nullptr ? nullptr : bindingFor(range->owner);
+      const auto exactBinding = [&](HirBindingId id,
+                                    const VariableDecl *declaration) {
+        const HirBinding *binding = bindingFor(id);
+        return binding != nullptr && binding->variable == declaration;
+      };
+      const auto exactValue = [&](HirValueId id, const ExprPtr &expression) {
+        const HirValue *value = body.findValue(id);
+        return expression && value != nullptr &&
+               value->source == expression.get();
+      };
+      const HirLoan *rangeLoan =
+          range == nullptr ? nullptr : body.findLoan(range->rangeLoan);
+      const HirLoan *elementLoan =
+          range == nullptr ? nullptr : body.findLoan(range->elementLoan);
+      const bool referenceElement =
+          source != nullptr && source->elementBinding() != nullptr &&
+          source->elementBinding()->type().reference.has_value();
+      const bool exactSemantic =
+          semantic != nullptr && range != nullptr &&
+          range->strategy == semantic->strategy &&
+          range->rangeType == semantic->rangeType &&
+          range->iteratorType == semantic->iteratorType &&
+          range->sentinelType == semantic->sentinelType &&
+          range->elementType == semantic->elementType &&
+          range->elementAccess == semantic->elementAccess &&
+          range->rangeLoan == semantic->rangeLoan &&
+          range->elementLoan == semantic->elementLoan &&
+          range->beginFunction == semantic->beginFunction &&
+          range->endFunction == semantic->endFunction &&
+          range->compareFunction == semantic->compareFunction &&
+          range->dereferenceFunction == semantic->dereferenceFunction &&
+          range->incrementFunction == semantic->incrementFunction &&
+          range->arrayLength == semantic->arrayLength &&
+          range->ownsRangeTemporary == semantic->ownsRangeTemporary;
+      const bool exactStructure =
+          source != nullptr && range != nullptr && statement.body &&
+          body.findStatement(*statement.body) != nullptr &&
+          body.findStatement(range->coreLoop) != nullptr &&
+          exactBinding(range->owner, source->ownerBinding()) &&
+          exactBinding(range->rangeCarrier, source->rangeBinding()) &&
+          exactBinding(range->iterator, source->iteratorBinding()) &&
+          exactBinding(range->sentinel, source->sentinelBinding()) &&
+          exactBinding(range->element, source->elementBinding()) &&
+          exactValue(range->source, source->ownerBinding()->initializer()) &&
+          exactValue(range->begin, source->iteratorBinding()->initializer()) &&
+          exactValue(range->end, source->sentinelBinding()->initializer()) &&
+          exactValue(range->comparison, source->coreLoop()->condition()) &&
+          exactValue(range->elementAccessValue,
+                     source->elementBinding()->initializer()) &&
+          exactValue(range->increment, source->coreLoop()->increment());
+      const bool exactLoans =
+          rangeLoan != nullptr && rangeLoan->access == AccessMode::ReadOnly &&
+          std::find(rangeLoan->carriers.begin(), rangeLoan->carriers.end(),
+                    range->rangeCarrier) != rangeLoan->carriers.end() &&
+          (!referenceElement ||
+           (elementLoan != nullptr &&
+            elementLoan->access == AccessMode::ReadOnly &&
+            std::find(elementLoan->carriers.begin(),
+                      elementLoan->carriers.end(),
+                      range->element) != elementLoan->carriers.end()));
+      const bool exactStrategy =
+          range != nullptr &&
+          ((range->strategy == RangeIterationStrategy::FixedArray &&
+            range->rangeType.kind == SemanticType::Array &&
+            range->rangeType.arrayLengthParameterId == 0 &&
+            range->rangeType.arrayLength == range->arrayLength &&
+            range->arrayLength != 0 &&
+            body.findValue(range->elementAccessValue) != nullptr &&
+            body.findValue(range->elementAccessValue)->kind ==
+                HirValueKind::Index &&
+            range->beginFunction == 0 && range->endFunction == 0) ||
+           (range->strategy == RangeIterationStrategy::Structural &&
+            range->beginFunction != 0 && range->endFunction != 0 &&
+            range->compareFunction != 0 && range->dereferenceFunction != 0 &&
+            range->incrementFunction != 0));
+      const bool exactOwner =
+          owner != nullptr &&
+          (range == nullptr ||
+           range->ownsRangeTemporary ==
+               (owner->info.type.kind != SemanticType::Reference));
+      if (!exactSemantic || !exactStructure || !exactLoans || !exactStrategy ||
+          !exactOwner) {
+        result.errors.emplace_back(
+            "range HIR plan differs from semantic owner/loan/protocol facts");
+      }
+    }
+  };
+  verifyRangeIterations(program.module());
+  for (const HirClassInstance &instance : program.classInstances()) {
+    verifyRangeIterations(instance.fieldInitializers);
+    verifyRangeIterations(instance.staticFieldInitializers);
+  }
+  for (const HirFunctionInstance &instance : program.functionInstances()) {
+    verifyRangeIterations(instance.body);
+  }
+  for (const HirConstructorInstance &instance :
+       program.constructorInstances()) {
+    verifyRangeIterations(instance.body);
+  }
+  for (const HirDestructorInstance &instance : program.destructorInstances()) {
+    verifyRangeIterations(instance.body);
+  }
+  for (const HirLambda &instance : program.lambdaInstances()) {
+    verifyRangeIterations(instance.body);
+  }
   const ProgramInitializationPlan &semanticInitialization =
       semantics.programInitializationPlan();
   const HirProgramInitializationPlan &initialization =

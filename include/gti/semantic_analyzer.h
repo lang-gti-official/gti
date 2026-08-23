@@ -587,6 +587,38 @@ struct SemanticLoanInfo {
   std::vector<SemanticLoanEndpoint> endpoints;
 };
 
+enum class RangeIterationStrategy {
+  Structural,
+  FixedArray,
+};
+
+// The semantic authority for one range statement. Generated syntax remains a
+// recovery/implementation detail; later phases consume these exact owner,
+// access, protocol, and loan identities instead of rediscovering a range from
+// member spellings.
+struct ResolvedRangeIterationInfo {
+  RangeIterationStrategy strategy = RangeIterationStrategy::Structural;
+  SemanticType rangeType = SemanticType::Unknown;
+  SemanticType iteratorType = SemanticType::Unknown;
+  SemanticType sentinelType = SemanticType::Unknown;
+  SemanticType elementType = SemanticType::Unknown;
+  AccessMode elementAccess = AccessMode::ReadOnly;
+  SymbolId owner = 0;
+  SymbolId rangeCarrier = 0;
+  SymbolId iterator = 0;
+  SymbolId sentinel = 0;
+  SymbolId element = 0;
+  SemanticLoanId rangeLoan = 0;
+  SemanticLoanId elementLoan = 0;
+  FunctionId beginFunction = 0;
+  FunctionId endFunction = 0;
+  FunctionId compareFunction = 0;
+  FunctionId dereferenceFunction = 0;
+  FunctionId incrementFunction = 0;
+  std::uint64_t arrayLength = 0;
+  bool ownsRangeTemporary = false;
+};
+
 struct SemanticConditionalLoanEnds {
   std::vector<SemanticLoanId> thenEntry;
   std::vector<SemanticLoanId> elseEntry;
@@ -745,6 +777,7 @@ enum class IntrinsicKind {
   ExpectedValue,
   ExpectedError,
   ExpectedValueOr,
+  ArrayRangeBegin,
   ArraySize,
   ExpectedHasValue,
   Count,
@@ -1766,6 +1799,9 @@ public:
   [[nodiscard]] const StructuredBindingInfo *
   findStructuredBinding(const StructuredBindingDecl &declaration) const;
 
+  [[nodiscard]] const ResolvedRangeIterationInfo *
+  findRangeIteration(const RangeForStmt &statement) const;
+
   [[nodiscard]] const FunctionInfo *
   findFunction(const FunctionDecl &declaration) const;
 
@@ -1993,6 +2029,8 @@ private:
   void record(const StructuredBindingDecl &declaration,
               StructuredBindingInfo info);
 
+  void record(const RangeForStmt &statement, ResolvedRangeIterationInfo info);
+
   void recordExplicitMove(const VariableDecl &declaration);
 
   void recordExplicitMove(const Parameter &parameter);
@@ -2136,6 +2174,8 @@ private:
       switchArmLoanEnds;
   std::unordered_map<const StructuredBindingDecl *, StructuredBindingInfo>
       structuredBindings;
+  std::unordered_map<const RangeForStmt *, ResolvedRangeIterationInfo>
+      rangeIterations;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
   std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
   std::unordered_map<const Lambda *, LambdaInfo> lambdas;

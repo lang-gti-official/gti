@@ -256,6 +256,39 @@ struct HirStructuredBindingElement {
   std::optional<HirValueId> index;
 };
 
+struct HirRangeIteration {
+  RangeIterationStrategy strategy = RangeIterationStrategy::Structural;
+  SemanticType rangeType = SemanticType::Unknown;
+  SemanticType iteratorType = SemanticType::Unknown;
+  SemanticType sentinelType = SemanticType::Unknown;
+  SemanticType elementType = SemanticType::Unknown;
+  AccessMode elementAccess = AccessMode::ReadOnly;
+  HirBindingId owner = 0;
+  HirBindingId rangeCarrier = 0;
+  HirBindingId iterator = 0;
+  HirBindingId sentinel = 0;
+  HirBindingId element = 0;
+  HirValueId source = 0;
+  HirValueId begin = 0;
+  HirValueId end = 0;
+  HirValueId comparison = 0;
+  HirValueId elementAccessValue = 0;
+  HirValueId increment = 0;
+  HirStatementId coreLoop = 0;
+  SemanticLoanId rangeLoan = 0;
+  SemanticLoanId elementLoan = 0;
+  FunctionId beginFunction = 0;
+  FunctionId endFunction = 0;
+  FunctionId compareFunction = 0;
+  FunctionId dereferenceFunction = 0;
+  FunctionId incrementFunction = 0;
+  std::uint64_t arrayLength = 0;
+  bool ownsRangeTemporary = false;
+
+  friend bool operator==(const HirRangeIteration &,
+                         const HirRangeIteration &) = default;
+};
+
 struct HirStatement {
   HirStatementId id = 0;
   HirStatementKind kind = HirStatementKind::Empty;
@@ -272,6 +305,7 @@ struct HirStatement {
   std::vector<HirSwitchArm> switchArms;
   bool exhaustiveSwitch = false;
   std::vector<HirStructuredBindingElement> structuredBindings;
+  std::optional<HirRangeIteration> rangeIteration;
   std::vector<SemanticLoanId> endedLoans;
   std::vector<SemanticLoanId> thenEntryEndedLoans;
   std::vector<SemanticLoanId> elseEntryEndedLoans;

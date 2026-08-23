@@ -253,7 +253,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v40 valid=" << program.valid() << '\n';
+    output << "mir-v41 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -573,7 +573,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v39\n";
+    output << "mir-body-v40\n";
     body(value, 0);
     return output.str();
   }
@@ -1318,6 +1318,30 @@ private:
       output << "  hir-value=" << item.hirValue << " constant=";
       constant(item.constant);
       output << '\n';
+    }
+    output << " range-iterations " << value.rangeIterations.size() << '\n';
+    for (const MirRangeIteration &item : value.rangeIterations) {
+      output << "  range" << item.id << " hir=" << item.hirStatement
+             << " core=" << item.coreLoop
+             << " strategy=" << number(item.strategy) << " range=";
+      type(item.rangeType);
+      output << " iterator=";
+      type(item.iteratorType);
+      output << " sentinel=";
+      type(item.sentinelType);
+      output << " element=";
+      type(item.elementType);
+      output << " access=" << number(item.elementAccess) << " owner=p"
+             << item.owner << " carrier=p" << item.rangeCarrier
+             << " iterator-place=p" << item.iterator << " sentinel-place=p"
+             << item.sentinel << " element-place=p" << item.element
+             << " range-loan=loan" << item.rangeLoan << " element-loan=loan"
+             << item.elementLoan << " owner-drop=drop" << item.ownerDrop
+             << " blocks=bb" << item.conditionEntryBlock << ",bb"
+             << item.conditionBlock << ",bb" << item.bodyBlock << ",bb"
+             << item.incrementBlock << ",bb" << item.cleanupBlock << ",bb"
+             << item.exitBlock << " extent=" << item.arrayLength
+             << " owns-temporary=" << item.ownsRangeTemporary << '\n';
     }
     output << " values " << value.values.size() << '\n';
     for (const MirValue &item : value.values) {

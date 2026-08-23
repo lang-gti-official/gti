@@ -1172,7 +1172,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v39\n") &&
+  expect(dump.starts_with("mir-body-v40\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5896,7 +5896,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v39\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v40\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7911,7 +7911,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v40 ") &&
+  expect(mirDump.starts_with("mir-v41 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -19275,14 +19275,9 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  constexpr std::string_view rangeLoanDeclaration =
-      "const ::__gti_program::CounterRange *__gti_mir_loan_";
-  const std::size_t firstRangeLoan =
-      artifact.contents.find(rangeLoanDeclaration);
   const bool emittedRangeCore =
-      firstRangeLoan != std::string::npos &&
-      artifact.contents.find(rangeLoanDeclaration,
-                             firstRangeLoan + rangeLoanDeclaration.size()) ==
+      artifact.contents.find(
+          "const ::__gti_program::CounterRange *__gti_mir_loan_") !=
           std::string::npos &&
       artifact.contents.find("_begin__gti_mir_failure(") != std::string::npos &&
       artifact.contents.find("_end__gti_mir_failure(") != std::string::npos &&
@@ -19294,7 +19289,7 @@ int main() {
       artifact.contents.find(".begin()") == std::string::npos &&
       artifact.contents.find(".end()") == std::string::npos;
   expect(emittedRangeCore,
-         "the C++ backend should emit one stable range borrow and the selected "
+         "the C++ backend should emit the verified range loans and selected "
          "GTI iterator methods without native C++ range lookup");
 
   const std::string formatted = lang::Formatter().format(
@@ -19358,13 +19353,11 @@ int main() {
              hasDiagnostic(invalid.diagnostics,
                            "Prefix operator++ must use a mutable receiver") &&
              hasDiagnostic(invalid.diagnostics,
-                           "Reference initializer must be an addressable") &&
-             hasDiagnostic(invalid.diagnostics,
                            "must accept its sentinel by read-only reference") &&
              hasDiagnostic(invalid.diagnostics, "Unknown member 'begin'") &&
              hasDiagnosticCode(invalid.diagnostics, "GTI-S2022"),
          "range and iterator diagnostics should reject malformed operator "
-         "contracts, temporary auto references, and missing begin members");
+         "contracts and missing begin members");
   const auto generatedDiagnostic =
       std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                    [](const lang::Diagnostic &diagnostic) {
@@ -19376,6 +19369,284 @@ int main() {
                  generatedDiagnostic->primary.start + 1,
          "diagnostics from lowered range operations should point at the "
          "source colon rather than a synthetic identifier width");
+}
+
+void testReadOnlyRangeLoans() {
+  const std::string source = R"(
+interface IteratorContract<T> {
+  T& operator*();
+  void operator++() mut;
+};
+
+class CounterIterator : public IteratorContract<int> {
+  mut int current;
+public:
+  CounterIterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(CounterIterator& other) {
+    return this.current != other.current;
+  }
+};
+
+class OwnedRange {
+  int first;
+  int last;
+public:
+  OwnedRange(int first, int last) : first(first), last(last) {}
+  OwnedRange(OwnedRange& other) = delete;
+  OwnedRange(OwnedRange&& other) = default;
+  ~OwnedRange() {}
+  CounterIterator begin() { return CounterIterator(this.first); }
+  CounterIterator end() { return CounterIterator(this.last); }
+};
+
+int nested_arrays() {
+  int first[3] = {1, 2, 3};
+  int second[2] = {4, 5};
+  mut int total = 0;
+  for (auto& left : first) {
+    for (int right : second) {
+      if (right == 4) { continue; }
+      total += left + right;
+    }
+  }
+  return total - 21;
+}
+
+int temporary_complete() {
+  mut int total = 0;
+  for (auto& value : OwnedRange(1, 5)) {
+    if (value == 2) { continue; }
+    if (value == 4) { break; }
+    total += value;
+  }
+  for (auto& value : OwnedRange(0, 0)) { return value; }
+  return total - 4;
+}
+
+int temporary_return() {
+  for (auto& value : OwnedRange(3, 6)) {
+    if (value == 4) { return value - 4; }
+  }
+  return 1;
+}
+
+int main() {
+  return nested_arrays() + temporary_complete() + temporary_return();
+}
+)";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "read-only-range-loans.gti", source, {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected read-only range diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             frontend.mir.valid() &&
+             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                 .valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "fixed arrays and move-only owned temporary ranges should lower "
+         "through verified semantic, HIR, and MIR range plans");
+
+  std::size_t fixedHirRanges = 0;
+  std::size_t temporaryHirRanges = 0;
+  bool hirLoansAreReadOnly = true;
+  const lang::HirFunctionInstance *temporaryCompleteHir = nullptr;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source != nullptr &&
+        function.source->name().lexeme == "temporary_complete") {
+      temporaryCompleteHir = &function;
+    }
+    for (const lang::HirStatement &statement : function.body.statements) {
+      if (!statement.rangeIteration) {
+        continue;
+      }
+      const lang::HirRangeIteration &range = *statement.rangeIteration;
+      fixedHirRanges +=
+          range.strategy == lang::RangeIterationStrategy::FixedArray;
+      temporaryHirRanges += range.ownsRangeTemporary;
+      const lang::HirLoan *rangeLoan = function.body.findLoan(range.rangeLoan);
+      const lang::HirLoan *elementLoan =
+          function.body.findLoan(range.elementLoan);
+      hirLoansAreReadOnly =
+          hirLoansAreReadOnly &&
+          range.elementAccess == lang::AccessMode::ReadOnly &&
+          rangeLoan != nullptr &&
+          rangeLoan->access == lang::AccessMode::ReadOnly &&
+          (range.elementLoan == 0 ||
+           (elementLoan != nullptr &&
+            elementLoan->access == lang::AccessMode::ReadOnly));
+      if (range.strategy == lang::RangeIterationStrategy::FixedArray) {
+        hirLoansAreReadOnly =
+            hirLoansAreReadOnly && range.arrayLength != 0 &&
+            range.beginFunction == 0 && range.endFunction == 0 &&
+            range.compareFunction == 0 && range.dereferenceFunction == 0 &&
+            range.incrementFunction == 0;
+      }
+    }
+  }
+  expect(fixedHirRanges == 2 && temporaryHirRanges == 3 && hirLoansAreReadOnly,
+         "HIR should retain fixed-array indexed strategy, structural "
+         "temporary ownership, and exact read-only loan identities");
+
+  std::size_t fixedMirRanges = 0;
+  std::size_t temporaryMirRanges = 0;
+  bool boundedLoans = true;
+  bool normalTemporaryDrop = false;
+  bool failureTemporaryDrop = false;
+  const lang::MirBody *temporaryCompleteMir = nullptr;
+  for (const lang::HirFunctionInstance &hirFunction :
+       frontend.hir.functionInstances()) {
+    const lang::MirFunctionInstance *mirFunction =
+        frontend.mir.findFunctionInstance(hirFunction.id);
+    if (mirFunction == nullptr) {
+      continue;
+    }
+    if (hirFunction.source != nullptr &&
+        hirFunction.source->name().lexeme == "temporary_complete") {
+      temporaryCompleteMir = &mirFunction->body;
+    }
+    for (const lang::MirRangeIteration &range :
+         mirFunction->body.rangeIterations) {
+      fixedMirRanges +=
+          range.strategy == lang::RangeIterationStrategy::FixedArray;
+      temporaryMirRanges += range.ownsRangeTemporary;
+      const lang::MirLoan *rangeLoan =
+          mirFunction->body.findLoan(range.rangeLoan);
+      const lang::MirLoan *elementLoan =
+          mirFunction->body.findLoan(range.elementLoan);
+      boundedLoans = boundedLoans &&
+                     range.elementAccess == lang::AccessMode::ReadOnly &&
+                     rangeLoan != nullptr && !rangeLoan->escapes &&
+                     (range.elementLoan == 0 ||
+                      (elementLoan != nullptr && !elementLoan->escapes));
+      if (!range.ownsRangeTemporary || range.ownerDrop == 0) {
+        continue;
+      }
+      for (const lang::MirBlock &block : mirFunction->body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+            if (event.kind != lang::MirLifecycleEventKind::Drop ||
+                event.source != range.ownerDrop) {
+              continue;
+            }
+            normalTemporaryDrop = normalTemporaryDrop || !event.failureCleanup;
+            failureTemporaryDrop = failureTemporaryDrop || event.failureCleanup;
+          }
+        }
+      }
+    }
+  }
+  expect(fixedMirRanges == 2 && temporaryMirRanges == 3 && boundedLoans &&
+             normalTemporaryDrop && failureTemporaryDrop,
+         "MIR should preserve loop-bounded read-only loans and exact-once "
+         "owned-range cleanup on normal and defined-failure paths");
+
+  lang::HirProgram invalidHir = frontend.hir;
+  bool corruptedHirRange = false;
+  auto &invalidHirFunctions =
+      const_cast<std::vector<lang::HirFunctionInstance> &>(
+          invalidHir.functionInstances());
+  for (lang::HirFunctionInstance &function : invalidHirFunctions) {
+    for (lang::HirStatement &statement : function.body.statements) {
+      if (statement.rangeIteration) {
+        statement.rangeIteration->elementAccess = lang::AccessMode::Mutable;
+        corruptedHirRange = true;
+        break;
+      }
+    }
+    if (corruptedHirRange) {
+      break;
+    }
+  }
+  expect(
+      corruptedHirRange &&
+          !lang::verifyHirProgramPlans(frontend.semantics, invalidHir).valid(),
+      "HIR verification should reject a range plan that widens the "
+      "semantic element loan");
+
+  lang::MirBody invalidMir =
+      temporaryCompleteMir == nullptr ? lang::MirBody{} : *temporaryCompleteMir;
+  if (!invalidMir.rangeIterations.empty()) {
+    invalidMir.rangeIterations.front().elementAccess =
+        lang::AccessMode::Mutable;
+  }
+  expect(temporaryCompleteHir != nullptr && temporaryCompleteMir != nullptr &&
+             !invalidMir.rangeIterations.empty() &&
+             !lang::verifyMirBody(invalidMir).valid(),
+         "MIR verification should reject a writable range plan forged after "
+         "semantic analysis");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find("std::array<std::int32_t, 3>") !=
+                 std::string::npos &&
+             artifact.contents.find("std::uint64_t{0}") != std::string::npos,
+         "the C++ backend should consume the fixed-array MIR strategy rather "
+         "than rediscovering source range syntax");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-read-only-range-loans.gti", R"(
+int& escape_element() {
+  int values[2] = {1, 2};
+  for (auto& value : values) { return value; }
+  return values[0];
+}
+
+int main() {
+  int values[2] = {1, 2};
+  for (auto& value : values) { value = 3; }
+  for (mut auto& value : values) { value = 4; }
+  for (int value : 42) { return value; }
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2002") &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2083") >= 2,
+         "read-only range diagnostics should reject mutation, escaping "
+         "element loans, mutable bindings, and unsupported range forms");
+
+  const lang::FrontendResult movedReuse =
+      lang::Frontend().analyze("moved-range-reuse.gti", R"(
+interface IteratorContract<T> { T& operator*(); void operator++() mut; };
+class Iterator : public IteratorContract<int> {
+  mut int current;
+public:
+  Iterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(Iterator& other) { return this.current != other.current; }
+};
+class Range {
+public:
+  Range() {}
+  Range(Range& other) = delete;
+  Range(Range&& other) = default;
+  Iterator begin() { return Iterator(0); }
+  Iterator end() { return Iterator(1); }
+};
+int main() {
+  mut Range range = Range();
+  for (auto& value : std::move(range)) { break; }
+  Iterator invalid = range.begin();
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!movedReuse.canGenerateCode() &&
+             hasDiagnosticCode(movedReuse.diagnostics, "GTI-S2018"),
+         "moving an owned range into loop storage should invalidate later "
+         "reuse of the original owner");
 }
 
 void testNamedGenerics() {
@@ -25908,7 +26179,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v40 ") &&
+             mirDump.starts_with("mir-v41 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -30012,6 +30283,7 @@ int main(int argc, char **argv) {
   testCallableMemberOperators();
   testConsumingCallableOperators();
   testRangeBasedForAndIteratorProtocol();
+  testReadOnlyRangeLoans();
   testNamedGenerics();
   testExactQualifiedClassSpecializations();
   testConstrainedGenerics();

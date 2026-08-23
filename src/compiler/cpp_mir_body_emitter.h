@@ -490,6 +490,14 @@ cppMirConstructorStatusCannotFail(const MirProgram &program,
     const MirProgram &program, const CppMirBodyEmissionMap &representations,
     HirFunctionInstanceId function);
 
+// True only when one verified body consumes this exact source member through
+// the class-subscript place compatibility path. That path has no call result
+// on which to encode a failure edge, so it needs an ordinary member boundary
+// that invokes the admitted failure sibling and contains failure terminally.
+[[nodiscard]] bool cppMirNeedsTerminalSubscriptBoundaryWrapper(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    HirFunctionInstanceId function);
+
 // True when the concrete class has a compiler-proven, observation-free empty
 // representation that the C++ backend may use while a failure-form
 // constructor publishes its MIR field schedule. This is representation-only:

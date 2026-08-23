@@ -56,8 +56,9 @@ opaque sources do not receive this bounded precise-place treatment. This rule
 does not permit mutable stored-reference fields, returning any local child
 reborrow (mutable or read-only) directly or through a stored carrier, or
 mutable owner-tied range iteration.
-Existing receiver-tied mutable-reference returns and structural range writable
-yields remain governed by their narrower rules.
+Existing receiver-tied mutable-reference returns remain governed by their
+narrower rules. Range-for element references are read-only in L-RANGE-01 even
+if a structural iterator's dereference method could produce writable access.
 
 A local borrowed-state carrier may retain an ordinary read-only owner
 dependency, but it may not retain a mutable parent loan or a child reborrow.
@@ -80,7 +81,12 @@ family implements this distinction.
 Local `auto` infers one exact complete value type from its initializer. It does
 not infer globals, fields, parameters, returns, arrays, or untyped braced
 initializers. The range-for forms `auto&` and `mut auto&` infer element borrows;
-plain `auto` does not silently infer a reference.
+plain `auto` does not silently infer a reference. A range-for rejects the
+`mut auto&` form with `GTI-S2083` until mutable iteration is implemented. A
+fixed array is traversed with an exact indexed strategy. An addressable nominal
+range receives a read-only loop loan, while an owned nominal temporary is moved
+into loop storage. Every reference element loan ends before increment or loop
+exit and may neither mutate nor escape its iteration.
 
 For a raw pointer, leading `mut` controls whether the pointer binding may be
 reseated. Pointee access is writable for `T*` and read-only for `const T*`.
