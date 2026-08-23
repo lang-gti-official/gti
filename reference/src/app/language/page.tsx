@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import language from "@/generated/language.json";
 
 export const metadata: Metadata = {
@@ -29,7 +30,9 @@ export default function LanguageIndex() {
         <tbody>
           {language.sections.map((section) => (
             <tr key={section.slug} id={section.slug}>
-              <td>{section.title}</td>
+              <td>
+                <Link href={`/language/${section.slug}/`}>{section.title}</Link>
+              </td>
               <td>
                 {section.status ? (
                   <span className="badge">{section.status}</span>
@@ -46,8 +49,8 @@ export default function LanguageIndex() {
       </table>
 
       <div className="stub-notice">
-        Rendered section pages (ported from the markdown sources, with stable
-        anchors) are the next population step for this area.
+        Each section renders the normative markdown captured at build time —
+        quoted, never paraphrased.
       </div>
     </>
   );

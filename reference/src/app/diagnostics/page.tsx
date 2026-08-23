@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import diagnostics from "@/generated/diagnostics.json";
+import { diagnosticProse } from "@/content/diagnostics";
 
 export const metadata: Metadata = {
   title: "Diagnostics",
@@ -38,12 +40,16 @@ export default function DiagnosticsIndex() {
               {codes.map((diagnostic) => (
                 <tr key={diagnostic.code} id={diagnostic.code}>
                   <td style={{ width: "9rem" }}>
-                    <code>{diagnostic.code}</code>
+                    <Link href={`/diagnostics/${diagnostic.code}/`}>
+                      <code>{diagnostic.code}</code>
+                    </Link>
                   </td>
                   <td className="muted">
-                    <span className="badge">
-                      to be documented
-                    </span>
+                    {diagnosticProse[diagnostic.code] ? (
+                      diagnosticProse[diagnostic.code].summary
+                    ) : (
+                      <span className="badge">to be documented</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -53,9 +59,10 @@ export default function DiagnosticsIndex() {
       ))}
 
       <div className="stub-notice">
-        Each code becomes a page carrying the rule it enforces, why the rule
-        exists, and a compiling example — the target of the{" "}
-        <code>error[GTI-…]: see &lt;url&gt;</code> link the compiler will emit.
+        Every code has a stable page — the target of the{" "}
+        <code>error[GTI-…]: see &lt;url&gt;</code> link the compiler will
+        emit. Documented pages carry the rule, its rationale, and a
+        reproducer verified at build time to fail with exactly that code.
       </div>
     </>
   );

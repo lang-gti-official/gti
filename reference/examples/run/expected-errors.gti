@@ -1,0 +1,33 @@
+// title: Errors as values with expected
+// unit: prelude
+// GTI has no exceptions. A fallible operation returns
+// expected<T, E>; failure is an unexpected(E) the caller must look at.
+
+enum class parse_errc {
+  empty,
+  not_a_digit,
+};
+
+expected<int32_t, parse_errc> digit_value(char value) {
+  // char carries no ordering in GTI; comparisons go through its byte value.
+  uint8_t byte = uint8_t(value);
+  if (byte < uint8_t('0') || byte > uint8_t('9')) {
+    return unexpected(parse_errc::not_a_digit);
+  }
+  return int32_t(byte - uint8_t('0'));
+}
+
+int main() {
+  expected<int32_t, parse_errc> seven = digit_value('7');
+  if (seven.has_value()) {
+    std::print("digit_value('7') = ");
+    std::print(seven.value());
+    std::print('\n');
+  }
+
+  expected<int32_t, parse_errc> letter = digit_value('x');
+  if (!letter.has_value()) {
+    std::println("digit_value('x') is an error, handled here");
+  }
+  return 0;
+}

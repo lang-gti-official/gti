@@ -1,0 +1,4 @@
+// The parser expected an expression after `return`.
+int main() {
+  return @;
+}

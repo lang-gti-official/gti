@@ -1,0 +1,5 @@
+// The argument does not satisfy the generic constraint.
+int main() {
+  std::print(true);
+  return 0;
+}
