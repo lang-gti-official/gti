@@ -268,7 +268,18 @@ namespace std {
     }
   }
 
+  void print(string value) {
+    for (mut size_t index = 0; index < value.size(); index++) {
+      print(value[index]);
+    }
+  }
+
   void println(string& value) {
+    print(value);
+    print("\n");
+  }
+
+  void println(string value) {
     print(value);
     print("\n");
   }

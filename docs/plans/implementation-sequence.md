@@ -854,6 +854,19 @@ analysis, HIR, MIR, and the backend.
   provenance. This is not yet the generated hosted-startup or merged
   program-initialization MIR body, and the compatibility backend remains
   non-authoritative for that schedule.
+- **Planned bounded follow-on (`M-TEMP-ARG-01`; ready, not active):** Permit a
+  direct fresh, self-contained class/struct result to initialize one exact
+  read-only `T&` call parameter through a full-expression-owned ephemeral
+  loan. Existing exact candidates requiring no ephemeral borrow form the first
+  viability tier; the new borrowed candidates are considered only when that
+  tier is empty, so an exact owning overload remains preferred without C++
+  conversion ranking. Semantics proves freshness and non-escape, HIR retains a
+  dedicated argument role, MIR schedules producer/place/`BorrowRead`/call/loan
+  end/drop, and production consumes that verified schedule. Mutable borrows,
+  local or stored references, explicit moves, borrowed-state or escaping
+  results, compound producers, and native calls remain excluded. The detailed
+  contract and failure/runtime matrix are in
+  [`mutable-temporary-receivers.md`](mutable-temporary-receivers.md#planned-follow-on-one-call-read-only-temporary-arguments).
 - **Non-goals:** broad AST emitter rewrite, production body emission, or an
   IIFE workaround. M-BACK owns production C++ consumption of this schedule.
 - **Exit gate:** deterministic HIR/MIR snapshots and verifier mutations prove

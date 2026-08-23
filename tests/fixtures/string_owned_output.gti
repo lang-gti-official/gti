@@ -1,0 +1,18 @@
+#include <std/filesystem>
+#include <std/string>
+
+int main() {
+  std::string named = std::string("named");
+  std::print(named);
+  std::print(" ");
+  std::print(std::to_string(int32_t(42)));
+  std::print(" ");
+  std::println(std::to_string(int32_t(7)));
+
+  mut std::filesystem::path path = std::filesystem::path();
+  path.assign("/hello/world.txt");
+  std::println(path.string());
+
+  std::println(named);
+  return 0;
+}

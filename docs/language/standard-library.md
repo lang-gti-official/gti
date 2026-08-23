@@ -67,7 +67,8 @@ The current implemented foundation includes:
 - `std::string` as a move-only owner over private character storage, including
   front/back and mutable checked access, resize, shrink-to-fit, pop-back, and
   source-defined base-10 `std::to_string` conversion for every fixed-width
-  integer, plus read-only `print`/`println` traversal;
+  integer, plus `print`/`println` traversal through either a read-only borrow
+  of a named owner or direct ownership transfer from a fresh string result;
   and
 - `std::vector<T>` as a move-only dynamic owner with checked indexed access,
   reserve, resize, shrink-to-fit, clear, push/pop, indexed insertion/erasure,
