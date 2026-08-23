@@ -972,6 +972,13 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/random_engine.gti"
     )
+    add_test(
+      NAME filesystem_path_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/filesystem_path_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/filesystem_path.gti"
+    )
 
     if(GTI_RELEASE_BUILD)
       # Release binaries deliberately omit source-tree fallback paths so the
@@ -990,6 +997,7 @@ if(BUILD_TESTING)
         mir_class_value_lifecycle_runtime mutable_temporary_receiver_runtime
         mir_backend_scalar_failure_callgraph_runtime
         random_engine_runtime default_parameters_runtime
+        filesystem_path_runtime
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )
