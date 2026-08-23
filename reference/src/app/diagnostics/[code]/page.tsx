@@ -3,14 +3,12 @@ import { notFound } from "next/navigation";
 import diagnostics from "@/generated/diagnostics.json";
 import reproducers from "@/generated/diagnostic-examples.json";
 import { diagnosticProse } from "@/content/diagnostics";
+import { Page, Descriptions } from "@/components/Cpp";
 import Code from "@/components/Code";
-import Breadcrumbs from "@/components/Breadcrumbs";
 
-// One page per diagnostic code — every code the compiler can publish gets a
-// stable URL from day one, which is the contract that lets the compiler emit
-// `see: <url>` in its output. Documented codes carry authored prose plus a
-// reproducer verified at build time to fail with exactly this code; the rest
-// are explicit stubs, never guesses.
+// One page per diagnostic code — the stable URL the compiler can cite.
+// Documented codes carry authored rule/rationale/fix prose and a reproducer
+// verified at build time to fail with exactly this code.
 
 export function generateStaticParams() {
   return diagnostics.diagnostics.map((d) => ({ code: d.code }));
@@ -37,64 +35,81 @@ export default async function DiagnosticPage({
 
   const prose = diagnosticProse[code];
   const reproducer = (
-    reproducers.reproducers as Record<
-      string,
-      { source: string; firstLine: string }
-    >
+    reproducers.reproducers as Record<string, { source: string; firstLine: string }>
   )[code];
 
   return (
-    <article>
-      <Breadcrumbs
-        trail={[
-          { label: "diagnostics", href: "/diagnostics/" },
-          { label: code },
-        ]}
-      />
-      <h1>
-        <code>{diagnostic.code}</code>
-        {prose ? <> — {prose.summary}</> : null}
-      </h1>
-      <p className="muted" style={{ fontSize: "0.8125rem" }}>
-        Family: {diagnostic.family} · published from{" "}
-        {diagnostic.files.map((file, index) => (
-          <span key={file}>
-            {index > 0 ? ", " : ""}
-            <code>{file}</code>
-          </span>
-        ))}
-      </p>
+    <Page title={prose ? `${code}: ${prose.summary}` : code}>
+      <table className="t-dcl-begin">
+        <tbody>
+          <tr className="t-dsc-header">
+            <td>
+              <div>
+                Published by the {diagnostic.family.toLowerCase()} phase from{" "}
+                {diagnostic.files.map((file, index) => (
+                  <span key={file}>
+                    {index > 0 ? ", " : ""}
+                    <code>{file}</code>
+                  </span>
+                ))}
+              </div>
+            </td>
+            <td></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
 
       {prose ? (
         <>
-          <h2 id="rule">Rule</h2>
+          <h3>Rule</h3>
           <p>{prose.rule}</p>
-          <h2 id="why">Why the rule exists</h2>
+          <h3>Rationale</h3>
           <p>{prose.why}</p>
-          <h2 id="fix">How to fix it</h2>
+          <h3>How to fix it</h3>
           <p>{prose.fix}</p>
         </>
       ) : (
-        <div className="stub-notice">
+        <p>
           This code is published by the compiler but its reference page has
           not been written yet. The census above is generated, so the code
           itself is current; only the explanation is missing.
-        </div>
+        </p>
       )}
 
       {reproducer ? (
         <>
-          <h2 id="example">Example</h2>
-          <p className="muted" style={{ fontSize: "0.8125rem" }}>
-            Verified at build time to fail with exactly this code (
-            {reproducers.verifiedWith}).
-          </p>
-          <Code code={reproducer.source} lang="gti" />
-          <pre>
-            <code>{reproducer.firstLine}</code>
-          </pre>
+          <h3>Example</h3>
+          <div className="t-example">
+            <div className="t-example-live-link">
+              <span className="coliru-btn">
+                Verified to fail with {code} ({reproducers.verifiedWith})
+              </span>
+            </div>
+            <Code code={reproducer.source} lang="gti" />
+            <p>Output:</p>
+            <div className="mw-highlight">
+              <pre>{reproducer.firstLine}</pre>
+            </div>
+          </div>
         </>
       ) : null}
-    </article>
+
+      <h3>See also</h3>
+      <Descriptions
+        groups={[
+          {
+            rows: [
+              {
+                name: "Diagnostics",
+                href: "/diagnostics/",
+                description: `all ${diagnostics.count} stable codes by family`,
+                kind: "index",
+              },
+            ],
+          },
+        ]}
+      />
+    </Page>
   );
 }
