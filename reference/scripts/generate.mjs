@@ -429,6 +429,125 @@ for (const entry of readdirSync(stdlibDirectory).sort()) {
 
 write("classes.json", { generatedFrom: "stdlib/std", classes });
 
+// --- Namespace-level function extraction ------------------------------------------
+//
+// Verbatim public free-function declarations per unit, for the header pages —
+// the <std/cmath> shape where the unit's surface is functions, not classes.
+// Function bodies are skipped by brace tracking so statements never register
+// as declarations. Names are read by walking back from the parameter list's
+// opening parenthesis (skipping one balanced generic clause), so a return
+// type like expected<T, E> cannot be mistaken for the name.
+
+function functionNameOf(signature) {
+  const open = signature.indexOf("(");
+  if (open <= 0) return null;
+  let index = open - 1;
+  while (index >= 0 && signature[index] === " ") index--;
+  if (signature[index] === ">") {
+    let angleDepth = 0;
+    while (index >= 0) {
+      if (signature[index] === ">") angleDepth++;
+      else if (signature[index] === "<") {
+        angleDepth--;
+        if (angleDepth === 0) { index--; break; }
+      }
+      index--;
+    }
+  }
+  let end = index;
+  while (index >= 0 && /[A-Za-z0-9_]/.test(signature[index])) index--;
+  const name = signature.slice(index + 1, end + 1);
+  return /^[a-z_][a-z0-9_]*$/.test(name) ? name : null;
+}
+
+const unitFunctions = [];
+
+for (const entry of readdirSync(stdlibDirectory).sort()) {
+  if (!entry.endsWith(".gti")) continue;
+  const unitName = entry.replace(/\.gti$/, "");
+  const lines = readFileSync(join(stdlibDirectory, entry), "utf8").split("\n");
+
+  const namespaces = [];
+  let globalDepth = 0;
+  let skipDepth = null; // inside a class or function body
+  let pending = "";
+  const functions = [];
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    const opens = (line.match(/\{/g) ?? []).length;
+    const closes = (line.match(/\}/g) ?? []).length;
+
+    if (skipDepth !== null) {
+      globalDepth += opens - closes;
+      if (globalDepth < skipDepth) skipDepth = null;
+      continue;
+    }
+
+    const namespaceMatch = line.match(/^namespace ([A-Za-z_][A-Za-z0-9_]*) \{$/);
+    if (namespaceMatch) {
+      namespaces.push({ name: namespaceMatch[1], depth: globalDepth });
+      globalDepth += opens - closes;
+      continue;
+    }
+    if (/^(?:class|struct) /.test(line) && line.endsWith("{")) {
+      globalDepth += opens - closes;
+      skipDepth = globalDepth;
+      continue;
+    }
+
+    const visible =
+      namespaces.length > 0 &&
+      !namespaces.some((n) => n.name === "detail" || n.name === "gti_internal");
+    let bodyOpened = false;
+    if (visible && /^[a-zA-Z_[]/.test(line) && !line.startsWith("using ")) {
+      const candidate = pending ? pending + " " + line : line;
+      // Hold an incomplete declaration until its terminator: a bare return
+      // type, an unbalanced parameter list, or a `requires` clause all
+      // continue onto later lines; `{` or `;` ends the declaration.
+      if (!candidate.includes("{") && !candidate.endsWith(";")) {
+        pending = candidate;
+        globalDepth += opens - closes;
+        continue;
+      }
+      pending = "";
+      bodyOpened = candidate.includes("{");
+      if (candidate.includes("(")) {
+        const signature = candidate
+          .replace(/\s*\{.*$/, ";")
+          .replace(/;;$/, ";")
+          .replace(/\s+/g, " ");
+        const name = functionNameOf(signature);
+        // A declaration carries a return type before its name; a statement
+        // (`for (...)`, a bare call) starts with the name itself.
+        const firstToken = signature.match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+        const keywords = new Set(["if", "for", "while", "switch", "return", "do"]);
+        if (name && firstToken !== name && !keywords.has(name)) {
+          functions.push({ name, signature });
+        }
+      }
+    } else {
+      pending = "";
+      bodyOpened = opens > closes && line.includes("(");
+    }
+
+    globalDepth += opens - closes;
+    if (bodyOpened && globalDepth > (namespaces.at(-1)?.depth ?? -1) + 1) {
+      // A declaration opened its body: skip until it closes.
+      skipDepth = globalDepth;
+    }
+    while (namespaces.length > 0 && globalDepth <= namespaces.at(-1).depth) {
+      namespaces.pop();
+    }
+  }
+
+  if (functions.length > 0) {
+    unitFunctions.push({ unit: unitName, functions });
+  }
+}
+
+write("functions.json", { generatedFrom: "stdlib/std", units: unitFunctions });
+
 // --- Diagnostic codes ------------------------------------------------------------
 
 const families = {
