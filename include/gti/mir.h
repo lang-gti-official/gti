@@ -552,6 +552,10 @@ struct MirBody {
     return id == 0 || id > blocks.size() ? nullptr : &blocks[id - 1];
   }
 
+  [[nodiscard]] MirBlock *findBlock(MirBlockId id) {
+    return id == 0 || id > blocks.size() ? nullptr : &blocks[id - 1];
+  }
+
   [[nodiscard]] const MirPlace *findPlace(MirPlaceId id) const {
     return id == 0 || id > places.size() ? nullptr : &places[id - 1];
   }

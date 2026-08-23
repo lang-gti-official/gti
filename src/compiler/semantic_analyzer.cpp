@@ -133,6 +133,7 @@ public:
     currentSourceUnit = 0;
     predeclaredVariables.clear();
     mutableFieldGroupOrigins.clear();
+    recursiveLayoutFields.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
     semanticModel.setExecutionProfile(target.executionProfile);
@@ -192,6 +193,7 @@ public:
     registerNamespaceSymbols(program.declarations(), {});
     collectRootNativeStorageSymbols(program.declarations());
     collectClassMembers(program.declarations(), {});
+    validateOrdinaryClassLayouts();
     registerGlobalBorrowStorage(program.declarations(), {});
     resolveInheritedMembers();
     validateNativeRecords();
@@ -1005,6 +1007,7 @@ public:
         validateReferenceBinding(fieldType, valueType,
                                  initializer.arguments.front());
       } else if (field != nullptr && initializer.arguments.size() == 1 &&
+                 !recursiveLayoutFields.contains(field) &&
                  !isOwnershipAssignable(fieldType, valueType,
                                         initializer.arguments.front())) {
         report(expressionToken(initializer.arguments.front()),
@@ -22227,6 +22230,108 @@ private:
     }
   }
 
+  [[nodiscard]] bool
+  byValueTypeReachesClass(const SemanticType &type, ClassId target,
+                          std::unordered_set<ClassId> &visiting) const {
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
+      return byValueTypeReachesClass(type.arguments.front(), target, visiting);
+    }
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size()) {
+      return false;
+    }
+    if (type.classId == target) {
+      return true;
+    }
+    if (!visiting.insert(type.classId).second) {
+      return false;
+    }
+
+    const ClassInfo &nested = classInfo(type.classId);
+    const GenericSubstitution substitution = classSubstitution(type);
+    for (const FieldInfo &field : nested.fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      const auto member = nested.members.find(field.declaration->name().lexeme);
+      if (member == nested.members.end()) {
+        continue;
+      }
+      const SemanticType fieldType =
+          substituteType(member->second.symbol.type, substitution);
+      if (byValueTypeReachesClass(fieldType, target, visiting)) {
+        visiting.erase(type.classId);
+        return true;
+      }
+    }
+
+    visiting.erase(type.classId);
+    return false;
+  }
+
+  void validateOrdinaryClassLayouts() {
+    for (const ClassInfo &owner : classes) {
+      if (owner.declaration == nullptr ||
+          owner.declaration->isForwardDeclaration() ||
+          owner.kind == ClassKind::Interface ||
+          owner.kind == ClassKind::Union || owner.cAbiRecord ||
+          owner.cOpaqueHandle) {
+        continue;
+      }
+
+      const SemanticType ownerType = openClassType(owner.id);
+      const GenericSubstitution substitution = classSubstitution(ownerType);
+      std::string ownerSpelling = owner.name.lexeme;
+      if (!owner.genericParameters.empty()) {
+        ownerSpelling += '<';
+        for (std::size_t index = 0; index < owner.genericParameters.size();
+             ++index) {
+          if (index != 0) {
+            ownerSpelling += ", ";
+          }
+          ownerSpelling += owner.genericParameters[index].name.lexeme;
+          if (owner.genericParameters[index].pack) {
+            ownerSpelling += "...";
+          }
+        }
+        ownerSpelling += '>';
+      }
+      for (const FieldInfo &field : owner.fields) {
+        if (field.declaration == nullptr) {
+          continue;
+        }
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        if (member == owner.members.end()) {
+          continue;
+        }
+        const SemanticType fieldType =
+            substituteType(member->second.symbol.type, substitution);
+        std::unordered_set<ClassId> visiting;
+        if (!byValueTypeReachesClass(fieldType, owner.id, visiting)) {
+          continue;
+        }
+
+        recursiveLayoutFields.insert(field.declaration);
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2082", DiagnosticPhase::Semantics,
+            field.declaration->type().name.last(),
+            "Type '" + ownerSpelling +
+                "' cannot contain itself by value through field '" +
+                field.declaration->name().lexeme + "'.");
+        diagnostic.related.push_back(
+            {tokenSpan(owner.name),
+             "The recursively contained type is declared here."});
+        diagnostic.hints.emplace_back(
+            "Break the recursive layout with an owning standard-library "
+            "indirection such as std::unique_ptr<" +
+            ownerSpelling +
+            ">, or use a reference when another object owns the value.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+  }
+
   void refreshFunctionPolymorphism(const FunctionCandidate &candidate) {
     if (candidate.declaration == nullptr) {
       return;
@@ -31200,6 +31305,7 @@ private:
   std::unordered_set<const VariableDecl *> predeclaredVariables;
   std::unordered_map<const VariableDecl *, const Token *>
       mutableFieldGroupOrigins;
+  std::unordered_set<const VariableDecl *> recursiveLayoutFields;
   std::unordered_set<const VariableDecl *> structuredBindingElements;
   std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
   TargetInfo target;

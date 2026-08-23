@@ -290,6 +290,10 @@ A `MirBody` owns:
 - places rooted in bindings, symbols, `this`, temporaries, values, or loans,
   with field/index/dereference projections and, where semantics supplied one,
   the corresponding value-owned `PlaceKey`;
+- a field projection from a class-valued SSA temporary is rooted in that
+  producer value, never in the projected load result. The producer dominates
+  the place-root use and the following `Load`, so verification cannot admit a
+  self-use-before-definition cycle;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - for the bounded ordinary-invocation slices, one non-removable,

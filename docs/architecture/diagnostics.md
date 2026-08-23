@@ -203,6 +203,15 @@ diagnostics or letting a backend message choose either identity.
   ownership use require intent. Immutable named-place failures retain the
   existing mutable-receiver diagnostic rather than being reclassified as a
   temporary.
+- `GTI-S2082` owns an ordinary class or struct field that makes its containing
+  type recursively contain itself by value, including through another nominal
+  field or a fixed array. Point at the written field type, relate the containing
+  type declaration, and suggest an owning standard-library indirection or a
+  reference according to ownership intent. References, raw pointers, and
+  wrappers whose stored representation is indirect stop the layout walk;
+  library names receive no compiler exception. Suppress constructor and
+  lifecycle cascades caused only by the impossible layout; passive unions and
+  native records retain their representation-specific diagnostics.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or

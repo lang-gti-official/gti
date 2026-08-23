@@ -191,8 +191,14 @@ MirEditResult MirProgramEditor::apply() {
   std::vector<MirBodyAddress> touched;
   for (const LiteralReplacement &patch : queued) {
     MirBody *target = findMirBody(candidate, patch.address.body);
-    MirInstruction &instruction = target->blocks[patch.address.block - 1]
-                                      .instructions[patch.address.index];
+    MirBlock *block =
+        target == nullptr ? nullptr : target->findBlock(patch.address.block);
+    if (block == nullptr || patch.address.index >= block->instructions.size()) {
+      addError(result, patch.address, patch.expectedInstruction,
+               "MIR replacement address became invalid before mutation");
+      return result;
+    }
+    MirInstruction &instruction = block->instructions[patch.address.index];
     MirInstruction replacement = instruction;
     if (patch.computeFold) {
       MirLiteralProvenance provenance{.kind =
