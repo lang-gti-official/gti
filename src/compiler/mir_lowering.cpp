@@ -118,6 +118,24 @@ public:
         }
       }
     }
+    // Constructor-local iterator/sentinel inference can select an exact
+    // move-only iterator value returned by begin(). Such a value retains a
+    // stored loan of its range owner, but is still transferred exactly once
+    // into the selected constructor parameter. Record only the producers
+    // named by that explicit HIR call-input plan so their failure-capable
+    // result is armed on the success edge before the later CallInput moves it.
+    for (const HirValue &consumer : source.values) {
+      if (!consumer.constructorTarget ||
+          consumer.constructorKind != ConstructorKind::Ordinary ||
+          !consumer.callPlan) {
+        continue;
+      }
+      for (const HirCallArgument &argument : consumer.callPlan->arguments) {
+        if (argument.kind == HirCallInputKind::MoveBorrowedTemporary) {
+          borrowedTemporaryTransfers.insert(argument.value);
+        }
+      }
+    }
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
     }
@@ -3056,7 +3074,8 @@ private:
     const std::optional<MirDropType> dropType =
         stageOwningParameter ? preparedParameterDropType(type) : std::nullopt;
     if (dropType && (inputKind == HirCallInputKind::CopyValue ||
-                     inputKind == HirCallInputKind::MoveValue)) {
+                     inputKind == HirCallInputKind::MoveValue ||
+                     inputKind == HirCallInputKind::MoveBorrowedTemporary)) {
       parameterDrop = appendPreparedParameterDrop(callSite, sourceValue, result,
                                                   info, *dropType);
       const MirDropObligation *prepared =
@@ -3081,7 +3100,8 @@ private:
           }
         }
       }
-    } else if (inputKind == HirCallInputKind::MoveValue) {
+    } else if (inputKind == HirCallInputKind::MoveValue ||
+               inputKind == HirCallInputKind::MoveBorrowedTemporary) {
       transferTemporaryOut(input, sourceValue);
     }
     (void)appendInstruction(std::move(input));
@@ -3578,10 +3598,11 @@ private:
     // nested input to another call. Arm its value obligation on the Invoke
     // success edge; the normal successor then owns the temporary until a
     // later CallInput reparents it or full-expression cleanup drops it.
-    const bool successEdgeResult = resultDrop != 0 && routeFailureEdgesHere() &&
-                                   !call.definedFailure.empty() &&
-                                   !call.destination && !call.loan &&
-                                   !value.ownership;
+    const bool successEdgeResult =
+        resultDrop != 0 && routeFailureEdgesHere() &&
+        !call.definedFailure.empty() && !call.destination &&
+        (!call.loan || borrowedTemporaryTransfers.contains(value.id)) &&
+        !value.ownership;
     if (successEdgeResult) {
       call.successResultDrop = resultDrop;
     } else if (!detachedBorrowResult) {
@@ -6307,6 +6328,7 @@ private:
   const HirProgram &program;
   const FailureMetadata &failureMetadata;
   const HirBody &source;
+  std::unordered_set<HirValueId> borrowedTemporaryTransfers;
   const MirDefinedFailureEffects &definedFailureEffects;
   bool implicitZeroReturn = false;
   const HirFunctionInstance *function = nullptr;
@@ -6620,6 +6642,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
     result.program.constructors.push_back(
         {.id = instance.id,
          .owner = instance.owner,
+         .typeArguments = instance.typeArguments,
+         .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,
          .parameterBindings = instance.parameterBindings,
          .borrowOrigin = instance.borrowOrigin,

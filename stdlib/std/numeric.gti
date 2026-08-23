@@ -7,7 +7,7 @@ namespace std {
     result_out_of_range,
   };
 
-  concept accumulates_into<Iterator, T> = gti_internal::accumulates_into_capability<Iterator, T>;
+  concept accumulates_into<Iterator, T> = std::dereferences_to<Iterator, T>;
 
   constexpr int8_t wrapping_add(int8_t left, int8_t right) { return gti_internal::integer_wrapping_add(left, right); }
   constexpr int16_t wrapping_add(int16_t left, int16_t right) { return gti_internal::integer_wrapping_add(left, right); }

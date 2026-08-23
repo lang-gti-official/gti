@@ -696,9 +696,21 @@ def main():
             "if (character == ' ') { found_separator = true; } } "
             "mut std::string copy = value.clone(); "
             "bool cloned = copy == value; copy[0] = 'E'; "
+            "mut std::string range_copy = "
+            "std::string(value.begin(), value.end()); "
+            "mut std::string empty_source = std::string(\"\"); "
+            "mut std::string empty_copy = "
+            "std::string(empty_source.begin(), empty_source.end()); "
+            "mut std::string one_source = std::string(\"x\"); "
+            "mut std::string one_copy = "
+            "std::string(one_source.begin(), one_source.end()); "
+            "value.push_back('!'); "
             "if (literal.size() == 6 and literal[0] == 'e' and cloned and "
             "traversed == 14 and found_separator and "
-            "value == \"engine runtime\" and copy[0] == 'E') { return 0; } "
+            "value == \"engine runtime!\" and "
+            "range_copy == \"engine runtime\" and empty_copy.empty() and "
+            "one_copy == \"x\" and copy[0] == 'E') { "
+            "return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )
@@ -723,6 +735,23 @@ def main():
             ]
         )
         run([str(standard_string_cpp20)])
+        for standard in ("c++20", "c++23"):
+            for optimization in ("-O1", "-O3"):
+                standard_string_optimized = (
+                    root / f"standard-string-{standard}-{optimization[1:].lower()}"
+                )
+                run(
+                    [
+                        gti,
+                        str(standard_string_source),
+                        "-o",
+                        str(standard_string_optimized),
+                        "--std",
+                        standard,
+                        optimization,
+                    ]
+                )
+                run([str(standard_string_optimized)])
 
         standard_vector_source = root / "standard-vector.gti"
         standard_vector_executable = root / "standard-vector"

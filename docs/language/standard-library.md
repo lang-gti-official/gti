@@ -65,7 +65,9 @@ The current implemented foundation includes:
 - `std::array<T, N>` over checked fixed-array storage, including front/back
   access and copyable-element fill; and
 - `std::string` as a move-only owner over private character storage, including
-  front/back and mutable checked access, resize, shrink-to-fit, pop-back, and
+  construction from an exact input iterator/sentinel pair whose dereference
+  referent is `char`, front/back and mutable checked access, resize,
+  shrink-to-fit, pop-back, and
   source-defined base-10 `std::to_string` conversion for every fixed-width
   integer, plus `print`/`println` traversal through either a read-only borrow
   of a named owner or direct ownership transfer from a fresh string result;
@@ -78,8 +80,9 @@ The current implemented foundation includes:
   owned array parameter and therefore requires copyable `T` when used; and
 - `std::forward_list<T>` as a move-only recursive unique owner with empty/front,
   clear, and constant-time front push/pop operations; and
-- `<std/iterator>` public `std::input_iterator<I>` and
-  `std::sentinel_for<S, I>` concepts over exact private structural
+- `<std/iterator>` public `std::input_iterator<I>`,
+  `std::sentinel_for<S, I>`, and `std::dereferences_to<I, T>` concepts over
+  exact private structural
   capabilities, plus forward-only `advance`, `distance`, and `next`; and
 - `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
   input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and

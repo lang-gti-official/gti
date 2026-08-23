@@ -606,6 +606,19 @@ private:
     genericParameters(value.genericParameters);
     output << ";parameters=";
     parameters(value.parameters);
+    output << ";requirements=[";
+    for (std::size_t index = 0; index < value.requirements.size(); ++index) {
+      separator(index);
+      output << "{concept=" << value.requirements[index].conceptId
+             << ";arguments=[";
+      for (std::size_t argument = 0;
+           argument < value.requirements[index].arguments.size(); ++argument) {
+        separator(argument);
+        type(value.requirements[index].arguments[argument]);
+      }
+      output << "]}";
+    }
+    output << ']';
     output << ";required=" << value.requiredParameterCount << ";borrow=";
     if (value.borrowParameter) {
       output << *value.borrowParameter;
@@ -618,7 +631,8 @@ private:
     } else {
       output << '-';
     }
-    output << ";private=" << value.compilerPrivate << ')';
+    output << ";requires=" << value.hasRequiresClause
+           << ";private=" << value.compilerPrivate << ')';
   }
 
   void printValue(const LoweredDestructorDeclaration &value) {
@@ -659,7 +673,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v2\n";
+  output << "lowered-program-v3\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -811,6 +825,8 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
     values.semanticTypes(instance.typeArguments);
     output << " values=";
     values.compileTimeValues(instance.valueArguments);
+    output << " parameters=";
+    values.semanticTypes(instance.parameterTypes);
     output << " instantiation=";
     if (instance.instantiationSource) {
       values.sourceSpan(*instance.instantiationSource);

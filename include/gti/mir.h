@@ -862,6 +862,12 @@ struct MirConstructorInitializer {
 struct MirConstructorInstance {
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
+  // Constructor-local generic arguments are part of the concrete instance
+  // identity just as owner arguments are part of the class instance. Keep
+  // them explicit in MIR so verification and later phases never have to
+  // reconstruct deduction from substituted parameter types.
+  std::vector<SemanticType> typeArguments;
+  std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
   std::vector<HirBindingId> parameterBindings;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;

@@ -476,6 +476,20 @@ cppMirStoredReferenceBindings(const MirConstructorInstance &constructor);
 cppMirConstructorStatusCannotFail(const MirProgram &program,
                                   HirConstructorInstanceId constructor);
 
+// True when this concrete MIR body has no status-producing failure record or
+// routing terminator.  The C++ adapter layer uses this exact proof before
+// exposing an ordinary wrapper for a conservatively may-raise source member.
+[[nodiscard]] bool cppMirBodyStatusCannotFail(const MirBody &body);
+
+// True only when one verified body consumes this exact source member as the
+// inline class-valued producer of a later operation. The C++ declaration
+// emitter uses this to publish the narrow failure-free boundary wrapper needed
+// by that use, without manufacturing ordinary entry points for unrelated
+// failure-form members.
+[[nodiscard]] bool cppMirNeedsFailureFreeBoundaryWrapper(
+    const MirProgram &program, const CppMirBodyEmissionMap &representations,
+    HirFunctionInstanceId function);
+
 // True when the concrete class has a compiler-proven, observation-free empty
 // representation that the C++ backend may use while a failure-form
 // constructor publishes its MIR field schedule. This is representation-only:

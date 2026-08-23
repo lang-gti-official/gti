@@ -8,6 +8,7 @@
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
+#include "gti/lowered_program_printer.h"
 #include "gti/mir_printer.h"
 #include "gti/optimizer.h"
 #include "gti/parser.h"
@@ -7910,7 +7911,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v39 ") &&
+  expect(mirDump.starts_with("mir-v40 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -21581,7 +21582,7 @@ int main() {
           hasDiagnosticHint(invalid.diagnostics,
                             "public read-only bool operator!=") &&
           hasDiagnosticHint(invalid.diagnostics,
-                            "referent is exactly the accumulator type") &&
+                            "referent is exactly the required type") &&
           hasRelatedDiagnostic(
               invalid.diagnostics,
               "Required here as 'std::input_iterator<Iterator>'"),
@@ -21665,15 +21666,14 @@ void invalid_pack<Args...>(Args... args)
   requires std::input_iterator<Args> {}
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !wrongArity.canGenerateCode() &&
-          hasDiagnosticCode(wrongArity.diagnostics, "GTI-S2049") &&
-          hasDiagnostic(wrongArity.diagnostics,
-                        "Concept 'std::input_iterator' requires 1 type "
-                        "argument") &&
-          hasDiagnostic(wrongArity.diagnostics, "type packs are not supported"),
-      "requires-clause concept applications should enforce exact arity "
-      "and reject unexpanded type packs");
+  expect(!wrongArity.canGenerateCode() &&
+             hasDiagnosticCode(wrongArity.diagnostics, "GTI-S2049") &&
+             hasDiagnostic(wrongArity.diagnostics,
+                           "Concept 'std::input_iterator' requires 1 type "
+                           "argument") &&
+             hasDiagnostic(wrongArity.diagnostics, "unexpanded type pack"),
+         "requires-clause concept applications should enforce exact arity "
+         "and reject unexpanded type packs");
 
   const lang::FrontendResult duplicate = lang::Frontend().analyze(
       "duplicate-structural-overload.gti", R"(
@@ -21762,6 +21762,355 @@ int32_t after() {
          "recovery-oriented formatting should not misindent a non-clause "
          "'requires' occurrence even though the compiler reserves it as a "
          "keyword");
+}
+
+void testConstructorLocalTypeGenerics() {
+  const std::string source = R"(
+#include <std/string>
+
+class Capture {
+public:
+  Capture<T>(T value) {}
+};
+
+class Tagged<Stored> {
+  Stored stored;
+
+public:
+  Tagged<Tag>(Stored value, Tag tag) : stored(value) {}
+  Stored read() { return this.stored; }
+};
+
+int main() {
+  Capture integer = Capture(1);
+  Capture boolean = Capture(true);
+  Tagged<int> tagged = Tagged<int>(4, true);
+  mut std::string source = std::string("hello");
+  mut std::string copy = std::string(source.begin(), source.end());
+  source.push_back('!');
+  if (copy == "hello" and source == "hello!" and tagged.read() == 4) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  const std::filesystem::path entry = std::filesystem::temp_directory_path() /
+                                      "gti-constructor-local-generics/main.gti";
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      entry, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected constructor-local generic diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && valid.mir.valid() &&
+             lang::verifyMirProgram(valid.mir).valid(),
+         "constructor-local type arguments should infer exactly, satisfy "
+         "declared requirements, and lower through verified MIR");
+
+  const lang::ClassDecl *capture = findTopLevelClass(valid.program, "Capture");
+  const lang::ConstructorDecl *captureConstructor = nullptr;
+  if (capture != nullptr) {
+    for (const lang::StmtPtr &member : capture->members()) {
+      if (const auto *constructor =
+              dynamic_cast<const lang::ConstructorDecl *>(member.get())) {
+        captureConstructor = constructor;
+        break;
+      }
+    }
+  }
+  expect(captureConstructor != nullptr &&
+             captureConstructor->genericParameters().size() == 1 &&
+             !captureConstructor->requiresClause(),
+         "the AST should scope a constructor-local type parameter to its "
+         "constructor declaration");
+
+  const lang::ConstructorInfo *captureInfo =
+      captureConstructor == nullptr
+          ? nullptr
+          : valid.semantics.findConstructor(*captureConstructor);
+  expect(captureInfo != nullptr && captureInfo->genericParameters.size() == 1 &&
+             captureInfo->parameterTypes.size() == 1 &&
+             captureInfo->parameterTypes.front().kind ==
+                 lang::SemanticType::TypeParameter,
+         "symbolic constructor metadata should retain its own generic "
+         "parameter identity and parameter pattern");
+
+  const lang::HirConstructorInstance *integerInstance = nullptr;
+  const lang::HirConstructorInstance *booleanInstance = nullptr;
+  const lang::HirConstructorInstance *taggedInstance = nullptr;
+  const lang::HirConstructorInstance *stringRangeInstance = nullptr;
+  for (const lang::HirConstructorInstance &instance :
+       valid.hir.constructorInstances()) {
+    if (instance.source == nullptr) {
+      continue;
+    }
+    if (instance.source->name().lexeme == "Capture" &&
+        instance.typeArguments.size() == 1 &&
+        instance.parameterTypes.size() == 1) {
+      if (instance.typeArguments.front() == lang::SemanticType::Int32) {
+        integerInstance = &instance;
+      } else if (instance.typeArguments.front() == lang::SemanticType::Bool) {
+        booleanInstance = &instance;
+      }
+    } else if (instance.source->name().lexeme == "Tagged" &&
+               instance.typeArguments.size() == 1 &&
+               instance.typeArguments.front() == lang::SemanticType::Bool) {
+      taggedInstance = &instance;
+    } else if (instance.source->name().lexeme == "string" &&
+               instance.typeArguments.size() == 2 &&
+               instance.parameterTypes.size() == 2) {
+      stringRangeInstance = &instance;
+    }
+  }
+  expect(integerInstance != nullptr && booleanInstance != nullptr &&
+             integerInstance->id != booleanInstance->id &&
+             integerInstance->declaration == booleanInstance->declaration &&
+             integerInstance->parameterTypes.front() ==
+                 lang::SemanticType::Int32 &&
+             booleanInstance->parameterTypes.front() ==
+                 lang::SemanticType::Bool,
+         "different inferred constructor-local types should produce stable, "
+         "distinct concrete constructor identities");
+  expect(taggedInstance != nullptr && stringRangeInstance != nullptr &&
+             stringRangeInstance->typeArguments[0] !=
+                 stringRangeInstance->typeArguments[1],
+         "generic owners and iterator/sentinel construction should preserve "
+         "independent owner and constructor-local arguments in HIR");
+
+  bool mirroredInteger = false;
+  bool mirroredBoolean = false;
+  bool mirroredRange = false;
+  for (const lang::MirConstructorInstance &instance :
+       valid.mir.constructorInstances()) {
+    if (integerInstance != nullptr && instance.id == integerInstance->id) {
+      mirroredInteger =
+          instance.typeArguments == integerInstance->typeArguments &&
+          instance.valueArguments == integerInstance->valueArguments &&
+          instance.parameterTypes == integerInstance->parameterTypes;
+    }
+    if (booleanInstance != nullptr && instance.id == booleanInstance->id) {
+      mirroredBoolean =
+          instance.typeArguments == booleanInstance->typeArguments &&
+          instance.valueArguments == booleanInstance->valueArguments &&
+          instance.parameterTypes == booleanInstance->parameterTypes;
+    }
+    if (stringRangeInstance != nullptr &&
+        instance.id == stringRangeInstance->id) {
+      mirroredRange =
+          instance.typeArguments == stringRangeInstance->typeArguments &&
+          instance.valueArguments == stringRangeInstance->valueArguments &&
+          instance.parameterTypes == stringRangeInstance->parameterTypes;
+    }
+  }
+  expect(mirroredInteger && mirroredBoolean && mirroredRange,
+         "MIR constructor instances should retain the concrete generic "
+         "arguments and parameter types selected by each HIR constructor "
+         "identity");
+
+  const lang::LoweredProgram loweredProgram =
+      gti_test::lowerProgram(valid, valid.mir, valid.mir);
+  const std::string lowered =
+      lang::LoweredProgramPrinter().print(loweredProgram);
+  expect(lowered.find("constructor(id=") != std::string::npos &&
+             lowered.find(";generics=[generic(") != std::string::npos &&
+             lowered.find(";requirements=[{concept=") != std::string::npos &&
+             lowered.find(";requires=1;") != std::string::npos,
+         "the lowered declaration contract should retain constructor "
+         "generics and their symbolic requirements");
+
+  const std::string mirText = lang::MirPrinter().print(valid.mir);
+  expect(mirText.find("move-borrowed-temporary") != std::string::npos,
+         "verified MIR should make the move of owner-tied iterator "
+         "temporaries into constructor parameters explicit");
+
+  const std::string generated = gti_test::emitCppText(valid);
+  expect(
+      generated.find("template <typename T>") != std::string::npos &&
+          generated.find("template <typename Tag>") != std::string::npos &&
+          generated.find("template <typename Iterator, typename Sentinel>") !=
+              std::string::npos &&
+          generated.find("requires std::") == std::string::npos,
+      "the backend should emit constructor templates without delegating "
+      "GTI constraint selection to C++");
+
+  const auto analyze = [&](std::string_view name, std::string text) {
+    return lang::Frontend().analyze(std::filesystem::path(name),
+                                    std::move(text), {standardLibraryPrelude()},
+                                    {}, {standardLibraryRoot()});
+  };
+  const lang::FrontendResult missingInference =
+      analyze("constructor-missing-inference.gti", R"(
+class Wrapper<T> {};
+class Missing {
+public:
+  Missing<T>(Wrapper<T> value) {}
+};
+int main() {
+  Missing value = Missing(1);
+  return 0;
+}
+)");
+  expect(!missingInference.canGenerateCode() &&
+             hasDiagnosticCode(missingInference.diagnostics, "GTI-S2023") &&
+             hasDiagnostic(missingInference.diagnostics,
+                           "Cannot infer constructor-local type parameter "
+                           "'T'") &&
+             hasRelatedDiagnostic(missingInference.diagnostics,
+                                  "Constructor-local generic parameter "
+                                  "declared here") &&
+             hasDiagnosticHint(missingInference.diagnostics, "inference-only"),
+         "a structurally unmatched parameter pattern should report focused "
+         "constructor-local inference failure");
+
+  const lang::FrontendResult conflictingInference =
+      analyze("constructor-conflicting-inference.gti", R"(
+class Conflict {
+public:
+  Conflict<T>(T left, T right) {}
+};
+int main() {
+  Conflict value = Conflict(1, true);
+  return 0;
+}
+)");
+  expect(!conflictingInference.canGenerateCode() &&
+             hasDiagnosticCode(conflictingInference.diagnostics, "GTI-S2023") &&
+             hasDiagnostic(conflictingInference.diagnostics,
+                           "Conflicting types were inferred for "
+                           "constructor-local type parameter 'T'"),
+         "repeated constructor parameter patterns should require one exact "
+         "canonical inferred type");
+
+  const lang::FrontendResult failedConstraint =
+      analyze("constructor-failed-constraint.gti", R"(
+class IntegralOnly {
+public:
+  IntegralOnly<std::integral T>(T value) {}
+};
+int main() {
+  IntegralOnly value = IntegralOnly(true);
+  return 0;
+}
+)");
+  expect(!failedConstraint.canGenerateCode() &&
+             hasDiagnosticCode(failedConstraint.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(failedConstraint.diagnostics,
+                           "does not satisfy generic constraint "
+                           "'std::integral'"),
+         "constructor constraints should be evaluated after exact argument "
+         "inference and before candidate admission");
+
+  const lang::FrontendResult escapedParameter =
+      analyze("constructor-local-parameter-scope.gti", R"(
+class Scoped {
+public:
+  Scoped<T>(T value) {}
+  T leak;
+};
+int main() { return 0; }
+)");
+  expect(!escapedParameter.canGenerateCode() &&
+             hasDiagnostic(escapedParameter.diagnostics, "Unknown type 'T'"),
+         "a constructor-local type parameter should not be visible to later "
+         "class members");
+
+  const lang::FrontendResult invalidDeclarations =
+      analyze("constructor-local-generic-declarations.gti", R"(
+class Owner<T> {
+public:
+  Owner<T>(int value) {}
+};
+class Packed {
+public:
+  Packed<Args...>(Args value) {}
+};
+class Uninferable {
+public:
+  Uninferable<T>(int value) {}
+};
+int main() { return 0; }
+)");
+  expect(!invalidDeclarations.canGenerateCode() &&
+             hasDiagnostic(invalidDeclarations.diagnostics,
+                           "Constructor-local generic parameters cannot "
+                           "shadow") &&
+             hasDiagnostic(invalidDeclarations.diagnostics,
+                           "Constructor-local generic parameter packs are "
+                           "not supported") &&
+             hasDiagnostic(invalidDeclarations.diagnostics,
+                           "must occur in a constructor parameter type"),
+         "constructor-local parameters should retain the bounded shadowing, "
+         "pack, and inference-only declaration rules");
+
+  const lang::FrontendResult wrongElement =
+      analyze("string-range-wrong-element.gti", R"(
+#include <std/string>
+#include <std/vector>
+int main() {
+  mut std::vector<int> values = std::vector<int>();
+  std::string text = std::string(values.begin(), values.end());
+  return 0;
+}
+)");
+  expect(!wrongElement.canGenerateCode() &&
+             hasDiagnosticCode(wrongElement.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(wrongElement.diagnostics, "std::dereferences_to") &&
+             hasRelatedDiagnostic(wrongElement.diagnostics,
+                                  "std::dereferences_to<Iterator, char>"),
+         "the standard string constructor should reject an iterator whose "
+         "read-only element referent is not exactly char");
+
+  const lang::FrontendResult closedRequirement =
+      analyze("constructor-closed-requirement.gti", R"(
+#include <std/iterator>
+class CharacterIterator {
+  char value = 'x';
+public:
+  char& operator*() { return this.value; }
+};
+class CharacterOnly {
+public:
+  CharacterOnly<Iterator>(Iterator value)
+    requires std::dereferences_to<Iterator, char> {}
+};
+int main() {
+  CharacterOnly value = CharacterOnly(CharacterIterator());
+  return 0;
+}
+)");
+  expect(closedRequirement.canGenerateCode(),
+         "a constructor requirement should accept a closed exact type "
+         "argument without making it part of inference");
+
+  const lang::FrontendResult dependentRequirement =
+      analyze("constructor-dependent-requirement.gti", R"(
+class Wrapper<T> {};
+concept copyable_wrapper<T> = std::copyable<T>;
+class Invalid {
+public:
+  Invalid<T>(T value) requires copyable_wrapper<Wrapper<T>> {}
+};
+int main() { return 0; }
+)");
+  expect(!dependentRequirement.canGenerateCode() &&
+             hasDiagnosticCode(dependentRequirement.diagnostics, "GTI-S2049") &&
+             hasDiagnostic(dependentRequirement.diagnostics,
+                           "dependent compound types are not supported"),
+         "the bounded requirement grammar should reject dependent compound "
+         "types instead of widening generic deduction");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Box{int value;public:Box<std::integral T>(T input)requires "
+      "std::copyable<T>:value(int(input)){};};");
+  expect(formatted.find("Box<std::integral T>(T input)\n"
+                        "    requires std::copyable<T> : value(int(input)) "
+                        "{};") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "constructor requirements should format idempotently and end before "
+         "an initializer-list colon");
 }
 
 void testValueGenerics() {
@@ -22098,7 +22447,7 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "Function value generic arguments are not supported") &&
           hasDiagnostic(invalid.diagnostics,
-                        "Constructor value parameters cannot shadow") &&
+                        "Constructor-local generic parameters cannot shadow") &&
           hasDiagnostic(invalid.diagnostics,
                         "A brace argument requires one exact fixed-array") &&
           hasDiagnostic(invalid.diagnostics,
@@ -25559,7 +25908,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v39 ") &&
+             mirDump.starts_with("mir-v40 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -29670,6 +30019,7 @@ int main(int argc, char **argv) {
   testConcurrentGlobalPolicy();
   testSourceDefinedConcepts();
   testStructuralRequiresAndAccumulate();
+  testConstructorLocalTypeGenerics();
   testValueGenerics();
   testContextualArrayArguments();
   testVariadicGenerics();

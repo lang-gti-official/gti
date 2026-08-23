@@ -253,8 +253,8 @@
       }
     },
     "20-strings.gti": {
-      "declarations": 188,
-      "bodies": 78,
+      "declarations": 207,
+      "bodies": 90,
       "generated_items": 7,
       "generated_kinds": {
         "program_initialization": 0,
@@ -533,8 +533,8 @@
       }
     },
     "40-loan-flow-edges.gti": {
-      "declarations": 188,
-      "bodies": 79,
+      "declarations": 207,
+      "bodies": 91,
       "generated_items": 8,
       "generated_kinds": {
         "program_initialization": 0,
@@ -575,8 +575,8 @@
       }
     },
     "43-program-arguments.gti": {
-      "declarations": 239,
-      "bodies": 89,
+      "declarations": 258,
+      "bodies": 101,
       "generated_items": 16,
       "generated_kinds": {
         "program_initialization": 0,
@@ -589,7 +589,7 @@
       }
     },
     "44-bounded-requires.gti": {
-      "declarations": 276,
+      "declarations": 277,
       "bodies": 134,
       "generated_items": 17,
       "generated_kinds": {
@@ -617,7 +617,7 @@
       }
     },
     "46-defined-integer-arithmetic.gti": {
-      "declarations": 227,
+      "declarations": 228,
       "bodies": 114,
       "generated_items": 2,
       "generated_kinds": {
@@ -701,7 +701,7 @@
       }
     },
     "52-stateful-callables.gti": {
-      "declarations": 300,
+      "declarations": 301,
       "bodies": 140,
       "generated_items": 19,
       "generated_kinds": {
@@ -785,8 +785,8 @@
       }
     },
     "58-formatted-output.gti": {
-      "declarations": 201,
-      "bodies": 95,
+      "declarations": 220,
+      "bodies": 107,
       "generated_items": 20,
       "generated_kinds": {
         "program_initialization": 0,
@@ -855,7 +855,7 @@
       }
     },
     "63-random-engine.gti": {
-      "declarations": 242,
+      "declarations": 243,
       "bodies": 124,
       "generated_items": 5,
       "generated_kinds": {
@@ -870,8 +870,8 @@
     }
   },
   "totals": {
-    "declarations": 9086,
-    "bodies": 2875,
+    "declarations": 9166,
+    "bodies": 2923,
     "generated_items": 353
   }
 }

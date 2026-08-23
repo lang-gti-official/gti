@@ -1758,6 +1758,7 @@ private:
     }
 
     std::unordered_set<HirValueId> temporaryBorrowValues;
+    std::unordered_set<HirValueId> borrowedMoveValues;
     for (const HirValue &call : body.values) {
       if (!call.callPlan) {
         continue;
@@ -1772,13 +1773,16 @@ private:
       for (const HirCallArgument &argument : call.callPlan->arguments) {
         if (argument.kind == HirCallInputKind::ReadTemporaryBorrow) {
           temporaryBorrowValues.insert(argument.value);
+        } else if (argument.kind == HirCallInputKind::MoveBorrowedTemporary) {
+          borrowedMoveValues.insert(argument.value);
         }
       }
     }
     for (HirValue &value : body.values) {
       if (value.fullExpression == 0 ||
           (!materializesDropValue(value) &&
-           !temporaryBorrowValues.contains(value.id))) {
+           !temporaryBorrowValues.contains(value.id) &&
+           !borrowedMoveValues.contains(value.id))) {
         continue;
       }
       const HirDropObligationId id = body.dropObligations.size() + 1;
@@ -2360,6 +2364,71 @@ private:
 
       result.push_back({.parameterIndex = index,
                         .value = source,
+                        .parameterType = parameter,
+                        .kind = kind,
+                        .defaultArgument = index >= explicitArgumentCount});
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::optional<std::vector<HirCallArgument>>
+  orderedConstructorArguments(const HirValue &constructor,
+                              const std::vector<HirValueId> &arguments,
+                              const std::vector<SemanticType> &parameterTypes,
+                              const HirBody &body,
+                              std::size_t explicitArgumentCount) const {
+    if (!constructor.constructorTarget ||
+        constructor.constructorKind != ConstructorKind::Ordinary ||
+        constructor.intrinsic != IntrinsicKind::None) {
+      return std::nullopt;
+    }
+    if (std::optional<std::vector<HirCallArgument>> ordinary = orderedArguments(
+            arguments, parameterTypes, body, explicitArgumentCount)) {
+      return ordinary;
+    }
+    if (arguments.size() != parameterTypes.size()) {
+      return std::nullopt;
+    }
+
+    std::vector<HirCallArgument> result;
+    result.reserve(arguments.size());
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const HirValue *input = body.findValue(arguments[index]);
+      const SemanticType &parameter = parameterTypes[index];
+      if (input == nullptr || input->kind == HirValueKind::PackExpansion) {
+        return std::nullopt;
+      }
+
+      HirCallInputKind kind = HirCallInputKind::Value;
+      if (parameter.kind == SemanticType::Reference) {
+        kind = parameter.referenceAccess == AccessMode::Mutable
+                   ? HirCallInputKind::MutableBorrow
+                   : HirCallInputKind::ReadBorrow;
+      } else if (orderedValueParameterType(parameter)) {
+        kind = HirCallInputKind::Value;
+      } else if (parameter.kind != SemanticType::Class ||
+                 input->info.type != parameter) {
+        return std::nullopt;
+      } else if (input->info.category == ValueCategory::Place &&
+                 input->info.traits.copyable &&
+                 !input->info.traits.containsBorrowedState) {
+        kind = HirCallInputKind::CopyValue;
+      } else if (input->info.category == ValueCategory::Value &&
+                 input->info.traits.movable &&
+                 !input->info.traits.containsBorrowedState) {
+        kind = HirCallInputKind::MoveValue;
+      } else if (input->kind == HirValueKind::Call && input->functionTarget &&
+                 input->borrowOrigin != BorrowOriginKind::None &&
+                 input->info.category == ValueCategory::Value &&
+                 input->info.traits.movable &&
+                 input->info.traits.containsBorrowedState) {
+        kind = HirCallInputKind::MoveBorrowedTemporary;
+      } else {
+        return std::nullopt;
+      }
+
+      result.push_back({.parameterIndex = index,
+                        .value = input->id,
                         .parameterType = parameter,
                         .kind = kind,
                         .defaultArgument = index >= explicitArgumentCount});
@@ -3442,8 +3511,9 @@ private:
               ? dynamic_cast<const DirectInitializer *>(raw)->arguments().size()
               : value.parameterTypes.size();
       if (std::optional<std::vector<HirCallArgument>> plannedArguments =
-              orderedArguments(arguments, value.parameterTypes, body,
-                               explicitArgumentCount)) {
+              orderedConstructorArguments(value, arguments,
+                                          value.parameterTypes, body,
+                                          explicitArgumentCount)) {
         value.callPlan = HirCallPlan{.receiver = std::nullopt,
                                      .arguments = std::move(*plannedArguments)};
       }

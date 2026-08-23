@@ -240,6 +240,15 @@ the selected parameter types. `ResolvedCallInfo` and
 the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
 
+An ordinary constructor can add inference-only local type parameters inside
+its owning class's generic scope. Candidate analysis infers them solely from
+written arguments, checks inline and trailing constraints after substitution,
+then records the declaration, concrete owner, ordered local type/value
+arguments, concrete parameters, requirements, and instantiation site in
+`ResolvedConstructionInfo`. Concrete constructor analysis revalidates those
+requirements before HIR. The instance key includes all local generic
+arguments, so equal native layouts do not merge semantic instances.
+
 Each reanalysis runs on the one shared analyzer inside a detach/restore
 bracket (`InstanceAnalysisScope`): the accumulated model is detached, the
 instance is analyzed into an empty delta `SemanticModel` whose lookups fall
@@ -390,16 +399,18 @@ relationship plus the ordered indices of the concept parameters to which it
 applies. Source concept composition remaps both forms through each concept
 application; public concept names never become semantic enum cases.
 
-A function's trailing clause is resolved once into
+A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
-application, and exact semantic type-parameter arguments. During symbolic body
+application, and exact semantic type arguments. Arguments may be visible
+non-pack parameters or closed concrete types; unresolved dependent compound
+types fail before candidate selection. During symbolic body
 analysis, a requirement scope contributes unary facts to ordinary constrained
 operations and supplies synthetic exact operator candidates for the bounded
 iterator relationships. This is semantic proof, not text-based operator
 guessing. The AST application is retained for source-facing diagnostics and
 tooling occurrences.
 
-Call viability substitutes concrete type arguments into the same records and
+Call or construction viability substitutes concrete type arguments into the same records and
 checks both unary and structural facts. Concrete generic reanalysis then
 resolves the real operator declarations in the instantiated body, so HIR sees
 the selected `FunctionId` rather than a compiler capability or unresolved C++

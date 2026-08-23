@@ -256,6 +256,7 @@ public:
         state.append("::");
         break;
       case Kind::Colon:
+        state.endRequiresClause();
         state.trimSpaces();
         if ((previous != nullptr && previous->kind == Kind::Word &&
              (previous->text == "public" || previous->text == "private")) ||

@@ -93,6 +93,8 @@ callInputKindName(HirCallInputKind kind) {
     return "read-temporary-borrow";
   case HirCallInputKind::MutableTemporaryBorrow:
     return "mutable-temporary-borrow";
+  case HirCallInputKind::MoveBorrowedTemporary:
+    return "move-borrowed-temporary";
   }
   return "invalid";
 }
@@ -251,7 +253,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v39 valid=" << program.valid() << '\n';
+    output << "mir-v40 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -452,7 +454,21 @@ public:
     for (const MirConstructorInstance &instance :
          program.constructorInstances()) {
       output << "constructor @" << instance.id << " owner=" << instance.owner
-             << " parameters=[";
+             << " type-arguments=[";
+      for (std::size_t index = 0; index < instance.typeArguments.size();
+           ++index) {
+        separator(index);
+        type(instance.typeArguments[index]);
+      }
+      output << "] value-arguments=[";
+      for (std::size_t index = 0; index < instance.valueArguments.size();
+           ++index) {
+        separator(index);
+        const CompileTimeValue &argument = instance.valueArguments[index];
+        output << '{' << number(argument.kind) << ':' << argument.value << ':'
+               << argument.parameterId << '}';
+      }
+      output << "] parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
         separator(index);

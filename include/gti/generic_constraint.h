@@ -34,7 +34,7 @@ enum class StructuralConstraintKind : std::uint8_t {
   None,
   InputIterator,
   SentinelFor,
-  AccumulatesInto,
+  DereferencesTo,
 };
 
 using GenericConstraintSet = std::uint32_t;
@@ -89,7 +89,7 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 3>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
-        {"accumulates_into", StructuralConstraintKind::AccumulatesInto, 2},
+        {"dereferences_to", StructuralConstraintKind::DereferencesTo, 2},
     }};
 
 static_assert(compilerConstraints.size() + 2 ==

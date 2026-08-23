@@ -212,6 +212,24 @@ requireCapture(212, "event", "variable.parameter");
 requireCapture(226, "upcast", "function.method.call");
 requireCapture(226, "Base", "type");
 
+const constructorGenericRow = fixtureLines.findIndex((line) =>
+  line.includes("HighlightText<Iterator>"),
+);
+const constructorRequiresRow = fixtureLines.findIndex((line) =>
+  line.includes("requires std::input_iterator<Iterator>"),
+);
+const constructorClosedRequirementRow = fixtureLines.findIndex((line) =>
+  line.includes("std::dereferences_to<Iterator, char>"),
+);
+requireCapture(constructorGenericRow, "HighlightText", "constructor");
+requireCapture(constructorGenericRow, "Iterator", "type.parameter");
+requireCapture(constructorRequiresRow, "requires", "keyword");
+requireCapture(constructorRequiresRow, "input_iterator", "type");
+requireCapture(constructorRequiresRow, "Iterator", "type.parameter");
+requireCapture(constructorClosedRequirementRow, "dereferences_to", "type");
+requireCapture(constructorClosedRequirementRow, "Iterator", "type.parameter");
+requireCapture(constructorClosedRequirementRow, "char", "type.builtin");
+
 const defineFlagRow = fixtureLines.findIndex(
   (line) => line === "#define HIGHLIGHT_FLAG",
 );

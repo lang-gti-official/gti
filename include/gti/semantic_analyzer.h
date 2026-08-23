@@ -1117,6 +1117,7 @@ struct ConstructorInfo {
   ConstructorKind kind = ConstructorKind::Ordinary;
   AccessModifier access = AccessModifier::Public;
   std::vector<GenericParameterInfo> genericParameters;
+  std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
   std::size_t requiredParameterCount = 0;
   std::vector<std::size_t> defaultArgumentEffectOwners;
@@ -1155,6 +1156,7 @@ struct ResolvedConstructionInfo {
   SemanticType constructedType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
+  std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
   std::vector<const Expr *> defaultArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;

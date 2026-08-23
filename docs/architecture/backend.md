@@ -148,6 +148,24 @@ loan-end schedule, and full-expression drop. Failure successors use the MIR
 cleanup order. The emitter neither binds an arbitrary C++ prvalue nor infers
 eligibility from the generated signature.
 
+For a verified `MoveBorrowedTemporary` constructor input, the body emitter
+publishes the exact producer call result into its MIR value-rooted lifetime
+slot, moves that value into the selected constructor parameter, and ends the
+moved-from slot representation after the consuming construction. MIR remains
+authoritative for producer success, ownership transfer, constructor failure
+cleanup, and the resulting value's one drop.
+
+When a generic source member has only a failure-form C++ entry point but a
+particular concrete MIR body is proved unable to fail, `CppEmitter` publishes a
+private failure-free boundary wrapper before its first use, but only when a
+verified body actually consumes that exact member as an inline class-valued
+producer. The wrapper invokes the existing failure sibling, returns its
+constructed result, and terminates if the verified impossible failure is
+observed. This representation adapter does not erase failure from compiler
+meaning, manufacture ordinary entry points for unrelated members, or make
+native exception behavior a lifetime authority; it exists only so an exact
+nested call can participate in an ordinary constructor full expression.
+
 A cleanup-free class result with one exact value-rooted field projection and
 one scalar `Load` uses the same uninitialized lifetime-slot representation.
 The call constructs the slot, and the load spells through its verified field

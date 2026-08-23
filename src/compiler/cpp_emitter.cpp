@@ -4301,7 +4301,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                                          ownerSpelling);
             output << ";\n";
           }
-          if (loweredNormalBodySupported(*instance)) {
+          const bool failureFreeBoundaryWrapper =
+              loweredFailureBodySupported(*instance) &&
+              !loweredNormalBodySupported(*instance) &&
+              cppMirBodyStatusCannotFail(instance->body) &&
+              cppMirNeedsFailureFreeBoundaryWrapper(mir, *generalEmissionMap,
+                                                    instance->id);
+          if (loweredNormalBodySupported(*instance) ||
+              failureFreeBoundaryWrapper) {
             writeIndent();
             output << "template <> ";
             emitLoweredFunctionSignature(*row, *function, instance, false,
@@ -4497,8 +4504,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << " __gti_result{};\n";
     }
     writeIndent();
-    output << "if (!"
-           << cppMirFailureSiblingSpelling(
+    output << "if (!";
+    if (function.receiverMutability == ReceiverMutability::Consuming) {
+      output << "std::move(*this).";
+    }
+    output << cppMirFailureSiblingSpelling(
                   cppFunctionSpelling(function, row.name))
            << '(';
     for (std::size_t index = 0; index < instance.parameterTypes.size();
@@ -4523,6 +4533,91 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
       output << "return *__gti_result;\n";
+    } else if (instance.returnType != SemanticType::Void) {
+      writeIndent();
+      output << "return __gti_result;\n";
+    }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  // A source member can conservatively retain the defined-failure flag even
+  // when its concrete verified MIR has no failure-producing path.  Such a
+  // member may still be needed as an ordinary nested expression (for example,
+  // a sentinel returned directly into a constructor argument).  Publish the
+  // ordinary signature as a narrow adapter over the admitted transformed
+  // body.  The MIR proof makes the failure arm unreachable; terminating if a
+  // stale backend violates that proof keeps the adapter fail-closed.
+  void emitLoweredFailureFreeBoundaryWrapper(
+      const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
+      const MirFunctionInstance &instance, std::string_view ownerSpelling,
+      bool explicitSpecialization) {
+    const bool placementResult =
+        instance.returnType.kind == SemanticType::Class ||
+        instance.returnType.kind == SemanticType::Lambda;
+    writeIndent();
+    if (explicitSpecialization) {
+      output << "template <> ";
+    }
+    emitLoweredFunctionSignature(row, function, &instance, false, false,
+                                 ownerSpelling);
+    output << " {\n";
+    ++indentation;
+    writeIndent();
+    output << "::gti_failure_record_v1 __gti_failure_record{};\n";
+    if (instance.returnType.kind == SemanticType::Reference) {
+      writeIndent();
+      if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
+        output << "const ";
+      }
+      emitSemanticType(instance.returnType.arguments.front());
+      output << " *__gti_result = nullptr;\n";
+    } else if (placementResult) {
+      writeIndent();
+      output << "::gti_internal::backend::mir_lifetime_slot<";
+      emitSemanticType(instance.returnType);
+      output << ", true> __gti_result;\n";
+    } else if (instance.returnType != SemanticType::Void) {
+      writeIndent();
+      emitSemanticType(instance.returnType);
+      output << " __gti_result{};\n";
+    }
+    writeIndent();
+    output << "if (!"
+           << cppMirFailureSiblingSpelling(
+                  cppFunctionSpelling(function, row.name))
+           << '(';
+    for (std::size_t index = 0; index < instance.parameterTypes.size();
+         ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << "__gti_mir_arg_" << index;
+    }
+    if (!instance.parameterTypes.empty()) {
+      output << ", ";
+    }
+    if (instance.returnType != SemanticType::Void) {
+      output << (placementResult ? "__gti_result.construction_address(), "
+                                 : "&__gti_result, ");
+    }
+    output << "&__gti_failure_record)) {\n";
+    ++indentation;
+    emitHostedFailureTermination();
+    --indentation;
+    writeIndent();
+    output << "}\n";
+    if (placementResult) {
+      writeIndent();
+      output << "__gti_result.mark_constructed();\n";
+    }
+    if (instance.returnType.kind == SemanticType::Reference) {
+      writeIndent();
+      output << "return *__gti_result;\n";
+    } else if (placementResult) {
+      writeIndent();
+      output << "return std::move(__gti_result.get());\n";
     } else if (instance.returnType != SemanticType::Void) {
       writeIndent();
       output << "return __gti_result;\n";
@@ -4572,6 +4667,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         if (instance->virtualMethod) {
           emitLoweredVirtualFailureBoundaryWrapper(row, function, *instance,
                                                    ownerSpelling, generic);
+        } else if (!loweredNormalBodySupported(*instance) &&
+                   cppMirBodyStatusCannotFail(instance->body) &&
+                   cppMirNeedsFailureFreeBoundaryWrapper(
+                       mir, *generalEmissionMap, instance->id)) {
+          emitLoweredFailureFreeBoundaryWrapper(row, function, *instance,
+                                                ownerSpelling, generic);
         }
       }
       if (loweredNormalBodySupported(*instance) &&
