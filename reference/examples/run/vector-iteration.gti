@@ -1,0 +1,28 @@
+// title: Vectors and checked indexing
+// unit: vector
+// std::vector is a move-only dynamic owner. Indexed access is bounds-checked;
+// going out of range is a defined runtime failure, not undefined behaviour.
+
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.reserve(std::size_t(4));
+  values.push_back(3);
+  values.push_back(1);
+  values.push_back(4);
+  values.push_back(1);
+
+  mut int32_t total = 0;
+  for (auto& value : values) {
+    total = total + value;
+  }
+  std::print("sum = ");
+  std::print(total);
+  std::print('\n');
+
+  std::print("values[2] = ");
+  std::print(values[std::size_t(2)]);
+  std::print('\n');
+  return 0;
+}

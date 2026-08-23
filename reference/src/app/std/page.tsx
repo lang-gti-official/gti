@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import units from "@/generated/units.json";
 
 export const metadata: Metadata = {
@@ -29,7 +30,9 @@ export default function StandardLibraryIndex() {
           {units.units.map((unit) => (
             <tr key={unit.name} id={unit.name}>
               <td>
-                <code>{unit.include}</code>
+                <Link href={`/std/${unit.name}/`}>
+                  <code>{unit.include}</code>
+                </Link>
               </td>
               <td>
                 {unit.types.length > 0 ? (
@@ -54,9 +57,9 @@ export default function StandardLibraryIndex() {
       </table>
 
       <div className="stub-notice">
-        Per-entity pages (one page per class and member, cppreference-style)
-        are the next population step; they render from the compiler&apos;s
-        entity graph once <code>gti --emit-api-json</code> lands.
+        Unit pages carry a synopsis quoted from the shipped source and
+        compiler-verified examples. Per-member pages arrive with{" "}
+        <code>gti --emit-api-json</code>.
       </div>
     </>
   );

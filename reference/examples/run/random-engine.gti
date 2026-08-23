@@ -1,0 +1,25 @@
+// title: Deterministic random sequences
+// unit: random
+// std::random_engine is a seeded xoshiro256++ generator: the same seed always
+// produces the same sequence, which is what makes tests and replays exact.
+// (std::random_device provides nondeterministic seeds when wanted.)
+
+#include <std/random>
+
+int main() {
+  mut std::random_engine first = std::random_engine(uint64_t(42));
+  mut std::random_engine second = std::random_engine(uint64_t(42));
+
+  mut bool agree = true;
+  for (mut uint64_t index = uint64_t(0); index < uint64_t(8);
+       index = index + uint64_t(1)) {
+    if (first() != second()) {
+      agree = false;
+    }
+  }
+
+  if (agree) {
+    std::println("same seed, same sequence: 8 of 8 draws agree");
+  }
+  return 0;
+}
