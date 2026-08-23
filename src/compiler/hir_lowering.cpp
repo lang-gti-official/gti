@@ -2394,7 +2394,8 @@ private:
     AccessMode access = AccessMode::ReadOnly;
     if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
       access = type.referenceAccess;
-      type = type.arguments.front();
+      SemanticType referent = type.arguments.front();
+      type = std::move(referent);
       category = ValueCategory::Place;
     }
     return {.type = type,

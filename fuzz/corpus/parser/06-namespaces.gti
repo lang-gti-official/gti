@@ -1,0 +1,17 @@
+// Namespaces may be nested and referred to with `::` qualification.
+namespace engine {
+namespace graphics {
+void render() {
+  std::println("rendering through a qualified name");
+}
+}
+}
+
+// An alias gives a nested namespace a shorter name.
+namespace gfx = engine::graphics;
+
+int main() {
+  engine::graphics::render();
+  gfx::render();
+  return 0;
+}

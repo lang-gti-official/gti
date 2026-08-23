@@ -73,6 +73,17 @@ advances its four-word state in GTI; only `random_device` crosses the bounded
 `gti_rt_random_bytes` C boundary to refill its private fixed buffer. Its call
 returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
 
+`<std/filesystem>` provides `std::filesystem::path` as pure pathname
+manipulation with no filesystem access. It carries C++'s decomposition and
+`has_*` query set, the modifiers, `assign`/`append`/`concat`, element-wise
+`compare` with ordering and equality operators, and `lexically_normal`.
+Element-wise comparison is what makes `"/a/b"` and `"/a//b"` equal while
+`"/a/b/"` differs from both, since a trailing separator contributes an empty
+final element. A pathname is stored exactly as supplied; normalization happens
+only in `lexically_normal`. Copying is explicit through `clone()`, and the
+converting constructor is declared but not yet callable — build a path with
+`path()` followed by `assign()` until `R-CLASS-VALUE-EMISSION` closes.
+
 Optional facilities live under `stdlib/std/` and are imported through logical
 standard-library paths such as `#include <std/array>`. These imports resolve
 against the compiler installation, not relative to the application or through

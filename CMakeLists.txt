@@ -22,6 +22,8 @@ include(CMakePackageConfigHelpers)
 option(GTI_BUILD_LSP "Build the GTI language server" ON)
 option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
 option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
+option(GTI_BUILD_FUZZERS
+       "Build opt-in libFuzzer harnesses (Clang only; never installed)" OFF)
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
@@ -201,6 +203,42 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   # definite -Wuninitialized analysis stays active. Clang has no such flag and
   # rejects it.
   add_compile_options(-Wno-maybe-uninitialized)
+endif()
+
+if(GTI_BUILD_FUZZERS)
+  # Fuzzing instruments the whole tree (position load-bearing, same rule as
+  # the warning flags above): the compiler library must carry coverage and
+  # sanitizer instrumentation or libFuzzer explores blind. Harness executables
+  # in fuzz/ additionally link -fsanitize=fuzzer for the driver.
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "GTI_BUILD_FUZZERS requires a Clang toolchain with "
+                        "libFuzzer; the current compiler is "
+                        "${CMAKE_CXX_COMPILER_ID}.")
+  endif()
+  # "Is Clang" is not enough: Apple's CommandLineTools clang ships without
+  # libclang_rt.fuzzer and only fails at link. Probe the runtime at configure
+  # time so the failure is immediate and names the fix.
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_FLAGS "-fsanitize=fuzzer,address,undefined")
+  check_cxx_source_compiles("
+#include <cstddef>
+#include <cstdint>
+extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *, size_t) { return 0; }
+" GTI_TOOLCHAIN_HAS_LIBFUZZER)
+  unset(CMAKE_REQUIRED_FLAGS)
+  if(NOT GTI_TOOLCHAIN_HAS_LIBFUZZER)
+    message(FATAL_ERROR "This Clang cannot link -fsanitize=fuzzer (Apple "
+                        "CommandLineTools omits libclang_rt.fuzzer). Use a "
+                        "full LLVM toolchain, e.g. "
+                        "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++.")
+  endif()
+  if(GTI_RELEASE_BUILD)
+    message(FATAL_ERROR "GTI_BUILD_FUZZERS and GTI_RELEASE_BUILD are mutually "
+                        "exclusive; fuzzers never enter release artifacts.")
+  endif()
+  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined
+                      -fno-omit-frame-pointer -fno-sanitize-recover=all)
+  add_link_options(-fsanitize=address,undefined)
 endif()
 
 add_library(
@@ -464,6 +502,12 @@ if(TARGET gti_lsp)
 endif()
 
 include(CTest)
+# After include(CTest) so fuzz/CMakeLists.txt sees BUILD_TESTING and can
+# register its fixed-corpus smoke test.
+if(GTI_BUILD_FUZZERS)
+  add_subdirectory("fuzz")
+endif()
+
 if(BUILD_TESTING)
   add_executable("gti_c_abi_smoke" "tests/c_abi_smoke.c")
   target_include_directories(
@@ -789,6 +833,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/07-generics.gti"
     )
     add_test(
+      NAME compiler_debug_tooling
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_debug_tooling_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(
       NAME defined_integer_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/defined_integer_runtime_test.py"
@@ -996,6 +1047,13 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/random_engine.gti"
     )
+    add_test(
+      NAME filesystem_path_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/filesystem_path_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/filesystem_path.gti"
+    )
 
     if(GTI_RELEASE_BUILD)
       # Release binaries deliberately omit source-tree fallback paths so the
@@ -1016,6 +1074,7 @@ if(BUILD_TESTING)
         mir_class_value_lifecycle_runtime mutable_temporary_receiver_runtime
         mir_backend_scalar_failure_callgraph_runtime
         random_engine_runtime default_parameters_runtime
+        compiler_debug_tooling filesystem_path_runtime
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )

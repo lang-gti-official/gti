@@ -136,8 +136,8 @@ description of the implementation.
   F1/F2/F3 and the same-thread `S-CALL-01` callback boundary
 - [Performance tooling](plans/performance-tooling.md)
 - [Compiler bug-finding and triage tooling](plans/compiler-bug-finding-and-triage.md)
-  — proposes replayable failure bundles, coverage-guided compiler fuzzers, a
-  lightweight reducer, and a bounded typed differential generator
+  — failure bundles/replay and opt-in compiler fuzzers are implemented as
+  `Q-FUZZ-01A/B`; reduction and typed differential generation remain
 - [Conditional compilation and configuration flags](plans/conditional-compilation.md)
   — implemented `#define`/`#ifdef` flag axis over target conditionals, its
   design rationale, and LSP inactive-region rendering

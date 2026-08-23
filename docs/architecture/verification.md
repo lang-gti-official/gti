@@ -520,3 +520,45 @@ git diff --check
 ```
 
 Use focused tests first; do not turn every change into the full audit matrix.
+
+## Failure Capture And Opt-In Fuzzing
+
+Two `Q-FUZZ-01` facilities support debugging beyond the deterministic suites
+(design: [`compiler-bug-finding-and-triage.md`](../plans/compiler-bug-finding-and-triage.md)).
+
+`scripts/debug/capture_compiler_failure.py` turns one failing direct source or
+project into a portable `gti-debug-bundle-v1` directory — probe ladder,
+normalized failure signature, source graph, raw logs, and the MIR/C++ the
+failing compiler actually produced — and replays a bundle distinguishing
+reproduced, disappeared, and replaced failures. `compiler_debug_tooling` in
+CTest covers it with injected failures.
+
+```sh
+python3 scripts/debug/capture_compiler_failure.py capture \
+    --gti build/gti --source bad.gti --out bundle
+python3 scripts/debug/capture_compiler_failure.py replay \
+    --gti build/gti --bundle bundle
+```
+
+`fuzz/` holds opt-in libFuzzer harnesses for the parser, formatter, and the
+whole analysis-to-backend pipeline. They exist only under
+`GTI_BUILD_FUZZERS=ON` (Clang required; tree-wide
+`fuzzer-no-link,address,undefined` instrumentation; never installed), and the
+`fuzzer_smoke` test runs each fixed seed corpus deterministically. Coverage
+exploration is an explicit local activity, never a merge gate:
+
+```sh
+cmake -S . -B build-fuzz -G Ninja -DGTI_BUILD_FUZZERS=ON -DGTI_BUILD_LSP=OFF
+cmake --build build-fuzz --target gti_parser_fuzzer
+mkdir -p /tmp/gti-fuzz-work
+build-fuzz/fuzz/gti_parser_fuzzer -dict=fuzz/dictionary/gti.dict \
+    -max_len=65536 /tmp/gti-fuzz-work fuzz/corpus/parser
+```
+
+libFuzzer writes every discovered input into the *first* corpus directory, so
+always put a scratch work directory first and the checked-in seeds second —
+the repository corpus stays curated, and `-merge=1` is how a genuinely
+coverage-increasing input is promoted into it deliberately.
+
+A finding follows the standing rule: capture it as a bundle, reduce it, and
+land a minimal deterministic regression in the owning suite.
