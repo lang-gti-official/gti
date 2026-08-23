@@ -5520,6 +5520,115 @@ int32_t main() {
          "verified MIR");
 }
 
+void testCopyParameterFieldPublicationAdmission() {
+  // A constructor member initializer that copies a class-typed by-value
+  // parameter into its field has no failure-form spelling: the staged
+  // publication declares only at a Move, and the copy-parameter
+  // member-initializer vocabulary is deliberately scalar-only. The gate
+  // must decline instead of emitting an undeclared staged local and a
+  // default-then-assign body for a field type without a usable default
+  // constructor.
+  const lang::FrontendResult copyForm =
+      analyzeWithStandardLibrary("cpp-mir-copy-parameter-field.gti", R"(
+class Payload {
+public:
+  int32_t value;
+  Payload(int32_t value) : value(value) {}
+};
+
+class Holder {
+public:
+  Payload inner;
+  Holder(Payload payload) : inner(payload) {}
+};
+
+int main() {
+  Holder holder = Holder(Payload(3));
+  return holder.inner.value - 3;
+}
+)");
+  expect(copyForm.canGenerateCode(),
+         "the copy-parameter field fixture should pass the frontend");
+  if (!copyForm.canGenerateCode()) {
+    return;
+  }
+  const auto findHolderConstructor = [](const lang::FrontendResult &frontend)
+      -> const lang::MirConstructorInstance * {
+    const lang::MirConstructorInstance *selected = nullptr;
+    for (const lang::MirConstructorInstance &constructor :
+         frontend.mir.constructorInstances()) {
+      if (constructor.parameterTypes.size() == 1 &&
+          constructor.parameterTypes.front().kind ==
+              lang::SemanticType::Class &&
+          !constructor.initializers.empty()) {
+        selected = &constructor;
+      }
+    }
+    return selected;
+  };
+  const lang::MirConstructorInstance *copyConstructor =
+      findHolderConstructor(copyForm);
+  expect(copyConstructor != nullptr,
+         "the copy fixture should lower the class-parameter constructor");
+  if (copyConstructor == nullptr) {
+    return;
+  }
+  {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(copyForm, copyForm.mir, lang::CppStandard::Cpp23));
+    const lang::CppMirBodyEmitter emitter(copyForm.mir, map);
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                       .owner = copyConstructor->id};
+    expect(!emitter.supportsBodyText(address) &&
+               !emitter.supportsFailureBodyText(address),
+           "the copy-parameter field publication must stay outside the "
+           "vocabulary on both forms until its member-initializer spelling "
+           "exists");
+  }
+
+  // The moved flavor of the same constructor keeps its admitted
+  // member-initializer publication.
+  const lang::FrontendResult moveForm =
+      analyzeWithStandardLibrary("cpp-mir-move-parameter-field.gti", R"(
+class Payload {
+public:
+  int32_t value;
+  Payload(int32_t value) : value(value) {}
+};
+
+class Holder {
+public:
+  Payload inner;
+  Holder(Payload payload) : inner(std::move(payload)) {}
+};
+
+int main() {
+  Holder holder = Holder(Payload(3));
+  return holder.inner.value - 3;
+}
+)");
+  expect(moveForm.canGenerateCode(),
+         "the move-parameter field fixture should pass the frontend");
+  if (!moveForm.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *moveConstructor =
+      findHolderConstructor(moveForm);
+  expect(moveConstructor != nullptr,
+         "the move fixture should lower the class-parameter constructor");
+  if (moveConstructor == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(moveForm, moveForm.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(moveForm.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = moveConstructor->id};
+  expect(emitter.supportsFailureBodyText(address),
+         "the moved-parameter field publication must keep its admitted "
+         "failure form");
+}
+
 void testAdjacentClassCopyAssignmentFusion() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-class-copy-assignment.gti", R"(
@@ -5759,6 +5868,7 @@ int main() {
   testContextualSignedMinimumInFailureCaller();
   testSingleUseClassSsaRepresentationSlot();
   testFailureCapableClassReturnTemporaryReceiver();
+  testCopyParameterFieldPublicationAdmission();
   testAdjacentClassCopyAssignmentFusion();
   testNativeCallbackFactoryBody();
   testDeducedCallableTemplateEmission();

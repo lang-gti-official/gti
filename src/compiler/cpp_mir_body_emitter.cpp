@@ -19428,7 +19428,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (address.kind == MirBodyKind::Constructor &&
            copyParameterFieldBinding(program_, body, address.owner,
                                      value.id)) ||
+          // A staged field publication spells its declaration at the Move
+          // itself; a Load-defined (copy) publication has no such spelling,
+          // so it must qualify through a declared story instead of this
+          // no-local one (the copy-parameter member-initializer vocabulary
+          // is deliberately scalar-only today).
           (definition != nullptr &&
+           definition->kind == MirInstructionKind::Move &&
            stagedConstructorFieldPublication(program_, body, address.owner,
                                              *definition) != nullptr) ||
           (definition != nullptr &&
