@@ -302,6 +302,20 @@ selected method must return `void`, an ordinary scalar, or an owned value with
 no tracked borrowed state; receiver-tied references and borrowed-state results
 remain ill-formed.
 
+For an ordinary GTI function or non-operator method call, the same direct fresh
+value may initialize an exact read-only `T&` parameter for that invocation
+only.
+Overload selection first considers every otherwise-exact candidate that needs
+no temporary argument borrow. Only when that tier is empty does it consider
+otherwise-exact candidates whose mismatch consists solely of one or more such
+fresh values targeting read-only references; selection still requires one
+unique candidate within the active tier. The selected callable must have a
+body, use GTI linkage, and return `void`, a scalar, or an owned value without
+tracked borrowed state. Mutable references, explicit moves, native or callback
+targets, compound producers, borrowed-state values, and results that could
+retain the argument loan remain ill-formed. Transparent parentheses do not
+change eligibility.
+
 A consuming call operator is non-virtual, has a body, and cannot implement an
 interface contract. Its result cannot be a reference or contain tracked
 borrowed state. Invocation consumes the exact source place under the ordinary

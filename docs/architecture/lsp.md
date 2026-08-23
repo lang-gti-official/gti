@@ -192,6 +192,13 @@ it only after a newer compiler snapshot accepts the receiver. Hover and
 signature help render the exact selected trailing-`mut` overload; the protocol
 layer does not infer freshness from constructor-like punctuation.
 
+Fresh temporary arguments use the same compiler snapshot. An ineligible
+read-only-reference argument publishes the compiler-owned `GTI-S2017` reason
+and related declaration; a newer valid snapshot clears it. Signature help
+renders the exact selected borrowed overload when the fallback tier is active
+and the exact by-value overload when the ordinary tier wins. The protocol
+layer does not classify producers, rank candidates, or extend lifetimes.
+
 ## Document State
 
 `LanguageServer` currently owns protocol handling and document lifecycle in one

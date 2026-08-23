@@ -2319,7 +2319,7 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
   return destination;
 }
 
-struct DirectTemporaryReceiver {
+struct DirectTemporaryBorrow {
   const MirInstruction *producer = nullptr;
   const MirInstruction *stage = nullptr;
   const MirInstruction *call = nullptr;
@@ -2333,46 +2333,18 @@ struct DirectTemporaryReceiver {
 };
 
 // Verified MIR gives a direct source temporary one exact value-rooted slot and
-// stages an explicit read or mutable borrow from it. Keep the value in that
-// slot rather than relying on C++ rvalue rules. Its exact value obligation
-// remains the sole cleanup authority through the enclosing full expression.
-[[nodiscard]] DirectTemporaryReceiver
-directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
-  if (call.kind != MirInstructionKind::Call || call.callSite == 0 ||
-      !call.functionTarget || call.intrinsic != IntrinsicKind::None ||
-      !call.receiver || call.receiver->kind != MirOperandKind::Value ||
-      call.receiver->value == 0 ||
-      call.receiver->type.kind != SemanticType::Class) {
-    return {};
-  }
-
-  const MirValue *stageValue = body.findValue(call.receiver->value);
-  const MirInstruction *stage =
-      stageValue == nullptr ? nullptr
-                            : findInstruction(body, stageValue->definition);
-  const bool readStage =
-      stage != nullptr &&
-      stage->callInputKind == HirCallInputKind::ReadTemporaryBorrow;
-  const bool mutableStage =
-      stage != nullptr &&
-      stage->callInputKind == HirCallInputKind::MutableTemporaryBorrow;
-  if (stage == nullptr || stage->kind != MirInstructionKind::CallInput ||
-      stage->callSite != call.callSite || !stage->callInputRole ||
-      *stage->callInputRole != MirCallInputRole::Receiver ||
-      stage->callInputIndex != 0 || stage->hirValue == 0 || !stage->result ||
-      *stage->result != call.receiver->value || stage->operands.size() != 1 ||
-      (!readStage && !mutableStage) ||
-      stage->operands.front().kind != (mutableStage
-                                           ? MirOperandKind::BorrowWrite
-                                           : MirOperandKind::BorrowRead)) {
-    return {};
-  }
-
-  const MirPlace *slot = body.findPlace(stage->operands.front().place);
+// stages one explicit borrow from it. Keep the value in that slot rather than
+// relying on C++ rvalue rules. Its exact value obligation remains the sole
+// cleanup authority through the enclosing full expression.
+[[nodiscard]] DirectTemporaryBorrow
+directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
+                      const MirInstruction &stage,
+                      const SemanticType &sourceType) {
+  const MirPlace *slot = body.findPlace(stage.operands.front().place);
   const MirTemporaryMaterialization materialization =
       slot == nullptr
           ? MirTemporaryMaterialization{}
-          : findMirTemporaryMaterialization(body, *slot, stage->hirValue);
+          : findMirTemporaryMaterialization(body, *slot, stage.hirValue);
   const MirValue *value = materialization.value;
   const MirInstruction *producer = materialization.producer;
   const bool ordinaryConstruction =
@@ -2388,16 +2360,16 @@ directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
       producer->intrinsic == IntrinsicKind::None;
   if (value == nullptr || producer == nullptr || slot == nullptr ||
       (!ordinaryConstruction && !functionCall) ||
-      value->sourceValue != stage->hirValue ||
-      value->info.type != call.receiver->type || !producer->result ||
-      *producer->result != value->id || producer->hirValue != stage->hirValue ||
+      value->sourceValue != stage.hirValue || value->info.type != sourceType ||
+      !producer->result || *producer->result != value->id ||
+      producer->hirValue != stage.hirValue ||
       producer->info.type != value->info.type ||
       !producer->localFailureSites.empty() ||
       (producer->successResultDestination &&
        *producer->successResultDestination != slot->id) ||
       (producer->destination && *producer->destination != slot->id) ||
       slot->type != value->info.type || slot->access != AccessMode::Mutable ||
-      slot->sourceValue != stage->hirValue) {
+      slot->sourceValue != stage.hirValue) {
     return {};
   }
 
@@ -2412,7 +2384,7 @@ directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
   const MirDropObligation *drop = nullptr;
   for (const MirDropObligation &candidate : body.dropObligations) {
     if (candidate.kind != MirDropObligationKind::Value ||
-        candidate.value != stage->hirValue) {
+        candidate.value != stage.hirValue) {
       continue;
     }
     if (drop != nullptr || candidate.place != slot->id ||
@@ -2457,17 +2429,99 @@ directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
     return {};
   }
   return {.producer = producer,
-          .stage = stage,
+          .stage = &stage,
           .call = &call,
           .slot = slot,
           .drop = drop};
 }
 
-[[nodiscard]] DirectTemporaryReceiver
+[[nodiscard]] DirectTemporaryBorrow
+directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
+  if (call.kind != MirInstructionKind::Call || call.callSite == 0 ||
+      !call.functionTarget || call.intrinsic != IntrinsicKind::None ||
+      !call.receiver || call.receiver->kind != MirOperandKind::Value ||
+      call.receiver->value == 0 ||
+      call.receiver->type.kind != SemanticType::Class) {
+    return {};
+  }
+
+  const MirValue *stageValue = body.findValue(call.receiver->value);
+  const MirInstruction *stage =
+      stageValue == nullptr ? nullptr
+                            : findInstruction(body, stageValue->definition);
+  const bool readStage =
+      stage != nullptr &&
+      stage->callInputKind == HirCallInputKind::ReadTemporaryBorrow;
+  const bool mutableStage =
+      stage != nullptr &&
+      stage->callInputKind == HirCallInputKind::MutableTemporaryBorrow;
+  if (stage == nullptr || stage->kind != MirInstructionKind::CallInput ||
+      stage->callSite != call.callSite || !stage->callInputRole ||
+      *stage->callInputRole != MirCallInputRole::Receiver ||
+      stage->callInputIndex != 0 || stage->hirValue == 0 || !stage->result ||
+      *stage->result != call.receiver->value || stage->operands.size() != 1 ||
+      (!readStage && !mutableStage) ||
+      stage->operands.front().kind != (mutableStage
+                                           ? MirOperandKind::BorrowWrite
+                                           : MirOperandKind::BorrowRead)) {
+    return {};
+  }
+  return directTemporaryBorrow(body, call, *stage, call.receiver->type);
+}
+
+[[nodiscard]] DirectTemporaryBorrow
+directTemporaryArgument(const MirBody &body, const MirInstruction &call,
+                        std::size_t index) {
+  if (call.kind != MirInstructionKind::Call || call.callSite == 0 ||
+      !call.functionTarget || call.constructorTarget || call.lambdaTarget ||
+      call.bodyTarget || call.callableInvocation ||
+      call.intrinsic != IntrinsicKind::None || index >= call.operands.size()) {
+    return {};
+  }
+  const MirOperand &operand = call.operands[index];
+  if (operand.kind != MirOperandKind::Value || operand.value == 0 ||
+      operand.type.kind != SemanticType::Reference ||
+      operand.type.referenceAccess != AccessMode::ReadOnly ||
+      operand.type.arguments.size() != 1 ||
+      operand.type.arguments.front().kind != SemanticType::Class) {
+    return {};
+  }
+  const MirValue *stageValue = body.findValue(operand.value);
+  const MirInstruction *stage =
+      stageValue == nullptr ? nullptr
+                            : findInstruction(body, stageValue->definition);
+  if (stage == nullptr || stage->kind != MirInstructionKind::CallInput ||
+      stage->callSite != call.callSite ||
+      stage->callInputRole != MirCallInputRole::Argument ||
+      stage->callInputIndex != index || stage->hirValue == 0 ||
+      stage->callInputKind != HirCallInputKind::ReadTemporaryBorrow ||
+      stage->defaultArgument || stage->destination || stage->receiver ||
+      stage->preparedParameterDrop || !stage->lifecycle.empty() ||
+      !stage->result || *stage->result != operand.value ||
+      stage->info.type != operand.type || stage->operands.size() != 1 ||
+      stage->operands.front().kind != MirOperandKind::BorrowRead ||
+      stage->operands.front().place == 0 ||
+      stage->operands.front().type != operand.type || !stage->loan) {
+    return {};
+  }
+  const MirLoan *loan = body.findLoan(*stage->loan);
+  if (loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
+      loan->source != stage->operands.front().place ||
+      loan->access != AccessMode::ReadOnly || loan->semanticLoan != 0 ||
+      loan->parent != 0 || loan->entry || loan->escapes ||
+      !loan->carriers.empty() || loan->storedField != 0 ||
+      loan->producedBy != stage->callSite) {
+    return {};
+  }
+  return directTemporaryBorrow(body, call, *stage,
+                               operand.type.arguments.front());
+}
+
+[[nodiscard]] DirectTemporaryBorrow
 directTemporaryReceiverForValue(const MirBody &body, MirValueId valueId) {
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
-      const DirectTemporaryReceiver receiver =
+      const DirectTemporaryBorrow receiver =
           directTemporaryReceiver(body, instruction);
       if (receiver && receiver.producer->result == valueId) {
         return receiver;
@@ -2477,13 +2531,37 @@ directTemporaryReceiverForValue(const MirBody &body, MirValueId valueId) {
   return {};
 }
 
-[[nodiscard]] DirectTemporaryReceiver
-directTemporaryReceiverForSlot(const MirBody &body, const MirPlace &slot) {
+[[nodiscard]] DirectTemporaryBorrow
+directTemporaryArgumentForValue(const MirBody &body, MirValueId valueId) {
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      for (std::size_t index = 0; index < instruction.operands.size();
+           ++index) {
+        const DirectTemporaryBorrow argument =
+            directTemporaryArgument(body, instruction, index);
+        if (argument && argument.producer->result == valueId) {
+          return argument;
+        }
+      }
+    }
+  }
+  return {};
+}
+
+[[nodiscard]] DirectTemporaryBorrow
+directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
+  const DirectTemporaryBorrow receiver =
+      directTemporaryReceiverForValue(body, valueId);
+  return receiver ? receiver : directTemporaryArgumentForValue(body, valueId);
+}
+
+[[nodiscard]] DirectTemporaryBorrow
+directTemporaryBorrowForSlot(const MirBody &body, const MirPlace &slot) {
   for (const MirValue &value : body.values) {
-    const DirectTemporaryReceiver receiver =
-        directTemporaryReceiverForValue(body, value.id);
-    if (receiver.slot == &slot) {
-      return receiver;
+    const DirectTemporaryBorrow temporary =
+        directTemporaryBorrowForValue(body, value.id);
+    if (temporary.slot == &slot) {
+      return temporary;
     }
   }
   return {};
@@ -2786,8 +2864,8 @@ transferredConstructorArgumentForResult(const MirBody &body,
 
 [[nodiscard]] const MirPlace *classValuePublicationSlot(const MirBody &body,
                                                         MirValueId valueId) {
-  const DirectTemporaryReceiver temporary =
-      directTemporaryReceiverForValue(body, valueId);
+  const DirectTemporaryBorrow temporary =
+      directTemporaryBorrowForValue(body, valueId);
   if (temporary.slot != nullptr) {
     return temporary.slot;
   }
@@ -2805,8 +2883,8 @@ constructDestinationSlot(const MirBody &body, const MirInstruction &construct) {
   if (!construct.result) {
     return 0;
   }
-  const DirectTemporaryReceiver temporary =
-      directTemporaryReceiverForValue(body, *construct.result);
+  const DirectTemporaryBorrow temporary =
+      directTemporaryBorrowForValue(body, *construct.result);
   if (temporary.producer == &construct && temporary.slot != nullptr) {
     return temporary.slot->id;
   }
@@ -8154,7 +8232,7 @@ lifetimeSlotPlace(const MirProgram &program,
     if (fixedArrayAggregateInputSlot(program, body, place.value) != nullptr) {
       return true;
     }
-    if (directTemporaryReceiverForSlot(body, place)) {
+    if (directTemporaryBorrowForSlot(body, place)) {
       return true;
     }
     const ValueRootedClassCallResultSlot resultSlot =
@@ -8169,7 +8247,7 @@ lifetimeSlotPlace(const MirProgram &program,
   }
   if (place.root == MirPlaceRootKind::Temporary && place.projections.empty() &&
       place.type.kind == SemanticType::Class) {
-    if (directTemporaryReceiverForSlot(body, place)) {
+    if (directTemporaryBorrowForSlot(body, place)) {
       return true;
     }
     if (conditionalClassReturnJoin(body, place)) {
@@ -12117,7 +12195,7 @@ public:
         if (callResultLoanIdentity(facts.body, value)) {
           continue;
         }
-        if (directTemporaryReceiverForValue(facts.body, value.id)) {
+        if (directTemporaryBorrowForValue(facts.body, value.id)) {
           // The Construct owns the temporary's slot and its sole member call
           // reads that slot; the SSA receiver identity has no storage.
           continue;
@@ -12395,6 +12473,12 @@ public:
              << "{};\n";
     }
     for (const MirLoan &loan : facts.body.loans) {
+      // A call-argument loan is representation-erased: the staged call input
+      // spells the verified lifetime slot directly and EndBorrow has no C++
+      // state to retire.
+      if (loan.kind == MirLoanKind::CallArgument) {
+        continue;
+      }
       // A Stored loan binds its reference field in the member initializer
       // list; no pointer local exists in the body.
       if (loan.kind == MirLoanKind::Stored) {
@@ -15209,8 +15293,8 @@ private:
         output << ");\n";
         return;
       }
-      const DirectTemporaryReceiver temporary =
-          directTemporaryReceiverForValue(facts.body, *instruction.result);
+      const DirectTemporaryBorrow temporary =
+          directTemporaryBorrowForValue(facts.body, *instruction.result);
       if (temporary.producer == &instruction && temporary.slot != nullptr &&
           (!failureForm || transformedConstructor(instruction) == nullptr)) {
         writeIndent();
@@ -19607,6 +19691,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (loan.kind == MirLoanKind::Local || loan.kind == MirLoanKind::Return) {
       continue;
     }
+    if (loan.kind == MirLoanKind::CallArgument) {
+      std::size_t matches = 0;
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          for (std::size_t index = 0; index < instruction.operands.size();
+               ++index) {
+            const DirectTemporaryBorrow temporary =
+                directTemporaryArgument(body, instruction, index);
+            if (temporary && temporary.stage->loan == loan.id) {
+              ++matches;
+            }
+          }
+        }
+      }
+      if (matches != 1) {
+        return false;
+      }
+      continue;
+    }
     if (loan.kind == MirLoanKind::Stored) {
       // A field-carrying stored loan is admitted only when the
       // Constructor case proved the bijective stores-reference pairing;
@@ -20330,7 +20433,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           isBorrowStagedResult(body, value) ||
           isStorageStagedResult(body, value) ||
           discardedAssignmentResult(body, value.id) ||
-          directTemporaryReceiverForValue(body, value.id) ||
+          directTemporaryBorrowForValue(body, value.id) ||
           unexpectedDefinition(body, value.id) != nullptr ||
           (definition != nullptr &&
            (returnConstructDefinition(body, value.id) == definition ||
@@ -22203,7 +22306,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               movedStage != nullptr
                   ? stagedTemporarySourceFor(body, *movedStage)
                   : StagedTemporarySource{};
-          const DirectTemporaryReceiver temporaryReceiver =
+          const DirectTemporaryBorrow temporaryReceiver =
               directTemporaryReceiver(body, instruction);
           const MirPlace *receiverPlace =
               movedSource.place != nullptr && movedSource.moved

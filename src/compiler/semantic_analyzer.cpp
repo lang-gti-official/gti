@@ -3509,10 +3509,14 @@ public:
                "GTI-S2005");
         valid = false;
       } else {
+        std::vector<std::size_t> ephemeralBorrowArguments;
         for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-          if (!contextualCallArgumentPotentiallyMatches(
-                  resolved.parameterTypes[index], argumentTypes[index],
-                  expr.arguments()[index], argumentAnalysis.deferred[index])) {
+          const CallArgumentMatchKind match = functionCallArgumentMatch(
+              resolved, index, argumentTypes[index], expr.arguments()[index],
+              argumentAnalysis.deferred[index]);
+          if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
+            ephemeralBorrowArguments.push_back(index);
+          } else if (match == CallArgumentMatchKind::Mismatch) {
             if (isContextualArrayArgument(expr.arguments()[index])) {
               const auto *initializer = dynamic_cast<const ArrayInitializer *>(
                   expr.arguments()[index].get());
@@ -3537,37 +3541,40 @@ public:
                     "GTI-S2015");
               }
             } else {
-              reportCallArgumentMismatch(index, resolved.parameterTypes[index],
-                                         argumentTypes[index],
-                                         expr.arguments()[index], "Function");
+              reportCallArgumentMismatch(
+                  index, resolved.parameterTypes[index], argumentTypes[index],
+                  expr.arguments()[index], "Function", &resolved);
             }
             valid = false;
           }
         }
-      }
+        if (valid && argumentAnalysis.hasDeferred()) {
+          valid = finishContextualCallArguments(
+                      resolved.parameterTypes, expr.arguments(),
+                      argumentAnalysis, expr.paren(), "Function") &&
+                  valid;
+        }
 
-      if (valid && argumentAnalysis.hasDeferred()) {
-        valid = finishContextualCallArguments(
-                    resolved.parameterTypes, expr.arguments(), argumentAnalysis,
-                    expr.paren(), "Function") &&
+        const CallReceiverMode receiverMode =
+            callReceiverMode(expr.callee(), resolved);
+        valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
+                                         expr.arguments(), receiverMode) &&
                 valid;
+        valid = validateConfinedCallableArguments(
+                    candidate, resolved, argumentTypes, expr.arguments()) &&
+                valid;
+        if (valid) {
+          recordResolvedCall(
+              expr, resolved, resolvedTypeArguments, resolvedValueArguments,
+              std::move(ephemeralBorrowArguments),
+              lambdaArgumentBoundaries(argumentTypes), receiverMode);
+        }
+        currentType = valid ? callExpressionType(resolved.returnType)
+                            : SemanticType::Unknown;
+        return;
       }
 
-      const CallReceiverMode receiverMode =
-          callReceiverMode(expr.callee(), resolved);
-      valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
-                                       expr.arguments(), receiverMode) &&
-              valid;
-      valid = validateConfinedCallableArguments(
-                  candidate, resolved, argumentTypes, expr.arguments()) &&
-              valid;
-      if (valid) {
-        recordResolvedCall(
-            expr, resolved, resolvedTypeArguments, resolvedValueArguments,
-            lambdaArgumentBoundaries(argumentTypes), receiverMode);
-      }
-      currentType = valid ? callExpressionType(resolved.returnType)
-                          : SemanticType::Unknown;
+      currentType = SemanticType::Unknown;
       return;
     }
 
@@ -3576,6 +3583,7 @@ public:
       FunctionCandidate function;
       std::vector<SemanticType> typeArguments;
       std::vector<CompileTimeValue> valueArguments;
+      std::vector<std::size_t> ephemeralBorrowArguments;
       CallReceiverMode receiverMode = CallReceiverMode::None;
     };
     std::vector<ViableOverload> viable;
@@ -3590,6 +3598,7 @@ public:
       FunctionCandidate resolved;
       std::vector<SemanticType> resolvedTypeArguments;
       std::vector<CompileTimeValue> resolvedValueArguments;
+      std::vector<std::size_t> resolvedEphemeralBorrowArguments;
       ConstraintFailure constraintFailure;
       if (!tryInstantiateFunction(candidate, explicitTypeArguments,
                                   argumentTypes, expr.arguments(), resolved,
@@ -3602,11 +3611,15 @@ public:
       }
       bool exact = true;
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-        if (!contextualCallArgumentPotentiallyMatches(
-                resolved.parameterTypes[index], argumentTypes[index],
-                expr.arguments()[index], argumentAnalysis.deferred[index])) {
+        const CallArgumentMatchKind match = functionCallArgumentMatch(
+            resolved, index, argumentTypes[index], expr.arguments()[index],
+            argumentAnalysis.deferred[index]);
+        if (match == CallArgumentMatchKind::Mismatch) {
           exact = false;
           break;
+        }
+        if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
+          resolvedEphemeralBorrowArguments.push_back(index);
         }
       }
       if (!exact) {
@@ -3628,9 +3641,19 @@ public:
         rejectedCompilerPrivate = true;
         continue;
       }
-      viable.push_back({&candidate, std::move(resolved),
-                        std::move(resolvedTypeArguments),
-                        std::move(resolvedValueArguments), receiverMode});
+      viable.push_back(
+          {&candidate, std::move(resolved), std::move(resolvedTypeArguments),
+           std::move(resolvedValueArguments),
+           std::move(resolvedEphemeralBorrowArguments), receiverMode});
+    }
+
+    if (std::any_of(viable.begin(), viable.end(),
+                    [](const ViableOverload &candidate) {
+                      return candidate.ephemeralBorrowArguments.empty();
+                    })) {
+      std::erase_if(viable, [](const ViableOverload &candidate) {
+        return !candidate.ephemeralBorrowArguments.empty();
+      });
     }
 
     if (std::any_of(viable.begin(), viable.end(),
@@ -3716,8 +3739,9 @@ public:
     }
     recordResolvedCall(
         expr, viable.front().function, viable.front().typeArguments,
-        viable.front().valueArguments, lambdaArgumentBoundaries(argumentTypes),
-        viable.front().receiverMode);
+        viable.front().valueArguments,
+        std::move(viable.front().ephemeralBorrowArguments),
+        lambdaArgumentBoundaries(argumentTypes), viable.front().receiverMode);
     currentType = callExpressionType(viable.front().function.returnType);
   }
 
@@ -15064,7 +15088,7 @@ private:
     if (member != nullptr &&
         function.receiverMutability == ReceiverMutability::Mutable &&
         receiverMode == CallReceiverMode::Value &&
-        freshTemporaryReceiver(member->object()).eligible &&
+        freshTemporaryValue(member->object()).eligible &&
         !freshTemporaryMethodSupported(function)) {
       reportMutableReceiverFailure(member->object(), paren, function, "Method");
       return false;
@@ -15921,6 +15945,7 @@ private:
   recordResolvedCall(const Call &call, const FunctionCandidate &function,
                      std::vector<SemanticType> typeArguments,
                      std::vector<CompileTimeValue> valueArguments,
+                     std::vector<std::size_t> ephemeralBorrowArguments,
                      std::vector<CallableArgumentBoundary> callableArguments,
                      CallReceiverMode receiverMode) {
     const bool pointerBearingCFunction =
@@ -15984,6 +16009,7 @@ private:
                                            : CallDispatch::Static,
         .dispatchOwner = function.dispatchOwner,
         .receiverMode = receiverMode,
+        .ephemeralBorrowArguments = std::move(ephemeralBorrowArguments),
         .callableArguments = std::move(callableArguments)};
     semanticModel.record(call, resolved);
     recordSelectedCallOccurrence(call, std::move(resolved));
@@ -16412,11 +16438,91 @@ private:
            info->access == AccessMode::Mutable;
   }
 
+  enum class CallArgumentMatchKind {
+    Mismatch,
+    Exact,
+    EphemeralReadBorrow,
+  };
+
+  [[nodiscard]] bool
+  ephemeralBorrowResultSupported(const FunctionCandidate &function) const {
+    if (function.returnBorrowOrigin != BorrowOriginKind::None ||
+        typeTraits(function.returnType).containsBorrowedState) {
+      return false;
+    }
+    switch (function.returnType.kind) {
+    case SemanticType::Reference:
+    case SemanticType::StringView:
+    case SemanticType::CString:
+    case SemanticType::RawPointer:
+    case SemanticType::NativeFunction:
+      return false;
+    default:
+      return true;
+    }
+  }
+
+  [[nodiscard]] bool
+  ephemeralBorrowTargetSupported(const FunctionCandidate &function) const {
+    if (function.id == 0 || function.declaration == nullptr ||
+        function.declaration->body() == nullptr ||
+        function.declaration->runtimeBinding() ||
+        function.declaration->hasCLinkage() ||
+        function.declaration->operatorName() ||
+        function.intrinsic != IntrinsicKind::None ||
+        !ephemeralBorrowResultSupported(function)) {
+      return false;
+    }
+    const FunctionInfo *target = semanticModel.findFunction(function.id);
+    if (target == nullptr && instanceBaseModel != nullptr) {
+      target = instanceBaseModel->findFunction(function.id);
+    }
+    return target != nullptr && target->linkage == LanguageLinkage::Gti &&
+           target->declaration != nullptr &&
+           target->declaration->body() != nullptr;
+  }
+
+  [[nodiscard]] bool ephemeralTemporaryArgumentMatches(
+      const FunctionCandidate &function, const SemanticType &parameter,
+      const SemanticType &argument, const ExprPtr &expression) const {
+    if (parameter.kind != SemanticType::Reference ||
+        parameter.referenceAccess != AccessMode::ReadOnly ||
+        parameter.arguments.size() != 1 ||
+        parameter.arguments.front() != argument ||
+        argument.kind != SemanticType::Class || !expression ||
+        !ephemeralBorrowTargetSupported(function)) {
+      return false;
+    }
+    const FreshTemporaryValueAssessment assessment =
+        freshTemporaryValue(expression);
+    return assessment.eligible && assessment.type == argument;
+  }
+
+  [[nodiscard]] CallArgumentMatchKind
+  functionCallArgumentMatch(const FunctionCandidate &function,
+                            std::size_t index, const SemanticType &argument,
+                            const ExprPtr &expression, bool deferred) const {
+    if (index >= function.parameterTypes.size()) {
+      return CallArgumentMatchKind::Mismatch;
+    }
+    const SemanticType &parameter = function.parameterTypes[index];
+    if (contextualCallArgumentPotentiallyMatches(parameter, argument,
+                                                 expression, deferred)) {
+      return CallArgumentMatchKind::Exact;
+    }
+    if (!deferred && ephemeralTemporaryArgumentMatches(function, parameter,
+                                                       argument, expression)) {
+      return CallArgumentMatchKind::EphemeralReadBorrow;
+    }
+    return CallArgumentMatchKind::Mismatch;
+  }
+
   void reportCallArgumentMismatch(std::size_t index,
                                   const SemanticType &parameter,
                                   const SemanticType &argument,
                                   const ExprPtr &expression,
-                                  std::string_view callable) {
+                                  std::string_view callable,
+                                  const FunctionCandidate *function = nullptr) {
     const std::string argumentLabel =
         callable == "Function" ? "Argument "
                                : std::string(callable) + " argument ";
@@ -16425,10 +16531,67 @@ private:
         expression) {
       const ExpressionInfo *info = semanticModel.findExpression(*expression);
       if (info == nullptr || info->category != ValueCategory::Place) {
-        report(expressionToken(expression),
-               argumentLabel + std::to_string(index + 1) +
-                   " cannot bind a reference to a temporary.",
-               "GTI-S2017");
+        std::string reason = argumentLabel + std::to_string(index + 1) +
+                             " cannot bind a reference to a temporary.";
+        if (parameter.referenceAccess == AccessMode::Mutable) {
+          reason = argumentLabel + std::to_string(index + 1) +
+                   " cannot bind a mutable reference to a temporary.";
+        } else if (argument.kind == SemanticType::Class) {
+          const FreshTemporaryValueAssessment assessment =
+              freshTemporaryValue(expression);
+          if (assessment.eligible && function != nullptr &&
+              !ephemeralBorrowTargetSupported(*function)) {
+            reason = !ephemeralBorrowResultSupported(*function)
+                         ? argumentLabel + std::to_string(index + 1) +
+                               " cannot borrow a temporary because the "
+                               "selected function may return a reference or "
+                               "value containing tracked borrowed state."
+                         : argumentLabel + std::to_string(index + 1) +
+                               " cannot borrow a temporary through a native, "
+                               "callback, unresolved, or declaration-only "
+                               "call target.";
+          } else {
+            switch (assessment.failure) {
+            case FreshTemporaryValueFailure::ExplicitMove:
+              reason = argumentLabel + std::to_string(index + 1) +
+                       " is an explicit move from existing storage, not a "
+                       "fresh temporary value.";
+              break;
+            case FreshTemporaryValueFailure::BorrowedState:
+              reason = argumentLabel + std::to_string(index + 1) +
+                       " contains tracked borrowed state and cannot be "
+                       "borrowed as a temporary argument.";
+              break;
+            case FreshTemporaryValueFailure::NonConcreteRecord:
+              reason = argumentLabel + std::to_string(index + 1) +
+                       " is not a concrete class or struct temporary.";
+              break;
+            case FreshTemporaryValueFailure::UnsupportedProducer:
+              reason = argumentLabel + std::to_string(index + 1) +
+                       " is not produced directly by an ordinary constructor "
+                       "or source-defined GTI function call.";
+              break;
+            case FreshTemporaryValueFailure::None:
+            case FreshTemporaryValueFailure::NotClassValue:
+              break;
+            }
+          }
+        }
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2017", DiagnosticPhase::Semantics,
+                           expressionToken(expression), std::move(reason));
+        if (function != nullptr && function->declaration != nullptr &&
+            !ephemeralBorrowTargetSupported(*function)) {
+          diagnostic.related.push_back(
+              {tokenSpan(function->declaration->name()),
+               "Selected function's result and linkage contract is declared "
+               "here."});
+        }
+        diagnostic.hints.emplace_back(
+            "Bind the value to a local before passing it when it must outlive "
+            "one call or falls outside the bounded fresh-value producer "
+            "family.");
+        diagnostics.emplace_back(std::move(diagnostic));
         return;
       }
       if (parameter.referenceAccess == AccessMode::Mutable &&
@@ -29176,7 +29339,7 @@ private:
     return isMutableObject(member.object());
   }
 
-  enum class FreshTemporaryReceiverFailure {
+  enum class FreshTemporaryValueFailure {
     None,
     NotClassValue,
     ExplicitMove,
@@ -29185,15 +29348,15 @@ private:
     UnsupportedProducer,
   };
 
-  struct FreshTemporaryReceiverAssessment {
+  struct FreshTemporaryValueAssessment {
     bool eligible = false;
-    FreshTemporaryReceiverFailure failure =
-        FreshTemporaryReceiverFailure::NotClassValue;
+    FreshTemporaryValueFailure failure =
+        FreshTemporaryValueFailure::NotClassValue;
     SemanticType type = SemanticType::Unknown;
   };
 
   [[nodiscard]] static const Expr *
-  transparentReceiverProducer(const ExprPtr &expression) {
+  transparentTemporaryProducer(const ExprPtr &expression) {
     const Expr *producer = expression.get();
     while (const auto *grouping = dynamic_cast<const Grouping *>(producer)) {
       producer = grouping->expression().get();
@@ -29201,9 +29364,9 @@ private:
     return producer;
   }
 
-  [[nodiscard]] FreshTemporaryReceiverAssessment
-  freshTemporaryReceiver(const ExprPtr &expression) const {
-    FreshTemporaryReceiverAssessment result;
+  [[nodiscard]] FreshTemporaryValueAssessment
+  freshTemporaryValue(const ExprPtr &expression) const {
+    FreshTemporaryValueAssessment result;
     if (!expression) {
       return result;
     }
@@ -29214,23 +29377,23 @@ private:
     }
     result.type = info->type;
     if (isExplicitMoveReceiver(expression)) {
-      result.failure = FreshTemporaryReceiverFailure::ExplicitMove;
+      result.failure = FreshTemporaryValueFailure::ExplicitMove;
       return result;
     }
     const ClassInfo *record = classInfo(info->type);
     if (record == nullptr || (record->kind != ClassKind::Class &&
                               record->kind != ClassKind::Struct)) {
-      result.failure = FreshTemporaryReceiverFailure::NonConcreteRecord;
+      result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
       return result;
     }
     if (info->traits.containsBorrowedState) {
-      result.failure = FreshTemporaryReceiverFailure::BorrowedState;
+      result.failure = FreshTemporaryValueFailure::BorrowedState;
       return result;
     }
 
-    const Expr *producer = transparentReceiverProducer(expression);
+    const Expr *producer = transparentTemporaryProducer(expression);
     if (producer == nullptr) {
-      result.failure = FreshTemporaryReceiverFailure::UnsupportedProducer;
+      result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
       return result;
     }
     if (const ResolvedConstructionInfo *construction =
@@ -29239,7 +29402,7 @@ private:
           construction->constructedType == info->type &&
           construction->borrowOrigin == BorrowOriginKind::None) {
         result.eligible = true;
-        result.failure = FreshTemporaryReceiverFailure::None;
+        result.failure = FreshTemporaryValueFailure::None;
         return result;
       }
     }
@@ -29255,16 +29418,20 @@ private:
       }
       if (resolved != nullptr && target != nullptr &&
           resolved->declaration != nullptr &&
+          resolved->declaration->body() != nullptr &&
+          !resolved->declaration->runtimeBinding() &&
+          !resolved->declaration->hasCLinkage() &&
+          !resolved->declaration->operatorName() &&
           resolved->intrinsic == IntrinsicKind::None &&
           resolved->returnType == info->type &&
           resolved->borrowOrigin == BorrowOriginKind::None &&
           target->linkage == LanguageLinkage::Gti) {
         result.eligible = true;
-        result.failure = FreshTemporaryReceiverFailure::None;
+        result.failure = FreshTemporaryValueFailure::None;
         return result;
       }
     }
-    result.failure = FreshTemporaryReceiverFailure::UnsupportedProducer;
+    result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
     return result;
   }
 
@@ -29303,7 +29470,7 @@ private:
       return CallReceiverMode::MutablePlace;
     }
     if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
-        freshTemporaryReceiver(receiver).eligible) {
+        freshTemporaryValue(receiver).eligible) {
       return function.receiverMutability == ReceiverMutability::Mutable
                  ? CallReceiverMode::FreshTemporaryMutable
                  : CallReceiverMode::FreshTemporaryRead;
@@ -29341,8 +29508,8 @@ private:
                                     const Token &location,
                                     const FunctionCandidate &function,
                                     std::string_view operation) {
-    const FreshTemporaryReceiverAssessment assessment =
-        freshTemporaryReceiver(receiver);
+    const FreshTemporaryValueAssessment assessment =
+        freshTemporaryValue(receiver);
     const bool valueShaped = assessment.type.kind == SemanticType::Class;
     if (!valueShaped) {
       report(location,
@@ -29361,24 +29528,24 @@ private:
                "containing tracked borrowed state.";
     } else {
       switch (assessment.failure) {
-      case FreshTemporaryReceiverFailure::ExplicitMove:
+      case FreshTemporaryValueFailure::ExplicitMove:
         reason = "An explicit move from existing storage is not a fresh "
                  "mutable temporary receiver.";
         break;
-      case FreshTemporaryReceiverFailure::NonConcreteRecord:
+      case FreshTemporaryValueFailure::NonConcreteRecord:
         reason = "Only a concrete class or struct value can be a mutable "
                  "temporary receiver.";
         break;
-      case FreshTemporaryReceiverFailure::BorrowedState:
+      case FreshTemporaryValueFailure::BorrowedState:
         reason = "A temporary containing tracked borrowed state cannot be "
                  "borrowed as a mutable receiver.";
         break;
-      case FreshTemporaryReceiverFailure::UnsupportedProducer:
+      case FreshTemporaryValueFailure::UnsupportedProducer:
         reason = "This value is not produced directly by an ordinary "
                  "constructor or GTI function call.";
         break;
-      case FreshTemporaryReceiverFailure::None:
-      case FreshTemporaryReceiverFailure::NotClassValue:
+      case FreshTemporaryValueFailure::None:
+      case FreshTemporaryValueFailure::NotClassValue:
         reason = std::string(operation) + " requires a mutable receiver.";
         break;
       }

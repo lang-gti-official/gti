@@ -6219,6 +6219,7 @@ def main():
     test_rename_tooling(sys.argv[1], root)
     test_signature_help_tooling(sys.argv[1], root)
     test_mutable_temporary_receiver_tooling(sys.argv[1], root)
+    test_temporary_argument_borrow_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
@@ -7197,6 +7198,121 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         assert signature and signature["signatures"][0]["label"].endswith(
             "inspect() mut"
         ), signature
+    finally:
+        session.close()
+
+
+def test_temporary_argument_borrow_tooling(executable, root):
+    invalid_source = (
+        "class Report {\n"
+        "public:\n"
+        "  Report() {}\n"
+        "};\n"
+        "int inspect(Report& report) { return 1; }\n"
+        "int choose(Report& report) { return 1; }\n"
+        "int choose(Report report) { return 2; }\n"
+        "int main() {\n"
+        "  mut Report report = Report();\n"
+        "  return inspect(std::move(report));\n"
+        "}\n"
+    )
+    valid_source = (
+        "class Report {\n"
+        "public:\n"
+        "  Report() {}\n"
+        "};\n"
+        "int inspect(Report& report) { return 1; }\n"
+        "int choose(Report& report) { return 1; }\n"
+        "int choose(Report report) { return 2; }\n"
+        "int main() {\n"
+        "  int observed = inspect(Report());\n"
+        "  return observed + choose(Report());\n"
+        "}\n"
+    )
+    path = root / "temporary-argument-borrow.gti"
+    path.write_text(invalid_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": invalid_source,
+                    }
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        diagnostics = invalid["params"]["diagnostics"]
+        assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and not message["params"]["diagnostics"]
+        )
+
+        def help_at(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/signatureHelp",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(valid_source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        inspect_call = valid_source.index("inspect(Report", valid_source.index("main"))
+        borrowed = help_at(2, inspect_call + len("inspect("))
+        assert borrowed and borrowed["signatures"][0]["label"] == (
+            "int32_t inspect(Report& report)"
+        ), borrowed
+
+        choose_call = valid_source.index("choose(Report", valid_source.index("main"))
+        owning = help_at(3, choose_call + len("choose("))
+        assert owning and owning["signatures"][0]["label"] == (
+            "int32_t choose(Report report)"
+        ), owning
     finally:
         session.close()
 

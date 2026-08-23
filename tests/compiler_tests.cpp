@@ -1171,7 +1171,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v38\n") &&
+  expect(dump.starts_with("mir-body-v39\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5895,7 +5895,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v38\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v39\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7908,7 +7908,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v38 ") &&
+  expect(mirDump.starts_with("mir-v39 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -25351,7 +25351,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v38 ") &&
+             mirDump.starts_with("mir-v39 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -28743,6 +28743,431 @@ int main() {
       "diagnostics while immutable named objects remain rejected");
 }
 
+void testTemporaryArgumentBorrows() {
+  const std::string source = R"(
+class Report {
+  int value;
+
+public:
+  Report(int value) : value(value) {}
+  int code() { return this.value; }
+};
+
+class Factory {
+public:
+  Factory() {}
+  Report build(int value) { return Report(value); }
+};
+
+Report make_report(int value) { return Report(value); }
+int inspect(Report& report) { return report.code(); }
+int triple(int left, Report& report, int right) {
+  return left + report.code() + right;
+}
+int combine(Report& left, Report& right) {
+  return left.code() + right.code();
+}
+void observe(Report& report) {}
+Report duplicate(Report& report) { return Report(report.code()); }
+int generic<T>(T& value) { return 9; }
+int choose(Report& report) { return 100 + report.code(); }
+int choose(Report report) { return 200 + report.code(); }
+int consume(int value) { return value; }
+int side(int value) { return value; }
+
+int main() {
+  int direct = inspect(Report(1));
+  int produced = inspect((make_report(2)));
+  int nested = consume(inspect((Report(3))));
+  int ordered = triple(side(4), Report(5), side(6));
+  int multiple = combine(Report(7), make_report(8));
+  observe(Report(11));
+  int owned = duplicate(Report(12)).code();
+  int concrete = generic(Report(9));
+  int owning = choose(Report(10));
+  Factory factory = Factory();
+  int member_produced = inspect(factory.build(13));
+  return direct + produced + nested + ordered + multiple + concrete + owning +
+         member_produced;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("temporary-argument-borrows.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected temporary-argument diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "direct construction, GTI-call, grouping, nested, multiple, and "
+         "concrete-generic temporary arguments should lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto hirFunction =
+      [&](std::string_view name) -> const lang::HirFunctionInstance * {
+    const auto found =
+        std::find_if(frontend.hir.functionInstances().begin(),
+                     frontend.hir.functionInstances().end(),
+                     [&](const lang::HirFunctionInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->name().lexeme == name;
+                     });
+    return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
+  };
+  const lang::HirFunctionInstance *main = hirFunction("main");
+  expect(main != nullptr,
+         "the temporary-argument fixture should retain its main instance");
+  if (main == nullptr) {
+    return;
+  }
+
+  std::size_t temporaryCalls = 0;
+  std::size_t temporaryArguments = 0;
+  bool owningOverloadSelected = false;
+  for (const lang::HirValue &value : main->body.values) {
+    if (value.kind != lang::HirValueKind::Call || !value.callPlan) {
+      continue;
+    }
+    std::vector<std::size_t> hirIndices;
+    for (const lang::HirCallArgument &argument : value.callPlan->arguments) {
+      if (argument.kind != lang::HirCallInputKind::ReadTemporaryBorrow) {
+        continue;
+      }
+      ++temporaryArguments;
+      hirIndices.push_back(argument.parameterIndex);
+      const lang::HirValue *producer = main->body.findValue(argument.value);
+      expect(argument.parameterType.kind == lang::SemanticType::Reference &&
+                 argument.parameterType.referenceAccess ==
+                     lang::AccessMode::ReadOnly &&
+                 argument.parameterType.arguments.size() == 1 &&
+                 producer != nullptr &&
+                 producer->info.type ==
+                     argument.parameterType.arguments.front() &&
+                 producer->info.category == lang::ValueCategory::Value &&
+                 !producer->info.traits.containsBorrowedState,
+             "HIR should retain the exact read-only reference parameter and "
+             "fresh self-contained producer for each ephemeral argument");
+    }
+    const auto *call = dynamic_cast<const lang::Call *>(value.source);
+    const lang::ResolvedCallInfo *resolved =
+        call == nullptr ? nullptr : frontend.semantics.findCall(*call);
+    if (!hirIndices.empty()) {
+      ++temporaryCalls;
+      expect(resolved != nullptr &&
+                 resolved->ephemeralBorrowArguments == hirIndices,
+             "HIR temporary argument indices should copy the semantic "
+             "overload decision exactly");
+    }
+    if (resolved != nullptr && resolved->declaration != nullptr &&
+        resolved->declaration->name().lexeme == "choose") {
+      owningOverloadSelected =
+          resolved->ephemeralBorrowArguments.empty() &&
+          resolved->parameterTypes.size() == 1 &&
+          resolved->parameterTypes.front().kind == lang::SemanticType::Class;
+    }
+  }
+  expect(temporaryCalls == 9 && temporaryArguments == 10 &&
+             owningOverloadSelected,
+         "the fallback tier should preserve every written temporary argument "
+         "while an existing exact by-value overload wins first");
+
+  const lang::MirFunctionInstance *mirMain =
+      frontend.mir.findFunctionInstance(main->id);
+  expect(mirMain != nullptr,
+         "the temporary-argument fixture should retain its MIR main body");
+  if (mirMain == nullptr) {
+    return;
+  }
+  std::vector<lang::MirLoanId> argumentLoans;
+  for (const lang::MirBlock &block : mirMain->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::CallInput ||
+          instruction.callInputKind !=
+              lang::HirCallInputKind::ReadTemporaryBorrow ||
+          instruction.callInputRole != lang::MirCallInputRole::Argument) {
+        continue;
+      }
+      const lang::MirPlace *place =
+          instruction.operands.empty()
+              ? nullptr
+              : mirMain->body.findPlace(instruction.operands.front().place);
+      const lang::MirLoan *loan =
+          instruction.loan ? mirMain->body.findLoan(*instruction.loan)
+                           : nullptr;
+      const std::size_t drops =
+          place == nullptr
+              ? 0
+              : static_cast<std::size_t>(std::count_if(
+                    mirMain->body.dropObligations.begin(),
+                    mirMain->body.dropObligations.end(),
+                    [&](const lang::MirDropObligation &drop) {
+                      return drop.kind == lang::MirDropObligationKind::Value &&
+                             drop.value == instruction.hirValue &&
+                             drop.place == place->id &&
+                             drop.hirFullExpression != 0 &&
+                             drop.fullExpression != 0;
+                    }));
+      expect(instruction.operands.size() == 1 &&
+                 instruction.operands.front().kind ==
+                     lang::MirOperandKind::BorrowRead &&
+                 place != nullptr &&
+                 place->root == lang::MirPlaceRootKind::Value &&
+                 place->access == lang::AccessMode::Mutable &&
+                 loan != nullptr &&
+                 loan->kind == lang::MirLoanKind::CallArgument &&
+                 loan->source == place->id &&
+                 loan->access == lang::AccessMode::ReadOnly &&
+                 loan->producedBy == instruction.callSite && !loan->escapes &&
+                 drops == 1,
+             "MIR should materialize one owned place, call-scoped read loan, "
+             "and full-expression drop for each temporary argument");
+      if (loan != nullptr) {
+        argumentLoans.push_back(loan->id);
+      }
+    }
+  }
+  expect(argumentLoans.size() == 10,
+         "MIR should retain all ten ephemeral argument loans");
+  for (const lang::MirLoanId loan : argumentLoans) {
+    std::size_t endings = 0;
+    for (const lang::MirBlock &block : mirMain->body.blocks) {
+      endings += static_cast<std::size_t>(std::count_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                   instruction.loan == loan;
+          }));
+    }
+    expect(endings >= 1,
+           "each call-scoped temporary argument loan should end on every "
+           "reachable post-invocation route");
+  }
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "the C++ backend should consume verified temporary argument slots "
+         "without native lifetime inference");
+
+  const auto mutableMirMain =
+      [&](lang::MirProgram &program) -> lang::MirFunctionInstance * {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    return main->id == 0 || main->id > functions.size()
+               ? nullptr
+               : &functions[main->id - 1];
+  };
+  const auto firstTemporaryStage =
+      [](lang::MirFunctionInstance &function) -> lang::MirInstruction * {
+    for (lang::MirBlock &block :
+         const_cast<std::vector<lang::MirBlock> &>(function.body.blocks)) {
+      for (lang::MirInstruction &instruction :
+           const_cast<std::vector<lang::MirInstruction> &>(
+               block.instructions)) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputKind ==
+                lang::HirCallInputKind::ReadTemporaryBorrow &&
+            instruction.callInputRole == lang::MirCallInputRole::Argument) {
+          return &instruction;
+        }
+      }
+    }
+    return nullptr;
+  };
+
+  lang::MirProgram wrongIndex = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableMirMain(wrongIndex)) {
+    if (lang::MirInstruction *stage = firstTemporaryStage(*function)) {
+      ++stage->callInputIndex;
+    }
+  }
+  expect(!lang::verifyMirProgram(wrongIndex).valid(),
+         "the verifier should reject a forged temporary argument index");
+
+  lang::MirProgram wrongPlace = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableMirMain(wrongPlace)) {
+    if (lang::MirInstruction *stage = firstTemporaryStage(*function);
+        stage != nullptr && !stage->operands.empty()) {
+      auto &places =
+          const_cast<std::vector<lang::MirPlace> &>(function->body.places);
+      places[stage->operands.front().place - 1].access =
+          lang::AccessMode::ReadOnly;
+    }
+  }
+  expect(!lang::verifyMirProgram(wrongPlace).valid(),
+         "the verifier should reject a temporary argument loan over a "
+         "non-materializable place");
+
+  lang::MirProgram wrongLoan = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableMirMain(wrongLoan)) {
+    if (lang::MirInstruction *stage = firstTemporaryStage(*function);
+        stage != nullptr && stage->loan) {
+      auto &loans =
+          const_cast<std::vector<lang::MirLoan> &>(function->body.loans);
+      loans[*stage->loan - 1].access = lang::AccessMode::Mutable;
+    }
+  }
+  expect(!lang::verifyMirProgram(wrongLoan).valid(),
+         "the verifier should reject a mutable or mismatched call-argument "
+         "loan");
+
+  lang::MirProgram wrongProducer = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableMirMain(wrongProducer)) {
+    if (lang::MirInstruction *stage = firstTemporaryStage(*function)) {
+      stage->hirValue = 0;
+    }
+  }
+  expect(!lang::verifyMirProgram(wrongProducer).valid(),
+         "the verifier should reject a temporary argument detached from its "
+         "exact producer identity");
+
+  lang::MirProgram missingFullExpression = frontend.mir;
+  if (lang::MirFunctionInstance *function =
+          mutableMirMain(missingFullExpression)) {
+    if (lang::MirInstruction *stage = firstTemporaryStage(*function)) {
+      auto &drops = const_cast<std::vector<lang::MirDropObligation> &>(
+          function->body.dropObligations);
+      const auto found =
+          std::find_if(drops.begin(), drops.end(), [&](const auto &drop) {
+            return drop.kind == lang::MirDropObligationKind::Value &&
+                   drop.value == stage->hirValue;
+          });
+      if (found != drops.end()) {
+        found->hirFullExpression = 0;
+      }
+    }
+  }
+  expect(!lang::verifyMirProgram(missingFullExpression).valid(),
+         "the verifier should reject a temporary argument without its exact "
+         "full-expression drop identity");
+
+  lang::MirProgram missingEnd = frontend.mir;
+  if (lang::MirFunctionInstance *function = mutableMirMain(missingEnd)) {
+    lang::MirInstruction *stage = firstTemporaryStage(*function);
+    const lang::MirLoanId loan =
+        stage != nullptr && stage->loan ? *stage->loan : 0;
+    if (loan != 0) {
+      for (lang::MirBlock &block :
+           const_cast<std::vector<lang::MirBlock> &>(function->body.blocks)) {
+        auto &instructions =
+            const_cast<std::vector<lang::MirInstruction> &>(block.instructions);
+        const auto ending = std::find_if(
+            instructions.begin(), instructions.end(),
+            [&](const lang::MirInstruction &instruction) {
+              return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                     instruction.loan == loan;
+            });
+        if (ending != instructions.end()) {
+          instructions.erase(ending);
+          break;
+        }
+      }
+    }
+  }
+  expect(!lang::verifyMirProgram(missingEnd).valid(),
+         "the verifier should reject a missing immediate temporary argument "
+         "loan ending");
+
+  const auto rejected =
+      [](std::string_view name, std::string_view source,
+         const std::vector<std::filesystem::path> &preludes = {}) {
+        return lang::Frontend().analyze(std::string(name), std::string(source),
+                                        preludes);
+      };
+  const lang::FrontendResult mutableReference =
+      rejected("mutable-temporary-argument.gti", R"(
+class Report { public: Report() {} };
+void update(mut Report& report) {}
+int main() { update(Report()); return 0; }
+)");
+  expect(!mutableReference.canGenerateCode() &&
+             hasDiagnosticCode(mutableReference.diagnostics, "GTI-S2017"),
+         "a mutable reference should remain unable to bind a temporary");
+
+  const lang::FrontendResult localReference =
+      rejected("local-temporary-reference.gti", R"(
+class Report { public: Report() {} };
+int main() { Report& alias = Report(); return 0; }
+)");
+  expect(!localReference.canGenerateCode() &&
+             hasDiagnosticCode(localReference.diagnostics, "GTI-S2017"),
+         "a local reference binding should not gain lifetime extension");
+
+  const std::vector<std::filesystem::path> prelude{standardLibraryPrelude()};
+  const lang::FrontendResult explicitMove =
+      rejected("moved-temporary-argument.gti", R"(
+class Report { public: Report() {} };
+void inspect(Report& report) {}
+int main() {
+  mut Report report = Report();
+  inspect(std::move(report));
+  return 0;
+}
+)",
+               prelude);
+  expect(!explicitMove.canGenerateCode() &&
+             hasDiagnosticCode(explicitMove.diagnostics, "GTI-S2017"),
+         "an explicit move from named storage should not count as fresh");
+
+  const lang::FrontendResult compound =
+      rejected("compound-temporary-argument.gti", R"(
+class Report { public: Report() {} };
+void inspect(Report& report) {}
+int main() {
+  bool select = true;
+  inspect(select ? Report() : Report());
+  return 0;
+}
+)");
+  expect(!compound.canGenerateCode() &&
+             hasDiagnosticCode(compound.diagnostics, "GTI-S2017"),
+         "a conditional class producer should remain outside the first "
+         "temporary-argument slice");
+
+  const lang::FrontendResult borrowedState =
+      rejected("borrowed-state-temporary-argument.gti", R"(
+class View {
+  int& value;
+public:
+  View(int& value) : value(value) {}
+};
+void inspect(View& view) {}
+int main() {
+  mut int value = 1;
+  inspect(View(value));
+  return 0;
+}
+)");
+  expect(!borrowedState.canGenerateCode() &&
+             hasDiagnosticCode(borrowedState.diagnostics, "GTI-S2017"),
+         "a fresh value carrying tracked borrowed state should remain "
+         "ineligible");
+
+  const lang::FrontendResult escapingResult =
+      rejected("escaping-temporary-argument.gti", R"(
+class Report { public: Report() {} };
+Report& retain(Report& report) { return report; }
+int main() { [[discard]] retain(Report()); return 0; }
+)");
+  expect(!escapingResult.canGenerateCode() &&
+             hasDiagnosticCode(escapingResult.diagnostics, "GTI-S2017"),
+         "a call result tied to the temporary parameter should remain "
+         "ineligible");
+
+  const lang::FrontendResult ambiguousFallback =
+      rejected("ambiguous-temporary-argument.gti", R"(
+class Report { public: Report() {} };
+int inspect(Report& report) { return 1; }
+int inspect<T>(T& report) { return 2; }
+int main() { return inspect(Report()); }
+)");
+  expect(!ambiguousFallback.canGenerateCode() &&
+             hasDiagnosticCode(ambiguousFallback.diagnostics, "GTI-S2013"),
+         "ordinary ambiguity should remain authoritative within the "
+         "ephemeral-borrow fallback tier");
+}
+
 void testReadOnlyReceiverDiagnostics() {
   const std::string invalidSource = R"(
 struct Component {
@@ -28936,6 +29361,10 @@ int main(int argc, char **argv) {
     testMutableTemporaryReceivers();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "temporary-arguments") {
+    testTemporaryArgumentBorrows();
+    return failures == 0 ? 0 : 1;
+  }
   if (argc == 2 && std::string(argv[1]) == "receiver-diagnostics") {
     testReadOnlyReceiverDiagnostics();
     return failures == 0 ? 0 : 1;
@@ -29010,6 +29439,7 @@ int main(int argc, char **argv) {
   testClassesStructsAndAccess();
   testMutableFieldGroups();
   testMutableTemporaryReceivers();
+  testTemporaryArgumentBorrows();
   testReadOnlyReceiverDiagnostics();
   testConstructorsAndReceiverMutability();
   testInheritanceAndInterfaces();

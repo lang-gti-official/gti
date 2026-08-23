@@ -1757,21 +1757,28 @@ private:
       }
     }
 
-    std::unordered_set<HirValueId> temporaryReceiverValues;
+    std::unordered_set<HirValueId> temporaryBorrowValues;
     for (const HirValue &call : body.values) {
-      if (!call.callPlan || !call.callPlan->receiver) {
+      if (!call.callPlan) {
         continue;
       }
-      const HirCallReceiver &receiver = *call.callPlan->receiver;
-      if (receiver.kind == HirCallInputKind::ReadTemporaryBorrow ||
-          receiver.kind == HirCallInputKind::MutableTemporaryBorrow) {
-        temporaryReceiverValues.insert(receiver.value);
+      if (call.callPlan->receiver) {
+        const HirCallReceiver &receiver = *call.callPlan->receiver;
+        if (receiver.kind == HirCallInputKind::ReadTemporaryBorrow ||
+            receiver.kind == HirCallInputKind::MutableTemporaryBorrow) {
+          temporaryBorrowValues.insert(receiver.value);
+        }
+      }
+      for (const HirCallArgument &argument : call.callPlan->arguments) {
+        if (argument.kind == HirCallInputKind::ReadTemporaryBorrow) {
+          temporaryBorrowValues.insert(argument.value);
+        }
       }
     }
     for (HirValue &value : body.values) {
       if (value.fullExpression == 0 ||
           (!materializesDropValue(value) &&
-           !temporaryReceiverValues.contains(value.id))) {
+           !temporaryBorrowValues.contains(value.id))) {
         continue;
       }
       const HirDropObligationId id = body.dropObligations.size() + 1;
@@ -2284,27 +2291,54 @@ private:
     }
   }
 
-  [[nodiscard]] std::optional<std::vector<HirCallArgument>>
-  orderedArguments(const std::vector<HirValueId> &arguments,
-                   const std::vector<SemanticType> &parameterTypes,
-                   const HirBody &body,
-                   std::size_t explicitArgumentCount =
-                       std::numeric_limits<std::size_t>::max()) const {
+  [[nodiscard]] std::optional<std::vector<HirCallArgument>> orderedArguments(
+      const std::vector<HirValueId> &arguments,
+      const std::vector<SemanticType> &parameterTypes, const HirBody &body,
+      std::size_t explicitArgumentCount =
+          std::numeric_limits<std::size_t>::max(),
+      std::span<const std::size_t> ephemeralBorrowArguments = {}) const {
     if (arguments.size() != parameterTypes.size()) {
+      return std::nullopt;
+    }
+    const std::unordered_set<std::size_t> ephemeralBorrowSet(
+        ephemeralBorrowArguments.begin(), ephemeralBorrowArguments.end());
+    if (ephemeralBorrowSet.size() != ephemeralBorrowArguments.size() ||
+        std::any_of(ephemeralBorrowSet.begin(), ephemeralBorrowSet.end(),
+                    [&](std::size_t index) {
+                      return index >= arguments.size() ||
+                             index >= explicitArgumentCount;
+                    })) {
       return std::nullopt;
     }
 
     std::vector<HirCallArgument> result;
     result.reserve(arguments.size());
     for (std::size_t index = 0; index < arguments.size(); ++index) {
-      const HirValue *input = body.findValue(arguments[index]);
+      HirValueId source = arguments[index];
+      const HirValue *input = body.findValue(source);
       const SemanticType &parameter = parameterTypes[index];
       if (input == nullptr || input->kind == HirValueKind::PackExpansion) {
         return std::nullopt;
       }
 
       HirCallInputKind kind = HirCallInputKind::Value;
-      if (parameter.kind == SemanticType::Reference) {
+      if (ephemeralBorrowSet.contains(index)) {
+        while (input != nullptr && input->kind == HirValueKind::Grouping &&
+               input->operands.size() == 1) {
+          source = input->operands.front();
+          input = body.findValue(source);
+        }
+        if (input == nullptr || parameter.kind != SemanticType::Reference ||
+            parameter.referenceAccess != AccessMode::ReadOnly ||
+            parameter.arguments.size() != 1 ||
+            parameter.arguments.front() != input->info.type ||
+            input->info.type.kind != SemanticType::Class ||
+            input->info.category != ValueCategory::Value ||
+            input->info.traits.containsBorrowedState) {
+          return std::nullopt;
+        }
+        kind = HirCallInputKind::ReadTemporaryBorrow;
+      } else if (parameter.kind == SemanticType::Reference) {
         kind = parameter.referenceAccess == AccessMode::Mutable
                    ? HirCallInputKind::MutableBorrow
                    : HirCallInputKind::ReadBorrow;
@@ -2325,7 +2359,7 @@ private:
       }
 
       result.push_back({.parameterIndex = index,
-                        .value = arguments[index],
+                        .value = source,
                         .parameterType = parameter,
                         .kind = kind,
                         .defaultArgument = index >= explicitArgumentCount});
@@ -3142,11 +3176,16 @@ private:
                              static_cast<std::ptrdiff_t>(argumentCount),
                          value.operands.end());
       }
+      const ResolvedCallInfo *resolved = model.findCall(*call);
+      const std::span<const std::size_t> ephemeralBorrowArguments =
+          resolved == nullptr ? std::span<const std::size_t>{}
+                              : std::span<const std::size_t>{
+                                    resolved->ephemeralBorrowArguments};
       const std::optional<std::vector<HirCallArgument>> plannedArguments =
           exactOperands ? orderedArguments(arguments, value.parameterTypes,
-                                           body, call->arguments().size())
+                                           body, call->arguments().size(),
+                                           ephemeralBorrowArguments)
                         : std::nullopt;
-      const ResolvedCallInfo *resolved = model.findCall(*call);
       const ResolvedOperatorInfo *resolvedOperator = model.findOperator(*call);
       const FunctionInfo *resolvedTarget =
           resolved == nullptr || resolved->function == 0

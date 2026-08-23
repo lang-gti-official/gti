@@ -140,6 +140,14 @@ materialization query. The corresponding MIR drop remains the only destruction
 authority on normal and defined-failure paths. The backend does not infer
 mutability from a C++ rvalue or reselect the native member overload.
 
+For a verified read-only temporary argument input, the body emitter uses the
+same exact value-rooted lifetime slot and passes that slot to the selected
+reference parameter. Its `CallArgument` loan is representation-erased only
+after preflight proves the matching `BorrowRead`, call input, immediate
+loan-end schedule, and full-expression drop. Failure successors use the MIR
+cleanup order. The emitter neither binds an arbitrary C++ prvalue nor infers
+eligibility from the generated signature.
+
 A cleanup-free class result with one exact value-rooted field projection and
 one scalar `Load` uses the same uninitialized lifetime-slot representation.
 The call constructs the slot, and the load spells through its verified field

@@ -24,6 +24,17 @@ Defaults do not distinguish overload identities and do not rank viable
 candidates; two otherwise-exact candidates remain ambiguous. Omitted defaults
 also do not contribute to generic inference.
 
+One bounded fallback preserves exact matching for a fresh, self-contained
+class or struct value passed directly to an exact read-only `T&` parameter.
+Selection first resolves all otherwise-exact candidates that require no
+ephemeral argument borrow. If that tier is non-empty, every candidate requiring
+the fallback is discarded. Only when the first tier is empty are candidates
+whose sole mismatch is one or more eligible call-only temporary borrows
+considered, and selection still requires one unique candidate within that
+tier. The number of temporary borrows, generic status, defaults, and return
+type do not rank candidates. Consequently an exact by-value overload wins over
+an exact read-only-reference fallback without importing conversion ranking.
+
 ## Alternatives
 
 - Delegate overloads to C++: rejected because the result would depend on

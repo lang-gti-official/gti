@@ -78,8 +78,9 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v38`/`mir-body-v38`
-(v38 added caller-expanded default-argument provenance to ordered call inputs
+The deterministic serialization is currently `mir-v39`/`mir-body-v39`
+(v39 added verified call-scoped loans for fresh read-only temporary arguments;
+v38 added caller-expanded default-argument provenance to ordered call inputs
 and explicit-argument counts to constructor initializers; v31 added the
 prefix-initialized storage type kind and its intrinsic
 family alongside the logical-size bounds check; v32 added the
@@ -300,7 +301,8 @@ A `MirBody` owns:
   non-reorderable `CallInput` checkpoint per receiver and argument. Each
   checkpoint retains the source HIR value, call-site identity, receiver or
   exact argument-index role, selected parameter type, and value/class-copy/
-  class-move/read-borrow/mutable-borrow mode. Argument checkpoints additionally
+  class-move/read-borrow/mutable-borrow/read-temporary-borrow mode. Argument
+  checkpoints additionally
   retain whether the value came from an omitted source default; verification
   requires those markers to form one trailing parameter suffix. For an
   ordinary `Call`, a
@@ -747,6 +749,20 @@ non-virtual GTI target, concrete owner type, receiver qualifier, result
 non-escape traits, producer type, place type/access/source identity, and drop
 descriptor to agree. This is an explicit MIR borrow schedule, not a native
 rvalue convention.
+
+An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
+input names an exact fresh class/struct producer and its selected parameter is
+read-only `T&`. Lowering materializes the producer's exact mutable value-rooted
+place, emits `BorrowRead`, and attaches one `CallArgument` loan to the
+`CallInput`. The loan is active while later arguments are prepared and ends in
+reverse temporary-argument order immediately after the call, or at the start
+of both normal and failure successors for an `Invoke`. The producer's one
+full-expression drop remains independent and follows the loan end. Verification
+rejects a mutable/projected/wrong-type place, a native or declaration-only
+producer/target, borrowed state, an escaping result, producer/input reordering,
+premature or missing loan ending, and a missing or duplicate drop. The backend
+therefore consumes a complete schedule rather than relying on C++ reference
+lifetime rules.
 
 Other calls and expression families still rely on ordered MIR produced by
 recursive lowering rather than a dedicated verifier-visible materialization

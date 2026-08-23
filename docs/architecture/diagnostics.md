@@ -97,6 +97,15 @@ diagnostics or letting a backend message choose either identity.
   `GTI-S2017` while carrying the same cause and structured context. Neither
   form offers a fix-it because adding receiver mutability changes the callable
   contract.
+- `GTI-S2017` owns invalid reference binding and retained-borrow conflicts. For
+  a fresh class/struct value written as an ordinary call argument, distinguish
+  a mutable reference, explicit move, borrowed-state or unsupported producer,
+  non-concrete value, native/callback/declaration-only target, and a result that
+  could retain the loan. Point at the argument, relate the selected declaration
+  when known, and suggest a named local or by-value parameter according to the
+  cause. Do not offer a fix-it because ownership transfer, storage duration,
+  and API shape require intent. An exact eligible read-only call-only borrow is
+  accepted and emits no diagnostic; local and stored bindings remain invalid.
 - `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a
   by-value argument. When constructor search finds one accessible candidate
   whose parameter types match and rejects it only because the written value

@@ -1222,6 +1222,9 @@ struct ResolvedCallInfo {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   CallReceiverMode receiverMode = CallReceiverMode::None;
+  // Exact read-only reference parameters that borrow one fresh value only for
+  // this invocation. The full expression retains ownership of each value.
+  std::vector<std::size_t> ephemeralBorrowArguments;
   std::vector<CallableArgumentBoundary> callableArguments;
 };
 

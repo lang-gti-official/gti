@@ -384,6 +384,7 @@ private:
   struct PreparedCallInput {
     MirOperand operand;
     MirDropObligationId parameterDrop = 0;
+    MirLoanId loan = 0;
   };
 
   struct PreparedCallArgumentFailure {
@@ -1090,9 +1091,27 @@ private:
         output.kind == MirBodyKind::FieldInitializers) {
       emitConstructorFailureDrain(consumedDrops, endedLoans);
     } else {
+      std::vector<MirLoanId> failureEndedLoans = endedLoans;
+      for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+        for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
+             ++loan) {
+          const MirLoan *record = output.findLoan(*loan);
+          if (record == nullptr) {
+            valid = false;
+            continue;
+          }
+          if (record->kind != MirLoanKind::CallArgument ||
+              containsLoan(failureEndedLoans, *loan)) {
+            continue;
+          }
+          (void)appendInstruction(
+              {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
+          failureEndedLoans.push_back(*loan);
+        }
+      }
       emitFailureTemporaryCleanup(temporaryDrops, consumedDrops);
       for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
-        emitFailureScopeCleanup(*scope, consumedDrops, endedLoans);
+        emitFailureScopeCleanup(*scope, consumedDrops, failureEndedLoans);
       }
     }
     terminate({.kind = MirTerminatorKind::PropagateFailure,
@@ -2523,13 +2542,14 @@ private:
                                 : AccessMode::ReadOnly;
   }
 
-  [[nodiscard]] MirOperand temporaryReceiverOperand(HirValueId id,
-                                                    AccessMode access) {
-    const HirValue *receiver = findValue(id);
-    if (receiver == nullptr ||
-        receiver->info.type.kind != SemanticType::Class ||
-        receiver->info.category != ValueCategory::Value ||
-        receiver->info.traits.containsBorrowedState) {
+  [[nodiscard]] MirOperand
+  temporaryBorrowOperand(HirValueId id, AccessMode access,
+                         const SemanticType &stagedType) {
+    const HirValue *temporary = findValue(id);
+    if (temporary == nullptr ||
+        temporary->info.type.kind != SemanticType::Class ||
+        temporary->info.category != ValueCategory::Value ||
+        temporary->info.traits.containsBorrowedState) {
       valid = false;
       return {};
     }
@@ -2553,18 +2573,18 @@ private:
     } else {
       place = appendPlace({.root = MirPlaceRootKind::Value,
                            .value = produced.value,
-                           .type = receiver->info.type,
+                           .type = temporary->info.type,
                            .access = AccessMode::Mutable,
-                           .traits = receiver->info.traits,
-                           .sourceValue = receiver->id});
+                           .traits = temporary->info.traits,
+                           .sourceValue = temporary->id});
     }
     const MirPlace *materialized = output.findPlace(place);
     if (materialized == nullptr ||
         materialized->root != MirPlaceRootKind::Value ||
         materialized->value != produced.value ||
-        materialized->type != receiver->info.type ||
+        materialized->type != temporary->info.type ||
         materialized->access != AccessMode::Mutable ||
-        materialized->sourceValue != receiver->id ||
+        materialized->sourceValue != temporary->id ||
         !materialized->projections.empty()) {
       valid = false;
       return {};
@@ -2572,7 +2592,7 @@ private:
     return {.kind = access == AccessMode::Mutable ? MirOperandKind::BorrowWrite
                                                   : MirOperandKind::BorrowRead,
             .place = place,
-            .type = receiver->info.type};
+            .type = stagedType};
   }
 
   [[nodiscard]] MirOperand receiverOperand(HirValueId id, AccessMode access) {
@@ -3001,6 +3021,29 @@ private:
                          .result = result,
                          .operands = {std::move(operand)},
                          .info = info};
+    MirLoanId inputLoan = 0;
+    if (role == MirCallInputRole::Argument &&
+        inputKind == HirCallInputKind::ReadTemporaryBorrow) {
+      const MirPlace *source = output.findPlace(input.operands.front().place);
+      if (type.kind != SemanticType::Reference ||
+          type.referenceAccess != AccessMode::ReadOnly ||
+          type.arguments.size() != 1 ||
+          type.arguments.front().kind != SemanticType::Class ||
+          input.operands.front().kind != MirOperandKind::BorrowRead ||
+          input.operands.front().type != type || source == nullptr ||
+          source->root != MirPlaceRootKind::Value ||
+          !source->projections.empty() ||
+          source->type != type.arguments.front() ||
+          source->access != AccessMode::Mutable ||
+          source->sourceValue != sourceValue || scopes.empty()) {
+        valid = false;
+      } else {
+        inputLoan = createLoan(MirLoanKind::CallArgument, source->id,
+                               AccessMode::ReadOnly, callSite);
+        input.loan = inputLoan;
+        scopes.back().loans.push_back(inputLoan);
+      }
+    }
     const bool materializesCheckedPlace =
         inputKind == HirCallInputKind::CopyValue ||
         ((inputKind == HirCallInputKind::ReadBorrow ||
@@ -3046,7 +3089,8 @@ private:
     return {.operand = {.kind = MirOperandKind::Value,
                         .value = result,
                         .type = type},
-            .parameterDrop = parameterDrop};
+            .parameterDrop = parameterDrop,
+            .loan = inputLoan};
   }
 
   void emitCall(const HirValue &value, bool detachedBorrowResult = false) {
@@ -3121,6 +3165,7 @@ private:
     std::optional<MirOperand> sourceReceiver;
     std::vector<MirOperand> sourceArguments;
     std::vector<MirDropObligationId> preparedParameterDrops;
+    std::vector<MirLoanId> temporaryArgumentLoans;
     sourceArguments.reserve(arguments.size());
     preparedParameterDrops.reserve(arguments.size() + 1);
 
@@ -3135,9 +3180,10 @@ private:
         const bool temporaryReceiver =
             receiver.kind == HirCallInputKind::ReadTemporaryBorrow ||
             receiver.kind == HirCallInputKind::MutableTemporaryBorrow;
-        sourceReceiver = temporaryReceiver
-                             ? temporaryReceiverOperand(receiver.value, access)
-                             : receiverOperand(receiver.value, access);
+        sourceReceiver =
+            temporaryReceiver
+                ? temporaryBorrowOperand(receiver.value, access, receiver.type)
+                : receiverOperand(receiver.value, access);
         PreparedCallInput prepared = prepareCallInput(
             value.id, receiver.value, receiver.type, receiver.kind,
             MirCallInputRole::Receiver, 0, *sourceReceiver, !temporaryReceiver);
@@ -3190,12 +3236,16 @@ private:
         call.parameterTypes.push_back(argument.parameterType);
         const std::optional<PreparedCallArgumentFailure> enclosingFailure =
             preparedCallArgumentFailure;
-        if (!preparedParameterDrops.empty()) {
+        if (!preparedParameterDrops.empty() ||
+            !temporaryArgumentLoans.empty()) {
           preparedCallArgumentFailure =
               PreparedCallArgumentFailure{.argument = argument.value};
         }
         MirOperand sourceArgument =
-            argument.kind == HirCallInputKind::CopyValue
+            argument.kind == HirCallInputKind::ReadTemporaryBorrow
+                ? temporaryBorrowOperand(argument.value, AccessMode::ReadOnly,
+                                         argument.parameterType)
+            : argument.kind == HirCallInputKind::CopyValue
                 ? copyArgumentOperand(argument.value, argument.parameterType)
                 : argumentOperand(argument.value, argument.parameterType);
         preparedCallArgumentFailure = enclosingFailure;
@@ -3203,8 +3253,13 @@ private:
         PreparedCallInput prepared = prepareCallInput(
             value.id, argument.value, argument.parameterType, argument.kind,
             MirCallInputRole::Argument, argument.parameterIndex,
-            sourceArguments.back(), true, argument.defaultArgument);
+            sourceArguments.back(),
+            argument.kind != HirCallInputKind::ReadTemporaryBorrow,
+            argument.defaultArgument);
         call.operands.push_back(std::move(prepared.operand));
+        if (prepared.loan != 0) {
+          temporaryArgumentLoans.push_back(prepared.loan);
+        }
         if (prepared.parameterDrop != 0) {
           preparedParameterDrops.push_back(prepared.parameterDrop);
         }
@@ -3533,6 +3588,12 @@ private:
       (void)initializeValueLifecycle(call, value);
     }
     (void)appendInstruction(std::move(call));
+    for (auto loan = temporaryArgumentLoans.rbegin();
+         loan != temporaryArgumentLoans.rend(); ++loan) {
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
+      removeLoanFromState(*loan, scopes, bindingLoans);
+    }
   }
 
   void emitPackFold(const HirValue &value) {
