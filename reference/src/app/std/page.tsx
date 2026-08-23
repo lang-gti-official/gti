@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import units from "@/generated/units.json";
+import classes from "@/generated/classes.json";
 
 export const metadata: Metadata = {
   title: "Standard library",
@@ -36,11 +37,23 @@ export default function StandardLibraryIndex() {
               </td>
               <td>
                 {unit.types.length > 0 ? (
-                  unit.types.map((typeName) => (
-                    <span key={typeName}>
-                      <code>{typeName}</code>{" "}
-                    </span>
-                  ))
+                  unit.types.map((typeName) => {
+                    const hasPage = classes.classes.some(
+                      (entry) =>
+                        entry.unit === unit.name && entry.name === typeName,
+                    );
+                    return (
+                      <span key={typeName}>
+                        {hasPage ? (
+                          <Link href={`/std/${unit.name}/${typeName}/`}>
+                            <code>{typeName}</code>
+                          </Link>
+                        ) : (
+                          <code>{typeName}</code>
+                        )}{" "}
+                      </span>
+                    );
+                  })
                 ) : (
                   <span className="muted">functions only</span>
                 )}

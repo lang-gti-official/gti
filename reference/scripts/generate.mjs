@@ -303,6 +303,132 @@ const units = readdirSync(stdlibDirectory)
 
 write("units.json", { generatedFrom: "stdlib/std", units });
 
+// --- Per-class member extraction ------------------------------------------------
+//
+// Verbatim member declarations for every public class, keyed by unit. Names
+// are recognized lexically for table grouping; the signature column is the
+// quoted source line, never a reconstruction. Classes inside `detail` or
+// `gti_internal` namespaces are implementation and are not listed.
+
+const classes = [];
+
+for (const entry of readdirSync(stdlibDirectory).sort()) {
+  if (!entry.endsWith(".gti")) continue;
+  const unitName = entry.replace(/\.gti$/, "");
+  const lines = readFileSync(join(stdlibDirectory, entry), "utf8").split("\n");
+
+  const namespaces = [];
+  let globalDepth = 0;
+  let current = null; // { name, qualified, members, relativeDepth, inPublic }
+  let pending = "";
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    const opens = (line.match(/\{/g) ?? []).length;
+    const closes = (line.match(/\}/g) ?? []).length;
+
+    if (current === null) {
+      const namespaceMatch = line.match(/^namespace ([A-Za-z_][A-Za-z0-9_]*) \{$/);
+      const classMatch = line.match(/^(?:class|struct) ([a-z_][a-z0-9_]*)/);
+      if (namespaceMatch) {
+        namespaces.push({ name: namespaceMatch[1], depth: globalDepth });
+      } else if (classMatch && line.endsWith("{")) {
+        const hidden = namespaces.some(
+          (n) => n.name === "detail" || n.name === "gti_internal",
+        );
+        current = {
+          name: classMatch[1],
+          qualified: [...namespaces.map((n) => n.name), classMatch[1]].join("::"),
+          hidden,
+          members: [],
+          relativeDepth: 1,
+          inPublic: line.startsWith("struct"),
+        };
+        globalDepth += opens - closes;
+        continue;
+      }
+      globalDepth += opens - closes;
+      while (namespaces.length > 0 && globalDepth <= namespaces.at(-1).depth) {
+        namespaces.pop();
+      }
+      continue;
+    }
+
+    // Inside a class.
+    if (current.relativeDepth === 1) {
+      if (line === "public:") { current.inPublic = true; continue; }
+      if (line === "private:" || line === "protected:") {
+        current.inPublic = false; pending = ""; continue;
+      }
+      if (line.startsWith("};")) {
+        if (!current.hidden && current.members.length > 0) {
+          classes.push({
+            unit: unitName,
+            name: current.name,
+            qualified: current.qualified,
+            members: current.members,
+          });
+        }
+        // The class's opening brace was counted into globalDepth when the
+        // class was entered; its closer lands here, outside the global
+        // accounting, so balance it or enclosing namespaces never pop.
+        globalDepth -= 1;
+        current = null;
+        continue;
+      }
+      if (current.inPublic) {
+        const candidate = pending ? pending + " " + line : line;
+        const parensBalanced =
+          (candidate.match(/\(/g) ?? []).length ===
+          (candidate.match(/\)/g) ?? []).length;
+        if (!parensBalanced) { pending = candidate; }
+        else if (/^[a-zA-Z_~[]/.test(candidate) &&
+                 (candidate.includes("(") || candidate.startsWith("using ") ||
+                  candidate.startsWith("static constexpr"))) {
+          pending = "";
+          const signature = candidate
+            .replace(/\s*\{\}?$/, ";")
+            .replace(/\s*\{ .*$/, ";")
+            .replace(/;;$/, ";")
+            .replace(/\s+/g, " ");
+          let memberName = null;
+          if (signature.startsWith(current.name + "(") ||
+              signature.startsWith(current.name + "<")) {
+            memberName = current.name;
+          } else if (signature.startsWith("~")) {
+            memberName = "~" + current.name;
+          } else {
+            const operatorMatch = signature.match(/\b(operator[^\s(]*(?:\(\))?)/);
+            if (operatorMatch) memberName = operatorMatch[1];
+            else {
+              const nameMatch = signature.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
+              if (nameMatch) memberName = nameMatch[1];
+              else {
+                const constant = signature.match(
+                  /^(?:static constexpr|using) .*?([A-Za-z_][A-Za-z0-9_]*)\s*=/,
+                );
+                if (constant) memberName = constant[1];
+              }
+            }
+          }
+          if (memberName) {
+            current.members.push({ name: memberName, signature });
+          }
+        } else if (parensBalanced) {
+          pending = "";
+        }
+      }
+    }
+    current.relativeDepth += opens - closes;
+    if (current.relativeDepth <= 0) {
+      globalDepth -= 1;
+      current = null;
+    }
+  }
+}
+
+write("classes.json", { generatedFrom: "stdlib/std", classes });
+
 // --- Diagnostic codes ------------------------------------------------------------
 
 const families = {
