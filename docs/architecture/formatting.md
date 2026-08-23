@@ -138,7 +138,11 @@ built-in type formatting as `float`.
 Generic parameter and argument clauses use compact angle brackets, such as
 `forward_list_iterator<T>`. The formatter treats comments and newlines as
 syntax trivia while distinguishing those clauses from relational expressions;
-ordinary comparisons retain spaces around `<` and `>`.
+ordinary comparisons retain spaces around `<`, `>`, `<=`, and `>=`. In
+particular, `>=` is split into a generic close followed by assignment only for
+the exact compact concept-declaration form `concept name<T>=...`; a comparison
+never inherits generic-angle state across an assignment, statement boundary,
+or unmatched delimiter.
 
 Constructor-local value parameters use the same compact clause, for example
 `Buffer<uint64_t N>(T values[N])`. A brace after `(` or `,` in a call remains
