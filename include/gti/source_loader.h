@@ -2,6 +2,7 @@
 
 #include "gti/configuration_flags.h"
 #include "gti/diagnostic.h"
+#include "gti/frontend_cache.h"
 #include "gti/frontend_work.h"
 #include "gti/source_graph.h"
 #include "gti/target.h"
@@ -22,8 +23,17 @@ using SourceDiagnostic = Diagnostic;
 
 class SourceLoader {
 public:
-  explicit SourceLoader(FrontendWorkMetrics *workMetrics = nullptr)
-      : workMetrics(workMetrics) {}
+  explicit SourceLoader(
+      FrontendWorkMetrics *workMetrics = nullptr,
+      std::shared_ptr<FrontendCache> cache = nullptr,
+      const std::unordered_map<std::string, std::uint64_t> *sourceGenerations =
+          nullptr,
+      const std::unordered_map<std::string, std::uint64_t> *sourceDigests =
+          nullptr,
+      std::string cacheContext = {})
+      : workMetrics(workMetrics), cache(std::move(cache)),
+        sourceGenerations(sourceGenerations), sourceDigests(sourceDigests),
+        cacheContext(std::move(cacheContext)) {}
 
   SourceGraph
   load(const std::filesystem::path &entryPath,
@@ -115,6 +125,11 @@ private:
   std::unordered_set<std::string> activeFlags;
   std::unordered_set<std::string> declaredFlags;
   FrontendWorkMetrics *workMetrics = nullptr;
+  std::shared_ptr<FrontendCache> cache;
+  const std::unordered_map<std::string, std::uint64_t> *sourceGenerations =
+      nullptr;
+  const std::unordered_map<std::string, std::uint64_t> *sourceDigests = nullptr;
+  std::string cacheContext;
 };
 
 } // namespace lang

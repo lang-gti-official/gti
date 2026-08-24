@@ -13,11 +13,171 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace lang {
+namespace {
+
+std::string cacheContext(const FrontendOptions &options) {
+  ConfigurationFlags flags = options.configurationFlags;
+  normalizeConfigurationFlags(flags);
+  std::string result =
+      options.target.arch + '\n' + options.target.vendor + '\n' +
+      options.target.os + '\n' +
+      std::string(executionProfileName(options.target.executionProfile)) +
+      '\n' +
+      std::string(
+          targetEndiannessName(options.target.dataLayout.endianness())) +
+      '\n' + std::to_string(options.target.dataLayout.pointerWidthBits());
+  for (const std::string &flag : flags) {
+    result += '\n';
+    result += flag;
+  }
+  result += '\n';
+  result += options.target.dataLayout.supported() ? "layout:supported"
+                                                  : "layout:unsupported";
+  for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
+    result += '\n';
+    const auto layout = options.target.dataLayout.scalarLayout(
+        static_cast<TargetScalarKind>(index));
+    if (!layout) {
+      result += '-';
+      continue;
+    }
+    result += std::to_string(layout->sizeBytes) + ':' +
+              std::to_string(layout->abiAlignmentBytes) + ':' +
+              std::to_string(layout->preferredAlignmentBytes);
+  }
+  return result;
+}
+
+std::uint64_t sourceGeneration(const FrontendOptions &options,
+                               std::string_view path) {
+  const auto found = options.sourceGenerations.find(std::string(path));
+  return found == options.sourceGenerations.end() ? 0 : found->second;
+}
+
+void digestInteger(std::uint64_t &digest, std::uint64_t value) {
+  for (unsigned shift = 0; shift < 64; shift += 8) {
+    digest ^= static_cast<unsigned char>(value >> shift);
+    digest *= 1099511628211ULL;
+  }
+}
+
+void digestText(std::uint64_t &digest, std::string_view value) {
+  digestInteger(digest, value.size());
+  for (const unsigned char byte : value) {
+    digest ^= byte;
+    digest *= 1099511628211ULL;
+  }
+}
+
+class DependencyDigestBuilder final {
+public:
+  DependencyDigestBuilder(const SourceGraph &graph,
+                          const FrontendOptions &options)
+      : graph(graph), options(options),
+        dependenciesBySource(graph.sourceUnits().size() + 1) {
+    for (const SourceDependency &dependency : graph.dependencyEdges()) {
+      if (dependency.source < dependenciesBySource.size()) {
+        dependenciesBySource[dependency.source].push_back(&dependency);
+      }
+    }
+  }
+
+  [[nodiscard]] std::unordered_map<SourceUnitId, std::uint64_t> build() {
+    for (const SourceUnit &unit : graph.sourceUnits()) {
+      static_cast<void>(digestFor(unit.id));
+    }
+    return std::move(memoized);
+  }
+
+private:
+  [[nodiscard]] std::uint64_t digestFor(SourceUnitId source) {
+    if (const auto found = memoized.find(source); found != memoized.end()) {
+      return found->second;
+    }
+
+    std::uint64_t result = 14695981039346656037ULL;
+    if (!visiting.insert(source).second) {
+      // SourceLoader diagnoses include cycles. Retain a deterministic marker
+      // so a recovered graph cannot recurse indefinitely while computing a
+      // cache identity.
+      digestText(result, "dependency-cycle");
+      digestInteger(result, source);
+      return result;
+    }
+
+    if (source >= dependenciesBySource.size()) {
+      visiting.erase(source);
+      memoized.emplace(source, result);
+      return result;
+    }
+    for (const SourceDependency *dependency : dependenciesBySource[source]) {
+      const SourceUnit *target = graph.findUnit(dependency->target);
+      if (target == nullptr) {
+        continue;
+      }
+      digestInteger(result, static_cast<std::uint64_t>(dependency->kind));
+      digestText(result, dependency->includeSpelling);
+      digestInteger(result, dependency->includeOccurrence);
+      digestText(result, target->path.string());
+      digestInteger(result, sourceGeneration(options, target->path.string()));
+      digestInteger(result, target->sourceDigest);
+      digestInteger(result, target->syntaxDigest);
+      digestInteger(result, digestFor(target->id));
+    }
+
+    visiting.erase(source);
+    // Zero is reserved as the identity of a raw lexical cache row.
+    if (result == 0) {
+      result = 1;
+    }
+    memoized.emplace(source, result);
+    return result;
+  }
+
+  const SourceGraph &graph;
+  const FrontendOptions &options;
+  std::unordered_map<SourceUnitId, std::uint64_t> memoized;
+  std::unordered_set<SourceUnitId> visiting;
+  std::vector<std::vector<const SourceDependency *>> dependenciesBySource;
+};
+
+FrontendUnitCacheKey unitCacheKey(const FrontendOptions &options,
+                                  const SourceUnit &unit,
+                                  std::string_view context,
+                                  std::uint64_t dependencyDigest) {
+  return {.canonicalPath = unit.path.string(),
+          .sourceGeneration = sourceGeneration(options, unit.path.string()),
+          .sourceDigest = unit.sourceDigest,
+          .syntaxDigest = unit.syntaxDigest,
+          .dependencyDigest = dependencyDigest,
+          .context = std::string(context),
+          .completionOffset =
+              unit.entry ? options.completionOffset : std::nullopt};
+}
+
+std::size_t estimatedTokenBytes(const std::vector<Token> &tokens) {
+  std::size_t result = tokens.size() * sizeof(Token);
+  for (const Token &token : tokens) {
+    result += token.lexeme.size() + token.source.size();
+    if (const auto *text = std::get_if<std::string>(&token.literal)) {
+      result += text->size();
+    }
+    if (token.leadingDocumentationMarkdown) {
+      result += token.leadingDocumentationMarkdown->size();
+    }
+  }
+  return result;
+}
+
+} // namespace
 
 Frontend::Frontend(FrontendOptions options) : options(std::move(options)) {}
 
@@ -32,7 +192,10 @@ FrontendResult Frontend::analyze(
   if (options.workMetrics != nullptr) {
     options.workMetrics->clear();
   }
-  SourceLoader sourceLoader(options.workMetrics);
+  const std::string frontendCacheContext = cacheContext(options);
+  SourceLoader sourceLoader(options.workMetrics, options.cache,
+                            &options.sourceGenerations, &options.sourceDigests,
+                            frontendCacheContext);
   const auto sourceLoadStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-source-load");
@@ -95,6 +258,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
   StmtList declarations;
   bool syntaxValid = true;
+  const std::string frontendCacheContext = cacheContext(options);
+  const std::unordered_map<SourceUnitId, std::uint64_t> dependencyDigests =
+      DependencyDigestBuilder(result.sourceGraph, options).build();
   const auto parseStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-parse");
@@ -103,21 +269,49 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       if (unit == nullptr) {
         continue;
       }
-      if (options.workMetrics != nullptr) {
-        options.workMetrics->parsedUnits.push_back(unit->path.string());
-      }
-      Parser parser(std::move(unit->tokens));
-      Program parsed = parser.parse();
-      appendParserDiagnostics(result.diagnostics, parser.errors(),
-                              result.sourceGraph, unitId);
-      syntaxValid = syntaxValid && !parser.hadError();
-
       unit->declarationStart = declarations.size();
-      StmtList unitDeclarations = parsed.takeDeclarations();
+      StmtList unitDeclarations;
+      const auto dependencyDigest = dependencyDigests.find(unitId);
+      const FrontendUnitCacheKey key =
+          unitCacheKey(options, *unit, frontendCacheContext,
+                       dependencyDigest == dependencyDigests.end()
+                           ? 0
+                           : dependencyDigest->second);
+      std::optional<CachedParsedUnit> cached =
+          options.cache ? options.cache->lookupParsed(key) : std::nullopt;
+      if (cached) {
+        unitDeclarations = std::move(cached->declarations);
+        appendParserDiagnostics(result.diagnostics, cached->diagnostics,
+                                result.sourceGraph, unitId);
+        syntaxValid = syntaxValid && !cached->hadError;
+        if (options.workMetrics != nullptr) {
+          options.workMetrics->parseCacheHits.push_back(unit->path.string());
+        }
+      } else {
+        if (options.workMetrics != nullptr) {
+          options.workMetrics->parsedUnits.push_back(unit->path.string());
+        }
+        std::size_t estimatedInputBytes = estimatedTokenBytes(unit->tokens);
+        if (const std::string *source =
+                result.sources.find(unit->path.string())) {
+          estimatedInputBytes += source->size();
+        }
+        Parser parser(std::move(unit->tokens));
+        Program parsed = parser.parse();
+        appendParserDiagnostics(result.diagnostics, parser.errors(),
+                                result.sourceGraph, unitId);
+        syntaxValid = syntaxValid && !parser.hadError();
+        unitDeclarations = parsed.takeDeclarations();
+        if (options.cache) {
+          options.cache->storeParsed(key, estimatedInputBytes,
+                                     {.declarations = unitDeclarations,
+                                      .diagnostics = parser.errors(),
+                                      .hadError = parser.hadError()});
+        }
+      }
       unit->declarationCount = unitDeclarations.size();
-      declarations.insert(declarations.end(),
-                          std::make_move_iterator(unitDeclarations.begin()),
-                          std::make_move_iterator(unitDeclarations.end()));
+      declarations.insert(declarations.end(), unitDeclarations.begin(),
+                          unitDeclarations.end());
     }
   }
   if (options.workMetrics != nullptr) {

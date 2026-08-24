@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -55,6 +56,14 @@ struct SourceUnit {
   SourceUnitId id = 0;
   std::filesystem::path path;
   std::vector<Token> tokens;
+  // Exact source-text identity used by caches after loading. A zero digest
+  // means the graph was supplied by a caller that did not establish one.
+  std::uint64_t sourceDigest = 0;
+  // Identity of the exact token stream presented to this unit's parser after
+  // includes and configuration directives have been resolved. This changes
+  // when dependency-provided flags select different syntax even if this
+  // unit's own source bytes do not.
+  std::uint64_t syntaxDigest = 0;
   // Token-granular inactive source spans are retained after parsing so editor
   // tooling can fade unselected branches without analysing them semantically.
   std::vector<SourceSpan> inactiveSpans;
