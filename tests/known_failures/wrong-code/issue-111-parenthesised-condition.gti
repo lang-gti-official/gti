@@ -1,0 +1,8 @@
+// expected exit status: 3 — actual: 9, the wrong branch runs
+int main() {
+  mut bool flag = true;
+  if ((flag)) {
+    return 3;
+  }
+  return 9;
+}
