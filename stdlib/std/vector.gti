@@ -66,6 +66,7 @@ public:
 };
 }
 
+/// An owning, move-only, contiguous sequence of `T` values.
 class vector<std::movable T> {
   mut gti_internal::prefix_storage<T> data;
   mut size_t count = 0;
@@ -106,14 +107,17 @@ public:
   vector(vector<T>& other) = delete;
   vector(vector<T>&& other) = default;
 
+  /// Returns the number of live elements.
   size_t size() {
     return this.count;
   }
 
+  /// Returns the number of elements that fit without growing storage.
   size_t capacity() {
     return this.reserved;
   }
 
+  /// Returns whether the vector contains no elements.
   bool empty() {
     return this.count == 0;
   }

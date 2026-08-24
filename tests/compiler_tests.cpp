@@ -28803,6 +28803,9 @@ public:
 
 void testLanguageQueries() {
   const std::string source = R"(
+/// Chooses the unsigned value.
+///
+/// The exact overload is selected by semantics.
 uint64_t choose(uint64_t value) { return value; }
 float choose(float value) { return value; }
 
@@ -28811,15 +28814,18 @@ namespace graphics {
 int render() { return 1; }
 }
 }
+/// A shorter spelling for the graphics namespace.
 namespace gfx = engine::graphics;
 
 class Fixed<T, uint64_t N> {
   T values[N] = {};
 };
 
+/// Owns one integer value.
 class Box {
   int value = 0;
 public:
+  /// Constructs a box from `value`.
   Box(int value) : value(value) {}
 };
 
@@ -28831,6 +28837,7 @@ public:
 };
 
 class Accessor {
+  /// The value returned by `inspect`.
   mut int value = 0;
 public:
   int inspect() { return this.value; }
@@ -28840,11 +28847,23 @@ public:
   }
 };
 
+/// A type that can render itself.
 interface Renderable {
   int render();
 };
 
 void relay<Args...>(Args... values) {}
+
+/// This block is deliberately detached.
+
+class Undocumented {
+  int value = 0;
+};
+
+// Ordinary comments are not API documentation.
+class OrdinaryCommented {
+  int value = 0;
+};
 
 int main() {
   auto inferred = choose(uint64_t(1));
@@ -28879,6 +28898,10 @@ int main() {
   const std::optional<lang::HoverInfo> selected = hoverAt(call + 1);
   expect(selected && selected->signature == "uint64_t choose(uint64_t value)",
          "hover should render the exact selected overload in GTI syntax");
+  expect(selected && selected->documentationMarkdown ==
+                         "Chooses the unsigned value.\n\nThe exact overload "
+                         "is selected by semantics.",
+         "selected-call hover should carry normalized declaration Markdown");
   expect(selected && selected->signature.find("float") == std::string::npos,
          "selected-call hover should not include unrelated overloads");
   expect(selected && selected->range.start == call &&
@@ -28891,6 +28914,9 @@ int main() {
   expect(interfaceHover && interfaceHover->signature == "interface Renderable",
          "hover should preserve interface spelling instead of rendering a "
          "class");
+  expect(interfaceHover && interfaceHover->documentationMarkdown ==
+                               "A type that can render itself.",
+         "type hover should carry declaration documentation");
 
   const std::size_t variadicDeclaration = source.find("relay<Args");
   const std::optional<lang::HoverInfo> variadicHover =
@@ -28898,6 +28924,18 @@ int main() {
   expect(variadicHover &&
              variadicHover->signature == "void relay<Args...>(Args... values)",
          "hover should preserve variadic-pack spelling on declarations");
+
+  const std::size_t undocumentedDeclaration = source.find("Undocumented");
+  const std::size_t ordinaryCommentedDeclaration =
+      source.find("OrdinaryCommented");
+  const std::optional<lang::HoverInfo> undocumentedHover =
+      hoverAt(undocumentedDeclaration + 1);
+  const std::optional<lang::HoverInfo> ordinaryCommentedHover =
+      hoverAt(ordinaryCommentedDeclaration + 1);
+  expect(undocumentedHover && !undocumentedHover->documentationMarkdown &&
+             ordinaryCommentedHover &&
+             !ordinaryCommentedHover->documentationMarkdown,
+         "blank lines and ordinary comments should not attach API Markdown");
 
   const std::size_t readonlyReceiverCall =
       source.find("fixed.inspect") + std::string("fixed.").size();
@@ -28929,6 +28967,22 @@ int main() {
   const std::optional<lang::HoverInfo> constructor = hoverAt(construction + 1);
   expect(constructor && constructor->signature == "Box(int32_t value)",
          "constructor hover should show the selected constructor signature");
+  expect(constructor && constructor->documentationMarkdown ==
+                            "Constructs a box from `value`.",
+         "constructor-call hover should prefer constructor documentation");
+
+  const std::size_t boxTypeUse = source.find("Box box");
+  const std::optional<lang::HoverInfo> boxTypeHover = hoverAt(boxTypeUse + 1);
+  expect(boxTypeHover &&
+             boxTypeHover->documentationMarkdown == "Owns one integer value.",
+         "type-use hover should carry documentation from its semantic symbol");
+
+  const std::size_t fieldUse =
+      source.find("this.value") + std::string("this.").size();
+  const std::optional<lang::HoverInfo> fieldHover = hoverAt(fieldUse + 1);
+  expect(fieldHover && fieldHover->documentationMarkdown ==
+                           "The value returned by `inspect`.",
+         "field-use hover should carry field documentation");
 
   const std::size_t copyConstruction =
       source.rfind("Lifecycle(lifecycle_source)");
@@ -29037,7 +29091,6 @@ int main() {
                                          valueParameterDeclaration,
          "definition should connect value-generic uses to their parameter");
 
-  const std::size_t boxTypeUse = source.find("Box box");
   const std::optional<lang::DefinitionInfo> classDefinition =
       queries.definition(frontend, unit, boxTypeUse + 1);
   const std::size_t boxClass = source.find("Box", source.find("class Box"));

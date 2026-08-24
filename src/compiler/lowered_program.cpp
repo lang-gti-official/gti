@@ -510,19 +510,17 @@ private:
   void collectStatement(const Stmt &statement, LoweredDeclarationId parent,
                         ClassId ownerClass,
                         const std::vector<std::string> &namespaceScope) {
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(&statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(&statement)) {
       if (const StmtList *active = conditional->activeBranch(target_)) {
         collectList(*active, parent, ownerClass, namespaceScope);
       }
       return;
     }
-    if (const auto *group =
-            dynamic_cast<const MutableFieldGroupDecl *>(&statement)) {
+    if (const auto *group = stmtAs<MutableFieldGroupDecl>(&statement)) {
       collectList(group->members(), parent, ownerClass, namespaceScope);
       return;
     }
-    if (dynamic_cast<const StaticAssertDecl *>(&statement) != nullptr) {
+    if (stmtAs<StaticAssertDecl>(&statement) != nullptr) {
       return;
     }
 
@@ -536,22 +534,20 @@ private:
     const StmtList *children = nullptr;
     std::vector<std::string> childNamespace = namespaceScope;
     ClassId childOwner = ownerClass;
-    if (const auto *declaration =
-            dynamic_cast<const NamespaceDecl *>(&statement)) {
+    if (const auto *declaration = stmtAs<NamespaceDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Namespace;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
       children = &declaration->declarations();
       childNamespace.push_back(row.name);
     } else if (const auto *declaration =
-                   dynamic_cast<const NamespaceAliasDecl *>(&statement)) {
+                   stmtAs<NamespaceAliasDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::NamespaceAlias;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
       row.payload = LoweredNamespaceAliasDeclaration{
           .target = lowerNamePath(declaration->target())};
-    } else if (const auto *declaration =
-                   dynamic_cast<const TypeAliasDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<TypeAliasDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::TypeAlias;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
@@ -562,8 +558,7 @@ private:
             .type = info->type,
             .compilerPrivate = info->compilerPrivate};
       }
-    } else if (const auto *declaration =
-                   dynamic_cast<const ClassDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<ClassDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Class;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
@@ -614,8 +609,7 @@ private:
         row.payload = std::move(payload);
       }
       children = &declaration->members();
-    } else if (const auto *declaration =
-                   dynamic_cast<const EnumDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<EnumDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Enum;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
@@ -643,8 +637,7 @@ private:
         }
         row.payload = std::move(payload);
       }
-    } else if (const auto *declaration =
-                   dynamic_cast<const FunctionDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<FunctionDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Function;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
@@ -699,8 +692,7 @@ private:
             .hasRequiresClause = declaration->requiresClause().has_value(),
             .compilerPrivate = info->compilerPrivate};
       }
-    } else if (const auto *declaration =
-                   dynamic_cast<const ConstructorDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<ConstructorDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Constructor;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
@@ -730,8 +722,7 @@ private:
             .hasRequiresClause = declaration->requiresClause().has_value(),
             .compilerPrivate = info->compilerPrivate};
       }
-    } else if (const auto *declaration =
-                   dynamic_cast<const DestructorDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<DestructorDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Destructor;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->tilde());
@@ -741,8 +732,7 @@ private:
         row.payload = LoweredDestructorDeclaration{.owner = info->owner,
                                                    .access = info->access};
       }
-    } else if (const auto *declaration =
-                   dynamic_cast<const VariableDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<VariableDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Storage;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
@@ -762,27 +752,24 @@ private:
             .hasInitializer = declaration->initializer() != nullptr};
       }
     } else if (const auto *declaration =
-                   dynamic_cast<const AccessSpecifierDecl *>(&statement)) {
+                   stmtAs<AccessSpecifierDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Access;
       row.name = declaration->keyword().lexeme;
       row.source = tokenSpan(declaration->keyword());
       row.payload = LoweredAccessDeclaration{.access = declaration->modifier()};
-    } else if (const auto *declaration =
-                   dynamic_cast<const ExternCDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<ExternCDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::LanguageLinkage;
       row.name = declaration->language().lexeme;
       row.source = tokenSpan(declaration->keyword());
       row.payload =
           LoweredLanguageLinkageDeclaration{.linkage = LanguageLinkage::C};
       children = &declaration->declarations();
-    } else if (const auto *declaration =
-                   dynamic_cast<const ConceptDecl *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<ConceptDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Concept;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
       row.generic = !declaration->typeParameters().empty();
-    } else if (const auto *declaration =
-                   dynamic_cast<const EmptyStmt *>(&statement)) {
+    } else if (const auto *declaration = stmtAs<EmptyStmt>(&statement)) {
       row.kind = LoweredDeclarationKind::Empty;
       row.source = tokenSpan(declaration->semicolon());
     } else {
