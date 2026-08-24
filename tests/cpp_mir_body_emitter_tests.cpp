@@ -1052,6 +1052,123 @@ int32_t read_state() { return state; }
       "without concrete initialization/storage authority");
 }
 
+void testGlobalClassStorageMemberProjection() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-body-global-class-storage.gti", R"(
+class thing {
+public:
+  thing() {}
+  mut int32_t value = 0;
+};
+
+mut thing g = thing();
+
+int32_t read_global() { return g.value; }
+void write_global(int32_t value) { g.value = value; }
+
+int main() {
+  write_global(int32_t(37));
+  return read_global() == 37 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the global class-storage fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  lang::CppMirBodyEmissionMapRows rows = buildRows(frontend, frontend.mir);
+  const auto slot = std::find_if(
+      rows.symbols.begin(), rows.symbols.end(),
+      [](const lang::CppMirSymbolRepresentation &row) {
+        return row.kind == lang::CppMirSymbolRepresentationKind::Storage &&
+               row.type.kind == lang::SemanticType::Class &&
+               row.runtimeLifetimeSlot;
+      });
+  expect(slot != rows.symbols.end(),
+         "runtime-initialized class program storage should carry one exact "
+         "lifetime-slot representation row");
+  if (slot == rows.symbols.end()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(rows);
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress module{.kind = lang::MirBodyKind::Module,
+                                    .owner = 0};
+  expect(emitter.analyze(module).ready() &&
+             emitter.supportsFailureBodyText(module),
+         "Module/0 should admit the class global's runtime construction "
+         "through its copied lifetime-slot row");
+
+  std::size_t projectedBodies = 0;
+  bool projectedBodiesSupported = true;
+  bool projectedBodiesUseSlotValue = true;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    const bool projected = std::any_of(
+        function.body.places.begin(), function.body.places.end(),
+        [](const lang::MirPlace &place) {
+          return place.root == lang::MirPlaceRootKind::Symbol &&
+                 !place.projections.empty() &&
+                 std::all_of(place.projections.begin(), place.projections.end(),
+                             [](const lang::MirPlaceProjection &projection) {
+                               return projection.kind ==
+                                      lang::MirProjectionKind::Field;
+                             });
+        });
+    if (!projected) {
+      continue;
+    }
+    ++projectedBodies;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const bool supported = function.mayRaiseDefinedFailure
+                               ? emitter.supportsFailureBodyText(address)
+                               : emitter.supportsBodyText(address);
+    projectedBodiesSupported = projectedBodiesSupported && supported;
+    if (!supported) {
+      continue;
+    }
+    const lang::CppMirBodyEmissionText text =
+        function.mayRaiseDefinedFailure
+            ? emitter.emitFailureBodyText(
+                  address, "global-class-storage-regression-v1", 1)
+            : emitter.emitBodyText(address,
+                                   "global-class-storage-regression-v1", 1);
+    projectedBodiesUseSlotValue =
+        projectedBodiesUseSlotValue && text.emitted() &&
+        text.text.find(".get().value") != std::string::npos;
+  }
+  expect(projectedBodies == 2 && projectedBodiesSupported &&
+             projectedBodiesUseSlotValue,
+         "global class field reads and writes should both emit through the "
+         "engaged lifetime-slot value");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find(
+             "mir_lifetime_slot<::__gti_program::thing, true> g") !=
+                 std::string::npos &&
+             artifact.contents.find("auto &__gti_mir_p_1 = "
+                                    "::__gti_program::g;") !=
+                 std::string::npos &&
+             artifact.contents.find("::__gti_program::g.get().value") !=
+                 std::string::npos,
+         "the complete backend should declare, construct, and project the "
+         "same class-global lifetime-slot representation");
+
+  slot->runtimeLifetimeSlot = false;
+  const lang::CppMirBodyEmissionMap missingSlotMap(std::move(rows));
+  expect(!lang::CppMirBodyEmitter(frontend.mir, missingSlotMap)
+              .supportsFailureBodyText(module),
+         "removing the copied lifetime-slot fact must fail Module/0 text "
+         "admission instead of emitting an undeclared slot carrier");
+}
+
 void testConcreteClassStaticStorage() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-body-class-static-storage.gti", R"(
@@ -6581,6 +6698,8 @@ constexpr NamedTest kTests[] = {
     {"testConcreteGenericFieldOwner", testConcreteGenericFieldOwner},
     {"testAmbiguousStaticStorageFailsClosed",
      testAmbiguousStaticStorageFailsClosed},
+    {"testGlobalClassStorageMemberProjection",
+     testGlobalClassStorageMemberProjection},
     {"testConcreteClassStaticStorage", testConcreteClassStaticStorage},
     {"testOwningCheckedBodyEmitsWholeCleanupProof",
      testOwningCheckedBodyEmitsWholeCleanupProof},
