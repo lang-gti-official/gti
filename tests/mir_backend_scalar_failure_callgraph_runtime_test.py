@@ -451,9 +451,8 @@ def main() -> int:
                     )
                     if identity_emission.returncode != 0:
                         return fail(identity_emission)
-                    identity = artifact_identity(
-                        identity_cpp.read_text(encoding="utf8")
-                    )
+                    generated = identity_cpp.read_text(encoding="utf8")
+                    identity = artifact_identity(generated)
                     if label not in observed_identities:
                         observed_identities[label] = identity
                     elif identity != observed_identities[label]:
@@ -462,11 +461,19 @@ def main() -> int:
                             "optimization or C++ standard\n"
                         )
                         return 1
+                    if not validate_emission(
+                        generated,
+                        expected_bodies,
+                        label,
+                        optimization,
+                        standard,
+                    ):
+                        return 1
 
-                for label, source, expected_bodies in (
-                    *success_cases,
-                    *((case[0], case[1], case[8]) for case in failure_cases),
-                ):
+                # Failure-case emission was already required for artifact
+                # identity above. Reuse it for representation validation;
+                # only success cases still need a separate emitted artifact.
+                for label, source, expected_bodies in success_cases:
                     emitted = root / f"{label}-{optimization}-{standard}.cpp"
                     emission = emit_program(
                         compiler, source, emitted, optimization, standard

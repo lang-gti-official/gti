@@ -988,7 +988,7 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_array_user_near_miss.gti"
     )
     set_tests_properties(mir_backend_scalar_failure_callgraph_runtime
-                         PROPERTIES TIMEOUT 300)
+                         PROPERTIES TIMEOUT 300 PROCESSORS 4)
     add_test(
       NAME native_record_c_oracle
       COMMAND "${Python3_EXECUTABLE}"
