@@ -69,6 +69,8 @@ own `main` function.
 | `61-global-borrow-returns.gti` | checked mutable borrows returned from exact global and static storage |
 | `62-native-c-boundaries.gti` | fixed-array C records, NUL-terminated strings, pointer-count results, and exact callbacks |
 | `63-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
+| `64-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
+| `65-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
 
 Build and run an example from the repository root:
 
@@ -167,6 +169,11 @@ for fallible host entropy when a program explicitly needs nondeterminism.
 arithmetic and bitwise members alongside mutable compound assignment and
 prefix decrement. Selection is member-only and exact; each related operator
 is declared independently rather than synthesized by the compiler.
+
+`65-mutable-ranges.gti` uses `for (mut T& element : range)` and inferred
+`mut auto&` to update fixed arrays and `std::vector` elements in place. The
+range owner is exclusively borrowed for the loop, while each element receives
+one child mutable loan limited to its iteration.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

@@ -3775,19 +3775,23 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
              std::find(loan.carriers.begin(), loan.carriers.end(), binding) !=
                  loan.carriers.end();
     };
-    if (range.elementAccess != AccessMode::ReadOnly ||
-        rangeLoan->access != AccessMode::ReadOnly || rangeLoan->escapes ||
+    if (rangeLoan->access != range.elementAccess || rangeLoan->escapes ||
         (range.elementLoan != 0 &&
          (elementLoan == nullptr ||
-          elementLoan->access != AccessMode::ReadOnly ||
-          elementLoan->escapes))) {
+          elementLoan->access != range.elementAccess || elementLoan->escapes ||
+          (range.elementAccess == AccessMode::Mutable &&
+           (range.elementLoan == range.rangeLoan ||
+            elementLoan->parent != range.rangeLoan))))) {
       return failure(body, owner,
-                     "read-only range iteration contains a writable or "
-                     "escaping loan");
+                     "range iteration contains an incoherent or escaping "
+                     "range/element loan");
     }
     if (!carries(*rangeLoan, rangePlace->binding) ||
         (range.elementLoan != 0 &&
-         !carries(*elementLoan, elementPlace->binding))) {
+         !carries(*elementLoan, elementPlace->binding)) ||
+        (range.elementAccess == AccessMode::Mutable &&
+         range.strategy == RangeIterationStrategy::Structural &&
+         !carries(*rangeLoan, iteratorPlace->binding))) {
       return failure(body, owner,
                      "range iteration loan does not retain its exact carrier");
     }
@@ -9028,7 +9032,8 @@ verifyMirConstructorBorrowSummary(const MirConstructorInstance &instance) {
         body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
           return loan.kind == MirLoanKind::Stored && loan.escapes &&
                  loan.storedField == initializer.field &&
-                 loan.producedBy == initializer.arguments.front();
+                 (loan.producedBy == initializer.arguments.front() ||
+                  (loan.entry && loan.producedBy == 0));
         });
     if (matching == body.loans.end() ||
         matching->access != initializer.borrowAccess) {

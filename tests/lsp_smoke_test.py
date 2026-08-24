@@ -6567,7 +6567,7 @@ def main():
     test_rename_tooling(sys.argv[1], root)
     test_signature_help_tooling(sys.argv[1], root)
     test_mutable_temporary_receiver_tooling(sys.argv[1], root)
-    test_read_only_range_loan_tooling(sys.argv[1], root)
+    test_range_loan_tooling(sys.argv[1], root)
     test_temporary_argument_borrow_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
     library_source = (
@@ -7551,7 +7551,7 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         session.close()
 
 
-def test_read_only_range_loan_tooling(executable, root):
+def test_range_loan_tooling(executable, root):
     invalid_source = (
         "int main() {\n"
         "  int values[2] = {1, 2};\n"
@@ -7561,19 +7561,18 @@ def test_read_only_range_loan_tooling(executable, root):
     )
     valid_source = (
         "int main() {\n"
-        "  int values[2] = {1, 2};\n"
-        "  mut int total = 0;\n"
-        "  for (auto& value : values) { total += value; }\n"
-        "  return total - 3;\n"
+        "  mut int values[2] = {1, 2};\n"
+        "  for (mut auto& value : values) { value += 1; }\n"
+        "  return values[0] + values[1] - 5;\n"
         "}\n"
     )
     incomplete_source = (
         "int main() {\n"
-        "  int values[2] = {1, 2};\n"
-        "  for (auto& value : values\n"
+        "  mut int values[2] = {1, 2};\n"
+        "  for (mut auto& value : values\n"
         "}\n"
     )
-    path = root / "read-only-range-loan.gti"
+    path = root / "range-loan.gti"
     path.write_text(invalid_source, encoding="utf-8")
     uri = path.resolve().as_uri()
 
@@ -7610,7 +7609,16 @@ def test_read_only_range_loan_tooling(executable, root):
             and message["params"].get("version") == 1
         )
         diagnostics = invalid["params"]["diagnostics"]
-        assert any(item.get("code") == "GTI-S2083" for item in diagnostics), diagnostics
+        mutable_contract = next(
+            item for item in diagnostics if item.get("code") == "GTI-S2083"
+        )
+        binding = invalid_source.index(
+            "value", invalid_source.index("for (mut auto& value")
+        )
+        assert mutable_contract["range"]["start"] == lsp_position(
+            invalid_source, binding
+        ), mutable_contract
+        assert "mutable owner" in mutable_contract["message"], mutable_contract
 
         session.send(
             {

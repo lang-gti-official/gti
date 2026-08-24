@@ -19649,6 +19649,387 @@ int main() {
          "reuse of the original owner");
 }
 
+void testMutableRangeLoans() {
+  const lang::FrontendResult fixedArrays =
+      lang::Frontend().analyze("mutable-fixed-array-ranges.gti", R"(
+int mutate_arrays() {
+  mut int32_t values[4] = {1, 2, 3, 4};
+  int32_t observed[2] = {5, 6};
+  mut int32_t total = 0;
+  for (mut int32_t& value : values) {
+    for (int32_t& item : observed) { total += item; }
+    value += 10;
+    if (value == 12) { continue; }
+    if (value == 13) { break; }
+  }
+  return values[0] + values[1] + values[2] + values[3] + total - 73;
+}
+
+int return_from_mutable_loop() {
+  mut int32_t values[2] = {1, 2};
+  for (mut auto& value : values) {
+    value += 1;
+    if (value == 3) { return value - 3; }
+  }
+  return 1;
+}
+
+int main() { return mutate_arrays() + return_from_mutable_loop(); }
+)");
+  expect(fixedArrays.canGenerateCode() && fixedArrays.mirValid &&
+             fixedArrays.mir.valid() &&
+             lang::verifyHirProgramPlans(fixedArrays.semantics, fixedArrays.hir)
+                 .valid() &&
+             lang::verifyMirProgram(fixedArrays.mir).valid(),
+         "mutable fixed-array iteration should lower through verified "
+         "exclusive range and element loans");
+
+  bool foundMutableFixedArray = false;
+  bool fixedArrayLoanShape = true;
+  for (const lang::HirFunctionInstance &function :
+       fixedArrays.hir.functionInstances()) {
+    for (const lang::HirStatement &statement : function.body.statements) {
+      if (!statement.rangeIteration ||
+          statement.rangeIteration->elementAccess !=
+              lang::AccessMode::Mutable) {
+        continue;
+      }
+      const lang::HirRangeIteration &range = *statement.rangeIteration;
+      const lang::HirLoan *rangeLoan = function.body.findLoan(range.rangeLoan);
+      const lang::HirLoan *elementLoan =
+          function.body.findLoan(range.elementLoan);
+      foundMutableFixedArray =
+          foundMutableFixedArray ||
+          range.strategy == lang::RangeIterationStrategy::FixedArray;
+      fixedArrayLoanShape = fixedArrayLoanShape && rangeLoan != nullptr &&
+                            rangeLoan->access == lang::AccessMode::Mutable &&
+                            elementLoan != nullptr &&
+                            elementLoan->access == lang::AccessMode::Mutable &&
+                            elementLoan->parent == range.rangeLoan;
+    }
+  }
+  expect(foundMutableFixedArray && fixedArrayLoanShape,
+         "HIR should retain a mutable fixed-array range loan and one exact "
+         "mutable child element loan");
+
+  bool mutableMirLoanShape = false;
+  for (const lang::MirFunctionInstance &function :
+       fixedArrays.mir.functionInstances()) {
+    for (const lang::MirRangeIteration &range : function.body.rangeIterations) {
+      if (range.elementAccess != lang::AccessMode::Mutable) {
+        continue;
+      }
+      const lang::MirLoan *rangeLoan = function.body.findLoan(range.rangeLoan);
+      const lang::MirLoan *elementLoan =
+          function.body.findLoan(range.elementLoan);
+      mutableMirLoanShape = rangeLoan != nullptr && !rangeLoan->escapes &&
+                            rangeLoan->access == lang::AccessMode::Mutable &&
+                            elementLoan != nullptr && !elementLoan->escapes &&
+                            elementLoan->access == lang::AccessMode::Mutable &&
+                            elementLoan->parent == range.rangeLoan;
+    }
+  }
+  expect(mutableMirLoanShape,
+         "MIR should preserve the exclusive parent/child range-loan shape");
+
+  const lang::OptimizationResult fixedArrayOptimizations =
+      lang::OptimizationPipeline().run(fixedArrays.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact fixedArrayArtifact = gti_test::emitCpp(
+      fixedArrays, fixedArrays.mir, fixedArrays.mir, fixedArrayOptimizations);
+  expect(fixedArrayArtifact.contents.find("GTI verified-MIR body") !=
+                 std::string::npos &&
+             fixedArrayArtifact.contents.find(
+                 "std::int32_t *__gti_mir_loan_") != std::string::npos,
+         "the C++ backend should consume mutable fixed-array loans from the "
+         "verified MIR plan");
+
+  lang::HirProgram invalidMutableHir = fixedArrays.hir;
+  bool corruptedMutableHir = false;
+  auto &invalidMutableHirFunctions =
+      const_cast<std::vector<lang::HirFunctionInstance> &>(
+          invalidMutableHir.functionInstances());
+  for (lang::HirFunctionInstance &function : invalidMutableHirFunctions) {
+    for (const lang::HirStatement &statement : function.body.statements) {
+      if (!statement.rangeIteration ||
+          statement.rangeIteration->elementAccess !=
+              lang::AccessMode::Mutable) {
+        continue;
+      }
+      for (lang::HirLoan &loan : function.body.loans) {
+        if (loan.semanticLoan == statement.rangeIteration->elementLoan) {
+          loan.parent = 0;
+          corruptedMutableHir = true;
+          break;
+        }
+      }
+      if (corruptedMutableHir) {
+        break;
+      }
+    }
+    if (corruptedMutableHir) {
+      break;
+    }
+  }
+  expect(corruptedMutableHir && !lang::verifyHirProgramPlans(
+                                     fixedArrays.semantics, invalidMutableHir)
+                                     .valid(),
+         "HIR verification should reject a mutable element loan detached "
+         "from its exclusive range parent");
+
+  lang::MirBody invalidMutableMir;
+  bool removedMutableElementEnd = false;
+  for (const lang::MirFunctionInstance &function :
+       fixedArrays.mir.functionInstances()) {
+    const auto mutableRange =
+        std::find_if(function.body.rangeIterations.begin(),
+                     function.body.rangeIterations.end(),
+                     [](const lang::MirRangeIteration &range) {
+                       return range.elementAccess == lang::AccessMode::Mutable;
+                     });
+    if (mutableRange == function.body.rangeIterations.end()) {
+      continue;
+    }
+    invalidMutableMir = function.body;
+    for (lang::MirBlock &block : invalidMutableMir.blocks) {
+      const auto ending = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                   instruction.loan == mutableRange->elementLoan;
+          });
+      if (ending != block.instructions.end()) {
+        block.instructions.erase(ending);
+        removedMutableElementEnd = true;
+        break;
+      }
+    }
+    break;
+  }
+  expect(removedMutableElementEnd &&
+             !lang::verifyMirBody(invalidMutableMir).valid(),
+         "MIR verification should reject a mutable element loan that remains "
+         "live across an increment or exit edge");
+
+  const lang::FrontendResult standardVector = lang::Frontend().analyze(
+      "mutable-vector-range.gti", R"(
+#include <std/vector>
+
+std::vector<int32_t> make_values() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(2);
+  values.push_back(3);
+  return std::move(values);
+}
+
+int mutate_owned_temporary() {
+  mut int32_t total = 0;
+  for (mut auto& value : make_values()) {
+    value += 4;
+    total += value;
+  }
+  for (mut auto& value : std::vector<int32_t>()) { return value; }
+  return total - 13;
+}
+
+int mutate_vector() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  for (mut auto& value : values) { value += 4; }
+  return values[std::size_t(0)] + values[std::size_t(1)] +
+         values[std::size_t(2)] - 18;
+}
+
+int main() { return mutate_vector() + mutate_owned_temporary(); }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(standardVector.canGenerateCode() && standardVector.mir.valid(),
+         "std::vector should expose bounded in-place mutable iteration");
+
+  bool foundMutableVector = false;
+  for (const lang::HirFunctionInstance &function :
+       standardVector.hir.functionInstances()) {
+    for (const lang::HirStatement &statement : function.body.statements) {
+      if (!statement.rangeIteration ||
+          statement.rangeIteration->elementAccess !=
+              lang::AccessMode::Mutable) {
+        continue;
+      }
+      const lang::HirRangeIteration &range = *statement.rangeIteration;
+      const lang::HirLoan *rangeLoan = function.body.findLoan(range.rangeLoan);
+      const lang::HirLoan *elementLoan =
+          function.body.findLoan(range.elementLoan);
+      foundMutableVector =
+          range.strategy == lang::RangeIterationStrategy::Structural &&
+          rangeLoan != nullptr &&
+          rangeLoan->access == lang::AccessMode::Mutable &&
+          std::find(rangeLoan->carriers.begin(), rangeLoan->carriers.end(),
+                    range.iterator) != rangeLoan->carriers.end() &&
+          elementLoan != nullptr &&
+          elementLoan->access == lang::AccessMode::Mutable &&
+          elementLoan->parent == range.rangeLoan;
+    }
+  }
+  expect(foundMutableVector,
+         "the mutable vector iterator should be a confined carrier of the "
+         "range loan and dereference to one mutable child loan");
+
+  const lang::OptimizationResult vectorOptimizations =
+      lang::OptimizationPipeline().run(standardVector.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact vectorArtifact =
+      gti_test::emitCpp(standardVector, standardVector.mir, standardVector.mir,
+                        vectorOptimizations);
+  expect(vectorArtifact.contents.find("vector_mut_iterator") !=
+                 std::string::npos &&
+             vectorArtifact.contents.find("begin_mut__gti_mir_failure") !=
+                 std::string::npos &&
+             vectorArtifact.contents.find("prefix_storage_read_mut") !=
+                 std::string::npos,
+         "the C++ backend should emit the mutable iterator's transferred "
+         "reference capability and mutable storage read");
+
+  bool mutableTemporaryCleanup = false;
+  bool mutableTemporaryFailureCleanup = false;
+  for (const lang::MirFunctionInstance &function :
+       standardVector.mir.functionInstances()) {
+    for (const lang::MirRangeIteration &range : function.body.rangeIterations) {
+      if (!range.ownsRangeTemporary ||
+          range.elementAccess != lang::AccessMode::Mutable ||
+          range.ownerDrop == 0) {
+        continue;
+      }
+      for (const lang::MirBlock &block : function.body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+            if (event.kind != lang::MirLifecycleEventKind::Drop ||
+                event.source != range.ownerDrop) {
+              continue;
+            }
+            mutableTemporaryCleanup =
+                mutableTemporaryCleanup || !event.failureCleanup;
+            mutableTemporaryFailureCleanup =
+                mutableTemporaryFailureCleanup || event.failureCleanup;
+          }
+        }
+      }
+    }
+  }
+  expect(mutableTemporaryCleanup && mutableTemporaryFailureCleanup,
+         "owned mutable vector ranges should be destroyed exactly once on "
+         "normal and defined-failure paths");
+
+  const std::string formattedMutableRange = lang::Formatter().format(
+      "int mutate(){mut int values[2]={1,2};"
+      "for(mut auto& value:values){value+=1;}return 0;}");
+  expect(formattedMutableRange.find("for (mut auto& value : values) {") !=
+                 std::string::npos &&
+             lang::Formatter().format(formattedMutableRange) ==
+                 formattedMutableRange,
+         "formatter should preserve mutable range bindings idempotently");
+
+  const lang::FrontendResult invalidFixedArrays =
+      lang::Frontend().analyze("invalid-mutable-fixed-array-ranges.gti", R"(
+int immutable_owner() {
+  int32_t values[2] = {1, 2};
+  for (mut int32_t& value : values) { value = 0; }
+  return 0;
+}
+
+int overlapping_owner() {
+  mut int32_t values[2] = {1, 2};
+  for (mut int32_t& value : values) {
+    for (int32_t& observed : values) { return observed + value; }
+  }
+  return 0;
+}
+
+int& escape_element() {
+  mut int32_t values[2] = {1, 2};
+  for (mut int32_t& value : values) { return value; }
+  return values[0];
+}
+)");
+  expect(!invalidFixedArrays.canGenerateCode() &&
+             hasDiagnosticCode(invalidFixedArrays.diagnostics, "GTI-S2083") &&
+             hasDiagnosticCode(invalidFixedArrays.diagnostics, "GTI-S2017"),
+         "mutable range diagnostics should reject immutable owners, "
+         "overlapping loans, and escaping element loans");
+
+  const lang::FrontendResult invalidVector = lang::Frontend().analyze(
+      "invalid-mutable-vector-range.gti", R"(
+#include <std/vector>
+
+int reserve_during_iteration() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  for (mut int32_t& value : values) {
+    values.reserve(std::size_t(8));
+  }
+  return 0;
+}
+
+int push_during_iteration() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  for (mut int32_t& value : values) { values.push_back(2); }
+  return 0;
+}
+
+int clear_during_iteration() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  for (mut int32_t& value : values) { values.clear(); }
+  return 0;
+}
+
+int move_owner_during_iteration() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  for (mut int32_t& value : values) {
+    std::vector<int32_t> moved = std::move(values);
+  }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidVector.canGenerateCode() &&
+             countDiagnosticCode(invalidVector.diagnostics, "GTI-S2017") >= 4,
+         "vector reserve, push, clear, and owner moves should be rejected "
+         "while a mutable range or element loan is active");
+
+  const lang::FrontendResult missingMutableProtocol =
+      lang::Frontend().analyze("missing-mutable-range-protocol.gti", R"(
+class Iterator {
+  mut int32_t current = 0;
+public:
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(Iterator& other) { return this.current != other.current; }
+};
+
+class ReadOnlyRange {
+public:
+  Iterator begin() { return Iterator(); }
+  Iterator end() { return Iterator(); }
+};
+
+int main() {
+  mut ReadOnlyRange values{};
+  for (mut int32_t& value : values) { value = 1; }
+  return 0;
+}
+)");
+  expect(
+      !missingMutableProtocol.canGenerateCode() &&
+          hasDiagnosticCode(missingMutableProtocol.diagnostics, "GTI-S2083") &&
+          hasDiagnosticHint(missingMutableProtocol.diagnostics, "begin_mut()"),
+      "a structural range without a mutable endpoint should receive the "
+      "mutable-range protocol diagnostic and actionable hint");
+}
+
 void testNamedGenerics() {
   lang::Lexer lexer;
   const std::string source = R"(
@@ -21764,7 +22145,7 @@ int main() {
               "friend const std::int32_t & __gti_operator_dereference("
               "const IteratorContract &__gti_receiver)") != std::string::npos &&
           exactBridgeCpp.find(
-              "__gti_fn_166_dynamic_step__gti_mir_failure("
+              "_dynamic_step__gti_mir_failure("
               "::__gti_program::IteratorContract & __gti_mir_arg_0, "
               "const ::__gti_program::DerivedEnd & __gti_mir_arg_1") !=
               std::string::npos &&
@@ -30284,6 +30665,7 @@ int main(int argc, char **argv) {
   testConsumingCallableOperators();
   testRangeBasedForAndIteratorProtocol();
   testReadOnlyRangeLoans();
+  testMutableRangeLoans();
   testNamedGenerics();
   testExactQualifiedClassSpecializations();
   testConstrainedGenerics();

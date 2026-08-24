@@ -1,0 +1,22 @@
+#include <std/vector>
+
+int main() {
+  mut int32_t samples[3] = {1, 2, 3};
+  for (mut auto& sample : samples) {
+    sample *= 2;
+  }
+
+  mut std::vector<int32_t> scores = std::vector<int32_t>();
+  scores.push_back(4);
+  scores.push_back(5);
+  for (mut int32_t& score : scores) {
+    score += 10;
+  }
+
+  if (samples[0] == 2 and samples[1] == 4 and samples[2] == 6 and
+      scores[std::size_t(0)] == 14 and scores[std::size_t(1)] == 15) {
+    std::println("mutable ranges passed");
+    return 0;
+  }
+  return 1;
+}
