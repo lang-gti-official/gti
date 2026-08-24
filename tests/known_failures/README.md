@@ -17,12 +17,27 @@ passing regression, delete it here, and add a row to *Graduated* below.
 | `issue-101-forward-list.gti` | [#101](https://github.com/LukeHHA/gti/issues/101) | `forward_list::push_front` → `GTI-B0001` in its own body |
 | `issue-103-lambda-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | reading a field of a captured class inside a lambda → `GTI-B0001` (MIR verifier) |
 | `issue-104-global-array-index.gti` | [#104](https://github.com/LukeHHA/gti/issues/104) | indexing a global array → `GTI-B0001` (the #100 fix took `Field` chains, not `Index`) |
+| `issue-106-array-of-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | *declaring* a fixed array of any class type → `GTI-B0001`; no read needed |
+
+## Memory-safety reproducers
+
+`asan/` holds inputs whose defect is invisible to `check.py`, because the
+normal compiler exits with a correct diagnostic and only a sanitizer build
+shows the fault. Run them through the ASan fuzz harness instead:
+
+```sh
+build-fuzz/fuzz/gti_pipeline_fuzzer -runs=1 tests/known_failures/asan/<file>.gti
+```
+
+| File | Issue | Symptom |
+| --- | --- | --- |
+| `asan/issue-107-assign-in-and.gti` | [#107](https://github.com/LukeHHA/gti/issues/107) | an assignment as an operand of `and` → heap-use-after-free in `SemanticVisitor::visitAssignExpr` |
 
 ## Confirmed root causes
 
 Each was located by instrumenting the rejecting gate with
 `scripts/debug/explain_rejection.py`, not inferred from reading the source.
-They share the `GTI-B0001` code but are three independent defects in two
+They share the `GTI-B0001` code but are four independent defects in two
 subsystems.
 
 Anchors are symbol names and diagnostic strings because **line numbers drift**
@@ -34,6 +49,7 @@ line.
 | #101 | C++ emitter | `cpp_mir_body_emitter.cpp`, `cppMirOwnedParameterFieldBindings` — no move/drop proof for a constructor taking owned parameters into fields |
 | #103 | MIR verifier | `mir.cpp`, `"lambda capture place does not match its exact environment field"` (~15694) — `place.type` is the *projected field's* type but is compared against `captureTypes[...]`, the whole capture's type, so any field projection mismatches |
 | #104 | C++ emitter | `cpp_mir_body_emitter.cpp`, `fieldStorage` (~20676) — a symbol-rooted place admits a chain of `Field` projections but not `Index` |
+| #106 | C++ emitter | `cpp_mir_body_emitter.cpp`, `MissingAggregateRollbackMir` (~9707) — an `Aggregate` whose element drop is non-trivial is admitted only by `failureFreeFixedArrayAggregateMove` or `passiveFixedArrayConstructAggregate`, and default-initializing an array of class elements matches neither |
 
 ## Finding the gate for a new GTI-B0001
 
@@ -56,6 +72,28 @@ when a gate has no comment of its own it borrows an unrelated one — read the
 code at the reported line before believing it. And `--gate verifier` prints the
 compiler's own error text, which usually names the broken rule outright and is
 often the better clue.
+
+## Sweeping for unspellable places
+
+Most backend ICEs here are the same kind of defect: a *place* — a storage root
+plus a chain of projections — that MIR verifies but the emitter cannot spell.
+The holes cluster, and fixing one pair routinely leaves its neighbours broken
+(#104 is precisely the neighbour #100's fix missed).
+
+`scripts/debug/place_shape_matrix.py` enumerates that space directly, crossing
+each storage root (local, global, parameter, lambda capture, `this`) with each
+projection chain (none, `.field`, `.field.field`, `[i]`, `[i].field`) in both
+read and write position, then compiling one minimal program per cell.
+
+```sh
+python3 scripts/debug/place_shape_matrix.py
+python3 scripts/debug/place_shape_matrix.py --only capture --write-dir /tmp/cells
+```
+
+It exits non-zero listing every `GTI-B0001` cell. It found #106, and its cells
+are what establish the *scope* claims in #103, #104 and #106 — that writes fail
+exactly where reads do, that `this` and parameter roots are unaffected, and
+that an unprojected capture is fine while any projected one is not.
 
 ## Checking status
 
@@ -86,4 +124,16 @@ fixed. Check any future formatter reproducer with the fuzz harness instead:
 
 ```sh
 build-fuzz/fuzz/gti_formatter_fuzzer -runs=1 tests/known_failures/formatter/<file>.gti
+```
+
+## Running the fuzzers without polluting the tree
+
+libFuzzer writes every coverage-increasing input into the **first** corpus
+directory on its command line. Passing `fuzz/corpus` directly therefore drops
+thousands of untracked files next to the 25 tracked seeds. Give it a scratch
+directory first and the seed corpus second, so seeds are read and new inputs
+land somewhere disposable:
+
+```sh
+build-fuzz/fuzz/gti_pipeline_fuzzer -max_total_time=300 /tmp/gti-corpus fuzz/corpus
 ```

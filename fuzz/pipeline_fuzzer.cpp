@@ -24,6 +24,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <exception>
 #include <string>
 #include <utility>
 
@@ -69,7 +71,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data,
 
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, lang::TargetInfo::host());
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
   if (!lowered.valid()) {
     if (lowered.issues.empty()) {
       gti_fuzz::fail("pipeline",
@@ -80,13 +83,24 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data,
     return 0;
   }
 
-  const lang::BackendArtifact mirArtifact =
-      lang::MirBackend().generate(*lowered.program);
-  const lang::BackendArtifact cppArtifact =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(*lowered.program);
-  if (cppArtifact.contents.empty()) {
-    gti_fuzz::fail("pipeline", "C++ backend produced an empty artifact");
+  // A backend reports an internal error by throwing, and the driver turns
+  // that into GTI-B0001. Letting it escape here would abort the process with
+  // no diagnostic, so every ICE would look like a memory-safety crash and
+  // the first one would end the run. Catch it, print what the user would
+  // have seen, and then fail deliberately — an ICE is still a bug.
+  try {
+    const lang::BackendArtifact mirArtifact =
+        lang::MirBackend().generate(*lowered.program);
+    const lang::BackendArtifact cppArtifact =
+        lang::CppBackend(lang::CppStandard::Cpp23).generate(*lowered.program);
+    if (cppArtifact.contents.empty()) {
+      gti_fuzz::fail("pipeline", "C++ backend produced an empty artifact");
+    }
+    (void)mirArtifact;
+  } catch (const std::exception &exception) {
+    std::fprintf(stderr, "gti-fuzz(pipeline): backend internal error: %s\n",
+                 exception.what());
+    gti_fuzz::fail("pipeline", "backend raised an internal error");
   }
-  (void)mirArtifact;
   return 0;
 }

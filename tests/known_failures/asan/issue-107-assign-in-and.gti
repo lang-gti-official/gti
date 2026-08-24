@@ -1,0 +1,7 @@
+int main() {
+  mut int a = 0;
+  if (a = 3 and a == 3) {
+    return 0;
+  }
+  return 1;
+}
