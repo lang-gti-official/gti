@@ -437,25 +437,22 @@ private:
   void seedDeclarations(const StmtList &declarations,
                         std::optional<ClassId> enclosingClass) {
     for (const StmtPtr &statement : declarations) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           seedDeclarations(*branch, enclosingClass);
         }
         continue;
       }
       if (const auto *namespaceDeclaration =
-              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+              stmtAs<NamespaceDecl>(statement.get())) {
         seedDeclarations(namespaceDeclaration->declarations(), enclosingClass);
         continue;
       }
-      if (const auto *externC =
-              dynamic_cast<const ExternCDecl *>(statement.get())) {
+      if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
         seedDeclarations(externC->declarations(), enclosingClass);
         continue;
       }
-      if (const auto *classDeclaration =
-              dynamic_cast<const ClassDecl *>(statement.get())) {
+      if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
         const ClassTypeInfo *classInfo =
             baseModel->findClassType(*classDeclaration);
         if (classInfo != nullptr && classInfo->genericParameters.empty()) {
@@ -467,8 +464,7 @@ private:
                              : std::optional<ClassId>{classInfo->id});
         continue;
       }
-      if (const auto *enumDeclaration =
-              dynamic_cast<const EnumDecl *>(statement.get())) {
+      if (const auto *enumDeclaration = stmtAs<EnumDecl>(statement.get())) {
         const EnumTypeInfo *info = baseModel->findEnumType(*enumDeclaration);
         if (info != nullptr) {
           HirEnum lowered{.declaration = info->id,
@@ -489,8 +485,7 @@ private:
         }
         continue;
       }
-      if (const auto *function =
-              dynamic_cast<const FunctionDecl *>(statement.get())) {
+      if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
         const FunctionInfo *info = baseModel->findFunction(*function);
         if (info == nullptr || !info->genericParameters.empty()) {
           continue;
@@ -810,15 +805,14 @@ private:
       const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments) {
     for (const StmtPtr &member : members) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(member.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(member.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           enqueueVirtualMembers(*branch, substitution, classTypeArguments,
                                 classValueArguments);
         }
         continue;
       }
-      const auto *function = dynamic_cast<const FunctionDecl *>(member.get());
+      const auto *function = stmtAs<FunctionDecl>(member.get());
       const FunctionInfo *info =
           function == nullptr ? nullptr : baseModel->findFunction(*function);
       if (info == nullptr || !info->virtualMethod || info->ownerClass == 0 ||
@@ -1868,7 +1862,7 @@ private:
     if (statement == nullptr) {
       return std::nullopt;
     }
-    if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+    if (const auto *block = stmtAs<BlockStmt>(statement)) {
       return appendStatement({.kind = HirStatementKind::Block,
                               .source = statement,
                               .unsafeBlock = block->isUnsafe(),
@@ -1877,8 +1871,7 @@ private:
                                   classValueArguments, body)},
                              body);
     }
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
       std::vector<HirStatementId> statements;
       if (const StmtList *branch = conditional->activeBranch(target)) {
         statements = lowerStatements(*branch, model, classArguments,
@@ -1889,14 +1882,13 @@ private:
                               .statements = std::move(statements)},
                              body);
     }
-    if (dynamic_cast<const CompileErrorDirective *>(statement) != nullptr) {
+    if (stmtAs<CompileErrorDirective>(statement) != nullptr) {
       return std::nullopt;
     }
-    if (dynamic_cast<const StaticAssertDecl *>(statement) != nullptr) {
+    if (stmtAs<StaticAssertDecl>(statement) != nullptr) {
       return std::nullopt;
     }
-    if (const auto *expression =
-            dynamic_cast<const ExpressionStmt *>(statement)) {
+    if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
       return appendStatement(
           {.kind = HirStatementKind::Expression,
            .source = statement,
@@ -1904,7 +1896,7 @@ private:
                                     classArguments, classValueArguments, body)},
           body);
     }
-    if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
+    if (const auto *forStatement = stmtAs<ForStmt>(statement)) {
       return appendStatement(
           {.kind = HirStatementKind::For,
            .source = statement,
@@ -1921,7 +1913,7 @@ private:
                                   classArguments, classValueArguments, body)},
           body);
     }
-    if (const auto *rangeFor = dynamic_cast<const RangeForStmt *>(statement)) {
+    if (const auto *rangeFor = stmtAs<RangeForStmt>(statement)) {
       const std::optional<HirStatementId> loweredBody =
           lowerStatement(rangeFor->lowered().get(), model, classArguments,
                          classValueArguments, body);
@@ -2000,7 +1992,7 @@ private:
                               .rangeIteration = std::move(range)},
                              body);
     }
-    if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+    if (const auto *ifStatement = stmtAs<IfStmt>(statement)) {
       if (ifStatement->isConstexpr()) {
         std::vector<HirStatementId> statements;
         if (const std::optional<bool> selected =
@@ -2036,8 +2028,7 @@ private:
                model)},
           body);
     }
-    if (const auto *loopControl =
-            dynamic_cast<const LoopControlStmt *>(statement)) {
+    if (const auto *loopControl = stmtAs<LoopControlStmt>(statement)) {
       return appendStatement(
           {.kind = loopControl->keyword().kind == TokenKind::BREAK
                        ? HirStatementKind::Break
@@ -2045,8 +2036,7 @@ private:
            .source = statement},
           body);
     }
-    if (const auto *returnStatement =
-            dynamic_cast<const ReturnStmt *>(statement)) {
+    if (const auto *returnStatement = stmtAs<ReturnStmt>(statement)) {
       return appendStatement(
           {.kind = HirStatementKind::Return,
            .source = statement,
@@ -2054,8 +2044,7 @@ private:
                                     classArguments, classValueArguments, body)},
           body);
     }
-    if (const auto *switchStatement =
-            dynamic_cast<const SwitchStmt *>(statement)) {
+    if (const auto *switchStatement = stmtAs<SwitchStmt>(statement)) {
       const std::optional<HirValueId> subject =
           lowerExpression(switchStatement->expression(), model, classArguments,
                           classValueArguments, body);
@@ -2126,8 +2115,7 @@ private:
            .exhaustiveSwitch = model.isExhaustiveSwitch(*switchStatement)},
           body);
     }
-    if (const auto *structured =
-            dynamic_cast<const StructuredBindingDecl *>(statement)) {
+    if (const auto *structured = stmtAs<StructuredBindingDecl>(statement)) {
       const StructuredBindingInfo *info =
           model.findStructuredBinding(*structured);
       const BindingInfo sourceInfo =
@@ -2168,7 +2156,7 @@ private:
                               .structuredBindings = std::move(bindings)},
                              body);
     }
-    if (const auto *variable = dynamic_cast<const VariableDecl *>(statement)) {
+    if (const auto *variable = stmtAs<VariableDecl>(statement)) {
       return appendStatement(
           {.kind = HirStatementKind::Variable,
            .source = statement,
@@ -2177,7 +2165,7 @@ private:
                                     classArguments, classValueArguments, body)},
           body);
     }
-    if (const auto *doWhile = dynamic_cast<const DoWhileStmt *>(statement)) {
+    if (const auto *doWhile = stmtAs<DoWhileStmt>(statement)) {
       const std::optional<HirStatementId> loweredBody =
           lowerStatement(doWhile->body().get(), model, classArguments,
                          classValueArguments, body);
@@ -2190,8 +2178,7 @@ private:
                               .body = loweredBody},
                              body);
     }
-    if (const auto *whileStatement =
-            dynamic_cast<const WhileStmt *>(statement)) {
+    if (const auto *whileStatement = stmtAs<WhileStmt>(statement)) {
       return appendStatement(
           {.kind = HirStatementKind::While,
            .source = statement,
@@ -2202,7 +2189,7 @@ private:
                                   classArguments, classValueArguments, body)},
           body);
     }
-    if (dynamic_cast<const EmptyStmt *>(statement) != nullptr) {
+    if (stmtAs<EmptyStmt>(statement) != nullptr) {
       return appendStatement(
           {.kind = HirStatementKind::Empty, .source = statement}, body);
     }
@@ -2220,7 +2207,7 @@ private:
         dispatchOwner.classId == target.ownerClass) {
       return dispatchOwner.arguments;
     }
-    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+    if (const auto *member = exprAs<Get>(callee.get())) {
       SemanticType receiver = model.typeOf(*member->object());
       if (receiver.kind == SemanticType::RawPointer &&
           receiver.arguments.size() == 1) {
@@ -2258,7 +2245,7 @@ private:
         dispatchOwner.classId == target.ownerClass) {
       return dispatchOwner.valueArguments;
     }
-    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+    if (const auto *member = exprAs<Get>(callee.get())) {
       SemanticType receiver = model.typeOf(*member->object());
       if (receiver.kind == SemanticType::RawPointer &&
           receiver.arguments.size() == 1) {
@@ -2775,7 +2762,7 @@ private:
       }
     };
 
-    if (const auto *assign = dynamic_cast<const Assign *>(raw)) {
+    if (const auto *assign = exprAs<Assign>(raw)) {
       const ResolvedOperatorInfo *resolved = model.findOperator(*assign);
       if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
         kind = HirValueKind::Call;
@@ -2810,18 +2797,17 @@ private:
         operation = assign->oper().kind;
       }
       lowerOperand(assign->value());
-    } else if (const auto *initializer =
-                   dynamic_cast<const ArrayInitializer *>(raw)) {
+    } else if (const auto *initializer = exprAs<ArrayInitializer>(raw)) {
       kind = HirValueKind::ArrayInitializer;
       for (const ExprPtr &element : initializer->elements()) {
         lowerOperand(element);
       }
-    } else if (const auto *binary = dynamic_cast<const Binary *>(raw)) {
+    } else if (const auto *binary = exprAs<Binary>(raw)) {
       kind = HirValueKind::Binary;
       operation = binary->oper().kind;
       lowerOperand(binary->left());
       lowerOperand(binary->right());
-    } else if (const auto *call = dynamic_cast<const Call *>(raw)) {
+    } else if (const auto *call = exprAs<Call>(raw)) {
       const ResolvedCallInfo *resolved = model.findCall(*call);
       const ResolvedPayloadConstructionInfo *payload =
           model.findPayloadConstruction(*call);
@@ -2861,7 +2847,7 @@ private:
                 : nullptr;
         if (resolvedInfo != nullptr && resolvedInfo->ownerClass != 0 &&
             !resolved->declaration->isStatic() &&
-            dynamic_cast<const Variable *>(call->callee().get()) != nullptr &&
+            exprAs<Variable>(call->callee().get()) != nullptr &&
             currentReceiverType.kind == SemanticType::Class) {
           receiver = lowerImplicitReceiver(body);
         }
@@ -2869,22 +2855,20 @@ private:
       for (const ExprPtr &argument : call->arguments()) {
         lowerOperand(argument);
       }
-    } else if (const auto *conditional =
-                   dynamic_cast<const ConditionalExpr *>(raw)) {
+    } else if (const auto *conditional = exprAs<ConditionalExpr>(raw)) {
       kind = HirValueKind::Conditional;
       lowerOperand(conditional->condition());
       lowerOperand(conditional->thenExpression());
       lowerOperand(conditional->elseExpression());
-    } else if (const auto *conversion = dynamic_cast<const Conversion *>(raw)) {
+    } else if (const auto *conversion = exprAs<Conversion>(raw)) {
       kind = HirValueKind::Conversion;
       lowerOperand(conversion->value());
-    } else if (const auto *initializer =
-                   dynamic_cast<const DirectInitializer *>(raw)) {
+    } else if (const auto *initializer = exprAs<DirectInitializer>(raw)) {
       kind = HirValueKind::DirectInitializer;
       for (const ExprPtr &argument : initializer->arguments()) {
         lowerOperand(argument);
       }
-    } else if (const auto *set = dynamic_cast<const DereferenceSet *>(raw)) {
+    } else if (const auto *set = exprAs<DereferenceSet>(raw)) {
       const ResolvedOperatorInfo *resolved = model.findOperator(*set);
       if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
         kind = HirValueKind::Call;
@@ -2922,18 +2906,18 @@ private:
         lowerOperand(set->object());
         lowerOperand(set->value());
       }
-    } else if (const auto *get = dynamic_cast<const Get *>(raw)) {
+    } else if (const auto *get = exprAs<Get>(raw)) {
       kind = HirValueKind::MemberAccess;
       operation = get->access().kind;
       lowerOperand(get->object());
-    } else if (const auto *grouping = dynamic_cast<const Grouping *>(raw)) {
+    } else if (const auto *grouping = exprAs<Grouping>(raw)) {
       kind = HirValueKind::Grouping;
       lowerOperand(grouping->expression());
-    } else if (const auto *index = dynamic_cast<const Index *>(raw)) {
+    } else if (const auto *index = exprAs<Index>(raw)) {
       kind = HirValueKind::Index;
       lowerOperand(index->object());
       lowerOperand(index->index());
-    } else if (const auto *set = dynamic_cast<const IndexSet *>(raw)) {
+    } else if (const auto *set = exprAs<IndexSet>(raw)) {
       const ResolvedOperatorInfo *resolved = model.findOperator(*set);
       if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
         kind = HirValueKind::Call;
@@ -2972,7 +2956,7 @@ private:
         lowerOperand(set->index());
         lowerOperand(set->value());
       }
-    } else if (const auto *lambda = dynamic_cast<const Lambda *>(raw)) {
+    } else if (const auto *lambda = exprAs<Lambda>(raw)) {
       kind = HirValueKind::Lambda;
       const HirLambdaId target =
           lowerLambda(*lambda, model, classArguments, classValueArguments);
@@ -2982,7 +2966,7 @@ private:
       for (const LambdaCapture &capture : lambda->captures()) {
         lowerOperand(capture.initializer);
       }
-    } else if (dynamic_cast<const LayoutQuery *>(raw) != nullptr) {
+    } else if (exprAs<LayoutQuery>(raw) != nullptr) {
       kind = HirValueKind::LayoutQuery;
       if (const std::optional<ConstantValue> constant =
               model.findConstant(*raw)) {
@@ -2991,8 +2975,7 @@ private:
           literal = Literal{integer->magnitude};
         }
       }
-    } else if (const auto *literalExpression =
-                   dynamic_cast<const LiteralExpr *>(raw)) {
+    } else if (const auto *literalExpression = exprAs<LiteralExpr>(raw)) {
       const ResolvedConstructionInfo *construction =
           model.findConstruction(*literalExpression);
       if (construction != nullptr &&
@@ -3016,27 +2999,25 @@ private:
         kind = HirValueKind::Literal;
         literal = literalExpression->value();
       }
-    } else if (const auto *logical = dynamic_cast<const Logical *>(raw)) {
+    } else if (const auto *logical = exprAs<Logical>(raw)) {
       kind = HirValueKind::Logical;
       operation = logical->oper().kind;
       lowerOperand(logical->left());
       lowerOperand(logical->right());
-    } else if (const auto *fold = dynamic_cast<const PackFold *>(raw)) {
+    } else if (const auto *fold = exprAs<PackFold>(raw)) {
       kind = HirValueKind::PackFold;
-      if (const auto *pattern =
-              dynamic_cast<const Call *>(fold->pattern().get())) {
+      if (const auto *pattern = exprAs<Call>(fold->pattern().get())) {
         for (const ExprPtr &argument : pattern->arguments()) {
           lowerOperand(argument);
         }
       }
-    } else if (dynamic_cast<const PackExpansion *>(raw) != nullptr) {
+    } else if (exprAs<PackExpansion>(raw) != nullptr) {
       kind = HirValueKind::PackExpansion;
-    } else if (const auto *postfix = dynamic_cast<const Postfix *>(raw)) {
+    } else if (const auto *postfix = exprAs<Postfix>(raw)) {
       kind = HirValueKind::Postfix;
       operation = postfix->oper().kind;
       lowerOperand(postfix->expression());
-    } else if (const auto *qualified =
-                   dynamic_cast<const QualifiedName *>(raw)) {
+    } else if (const auto *qualified = exprAs<QualifiedName>(raw)) {
       kind = HirValueKind::QualifiedName;
       if (const ResolvedEnumeratorInfo *resolved =
               model.findEnumerator(*qualified)) {
@@ -3049,9 +3030,9 @@ private:
           kind = HirValueKind::PayloadConstruction;
         }
       }
-    } else if (dynamic_cast<const This *>(raw) != nullptr) {
+    } else if (exprAs<This>(raw) != nullptr) {
       kind = HirValueKind::This;
-    } else if (const auto *set = dynamic_cast<const Set *>(raw)) {
+    } else if (const auto *set = exprAs<Set>(raw)) {
       const ResolvedOperatorInfo *resolved = model.findOperator(*set);
       if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
         kind = HirValueKind::Call;
@@ -3095,7 +3076,7 @@ private:
         lowerOperand(set->object());
         lowerOperand(set->value());
       }
-    } else if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
+    } else if (const auto *unary = exprAs<Unary>(raw)) {
       const SemanticType *rangeType =
           unary->rangeObject() ? model.findType(*unary->rangeObject())
                                : nullptr;
@@ -3115,10 +3096,10 @@ private:
         operation = unary->oper().kind;
         lowerOperand(unary->right());
       }
-    } else if (const auto *unexpected = dynamic_cast<const Unexpected *>(raw)) {
+    } else if (const auto *unexpected = exprAs<Unexpected>(raw)) {
       kind = HirValueKind::Unexpected;
       lowerOperand(unexpected->error());
-    } else if (dynamic_cast<const Variable *>(raw) != nullptr) {
+    } else if (exprAs<Variable>(raw) != nullptr) {
       const ExpressionInfo *info = model.findExpression(*raw);
       if (const std::optional<ConstantValue> constant =
               model.findConstant(*raw);
@@ -3164,9 +3145,8 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
-    if (const auto *call = dynamic_cast<const Call *>(raw);
-        call != nullptr &&
-        dynamic_cast<const Get *>(call->callee().get()) != nullptr &&
+    if (const auto *call = exprAs<Call>(raw);
+        call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&
         !value.operands.empty()) {
       const HirValue *callee = body.findValue(value.operands.front());
       if (callee != nullptr && callee->kind == HirValueKind::MemberAccess &&
@@ -3236,7 +3216,7 @@ private:
       value.operands.insert(value.operands.begin(),
                             lowerImplicitReceiver(body));
     }
-    if (const auto *call = dynamic_cast<const Call *>(raw)) {
+    if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
         value.dispatch = resolved->dispatch;
@@ -3327,7 +3307,7 @@ private:
         }
       }
     }
-    if (const auto *fold = dynamic_cast<const PackFold *>(raw)) {
+    if (const auto *fold = exprAs<PackFold>(raw)) {
       if (const ResolvedPackFoldInfo *resolved = model.findPackFold(*fold)) {
         value.packFoldSymbol = resolved->packSymbol;
         value.packFoldParameter = resolved->packParameter;
@@ -3369,10 +3349,9 @@ private:
       value.borrowAccess = construction->borrowAccess;
       value.constructorKind = construction->kind;
       std::optional<SourceSpan> site;
-      if (const auto *call = dynamic_cast<const Call *>(raw)) {
+      if (const auto *call = exprAs<Call>(raw)) {
         site = tokenSpan(call->paren());
-      } else if (const auto *initializer =
-                     dynamic_cast<const DirectInitializer *>(raw)) {
+      } else if (const auto *initializer = exprAs<DirectInitializer>(raw)) {
         site = tokenSpan(initializer->brace());
       }
       const HirConstructorInstanceId target =
@@ -3431,32 +3410,32 @@ private:
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
         SemanticType receiverType = resolved->dispatchOwner;
-        if (const auto *binary = dynamic_cast<const Binary *>(raw)) {
+        if (const auto *binary = exprAs<Binary>(raw)) {
           if (receiverType.kind != SemanticType::Class ||
               receiverType.classId != target->ownerClass) {
             receiverType = model.typeOf(*binary->left());
           }
-        } else if (const auto *get = dynamic_cast<const Get *>(raw)) {
+        } else if (const auto *get = exprAs<Get>(raw)) {
           if (receiverType.kind != SemanticType::Class ||
               receiverType.classId != target->ownerClass) {
             receiverType = model.typeOf(*get->object());
           }
-        } else if (const auto *index = dynamic_cast<const Index *>(raw)) {
+        } else if (const auto *index = exprAs<Index>(raw)) {
           if (receiverType.kind != SemanticType::Class ||
               receiverType.classId != target->ownerClass) {
             receiverType = model.typeOf(*index->object());
           }
-        } else if (const auto *call = dynamic_cast<const Call *>(raw)) {
+        } else if (const auto *call = exprAs<Call>(raw)) {
           if (receiverType.kind != SemanticType::Class ||
               receiverType.classId != target->ownerClass) {
             receiverType = model.typeOf(*call->callee());
           }
-        } else if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
+        } else if (const auto *unary = exprAs<Unary>(raw)) {
           if (receiverType.kind != SemanticType::Class ||
               receiverType.classId != target->ownerClass) {
             receiverType = model.typeOf(*unary->right());
           }
-        } else if (dynamic_cast<const Assign *>(raw) != nullptr) {
+        } else if (exprAs<Assign>(raw) != nullptr) {
           if (receiverType.kind != SemanticType::Class ||
               receiverType.classId != target->ownerClass) {
             const SymbolRecord *receiverSymbol =
@@ -3504,7 +3483,7 @@ private:
                             {}, resolved->returnType, resolved->parameterTypes);
       }
     }
-    if (const auto *call = dynamic_cast<const Call *>(raw);
+    if (const auto *call = exprAs<Call>(raw);
         call != nullptr && kind == HirValueKind::Call &&
         value.intrinsic == IntrinsicKind::None && !value.constructorTarget &&
         value.functionTarget &&
@@ -3592,10 +3571,9 @@ private:
               static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
           value.operands.end());
       const std::size_t explicitArgumentCount =
-          dynamic_cast<const Call *>(raw) != nullptr
-              ? dynamic_cast<const Call *>(raw)->arguments().size()
-          : dynamic_cast<const DirectInitializer *>(raw) != nullptr
-              ? dynamic_cast<const DirectInitializer *>(raw)->arguments().size()
+          exprAs<Call>(raw) != nullptr ? exprAs<Call>(raw)->arguments().size()
+          : exprAs<DirectInitializer>(raw) != nullptr
+              ? exprAs<DirectInitializer>(raw)->arguments().size()
               : value.parameterTypes.size();
       if (std::optional<std::vector<HirCallArgument>> plannedArguments =
               orderedConstructorArguments(value, arguments,

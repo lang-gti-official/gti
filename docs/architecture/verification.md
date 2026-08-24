@@ -61,6 +61,8 @@ assertions.
 | `project_model` | manifests, plans, profiles, targets, native inputs, path safety |
 | `cli_workflow` / `project_cli_workflow` | end-to-end direct and project commands |
 | `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits |
+| `frontend_cache_invalidation` | cached/uncached semantic and diagnostic equivalence, immutable AST hover, root/dependency/unrelated invalidation, dirty-overlay/disk transitions, configuration identity, stale source generations, and entry/estimated-byte LRU bounds |
+| `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, cancellation/supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
 | `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
@@ -92,6 +94,16 @@ mode, where build and result correctness are required but elapsed time is not
 compared with a threshold. Full local runs retain their exact commands,
 compiler identity, source and emitted-code digests, randomized sample order,
 and every raw sample for later analysis.
+
+The LSP has a separate protocol-level scalability runner,
+`scripts/lsp_benchmark.py`. Its schema-2 report retains every latency sample
+and every opt-in frontend trace, summarizes unit-level load/lex/parse/semantic
+work and cache occupancy, and can compare repeated-edit and cold-open medians
+with a baseline captured under the same local build and machine configuration.
+When both binaries are supplied, it alternates current-first and baseline-first
+pairs to limit host thermal/load bias. Its CTest smoke gate enforces the
+protocol and work/invalidation invariants but does not enforce the 30% campaign
+target on shared CI timing.
 
 The release workflow separately installs the `gti_toolchain` component into a
 clean staging prefix, configures an external consumer with `find_package(GTI

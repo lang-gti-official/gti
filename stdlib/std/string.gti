@@ -40,6 +40,7 @@ namespace std {
     };
   }
 
+  /// An owning, move-only, mutable sequence of characters.
   class string {
     mut gti_internal::prefix_storage<char> data;
     mut size_t count = 0;
@@ -103,10 +104,12 @@ namespace std {
     string(string& other) = delete;
     string(string&& other) = default;
 
+    /// Returns the number of live characters.
     size_t size() {
       return this.count;
     }
 
+    /// Returns whether the string contains no characters.
     bool empty() {
       return this.count == 0;
     }
@@ -131,6 +134,7 @@ namespace std {
       return gti_internal::prefix_storage_read_mut(this.data, this.count - 1);
     }
 
+    /// Returns the number of characters that fit without growing storage.
     size_t capacity() {
       return this.reserved;
     }

@@ -5,6 +5,10 @@
 #define FAST_PATH
 
 #if defined(FAST_PATH)
+/// Returns the value selected by the active configuration branch.
+///
+/// Hovering either this declaration or its call shows this Markdown together
+/// with the compiler-selected signature.
 int selected_value() {
   return 40;
 }
@@ -17,6 +21,7 @@ int selected_value() {
 #undef FAST_PATH
 
 #ifndef FAST_PATH
+/// Supplies the portable fallback adjustment.
 int final_bias() {
   return 2;
 }

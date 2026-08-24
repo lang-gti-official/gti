@@ -23,6 +23,8 @@
 
 namespace lang {
 
+struct FrontendWorkMetrics;
+
 using ClassId = std::size_t;
 using ConceptId = std::size_t;
 using ConstructorId = std::size_t;
@@ -1471,6 +1473,7 @@ struct SymbolRecord {
   bool internalLinkage = false;
   bool generated = false;
   bool compilerPrivate = false;
+  std::optional<std::string> documentationMarkdown;
 };
 
 // Byte-exact source geometry of one call's argument list, recorded by the
@@ -1563,6 +1566,9 @@ private:
   void rebase(const SemanticDatabase *baseDatabase);
 
   SymbolId recordSymbol(SymbolRecord symbol);
+
+  void setSymbolDocumentation(SymbolId symbol,
+                              std::string documentationMarkdown);
 
   [[nodiscard]] SymbolId
   symbolForDeclaration(SourceUnitId sourceUnit, const SourceSpan &span,
@@ -2114,6 +2120,9 @@ private:
 
   SymbolId recordSymbol(SymbolRecord symbol);
 
+  void setSymbolDocumentation(SymbolId symbol,
+                              std::string documentationMarkdown);
+
   [[nodiscard]] SymbolId
   symbolForDeclaration(SourceUnitId sourceUnit, const SourceSpan &span,
                        std::string_view generatedName = {}) const;
@@ -2246,7 +2255,8 @@ class SemanticVisitor {
 public:
   explicit SemanticVisitor(TargetInfo target = TargetInfo::host(),
                            const SourceGraph *sourceGraph = nullptr,
-                           bool toolingOccurrences = true);
+                           bool toolingOccurrences = true,
+                           FrontendWorkMetrics *workMetrics = nullptr);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;

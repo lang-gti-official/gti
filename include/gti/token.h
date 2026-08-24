@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -253,6 +254,11 @@ struct Token {
   std::string source;
   bool completion = false;
   bool generated = false;
+  // A contiguous `///` block immediately preceding this token. The lexer
+  // keeps documentation as leading trivia instead of emitting comment tokens
+  // into the grammar; the parser transfers it to the declaration whose first
+  // token owns the trivia.
+  std::shared_ptr<const std::string> leadingDocumentationMarkdown;
   // The loader resolves each flag reference in source order before parsing.
   // Target comparisons and boolean composition remain semantic authority.
   std::optional<bool> configurationFlagDefined;

@@ -25,8 +25,10 @@
 namespace std {
   namespace filesystem {
 
+    /// An owning pathname value that performs lexical path manipulation.
     class path {
     public:
+      /// Constructs an empty path.
       path() {}
 
       // Copying is explicit through clone(), as elsewhere in the GTI standard
@@ -37,6 +39,7 @@ namespace std {
       // Construction from text. Callers on a compiler predating the class-value
       // constructor emission fix should use `path()` followed by `assign()`,
       // which is equivalent and is itself part of the C++ surface.
+      /// Constructs a path containing `source` exactly as supplied.
       path(std::string_view source) {
         this.text.append(source);
       }
@@ -148,6 +151,7 @@ namespace std {
 
       // --- Format observers -----------------------------------------------
 
+      /// Returns a fresh owning string containing the native path spelling.
       std::string string() {
         mut std::string result = std::string("");
         path::copy_text(result, this.text);

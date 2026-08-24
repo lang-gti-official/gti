@@ -253,6 +253,7 @@ add_library(
   "src/compiler/format_config.cpp"
   "src/compiler/formatter.cpp"
   "src/compiler/frontend.cpp"
+  "src/compiler/frontend_cache.cpp"
   "src/compiler/hir.cpp"
   "src/compiler/hir_model.cpp"
   "src/compiler/hir_lowering.cpp"
@@ -398,9 +399,19 @@ target_compile_definitions(
 
 if(GTI_BUILD_LSP)
   find_package(Threads REQUIRED)
+  add_library("gti_lsp_state" STATIC "src/lsp/frontend_snapshot_state.cpp")
+  target_include_directories(
+    "gti_lsp_state"
+    PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/lsp>"
+  )
+  target_link_libraries("gti_lsp_state" PUBLIC gti_compiler)
+  target_compile_features("gti_lsp_state" PUBLIC cxx_std_20)
+
   add_executable("gti_lsp" "src/lsp/main.cpp")
   target_include_directories("gti_lsp" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
-  target_link_libraries("gti_lsp" PRIVATE gti_driver Threads::Threads)
+  target_link_libraries(
+    "gti_lsp" PRIVATE gti_driver gti_lsp_state Threads::Threads
+  )
   target_compile_definitions(
     "gti_lsp"
     PRIVATE
@@ -547,6 +558,13 @@ if(BUILD_TESTING)
                  "tests/compiler_library_smoke.cpp")
   target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)
   add_test(NAME compiler_library_boundary COMMAND gti_compiler_library_smoke)
+
+  if(TARGET gti_lsp_state)
+    add_executable("gti_frontend_cache_tests"
+                   "tests/frontend_cache_tests.cpp")
+    target_link_libraries("gti_frontend_cache_tests" PRIVATE gti_lsp_state)
+    add_test(NAME frontend_cache_invalidation COMMAND gti_frontend_cache_tests)
+  endif()
 
   add_executable("gti_cpp_backend_library_smoke"
                  "tests/cpp_backend_library_smoke.cpp")
@@ -1170,9 +1188,19 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
                 "$<TARGET_FILE:gti_lsp>"
       )
+      add_test(
+        NAME lsp_scalability_benchmark_smoke
+        COMMAND
+          "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/scripts/lsp_benchmark.py"
+          --lsp "$<TARGET_FILE:gti_lsp>"
+          --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
+          --output "${CMAKE_CURRENT_BINARY_DIR}/lsp-benchmark-smoke"
+          --dependencies 8 --smoke
+      )
       if(GTI_RELEASE_BUILD)
         set_tests_properties(
-          lsp_protocol block_comment_lsp
+          lsp_protocol block_comment_lsp lsp_scalability_benchmark_smoke
           PROPERTIES ENVIRONMENT
             "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
         )
