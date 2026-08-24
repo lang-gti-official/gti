@@ -24,6 +24,7 @@ passing regression and delete it here.
 | `issue-95-global-no-main.gti` | [#95](https://github.com/LukeHHA/gti/issues/95) | a global variable with no `main` → `GTI-B0001` |
 | `issue-101-pair.gti` | [#101](https://github.com/LukeHHA/gti/issues/101) | `std::make_pair` → `GTI-B0001` in the stdlib body |
 | `issue-101-forward-list.gti` | [#101](https://github.com/LukeHHA/gti/issues/101) | `forward_list::push_front` → `GTI-B0001` in its own body |
+| `issue-103-lambda-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | reading a field of a captured class inside a lambda → `GTI-B0001` (MIR verifier) |
 
 ## Formatter reproducers
 
@@ -40,6 +41,36 @@ Check it with the fuzz harness rather than `check.py`:
 build-fuzz/fuzz/gti_formatter_fuzzer -runs=1 \
   tests/known_failures/formatter/issue-96-token-merge.gti
 ```
+
+## Confirmed root causes
+
+Each was located by instrumenting the rejecting gate (see
+`scripts/debug/explain_rejection.py`), not inferred. They share the
+`GTI-B0001` code but are five independent defects in three subsystems.
+
+| Issue | Subsystem | Gate |
+| --- | --- | --- |
+| #92 | MIR verifier | `mir.cpp:2004` — the read-only exemption admits `CallResult`/root-`Stored` siblings, but an outer range-`for`'s loan is `Local` |
+| #95 | program plan | `cpp_mir_program_plan.cpp:928` — a global makes initialization expected, but with no `main` nothing calls `Module/0` |
+| #100 | C++ emitter | `cpp_mir_body_emitter.cpp:20398` — symbol-rooted places admit no projections (field *or* index) |
+| #101 | C++ emitter | `cpp_mir_body_emitter.cpp:19920` — no move/drop proof for constructors taking owned parameters into fields |
+| #103 | MIR verifier | `mir.cpp:14960` — a capture place's type is compared to the whole capture's type, so any field projection mismatches |
+
+## Finding the gate for a new GTI-B0001
+
+`scripts/debug/explain_rejection.py` automates what located every root cause
+in the table above: it temporarily instruments the rejecting subsystem,
+rebuilds, runs the reproducer, names the gates that fired with their guarding
+comment, and always restores the source.
+
+```sh
+python3 scripts/debug/explain_rejection.py --source bad.gti              # emitter
+python3 scripts/debug/explain_rejection.py --source bad.gti --gate verifier
+```
+
+Gates inside speculative `is it shape X?` lambdas are flagged `(probe)` and
+are usually not the cause; a gate in the function body proper is. If no gate
+fires, the rejection is in the other subsystem — try the other `--gate`.
 
 ## Checking status
 
