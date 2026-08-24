@@ -7037,12 +7037,35 @@ int folded_branch() {
   return 6;
 }
 
+class CleanupProbe {
+public:
+  CleanupProbe() {}
+  ~CleanupProbe() {}
+};
+
+int retained_unreachable_cleanup() {
+  if (1 < 2) {
+    return 1;
+  }
+  CleanupProbe probe{};
+  return 2;
+}
+
+int retained_trapping_computation(int divisor) {
+  for (mut int index = 0; index < 1; 8 / divisor) {
+    index++;
+  }
+  return 1;
+}
+
 int main() {
   if (promoted_branch(true) != 2) { return 1; }
   if (promoted_loop(4) != 6) { return 2; }
   if (retained_borrow() != 4) { return 3; }
   if (failure_sensitive(2) != 4) { return 4; }
   if (folded_branch() != 5) { return 5; }
+  if (retained_unreachable_cleanup() != 1) { return 6; }
+  if (retained_trapping_computation(2) != 1) { return 7; }
   return 0;
 }
 )";
@@ -7123,6 +7146,10 @@ int main() {
   }
   const lang::OptimizationPassReport *promotion =
       findPass(optimized.report, "scalar-promotion");
+  const lang::OptimizationPassReport *unreachableCleanup =
+      findPass(optimized.report, "unreachable-block-cleanup");
+  const lang::OptimizationPassReport *deadComputations =
+      findPass(optimized.report, "dead-unused-computations");
   const bool loanMiss =
       promotion != nullptr &&
       std::any_of(promotion->remarks.begin(), promotion->remarks.end(),
@@ -7140,6 +7167,25 @@ int main() {
                            remark.message.find("failure-sensitive") !=
                                std::string::npos;
                   });
+  const bool cleanupMiss =
+      unreachableCleanup != nullptr &&
+      std::any_of(unreachableCleanup->remarks.begin(),
+                  unreachableCleanup->remarks.end(),
+                  [](const lang::OptimizationRemark &remark) {
+                    return remark.kind ==
+                               lang::OptimizationRemarkKind::Missed &&
+                           remark.message.find("lifecycle, failure, loan") !=
+                               std::string::npos;
+                  });
+  const bool trappingComputationMiss =
+      deadComputations != nullptr &&
+      std::any_of(
+          deadComputations->remarks.begin(), deadComputations->remarks.end(),
+          [](const lang::OptimizationRemark &remark) {
+            return remark.kind == lang::OptimizationRemarkKind::Missed &&
+                   remark.message.find("may trap or has observable") !=
+                       std::string::npos;
+          });
   const lang::MirFunctionInstance *promoted =
       optimized.mir.findFunctionInstance(promotedHir->id);
   const bool hasMergeParameter =
@@ -7174,6 +7220,10 @@ int main() {
              actualPasses == expectedPasses && promotion != nullptr &&
              promotion->changed && promotion->candidates != 0 &&
              promotion->missed != 0 && loanMiss && failureMiss &&
+             unreachableCleanup != nullptr && unreachableCleanup->changed &&
+             unreachableCleanup->missed != 0 && cleanupMiss &&
+             deadComputations != nullptr && deadComputations->changed &&
+             deadComputations->missed != 0 && trappingComputationMiss &&
              hasMergeParameter && hasEdgeArgument && hasTombstone &&
              optimized.report.safety.sourceOperations >=
                  optimized.report.safety.emittedOperations &&

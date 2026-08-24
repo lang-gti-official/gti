@@ -1,9 +1,13 @@
 #include "gti/ast_printer.h"
+#include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/effects.h"
+#include "gti/optimization/pass.h"
+#include "gti/optimization/report.h"
 #include "gti/optimization/rewrite.h"
+#include "gti/optimizer.h"
 #include "gti/support.h"
 #include "gti/target.h"
 
@@ -102,6 +106,36 @@ int main() {
       lang::SignaturePrinter(semantics).binding(occurrence) !=
           "unknown value") {
     return 6;
+  }
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("installed-optimizer-smoke.gti", R"(
+int choose() {
+  if (1 < 2) {
+    return 3;
+  }
+  return 4;
+}
+
+int main() {
+  return choose() - 3;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    return 7;
+  }
+  const lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O1});
+  const std::string report =
+      lang::serializeOptimizationReportJson(optimized.report, "O1");
+  lang::MirBodyAnalysisManager analyses;
+  if (!optimized.valid() || optimized.report.passes.size() != 4 ||
+      report.find("\"schema\":\"gti-optimization-report\"") ==
+          std::string::npos ||
+      analyses.revision({}) != 0) {
+    return 8;
   }
 
   return 0;
