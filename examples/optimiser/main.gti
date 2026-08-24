@@ -1,0 +1,79 @@
+#include <std/format>
+
+// This workload deliberately uses a fixed problem size. Hyperfine should time
+// only the already-built executables, so every optimization level performs the
+// same deterministic work without consulting a clock or command-line input.
+constexpr int32_t image_width = 1000;
+constexpr int32_t image_height = 700;
+constexpr int32_t maximum_iterations = 600;
+constexpr uint64_t pixel_count =
+    uint64_t(image_width) * uint64_t(image_height);
+
+// This value is verified at every optimization level. Keeping the expected
+// checksum in the program makes every timed invocation self-checking.
+constexpr uint64_t expected_checksum = uint64_t(10183699723);
+
+int32_t escape_iterations(double coordinate_real,
+                          double coordinate_imaginary) {
+  mut double value_real = 0.0d;
+  mut double value_imaginary = 0.0d;
+  mut int32_t iteration = 0;
+
+  while (iteration < maximum_iterations) {
+    double real_squared = value_real * value_real;
+    double imaginary_squared = value_imaginary * value_imaginary;
+    if (real_squared + imaginary_squared > 4.0d) {
+      break;
+    }
+
+    double next_imaginary =
+        2.0d * value_real * value_imaginary + coordinate_imaginary;
+    value_real = real_squared - imaginary_squared + coordinate_real;
+    value_imaginary = next_imaginary;
+    iteration++;
+  }
+
+  return iteration;
+}
+
+uint64_t render_checksum() {
+  mut uint64_t checksum = uint64_t(0);
+
+  for (mut int32_t pixel_y = 0; pixel_y < image_height; pixel_y++) {
+    double coordinate_imaginary =
+        (double(pixel_y) / double(image_height)) * 2.4d - 1.2d;
+
+    for (mut int32_t pixel_x = 0; pixel_x < image_width; pixel_x++) {
+      double coordinate_real =
+          (double(pixel_x) / double(image_width)) * 3.5d - 2.5d;
+      int32_t iterations =
+          escape_iterations(coordinate_real, coordinate_imaginary);
+
+      // Every pixel contributes to the result. The bounds above keep the
+      // complete sum well inside uint64_t, so ordinary checked GTI arithmetic
+      // has identical successful behavior at every optimization level.
+      uint64_t column_weight =
+          uint64_t((pixel_x % int32_t(251)) + int32_t(1));
+      uint64_t row_tag =
+          uint64_t((pixel_y % int32_t(257)) + int32_t(1));
+      checksum += uint64_t(iterations) * column_weight + row_tag;
+    }
+  }
+
+  return checksum;
+}
+
+int main() {
+  uint64_t checksum = render_checksum();
+
+  auto printed = std::try_println(
+      "GTI-OPTIMISER-1 checksum={} pixels={}", checksum, pixel_count);
+  if (!printed) {
+    return 2;
+  }
+
+  if (checksum != expected_checksum) {
+    return 1;
+  }
+  return 0;
+}
