@@ -271,6 +271,7 @@ add_library(
   "src/compiler/optimization/pass.cpp"
   "src/compiler/optimization/report.cpp"
   "src/compiler/optimization/rewrite.cpp"
+  "src/compiler/optimization/safety.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
   "src/compiler/semantic_analyzer.cpp"
@@ -602,6 +603,11 @@ if(BUILD_TESTING)
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
 
+  add_executable("gti_optimizer_safety_tests"
+                 "tests/optimizer_safety_tests.cpp")
+  target_link_libraries("gti_optimizer_safety_tests" PRIVATE gti_compiler)
+  add_test(NAME optimizer_safety COMMAND gti_optimizer_safety_tests)
+
   add_executable("gti_failure_metadata_tests"
                  "tests/failure_metadata_tests.cpp")
   target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
@@ -793,6 +799,20 @@ if(BUILD_TESTING)
            COMMAND gti_prefix_storage_evidence "${CMAKE_CXX_COMPILER}")
   set_tests_properties(
     prefix_storage_native_evidence
+    PROPERTIES TIMEOUT 600
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+
+  add_executable("gti_optimizer_safety_native_evidence"
+                 "tests/optimizer_safety_native_evidence.cpp")
+  target_link_libraries("gti_optimizer_safety_native_evidence"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME optimizer_safety_native_evidence
+           COMMAND gti_optimizer_safety_native_evidence
+                   "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(
+    optimizer_safety_native_evidence
     PROPERTIES TIMEOUT 600
                ENVIRONMENT
                  "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"

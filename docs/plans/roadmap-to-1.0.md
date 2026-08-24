@@ -759,11 +759,16 @@ Implemented foundation:
    no source-expression execution authority.
 5. Opt-in pre/post MIR, human remarks, versioned JSON reports, and exact current
    safety-operation counts.
+6. O2/O3 proof-carrying discharge of exact fixed-array read bounds,
+   sparse-storage read bounds/initialization, and checked integer
+   add/subtract/multiply/negate overflow outcomes.
 
 Remaining sequence:
 
-1. Add sparse propagation and predicate facts as measured local clients.
-2. Add range and bounds-check elimination only with recorded GTI-level proofs.
+1. Add sparse propagation and broader predicate facts as measured local
+   clients.
+2. Widen check elimination one operation family at a time with recorded
+   GTI-level proofs and differential evidence.
 3. Consider inlining or devirtualization only after call effects, lifetime,
    layout, closed-world, and cost gates are complete.
 

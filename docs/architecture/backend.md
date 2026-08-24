@@ -153,6 +153,22 @@ facts reject the complete program before output; there is no AST/HIR body
 fallback.
 
 Optimizer tombstones are verified inert proof slots and emit no operation.
+An instruction safety discharge is likewise consumed only as sealed optimized
+MIR, never as a backend analysis result. When all local overflow outcomes for a
+checked add, subtract, multiply, or negate are discharged, the C++ backend may
+emit the direct arithmetic representation. When all local outcomes for an
+admitted fixed-array read are discharged, it may emit a direct indexed read.
+For a private sparse-storage read or mutable read, it may select the
+backend-private unchecked helper only when both the exact bounds and
+initialized-slot outcomes are discharged. A fully discharged `Invoke` follows
+its verified success edge; any retained local or callee failure keeps the
+checked representation and failure transfer.
+
+These choices inspect only MIR operation identities and exact discharge
+metadata. They do not recognize `std` wrappers, source declaration names, or
+generated C++ shape. Prefix storage and every unsupported operation remain on
+their checked backend route.
+
 For a scalar block parameter, the C++ MIR body emitter owns one backend-private
 edge slot. Every `Goto`, `Branch`, `Invoke`, or `Switch` predecessor
 publishes its verified arguments to those slots before transferring control;

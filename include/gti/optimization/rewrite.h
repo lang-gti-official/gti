@@ -23,6 +23,7 @@ struct MirAnalysisInvalidation {
   bool controlFlow = false;
   bool reachability = false;
   bool dominance = false;
+  bool safetyChecks = false;
 };
 
 struct MirEditResult {
@@ -83,6 +84,12 @@ public:
   void queueDeadInstructionRemoval(MirInstructionKey target);
   void queueUnreachableBlockRemoval(MirBodyAddress body, MirBlockId block);
 
+  // Queues an exact local failure outcome for discharge. The supplied proof
+  // is an untrusted claim: apply() reruns the canonical safety analysis before
+  // attaching metadata to candidate MIR.
+  void queueSafetyDischarge(MirInstructionKey target,
+                            MirSafetyDischarge discharge);
+
   [[nodiscard]] std::size_t pendingPatchCount() const { return patches.size(); }
   [[nodiscard]] std::size_t pendingBranchFoldCount() const {
     return branchFolds.size();
@@ -95,6 +102,9 @@ public:
   }
   [[nodiscard]] std::size_t pendingUnreachableBlockCount() const {
     return unreachableBlocks.size();
+  }
+  [[nodiscard]] std::size_t pendingSafetyDischargeCount() const {
+    return safetyDischarges.size();
   }
 
   [[nodiscard]] MirEditResult apply();
@@ -124,6 +134,11 @@ private:
     MirBlockId block = 0;
   };
 
+  struct SafetyDischarge {
+    MirInstructionKey target;
+    MirSafetyDischarge discharge;
+  };
+
   MirProgram &program;
   std::string pass;
   std::vector<LiteralReplacement> patches;
@@ -131,6 +146,7 @@ private:
   std::vector<ScalarPromotion> scalarPromotions;
   std::vector<MirInstructionKey> deadInstructions;
   std::vector<UnreachableBlock> unreachableBlocks;
+  std::vector<SafetyDischarge> safetyDischarges;
 };
 
 } // namespace lang

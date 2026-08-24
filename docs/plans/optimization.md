@@ -4,8 +4,9 @@
 > boundary is documented in
 > [`docs/architecture/optimization.md`](../architecture/optimization.md).
 
-Status: accepted; Milestones 1 through 3 and the first local Milestone 4
-pipeline are implemented. Milestones 5 and 6 remain capability-gated.
+Status: accepted; Milestones 1 through 3, the first local Milestone 4 pipeline,
+and the first bounded Milestone 5 safety slice are implemented. Broader
+Milestone 5 families and Milestone 6 remain capability-gated.
 
 Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
 in this proposal. `BackendInput`, HIR replacement-table emission, mixed AST/HIR
@@ -19,8 +20,10 @@ transformation evidence and independent replay, complete conservative
 per-instance effects, scalar block parameters/edge arguments, acyclic scalar
 promotion, unreachable cleanup, dead unused computation removal, the
 client-backed pass/analysis manager, and opt-in MIR/report observability are
-implemented. O1 owns this local pipeline; O2/O3 currently run the same GTI
-passes. O-MIR-03 is no longer blocked.
+implemented. O1 owns this local pipeline. O2/O3 additionally run independent
+bounds, initialized-storage-state, and arithmetic-overflow discharge passes
+backed by canonical body-local proofs. O-MIR-03 and the first O-MIR-04 slice are
+no longer blocked.
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). Infrastructure
@@ -666,6 +669,15 @@ Acceptance criteria:
   bound.
 
 ### Milestone 5: proof-carrying safety optimization
+
+**Implementation status:** the first bounded slice is complete. Exact
+fixed-array read bounds, exact sparse-storage read bounds/initialization, and
+checked integer add/subtract/multiply/negate overflow outcomes can be
+discharged at O2/O3. Canonical analysis, typed outcome metadata, controlled
+editing, independent replay, backend consumption, schema-v2 per-family
+reporting, near-miss tests, and O0/O2/O3 native-`-O0` differential evidence are
+implemented together. Array writes/borrows, prefix storage, remaining numeric
+operators, aliases, and interprocedural proofs remain future measured slices.
 
 - Represent checked integer operations and their failure categories explicitly
   enough for range proofs to discharge individual checks.
