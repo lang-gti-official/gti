@@ -2528,7 +2528,7 @@ private:
     }
     std::size_t argumentCount = value.parameterTypes.size();
     if (value.kind == HirValueKind::Call) {
-      if (const auto *call = dynamic_cast<const Call *>(value.source)) {
+      if (const auto *call = exprAs<Call>(value.source)) {
         argumentCount = call->arguments().size();
       }
     }
