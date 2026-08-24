@@ -2432,13 +2432,15 @@ public:
             (identifier)))))))
 
 ================================================================================
-Copy and move constructor policies
+Defaulted lifecycle and copy/move constructor policies
 ================================================================================
 
 class Value {
 public:
+  Value() = default;
   Value(Value& other) = default;
   Value(Value&& other) = delete;
+  ~Value() = default;
 };
 
 --------------------------------------------------------------------------------
@@ -2448,6 +2450,10 @@ public:
     (identifier)
     (class_body
       (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (parameter_clause)
+        (special_member_specifier))
       (constructor_declaration
         (identifier)
         (parameter_clause
@@ -2467,6 +2473,9 @@ public:
                 (identifier))
               (reference_declarator))
             (identifier)))
+        (special_member_specifier))
+      (destructor_declaration
+        (identifier)
         (special_member_specifier)))))
 
 ==================

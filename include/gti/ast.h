@@ -1473,9 +1473,11 @@ private:
 
 class DestructorDecl final : public Stmt {
 public:
-  DestructorDecl(Token tilde, Token name, std::unique_ptr<BlockStmt> body)
+  DestructorDecl(Token tilde, Token name,
+                 std::optional<SpecialMemberSpecifier> specifier,
+                 std::unique_ptr<BlockStmt> body)
       : tilde_(std::move(tilde)), name_(std::move(name)),
-        body_(std::move(body)) {}
+        specifier_(std::move(specifier)), body_(std::move(body)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitDestructorDecl(*this);
@@ -1483,11 +1485,15 @@ public:
 
   [[nodiscard]] const Token &tilde() const { return tilde_; }
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::optional<SpecialMemberSpecifier> &specifier() const {
+    return specifier_;
+  }
   [[nodiscard]] const std::unique_ptr<BlockStmt> &body() const { return body_; }
 
 private:
   Token tilde_;
   Token name_;
+  std::optional<SpecialMemberSpecifier> specifier_;
   std::unique_ptr<BlockStmt> body_;
 };
 

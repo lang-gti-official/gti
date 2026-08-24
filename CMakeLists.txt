@@ -982,6 +982,14 @@ if(BUILD_TESTING)
     set_tests_properties(mir_backend_class_default_cleanup_runtime
                          PROPERTIES TIMEOUT 180)
     add_test(
+      NAME defaulted_lifecycle_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/defaulted_lifecycle_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/defaulted_lifecycle.gti"
+    )
+    set_tests_properties(defaulted_lifecycle_runtime PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mir_backend_owned_lifecycle_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_owned_lifecycle_runtime_test.py"

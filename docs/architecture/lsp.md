@@ -86,6 +86,12 @@ protocol adapter only serializes these notes. Hovering the parameter binding
 itself remains ordinary binding hover until semantic occurrences retain its
 owning function and parameter contract directly.
 
+Defaulted default constructors and destructors use those same compiler-owned
+declaration identities. Declaration hover and document-symbol detail include
+`= default`, selected construction hover presents the callable `Type()`
+signature, and definition from the call reaches the written constructor. The
+protocol layer does not infer lifecycle policy from punctuation.
+
 Lambda capture targets and sources remain separate semantic symbols. Hover on
 an environment binding appends the compiler-owned `immutable copy-snapshot
 capture` or `owned move capture` note; definition from the initializer source

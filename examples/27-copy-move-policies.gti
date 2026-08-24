@@ -9,6 +9,18 @@ public:
   int read() { return this.value; }
 };
 
+class StructuralValue {
+  int value = 5;
+
+public:
+  // These declarations select the same structural lifecycle operations the
+  // compiler would generate if they were omitted.
+  StructuralValue() = default;
+  ~StructuralValue() = default;
+
+  int read() { return this.value; }
+};
+
 class Ticket {
   int id;
 
@@ -21,6 +33,7 @@ public:
 };
 
 int main() {
+  StructuralValue structural{};
   Snapshot original{7};
   Snapshot copied = Snapshot(original);
 
@@ -30,9 +43,9 @@ int main() {
   mut Ticket ticket{42};
   Ticket transferred = Ticket(std::move(ticket));
 
-  if (copied.read() == 7 and moved.read() == 9 and
+  if (structural.read() == 5 and copied.read() == 7 and moved.read() == 9 and
       transferred.read() == 42) {
-    std::println("copy and move policies worked");
+    std::println("defaulted lifecycle and copy/move policies worked");
     return 0;
   }
   return 1;

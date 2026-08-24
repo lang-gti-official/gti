@@ -149,8 +149,14 @@ defined-failure effect summary. Each concrete function records
 bit to concrete constructors and destructors and makes
 `MirDefinedFailureEffects` the canonical three-kind result. Source constructors
 and destructors are distinguished from declarations; a runtime definition kind
-is not valid for either lifecycle body. Version 22 adds the pointer-free merged
-program-initialization unit/step plan and serializes each block's exact
+is not valid for either lifecycle body. Program lifecycle state records an
+explicitly defaulted default constructor or
+destructor as `Generated`, so neither declaration creates a concrete MIR body
+instance. Construction and structural drops then use the same verified
+operations as the equivalent omitted declaration.
+
+Version 22 adds the pointer-free merged program-initialization unit/step plan
+and serializes each block's exact
 `ProgramInitializationStepId` tag. Version 23 adds the pointer-free
 `MirHostedStartupPlan`, the compiler-generated `HostedStartup/<entry>` body,
 its dense operation inventory, and exact generated-entity provenance tags on

@@ -738,8 +738,15 @@ private:
       if (const DestructorInfo *info =
               semantics_.findDestructor(*declaration)) {
         row.semanticIdentity = info->owner;
-        row.payload = LoweredDestructorDeclaration{.owner = info->owner,
-                                                   .access = info->access};
+        row.payload = LoweredDestructorDeclaration{
+            .owner = info->owner,
+            .access = info->access,
+            .specifier =
+                declaration->specifier()
+                    ? std::optional<
+                          SpecialMemberSpecifierKind>{declaration->specifier()
+                                                          ->kind}
+                    : std::nullopt};
       }
     } else if (const auto *declaration =
                    dynamic_cast<const VariableDecl *>(&statement)) {
