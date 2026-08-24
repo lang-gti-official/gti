@@ -149,7 +149,7 @@ private:
       return classDeclaration({}, previous());
     }
     if (match({TokenKind::SEMICOLON})) {
-      return std::make_unique<EmptyStmt>(previous());
+      return std::make_shared<EmptyStmt>(previous());
     }
     if (isStructuredBindingPrefix()) {
       throw error(peek(),
@@ -225,8 +225,8 @@ private:
           declaration = typedDeclaration(true, std::nullopt, false, false, true,
                                          LanguageLinkage::C);
         }
-        const auto *function =
-            dynamic_cast<const FunctionDecl *>(declaration.get());
+        stampExtent(declaration, declarationStart);
+        const auto *function = stmtAs<FunctionDecl>(declaration.get());
         if (function == nullptr) {
           throw error(declarationStart,
                       "An extern \"C\" block may contain only function "
@@ -244,7 +244,7 @@ private:
     }
     consume(TokenKind::RIGHT_BRACE,
             "Expect '}' after extern \"C\" declarations.");
-    return std::make_unique<ExternCDecl>(
+    return std::make_shared<ExternCDecl>(
         std::move(keyword), std::move(language), std::move(declarations));
   }
 
@@ -253,7 +253,7 @@ private:
     if (match({TokenKind::EQUAL})) {
       NamePath target = parseNamePath();
       consume(TokenKind::SEMICOLON, "Expect ';' after namespace alias.");
-      return std::make_unique<NamespaceAliasDecl>(name, std::move(target));
+      return std::make_shared<NamespaceAliasDecl>(name, std::move(target));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before namespace body.");
@@ -266,7 +266,7 @@ private:
       }
     }
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after namespace body.");
-    return std::make_unique<NamespaceDecl>(name, std::move(declarations));
+    return std::make_shared<NamespaceDecl>(name, std::move(declarations));
   }
 
   StmtPtr typeAliasDeclaration(Token keyword) {
@@ -275,7 +275,7 @@ private:
     consume(TokenKind::EQUAL, "Expect '=' after type alias name.");
     TypeRef target = parseType();
     consume(TokenKind::SEMICOLON, "Expect ';' after type alias declaration.");
-    return std::make_unique<TypeAliasDecl>(std::move(keyword), std::move(name),
+    return std::make_shared<TypeAliasDecl>(std::move(keyword), std::move(name),
                                            std::move(target));
   }
 
@@ -309,7 +309,7 @@ private:
       consume(TokenKind::SEMICOLON, "Expect ';' after concept declaration.");
     }
 
-    return std::make_unique<ConceptDecl>(
+    return std::make_shared<ConceptDecl>(
         std::move(keyword), std::move(name), std::move(typeParameters),
         std::move(requirements), std::move(compilerBinding));
   }
@@ -407,7 +407,7 @@ private:
       } while (match({TokenKind::COMMA}));
     }
     if (match({TokenKind::SEMICOLON})) {
-      return std::make_unique<ClassDecl>(
+      return std::make_shared<ClassDecl>(
           std::move(attributes), std::move(keyword), kind, std::move(name),
           std::move(exactSpecialization), std::move(genericParameters),
           std::move(bases), StmtList{}, true);
@@ -438,7 +438,7 @@ private:
     currentClassName = enclosingClassName;
     currentClassKind = enclosingClassKind;
 
-    return std::make_unique<ClassDecl>(
+    return std::make_shared<ClassDecl>(
         std::move(attributes), std::move(keyword), kind, name,
         std::move(exactSpecialization), std::move(genericParameters),
         std::move(bases), std::move(members), false);
@@ -476,7 +476,7 @@ private:
 
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after scoped enum body.");
     consume(TokenKind::SEMICOLON, "Expect ';' after scoped enum declaration.");
-    return std::make_unique<EnumDecl>(
+    return std::make_shared<EnumDecl>(
         std::move(keyword), std::move(classKeyword), std::move(name),
         std::move(underlyingType), std::move(enumerators));
   }
@@ -676,7 +676,7 @@ private:
               "Expect ';' after pure virtual declaration.");
       pureSpecifier =
           PureSpecifier{.equal = std::move(equal), .zero = std::move(zero)};
-      return std::make_unique<FunctionDecl>(
+      return std::make_shared<FunctionDecl>(
           std::move(returnType), name, std::move(genericParameters),
           std::move(parameters), nullptr, std::move(runtimeBinding),
           receiverMutability, returnMutability, std::move(operatorName),
@@ -687,7 +687,7 @@ private:
     }
 
     if (match({TokenKind::SEMICOLON})) {
-      return std::make_unique<FunctionDecl>(
+      return std::make_shared<FunctionDecl>(
           std::move(returnType), name, std::move(genericParameters),
           std::move(parameters), nullptr, std::move(runtimeBinding),
           receiverMutability, returnMutability, std::move(operatorName),
@@ -699,7 +699,7 @@ private:
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
-    return std::make_unique<FunctionDecl>(
+    return std::make_shared<FunctionDecl>(
         std::move(returnType), name, std::move(genericParameters),
         std::move(parameters), std::move(body), std::move(runtimeBinding),
         receiverMutability, returnMutability, std::move(operatorName),
@@ -952,7 +952,7 @@ private:
       }
       consume(TokenKind::SEMICOLON,
               "Expect ';' after special constructor declaration.");
-      return std::make_unique<ConstructorDecl>(
+      return std::make_shared<ConstructorDecl>(
           std::move(name), std::move(genericParameters), std::move(parameters),
           std::move(requiresClause), std::move(initializers),
           SpecialMemberSpecifier{.equal = std::move(equal),
@@ -963,7 +963,7 @@ private:
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before constructor body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
-    return std::make_unique<ConstructorDecl>(
+    return std::make_shared<ConstructorDecl>(
         std::move(name), std::move(genericParameters), std::move(parameters),
         std::move(requiresClause), std::move(initializers), std::nullopt,
         std::move(body));
@@ -994,7 +994,7 @@ private:
       }
       consume(TokenKind::SEMICOLON,
               "Expect ';' after special destructor declaration.");
-      return std::make_unique<DestructorDecl>(
+      return std::make_shared<DestructorDecl>(
           std::move(tilde), std::move(name),
           SpecialMemberSpecifier{.equal = std::move(equal),
                                  .keyword = std::move(keyword),
@@ -1003,7 +1003,7 @@ private:
     }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before destructor body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
-    return std::make_unique<DestructorDecl>(std::move(tilde), std::move(name),
+    return std::make_shared<DestructorDecl>(std::move(tilde), std::move(name),
                                             std::nullopt, std::move(body));
   }
 
@@ -1050,7 +1050,7 @@ private:
     }
 
     consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
-    return std::make_unique<VariableDecl>(
+    return std::make_shared<VariableDecl>(
         mutability, std::move(type), name, std::move(initializer),
         std::move(staticKeyword), false, std::move(constexprKeyword));
   }
@@ -1083,7 +1083,7 @@ private:
           "A mutable field group must contain at least one field or "
           "configuration item."));
     }
-    return std::make_unique<MutableFieldGroupDecl>(
+    return std::make_shared<MutableFieldGroupDecl>(
         std::move(keyword), std::move(leftBrace), std::move(members),
         std::move(rightBrace));
   }
@@ -1116,7 +1116,7 @@ private:
         consume(TokenKind::RIGHT_PAREN, "Expect ')' after 'static_assert'.");
     Token semicolon =
         consume(TokenKind::SEMICOLON, "Expect ';' after 'static_assert'.");
-    return std::make_unique<StaticAssertDecl>(
+    return std::make_shared<StaticAssertDecl>(
         std::move(keyword), std::move(leftParen), std::move(conditionStart),
         std::move(condition), std::move(comma), std::move(message),
         std::move(rightParen), std::move(semicolon));
@@ -1378,7 +1378,13 @@ private:
   }
 
   void stampExtent(const StmtPtr &statement, const Token &start) const {
-    if (statement == nullptr || current == 0) {
+    if (statement == nullptr) {
+      return;
+    }
+    if (start.leadingDocumentationMarkdown) {
+      statement->setDocumentationMarkdown(*start.leadingDocumentationMarkdown);
+    }
+    if (current == 0) {
       return;
     }
     const Token &last = previous();
@@ -1412,7 +1418,7 @@ private:
 
     if (context == ItemContext::MutableFieldGroup) {
       if (match({TokenKind::SEMICOLON})) {
-        return std::make_unique<EmptyStmt>(previous());
+        return std::make_shared<EmptyStmt>(previous());
       }
       return groupedFieldDeclaration();
     }
@@ -1439,13 +1445,13 @@ private:
       if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
         Token keyword = previous();
         consume(TokenKind::COLON, "Expect ':' after access specifier.");
-        return std::make_unique<AccessSpecifierDecl>(
+        return std::make_shared<AccessSpecifierDecl>(
             keyword, keyword.kind == TokenKind::PUBLIC
                          ? AccessModifier::Public
                          : AccessModifier::Private);
       }
       if (match({TokenKind::SEMICOLON})) {
-        return std::make_unique<EmptyStmt>(previous());
+        return std::make_shared<EmptyStmt>(previous());
       }
       if (match({TokenKind::TILDE})) {
         return destructorDeclaration(previous());
@@ -1521,7 +1527,7 @@ private:
     ExprPtr initializer = initializerExpression();
     consume(TokenKind::SEMICOLON,
             "Expect ';' after structured binding declaration.");
-    return std::make_unique<StructuredBindingDecl>(
+    return std::make_shared<StructuredBindingDecl>(
         std::move(autoKeyword), std::move(leftBracket), std::move(bindings),
         std::move(rightBracket), std::move(equal), std::move(initializer));
   }
@@ -1543,7 +1549,7 @@ private:
 
     consume(TokenKind::HASH_ENDIF,
             "Expect '#endif' after compile-time conditional.");
-    return std::make_unique<ConditionalStmt>(std::move(directive),
+    return std::make_shared<ConditionalStmt>(std::move(directive),
                                              std::move(branches));
   }
 
@@ -1737,7 +1743,7 @@ private:
       return returnStatement();
     }
     if (match({TokenKind::SEMICOLON})) {
-      return std::make_unique<EmptyStmt>(previous());
+      return std::make_shared<EmptyStmt>(previous());
     }
     if (check(TokenKind::LEFT_BRACKET) &&
         peekAt(1).kind == TokenKind::LEFT_BRACKET) {
@@ -1774,7 +1780,7 @@ private:
     if (match({TokenKind::ELSE})) {
       elseBranch = statement();
     }
-    return std::make_unique<IfStmt>(std::move(condition), std::move(thenBranch),
+    return std::make_shared<IfStmt>(std::move(condition), std::move(thenBranch),
                                     std::move(elseBranch),
                                     std::move(constexprKeyword));
   }
@@ -1783,7 +1789,7 @@ private:
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'while'.");
     ExprPtr condition = expression();
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after while condition.");
-    return std::make_unique<WhileStmt>(std::move(condition), statement());
+    return std::make_shared<WhileStmt>(std::move(condition), statement());
   }
 
   StmtPtr doWhileStatement() {
@@ -1793,7 +1799,7 @@ private:
     ExprPtr condition = expression();
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after do-while condition.");
     consume(TokenKind::SEMICOLON, "Expect ';' after do-while statement.");
-    return std::make_unique<DoWhileStmt>(std::move(body), std::move(condition));
+    return std::make_shared<DoWhileStmt>(std::move(body), std::move(condition));
   }
 
   StmtPtr forStatement() {
@@ -1829,7 +1835,7 @@ private:
 
     StmtPtr initializer;
     if (match({TokenKind::SEMICOLON})) {
-      initializer = std::make_unique<EmptyStmt>(previous());
+      initializer = std::make_shared<EmptyStmt>(previous());
     } else if (isTypedDeclaration()) {
       initializer = typedDeclaration(false, std::nullopt, false, false, false);
     } else {
@@ -1848,7 +1854,7 @@ private:
     }
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after for clauses.");
 
-    return std::make_unique<ForStmt>(std::move(initializer),
+    return std::make_shared<ForStmt>(std::move(initializer),
                                      std::move(condition), std::move(increment),
                                      statement());
   }
@@ -1899,7 +1905,7 @@ private:
     TypeRef sentinelType(generatedToken(TokenKind::AUTO, "auto", colon));
 
     StmtList loopBody;
-    auto elementBinding = std::make_unique<VariableDecl>(
+    auto elementBinding = std::make_shared<VariableDecl>(
         bindingMutability, bindingType, bindingName,
         std::make_unique<Unary>(generatedToken(TokenKind::STAR, "*", colon),
                                 generatedVariable(iteratorName),
@@ -1909,8 +1915,8 @@ private:
     loopBody.emplace_back(std::move(elementBinding));
     loopBody.emplace_back(std::move(body));
 
-    auto coreLoop = std::make_unique<ForStmt>(
-        std::make_unique<EmptyStmt>(
+    auto coreLoop = std::make_shared<ForStmt>(
+        std::make_shared<EmptyStmt>(
             generatedToken(TokenKind::SEMICOLON, ";", colon)),
         std::make_unique<Binary>(
             generatedVariable(iteratorName),
@@ -1923,33 +1929,33 @@ private:
     const ForStmt *coreLoopPointer = coreLoop.get();
 
     StmtList lowered;
-    auto ownerBinding = std::make_unique<VariableDecl>(
+    auto ownerBinding = std::make_shared<VariableDecl>(
         mutableElementLoan ? Mutability::Mutable : Mutability::Immutable,
         std::move(ownerType), ownerName, std::move(range), std::nullopt, false,
         std::nullopt, true);
     const VariableDecl *ownerBindingPointer = ownerBinding.get();
     lowered.emplace_back(std::move(ownerBinding));
-    auto rangeBinding = std::make_unique<VariableDecl>(
+    auto rangeBinding = std::make_shared<VariableDecl>(
         mutableElementLoan ? Mutability::Mutable : Mutability::Immutable,
         std::move(rangeType), rangeName, generatedVariable(ownerName),
         std::nullopt, true);
     const VariableDecl *rangeBindingPointer = rangeBinding.get();
     lowered.emplace_back(std::move(rangeBinding));
-    auto iteratorBinding = std::make_unique<VariableDecl>(
+    auto iteratorBinding = std::make_shared<VariableDecl>(
         Mutability::Mutable, std::move(iteratorType), iteratorName,
         generatedMemberCall(rangeName,
                             mutableElementLoan ? "begin_mut" : "begin", colon),
         std::nullopt, false, std::nullopt, false, true);
     const VariableDecl *iteratorBindingPointer = iteratorBinding.get();
     lowered.emplace_back(std::move(iteratorBinding));
-    auto sentinelBinding = std::make_unique<VariableDecl>(
+    auto sentinelBinding = std::make_shared<VariableDecl>(
         Mutability::Immutable, std::move(sentinelType), sentinelName,
         generatedMemberCall(rangeName, "end", colon));
     const VariableDecl *sentinelBindingPointer = sentinelBinding.get();
     lowered.emplace_back(std::move(sentinelBinding));
     lowered.emplace_back(std::move(coreLoop));
 
-    return std::make_unique<RangeForStmt>(
+    return std::make_shared<RangeForStmt>(
         std::move(keyword), bindingMutability, std::move(bindingType),
         std::move(bindingName), std::move(colon),
         std::make_unique<BlockStmt>(std::move(lowered)), ownerBindingPointer,
@@ -2001,7 +2007,7 @@ private:
     }
 
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after switch arms.");
-    return std::make_unique<SwitchStmt>(std::move(keyword), std::move(value),
+    return std::make_shared<SwitchStmt>(std::move(keyword), std::move(value),
                                         std::move(arms));
   }
 
@@ -2012,14 +2018,14 @@ private:
       value = initializerExpression();
     }
     consume(TokenKind::SEMICOLON, "Expect ';' after return value.");
-    return std::make_unique<ReturnStmt>(keyword, std::move(value));
+    return std::make_shared<ReturnStmt>(keyword, std::move(value));
   }
 
   StmtPtr loopControlStatement() {
     Token keyword = previous();
     const std::string message = "Expect ';' after '" + keyword.lexeme + "'.";
     consume(TokenKind::SEMICOLON, message);
-    return std::make_unique<LoopControlStmt>(std::move(keyword));
+    return std::make_shared<LoopControlStmt>(std::move(keyword));
   }
 
   StmtPtr
@@ -2031,7 +2037,7 @@ private:
     } else if (hadCompletion == consumedCompletion) {
       consume(TokenKind::SEMICOLON, "Expect ';' after expression.");
     }
-    return std::make_unique<ExpressionStmt>(std::move(value),
+    return std::make_shared<ExpressionStmt>(std::move(value),
                                             std::move(discardAttribute));
   }
 
@@ -2059,24 +2065,24 @@ private:
       ExprPtr value =
           check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
 
-      if (auto *variable = dynamic_cast<Variable *>(expr.get())) {
+      if (auto *variable = exprAs<Variable>(expr.get())) {
         return std::make_unique<Assign>(variable->name(), oper,
                                         std::move(value));
       }
-      if (auto *qualified = dynamic_cast<QualifiedName *>(expr.get())) {
+      if (auto *qualified = exprAs<QualifiedName>(expr.get())) {
         return std::make_unique<Assign>(qualified->takeName(), oper,
                                         std::move(value));
       }
-      if (auto *get = dynamic_cast<Get *>(expr.get())) {
+      if (auto *get = exprAs<Get>(expr.get())) {
         return std::make_unique<Set>(get->takeObject(), get->access(),
                                      get->name(), oper, std::move(value));
       }
-      if (auto *index = dynamic_cast<Index *>(expr.get())) {
+      if (auto *index = exprAs<Index>(expr.get())) {
         return std::make_unique<IndexSet>(index->takeObject(), index->bracket(),
                                           index->takeIndex(), oper,
                                           std::move(value));
       }
-      if (auto *unary = dynamic_cast<Unary *>(expr.get());
+      if (auto *unary = exprAs<Unary>(expr.get());
           unary != nullptr && unary->oper().kind == TokenKind::STAR) {
         return std::make_unique<DereferenceSet>(
             unary->oper(), unary->takeRight(), oper, std::move(value));
@@ -2250,7 +2256,7 @@ private:
         ExprPtr argument =
             check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
         if (match({TokenKind::ELLIPSIS})) {
-          const auto *variable = dynamic_cast<const Variable *>(argument.get());
+          const auto *variable = exprAs<Variable>(argument.get());
           if (variable == nullptr) {
             throw error(previous(),
                         "Only a named function parameter pack can be "
@@ -2359,7 +2365,7 @@ private:
         Token comma = previous();
         if (match({TokenKind::ELLIPSIS})) {
           Token ellipsis = previous();
-          if (dynamic_cast<const Call *>(expr.get()) == nullptr) {
+          if (exprAs<Call>(expr.get()) == nullptr) {
             throw error(
                 ellipsis,
                 "A pack fold pattern must be a function or method call.");

@@ -9,16 +9,21 @@ The LSP is an adapter over compiler-owned semantics:
 JSON-RPC/LSP
   -> protocol conversion in src/lsp/main.cpp
   -> open-document state and generation checks
+  -> exact frontend source snapshot / bounded parsed-unit cache
   -> immutable FrontendResult snapshot
   -> LanguageQueries / SemanticDatabase
 ```
 
 ## Semantic Source Of Truth
 
-`FrontendResult` owns the recovered AST, `SemanticModel`, `SemanticDatabase`,
+`FrontendResult` retains the recovered AST, `SemanticModel`, `SemanticDatabase`,
 HIR/MIR, source graph, source text, and diagnostics together. The LSP retains a
 `shared_ptr<const FrontendResult>` in each `AnalysisSnapshot`. This keeps AST
 pointers and snapshot-scoped symbol IDs valid while a request reads them.
+Compatible snapshots may share immutable parsed statement trees through the
+frontend cache, but every snapshot constructs a fresh semantic model and
+database. Symbol IDs, semantic records, and pointers into one semantic model
+are never cache values.
 
 `LanguageQueries` is declared in `include/gti/language_queries.h`; reusable
 hover, completion, definition, and signature rendering compile in
@@ -28,6 +33,15 @@ operators, and comments. Line and block comments are split into per-line LSP
 tokens with UTF-16 lengths; delimiters inside literals are excluded. The
 protocol layer must not repeat name lookup, overload selection, type rendering,
 or declaration parsing.
+
+Contiguous `///` blocks are normalized by the lexer as leading trivia on the
+following declaration token. The parser transfers that Markdown onto the
+declaration, and semantic analysis attaches the same value to the exact
+`SymbolRecord`. Hover reads documentation through the occurrence's selected
+symbol, so declaration, type, field, constructor, and overload-selected call
+sites agree across entry files, included sources, and dirty dependency
+overlays. The protocol adapter places the documentation after the canonical GTI
+signature and does not search source text for comments.
 
 Compile-time conditions retain loader-resolved inactive token spans in each
 `SourceUnit`. Semantic tokens apply the `inactiveCode` modifier to those spans;
@@ -225,21 +239,62 @@ array strategy, invalidation rule, or temporary ownership from punctuation.
 
 ## Document State
 
-`LanguageServer` currently owns protocol handling and document lifecycle in one
-large class. It stores unsaved source overlays, client versions, internal
-analysis generations, dependency generations, immutable snapshots, diagnostic
-sets, and semantic-token caches.
+`LanguageServer` still owns protocol handling, open overlays, client versions,
+analysis generations, dependency relationships, immutable result snapshots,
+diagnostic sets, and semantic-token caches. Exact reusable-frontend input state
+is extracted behind `FrontendSnapshotState` in `src/lsp/`. That component owns
+the shared `FrontendCache`, per-canonical-source generations, and exact digests
+learned from successfully published analyses. Workers receive a value snapshot
+of those identities; the JSON-RPC adapter does not expose its mutable maps to
+compiler work.
 
 - `didOpen`/`didChange` replace the full synchronized source, advance the
-  generation, invalidate the prior snapshot/cache and affected dependants, and
-  schedule analysis over all open-buffer overlays.
+  document and canonical-source generations, erase the prior learned digest,
+  invalidate affected dependants, and schedule analysis over all open-buffer
+  overlays. A stale result snapshot may remain allocated until its replacement
+  is published, but generation checks make it inaccessible to requests.
 - `didClose` removes the overlay and snapshot, clears diagnostics, invalidates
-  pending work, and reanalyzes dependants whose view changes.
+  the overlay source identity and pending work, and reanalyzes dependants whose
+  view changes. The next analysis must read the disk source before learning its
+  new digest.
 - Completed analysis is published only if the document and dependency
-  generations still match. Stale semantic requests are rejected.
+  generations still match. Only then may its source digests be learned. Stale
+  semantic requests and stale digest publications are rejected.
 - The dynamic file watcher covers both `**/*.gti` and `**/gti.toml`. A manifest
   change invalidates semantic-token caches and reanalyses every open document,
   so changing `[build].defines` flips the selected/inactive branches.
+
+### Reusable frontend work
+
+The process-local frontend cache is a thread-safe LRU bounded by both 256 rows
+and 64 MiB of conservatively estimated input/tree storage. Lexical rows retain
+exact source text, tokens, and lexer diagnostics. Parsed rows retain immutable
+statement trees and parser diagnostics. A key includes canonical source path,
+that source's generation, stable exact-content digest, exact post-directive
+token-stream digest, a transitive dependency-input digest, normalized target
+data layout and configuration flags, and the completion offset where
+applicable. The dependency identity includes each visible input's canonical
+path, generation, exact source digest, and processed token digest. A
+dependency-provided flag that selects different syntax therefore invalidates
+an otherwise unchanged dependant parse. Dirty overlays additionally compare
+their exact bytes after lexical lookup, so they override disk state and a
+digest collision cannot select different text there.
+
+A generation change makes old rows unreachable immediately. Physical removal
+is left to the LRU, avoiding large AST destruction while the protocol thread is
+processing a change. A root-only edit can therefore reload, lex, and parse the
+root while reusing unchanged dependency and standard-library inputs. A dirty
+dependency advances only that source identity; existing dependency tracking
+reanalyzes its open dependants, whose affected parsed rows miss through the
+dependency digest, without advancing or invalidating unrelated source
+identities.
+
+This is deliberately not a semantic snapshot cache. Semantic analysis and HIR
+still run over the complete compatible parsed program, producing new
+snapshot-local identities and records. The benchmark exposes exact loaded,
+lexed, parsed, semantically analysed, and cache-hit unit lists plus phase times
+through the opt-in `GTI_LSP_FRONTEND_TRACE` stream. The same report records the
+configured cache limits and observed estimated occupancy.
 
 Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
@@ -335,8 +390,9 @@ meaning from punctuation.
 
 ## Current Limits
 
-- Documentation comments are not retained by the compiler, so hover's optional
-  Markdown documentation field is normally empty.
+- Retained documentation is currently consumed by hover. Completion,
+  signature help, and generated API reference output do not yet publish the
+  same compiler-owned Markdown.
 - Definition, references, document highlights, and rename are implemented
   from exact resolved symbols. Rename is deliberately limited to
   function-local names: identities visible outside the entry document's
@@ -344,7 +400,13 @@ meaning from punctuation.
   see, so the compiler query rejects them instead of producing an incomplete
   edit. A project symbol index is not implemented.
 - `SymbolId` is snapshot-local. There is no durable cross-analysis identity.
-- Document/scheduling state is not yet extracted from the protocol class.
+- Document overlays, dependency scheduling, diagnostic aggregation, and most
+  request freshness rules remain in the protocol class. The exact reusable
+  frontend-input identity/cache seam is extracted; broader state extraction
+  should follow a concrete testability or feature need.
+- Semantic analysis and HIR remain whole-program work on every accepted edit.
+  They are the largest remaining repeated-edit cost; no semantic checkpoint or
+  durable symbol identity is implemented.
 - `Frontend`/`LanguageQueries` can consume the same explicit
   `PackageSourceRoot` graph as compilation. The LSP now consumes the nearest
   manifest's configuration flags, but does not yet resolve its workspace graph,
@@ -364,6 +426,8 @@ features share compiler semantics.
 ## Do Not Copy From clangd Yet
 
 GTI does not need C++ preambles/PCH, compile-command borrowing, macro
-spelling/expansion locations, background index shards, remote indexes, AST LRU
-caches, or one worker per translation unit. Preserve the boundaries that allow
-measured evolution without importing those systems preemptively.
+spelling/expansion locations, background index shards, remote indexes,
+clangd-style full semantic translation-unit AST caches, or one worker per
+translation unit. Its bounded exact-content parsed-unit reuse is narrower and
+contains no semantic records. Preserve the boundaries that allow measured
+evolution without importing those systems preemptively.

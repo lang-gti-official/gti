@@ -675,6 +675,113 @@ private:
   const OptimizationResult &compatibility;
 };
 
+[[nodiscard]] std::optional<MirSafetyCheckFamily>
+safetyFamily(DefinedFailureOutcome outcome) {
+  if (outcome.code == DefinedFailureCode::IndexOutOfBounds) {
+    return MirSafetyCheckFamily::Bounds;
+  }
+  if (outcome.code == DefinedFailureCode::InvalidStorageState) {
+    return MirSafetyCheckFamily::StorageState;
+  }
+  if (outcome.code == DefinedFailureCode::IntegerOverflow) {
+    return MirSafetyCheckFamily::ArithmeticOverflow;
+  }
+  return std::nullopt;
+}
+
+class SafetyCheckEliminationPass final : public MirPass {
+public:
+  explicit SafetyCheckEliminationPass(MirSafetyCheckFamily family)
+      : family(family), passName("discharge-") {
+    passName += mirSafetyCheckFamilyName(family);
+    passName += "-checks";
+  }
+
+  [[nodiscard]] std::string_view name() const override { return passName; }
+
+  [[nodiscard]] MirPassOutcome run(MirPassContext &context,
+                                   MirBodyAnalysisManager &analyses) override {
+    MirPassOutcome outcome;
+    outcome.report.name = passName;
+    outcome.report.iterations = 1;
+    MirProgramEditor editor(context.program, passName);
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(context.program)) {
+      const MirBody *body = findMirBody(context.program, address);
+      const MirCfgAnalysis *cfg = analyses.cfg(context.program, address);
+      const MirDominanceInfo *dominance =
+          analyses.dominance(context.program, address);
+      const auto *uses = analyses.valueUses(context.program, address);
+      const MirSafetyAnalysis *safety =
+          analyses.safetyChecks(context.program, address);
+      ++outcome.report.analyzedBodies;
+      if (body == nullptr || cfg == nullptr || dominance == nullptr ||
+          uses == nullptr || safety == nullptr) {
+        outcome.verification.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .message = "safety-check elimination could not derive CFG, "
+                        "dominance, uses, and canonical safety facts"});
+        return outcome;
+      }
+      for (const MirBlock &block : body->blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin) {
+            for (const DefinedFailureOutcome failure :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (safetyFamily(failure) != family) {
+                continue;
+              }
+              const MirSafetyDischarge discharge{
+                  .family = family, .origin = origin, .outcome = failure};
+              if (hasMirSafetyDischarge(instruction, discharge)) {
+                continue;
+              }
+              ++outcome.report.candidates;
+              if (safety->find(instruction.id, discharge) != nullptr) {
+                editor.queueSafetyDischarge(
+                    {.body = address, .instruction = instruction.id},
+                    discharge);
+              } else {
+                ++outcome.report.missed;
+                outcome.report.remarks.push_back(
+                    {.kind = OptimizationRemarkKind::Missed,
+                     .pass = passName,
+                     .message =
+                         "check retained: canonical MIR facts do not prove " +
+                         std::string(mirSafetyCheckFamilyName(family)) +
+                         " safety",
+                     .body = address,
+                     .block = block.id,
+                     .instruction = instruction.id,
+                     .sourceValue = instruction.hirValue,
+                     .sourceStatement = instruction.hirStatement});
+              }
+            }
+          }
+        }
+      }
+    }
+    if (editor.pendingSafetyDischargeCount() == 0) {
+      outcome.preserved = MirPreservedAnalyses::all();
+      return outcome;
+    }
+    const MirEditResult edited = editor.apply();
+    mergeEditReport(outcome.report, edited);
+    outcome.transformations = edited.transformations;
+    outcome.verification = edited.verification;
+    outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
+                                       : MirPreservedAnalyses::all();
+    return outcome;
+  }
+
+private:
+  MirSafetyCheckFamily family = MirSafetyCheckFamily::Count;
+  std::string passName;
+};
+
 class UnreachableBlockCleanupPass final : public MirPass {
 public:
   [[nodiscard]] std::string_view name() const override {
@@ -862,8 +969,15 @@ public:
   }
 };
 
-[[nodiscard]] std::size_t countSafetyOperations(const MirProgram &program) {
-  std::size_t count = 0;
+struct SafetyCensus {
+  std::size_t total = 0;
+  std::array<std::size_t, static_cast<std::size_t>(MirSafetyCheckFamily::Count)>
+      families{};
+};
+
+[[nodiscard]] SafetyCensus countSafetyOperations(const MirProgram &program,
+                                                 bool activeOnly) {
+  SafetyCensus count;
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {
@@ -874,10 +988,21 @@ public:
         if (instruction.tombstone) {
           continue;
         }
-        const MirEffectTraits effect = effects(program, instruction);
-        if (effect.mayTrap || !instruction.definedFailure.empty() ||
-            !instruction.localFailureSites.empty()) {
-          ++count;
+        for (std::size_t origin = 0;
+             origin < instruction.definedFailure.localOrigins.size();
+             ++origin) {
+          for (const DefinedFailureOutcome outcome :
+               instruction.definedFailure.localOrigins[origin].outcomes) {
+            if (activeOnly &&
+                isMirFailureOutcomeDischarged(instruction, origin, outcome)) {
+              continue;
+            }
+            ++count.total;
+            if (const std::optional<MirSafetyCheckFamily> family =
+                    safetyFamily(outcome)) {
+              ++count.families[static_cast<std::size_t>(*family)];
+            }
+          }
         }
       }
     }
@@ -924,10 +1049,16 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
         }
       }
       for (const MirTransformRecord &record : outcome.transformations) {
+        const std::string message =
+            record.safetyDischarge ? "discharged " +
+                                         std::string(mirSafetyCheckFamilyName(
+                                             record.safetyDischarge->family)) +
+                                         " check with replayable GTI MIR proof"
+                                   : "applied verified MIR transformation";
         outcome.report.remarks.push_back(
             {.kind = OptimizationRemarkKind::Applied,
              .pass = outcome.report.name,
-             .message = "applied verified MIR transformation",
+             .message = message,
              .body = record.body,
              .block = record.block,
              .instruction = record.instruction,
@@ -945,9 +1076,18 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
 
     ScalarPromotionPass scalarPromotion;
     LiteralIdentityFoldPass literalFolding(*compatibility);
+    SafetyCheckEliminationPass boundsChecks(MirSafetyCheckFamily::Bounds);
+    SafetyCheckEliminationPass storageChecks(
+        MirSafetyCheckFamily::StorageState);
+    SafetyCheckEliminationPass overflowChecks(
+        MirSafetyCheckFamily::ArithmeticOverflow);
     UnreachableBlockCleanupPass unreachableCleanup;
     DeadUnusedComputationPass deadComputations;
     if (!execute(scalarPromotion) || !execute(literalFolding) ||
+        ((request.level == OptimizationLevel::O2 ||
+          request.level == OptimizationLevel::O3) &&
+         (!execute(boundsChecks) || !execute(storageChecks) ||
+          !execute(overflowChecks))) ||
         !execute(unreachableCleanup) || !execute(deadComputations)) {
       return result;
     }
@@ -956,15 +1096,26 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
   std::sort(result.report.transformations.begin(),
             result.report.transformations.end(), mirTransformRecordLess);
 
-  result.report.safety.sourceOperations =
-      countSafetyOperations(result.sourceMir);
-  result.report.safety.emittedOperations = countSafetyOperations(result.mir);
+  const SafetyCensus sourceChecks =
+      countSafetyOperations(result.sourceMir, false);
+  const SafetyCensus emittedChecks = countSafetyOperations(result.mir, true);
+  result.report.safety.sourceOperations = sourceChecks.total;
+  result.report.safety.emittedOperations = emittedChecks.total;
   result.report.safety.staticallyDischarged =
       result.report.safety.sourceOperations >=
               result.report.safety.emittedOperations
           ? result.report.safety.sourceOperations -
                 result.report.safety.emittedOperations
           : 0;
+  result.report.safety.sourceByFamily = sourceChecks.families;
+  result.report.safety.emittedByFamily = emittedChecks.families;
+  for (std::size_t family = 0;
+       family < result.report.safety.dischargedByFamily.size(); ++family) {
+    result.report.safety.dischargedByFamily[family] =
+        sourceChecks.families[family] >= emittedChecks.families[family]
+            ? sourceChecks.families[family] - emittedChecks.families[family]
+            : 0;
+  }
 
   if (request.options.verifyMir) {
     result.report.outputVerification = verifyMirOptimizationCoherence(

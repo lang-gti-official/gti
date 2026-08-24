@@ -2594,29 +2594,33 @@ complete.
 
 Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 
-- **State/role:** blocked; performance-driven proof work whose prerequisites
-  are a checked benchmark fixture for
-  the selected family delivered through `P-MEASURE-01`, explicit checked
-  operations and failure identities from `M-FAIL-01`, `O-MIR-02`, and
-  MIR-backed emission for the selected operation family's closed call-graph
-  slice. The first family also brings only the CFG, dominance, predicate, and
-  loop facts its proof actually needs.
-- **Scope:** Measure and implement bounds, initialized-storage state, and
-  arithmetic-overflow checks as separate families. Remove one selected check
-  only with a recorded GTI-level proof and differential
-  runtime/failure-category tests. CFG simplification and predicate propagation
-  may precede a range proof when they establish its inputs; do not mechanically
-  move range elimination ahead of those dependencies. A backend assumption is
-  valid only when derived from a verified MIR fact.
+- **State/role:** first production slice complete. O2/O3 run separate bounds,
+  initialized-storage-state, and arithmetic-overflow discharge passes over one
+  canonical body-local safety analysis; O0/O1 remain unchanged.
+- **Implemented scope:** interval and branch-predicate proofs discharge
+  in-range fixed-array scalar reads and non-overflowing checked integer
+  add/subtract/multiply/negate. Exact sparse-storage state discharges read and
+  mutable-read bounds plus initialized-slot outcomes only after a successful
+  exact-slot construct not invalidated by destroy or an opaque mutation.
+  Discharges retain the checked MIR instruction and failure CFG, name the exact
+  local outcome, and carry stable related block/instruction/value/place
+  identities. Controlled editing reruns the canonical analysis, coherence
+  independently replays every proof from source MIR, and all backends consume
+  only the sealed optimized instruction metadata.
+- **Remaining scope:** widen one measured operation family at a time. Array
+  writes/borrows, prefix storage, division/remainder/shifts/conversions,
+  aliases, interprocedural facts, and general loop/versioning analyses remain
+  checked and must bring their own exact proof and evidence.
 - **Non-goals:** deleting checks by optimization level, recognizing public
   wrapper names, treating emitted C++ shape as proof, or replacing GTI's
   left-to-right intermediate overflow behavior with a widened final check.
-- **Exit gate:** the first removed check carries a reproducible proof tied to
-  GTI places/ranges/effects and emits a deterministic applied optimization
-  remark identifying the operation family, body, source site, and proof.
-  Forged or stale proofs fail verification, and near-miss cases retain the
-  check. O0/O2/O3 tests preserve successful results, failure category and
-  origin, cleanup, alias/mutation barriers, and boundary values. Native
+- **Exit gate:** satisfied for the implemented families. Every removed check
+  carries a reproducible proof tied to GTI places/ranges/effects and emits a
+  deterministic applied optimization remark identifying the operation family,
+  body, source site, and proof. Forged or stale proofs fail verification, and
+  near-miss cases retain the check. O0/O2/O3 native-`-O0` differential tests
+  preserve successful results, failure category and origin, cleanup,
+  alias/mutation barriers, and boundary values. Native
   vectorization remarks and assembly may support a performance conclusion but
   never establish semantic validity. A loop-versioned fast path is permitted
   only when its side-effect-free preflight and checked scalar fallback preserve
@@ -2707,8 +2711,8 @@ artifact policy stay in `gti_driver`, never `gti_compiler` or the LSP.
 
 | ID | State | Scope and dependency |
 | --- | --- | --- |
-| `T-LSP-01` | ready | Retain documentation comments/declaration extents once and expose them through compiler symbols, hover, completion, and generated API docs. |
-| `T-LSP-02` | references/highlights/document symbols/rename complete; signature help ready | Current-snapshot references, document highlights, hierarchical document symbols over parser-recorded extents, and fail-closed function-local rename are implemented through `LanguageQueries` with protocol tests. The remaining sub-slice is signature help from the selected overload and argument position. |
+| `T-LSP-01` | hover complete; completion/API docs ready | `///` Markdown is retained once on declarations and exact compiler symbols, and hover publishes it at declarations and resolved uses across dirty dependency overlays. Completion, signature help, and generated API docs remain consumers of the same value. |
+| `T-LSP-02` | complete for current snapshots | Current-snapshot references, document highlights, hierarchical document symbols over parser-recorded extents, fail-closed function-local rename, and signature help from the selected overload and argument position are implemented through `LanguageQueries` with protocol tests. Project-wide coverage remains gated on `T-LSP-04/05`. |
 | `T-LSP-03` | measured defer | Extract document/snapshot service boundaries when a concrete feature makes the current server class costly to evolve. |
 | `T-LSP-04` | blocked | After `B-PROJECT-05`, consume driver-owned `ProjectFacts` without fetching/building and with dirty buffers authoritative. |
 | `T-LSP-05` | measured defer | A durable project index only after unopened-file references/rename proves a client. |
@@ -2744,7 +2748,7 @@ owned by the rows and domain plans above.
 | Public threads/atomics/mutex | **systems-readiness work-queue profile** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
 | Evaluation order | **contract adopted; bounded ordinary call/constructor schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference plus eligible class-copy/class-move ordinary-call and concrete ordinary-constructor HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` done -> `M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
-| Source text and documentation comments | **systems-readiness contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
+| Source text and documentation comments | **hover contract/tooling complete; broader consumers remain** | `///` retention and hover are complete in `T-LSP-01`; completion, signature help, broader library coverage, and generated API documentation remain |
 | Target/data-layout facts and `sizeof`/`alignof` | **complete bounded systems-readiness substrate** | `S-LAYOUT-01` and `S-LAYOUT-02` done; aggregate/native layout remains client-driven |
 | Compiler-private capability visibility | **complete** | `I-CAP-01` done; trusted source roles, exact private type identity, `GTI-S2058`, and compiler-owned LSP filtering |
 | Indexed partial moves | **complete bounded-first slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |

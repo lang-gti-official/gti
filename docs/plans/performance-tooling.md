@@ -461,7 +461,7 @@ semantic inputs or cache identities.
 and actionable missed remarks, analysis invalidation, stable MIR/HIR
 identities, proof kinds, typed transformation records, and input/output
 verification. `optimizationReportSchemaVersion` is independent from MIR
-serialization and currently version 1.
+serialization and currently version 2.
 
 The implementation retains these rules:
 
@@ -489,9 +489,11 @@ reports; timing is deliberately absent.
 
 ### Safety-operation reporting
 
-The current report counts exact MIR safety operations before optimization,
+The current report counts exact MIR local failure outcomes before optimization,
 after optimization, and statically discharged by the verified GTI transform.
-More specific future categories include:
+Schema version 2 also reconciles exact bounds, storage-state, and
+arithmetic-overflow families independently. More specific future categories
+include:
 
 ```text
 fixed-array bounds checks emitted
@@ -506,9 +508,9 @@ checks statically discharged by GTI
 
 These are static IR/emission counts, not runtime execution counts and not proof
 of final machine-code cost. The native compiler may inline or eliminate them
-later. The current generic source/emitted/discharged counts are labelled
-accordingly and are extended into named families only when MIR identities make
-that count exact.
+later. The aggregate and current per-family source/emitted/discharged counts
+are labelled accordingly. Further named families are added only when MIR
+identities make that count exact.
 
 Range analysis should report a discharged check only when GTI proves the
 required predicate at the language level. Do not remove checks merely because
@@ -748,6 +750,13 @@ Acceptance criteria:
 - a profiler symbol can be resolved to its GTI declaration.
 
 ### Milestone 5: measurement-driven optimization
+
+The first production slice is implemented for exact fixed-array reads,
+exact-slot sparse-storage reads, and proved non-overflowing checked
+add/subtract/multiply/negate. Structural reports and O0/O2/O3 native-`-O0`
+differential tests establish semantic preservation; representative benchmark
+remeasurement remains required before making performance claims or widening a
+family.
 
 - Use benchmark and report evidence to prioritize MIR propagation,
   reachability, dead-value elimination, and range analysis.

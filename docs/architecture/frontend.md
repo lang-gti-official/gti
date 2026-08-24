@@ -46,11 +46,40 @@ verified cache hit or moves it into `Frontend::analyzeLoaded` on a miss. The
 loaded entry point resumes the same parser/semantic/HIR/MIR pipeline; it is not
 a second include resolver or frontend representation.
 
-Each `SourceUnit` retains its path, logical import where applicable, tokens,
-token-granular inactive spans for editor presentation, dependency edges, and
-final declaration range in the combined transitional `Program`. Semantic
+Each `SourceUnit` retains its path, stable exact-source digest, logical import
+where applicable, tokens, token-granular inactive spans for editor
+presentation, dependency edges, and final declaration range in the combined
+transitional `Program`. Semantic
 visibility uses the graph: a unit sees itself, direct includes, and the
 prelude, not arbitrary declarations in the combined AST.
+
+### Reusable lexical and parsed units
+
+`FrontendCache` is an optional frontend input owned by a coordinator such as
+the LSP. It reuses only source text/tokens or immutable parsed statement trees;
+it never retains semantic records, snapshot-local symbol IDs, HIR, MIR, or
+backend state. A unit key contains its canonical path, coordinator-supplied
+source generation, stable exact-content digest, normalized target data layout
+and configuration flags, and an entry completion offset when present. Parsed
+rows additionally key the exact post-directive token-stream digest, including
+resolved configuration-flag values and source geometry, plus a deterministic
+digest of that unit's transitive dependency inputs. The dependency digest
+includes graph order, canonical identities, generations, exact source digests,
+and processed token digests. A dependency that changes the active flag state
+therefore invalidates an otherwise unchanged dependant's parsed row without
+invalidating unrelated graphs. A missing source, token-stream, or dependency
+digest forces a miss. Dirty lexical overlays also require an exact
+byte-for-byte source match.
+
+The cache uses one process-local, thread-safe least-recently-used policy across
+lexical and parsed rows. The default limits are 256 rows and 64 MiB of
+conservatively estimated storage. Coordinators advance only changed source
+generations; older rows become unreachable and are reclaimed by normal
+eviction. This keeps invalidation explicit without allowing a protocol thread
+to synchronously destroy a large cached tree. Source loading still rebuilds
+the dependency graph and processes include/configuration directives for every
+snapshot, so the cache cannot bypass path, overlay, visibility, or active-branch
+authority.
 
 `SourceGraph::compilationOrder()` supplies the current dependency-first parsing
 and combined-AST assembly order. It is not runtime program-initialization
@@ -90,12 +119,14 @@ spellings select binary32 and `d`/`D` selects binary64. The compiled lexer
 passes the original decimal digits directly to the private `APFloat`
 implementation; it never converts through host `double`.
 
-The lexer discards `//` line comments and non-nesting `/* ... */` block
-comments while preserving following token offsets and line numbers. An
-unterminated block comment produces `GTI-L0011` at its opening delimiter and
-stops later phases without parser cascades. The formatter and editor tooling
-scan comments separately. Documentation-comment retention is therefore not yet
-a compiler semantic capability.
+The lexer discards ordinary `//` line comments and non-nesting `/* ... */`
+block comments while preserving following token offsets and line numbers. A
+contiguous `///` block is instead normalized as Markdown leading trivia on the
+next declaration token; the parser transfers it to the declaration and
+semantics attaches it to the exact tooling symbol. An unterminated block
+comment produces `GTI-L0011` at its opening delimiter and stops later phases
+without parser cascades. The formatter and lexical editor highlighting still
+scan written comment ranges separately.
 
 ## Parser And AST
 
@@ -104,8 +135,18 @@ recovery, and synchronization through a narrow facade. Its algorithms and
 request-local parser state are compiled once in `src/compiler/parser.cpp`;
 consumers depend only on the facade, AST, token, and diagnostic contracts.
 `include/gti/ast.h` owns syntax node and visitor contracts.
-AST children own their subtrees. Syntax nodes preserve written forms and source
-tokens; they do not own resolved types or selected declarations.
+AST children own their subtrees. Top-level and nested statement handles use
+shared ownership so an exactly compatible cache row and one or more immutable
+frontend snapshots can retain the same parsed tree; expression children remain
+uniquely owned inside that tree. Syntax nodes preserve written forms and source
+tokens; they do not own resolved types or selected declarations, and compiler
+passes treat cached trees as immutable.
+
+Every final expression and statement node exposes one closed `ExprKind` or
+`StmtKind` tag in addition to the visitor interface. `exprAs<T>`/`stmtAs<T>`
+check that tag before a static cast. This avoids repeated RTTI name comparisons
+in semantic and HIR classification while leaving syntax authority and visitor
+exhaustiveness unchanged.
 
 `LayoutQuery` preserves the written operator token and one parenthesized
 `TypeRef`. The parser does not accept an expression operand, an unparenthesized
@@ -219,11 +260,13 @@ records the editor occurrence table. Compilation leaves it off; the LSP
 leaves it on.
 
 `FrontendOptions::stopAfter` selects the last phase the pipeline runs:
-`Semantics`, `Hir`, or the default `Mir`. A consumer that never reads HIR or
-MIR (the LSP) requests `Semantics`; skipped phases keep their validity flags
-false, so code generation stays disabled. The semantic model is moved out of
-the analyzer once its last reader (HIR instance reanalysis) has finished
-rather than deep-copied.
+`Semantics`, `Hir`, or the default `Mir`. Completion returns after semantic
+context capture. Ordinary editor snapshots request `Hir` so concrete generic
+instance reanalysis publishes the same source-level diagnostics as `gti
+check`, but the LSP does not query HIR directly and never builds MIR. Skipped
+phases keep their validity flags false, so code generation stays disabled. The
+semantic model is moved out of the analyzer once its last reader (HIR instance
+reanalysis) has finished rather than deep-copied.
 
 ## Boundaries
 

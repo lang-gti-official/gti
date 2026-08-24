@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -81,6 +82,7 @@ enum class MirTransformKind {
   ReplaceTerminator,
   RemoveBlock,
   PromotePlace,
+  DischargeSafetyCheck,
   Count,
 };
 
@@ -91,7 +93,46 @@ enum class MirTransformProofKind {
   UnreachableBlock,
   DeadUnusedComputation,
   ScalarPromotion,
+  BoundsRange,
+  StorageInitialization,
+  ArithmeticRange,
   Count,
+};
+
+enum class MirSafetyCheckFamily : std::uint8_t {
+  Bounds,
+  StorageState,
+  ArithmeticOverflow,
+  Count,
+};
+
+[[nodiscard]] constexpr std::string_view
+mirSafetyCheckFamilyName(MirSafetyCheckFamily family) {
+  switch (family) {
+  case MirSafetyCheckFamily::Bounds:
+    return "bounds";
+  case MirSafetyCheckFamily::StorageState:
+    return "storage-state";
+  case MirSafetyCheckFamily::ArithmeticOverflow:
+    return "arithmetic-overflow";
+  case MirSafetyCheckFamily::Count:
+    return "invalid";
+  }
+  return "invalid";
+}
+
+// A backend may omit exactly this source-defined failure outcome. The
+// optimizer attaches discharges only through the controlled MIR editor, and
+// optimization coherence independently re-derives every attached outcome.
+// Retaining the outcome identity, rather than a broad "cannot fail" bit,
+// permits an instruction with unrelated failure modes to stay checked.
+struct MirSafetyDischarge {
+  MirSafetyCheckFamily family = MirSafetyCheckFamily::Count;
+  std::size_t origin = 0;
+  DefinedFailureOutcome outcome;
+
+  friend bool operator==(const MirSafetyDischarge &,
+                         const MirSafetyDischarge &) = default;
 };
 
 // Analyses whose exact facts justify one optimizer transformation. These are
@@ -103,6 +144,7 @@ struct MirTransformRequiredAnalyses {
   bool reachability = false;
   bool dominance = false;
   bool scalarPromotion = false;
+  bool safetyChecks = false;
 
   friend bool operator==(const MirTransformRequiredAnalyses &,
                          const MirTransformRequiredAnalyses &) = default;
@@ -125,9 +167,11 @@ struct MirTransformRecord {
   // Replacement payloads are untrusted claims. Coherence replay derives the
   // same literal independently before applying an instruction replacement.
   std::optional<Literal> replacementLiteral;
+  std::optional<MirSafetyDischarge> safetyDischarge;
   std::vector<MirBlockId> relatedBlocks;
   std::vector<MirInstructionId> relatedInstructions;
   std::vector<MirValueId> relatedValues;
+  std::vector<MirPlaceId> relatedPlaces;
   MirTransformRequiredAnalyses requiredAnalyses;
 
   friend bool operator==(const MirTransformRecord &,
@@ -509,6 +553,7 @@ struct MirInstruction {
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
   std::vector<FailureSiteId> localFailureSites;
+  std::vector<MirSafetyDischarge> safetyDischarges;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
@@ -529,6 +574,15 @@ struct MirInstruction {
   friend bool operator==(const MirInstruction &,
                          const MirInstruction &) = default;
 };
+
+[[nodiscard]] bool hasMirSafetyDischarge(const MirInstruction &instruction,
+                                         MirSafetyDischarge discharge);
+[[nodiscard]] bool
+isMirFailureOutcomeDischarged(const MirInstruction &instruction,
+                              std::size_t origin,
+                              DefinedFailureOutcome outcome);
+[[nodiscard]] bool
+allMirLocalFailuresDischarged(const MirInstruction &instruction);
 
 [[nodiscard]] MirInstruction
 makeMirInstructionTombstone(const MirInstruction &instruction);

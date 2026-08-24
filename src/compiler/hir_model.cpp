@@ -190,7 +190,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   }
   const auto verifyRangeIterations = [&](const HirBody &body) {
     for (const HirStatement &statement : body.statements) {
-      const auto *source = dynamic_cast<const RangeForStmt *>(statement.source);
+      const auto *source = stmtAs<RangeForStmt>(statement.source);
       if (statement.kind != HirStatementKind::RangeFor) {
         if (statement.rangeIteration) {
           result.errors.emplace_back(
@@ -537,7 +537,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
     const HirValue &parent = *parents->second.front();
     if (value.kind == HirValueKind::Literal) {
-      const auto *literal = dynamic_cast<const LiteralExpr *>(parent.source);
+      const auto *literal = exprAs<LiteralExpr>(parent.source);
       return literal != nullptr && parent.constructorTarget &&
              std::holds_alternative<std::nullptr_t>(literal->value()) &&
              parent.parameterTypes ==
@@ -552,7 +552,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
              std::holds_alternative<std::nullptr_t>(*value.literal) &&
              !value.place && value.fullExpression == parent.fullExpression;
     }
-    const auto *assignment = dynamic_cast<const Assign *>(parent.source);
+    const auto *assignment = exprAs<Assign>(parent.source);
     const SymbolId symbol =
         assignment == nullptr ? 0 : semantics.findResolvedSymbol(*assignment);
     const SymbolRecord *record = semantics.database().findSymbol(symbol);

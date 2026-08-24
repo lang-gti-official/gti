@@ -42,6 +42,12 @@ This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
 
+Borrow-summary publication builds one `FunctionId`-to-candidate index after
+declaration registration and updates only the candidate rows for each resolved
+function. It does not rescan every namespace/member overload table once per
+function. The index is analysis-local and contains no durable or cached symbol
+identity.
+
 Mutable field groups are source-only declaration containers. Member collection
 recurses through the active group items with the surrounding access state,
 registering every child as an ordinary mutable direct field in textual order.

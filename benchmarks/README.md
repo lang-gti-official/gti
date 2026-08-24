@@ -7,6 +7,64 @@ requires one identical `GTI-BENCH-1` result record, and only then collects
 timings. Shared CI may validate builds and records, but must not enforce a wall
 time threshold.
 
+## LSP scalability
+
+`scripts/lsp_benchmark.py` drives `gti_lsp` over its real JSON-RPC transport
+and retains raw latency samples plus opt-in frontend work traces. Its fixture
+contains a root, configurable direct dependencies, and the standard-library
+prelude. Each iteration measures cold open to diagnostics, a root-only edit,
+a dirty dependency edit and dependant refresh, semantic tokens, hover,
+completion, cancellation, and superseded document generations.
+
+The LSP writes trace records only when the benchmark supplies the
+`GTI_LSP_FRONTEND_TRACE` environment variable. Each record names every unit
+loaded, lexed, parsed, and semantically analysed for that request, along with
+lex/parse cache hits, phase times, and bounded-cache occupancy. Schema 2
+summarizes those counters for each interaction and fails unless a root-only
+edit reuses every unchanged dependency and prelude unit, dirty dependency work
+is scoped to that unit plus its affected dependant parse, and observed cache
+occupancy stays within both limits.
+The benchmark's `--smoke` mode is a correctness and schema gate only and never
+enforces wall time.
+
+For a stable local comparison, use the same binary configuration, machine,
+dependency count, warmup count, and sample count for both runs:
+
+```sh
+python3 scripts/lsp_benchmark.py \
+  --lsp build/gti_lsp --stdlib stdlib \
+  --output build/lsp-benchmarks --json build/lsp-benchmarks/baseline.json \
+  --dependencies 16 --warmup 2 --runs 10
+
+python3 scripts/lsp_benchmark.py \
+  --lsp build/gti_lsp --stdlib stdlib \
+  --output build/lsp-benchmarks --json build/lsp-benchmarks/after.json \
+  --dependencies 16 --warmup 2 --runs 10 \
+  --baseline build/lsp-benchmarks/baseline.json
+```
+
+When both binaries are available, prefer one interleaved campaign so thermal
+or background-load drift affects them evenly:
+
+```sh
+python3 scripts/lsp_benchmark.py \
+  --lsp build/gti_lsp \
+  --baseline-lsp /path/to/unchanged-baseline/gti_lsp \
+  --stdlib stdlib --output build/lsp-benchmarks \
+  --json build/lsp-benchmarks/interleaved.json \
+  --dependencies 16 --warmup 5 --runs 30
+```
+
+The runner alternates current-first and baseline-first pairs and retains both
+sets of raw samples in the schema-2 report.
+
+The comparison reports the repeated-edit reduction and cold-open regression,
+and reaches `targetMet` only when the work invariants also pass. A result is a
+valid campaign comparison only when both binaries use the same build type,
+machine, dependency count, warmup count, and sample count.
+Reports and generated fixtures belong under the selected output directory and
+are not source artifacts.
+
 ## Workloads and variants
 
 Each directory under `workloads/` contains a schema-1 `benchmark.json` and the

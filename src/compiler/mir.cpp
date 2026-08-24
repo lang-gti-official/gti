@@ -1,7 +1,7 @@
 #include "gti/mir.h"
-
 #include "gti/mir_dominance.h"
 #include "gti/optimization/effects.h"
+#include "gti/optimization/safety.h"
 
 #include <algorithm>
 #include <functional>
@@ -134,19 +134,32 @@ MirBody *findMirBody(MirProgram &program, MirBodyAddress address) {
 bool mirTransformRecordLess(const MirTransformRecord &left,
                             const MirTransformRecord &right) {
   const auto key = [](const MirTransformRecord &record) {
-    return std::tuple{static_cast<std::size_t>(record.body.kind),
-                      record.body.owner,
-                      record.block,
-                      record.instruction,
-                      record.place,
-                      static_cast<std::size_t>(record.kind),
-                      static_cast<std::size_t>(record.proof),
-                      record.sourceValue,
-                      record.sourceStatement,
-                      record.pass,
-                      record.relatedBlocks,
-                      record.relatedInstructions,
-                      record.relatedValues};
+    return std::tuple{
+        static_cast<std::size_t>(record.body.kind),
+        record.body.owner,
+        record.block,
+        record.instruction,
+        record.place,
+        static_cast<std::size_t>(record.kind),
+        static_cast<std::size_t>(record.proof),
+        record.sourceValue,
+        record.sourceStatement,
+        record.pass,
+        record.safetyDischarge.has_value(),
+        record.safetyDischarge
+            ? static_cast<std::size_t>(record.safetyDischarge->family)
+            : 0,
+        record.safetyDischarge ? record.safetyDischarge->origin : 0,
+        record.safetyDischarge
+            ? static_cast<std::size_t>(record.safetyDischarge->outcome.code)
+            : 0,
+        record.safetyDischarge
+            ? static_cast<std::size_t>(record.safetyDischarge->outcome.detail)
+            : 0,
+        record.relatedBlocks,
+        record.relatedInstructions,
+        record.relatedValues,
+        record.relatedPlaces};
   };
   if (key(left) != key(right)) {
     return key(left) < key(right);
@@ -155,12 +168,49 @@ bool mirTransformRecordLess(const MirTransformRecord &left,
                   left.requiredAnalyses.effects,
                   left.requiredAnalyses.reachability,
                   left.requiredAnalyses.dominance,
-                  left.requiredAnalyses.scalarPromotion) <
+                  left.requiredAnalyses.scalarPromotion,
+                  left.requiredAnalyses.safetyChecks) <
          std::tie(right.requiredAnalyses.valueUses,
                   right.requiredAnalyses.effects,
                   right.requiredAnalyses.reachability,
                   right.requiredAnalyses.dominance,
-                  right.requiredAnalyses.scalarPromotion);
+                  right.requiredAnalyses.scalarPromotion,
+                  right.requiredAnalyses.safetyChecks);
+}
+
+bool hasMirSafetyDischarge(const MirInstruction &instruction,
+                           MirSafetyDischarge discharge) {
+  return std::find(instruction.safetyDischarges.begin(),
+                   instruction.safetyDischarges.end(),
+                   discharge) != instruction.safetyDischarges.end();
+}
+
+bool isMirFailureOutcomeDischarged(const MirInstruction &instruction,
+                                   std::size_t origin,
+                                   DefinedFailureOutcome outcome) {
+  return std::any_of(
+      instruction.safetyDischarges.begin(), instruction.safetyDischarges.end(),
+      [&](const MirSafetyDischarge &discharge) {
+        return discharge.origin == origin && discharge.outcome == outcome;
+      });
+}
+
+bool allMirLocalFailuresDischarged(const MirInstruction &instruction) {
+  if (instruction.definedFailure.localOrigins.empty()) {
+    return false;
+  }
+  bool sawOutcome = false;
+  for (std::size_t origin = 0;
+       origin < instruction.definedFailure.localOrigins.size(); ++origin) {
+    for (const DefinedFailureOutcome outcome :
+         instruction.definedFailure.localOrigins[origin].outcomes) {
+      sawOutcome = true;
+      if (!isMirFailureOutcomeDischarged(instruction, origin, outcome)) {
+        return false;
+      }
+    }
+  }
+  return sawOutcome;
 }
 
 bool isMirBlockParameterType(const SemanticType &type) {
@@ -3319,6 +3369,87 @@ validFailureInstructionShape(const MirInstruction &instruction) {
   return false;
 }
 
+[[nodiscard]] bool validSafetyDischarges(const MirInstruction &instruction) {
+  const auto less = [](const MirSafetyDischarge &left,
+                       const MirSafetyDischarge &right) {
+    return std::tuple{static_cast<std::size_t>(left.family), left.origin,
+                      static_cast<std::size_t>(left.outcome.code),
+                      static_cast<std::size_t>(left.outcome.detail)} <
+           std::tuple{static_cast<std::size_t>(right.family), right.origin,
+                      static_cast<std::size_t>(right.outcome.code),
+                      static_cast<std::size_t>(right.outcome.detail)};
+  };
+  if (!std::is_sorted(instruction.safetyDischarges.begin(),
+                      instruction.safetyDischarges.end(), less) ||
+      std::adjacent_find(instruction.safetyDischarges.begin(),
+                         instruction.safetyDischarges.end()) !=
+          instruction.safetyDischarges.end()) {
+    return false;
+  }
+  for (const MirSafetyDischarge &discharge : instruction.safetyDischarges) {
+    if (discharge.family >= MirSafetyCheckFamily::Count ||
+        discharge.origin >= instruction.definedFailure.localOrigins.size()) {
+      return false;
+    }
+    const auto &outcomes =
+        instruction.definedFailure.localOrigins[discharge.origin].outcomes;
+    if (std::find(outcomes.begin(), outcomes.end(), discharge.outcome) ==
+        outcomes.end()) {
+      return false;
+    }
+    const bool familyMatches =
+        (discharge.family == MirSafetyCheckFamily::Bounds &&
+         discharge.outcome.code == DefinedFailureCode::IndexOutOfBounds) ||
+        (discharge.family == MirSafetyCheckFamily::StorageState &&
+         discharge.outcome.code == DefinedFailureCode::InvalidStorageState) ||
+        (discharge.family == MirSafetyCheckFamily::ArithmeticOverflow &&
+         discharge.outcome.code == DefinedFailureCode::IntegerOverflow);
+    if (!familyMatches) {
+      return false;
+    }
+    const bool admittedShape = [&]() {
+      switch (discharge.family) {
+      case MirSafetyCheckFamily::Bounds:
+        if (discharge.outcome.detail == DefinedFailureDetail::FixedArray) {
+          return instruction.kind == MirInstructionKind::Load;
+        }
+        return discharge.outcome.detail ==
+                   DefinedFailureDetail::PrivateStorage &&
+               instruction.kind == MirInstructionKind::Call &&
+               (instruction.intrinsic == IntrinsicKind::StorageRead ||
+                instruction.intrinsic == IntrinsicKind::StorageReadMut);
+      case MirSafetyCheckFamily::StorageState:
+        return discharge.outcome.detail ==
+                   DefinedFailureDetail::UninitializedAccess &&
+               instruction.kind == MirInstructionKind::Call &&
+               (instruction.intrinsic == IntrinsicKind::StorageRead ||
+                instruction.intrinsic == IntrinsicKind::StorageReadMut);
+      case MirSafetyCheckFamily::ArithmeticOverflow:
+        if (instruction.kind != MirInstructionKind::Compute) {
+          return false;
+        }
+        return (instruction.operation == MirOperation::Add &&
+                discharge.outcome.detail == DefinedFailureDetail::Addition) ||
+               (instruction.operation == MirOperation::Subtract &&
+                discharge.outcome.detail ==
+                    DefinedFailureDetail::Subtraction) ||
+               (instruction.operation == MirOperation::Multiply &&
+                discharge.outcome.detail ==
+                    DefinedFailureDetail::Multiplication) ||
+               (instruction.operation == MirOperation::Negate &&
+                discharge.outcome.detail == DefinedFailureDetail::Negation);
+      case MirSafetyCheckFamily::Count:
+        return false;
+      }
+      return false;
+    }();
+    if (!admittedShape) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 bool supportsMirFailureControlFlow(MirBodyKind kind) {
@@ -3726,6 +3857,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
           instruction.payloadIndex ||
           instruction.intrinsic != IntrinsicKind::None ||
           instruction.synchronization != SynchronizationOperation{} ||
+          !instruction.safetyDischarges.empty() ||
           instruction.dispatch != CallDispatch::Static ||
           instruction.dispatchOwner != SemanticType::Unknown ||
           instruction.lambdaTarget || !instruction.callableArguments.empty() ||
@@ -6061,14 +6193,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           previousFailureDrop = obligation->constructionOrder;
         }
       }
-      if (!validFailureInstructionShape(instruction)) {
+      if (!validFailureInstructionShape(instruction) ||
+          !validSafetyDischarges(instruction)) {
         const DefinedFailureOrigin *firstOrigin =
             instruction.definedFailure.localOrigins.empty()
                 ? nullptr
                 : &instruction.definedFailure.localOrigins.front();
         return failure(
             body, owner,
-            "defined-failure metadata does not match instruction kind " +
+            "defined-failure metadata or safety-discharge metadata does not "
+            "match instruction kind " +
                 std::to_string(static_cast<unsigned>(instruction.kind)) +
                 " and propagation " +
                 std::to_string(static_cast<unsigned>(
@@ -15771,13 +15905,18 @@ verifyMirOptimizationCoherence(const MirProgram &source,
     reject({}, "MIR transformation records are not in deterministic order");
     return result;
   }
-  if (std::any_of(records.begin(), records.end(),
-                  [](const MirTransformRecord &record) {
-                    return record.pass.empty() ||
-                           record.kind == MirTransformKind::Count ||
-                           record.proof == MirTransformProofKind::Count;
-                  })) {
-    reject({}, "MIR transformation record has an invalid pass or kind");
+  if (std::any_of(
+          records.begin(), records.end(), [](const MirTransformRecord &record) {
+            return record.pass.empty() ||
+                   record.kind == MirTransformKind::Count ||
+                   record.proof == MirTransformProofKind::Count ||
+                   (record.kind != MirTransformKind::DischargeSafetyCheck &&
+                    (record.safetyDischarge.has_value() ||
+                     !record.relatedPlaces.empty() ||
+                     record.requiredAnalyses.safetyChecks));
+          })) {
+    reject({}, "MIR transformation record has an invalid pass, kind, or "
+               "safety-proof payload");
     return result;
   }
 
@@ -15814,6 +15953,12 @@ verifyMirOptimizationCoherence(const MirProgram &source,
         return result;
       }
       for (const MirInstruction &instruction : block.instructions) {
+        if (!instruction.safetyDischarges.empty()) {
+          reject(address,
+                 "source MIR already contains optimizer safety discharges",
+                 block.id, instruction.id);
+          return result;
+        }
         if (instruction.tombstone || (instruction.literalProvenance.kind !=
                                           MirLiteralProvenanceKind::None &&
                                       instruction.literalProvenance.kind !=
@@ -16205,6 +16350,70 @@ verifyMirOptimizationCoherence(const MirProgram &source,
   const MirVerificationResult foldedVerification = verifyMirProgram(candidate);
   if (!foldedVerification.valid()) {
     return foldedVerification;
+  }
+
+  // Safety discharges are replayed from the current canonical candidate after
+  // value/branch folds and before destructive cleanup. Record payloads and
+  // optimized instruction metadata are both untrusted; only the independent
+  // body-local safety analysis authorizes attaching the exact outcome.
+  for (std::size_t index = 0; index < records.size(); ++index) {
+    const MirTransformRecord &record = records[index];
+    if (consumed[index] ||
+        record.kind != MirTransformKind::DischargeSafetyCheck) {
+      continue;
+    }
+    MirBody *body = findMirBody(candidate, record.body);
+    const InstructionLocation location =
+        body == nullptr ? InstructionLocation{}
+                        : findInstruction(*body, record.instruction);
+    const MirSafetyAnalysis analysis =
+        analyzeMirSafetyChecks(candidate, record.body);
+    const MirSafetyProof *proof =
+        record.safetyDischarge
+            ? analysis.find(record.instruction, *record.safetyDischarge)
+            : nullptr;
+    const MirTransformRequiredAnalyses requiredSafety{.valueUses = true,
+                                                      .reachability = true,
+                                                      .dominance = true,
+                                                      .safetyChecks = true};
+    if (location.block == nullptr || location.instruction == nullptr ||
+        proof == nullptr || location.block->id != record.block ||
+        record.place != 0 || record.replacementLiteral ||
+        record.proof !=
+            mirSafetyTransformProof(record.safetyDischarge->family) ||
+        record.sourceValue != location.instruction->hirValue ||
+        record.sourceStatement != location.instruction->hirStatement ||
+        record.relatedBlocks != proof->relatedBlocks ||
+        record.relatedInstructions != proof->relatedInstructions ||
+        record.relatedValues != proof->relatedValues ||
+        record.relatedPlaces != proof->relatedPlaces ||
+        record.requiredAnalyses != requiredSafety ||
+        hasMirSafetyDischarge(*location.instruction, *record.safetyDischarge)) {
+      reject(record.body,
+             "safety-check discharge record does not replay from canonical "
+             "MIR facts",
+             record.block, record.instruction);
+      return result;
+    }
+    location.instruction->safetyDischarges.push_back(*record.safetyDischarge);
+    std::sort(
+        location.instruction->safetyDischarges.begin(),
+        location.instruction->safetyDischarges.end(),
+        [](const MirSafetyDischarge &left, const MirSafetyDischarge &right) {
+          return std::tuple{static_cast<std::size_t>(left.family), left.origin,
+                            static_cast<std::size_t>(left.outcome.code),
+                            static_cast<std::size_t>(left.outcome.detail)} <
+                 std::tuple{static_cast<std::size_t>(right.family),
+                            right.origin,
+                            static_cast<std::size_t>(right.outcome.code),
+                            static_cast<std::size_t>(right.outcome.detail)};
+        });
+    consumed[index] = true;
+  }
+
+  const MirVerificationResult safetyVerification = verifyMirProgram(candidate);
+  if (!safetyVerification.valid()) {
+    return safetyVerification;
   }
 
   for (std::size_t index = 0; index < records.size(); ++index) {

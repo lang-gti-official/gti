@@ -279,10 +279,12 @@ analyzeScalarPromotion(const MirProgram &program, MirBodyAddress address,
 } // namespace
 
 std::string_view name(MirAnalysisKind kind) {
-  constexpr std::array names{
-      std::string_view{"cfg-reachability"}, std::string_view{"dominance"},
-      std::string_view{"value-uses"}, std::string_view{"effects"},
-      std::string_view{"scalar-promotion-inputs"}};
+  constexpr std::array names{std::string_view{"cfg-reachability"},
+                             std::string_view{"dominance"},
+                             std::string_view{"value-uses"},
+                             std::string_view{"effects"},
+                             std::string_view{"scalar-promotion-inputs"},
+                             std::string_view{"safety-checks"}};
   const std::size_t index = static_cast<std::size_t>(kind);
   return index < names.size() ? names[index] : "invalid";
 }
@@ -435,6 +437,19 @@ MirBodyAnalysisManager::scalarPromotionInputs(const MirProgram &program,
   return &*cached.scalarPromotionInputs;
 }
 
+const MirSafetyAnalysis *
+MirBodyAnalysisManager::safetyChecks(const MirProgram &program,
+                                     MirBodyAddress address) {
+  Entry &cached = entry(address);
+  if (!cached.safetyChecks) {
+    if (findMirBody(program, address) == nullptr) {
+      return nullptr;
+    }
+    cached.safetyChecks = analyzeMirSafetyChecks(program, address);
+  }
+  return &*cached.safetyChecks;
+}
+
 std::vector<std::string>
 MirBodyAnalysisManager::invalidate(MirBodyAddress address,
                                    const MirPreservedAnalyses &preserved) {
@@ -452,6 +467,7 @@ MirBodyAnalysisManager::invalidate(MirBodyAddress address,
   drop(MirAnalysisKind::ValueUses, cached.valueUses);
   drop(MirAnalysisKind::Effects, cached.effects);
   drop(MirAnalysisKind::ScalarPromotionInputs, cached.scalarPromotionInputs);
+  drop(MirAnalysisKind::SafetyChecks, cached.safetyChecks);
   return invalidated;
 }
 

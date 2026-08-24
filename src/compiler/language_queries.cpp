@@ -671,6 +671,13 @@ public:
     if (result.signature.empty() || result.signature == "unknown") {
       return std::nullopt;
     }
+    if (occurrence->symbol != 0) {
+      if (const SymbolRecord *symbol =
+              semantics.database().findSymbol(occurrence->symbol);
+          symbol != nullptr && symbol->documentationMarkdown) {
+        result.documentationMarkdown = symbol->documentationMarkdown;
+      }
+    }
     if (hoveredFunction != nullptr) {
       appendCallableContractNotes(result, semantics, *hoveredFunction,
                                   hoveredCall, types);
@@ -943,6 +950,10 @@ public:
     FrontendOptions options;
     options.analyzeRecoveredProgram = true;
     options.completionOffset = input.byteOffset;
+    options.workMetrics = input.workMetrics;
+    options.cache = input.cache;
+    options.sourceGenerations = input.sourceGenerations;
+    options.sourceDigests = input.sourceDigests;
     FrontendResult snapshot = Frontend(options).analyze(
         input.entryPath, input.source, input.preludePaths,
         input.sourceOverrides, input.standardLibraryRoots,
@@ -1416,8 +1427,7 @@ private:
       if (statement == nullptr) {
         continue;
       }
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (conditional->directive().source != unitPath) {
           continue;
         }
@@ -1427,14 +1437,12 @@ private:
         }
         continue;
       }
-      if (const auto *group =
-              dynamic_cast<const MutableFieldGroupDecl *>(statement.get())) {
+      if (const auto *group = stmtAs<MutableFieldGroupDecl>(statement.get())) {
         appendOutline(snapshot, sourceUnit, unitPath, target, group->members(),
                       insideClass, result);
         continue;
       }
-      if (const auto *foreign =
-              dynamic_cast<const ExternCDecl *>(statement.get())) {
+      if (const auto *foreign = stmtAs<ExternCDecl>(statement.get())) {
         if (foreign->keyword().source != unitPath) {
           continue;
         }
@@ -1478,8 +1486,7 @@ private:
       return info;
     };
 
-    if (const auto *namespaceDecl =
-            dynamic_cast<const NamespaceDecl *>(&statement)) {
+    if (const auto *namespaceDecl = stmtAs<NamespaceDecl>(&statement)) {
       std::optional<DocumentSymbolInfo> info =
           makeInfo(namespaceDecl->name(), DocumentSymbolKind::Namespace);
       if (info) {
@@ -1488,11 +1495,10 @@ private:
       }
       return info;
     }
-    if (const auto *alias =
-            dynamic_cast<const NamespaceAliasDecl *>(&statement)) {
+    if (const auto *alias = stmtAs<NamespaceAliasDecl>(&statement)) {
       return makeInfo(alias->name(), DocumentSymbolKind::Namespace);
     }
-    if (const auto *classDecl = dynamic_cast<const ClassDecl *>(&statement)) {
+    if (const auto *classDecl = stmtAs<ClassDecl>(&statement)) {
       DocumentSymbolKind kind = DocumentSymbolKind::Class;
       switch (classDecl->kind()) {
       case ClassKind::Class:
@@ -1523,7 +1529,7 @@ private:
       }
       return info;
     }
-    if (const auto *enumDecl = dynamic_cast<const EnumDecl *>(&statement)) {
+    if (const auto *enumDecl = stmtAs<EnumDecl>(&statement)) {
       std::optional<DocumentSymbolInfo> info =
           makeInfo(enumDecl->name(), DocumentSymbolKind::Enum);
       if (info) {
@@ -1546,7 +1552,7 @@ private:
       }
       return info;
     }
-    if (const auto *function = dynamic_cast<const FunctionDecl *>(&statement)) {
+    if (const auto *function = stmtAs<FunctionDecl>(&statement)) {
       if (function->operatorName()) {
         return makeInfo(function->name(), DocumentSymbolKind::Operator,
                         std::string(operatorSourceSpelling(
@@ -1556,25 +1562,22 @@ private:
                                             ? DocumentSymbolKind::Method
                                             : DocumentSymbolKind::Function);
     }
-    if (const auto *constructor =
-            dynamic_cast<const ConstructorDecl *>(&statement)) {
+    if (const auto *constructor = stmtAs<ConstructorDecl>(&statement)) {
       return makeInfo(constructor->name(), DocumentSymbolKind::Constructor);
     }
-    if (const auto *destructor =
-            dynamic_cast<const DestructorDecl *>(&statement)) {
+    if (const auto *destructor = stmtAs<DestructorDecl>(&statement)) {
       return makeInfo(destructor->name(), DocumentSymbolKind::Destructor,
                       "~" + destructor->name().lexeme);
     }
-    if (const auto *variable = dynamic_cast<const VariableDecl *>(&statement)) {
+    if (const auto *variable = stmtAs<VariableDecl>(&statement)) {
       return makeInfo(variable->name(), insideClass
                                             ? DocumentSymbolKind::Field
                                             : DocumentSymbolKind::Variable);
     }
-    if (const auto *alias = dynamic_cast<const TypeAliasDecl *>(&statement)) {
+    if (const auto *alias = stmtAs<TypeAliasDecl>(&statement)) {
       return makeInfo(alias->name(), DocumentSymbolKind::TypeAlias);
     }
-    if (const auto *conceptDecl =
-            dynamic_cast<const ConceptDecl *>(&statement)) {
+    if (const auto *conceptDecl = stmtAs<ConceptDecl>(&statement)) {
       return makeInfo(conceptDecl->name(), DocumentSymbolKind::Concept);
     }
     return std::nullopt;
@@ -1584,28 +1587,26 @@ private:
   findConceptDeclaration(const StmtList &statements,
                          const SourceSpan &declarationSpan) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *declaration =
-              dynamic_cast<const ConceptDecl *>(statement.get());
+      if (const auto *declaration = stmtAs<ConceptDecl>(statement.get());
           declaration != nullptr &&
           sameSpan(tokenSpan(declaration->name()), declarationSpan)) {
         return declaration;
       }
       if (const auto *namespaceDeclaration =
-              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+              stmtAs<NamespaceDecl>(statement.get())) {
         if (const ConceptDecl *found = findConceptDeclaration(
                 namespaceDeclaration->declarations(), declarationSpan)) {
           return found;
         }
       } else if (const auto *conditional =
-                     dynamic_cast<const ConditionalStmt *>(statement.get())) {
+                     stmtAs<ConditionalStmt>(statement.get())) {
         for (const ConditionalBranch &branch : conditional->branches()) {
           if (const ConceptDecl *found =
                   findConceptDeclaration(branch.statements, declarationSpan)) {
             return found;
           }
         }
-      } else if (const auto *foreign =
-                     dynamic_cast<const ExternCDecl *>(statement.get())) {
+      } else if (const auto *foreign = stmtAs<ExternCDecl>(statement.get())) {
         if (const ConceptDecl *found = findConceptDeclaration(
                 foreign->declarations(), declarationSpan)) {
           return found;

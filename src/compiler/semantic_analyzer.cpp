@@ -1,9 +1,11 @@
 #include "gti/semantic_analyzer.h"
 
+#include "gti/frontend_work.h"
 #include "semantic_diagnostics.h"
 #include "semantic_spelling.h"
 
 #include <cassert>
+#include <chrono>
 
 namespace lang {
 
@@ -72,9 +74,9 @@ public:
   };
 
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
-                bool toolingOccurrences)
+                bool toolingOccurrences, FrontendWorkMetrics *workMetrics)
       : target(std::move(target)), sourceGraph(sourceGraph),
-        toolingOccurrences(toolingOccurrences) {
+        toolingOccurrences(toolingOccurrences), workMetrics(workMetrics) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
@@ -178,6 +180,7 @@ public:
     lambdaUncapturedLocals.clear();
     currentReturnType = SemanticType::Unknown;
 
+    const auto registrationStart = std::chrono::steady_clock::now();
     registerNamespaces(program.declarations(), {});
     registerNamespaceAliases(program.declarations(), {});
     registerTypeAliases(program.declarations(), {});
@@ -203,10 +206,26 @@ public:
     validateInterfaceCapabilities();
     recordClassTypes();
     recordClassLifecycles();
+    if (workMetrics != nullptr) {
+      workMetrics->semanticRegistrationMicroseconds = static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - registrationStart)
+              .count());
+    }
     beginScope();
+    const auto bodyStart = std::chrono::steady_clock::now();
+    measureTopLevelStatements = workMetrics != nullptr;
     analyze(program.declarations());
+    measureTopLevelStatements = false;
     validateDefaultArgumentCycles();
     endScope();
+    if (workMetrics != nullptr) {
+      workMetrics->semanticBodyMicroseconds = static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - bodyStart)
+              .count());
+    }
+    const auto finalizationStart = std::chrono::steady_clock::now();
     discoverOwnedCallableContracts();
     semanticModel.finalizeCallableForwardings();
     validateOnceCallableForwardings();
@@ -217,6 +236,12 @@ public:
     semanticModel.finalizeCallableArguments();
     finalizeProgramInitialization(program);
     semanticModel.finalizeOccurrences();
+    if (workMetrics != nullptr) {
+      workMetrics->semanticFinalizationMicroseconds = static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - finalizationStart)
+              .count());
+    }
     return !hadError();
   }
 
@@ -343,6 +368,23 @@ public:
   [[nodiscard]] bool requiresActiveCleanupFor(const SemanticType &type) const {
     ActiveCleanupQuery query;
     return requiresActiveCleanup(type, query);
+  }
+
+  void attachDeclarationDocumentation(SymbolId symbol,
+                                      const Stmt &declaration) {
+    const std::optional<std::string> &documentation =
+        declaration.documentationMarkdown();
+    if (symbol != 0 && documentation && !documentation->empty()) {
+      semanticModel.setSymbolDocumentation(symbol, *documentation);
+    }
+  }
+
+  void attachTokenDocumentation(SymbolId symbol, const Token &declaration) {
+    if (symbol != 0 && declaration.leadingDocumentationMarkdown &&
+        !declaration.leadingDocumentationMarkdown->empty()) {
+      semanticModel.setSymbolDocumentation(
+          symbol, *declaration.leadingDocumentationMarkdown);
+    }
   }
 
   // Concrete instance reanalysis runs on this visitor inside a detach/
@@ -544,6 +586,7 @@ public:
     const SymbolId symbol = recordToolingSymbol(
         stmt.name(), SymbolKind::Enum,
         info == nullptr ? stmt.name().lexeme : info->qualifiedName, type);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -560,6 +603,7 @@ public:
           (info == nullptr ? stmt.name().lexeme : info->qualifiedName) +
               "::" + enumerator.name.lexeme,
           type);
+      attachTokenDocumentation(enumeratorSymbol, enumerator.name);
       semanticModel.recordOccurrence(
           {.sourceUnit = currentSourceUnit,
            .span = tokenSpan(enumerator.name),
@@ -642,6 +686,7 @@ public:
             ? typeSpelling(type)
             : qualifiedName(info.namespaceScope, stmt.name().lexeme),
         type, false, !stmt.isForwardDeclaration());
+    attachDeclarationDocumentation(symbol, stmt);
     OccurrenceRole roles = OccurrenceRole::Declaration;
     if (!stmt.isForwardDeclaration()) {
       roles |= OccurrenceRole::Definition;
@@ -787,6 +832,7 @@ public:
         qualifiedName(owner.namespaceScope,
                       owner.name.lexeme + "::" + stmt.name().lexeme),
         ownerType, false, true, constructorAccess(owner, &stmt));
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -1035,12 +1081,11 @@ public:
         // isAssignable already proved the value fits the field.
         const Expr *argument = initializer.arguments.front().get();
         std::vector<const Expr *> chain;
-        while (const auto *grouping =
-                   dynamic_cast<const Grouping *>(argument)) {
+        while (const auto *grouping = exprAs<Grouping>(argument)) {
           chain.push_back(argument);
           argument = grouping->expression().get();
         }
-        if (dynamic_cast<const LiteralExpr *>(argument) != nullptr) {
+        if (exprAs<LiteralExpr>(argument) != nullptr) {
           chain.push_back(argument);
           for (const Expr *node : chain) {
             if (const ExpressionInfo *info =
@@ -1057,7 +1102,7 @@ public:
         std::optional<std::size_t> ownedParameter;
         if (const ExprPtr *moved =
                 explicitMoveSource(initializer.arguments.front())) {
-          const auto *variable = dynamic_cast<const Variable *>(moved->get());
+          const auto *variable = exprAs<Variable>(moved->get());
           const Symbol *source =
               variable == nullptr ? nullptr : resolve(variable->name());
           if (source != nullptr && source->parameterDeclaration != nullptr &&
@@ -1156,6 +1201,7 @@ public:
                       owner.name.lexeme + "::~" + stmt.name().lexeme),
         SemanticType::classType(*currentClass), false, true,
         AccessModifier::Public);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -1445,7 +1491,7 @@ public:
     }
 
     const auto selectedCall = [&](const ExprPtr &expression) -> FunctionId {
-      const auto *call = dynamic_cast<const Call *>(expression.get());
+      const auto *call = exprAs<Call>(expression.get());
       const ResolvedCallInfo *resolved =
           call == nullptr ? nullptr : semanticModel.findCall(*call);
       return resolved == nullptr ? 0 : resolved->function;
@@ -1540,6 +1586,7 @@ public:
     const Token &functionToken =
         stmt.operatorName() ? stmt.operatorName()->symbol : stmt.name();
     const SymbolId functionSymbol = recordFunctionSymbol(stmt);
+    attachDeclarationDocumentation(functionSymbol, stmt);
     OccurrenceRole functionRoles = OccurrenceRole::Declaration;
     if (stmt.body()) {
       functionRoles |= OccurrenceRole::Definition;
@@ -1785,7 +1832,6 @@ public:
       endTypeParameterScope();
       return;
     }
-
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
@@ -2032,6 +2078,7 @@ public:
         recordToolingSymbol(stmt.name(), SymbolKind::NamespaceAlias,
                             qualifiedName(currentNamespace, stmt.name().lexeme),
                             SemanticType::Unknown);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -2046,6 +2093,7 @@ public:
         recordToolingSymbol(stmt.name(), SymbolKind::Namespace,
                             qualifiedName(currentNamespace, stmt.name().lexeme),
                             SemanticType::Unknown);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -2406,8 +2454,8 @@ public:
              "GTI-S2048");
     }
 
-    const bool untypedInitializer = dynamic_cast<const ArrayInitializer *>(
-                                        stmt.initializer().get()) != nullptr;
+    const bool untypedInitializer =
+        exprAs<ArrayInitializer>(stmt.initializer().get()) != nullptr;
     const SemanticType initializerType = analyzeExpectedCallableResult(
         stmt.initializer(), SemanticType::Unknown);
     SemanticType sourceType = initializerType;
@@ -2564,6 +2612,7 @@ public:
       const SymbolId symbol =
           recordBindingOccurrence(binding.name(), element.binding.type, false,
                                   SemanticBindingKind::LocalVariable);
+      attachDeclarationDocumentation(symbol, stmt);
       element.declaration = &binding;
       element.binding.symbol = symbol;
       semanticModel.record(binding, element.binding);
@@ -2594,6 +2643,7 @@ public:
         info == nullptr ? qualifiedName(currentNamespace, stmt.name().lexeme)
                         : info->qualifiedName,
         type);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -2612,6 +2662,7 @@ public:
       return;
     }
     const RegisteredConcept &conceptInfo = concepts[found->second - 1];
+    attachDeclarationDocumentation(conceptInfo.symbol, stmt);
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                     .span = tokenSpan(stmt.name()),
                                     .kind = SemanticOccurrenceKind::Symbol,
@@ -2671,6 +2722,7 @@ public:
     const SymbolId symbol = recordBindingOccurrence(
         stmt.name(), declaredType, stmt.isMutable(), bindingKind,
         bindingKind == SemanticBindingKind::StaticField, internalLinkage);
+    attachDeclarationDocumentation(symbol, stmt);
     BindingInfo info =
         bindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
                                                    : AccessMode::ReadOnly);
@@ -2807,8 +2859,8 @@ public:
             .id = *currentClass};
       }
       analyzingFieldInitializer = currentClass && functionDepth == 0;
-      const bool directInitializer = dynamic_cast<const DirectInitializer *>(
-                                         stmt.initializer().get()) != nullptr;
+      const bool directInitializer =
+          exprAs<DirectInitializer>(stmt.initializer().get()) != nullptr;
       const SemanticType expectedInitializer =
           declaredType.kind == SemanticType::Reference &&
                   declaredType.arguments.size() == 1 && !directInitializer
@@ -2867,8 +2919,7 @@ public:
     }
 
     if (stmt.initializer() && declaredType.kind == SemanticType::Reference &&
-        dynamic_cast<const DirectInitializer *>(stmt.initializer().get()) ==
-            nullptr) {
+        exprAs<DirectInitializer>(stmt.initializer().get()) == nullptr) {
       validateReferenceBinding(declaredType, initializerType,
                                stmt.initializer());
       if (declaredType.arguments.size() == 1 &&
@@ -3079,7 +3130,7 @@ public:
                       ? analyzeInitializer(expr.value(), targetType)
                       : analyze(expr.value());
     }
-    const auto *moveCall = dynamic_cast<const Call *>(expr.value().get());
+    const auto *moveCall = exprAs<Call>(expr.value().get());
     const Variable *movedSource =
         moveCall != nullptr &&
                 resolvedIntrinsicKind(*moveCall) == IntrinsicKind::Move &&
@@ -3407,8 +3458,7 @@ public:
       analyzeIntrinsicCall(expr, *intrinsic);
       return;
     }
-    if (const auto *callee =
-            dynamic_cast<const Variable *>(expr.callee().get())) {
+    if (const auto *callee = exprAs<Variable>(expr.callee().get())) {
       if (const std::optional<SemanticType> target =
               resolveTypeParameter(NamePath(callee->name()))) {
         analyzeTypeParameterCall(expr, *target);
@@ -3561,7 +3611,7 @@ public:
       explicitTypeArguments.emplace_back(argumentType);
     }
 
-    if (const auto *member = dynamic_cast<const Get *>(expr.callee().get())) {
+    if (const auto *member = exprAs<Get>(expr.callee().get())) {
       const SemanticType *objectType =
           semanticModel.findType(*member->object());
       if (objectType != nullptr && objectType->kind == SemanticType::Expected) {
@@ -3690,8 +3740,8 @@ public:
             ephemeralBorrowArguments.push_back(index);
           } else if (match == CallArgumentMatchKind::Mismatch) {
             if (isContextualArrayArgument(expr.arguments()[index])) {
-              const auto *initializer = dynamic_cast<const ArrayInitializer *>(
-                  expr.arguments()[index].get());
+              const auto *initializer =
+                  exprAs<ArrayInitializer>(expr.arguments()[index].get());
               if (resolved.parameterTypes[index].kind != SemanticType::Array) {
                 report(expressionToken(expr.arguments()[index]),
                        "A brace argument requires one exact fixed-array "
@@ -3861,7 +3911,7 @@ public:
           return;
         }
         if (viable.empty() && rejectedMutableReceiver) {
-          const auto *member = dynamic_cast<const Get *>(expr.callee().get());
+          const auto *member = exprAs<Get>(expr.callee().get());
           if (member != nullptr && rejectedMutableFunction) {
             reportMutableReceiverFailure(member->object(), expr.paren(),
                                          *rejectedMutableFunction,
@@ -4781,14 +4831,12 @@ public:
                                  ? directCall(capture.initializer)
                                  : nullptr;
       const auto *moveName =
-          moveCall == nullptr
-              ? nullptr
-              : dynamic_cast<const QualifiedName *>(moveCall->callee().get());
+          moveCall == nullptr ? nullptr
+                              : exprAs<QualifiedName>(moveCall->callee().get());
       const auto *sourceExpression =
           moveCall == nullptr || moveCall->arguments().size() != 1
               ? nullptr
-              : dynamic_cast<const Variable *>(
-                    moveCall->arguments().front().get());
+              : exprAs<Variable>(moveCall->arguments().front().get());
       const bool explicitMoveSyntax =
           capture.explicitInitializer() && moveCall != nullptr &&
           moveCall->typeArguments().empty() && moveName != nullptr &&
@@ -4819,7 +4867,7 @@ public:
       const auto *copySource =
           capture.explicitInitializer()
               ? nullptr
-              : dynamic_cast<const Variable *>(capture.initializer.get());
+              : exprAs<Variable>(capture.initializer.get());
       const Variable *sourceExpressionForCapture =
           capture.explicitInitializer() ? sourceExpression : copySource;
       const Token &sourceName = sourceExpressionForCapture == nullptr
@@ -5376,7 +5424,7 @@ public:
   }
 
   void visitPackFoldExpr(const PackFold &expr) override {
-    const auto *call = dynamic_cast<const Call *>(expr.pattern().get());
+    const auto *call = exprAs<Call>(expr.pattern().get());
     if (call == nullptr) {
       report(expr.ellipsis(),
              "A pack fold requires one ordinary function-call pattern.",
@@ -5419,7 +5467,7 @@ public:
     const Symbol *packSymbol = nullptr;
     for (std::size_t index = 0; index < call->arguments().size(); ++index) {
       const ExprPtr &argument = call->arguments()[index];
-      const auto *variable = dynamic_cast<const Variable *>(argument.get());
+      const auto *variable = exprAs<Variable>(argument.get());
       if (variable == nullptr) {
         report(expressionToken(argument),
                "Pack-fold call arguments must be named local values so the "
@@ -5962,8 +6010,7 @@ public:
       return;
     }
     if (expr.oper().kind == TokenKind::MINUS) {
-      if (const auto *literal =
-              dynamic_cast<const LiteralExpr *>(expr.right().get());
+      if (const auto *literal = exprAs<LiteralExpr>(expr.right().get());
           literal != nullptr) {
         const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
         if (magnitude != nullptr && *magnitude == (std::uint64_t{1} << 63U)) {
@@ -5979,8 +6026,7 @@ public:
       }
     }
     if (expr.oper().kind == TokenKind::STAR && expr.rangeObject()) {
-      const auto *rangeVariable =
-          dynamic_cast<const Variable *>(expr.rangeObject().get());
+      const auto *rangeVariable = exprAs<Variable>(expr.rangeObject().get());
       const Symbol *rangeSymbol =
           rangeVariable == nullptr ? nullptr : resolve(rangeVariable->name());
       SemanticType rangeType =
@@ -7453,7 +7499,7 @@ private:
     }
 
     const SemanticType sourceType = semanticModel.typeOf(source);
-    if (dynamic_cast<const LayoutQuery *>(&source) != nullptr) {
+    if (exprAs<LayoutQuery>(&source) != nullptr) {
       if (const std::optional<ConstantValue> value =
               semanticModel.findConstant(source)) {
         return constexprSuccess(source, *value, context);
@@ -7461,20 +7507,20 @@ private:
       return constexprFailure(expressionToken(source),
                               ConstantEvaluationFailure::UnsupportedType);
     }
-    if (const auto *literal = dynamic_cast<const LiteralExpr *>(&source)) {
+    if (const auto *literal = exprAs<LiteralExpr>(&source)) {
       const ConstantEvaluation evaluated = evaluateConstantLiteral(
           literal->value(), constantIntegerDomain(sourceType));
       return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(literal->token(), evaluated.failure);
     }
-    if (const auto *grouping = dynamic_cast<const Grouping *>(&source)) {
+    if (const auto *grouping = exprAs<Grouping>(&source)) {
       ConstexprEvaluation evaluated =
           evaluateConstexprExpression(grouping->expression(), context);
       return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : evaluated;
     }
-    if (dynamic_cast<const Variable *>(&source) != nullptr ||
-        dynamic_cast<const QualifiedName *>(&source) != nullptr) {
+    if (exprAs<Variable>(&source) != nullptr ||
+        exprAs<QualifiedName>(&source) != nullptr) {
       const SymbolId symbol = semanticModel.findResolvedSymbol(source);
       if (const ConstexprLocalValue *local =
               findConstexprLocal(context, symbol)) {
@@ -7493,7 +7539,7 @@ private:
       return constexprFailure(expressionToken(source),
                               ConstantEvaluationFailure::NonConstantReference);
     }
-    if (const auto *assignment = dynamic_cast<const Assign *>(&source)) {
+    if (const auto *assignment = exprAs<Assign>(&source)) {
       ConstexprLocalValue *target = findMutableConstexprLocal(
           context, semanticModel.findResolvedSymbol(source));
       if (target == nullptr) {
@@ -7538,7 +7584,7 @@ private:
       *target = *evaluated.value;
       return constexprSuccess(source, **target, context);
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(&source)) {
+    if (const auto *unary = exprAs<Unary>(&source)) {
       if (unary->oper().kind == TokenKind::PLUS_PLUS ||
           unary->oper().kind == TokenKind::MINUS_MINUS) {
         return evaluateConstexprMutation(source, unary->right(), unary->oper(),
@@ -7555,11 +7601,11 @@ private:
       return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(unary->oper(), evaluated.failure);
     }
-    if (const auto *postfix = dynamic_cast<const Postfix *>(&source)) {
+    if (const auto *postfix = exprAs<Postfix>(&source)) {
       return evaluateConstexprMutation(source, postfix->expression(),
                                        postfix->oper(), true, context);
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(&source)) {
+    if (const auto *binary = exprAs<Binary>(&source)) {
       ConstexprEvaluation left =
           evaluateConstexprExpression(binary->left(), context);
       if (!left) {
@@ -7576,7 +7622,7 @@ private:
       return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(binary->oper(), evaluated.failure);
     }
-    if (const auto *logical = dynamic_cast<const Logical *>(&source)) {
+    if (const auto *logical = exprAs<Logical>(&source)) {
       ConstexprEvaluation left =
           evaluateConstexprExpression(logical->left(), context);
       if (!left) {
@@ -7601,8 +7647,7 @@ private:
       return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(logical->oper(), evaluated.failure);
     }
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalExpr *>(&source)) {
+    if (const auto *conditional = exprAs<ConditionalExpr>(&source)) {
       ConstexprEvaluation condition =
           evaluateConstexprExpression(conditional->condition(), context);
       if (!condition) {
@@ -7619,7 +7664,7 @@ private:
                                       context);
       return result ? constexprSuccess(source, *result.value, context) : result;
     }
-    if (const auto *conversion = dynamic_cast<const Conversion *>(&source)) {
+    if (const auto *conversion = exprAs<Conversion>(&source)) {
       ConstexprEvaluation operand =
           evaluateConstexprExpression(conversion->value(), context);
       if (!operand) {
@@ -7631,8 +7676,7 @@ private:
                  ? constexprSuccess(source, *evaluated.value, context)
                  : constexprFailure(conversion->paren(), evaluated.failure);
     }
-    if (const auto *initializer =
-            dynamic_cast<const DirectInitializer *>(&source)) {
+    if (const auto *initializer = exprAs<DirectInitializer>(&source)) {
       if (initializer->arguments().size() != 1) {
         return constexprFailure(
             initializer->brace(),
@@ -7649,9 +7693,8 @@ private:
                  ? constexprSuccess(source, *evaluated.value, context)
                  : constexprFailure(initializer->brace(), evaluated.failure);
     }
-    if (const auto *call = dynamic_cast<const Call *>(&source)) {
-      if (const auto *member =
-              dynamic_cast<const Get *>(call->callee().get())) {
+    if (const auto *call = exprAs<Call>(&source)) {
+      if (const auto *member = exprAs<Get>(call->callee().get())) {
         const SemanticType objectType = semanticModel.typeOf(*member->object());
         if (objectType.kind == SemanticType::Expected &&
             objectType.arguments.size() == 2) {
@@ -7878,27 +7921,25 @@ private:
       return constexprStatementFailure(
           constexprFailure({}, ConstantEvaluationFailure::ResourceLimit));
     }
-    if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+    if (const auto *block = stmtAs<BlockStmt>(statement)) {
       context.scopes.emplace_back();
       ConstexprStatementEvaluation evaluated =
           executeConstexprStatements(block->statements(), context);
       context.scopes.pop_back();
       return evaluated;
     }
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
       const StmtList *branch = conditional->activeBranch(target);
       return branch == nullptr ? ConstexprStatementEvaluation{}
                                : executeConstexprStatements(*branch, context);
     }
-    if (dynamic_cast<const EmptyStmt *>(statement) != nullptr) {
+    if (stmtAs<EmptyStmt>(statement) != nullptr) {
       return {};
     }
-    if (dynamic_cast<const StaticAssertDecl *>(statement) != nullptr) {
+    if (stmtAs<StaticAssertDecl>(statement) != nullptr) {
       return {};
     }
-    if (const auto *declaration =
-            dynamic_cast<const VariableDecl *>(statement)) {
+    if (const auto *declaration = stmtAs<VariableDecl>(statement)) {
       const BindingInfo *binding = semanticModel.findBinding(*declaration);
       if (binding == nullptr || binding->symbol == 0) {
         return constexprStatementFailure(constexprFailure(
@@ -7938,15 +7979,13 @@ private:
       context.scopes.back().insert_or_assign(binding->symbol, std::move(value));
       return {};
     }
-    if (const auto *expression =
-            dynamic_cast<const ExpressionStmt *>(statement)) {
+    if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
       ConstexprEvaluation evaluated =
           evaluateConstexprExpression(expression->expression(), context);
       return evaluated ? ConstexprStatementEvaluation{}
                        : constexprStatementFailure(std::move(evaluated));
     }
-    if (const auto *returnStatement =
-            dynamic_cast<const ReturnStmt *>(statement)) {
+    if (const auto *returnStatement = stmtAs<ReturnStmt>(statement)) {
       if (!returnStatement->value()) {
         return constexprStatementFailure(constexprFailure(
             returnStatement->keyword(),
@@ -7961,7 +8000,7 @@ private:
       return {.control = ConstexprControlFlow::Return,
               .value = std::move(value.value)};
     }
-    if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+    if (const auto *ifStatement = stmtAs<IfStmt>(statement)) {
       const StmtPtr *selectedBranch = nullptr;
       if (ifStatement->isConstexpr()) {
         const std::optional<bool> selected =
@@ -7994,14 +8033,12 @@ private:
                  ? ConstexprStatementEvaluation{}
                  : executeConstexprStatement(selectedBranch->get(), context);
     }
-    if (const auto *loopControl =
-            dynamic_cast<const LoopControlStmt *>(statement)) {
+    if (const auto *loopControl = stmtAs<LoopControlStmt>(statement)) {
       return {.control = loopControl->keyword().kind == TokenKind::BREAK
                              ? ConstexprControlFlow::Break
                              : ConstexprControlFlow::Continue};
     }
-    if (const auto *whileStatement =
-            dynamic_cast<const WhileStmt *>(statement)) {
+    if (const auto *whileStatement = stmtAs<WhileStmt>(statement)) {
       while (true) {
         ConstexprEvaluation condition =
             evaluateConstexprExpression(whileStatement->condition(), context);
@@ -8028,7 +8065,7 @@ private:
         }
       }
     }
-    if (const auto *doWhile = dynamic_cast<const DoWhileStmt *>(statement)) {
+    if (const auto *doWhile = stmtAs<DoWhileStmt>(statement)) {
       while (true) {
         ConstexprStatementEvaluation body =
             executeConstexprStatement(doWhile->body().get(), context);
@@ -8055,7 +8092,7 @@ private:
         }
       }
     }
-    if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
+    if (const auto *forStatement = stmtAs<ForStmt>(statement)) {
       context.scopes.emplace_back();
       ConstexprStatementEvaluation result =
           executeConstexprStatement(forStatement->initializer().get(), context);
@@ -8100,8 +8137,7 @@ private:
       context.scopes.pop_back();
       return result;
     }
-    if (const auto *switchStatement =
-            dynamic_cast<const SwitchStmt *>(statement)) {
+    if (const auto *switchStatement = stmtAs<SwitchStmt>(statement)) {
       ConstexprEvaluation subject =
           evaluateConstexprExpression(switchStatement->expression(), context);
       if (!subject) {
@@ -8335,15 +8371,13 @@ private:
 
   [[nodiscard]] static std::optional<bool>
   constantBoolean(const ExprPtr &expression) {
-    if (const auto *literal =
-            dynamic_cast<const LiteralExpr *>(expression.get())) {
+    if (const auto *literal = exprAs<LiteralExpr>(expression.get())) {
       if (const bool *value = std::get_if<bool>(&literal->value())) {
         return *value;
       }
       return std::nullopt;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return constantBoolean(grouping->expression());
     }
     return std::nullopt;
@@ -8369,26 +8403,24 @@ private:
     if (statement == nullptr) {
       return {};
     }
-    if (dynamic_cast<const ReturnStmt *>(statement) != nullptr) {
+    if (stmtAs<ReturnStmt>(statement) != nullptr) {
       return {.canFallThrough = false};
     }
-    if (const auto *control =
-            dynamic_cast<const LoopControlStmt *>(statement)) {
+    if (const auto *control = stmtAs<LoopControlStmt>(statement)) {
       return {.canFallThrough = false,
               .breaksEnclosingControl =
                   control->keyword().kind == TokenKind::BREAK,
               .continuesEnclosingLoop =
                   control->keyword().kind == TokenKind::CONTINUE};
     }
-    if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+    if (const auto *block = stmtAs<BlockStmt>(statement)) {
       return summarizeFlow(block->statements());
     }
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
       const StmtList *branch = conditional->activeBranch(target);
       return branch == nullptr ? FlowSummary{} : summarizeFlow(*branch);
     }
-    if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+    if (const auto *ifStatement = stmtAs<IfStmt>(statement)) {
       if (ifStatement->isConstexpr()) {
         if (const std::optional<bool> selected =
                 semanticModel.findConstexprBranch(*ifStatement)) {
@@ -8413,8 +8445,7 @@ private:
               .continuesEnclosingLoop = thenFlow.continuesEnclosingLoop ||
                                         elseFlow.continuesEnclosingLoop};
     }
-    if (const auto *switchStatement =
-            dynamic_cast<const SwitchStmt *>(statement)) {
+    if (const auto *switchStatement = stmtAs<SwitchStmt>(statement)) {
       bool coversEveryValue =
           semanticModel.isExhaustiveSwitch(*switchStatement);
       bool reachesAfterSwitch = false;
@@ -8432,17 +8463,17 @@ private:
       return {.canFallThrough = !coversEveryValue || reachesAfterSwitch,
               .continuesEnclosingLoop = continuesEnclosingLoop};
     }
-    if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
+    if (const auto *forStatement = stmtAs<ForStmt>(statement)) {
       const FlowSummary body = summarizeFlow(forStatement->body().get());
       const bool repeatsForever =
           !forStatement->condition() ||
           constantBoolean(forStatement->condition()) == true;
       return {.canFallThrough = !repeatsForever || body.breaksEnclosingControl};
     }
-    if (const auto *rangeFor = dynamic_cast<const RangeForStmt *>(statement)) {
+    if (const auto *rangeFor = stmtAs<RangeForStmt>(statement)) {
       return summarizeFlow(rangeFor->lowered().get());
     }
-    if (const auto *doWhile = dynamic_cast<const DoWhileStmt *>(statement)) {
+    if (const auto *doWhile = stmtAs<DoWhileStmt>(statement)) {
       const FlowSummary body = summarizeFlow(doWhile->body().get());
       const bool reachesCondition =
           body.canFallThrough || body.continuesEnclosingLoop;
@@ -8451,8 +8482,7 @@ private:
                   (reachesCondition &&
                    constantBoolean(doWhile->condition()) != true)};
     }
-    if (const auto *whileStatement =
-            dynamic_cast<const WhileStmt *>(statement)) {
+    if (const auto *whileStatement = stmtAs<WhileStmt>(statement)) {
       const FlowSummary body = summarizeFlow(whileStatement->body().get());
       return {.canFallThrough =
                   constantBoolean(whileStatement->condition()) != true ||
@@ -8486,15 +8516,14 @@ private:
     if (statement == nullptr) {
       return {};
     }
-    if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+    if (const auto *block = stmtAs<BlockStmt>(statement)) {
       return summarizeLoanFlow(block->statements());
     }
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
       const StmtList *branch = conditional->activeBranch(target);
       return branch == nullptr ? FlowSummary{} : summarizeLoanFlow(*branch);
     }
-    if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+    if (const auto *ifStatement = stmtAs<IfStmt>(statement)) {
       if (ifStatement->isConstexpr()) {
         if (const std::optional<bool> selected =
                 semanticModel.findConstexprBranch(*ifStatement)) {
@@ -8624,6 +8653,7 @@ private:
         declaration.name(), inferredType, declaration.isMutable(),
         local ? SemanticBindingKind::LocalVariable
               : SemanticBindingKind::GlobalVariable);
+    attachDeclarationDocumentation(symbol, declaration);
     const std::optional<ConstantValue> constant = constexprBindingValue(
         declaration, inferredType,
         diagnostics.size() == declarationDiagnosticStart &&
@@ -9683,33 +9713,32 @@ private:
   [[nodiscard]] static const Variable *
   movedVariable(const ExprPtr &expression) {
     const Expr *candidate = expression.get();
-    while (const auto *grouping = dynamic_cast<const Grouping *>(candidate)) {
+    while (const auto *grouping = exprAs<Grouping>(candidate)) {
       candidate = grouping->expression().get();
     }
-    return dynamic_cast<const Variable *>(candidate);
+    return exprAs<Variable>(candidate);
   }
 
   [[nodiscard]] const ExprPtr *
   operatorBorrowSource(const ExprPtr &expression,
                        const ResolvedOperatorInfo &resolved) const {
     if (resolved.borrowOrigin == BorrowOriginKind::Receiver) {
-      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      if (const auto *call = exprAs<Call>(expression.get())) {
         return &call->callee();
       }
-      if (const auto *binary = dynamic_cast<const Binary *>(expression.get())) {
+      if (const auto *binary = exprAs<Binary>(expression.get())) {
         return &binary->left();
       }
-      if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      if (const auto *member = exprAs<Get>(expression.get())) {
         return &member->object();
       }
-      if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      if (const auto *index = exprAs<Index>(expression.get())) {
         return &index->object();
       }
-      if (const auto *postfix =
-              dynamic_cast<const Postfix *>(expression.get())) {
+      if (const auto *postfix = exprAs<Postfix>(expression.get())) {
         return &postfix->expression();
       }
-      if (const auto *unary = dynamic_cast<const Unary *>(expression.get())) {
+      if (const auto *unary = exprAs<Unary>(expression.get())) {
         return &unary->right();
       }
       return nullptr;
@@ -9717,15 +9746,15 @@ private:
     if (resolved.borrowOrigin != BorrowOriginKind::Argument) {
       return nullptr;
     }
-    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression.get())) {
       return resolved.borrowArgument < call->arguments().size()
                  ? &call->arguments()[resolved.borrowArgument]
                  : nullptr;
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get())) {
+    if (const auto *binary = exprAs<Binary>(expression.get())) {
       return resolved.borrowArgument == 0 ? &binary->right() : nullptr;
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return resolved.borrowArgument == 0 ? &index->index() : nullptr;
     }
     return nullptr;
@@ -9736,8 +9765,7 @@ private:
     if (!expression) {
       return nullptr;
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
       if (symbol != nullptr &&
           (symbol->type.kind == SemanticType::Reference ||
@@ -9756,19 +9784,19 @@ private:
         semanticModel.findConstruction(*expression);
     if (construction != nullptr &&
         construction->borrowOrigin == BorrowOriginKind::Argument) {
-      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      if (const auto *call = exprAs<Call>(expression.get())) {
         return construction->borrowArgument < call->arguments().size()
                    ? &call->arguments()[construction->borrowArgument]
                    : nullptr;
       }
       if (const auto *initializer =
-              dynamic_cast<const DirectInitializer *>(expression.get())) {
+              exprAs<DirectInitializer>(expression.get())) {
         return construction->borrowArgument < initializer->arguments().size()
                    ? &initializer->arguments()[construction->borrowArgument]
                    : nullptr;
       }
     }
-    const auto *call = dynamic_cast<const Call *>(expression.get());
+    const auto *call = exprAs<Call>(expression.get());
     if (call == nullptr) {
       return nullptr;
     }
@@ -9782,8 +9810,7 @@ private:
                  : nullptr;
     }
     if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
-      if (const auto *member =
-              dynamic_cast<const Get *>(call->callee().get())) {
+      if (const auto *member = exprAs<Get>(call->callee().get())) {
         return &member->object();
       }
     }
@@ -9802,8 +9829,7 @@ private:
     if (!expression || !visiting.insert(expression.get()).second) {
       return nullptr;
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       if (const ExprPtr *source = storedBorrowSource(expression)) {
         if (const Variable *owner = borrowedOwnerVariable(*source, visiting)) {
           return owner;
@@ -9811,21 +9837,20 @@ private:
       }
       return variable;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return borrowedOwnerVariable(grouping->expression(), visiting);
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    if (const auto *binary = exprAs<Binary>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return borrowedOwnerVariable(binary->right(), visiting);
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return borrowedOwnerVariable(index->object(), visiting);
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+    if (const auto *member = exprAs<Get>(expression.get())) {
       return borrowedOwnerVariable(member->object(), visiting);
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+    if (const auto *unary = exprAs<Unary>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       return borrowedOwnerVariable(unary->right(), visiting);
     }
@@ -9840,25 +9865,23 @@ private:
     if (!expression) {
       return nullptr;
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       return variable;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return directStorageVariable(grouping->expression());
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    if (const auto *binary = exprAs<Binary>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return directStorageVariable(binary->right());
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return directStorageVariable(index->object());
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+    if (const auto *member = exprAs<Get>(expression.get())) {
       return directStorageVariable(member->object());
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+    if (const auto *unary = exprAs<Unary>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       return directStorageVariable(unary->right());
     }
@@ -9875,8 +9898,7 @@ private:
     if (!expression) {
       return std::nullopt;
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
       if (symbol != nullptr && symbol->retainedLoan != 0) {
         return RetainedLoanSource{.loan = symbol->retainedLoan,
@@ -9884,21 +9906,20 @@ private:
       }
       return std::nullopt;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return retainedLoanSource(grouping->expression());
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    if (const auto *binary = exprAs<Binary>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return retainedLoanSource(binary->right());
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+    if (const auto *member = exprAs<Get>(expression.get())) {
       return retainedLoanSource(member->object());
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return retainedLoanSource(index->object());
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+    if (const auto *unary = exprAs<Unary>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       if (unary->rangeObject()) {
         const SemanticType *rangeType =
@@ -9924,21 +9945,21 @@ private:
         semanticModel.findConstruction(*expression);
     if (construction != nullptr &&
         construction->borrowOrigin == BorrowOriginKind::Argument) {
-      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      if (const auto *call = exprAs<Call>(expression.get())) {
         return construction->borrowArgument < call->arguments().size()
                    ? retainedLoanSource(
                          call->arguments()[construction->borrowArgument])
                    : std::nullopt;
       }
       if (const auto *initializer =
-              dynamic_cast<const DirectInitializer *>(expression.get())) {
+              exprAs<DirectInitializer>(expression.get())) {
         return construction->borrowArgument < initializer->arguments().size()
                    ? retainedLoanSource(
                          initializer->arguments()[construction->borrowArgument])
                    : std::nullopt;
       }
     }
-    const auto *call = dynamic_cast<const Call *>(expression.get());
+    const auto *call = exprAs<Call>(expression.get());
     if (call == nullptr) {
       return std::nullopt;
     }
@@ -9962,7 +9983,7 @@ private:
       return retainedLoanSource(call->arguments()[resolved->borrowArgument]);
     }
     if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
-      const auto *member = dynamic_cast<const Get *>(call->callee().get());
+      const auto *member = exprAs<Get>(call->callee().get());
       if (member != nullptr) {
         return retainedLoanSource(member->object());
       }
@@ -10019,7 +10040,7 @@ private:
     if (place.root != nullptr) {
       return loanPlace(std::move(place));
     }
-    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression.get())) {
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
       if (resolved != nullptr &&
           resolved->borrowOrigin == BorrowOriginKind::Global &&
@@ -10136,16 +10157,14 @@ private:
   }
 
   void validateLoanPlaceAccess(const Expr &expression, OccurrenceRole roles) {
+    const ExprKind kind = expression.exprKind();
     if (suppressLoanPlaceAccessDepth != 0 ||
         std::find(suppressedProjectedPlaceReads.begin(),
                   suppressedProjectedPlaceReads.end(),
                   &expression) != suppressedProjectedPlaceReads.end() ||
-        dynamic_cast<const Assign *>(&expression) != nullptr ||
-        dynamic_cast<const Set *>(&expression) != nullptr ||
-        dynamic_cast<const IndexSet *>(&expression) != nullptr ||
-        dynamic_cast<const DereferenceSet *>(&expression) != nullptr ||
-        (analyzingCallCallee &&
-         dynamic_cast<const Get *>(&expression) != nullptr)) {
+        kind == ExprKind::Assign || kind == ExprKind::Set ||
+        kind == ExprKind::IndexSet || kind == ExprKind::DereferenceSet ||
+        (analyzingCallCallee && kind == ExprKind::Get)) {
       return;
     }
     SemanticPlace place = semanticPlace(&expression);
@@ -10207,11 +10226,10 @@ private:
     if (!expression) {
       return std::nullopt;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return transientBorrowProduction(grouping->expression());
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    if (const auto *binary = exprAs<Binary>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return transientBorrowProduction(binary->right());
     }
@@ -10268,12 +10286,12 @@ private:
         resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Argument) {
       const ExprPtr *source = nullptr;
-      if (const auto *call = dynamic_cast<const Call *>(expression.get());
+      if (const auto *call = exprAs<Call>(expression.get());
           call != nullptr &&
           resolved->borrowArgument < call->arguments().size()) {
         source = &call->arguments()[resolved->borrowArgument];
       } else if (const auto *initializer =
-                     dynamic_cast<const DirectInitializer *>(expression.get());
+                     exprAs<DirectInitializer>(expression.get());
                  initializer != nullptr &&
                  resolved->borrowArgument < initializer->arguments().size()) {
         source = &initializer->arguments()[resolved->borrowArgument];
@@ -10289,7 +10307,7 @@ private:
               AccessMode::Mutable;
       return fromSource(*source, resolved->borrowAccess, mutableProducer);
     }
-    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression.get())) {
       if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
           resolved != nullptr &&
           resolved->borrowOrigin != BorrowOriginKind::None) {
@@ -10309,8 +10327,7 @@ private:
               resolved->declaration != nullptr &&
               resolved->declaration->receiverMutability() ==
                   ReceiverMutability::Mutable;
-          if (const auto *member =
-                  dynamic_cast<const Get *>(call->callee().get())) {
+          if (const auto *member = exprAs<Get>(call->callee().get())) {
             return fromSource(member->object(), resolved->borrowAccess,
                               mutableProducer);
           }
@@ -10364,22 +10381,22 @@ private:
   }
 
   static const ExprPtr *operatorReceiverExpression(const ExprPtr &expression) {
-    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression.get())) {
       return &call->callee();
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get())) {
+    if (const auto *binary = exprAs<Binary>(expression.get())) {
       return &binary->left();
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+    if (const auto *member = exprAs<Get>(expression.get())) {
       return &member->object();
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return &index->object();
     }
-    if (const auto *postfix = dynamic_cast<const Postfix *>(expression.get())) {
+    if (const auto *postfix = exprAs<Postfix>(expression.get())) {
       return &postfix->expression();
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression.get())) {
+    if (const auto *unary = exprAs<Unary>(expression.get())) {
       return &unary->right();
     }
     return nullptr;
@@ -10399,32 +10416,29 @@ private:
       return;
     }
 
-    if (const auto *assign = dynamic_cast<const Assign *>(expression.get());
+    if (const auto *assign = exprAs<Assign>(expression.get());
         assign != nullptr && assign->path().segments.size() == 1) {
       if (Symbol *target = resolveMutable(assign->name())) {
         appendUniquePlace(places, loanPlace(placeForSymbol(*target)));
       }
-    } else if (const auto *set = dynamic_cast<const Set *>(expression.get())) {
+    } else if (const auto *set = exprAs<Set>(expression.get())) {
       appendUniquePlace(places, loanPlace(semanticPlace(*set)));
-    } else if (const auto *indexSet =
-                   dynamic_cast<const IndexSet *>(expression.get())) {
+    } else if (const auto *indexSet = exprAs<IndexSet>(expression.get())) {
       appendUniquePlace(places, loanPlace(semanticPlace(*indexSet)));
     } else if (const auto *dereferenceSet =
-                   dynamic_cast<const DereferenceSet *>(expression.get())) {
+                   exprAs<DereferenceSet>(expression.get())) {
       SemanticPlace target = semanticPlace(dereferenceSet->object());
       if (target.root != nullptr) {
         target.projections.push_back(
             {.kind = PlaceProjectionKind::Dereference});
         appendUniquePlace(places, loanPlace(std::move(target)));
       }
-    } else if (const auto *postfix =
-                   dynamic_cast<const Postfix *>(expression.get())) {
+    } else if (const auto *postfix = exprAs<Postfix>(expression.get())) {
       if (postfix->oper().kind == TokenKind::PLUS_PLUS ||
           postfix->oper().kind == TokenKind::MINUS_MINUS) {
         appendUniquePlace(places, transientLoanPlace(postfix->expression()));
       }
-    } else if (const auto *unary =
-                   dynamic_cast<const Unary *>(expression.get())) {
+    } else if (const auto *unary = exprAs<Unary>(expression.get())) {
       if (unary->oper().kind == TokenKind::PLUS_PLUS ||
           unary->oper().kind == TokenKind::MINUS_MINUS) {
         appendUniquePlace(places, transientLoanPlace(unary->right()));
@@ -10439,7 +10453,7 @@ private:
           appendUniquePlace(places, transientLoanPlace(*receiver));
         }
       }
-      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      if (const auto *call = exprAs<Call>(expression.get())) {
         const std::size_t count =
             std::min(resolved->parameterTypes.size(), call->arguments().size());
         for (std::size_t index = 0; index < count; ++index) {
@@ -10450,16 +10464,14 @@ private:
                               transientLoanPlace(call->arguments()[index]));
           }
         }
-      } else if (const auto *binary =
-                     dynamic_cast<const Binary *>(expression.get())) {
+      } else if (const auto *binary = exprAs<Binary>(expression.get())) {
         if (!resolved->parameterTypes.empty() &&
             resolved->parameterTypes.front().kind == SemanticType::Reference &&
             resolved->parameterTypes.front().referenceAccess ==
                 AccessMode::Mutable) {
           appendUniquePlace(places, transientLoanPlace(binary->right()));
         }
-      } else if (const auto *index =
-                     dynamic_cast<const Index *>(expression.get())) {
+      } else if (const auto *index = exprAs<Index>(expression.get())) {
         if (!resolved->parameterTypes.empty() &&
             resolved->parameterTypes.front().kind == SemanticType::Reference &&
             resolved->parameterTypes.front().referenceAccess ==
@@ -10472,11 +10484,10 @@ private:
     if (const ResolvedConstructionInfo *resolved =
             semanticModel.findConstruction(*expression)) {
       const ExprList *arguments = nullptr;
-      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      if (const auto *call = exprAs<Call>(expression.get())) {
         arguments = &call->arguments();
       } else if (const auto *initializer =
-                     dynamic_cast<const DirectInitializer *>(
-                         expression.get())) {
+                     exprAs<DirectInitializer>(expression.get())) {
         arguments = &initializer->arguments();
       }
       if (arguments != nullptr) {
@@ -10492,13 +10503,11 @@ private:
       }
     }
 
-    const auto *call = dynamic_cast<const Call *>(expression.get());
+    const auto *call = exprAs<Call>(expression.get());
     const ResolvedCallInfo *resolved =
         call == nullptr ? nullptr : semanticModel.findCall(*call);
     const auto *qualifiedCallee =
-        call == nullptr
-            ? nullptr
-            : dynamic_cast<const QualifiedName *>(call->callee().get());
+        call == nullptr ? nullptr : exprAs<QualifiedName>(call->callee().get());
     const bool syntacticMove =
         qualifiedCallee != nullptr &&
         qualifiedCallee->name().segments.size() == 2 &&
@@ -10513,8 +10522,7 @@ private:
       if (resolved->declaration != nullptr &&
           resolved->declaration->receiverMutability() ==
               ReceiverMutability::Mutable) {
-        if (const auto *member =
-                dynamic_cast<const Get *>(call->callee().get())) {
+        if (const auto *member = exprAs<Get>(call->callee().get())) {
           appendUniquePlace(places, transientLoanPlace(member->object()));
         } else if (currentClass) {
           appendUniquePlace(
@@ -10534,19 +10542,17 @@ private:
       }
     }
 
-    if (const auto *assign = dynamic_cast<const Assign *>(expression.get())) {
+    if (const auto *assign = exprAs<Assign>(expression.get())) {
       appendTransientMutationPlaces(assign->value(), places);
-    } else if (const auto *array =
-                   dynamic_cast<const ArrayInitializer *>(expression.get())) {
+    } else if (const auto *array = exprAs<ArrayInitializer>(expression.get())) {
       for (const ExprPtr &element : array->elements()) {
         appendTransientMutationPlaces(element, places);
       }
-    } else if (const auto *binary =
-                   dynamic_cast<const Binary *>(expression.get())) {
+    } else if (const auto *binary = exprAs<Binary>(expression.get())) {
       appendTransientMutationPlaces(binary->left(), places);
       appendTransientMutationPlaces(binary->right(), places);
     } else if (const auto *conditional =
-                   dynamic_cast<const ConditionalExpr *>(expression.get())) {
+                   exprAs<ConditionalExpr>(expression.get())) {
       appendTransientMutationPlaces(conditional->condition(), places);
       appendTransientMutationPlaces(conditional->thenExpression(), places);
       appendTransientMutationPlaces(conditional->elseExpression(), places);
@@ -10555,48 +10561,39 @@ private:
       for (const ExprPtr &argument : call->arguments()) {
         appendTransientMutationPlaces(argument, places);
       }
-    } else if (const auto *conversion =
-                   dynamic_cast<const Conversion *>(expression.get())) {
+    } else if (const auto *conversion = exprAs<Conversion>(expression.get())) {
       appendTransientMutationPlaces(conversion->value(), places);
     } else if (const auto *initializer =
-                   dynamic_cast<const DirectInitializer *>(expression.get())) {
+                   exprAs<DirectInitializer>(expression.get())) {
       for (const ExprPtr &argument : initializer->arguments()) {
         appendTransientMutationPlaces(argument, places);
       }
     } else if (const auto *dereferenceSet =
-                   dynamic_cast<const DereferenceSet *>(expression.get())) {
+                   exprAs<DereferenceSet>(expression.get())) {
       appendTransientMutationPlaces(dereferenceSet->object(), places);
       appendTransientMutationPlaces(dereferenceSet->value(), places);
-    } else if (const auto *member =
-                   dynamic_cast<const Get *>(expression.get())) {
+    } else if (const auto *member = exprAs<Get>(expression.get())) {
       appendTransientMutationPlaces(member->object(), places);
-    } else if (const auto *grouping =
-                   dynamic_cast<const Grouping *>(expression.get())) {
+    } else if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       appendTransientMutationPlaces(grouping->expression(), places);
-    } else if (const auto *index =
-                   dynamic_cast<const Index *>(expression.get())) {
+    } else if (const auto *index = exprAs<Index>(expression.get())) {
       appendTransientMutationPlaces(index->object(), places);
       appendTransientMutationPlaces(index->index(), places);
-    } else if (const auto *indexSet =
-                   dynamic_cast<const IndexSet *>(expression.get())) {
+    } else if (const auto *indexSet = exprAs<IndexSet>(expression.get())) {
       appendTransientMutationPlaces(indexSet->object(), places);
       appendTransientMutationPlaces(indexSet->index(), places);
       appendTransientMutationPlaces(indexSet->value(), places);
-    } else if (const auto *logical =
-                   dynamic_cast<const Logical *>(expression.get())) {
+    } else if (const auto *logical = exprAs<Logical>(expression.get())) {
       appendTransientMutationPlaces(logical->left(), places);
       appendTransientMutationPlaces(logical->right(), places);
-    } else if (const auto *postfix =
-                   dynamic_cast<const Postfix *>(expression.get())) {
+    } else if (const auto *postfix = exprAs<Postfix>(expression.get())) {
       appendTransientMutationPlaces(postfix->expression(), places);
-    } else if (const auto *set = dynamic_cast<const Set *>(expression.get())) {
+    } else if (const auto *set = exprAs<Set>(expression.get())) {
       appendTransientMutationPlaces(set->object(), places);
       appendTransientMutationPlaces(set->value(), places);
-    } else if (const auto *unary =
-                   dynamic_cast<const Unary *>(expression.get())) {
+    } else if (const auto *unary = exprAs<Unary>(expression.get())) {
       appendTransientMutationPlaces(unary->right(), places);
-    } else if (const auto *unexpected =
-                   dynamic_cast<const Unexpected *>(expression.get())) {
+    } else if (const auto *unexpected = exprAs<Unexpected>(expression.get())) {
       appendTransientMutationPlaces(unexpected->error(), places);
     }
   }
@@ -10606,11 +10603,10 @@ private:
     if (!expression) {
       return false;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return reportCommaTransientConflict(grouping->expression(), location);
     }
-    const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    const auto *binary = exprAs<Binary>(expression.get());
     if (binary == nullptr || binary->oper().kind != TokenKind::COMMA) {
       return false;
     }
@@ -11174,10 +11170,10 @@ private:
   }
 
   [[nodiscard]] bool supportsProvenLoanEnd(const LoanFlowRecord &loan) const {
-    if (dynamic_cast<const VariableDecl *>(loan.lastUse) != nullptr ||
-        dynamic_cast<const ExpressionStmt *>(loan.lastUse) != nullptr ||
-        dynamic_cast<const IfStmt *>(loan.lastUse) != nullptr ||
-        dynamic_cast<const SwitchStmt *>(loan.lastUse) != nullptr) {
+    if (stmtAs<VariableDecl>(loan.lastUse) != nullptr ||
+        stmtAs<ExpressionStmt>(loan.lastUse) != nullptr ||
+        stmtAs<IfStmt>(loan.lastUse) != nullptr ||
+        stmtAs<SwitchStmt>(loan.lastUse) != nullptr) {
       return true;
     }
     const auto loop =
@@ -11203,8 +11199,8 @@ private:
 
   [[nodiscard]] static bool
   supportsConditionalArmLoanEnd(const Stmt *statement) {
-    return dynamic_cast<const VariableDecl *>(statement) != nullptr ||
-           dynamic_cast<const ExpressionStmt *>(statement) != nullptr;
+    return stmtAs<VariableDecl>(statement) != nullptr ||
+           stmtAs<ExpressionStmt>(statement) != nullptr;
   }
 
   [[nodiscard]] static bool
@@ -13069,11 +13065,12 @@ private:
 
   [[nodiscard]] std::optional<TypeAliasId>
   typeAliasForCallee(const ExprPtr &callee) const {
-    if (const auto *variable = dynamic_cast<const Variable *>(callee.get())) {
+    if (callee && callee->exprKind() == ExprKind::Variable) {
+      const auto *variable = static_cast<const Variable *>(callee.get());
       return resolveTypeAliasPath(NamePath(variable->name()), currentNamespace);
     }
-    if (const auto *qualified =
-            dynamic_cast<const QualifiedName *>(callee.get())) {
+    if (callee && callee->exprKind() == ExprKind::QualifiedName) {
+      const auto *qualified = static_cast<const QualifiedName *>(callee.get());
       return resolveTypeAliasPath(qualified->name(), currentNamespace);
     }
     return std::nullopt;
@@ -13081,10 +13078,13 @@ private:
 
   [[nodiscard]] static const Call *directCall(const ExprPtr &expression) {
     const Expr *candidate = expression.get();
-    while (const auto *grouping = dynamic_cast<const Grouping *>(candidate)) {
-      candidate = grouping->expression().get();
+    while (candidate != nullptr &&
+           candidate->exprKind() == ExprKind::Grouping) {
+      candidate = static_cast<const Grouping *>(candidate)->expression().get();
     }
-    return dynamic_cast<const Call *>(candidate);
+    return candidate != nullptr && candidate->exprKind() == ExprKind::Call
+               ? static_cast<const Call *>(candidate)
+               : nullptr;
   }
 
   [[nodiscard]] const ExprPtr *
@@ -14041,7 +14041,7 @@ private:
             CompileTimeValue::parameter(argument.arrayLengthParameterId);
       } else if (expression != nullptr && *expression != nullptr) {
         if (const auto *initializer =
-                dynamic_cast<const ArrayInitializer *>(expression->get())) {
+                exprAs<ArrayInitializer>(expression->get())) {
           inferredLength =
               CompileTimeValue::uint64(initializer->elements().size());
         }
@@ -14251,7 +14251,7 @@ private:
             CompileTimeValue::parameter(argument.arrayLengthParameterId);
       } else if (expression != nullptr && *expression != nullptr) {
         if (const auto *initializer =
-                dynamic_cast<const ArrayInitializer *>(expression->get())) {
+                exprAs<ArrayInitializer>(expression->get())) {
           inferredLength =
               CompileTimeValue::uint64(initializer->elements().size());
         }
@@ -14568,9 +14568,8 @@ private:
       return std::nullopt;
     }
     const ExprPtr *moved = explicitMoveSource(expression);
-    const auto *variable = moved == nullptr
-                               ? nullptr
-                               : dynamic_cast<const Variable *>(moved->get());
+    const auto *variable =
+        moved == nullptr ? nullptr : exprAs<Variable>(moved->get());
     const SymbolId symbol =
         variable == nullptr ? 0 : semanticModel.findResolvedSymbol(*variable);
     if (symbol == 0) {
@@ -14589,11 +14588,10 @@ private:
 
   [[nodiscard]] static const ExprList *
   constructionArguments(const ExprPtr &expression) {
-    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression.get())) {
       return &call->arguments();
     }
-    if (const auto *initializer =
-            dynamic_cast<const DirectInitializer *>(expression.get())) {
+    if (const auto *initializer = exprAs<DirectInitializer>(expression.get())) {
       return &initializer->arguments();
     }
     return nullptr;
@@ -14659,7 +14657,7 @@ private:
           function.declaration->body()->statements().size() != 1) {
         continue;
       }
-      const auto *returnStatement = dynamic_cast<const ReturnStmt *>(
+      const auto *returnStatement = stmtAs<ReturnStmt>(
           function.declaration->body()->statements().front().get());
       if (returnStatement == nullptr || !returnStatement->value()) {
         continue;
@@ -15516,7 +15514,7 @@ private:
     }
 
     validateMutableCallArgumentLoans(function.parameterTypes, arguments, paren);
-    const auto *member = dynamic_cast<const Get *>(callee.get());
+    const auto *member = exprAs<Get>(callee.get());
     const AccessMode selectedReceiverAccess =
         receiverAllowsMutation(function.receiverMutability)
             ? AccessMode::Mutable
@@ -16095,9 +16093,8 @@ private:
         reportCompilerPrivateAccess(token,
                                     std::string(operatorSourceSpelling(kind)));
       } else if (viable.empty() && rejectedConsumingReceiver) {
-        const auto *call = kind == OverloadedOperator::Call
-                               ? dynamic_cast<const Call *>(&site)
-                               : nullptr;
+        const auto *call =
+            kind == OverloadedOperator::Call ? exprAs<Call>(&site) : nullptr;
         if (call != nullptr && boundary) {
           (void)validateCallableCapability(*call,
                                            CallableInvocationCapability::Once);
@@ -16111,9 +16108,8 @@ private:
           diagnostics.emplace_back(std::move(diagnostic));
         }
       } else if (viable.empty() && rejectedMutableReceiver) {
-        const auto *call = kind == OverloadedOperator::Call
-                               ? dynamic_cast<const Call *>(&site)
-                               : nullptr;
+        const auto *call =
+            kind == OverloadedOperator::Call ? exprAs<Call>(&site) : nullptr;
         if (call != nullptr && boundary) {
           (void)validateCallableCapability(
               *call, CallableInvocationCapability::Mutable);
@@ -16679,7 +16675,7 @@ private:
   [[nodiscard]] bool
   isContextualArrayArgument(const ExprPtr &expression) const {
     return expression != nullptr &&
-           dynamic_cast<const ArrayInitializer *>(expression.get()) != nullptr;
+           exprAs<ArrayInitializer>(expression.get()) != nullptr;
   }
 
   [[nodiscard]] static bool
@@ -16792,11 +16788,10 @@ private:
       return false;
     }
     const Symbol *symbol = nullptr;
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       symbol = resolve(variable->name());
     } else if (const auto *qualified =
-                   dynamic_cast<const QualifiedName *>(expression.get())) {
+                   exprAs<QualifiedName>(expression.get())) {
       symbol = resolveQualified(qualified->name());
     }
     return symbol != nullptr && symbol->type == SemanticType::Function;
@@ -16825,8 +16820,7 @@ private:
       return callArgumentMatches(parameter, argument, expression);
     }
     if (isContextualArrayArgument(expression)) {
-      const auto *initializer =
-          dynamic_cast<const ArrayInitializer *>(expression.get());
+      const auto *initializer = exprAs<ArrayInitializer>(expression.get());
       return parameter.kind == SemanticType::Array &&
              parameter.arrayLengthParameterId == 0 &&
              (initializer == nullptr || initializer->elements().empty() ||
@@ -17898,7 +17892,7 @@ private:
                                 : selected.constructor->borrowAccess,
             .generatedDefault = selected.generatedDefault,
             .kind = selected.kind});
-    if (const auto *call = dynamic_cast<const Call *>(&construction)) {
+    if (const auto *call = exprAs<Call>(&construction)) {
       const ResolvedConstructionInfo *resolved =
           semanticModel.findConstruction(construction);
       const Token token = callableToken(call->callee());
@@ -18069,8 +18063,7 @@ private:
                  typeSpelling(indexType) + "'.",
              "GTI-S2035");
     }
-    const auto *literal =
-        object ? dynamic_cast<const LiteralExpr *>(object.get()) : nullptr;
+    const auto *literal = object ? exprAs<LiteralExpr>(object.get()) : nullptr;
     const auto *text = literal == nullptr
                            ? nullptr
                            : std::get_if<std::string>(&literal->value());
@@ -19155,8 +19148,7 @@ private:
     if (!expression || !visiting.insert(expression.get()).second) {
       return false;
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
       if (symbol != nullptr && symbol->parameterDeclaration == &parameter) {
         return true;
@@ -19166,22 +19158,21 @@ private:
       }
       return false;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return isParameterDerivedBorrow(grouping->expression(), parameter,
                                       visiting);
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    if (const auto *binary = exprAs<Binary>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return isParameterDerivedBorrow(binary->right(), parameter, visiting);
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return isParameterDerivedBorrow(index->object(), parameter, visiting);
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+    if (const auto *member = exprAs<Get>(expression.get())) {
       return isParameterDerivedBorrow(member->object(), parameter, visiting);
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+    if (const auto *unary = exprAs<Unary>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       return isParameterDerivedBorrow(unary->right(), parameter, visiting);
     }
@@ -19202,11 +19193,10 @@ private:
     if (!expression || !visiting.insert(expression.get()).second) {
       return false;
     }
-    if (dynamic_cast<const This *>(expression.get()) != nullptr) {
+    if (exprAs<This>(expression.get()) != nullptr) {
       return true;
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
       if (currentClass && symbol != nullptr &&
           symbol->bindingKind == SemanticBindingKind::Field &&
@@ -19221,29 +19211,28 @@ private:
       }
       return false;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return isReceiverDerivedBorrow(grouping->expression(), visiting);
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    if (const auto *binary = exprAs<Binary>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return isReceiverDerivedBorrow(binary->right(), visiting);
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return isReceiverDerivedBorrow(index->object(), visiting);
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+    if (const auto *member = exprAs<Get>(expression.get())) {
       return isReceiverDerivedBorrow(member->object(), visiting);
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+    if (const auto *unary = exprAs<Unary>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       return isReceiverDerivedBorrow(unary->right(), visiting);
     }
-    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression.get())) {
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
       if (resolved != nullptr &&
           resolved->borrowOrigin == BorrowOriginKind::Receiver &&
-          dynamic_cast<const Get *>(call->callee().get()) == nullptr) {
+          exprAs<Get>(call->callee().get()) == nullptr) {
         return currentClass.has_value();
       }
     }
@@ -19264,38 +19253,37 @@ private:
     if (!expression || !visiting.insert(expression.get()).second) {
       return false;
     }
-    if (dynamic_cast<const Variable *>(expression.get()) != nullptr) {
+    if (exprAs<Variable>(expression.get()) != nullptr) {
       if (const ExprPtr *source = storedBorrowSource(expression)) {
         return hasStableBorrowStorage(*source, visiting);
       }
       return true;
     }
-    if (dynamic_cast<const QualifiedName *>(expression.get()) != nullptr ||
-        dynamic_cast<const This *>(expression.get()) != nullptr) {
+    if (exprAs<QualifiedName>(expression.get()) != nullptr ||
+        exprAs<This>(expression.get()) != nullptr) {
       return true;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return hasStableBorrowStorage(grouping->expression(), visiting);
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    if (const auto *binary = exprAs<Binary>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return hasStableBorrowStorage(binary->right(), visiting);
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return hasStableBorrowStorage(index->object(), visiting);
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+    if (const auto *member = exprAs<Get>(expression.get())) {
       return hasStableBorrowStorage(member->object(), visiting);
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+    if (const auto *unary = exprAs<Unary>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       const ExpressionInfo *owner =
           semanticModel.findExpression(*unary->right());
       return owner != nullptr && owner->category == ValueCategory::Place &&
              hasStableBorrowStorage(unary->right(), visiting);
     }
-    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression.get())) {
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
       if (resolved != nullptr &&
           resolved->borrowOrigin == BorrowOriginKind::Global &&
@@ -19304,7 +19292,7 @@ private:
       }
       if (resolved != nullptr &&
           resolved->borrowOrigin == BorrowOriginKind::Receiver &&
-          dynamic_cast<const Get *>(call->callee().get()) == nullptr) {
+          exprAs<Get>(call->callee().get()) == nullptr) {
         return currentClass.has_value();
       }
     }
@@ -19832,15 +19820,13 @@ private:
 
   void analyzeConcreteClassStaticAssertions(const StmtList &members) {
     for (const StmtPtr &member : members) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(member.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(member.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           analyzeConcreteClassStaticAssertions(*branch);
         }
         continue;
       }
-      if (const auto *assertion =
-              dynamic_cast<const StaticAssertDecl *>(member.get())) {
+      if (const auto *assertion = stmtAs<StaticAssertDecl>(member.get())) {
         assertion->accept(*this);
       }
     }
@@ -20778,15 +20764,13 @@ private:
 
   void collectRootNativeStorageSymbols(const StmtList &statements) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           collectRootNativeStorageSymbols(*branch);
         }
         continue;
       }
-      if (const auto *variable =
-              dynamic_cast<const VariableDecl *>(statement.get())) {
+      if (const auto *variable = stmtAs<VariableDecl>(statement.get())) {
         rootNativeStorageSymbols.emplace(variable->name().lexeme, variable);
       }
     }
@@ -20803,27 +20787,23 @@ private:
   void registerGlobalBorrowStorage(const StmtList &statements,
                                    std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerGlobalBorrowStorage(*branch, scope);
         }
         continue;
       }
-      if (const auto *externC =
-              dynamic_cast<const ExternCDecl *>(statement.get())) {
+      if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
         registerGlobalBorrowStorage(externC->declarations(), scope);
         continue;
       }
-      if (const auto *namespaceDecl =
-              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+      if (const auto *namespaceDecl = stmtAs<NamespaceDecl>(statement.get())) {
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerGlobalBorrowStorage(namespaceDecl->declarations(), scope);
         scope.pop_back();
         continue;
       }
-      const auto *variable =
-          dynamic_cast<const VariableDecl *>(statement.get());
+      const auto *variable = stmtAs<VariableDecl>(statement.get());
       if (variable == nullptr) {
         continue;
       }
@@ -20877,12 +20857,10 @@ private:
     if (!expression) {
       return nullptr;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return resolveGlobalBorrowStorage(grouping->expression());
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       for (std::size_t depth = currentNamespace.size() + 1; depth > 0;
            --depth) {
         if (const GlobalBorrowStorageInfo *storage =
@@ -20893,8 +20871,7 @@ private:
       }
       return nullptr;
     }
-    const auto *qualified =
-        dynamic_cast<const QualifiedName *>(expression.get());
+    const auto *qualified = exprAs<QualifiedName>(expression.get());
     if (qualified == nullptr || qualified->name().segments.size() < 2) {
       return nullptr;
     }
@@ -20914,11 +20891,10 @@ private:
     if (!expression) {
       return std::nullopt;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return predeclaredGlobalBorrowPlace(grouping->expression());
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+    if (const auto *unary = exprAs<Unary>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       std::optional<BorrowOriginPlace> result =
           predeclaredGlobalBorrowPlace(unary->right());
@@ -21263,15 +21239,13 @@ private:
   void registerNamespaces(const StmtList &statements,
                           std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerNamespaces(*branch, scope);
         }
         continue;
       }
-      const auto *namespaceDecl =
-          dynamic_cast<const NamespaceDecl *>(statement.get());
+      const auto *namespaceDecl = stmtAs<NamespaceDecl>(statement.get());
       if (namespaceDecl == nullptr) {
         continue;
       }
@@ -21301,13 +21275,12 @@ private:
   void registerNamespaceAliases(const StmtList &statements,
                                 std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerNamespaceAliases(*branch, scope);
         }
-      } else if (const auto *alias = dynamic_cast<const NamespaceAliasDecl *>(
-                     statement.get())) {
+      } else if (const auto *alias =
+                     stmtAs<NamespaceAliasDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(alias->name());
         if ((!scope.empty() && isCompilerPrivateScope(scope)) ||
             (scope.empty() && alias->name().lexeme == "gti_internal")) {
@@ -21352,7 +21325,7 @@ private:
         namespaceToolingSymbols.try_emplace(name, symbol);
         publishNamespaceAlias(name, info);
       } else if (const auto *namespaceDecl =
-                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+                     stmtAs<NamespaceDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerNamespaceAliases(namespaceDecl->declarations(), scope);
@@ -21364,13 +21337,11 @@ private:
   void registerTypeAliases(const StmtList &statements,
                            std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerTypeAliases(*branch, scope);
         }
-      } else if (const auto *alias =
-                     dynamic_cast<const TypeAliasDecl *>(statement.get())) {
+      } else if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(alias->name());
         const std::string qualified =
             qualifiedName(scope, alias->name().lexeme);
@@ -21402,7 +21373,7 @@ private:
         publishTypeAlias(qualified, id, currentSourceUnit,
                          typeAliases.back().compilerPrivate);
       } else if (const auto *namespaceDecl =
-                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+                     stmtAs<NamespaceDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerTypeAliases(namespaceDecl->declarations(), scope);
@@ -21426,13 +21397,12 @@ private:
   void registerConcepts(const StmtList &statements,
                         std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerConcepts(*branch, scope);
         }
       } else if (const auto *declaration =
-                     dynamic_cast<const ConceptDecl *>(statement.get())) {
+                     stmtAs<ConceptDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(declaration->name());
         const std::string qualified =
             qualifiedName(scope, declaration->name().lexeme);
@@ -21493,7 +21463,7 @@ private:
                             .compilerPrivate = compilerPrivateDeclaration(
                                 currentSourceUnit, scope)});
       } else if (const auto *namespaceDeclaration =
-                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+                     stmtAs<NamespaceDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDeclaration->name());
         scope.emplace_back(namespaceDeclaration->name().lexeme);
         registerConcepts(namespaceDeclaration->declarations(), scope);
@@ -21933,22 +21903,20 @@ private:
   void registerEnums(const StmtList &statements,
                      std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerEnums(*branch, scope);
         }
         continue;
       }
-      if (const auto *namespaceDecl =
-              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+      if (const auto *namespaceDecl = stmtAs<NamespaceDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerEnums(namespaceDecl->declarations(), scope);
         scope.pop_back();
         continue;
       }
-      const auto *enumDecl = dynamic_cast<const EnumDecl *>(statement.get());
+      const auto *enumDecl = stmtAs<EnumDecl>(statement.get());
       if (enumDecl == nullptr) {
         continue;
       }
@@ -22413,13 +22381,11 @@ private:
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerClasses(*branch, scope);
         }
-      } else if (const auto *classDecl =
-                     dynamic_cast<const ClassDecl *>(statement.get())) {
+      } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
         if (classDecl->isExactSpecialization()) {
           continue;
@@ -22529,7 +22495,7 @@ private:
                           compilerPrivateDeclaration(currentSourceUnit, scope),
                       .compilerCapability = compilerCapability});
       } else if (const auto *namespaceDecl =
-                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+                     stmtAs<NamespaceDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerClasses(namespaceDecl->declarations(), scope);
@@ -22676,22 +22642,19 @@ private:
                                     std::vector<std::string> scope) {
     const std::vector<std::string> enclosingNamespace = currentNamespace;
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerClassSpecializations(*branch, scope);
         }
         continue;
       }
-      if (const auto *namespaceDecl =
-              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+      if (const auto *namespaceDecl = stmtAs<NamespaceDecl>(statement.get())) {
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerClassSpecializations(namespaceDecl->declarations(), scope);
         scope.pop_back();
         continue;
       }
-      const auto *declaration =
-          dynamic_cast<const ClassDecl *>(statement.get());
+      const auto *declaration = stmtAs<ClassDecl>(statement.get());
       if (declaration == nullptr) {
         continue;
       }
@@ -23043,17 +23006,14 @@ private:
                                          std::vector<std::string> scope,
                                          bool classMember) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerFunctionGenericParameters(*branch, scope, classMember);
         }
-      } else if (const auto *externC =
-                     dynamic_cast<const ExternCDecl *>(statement.get())) {
+      } else if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
         registerFunctionGenericParameters(externC->declarations(), scope,
                                           false);
-      } else if (const auto *function =
-                     dynamic_cast<const FunctionDecl *>(statement.get())) {
+      } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(function->name());
         std::vector<GenericParameterInfo> genericParameters =
             makeGenericParameters(function->genericParameters(),
@@ -23088,8 +23048,7 @@ private:
                 .intrinsic = intrinsic,
                 .compilerPrivate =
                     compilerPrivateDeclaration(currentSourceUnit, scope)});
-      } else if (const auto *classDecl =
-                     dynamic_cast<const ClassDecl *>(statement.get())) {
+      } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
         const auto registered = classDeclIds.find(classDecl);
         if (registered == classDeclIds.end()) {
@@ -23101,7 +23060,7 @@ private:
         registerFunctionGenericParameters(classDecl->members(),
                                           std::move(memberScope), true);
       } else if (const auto *namespaceDecl =
-                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+                     stmtAs<NamespaceDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerFunctionGenericParameters(namespaceDecl->declarations(), scope,
@@ -23132,16 +23091,13 @@ private:
   void registerNamespaceSymbols(const StmtList &statements,
                                 std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerNamespaceSymbols(*branch, scope);
         }
-      } else if (const auto *externC =
-                     dynamic_cast<const ExternCDecl *>(statement.get())) {
+      } else if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
         registerNamespaceSymbols(externC->declarations(), scope);
-      } else if (const auto *function =
-                     dynamic_cast<const FunctionDecl *>(statement.get())) {
+      } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(function->name());
         Symbol symbol = functionSymbol(*function, scope);
         if (!symbol.overloads.empty()) {
@@ -23149,8 +23105,7 @@ private:
                                   0);
         }
         declareNamespaceSymbol(scope, function->name(), std::move(symbol));
-      } else if (const auto *classDecl =
-                     dynamic_cast<const ClassDecl *>(statement.get())) {
+      } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
         if (classDecl->isExactSpecialization()) {
           continue;
@@ -23161,7 +23116,7 @@ private:
                                  SemanticType::typeName(found->second), false);
         }
       } else if (const auto *namespaceDecl =
-                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+                     stmtAs<NamespaceDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerNamespaceSymbols(namespaceDecl->declarations(), scope);
@@ -23173,13 +23128,11 @@ private:
   void collectClassMembers(const StmtList &statements,
                            std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           collectClassMembers(*branch, scope);
         }
-      } else if (const auto *classDecl =
-                     dynamic_cast<const ClassDecl *>(statement.get())) {
+      } else if (const auto *classDecl = stmtAs<ClassDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
         const auto found = classDeclIds.find(classDecl);
         if (found == classDeclIds.end()) {
@@ -23193,7 +23146,7 @@ private:
         collectMembers(classDecl->members(), info, access);
         endTypeParameterScope();
       } else if (const auto *namespaceDecl =
-                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+                     stmtAs<NamespaceDecl>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         collectClassMembers(namespaceDecl->declarations(), scope);
@@ -24019,8 +23972,7 @@ private:
     const SourceUnitId enclosingSourceUnit = currentSourceUnit;
     bool containsNativeSurface = false;
     for (const StmtPtr &statement : declarations) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           containsNativeSurface =
               validateNativeFacingNamespaces(*branch, depth) ||
@@ -24028,8 +23980,7 @@ private:
         }
         continue;
       }
-      if (const auto *nameSpace =
-              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+      if (const auto *nameSpace = stmtAs<NamespaceDecl>(statement.get())) {
         const bool childContainsNative = validateNativeFacingNamespaces(
             nameSpace->declarations(), depth + 1);
         if (childContainsNative) {
@@ -24041,8 +23992,7 @@ private:
         }
         continue;
       }
-      if (const auto *classDeclaration =
-              dynamic_cast<const ClassDecl *>(statement.get())) {
+      if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
         const auto found = classDeclIds.find(classDeclaration);
         if (found != classDeclIds.end()) {
           const ClassInfo &owner = classInfo(found->second);
@@ -24054,13 +24004,12 @@ private:
         }
         continue;
       }
-      const auto *externC = dynamic_cast<const ExternCDecl *>(statement.get());
+      const auto *externC = stmtAs<ExternCDecl>(statement.get());
       if (externC == nullptr) {
         continue;
       }
       for (const StmtPtr &nativeDeclaration : externC->declarations()) {
-        const auto *function =
-            dynamic_cast<const FunctionDecl *>(nativeDeclaration.get());
+        const auto *function = stmtAs<FunctionDecl>(nativeDeclaration.get());
         const FunctionInfo *info = function == nullptr
                                        ? nullptr
                                        : semanticModel.findFunction(*function);
@@ -24155,15 +24104,14 @@ private:
   void validateCAbiAccessSpecifiers(const StmtList &members,
                                     const ClassInfo &owner, bool &valid) {
     for (const StmtPtr &statement : members) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           validateCAbiAccessSpecifiers(*branch, owner, valid);
         }
         continue;
       }
       if (const auto *specifier =
-              dynamic_cast<const AccessSpecifierDecl *>(statement.get())) {
+              stmtAs<AccessSpecifierDecl>(statement.get())) {
         reportCAbiRecord(
             specifier->keyword(),
             "C ABI record '" + owner.name.lexeme +
@@ -24852,8 +24800,7 @@ private:
                  "GTI-S2045");
           continue;
         }
-        const auto *source =
-            dynamic_cast<const Variable *>(binding->arguments.front().get());
+        const auto *source = exprAs<Variable>(binding->arguments.front().get());
         if (source == nullptr) {
           report(expressionToken(binding->arguments.front()),
                  "Stored reference field '" + stored.field->name().lexeme +
@@ -24893,38 +24840,59 @@ private:
     }
   }
 
-  static void
-  updateFunctionCandidateBorrowSummary(Symbol &symbol,
-                                       const FunctionInfo &function) {
+  using BorrowSummaryCandidateIndex =
+      std::unordered_map<FunctionId, std::vector<FunctionCandidate *>>;
+
+  void
+  indexFunctionCandidateBorrowSummaries(Symbol &symbol,
+                                        BorrowSummaryCandidateIndex &index) {
     for (FunctionCandidate &candidate : symbol.overloads) {
-      if (candidate.id != function.id) {
-        continue;
+      index[candidate.id].emplace_back(&candidate);
+      if (workMetrics != nullptr) {
+        ++workMetrics->semanticBorrowSummaryCandidateInspections;
       }
-      candidate.returnBorrowOrigin = function.returnBorrowOrigin;
-      candidate.returnBorrowParameter = function.returnBorrowParameter;
-      candidate.returnBorrowAccess = function.returnBorrowAccess;
-      candidate.returnBorrowPlace = function.returnBorrowPlace;
     }
   }
 
-  void publishFunctionBorrowSummary(const FunctionInfo &function) {
+  [[nodiscard]] BorrowSummaryCandidateIndex
+  functionCandidateBorrowSummaryIndex() {
+    BorrowSummaryCandidateIndex index;
     for (auto &[_, symbol] : namespaceSymbols) {
-      updateFunctionCandidateBorrowSummary(symbol, function);
+      indexFunctionCandidateBorrowSummaries(symbol, index);
     }
     for (auto &[_, symbols] : visibleNamespaceSymbols) {
       for (auto &[__, symbol] : symbols) {
-        updateFunctionCandidateBorrowSummary(symbol, function);
+        indexFunctionCandidateBorrowSummaries(symbol, index);
       }
     }
     for (auto &[_, symbols] : internalNamespaceSymbols) {
       for (auto &[__, symbol] : symbols) {
-        updateFunctionCandidateBorrowSummary(symbol, function);
+        indexFunctionCandidateBorrowSummaries(symbol, index);
       }
     }
     for (ClassInfo &owner : classes) {
       for (auto &[_, member] : owner.members) {
-        updateFunctionCandidateBorrowSummary(member.symbol, function);
+        indexFunctionCandidateBorrowSummaries(member.symbol, index);
       }
+    }
+    return index;
+  }
+
+  void publishFunctionBorrowSummary(
+      const FunctionInfo &function,
+      const BorrowSummaryCandidateIndex &candidateIndex) {
+    const auto found = candidateIndex.find(function.id);
+    if (found == candidateIndex.end()) {
+      return;
+    }
+    for (FunctionCandidate *candidate : found->second) {
+      if (workMetrics != nullptr) {
+        ++workMetrics->semanticBorrowSummaryCandidateInspections;
+      }
+      candidate->returnBorrowOrigin = function.returnBorrowOrigin;
+      candidate->returnBorrowParameter = function.returnBorrowParameter;
+      candidate->returnBorrowAccess = function.returnBorrowAccess;
+      candidate->returnBorrowPlace = function.returnBorrowPlace;
     }
   }
 
@@ -24934,18 +24902,17 @@ private:
     if (statement == nullptr) {
       return;
     }
-    if (const auto *returned = dynamic_cast<const ReturnStmt *>(statement)) {
+    if (const auto *returned = stmtAs<ReturnStmt>(statement)) {
       returns.push_back(&returned->value());
       return;
     }
-    if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+    if (const auto *block = stmtAs<BlockStmt>(statement)) {
       for (const StmtPtr &nested : block->statements()) {
         collectBorrowReturnExpressions(nested.get(), returns);
       }
       return;
     }
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
       if (const StmtList *branch = conditional->activeBranch(target)) {
         for (const StmtPtr &nested : *branch) {
           collectBorrowReturnExpressions(nested.get(), returns);
@@ -24953,12 +24920,12 @@ private:
       }
       return;
     }
-    if (const auto *branch = dynamic_cast<const IfStmt *>(statement)) {
+    if (const auto *branch = stmtAs<IfStmt>(statement)) {
       collectBorrowReturnExpressions(branch->thenBranch().get(), returns);
       collectBorrowReturnExpressions(branch->elseBranch().get(), returns);
       return;
     }
-    if (const auto *selection = dynamic_cast<const SwitchStmt *>(statement)) {
+    if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
       for (const SwitchArm &arm : selection->arms()) {
         for (const StmtPtr &nested : arm.statements) {
           collectBorrowReturnExpressions(nested.get(), returns);
@@ -24966,19 +24933,19 @@ private:
       }
       return;
     }
-    if (const auto *loop = dynamic_cast<const ForStmt *>(statement)) {
+    if (const auto *loop = stmtAs<ForStmt>(statement)) {
       collectBorrowReturnExpressions(loop->body().get(), returns);
       return;
     }
-    if (const auto *loop = dynamic_cast<const RangeForStmt *>(statement)) {
+    if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
       collectBorrowReturnExpressions(loop->lowered().get(), returns);
       return;
     }
-    if (const auto *loop = dynamic_cast<const DoWhileStmt *>(statement)) {
+    if (const auto *loop = stmtAs<DoWhileStmt>(statement)) {
       collectBorrowReturnExpressions(loop->body().get(), returns);
       return;
     }
-    if (const auto *loop = dynamic_cast<const WhileStmt *>(statement)) {
+    if (const auto *loop = stmtAs<WhileStmt>(statement)) {
       collectBorrowReturnExpressions(loop->body().get(), returns);
     }
   }
@@ -25043,6 +25010,8 @@ private:
   }
 
   void resolveFunctionBorrowSummaries() {
+    BorrowSummaryCandidateIndex candidateIndex =
+        functionCandidateBorrowSummaryIndex();
     for (const auto &[declaration, _] : functionGenericParameters) {
       if (declaration == nullptr) {
         continue;
@@ -25050,6 +25019,9 @@ private:
       const FunctionInfo *existing = semanticModel.findFunction(*declaration);
       if (existing == nullptr) {
         continue;
+      }
+      if (workMetrics != nullptr) {
+        ++workMetrics->semanticBorrowSummaryFunctions;
       }
       FunctionInfo updated = *existing;
       FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
@@ -25069,7 +25041,7 @@ private:
       updated.returnBorrowAccess = summary.access;
       updated.returnBorrowPlace = summary.place;
       semanticModel.record(*declaration, updated);
-      publishFunctionBorrowSummary(updated);
+      publishFunctionBorrowSummary(updated, candidateIndex);
     }
   }
 
@@ -25189,20 +25161,18 @@ private:
                       AccessModifier &access,
                       const Token *mutableGroupOrigin = nullptr) {
     for (const StmtPtr &statement : members) {
-      if (const auto *group =
-              dynamic_cast<const MutableFieldGroupDecl *>(statement.get())) {
+      if (const auto *group = stmtAs<MutableFieldGroupDecl>(statement.get())) {
         collectMembers(group->members(), owner, access, &group->keyword());
         continue;
       }
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
         if (const StmtList *branch = conditional->activeBranch(target)) {
           collectMembers(*branch, owner, access, mutableGroupOrigin);
         }
         continue;
       }
       if (const auto *specifier =
-              dynamic_cast<const AccessSpecifierDecl *>(statement.get())) {
+              stmtAs<AccessSpecifierDecl>(statement.get())) {
         if (owner.kind == ClassKind::Interface) {
           report(specifier->keyword(),
                  "Interface members are always public; access specifiers are "
@@ -25222,8 +25192,7 @@ private:
         continue;
       }
 
-      if (const auto *constructor =
-              dynamic_cast<const ConstructorDecl *>(statement.get())) {
+      if (const auto *constructor = stmtAs<ConstructorDecl>(statement.get())) {
         if (owner.kind == ClassKind::Union) {
           report(constructor->name(),
                  "A passive union cannot declare constructors.", "GTI-S2066");
@@ -25440,8 +25409,7 @@ private:
         continue;
       }
 
-      if (const auto *destructor =
-              dynamic_cast<const DestructorDecl *>(statement.get())) {
+      if (const auto *destructor = stmtAs<DestructorDecl>(statement.get())) {
         if (owner.kind == ClassKind::Union) {
           report(destructor->tilde(),
                  "A passive union cannot declare a destructor.", "GTI-S2066");
@@ -25497,8 +25465,7 @@ private:
 
       const Token *name = nullptr;
       const VariableDecl *field = nullptr;
-      const FunctionDecl *function =
-          dynamic_cast<const FunctionDecl *>(statement.get());
+      const FunctionDecl *function = stmtAs<FunctionDecl>(statement.get());
       Symbol symbol;
       if (function != nullptr) {
         if (owner.kind == ClassKind::Union) {
@@ -25564,8 +25531,7 @@ private:
                    "GTI-S2041");
           }
         }
-      } else if (const auto *variable =
-                     dynamic_cast<const VariableDecl *>(statement.get())) {
+      } else if (const auto *variable = stmtAs<VariableDecl>(statement.get())) {
         if (mutableGroupOrigin != nullptr) {
           mutableFieldGroupOrigins.insert_or_assign(variable,
                                                     mutableGroupOrigin);
@@ -25912,26 +25878,25 @@ private:
         semanticModel.isProgramConstantSubstitution(expression)) {
       semanticModel.clearProgramConstantSubstitution(expression);
     }
-    if (const auto *grouping = dynamic_cast<const Grouping *>(&expression)) {
+    if (const auto *grouping = exprAs<Grouping>(&expression)) {
       if (grouping->expression()) {
         clearProgramConstantSubstitutionsInBoundary(*grouping->expression(),
                                                     symbol);
       }
-    } else if (const auto *conversion =
-                   dynamic_cast<const Conversion *>(&expression)) {
+    } else if (const auto *conversion = exprAs<Conversion>(&expression)) {
       if (conversion->value()) {
         clearProgramConstantSubstitutionsInBoundary(*conversion->value(),
                                                     symbol);
       }
-    } else if (const auto *member = dynamic_cast<const Get *>(&expression)) {
+    } else if (const auto *member = exprAs<Get>(&expression)) {
       if (member->object()) {
         clearProgramConstantSubstitutionsInBoundary(*member->object(), symbol);
       }
-    } else if (const auto *index = dynamic_cast<const Index *>(&expression)) {
+    } else if (const auto *index = exprAs<Index>(&expression)) {
       if (index->object()) {
         clearProgramConstantSubstitutionsInBoundary(*index->object(), symbol);
       }
-    } else if (const auto *unary = dynamic_cast<const Unary *>(&expression)) {
+    } else if (const auto *unary = exprAs<Unary>(&expression)) {
       if (unary->right()) {
         clearProgramConstantSubstitutionsInBoundary(*unary->right(), symbol);
       }
@@ -26249,7 +26214,7 @@ private:
     if (!currentProgramEffectOwner.valid()) {
       return;
     }
-    if (const auto *fold = dynamic_cast<const PackFold *>(&expression);
+    if (const auto *fold = exprAs<PackFold>(&expression);
         fold != nullptr && semanticModel.findPackFold(*fold) != nullptr) {
       addUnknownProgramEffect(expression,
                               "a pack-expanded GTI call has an open effect "
@@ -26259,12 +26224,12 @@ private:
     if (const ResolvedConstructionInfo *construction =
             semanticModel.findConstruction(expression)) {
       std::size_t suppliedArguments = 0;
-      if (const auto *call = dynamic_cast<const Call *>(&expression)) {
+      if (const auto *call = exprAs<Call>(&expression)) {
         suppliedArguments = call->arguments().size();
         recordProgramArgumentBoundaryEffects(construction->parameterTypes,
                                              call->arguments());
       } else if (const auto *initializer =
-                     dynamic_cast<const DirectInitializer *>(&expression)) {
+                     exprAs<DirectInitializer>(&expression)) {
         suppliedArguments = initializer->arguments().size();
         recordProgramArgumentBoundaryEffects(construction->parameterTypes,
                                              initializer->arguments());
@@ -26298,17 +26263,17 @@ private:
     }
     if (const ResolvedOperatorInfo *operation =
             semanticModel.findOperator(expression)) {
-      if (const auto *call = dynamic_cast<const Call *>(&expression)) {
+      if (const auto *call = exprAs<Call>(&expression)) {
         recordProgramArgumentBoundaryEffects(operation->parameterTypes,
                                              call->arguments());
-      } else if (const auto *binary = dynamic_cast<const Binary *>(&expression);
+      } else if (const auto *binary = exprAs<Binary>(&expression);
                  binary != nullptr && !operation->parameterTypes.empty()) {
         if (operation->parameterTypes.front().kind == SemanticType::Reference ||
             operation->parameterTypes.front().kind ==
                 SemanticType::RawPointer) {
           forceProgramStorageBoundaryAccess(binary->right());
         }
-      } else if (const auto *index = dynamic_cast<const Index *>(&expression);
+      } else if (const auto *index = exprAs<Index>(&expression);
                  index != nullptr && !operation->parameterTypes.empty()) {
         if (operation->parameterTypes.front().kind == SemanticType::Reference ||
             operation->parameterTypes.front().kind ==
@@ -26344,7 +26309,7 @@ private:
       }
       return;
     }
-    const auto *call = dynamic_cast<const Call *>(&expression);
+    const auto *call = exprAs<Call>(&expression);
     if (call == nullptr) {
       return;
     }
@@ -26456,8 +26421,7 @@ private:
       const Stmt &statement, SourceUnitId sourceUnit,
       std::optional<ClassId> enclosingClass,
       std::vector<ProgramInitializationStep> &steps) const {
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(&statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(&statement)) {
       if (const StmtList *branch = conditional->activeBranch(target)) {
         for (const StmtPtr &child : *branch) {
           collectProgramInitializationStatement(*child, sourceUnit,
@@ -26466,21 +26430,21 @@ private:
       }
       return;
     }
-    if (const auto *space = dynamic_cast<const NamespaceDecl *>(&statement)) {
+    if (const auto *space = stmtAs<NamespaceDecl>(&statement)) {
       for (const StmtPtr &child : space->declarations()) {
         collectProgramInitializationStatement(*child, sourceUnit,
                                               enclosingClass, steps);
       }
       return;
     }
-    if (const auto *external = dynamic_cast<const ExternCDecl *>(&statement)) {
+    if (const auto *external = stmtAs<ExternCDecl>(&statement)) {
       for (const StmtPtr &child : external->declarations()) {
         collectProgramInitializationStatement(*child, sourceUnit,
                                               enclosingClass, steps);
       }
       return;
     }
-    if (const auto *owner = dynamic_cast<const ClassDecl *>(&statement)) {
+    if (const auto *owner = stmtAs<ClassDecl>(&statement)) {
       const ClassTypeInfo *info = semanticModel.findClassType(*owner);
       if (info == nullptr || !info->genericParameters.empty()) {
         return;
@@ -26491,7 +26455,7 @@ private:
       }
       return;
     }
-    const auto *variable = dynamic_cast<const VariableDecl *>(&statement);
+    const auto *variable = stmtAs<VariableDecl>(&statement);
     if (variable == nullptr || (enclosingClass && !variable->isStatic())) {
       return;
     }
@@ -26522,8 +26486,7 @@ private:
   void
   collectProgramEntryStatement(const Stmt &statement,
                                const FunctionDecl *&entryDeclaration) const {
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(&statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(&statement)) {
       if (const StmtList *branch = conditional->activeBranch(target)) {
         for (const StmtPtr &child : *branch) {
           collectProgramEntryStatement(*child, entryDeclaration);
@@ -26531,25 +26494,25 @@ private:
       }
       return;
     }
-    if (const auto *space = dynamic_cast<const NamespaceDecl *>(&statement)) {
+    if (const auto *space = stmtAs<NamespaceDecl>(&statement)) {
       for (const StmtPtr &child : space->declarations()) {
         collectProgramEntryStatement(*child, entryDeclaration);
       }
       return;
     }
-    if (const auto *external = dynamic_cast<const ExternCDecl *>(&statement)) {
+    if (const auto *external = stmtAs<ExternCDecl>(&statement)) {
       for (const StmtPtr &child : external->declarations()) {
         collectProgramEntryStatement(*child, entryDeclaration);
       }
       return;
     }
-    if (const auto *owner = dynamic_cast<const ClassDecl *>(&statement)) {
+    if (const auto *owner = stmtAs<ClassDecl>(&statement)) {
       for (const StmtPtr &child : owner->members()) {
         collectProgramEntryStatement(*child, entryDeclaration);
       }
       return;
     }
-    const auto *function = dynamic_cast<const FunctionDecl *>(&statement);
+    const auto *function = stmtAs<FunctionDecl>(&statement);
     const FunctionInfo *info =
         function == nullptr ? nullptr : semanticModel.findFunction(*function);
     if (info != nullptr && info->entryKind != ProgramEntryKind::None) {
@@ -26825,38 +26788,34 @@ private:
   }
 
   [[nodiscard]] SourceUnitId statementSourceUnit(const Stmt &statement) const {
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(&statement)) {
+    if (const auto *conditional = stmtAs<ConditionalStmt>(&statement)) {
       return sourceUnitFor(conditional->directive());
     }
-    if (const auto *classDecl = dynamic_cast<const ClassDecl *>(&statement)) {
+    if (const auto *classDecl = stmtAs<ClassDecl>(&statement)) {
       return sourceUnitFor(classDecl->name());
     }
-    if (const auto *function = dynamic_cast<const FunctionDecl *>(&statement)) {
+    if (const auto *function = stmtAs<FunctionDecl>(&statement)) {
       return sourceUnitFor(function->name());
     }
-    if (const auto *alias =
-            dynamic_cast<const NamespaceAliasDecl *>(&statement)) {
+    if (const auto *alias = stmtAs<NamespaceAliasDecl>(&statement)) {
       return sourceUnitFor(alias->name());
     }
-    if (const auto *namespaceDecl =
-            dynamic_cast<const NamespaceDecl *>(&statement)) {
+    if (const auto *namespaceDecl = stmtAs<NamespaceDecl>(&statement)) {
       return sourceUnitFor(namespaceDecl->name());
     }
-    if (const auto *alias = dynamic_cast<const TypeAliasDecl *>(&statement)) {
+    if (const auto *alias = stmtAs<TypeAliasDecl>(&statement)) {
       return sourceUnitFor(alias->name());
     }
-    if (const auto *variable = dynamic_cast<const VariableDecl *>(&statement)) {
+    if (const auto *variable = stmtAs<VariableDecl>(&statement)) {
       return sourceUnitFor(variable->name());
     }
-    if (const auto *binding =
-            dynamic_cast<const StructuredBindingDecl *>(&statement)) {
+    if (const auto *binding = stmtAs<StructuredBindingDecl>(&statement)) {
       return sourceUnitFor(binding->autoKeyword());
     }
-    if (const auto *empty = dynamic_cast<const EmptyStmt *>(&statement)) {
+    if (const auto *empty = stmtAs<EmptyStmt>(&statement)) {
       return sourceUnitFor(empty->semicolon());
     }
-    if (const auto *externC = dynamic_cast<const ExternCDecl *>(&statement)) {
+    if (const auto *externC = stmtAs<ExternCDecl>(&statement)) {
       return sourceUnitFor(externC->keyword());
     }
     return 0;
@@ -26873,11 +26832,18 @@ private:
     LoanFlowContext reachableLoanFlow;
     std::vector<ValueControlFlowContext> reachableValueControlFlow;
     SemanticType reachableType = currentType;
+    const bool measureStatements = measureTopLevelStatements;
+    if (measureStatements) {
+      measureTopLevelStatements = false;
+    }
     for (std::size_t index = 0; index < statements.size(); ++index) {
       const StmtPtr &statement = statements[index];
       loanFlow.currentRegion = region;
       loanFlow.currentOrder = index + 1;
       loanFlow.currentStatement = statement.get();
+      const auto statementStart = measureStatements
+                                      ? std::chrono::steady_clock::now()
+                                      : std::chrono::steady_clock::time_point{};
       if (reachable) {
         analyze(statement);
         reachable = summarizeFlow(statement.get()).canFallThrough;
@@ -26891,6 +26857,21 @@ private:
         }
         analyze(statement);
       }
+      if (measureStatements && workMetrics != nullptr && statement != nullptr) {
+        const std::size_t elapsed = static_cast<std::size_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - statementStart)
+                .count());
+        const SourceUnitId unit = statementSourceUnit(*statement);
+        if (sourceGraph != nullptr && sourceGraph->isCompilerTrusted(unit)) {
+          workMetrics->semanticTrustedBodyMicroseconds += elapsed;
+        } else {
+          workMetrics->semanticApplicationBodyMicroseconds += elapsed;
+        }
+      }
+    }
+    if (measureStatements) {
+      measureTopLevelStatements = true;
     }
     if (hasUnreachableTail) {
       scopes = std::move(reachableScopes);
@@ -26945,7 +26926,7 @@ private:
   }
 
   void analyzeConditionalArm(const StmtPtr &statement) {
-    if (!statement || dynamic_cast<const BlockStmt *>(statement.get())) {
+    if (!statement || stmtAs<BlockStmt>(statement.get())) {
       analyze(statement);
       return;
     }
@@ -26965,7 +26946,7 @@ private:
   // bodies the same region boundary as blocks prevents a loan created before
   // the loop from being mistaken for an iteration-local conditional loan.
   void analyzeLoopBody(const StmtPtr &statement) {
-    if (!statement || dynamic_cast<const BlockStmt *>(statement.get())) {
+    if (!statement || stmtAs<BlockStmt>(statement.get())) {
       analyze(statement);
       return;
     }
@@ -26995,6 +26976,7 @@ private:
 
   [[nodiscard]] ExpressionInfo classifyExpression(const Expr &expr,
                                                   SemanticType type) const {
+    const ExprKind kind = expr.exprKind();
     const auto preserveCategory = [&](const Expr &source) {
       const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
       return sourceInfo == nullptr
@@ -27003,16 +26985,20 @@ private:
                                   sourceInfo->access);
     };
 
-    if (const auto *grouping = dynamic_cast<const Grouping *>(&expr)) {
-      return preserveCategory(*grouping->expression());
+    if (kind == ExprKind::Grouping) {
+      return preserveCategory(
+          *static_cast<const Grouping &>(expr).expression());
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(&expr);
-        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
-      return preserveCategory(*binary->right());
+    if (kind == ExprKind::Binary) {
+      const Binary &binary = static_cast<const Binary &>(expr);
+      if (binary.oper().kind == TokenKind::COMMA) {
+        return preserveCategory(*binary.right());
+      }
     }
-    if (const auto *variable = dynamic_cast<const Variable *>(&expr)) {
-      const Symbol *symbol = resolve(variable->name());
-      if (symbol == nullptr && resolveValueParameter(variable->name())) {
+    if (kind == ExprKind::Variable) {
+      const Variable &variable = static_cast<const Variable &>(expr);
+      const Symbol *symbol = resolve(variable.name());
+      if (symbol == nullptr && resolveValueParameter(variable.name())) {
         return expressionInfo(std::move(type));
       }
       if (symbol != nullptr && (symbol->type == SemanticType::Function ||
@@ -27030,8 +27016,9 @@ private:
                             mutableAccess ? AccessMode::Mutable
                                           : AccessMode::ReadOnly);
     }
-    if (const auto *qualified = dynamic_cast<const QualifiedName *>(&expr)) {
-      const Symbol *symbol = resolveQualified(qualified->name());
+    if (kind == ExprKind::QualifiedName) {
+      const QualifiedName &qualified = static_cast<const QualifiedName &>(expr);
+      const Symbol *symbol = resolveQualified(qualified.name());
       if (symbol != nullptr && (symbol->type == SemanticType::Function ||
                                 symbol->type == SemanticType::TypeName)) {
         return expressionInfo(std::move(type));
@@ -27041,16 +27028,15 @@ private:
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly);
     }
-    if (dynamic_cast<const This *>(&expr) != nullptr) {
+    if (kind == ExprKind::This) {
       return expressionInfo(std::move(type), ValueCategory::Place,
                             receiverAllowsMutation(currentReceiverMutability)
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly);
     }
     const bool directOperatorResult =
-        dynamic_cast<const Index *>(&expr) != nullptr ||
-        dynamic_cast<const Call *>(&expr) != nullptr ||
-        (dynamic_cast<const Unary *>(&expr) != nullptr &&
+        kind == ExprKind::Index || kind == ExprKind::Call ||
+        (kind == ExprKind::Unary &&
          static_cast<const Unary &>(expr).oper().kind == TokenKind::STAR);
     if (directOperatorResult) {
       if (const ResolvedOperatorInfo *resolved =
@@ -27063,8 +27049,9 @@ private:
         return expressionInfo(std::move(type));
       }
     }
-    if (const auto *index = dynamic_cast<const Index *>(&expr)) {
-      const SemanticType *objectType = semanticModel.findType(*index->object());
+    if (kind == ExprKind::Index) {
+      const Index &index = static_cast<const Index &>(expr);
+      const SemanticType *objectType = semanticModel.findType(*index.object());
       if (objectType != nullptr &&
           objectType->kind == SemanticType::StringView) {
         return expressionInfo(std::move(type));
@@ -27075,7 +27062,7 @@ private:
                               objectType->pointerAccess);
       }
       const ExpressionInfo *objectInfo =
-          semanticModel.findExpression(*index->object());
+          semanticModel.findExpression(*index.object());
       return expressionInfo(std::move(type), ValueCategory::Place,
                             objectInfo != nullptr &&
                                     objectInfo->category ==
@@ -27084,14 +27071,17 @@ private:
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly);
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(&expr);
-        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
-      if (unary->rangeObject()) {
+    if (kind == ExprKind::Unary) {
+      const Unary &unary = static_cast<const Unary &>(expr);
+      if (unary.oper().kind != TokenKind::STAR) {
+        return expressionInfo(std::move(type));
+      }
+      if (unary.rangeObject()) {
         const SemanticType *rangeType =
-            semanticModel.findType(*unary->rangeObject());
+            semanticModel.findType(*unary.rangeObject());
         if (rangeType != nullptr && rangeType->kind == SemanticType::Array) {
           const ExpressionInfo *rangeInfo =
-              semanticModel.findExpression(*unary->rangeObject());
+              semanticModel.findExpression(*unary.rangeObject());
           return expressionInfo(std::move(type), ValueCategory::Place,
                                 rangeInfo != nullptr &&
                                         rangeInfo->category ==
@@ -27109,44 +27099,45 @@ private:
                               resolved->returnType.referenceAccess);
       }
       if (const SemanticType *pointerType =
-              semanticModel.findType(*unary->right());
+              semanticModel.findType(*unary.right());
           pointerType != nullptr &&
           pointerType->kind == SemanticType::RawPointer) {
         return expressionInfo(std::move(type), ValueCategory::Place,
                               pointerType->pointerAccess);
       }
       const ExpressionInfo *ownerInfo =
-          semanticModel.findExpression(*unary->right());
+          semanticModel.findExpression(*unary.right());
       return expressionInfo(std::move(type), ValueCategory::Place,
                             ownerInfo != nullptr &&
                                     ownerInfo->access == AccessMode::Mutable
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly);
     }
-    if (const auto *get = dynamic_cast<const Get *>(&expr)) {
+    if (kind == ExprKind::Get) {
+      const Get &get = static_cast<const Get &>(expr);
       if (type == SemanticType::Function) {
         return expressionInfo(std::move(type));
       }
-      const SemanticType memberObjectType = memberAccessObjectType(*get);
-      const MemberInfo *member = findMember(memberObjectType, get->name());
+      const SemanticType memberObjectType = memberAccessObjectType(get);
+      const MemberInfo *member = findMember(memberObjectType, get.name());
       const ExpressionInfo *objectInfo =
-          semanticModel.findExpression(*get->object());
+          semanticModel.findExpression(*get.object());
       const SemanticType *rawReceiver =
-          get->access().kind == TokenKind::ARROW
-              ? semanticModel.findType(*get->object())
+          get.access().kind == TokenKind::ARROW
+              ? semanticModel.findType(*get.object())
               : nullptr;
       const bool mutableAccess =
           member == nullptr ||
           (member->symbol.type.kind == SemanticType::Reference
                ? member->symbol.type.referenceAccess == AccessMode::Mutable
                : member->symbol.assignable &&
-                     (get->access().kind == TokenKind::ARROW
+                     (get.access().kind == TokenKind::ARROW
                           ? (rawReceiver != nullptr &&
                                      rawReceiver->kind ==
                                          SemanticType::RawPointer
                                  ? rawReceiver->pointerAccess ==
                                        AccessMode::Mutable
-                                 : memberReceiverIsMutable(*get))
+                                 : memberReceiverIsMutable(get))
                           : objectInfo != nullptr &&
                                 objectInfo->category == ValueCategory::Place &&
                                 objectInfo->access == AccessMode::Mutable));
@@ -27154,9 +27145,10 @@ private:
                             mutableAccess ? AccessMode::Mutable
                                           : AccessMode::ReadOnly);
     }
-    if (const auto *call = dynamic_cast<const Call *>(&expr)) {
-      if (const auto *member =
-              dynamic_cast<const Get *>(call->callee().get())) {
+    if (kind == ExprKind::Call) {
+      const Call &call = static_cast<const Call &>(expr);
+      if (call.callee() && call.callee()->exprKind() == ExprKind::Get) {
+        const Get *member = static_cast<const Get *>(call.callee().get());
         const SemanticType *objectType =
             semanticModel.findType(*member->object());
         if (objectType != nullptr &&
@@ -27174,7 +27166,7 @@ private:
                   : AccessMode::ReadOnly);
         }
       }
-      const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      const ResolvedCallInfo *resolved = semanticModel.findCall(call);
       if (resolved != nullptr &&
           resolved->returnType.kind == SemanticType::Reference &&
           resolved->returnType.arguments.size() == 1) {
@@ -27362,7 +27354,9 @@ private:
   [[nodiscard]] DefinedFailureOperation
   classifyDefinedFailure(const Expr &expr, const ExpressionInfo &info) const {
     DefinedFailureOperation operation;
-    const auto *callExpression = dynamic_cast<const Call *>(&expr);
+    const ExprKind kind = expr.exprKind();
+    const auto *callExpression =
+        kind == ExprKind::Call ? static_cast<const Call *>(&expr) : nullptr;
     const ResolvedCallInfo *callResolution =
         callExpression == nullptr ? nullptr
                                   : semanticModel.findCall(*callExpression);
@@ -27378,10 +27372,8 @@ private:
     if (const ResolvedOperatorInfo *resolved =
             semanticModel.findOperator(expr)) {
       const bool assignmentExpression =
-          dynamic_cast<const Assign *>(&expr) != nullptr ||
-          dynamic_cast<const Set *>(&expr) != nullptr ||
-          dynamic_cast<const IndexSet *>(&expr) != nullptr ||
-          dynamic_cast<const DereferenceSet *>(&expr) != nullptr;
+          kind == ExprKind::Assign || kind == ExprKind::Set ||
+          kind == ExprKind::IndexSet || kind == ExprKind::DereferenceSet;
       const bool loweredAssignmentCall =
           assignmentExpression &&
           (resolved->kind == OverloadedOperator::Assignment ||
@@ -27405,9 +27397,10 @@ private:
       return operation;
     }
 
-    if (const auto *call = dynamic_cast<const Call *>(&expr)) {
-      if (const auto *member =
-              dynamic_cast<const Get *>(call->callee().get())) {
+    if (kind == ExprKind::Call) {
+      const auto *call = static_cast<const Call *>(&expr);
+      if (call->callee() && call->callee()->exprKind() == ExprKind::Get) {
+        const auto *member = static_cast<const Get *>(call->callee().get());
         const SemanticType objectType = semanticModel.typeOf(*member->object());
         if (objectType.kind == SemanticType::Expected &&
             call->arguments().empty()) {
@@ -27599,7 +27592,8 @@ private:
       }
     }
 
-    if (const auto *conversion = dynamic_cast<const Conversion *>(&expr)) {
+    if (kind == ExprKind::Conversion) {
+      const auto *conversion = static_cast<const Conversion *>(&expr);
       if (numericConversionMayFail(semanticModel.typeOf(*conversion->value()),
                                    info.type)) {
         anchor(conversion->targetType().name.first());
@@ -27623,12 +27617,14 @@ private:
                           DefinedFailureDetail::StringView);
       }
     };
-    if (const auto *index = dynamic_cast<const Index *>(&expr)) {
+    if (kind == ExprKind::Index) {
+      const auto *index = static_cast<const Index *>(&expr);
       addIndexFailure(index->object(), index->bracket());
       return operation;
     }
 
-    if (const auto *binary = dynamic_cast<const Binary *>(&expr)) {
+    if (kind == ExprKind::Binary) {
+      const auto *binary = static_cast<const Binary *>(&expr);
       const SemanticType leftType = semanticModel.typeOf(*binary->left());
       const SemanticType rightType = semanticModel.typeOf(*binary->right());
       // Raw-pointer difference is an unsafe pointer operation whose
@@ -27643,7 +27639,8 @@ private:
         addIntegerOperationFailures(operation, binary->oper().kind, info.type,
                                     rightType);
       }
-    } else if (const auto *unary = dynamic_cast<const Unary *>(&expr)) {
+    } else if (kind == ExprKind::Unary) {
+      const auto *unary = static_cast<const Unary *>(&expr);
       if (isIntegral(info.type)) {
         if (unary->oper().kind == TokenKind::MINUS) {
           anchor(unary->oper());
@@ -27673,7 +27670,8 @@ private:
           }
         }
       }
-    } else if (const auto *postfix = dynamic_cast<const Postfix *>(&expr)) {
+    } else if (kind == ExprKind::Postfix) {
+      const auto *postfix = static_cast<const Postfix *>(&expr);
       if (isIntegral(info.type)) {
         anchor(postfix->oper());
         const SemanticType operandType =
@@ -27686,7 +27684,8 @@ private:
                             DefinedFailureDetail::NumericCast);
         }
       }
-    } else if (const auto *assign = dynamic_cast<const Assign *>(&expr)) {
+    } else if (kind == ExprKind::Assign) {
+      const auto *assign = static_cast<const Assign *>(&expr);
       if (assign->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
         anchor(assign->oper());
         const SemanticType right = semanticModel.typeOf(*assign->value());
@@ -27698,7 +27697,8 @@ private:
         addCompoundConversionFailure(operation, assign->oper().kind, info.type,
                                      right, nullptr, assign->value().get());
       }
-    } else if (const auto *set = dynamic_cast<const Set *>(&expr)) {
+    } else if (kind == ExprKind::Set) {
+      const auto *set = static_cast<const Set *>(&expr);
       if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
         anchor(set->oper());
         const SemanticType right = semanticModel.typeOf(*set->value());
@@ -27709,7 +27709,8 @@ private:
         addCompoundConversionFailure(operation, set->oper().kind, info.type,
                                      right, nullptr, set->value().get());
       }
-    } else if (const auto *set = dynamic_cast<const IndexSet *>(&expr)) {
+    } else if (kind == ExprKind::IndexSet) {
+      const auto *set = static_cast<const IndexSet *>(&expr);
       addIndexFailure(set->object(), set->bracket());
       if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
         anchor(set->oper());
@@ -27721,7 +27722,8 @@ private:
         addCompoundConversionFailure(operation, set->oper().kind, info.type,
                                      right, nullptr, set->value().get());
       }
-    } else if (const auto *set = dynamic_cast<const DereferenceSet *>(&expr)) {
+    } else if (kind == ExprKind::DereferenceSet) {
+      const auto *set = static_cast<const DereferenceSet *>(&expr);
       if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
         anchor(set->oper());
         const SemanticType right = semanticModel.typeOf(*set->value());
@@ -27768,13 +27770,15 @@ private:
     validateProjectedPlaceRead(expr);
     validateLoanPlaceAccess(expr, requestedRoles);
     Token token = expressionToken(expr);
+    const ExprKind kind = expr.exprKind();
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     bool mutableBinding = false;
     bool staticMember = false;
     SymbolId symbolId = 0;
     OccurrenceRole roles = requestedRoles;
-    if (const auto *variable = dynamic_cast<const Variable *>(&expr)) {
-      if (const Symbol *symbol = resolve(variable->name())) {
+    if (kind == ExprKind::Variable) {
+      const Variable &variable = static_cast<const Variable &>(expr);
+      if (const Symbol *symbol = resolve(variable.name())) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
         staticMember = symbol->staticMember || symbol->internalLinkage;
@@ -27783,7 +27787,7 @@ private:
           semanticModel.recordConstant(expr, *symbol->constant);
         }
       } else if (const std::optional<CompileTimeValue> value =
-                     resolveValueParameter(variable->name());
+                     resolveValueParameter(variable.name());
                  value) {
         if (value->kind == CompileTimeValue::Parameter) {
           const GenericParameterInfo *parameter =
@@ -27798,19 +27802,20 @@ private:
                               .domain = CheckedIntegerDomain{.width = 64}});
         }
       }
-    } else if (const auto *pack = dynamic_cast<const PackExpansion *>(&expr)) {
-      token = pack->name();
-      if (const Symbol *symbol = resolve(pack->name())) {
+    } else if (kind == ExprKind::PackExpansion) {
+      const PackExpansion &pack = static_cast<const PackExpansion &>(expr);
+      token = pack.name();
+      if (const Symbol *symbol = resolve(pack.name())) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
         staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
       }
-    } else if (const auto *fold = dynamic_cast<const PackFold *>(&expr)) {
-      token = fold->ellipsis();
-    } else if (const auto *qualified =
-                   dynamic_cast<const QualifiedName *>(&expr)) {
-      if (const Symbol *symbol = resolveQualified(qualified->name())) {
+    } else if (kind == ExprKind::PackFold) {
+      token = static_cast<const PackFold &>(expr).ellipsis();
+    } else if (kind == ExprKind::QualifiedName) {
+      const QualifiedName &qualified = static_cast<const QualifiedName &>(expr);
+      if (const Symbol *symbol = resolveQualified(qualified.name())) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
         staticMember = symbol->staticMember || symbol->internalLinkage;
@@ -27820,7 +27825,7 @@ private:
         }
       }
       if (const ResolvedEnumeratorInfo *enumerator =
-              semanticModel.findEnumerator(*qualified);
+              semanticModel.findEnumerator(qualified);
           enumerator != nullptr && enumerator->declaration != nullptr) {
         symbolId = symbolForDeclaration(enumerator->declaration->name);
         if (symbolId == 0) {
@@ -27835,41 +27840,44 @@ private:
               enumType);
         }
       }
-    } else if (const auto *member = dynamic_cast<const Get *>(&expr)) {
+    } else if (kind == ExprKind::Get) {
+      const Get &member = static_cast<const Get &>(expr);
       if (const MemberInfo *resolved =
-              findMember(memberAccessObjectType(*member), member->name())) {
+              findMember(memberAccessObjectType(member), member.name())) {
         const Symbol substituted =
-            substituteSymbol(resolved->symbol, memberAccessObjectType(*member));
+            substituteSymbol(resolved->symbol, memberAccessObjectType(member));
         bindingKind = substituted.bindingKind;
         mutableBinding = substituted.assignable;
         staticMember = substituted.staticMember || substituted.internalLinkage;
-        if (isCompilerTrustedRequester(member->name()) ||
+        if (isCompilerTrustedRequester(member.name()) ||
             !substituted.compilerPrivate) {
           symbolId = toolingSymbolFor(substituted);
         }
       }
-    } else if (const auto *assignment = dynamic_cast<const Assign *>(&expr)) {
-      token = assignment->name();
+    } else if (kind == ExprKind::Assign) {
+      const Assign &assignment = static_cast<const Assign &>(expr);
+      token = assignment.name();
       roles = OccurrenceRole::Reference | OccurrenceRole::Write;
-      if (assignment->oper().kind != TokenKind::EQUAL) {
+      if (assignment.oper().kind != TokenKind::EQUAL) {
         roles |= OccurrenceRole::Read;
       }
-      const Symbol *symbol = assignment->path().segments.size() > 1
-                                 ? resolveQualified(assignment->path())
-                                 : resolve(assignment->name());
+      const Symbol *symbol = assignment.path().segments.size() > 1
+                                 ? resolveQualified(assignment.path())
+                                 : resolve(assignment.name());
       if (symbol != nullptr) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
         staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
       }
-    } else if (const auto *set = dynamic_cast<const Set *>(&expr)) {
+    } else if (kind == ExprKind::Set) {
+      const Set &set = static_cast<const Set &>(expr);
       roles = OccurrenceRole::Reference | OccurrenceRole::Write;
-      if (set->oper().kind != TokenKind::EQUAL) {
+      if (set.oper().kind != TokenKind::EQUAL) {
         roles |= OccurrenceRole::Read;
       }
       if (const MemberInfo *resolved =
-              findMember(memberAccessObjectType(*set), set->name())) {
+              findMember(memberAccessObjectType(set), set.name())) {
         bindingKind = resolved->symbol.bindingKind;
         mutableBinding = resolved->symbol.assignable;
         staticMember =
@@ -29811,7 +29819,7 @@ private:
 
   [[nodiscard]] const EnumeratorRecord *
   payloadEnumeratorForCallee(const ExprPtr &callee) const {
-    const auto *qualified = dynamic_cast<const QualifiedName *>(callee.get());
+    const auto *qualified = exprAs<QualifiedName>(callee.get());
     if (qualified == nullptr) {
       return nullptr;
     }
@@ -29896,8 +29904,8 @@ private:
   [[nodiscard]] std::optional<ResolvedPayloadPatternInfo>
   analyzePayloadSwitchPattern(const ExprPtr &expression,
                               const SemanticType &subjectType) {
-    const Call *call = dynamic_cast<const Call *>(expression.get());
-    const auto *qualified = dynamic_cast<const QualifiedName *>(
+    const Call *call = exprAs<Call>(expression.get());
+    const auto *qualified = exprAs<QualifiedName>(
         call == nullptr ? expression.get() : call->callee().get());
     if (qualified == nullptr) {
       report(expressionToken(expression),
@@ -29950,8 +29958,7 @@ private:
     }
     std::unordered_set<std::string> names;
     for (std::size_t index = 0; index < call->arguments().size(); ++index) {
-      const auto *binding =
-          dynamic_cast<const Variable *>(call->arguments()[index].get());
+      const auto *binding = exprAs<Variable>(call->arguments()[index].get());
       if (binding == nullptr) {
         report(expressionToken(call->arguments()[index]),
                "Payload switch patterns accept only plain binding names.",
@@ -29977,17 +29984,19 @@ private:
 
   [[nodiscard]] std::optional<Symbol>
   resolveExpressionSymbol(const ExprPtr &expression) const {
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (expression && expression->exprKind() == ExprKind::Variable) {
+      const auto *variable = static_cast<const Variable *>(expression.get());
       const Symbol *symbol = resolve(variable->name());
       return symbol == nullptr ? std::nullopt : std::optional<Symbol>(*symbol);
     }
-    if (const auto *qualified =
-            dynamic_cast<const QualifiedName *>(expression.get())) {
+    if (expression && expression->exprKind() == ExprKind::QualifiedName) {
+      const auto *qualified =
+          static_cast<const QualifiedName *>(expression.get());
       const Symbol *symbol = resolveQualified(qualified->name());
       return symbol == nullptr ? std::nullopt : std::optional<Symbol>(*symbol);
     }
-    if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
+    if (expression && expression->exprKind() == ExprKind::Get) {
+      const auto *get = static_cast<const Get *>(expression.get());
       const SemanticType memberObjectType = memberAccessObjectType(*get);
       if (memberObjectType != SemanticType::Unknown) {
         if (const MemberInfo *member =
@@ -30007,8 +30016,8 @@ private:
                info->access == AccessMode::Mutable;
       }
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (expression && expression->exprKind() == ExprKind::Variable) {
+      const auto *variable = static_cast<const Variable *>(expression.get());
       const Symbol *symbol = resolve(variable->name());
       if (symbol == nullptr) {
         return true;
@@ -30017,8 +30026,9 @@ private:
              (symbol->ownerClass == 0 || symbol->staticMember ||
               receiverAllowsMutation(currentReceiverMutability));
     }
-    if (const auto *qualified =
-            dynamic_cast<const QualifiedName *>(expression.get())) {
+    if (expression && expression->exprKind() == ExprKind::QualifiedName) {
+      const auto *qualified =
+          static_cast<const QualifiedName *>(expression.get());
       const Symbol *symbol = resolveQualified(qualified->name());
       if (symbol == nullptr) {
         return true;
@@ -30027,7 +30037,8 @@ private:
              (symbol->ownerClass == 0 || symbol->staticMember ||
               receiverAllowsMutation(currentReceiverMutability));
     }
-    if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
+    if (expression && expression->exprKind() == ExprKind::Get) {
+      const auto *get = static_cast<const Get *>(expression.get());
       const SemanticType memberObjectType = memberAccessObjectType(*get);
       if (memberObjectType == SemanticType::Unknown) {
         return true;
@@ -30051,11 +30062,10 @@ private:
   }
 
   [[nodiscard]] static bool isThisObject(const ExprPtr &expression) {
-    if (dynamic_cast<const This *>(expression.get()) != nullptr) {
+    if (exprAs<This>(expression.get()) != nullptr) {
       return true;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return isThisObject(grouping->expression());
     }
     return false;
@@ -30081,25 +30091,23 @@ private:
     if (!receiverRestrictionActive() || !expression) {
       return std::nullopt;
     }
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return receiverRestrictedField(grouping->expression());
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       const SemanticType *objectType = semanticModel.findType(*index->object());
       if (objectType == nullptr || objectType->kind != SemanticType::Array) {
         return std::nullopt;
       }
       return receiverRestrictedField(index->object());
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
       return symbol == nullptr
                  ? std::nullopt
                  : receiverRestrictedField(variable->name(), *symbol);
     }
-    const auto *member = dynamic_cast<const Get *>(expression.get());
+    const auto *member = exprAs<Get>(expression.get());
     if (member == nullptr || member->access().kind != TokenKind::DOT) {
       return std::nullopt;
     }
@@ -30168,18 +30176,16 @@ private:
 
   [[nodiscard]] static const Token *
   receiverRestrictedWrittenField(const ExprPtr &expression) {
-    if (const auto *grouping =
-            dynamic_cast<const Grouping *>(expression.get())) {
+    if (const auto *grouping = exprAs<Grouping>(expression.get())) {
       return receiverRestrictedWrittenField(grouping->expression());
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+    if (const auto *index = exprAs<Index>(expression.get())) {
       return receiverRestrictedWrittenField(index->object());
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+    if (const auto *member = exprAs<Get>(expression.get())) {
       return &member->name();
     }
-    if (const auto *variable =
-            dynamic_cast<const Variable *>(expression.get())) {
+    if (const auto *variable = exprAs<Variable>(expression.get())) {
       return &variable->name();
     }
     return nullptr;
@@ -30305,7 +30311,7 @@ private:
   [[nodiscard]] static const Expr *
   transparentTemporaryProducer(const ExprPtr &expression) {
     const Expr *producer = expression.get();
-    while (const auto *grouping = dynamic_cast<const Grouping *>(producer)) {
+    while (const auto *grouping = exprAs<Grouping>(producer)) {
       producer = grouping->expression().get();
     }
     return producer;
@@ -30353,7 +30359,7 @@ private:
         return result;
       }
     }
-    if (const auto *call = dynamic_cast<const Call *>(producer)) {
+    if (const auto *call = exprAs<Call>(producer)) {
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
       const FunctionInfo *target =
           resolved == nullptr || resolved->function == 0
@@ -30431,7 +30437,7 @@ private:
     if (function.ownerClass == 0 || function.staticMember) {
       return CallReceiverMode::None;
     }
-    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+    if (const auto *member = exprAs<Get>(callee.get())) {
       if (member->access().kind == TokenKind::ARROW) {
         return function.receiverMutability == ReceiverMutability::Mutable &&
                        memberReceiverIsMutable(*member)
@@ -30726,22 +30732,26 @@ private:
     if (expression == nullptr) {
       return {};
     }
-    if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
-      return semanticPlace(grouping->expression().get());
+    const ExprKind kind = expression->exprKind();
+    if (kind == ExprKind::Grouping) {
+      return semanticPlace(
+          static_cast<const Grouping *>(expression)->expression().get());
     }
-    if (const auto *variable = dynamic_cast<const Variable *>(expression)) {
-      Symbol *symbol = resolvePlaceSymbol(variable->name());
+    if (kind == ExprKind::Variable) {
+      Symbol *symbol =
+          resolvePlaceSymbol(static_cast<const Variable *>(expression)->name());
       return symbol == nullptr ? SemanticPlace{} : placeForSymbol(*symbol);
     }
-    if (const auto *qualified =
-            dynamic_cast<const QualifiedName *>(expression)) {
-      Symbol *symbol = resolveQualifiedPlaceSymbol(qualified->name());
+    if (kind == ExprKind::QualifiedName) {
+      Symbol *symbol = resolveQualifiedPlaceSymbol(
+          static_cast<const QualifiedName *>(expression)->name());
       return symbol == nullptr ? SemanticPlace{} : placeForSymbol(*symbol);
     }
-    if (dynamic_cast<const This *>(expression) != nullptr) {
+    if (kind == ExprKind::This) {
       return {.root = receiverStateSymbol(), .receiver = true};
     }
-    if (const auto *member = dynamic_cast<const Get *>(expression)) {
+    if (kind == ExprKind::Get) {
+      const auto *member = static_cast<const Get *>(expression);
       SemanticPlace place = semanticPlace(member->object().get());
       if (place.root == nullptr) {
         return {};
@@ -30764,7 +30774,8 @@ private:
       }
       return place;
     }
-    if (const auto *index = dynamic_cast<const Index *>(expression)) {
+    if (kind == ExprKind::Index) {
+      const auto *index = static_cast<const Index *>(expression);
       SemanticPlace place = semanticPlace(index->object().get());
       const SemanticType *objectType = semanticModel.findType(*index->object());
       if (place.root != nullptr && objectType != nullptr) {
@@ -30776,11 +30787,14 @@ private:
       }
       return place;
     }
-    if (const auto *indexSet = dynamic_cast<const IndexSet *>(expression)) {
-      return semanticPlace(*indexSet);
+    if (kind == ExprKind::IndexSet) {
+      return semanticPlace(*static_cast<const IndexSet *>(expression));
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expression);
-        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+    if (kind == ExprKind::Unary) {
+      const auto *unary = static_cast<const Unary *>(expression);
+      if (unary->oper().kind != TokenKind::STAR) {
+        return {};
+      }
       if (unary->rangeObject()) {
         SemanticPlace place = semanticPlace(unary->rangeObject().get());
         const SemanticType *objectType =
@@ -31011,10 +31025,10 @@ private:
     if (std::find(suppressedProjectedPlaceReads.begin(),
                   suppressedProjectedPlaceReads.end(),
                   &expression) != suppressedProjectedPlaceReads.end() ||
-        dynamic_cast<const Assign *>(&expression) != nullptr ||
-        dynamic_cast<const Set *>(&expression) != nullptr ||
-        dynamic_cast<const IndexSet *>(&expression) != nullptr ||
-        dynamic_cast<const DereferenceSet *>(&expression) != nullptr) {
+        exprAs<Assign>(&expression) != nullptr ||
+        exprAs<Set>(&expression) != nullptr ||
+        exprAs<IndexSet>(&expression) != nullptr ||
+        exprAs<DereferenceSet>(&expression) != nullptr) {
       return;
     }
     SemanticPlace place = semanticPlace(&expression);
@@ -31378,14 +31392,18 @@ private:
     if (expression == nullptr) {
       return nullptr;
     }
-    if (const auto *literal = dynamic_cast<const LiteralExpr *>(expression)) {
+    if (expression->exprKind() == ExprKind::LiteralExpr) {
+      const auto *literal = static_cast<const LiteralExpr *>(expression);
       return std::holds_alternative<std::uint64_t>(literal->value()) ? literal
                                                                      : nullptr;
     }
-    if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
+    if (expression->exprKind() == ExprKind::Grouping) {
+      const auto *grouping = static_cast<const Grouping *>(expression);
       return contextualIntegerLiteral(grouping->expression().get(), allowSign);
     }
-    const auto *unary = dynamic_cast<const Unary *>(expression);
+    const auto *unary = expression->exprKind() == ExprKind::Unary
+                            ? static_cast<const Unary *>(expression)
+                            : nullptr;
     if (allowSign && unary != nullptr &&
         (unary->oper().kind == TokenKind::PLUS ||
          unary->oper().kind == TokenKind::MINUS)) {
@@ -31725,17 +31743,17 @@ private:
     if (expression == nullptr) {
       return std::nullopt;
     }
-    if (const auto *literal = dynamic_cast<const LiteralExpr *>(expression)) {
+    if (const auto *literal = exprAs<LiteralExpr>(expression)) {
       const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
       if (magnitude == nullptr) {
         return std::nullopt;
       }
       return IntegerConstant{.negative = false, .magnitude = *magnitude};
     }
-    if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
+    if (const auto *grouping = exprAs<Grouping>(expression)) {
       return integerConstant(grouping->expression().get());
     }
-    const auto *unary = dynamic_cast<const Unary *>(expression);
+    const auto *unary = exprAs<Unary>(expression);
     if (unary == nullptr || (unary->oper().kind != TokenKind::MINUS &&
                              unary->oper().kind != TokenKind::PLUS)) {
       return std::nullopt;
@@ -31755,11 +31773,11 @@ private:
     if (expression == nullptr) {
       return std::nullopt;
     }
-    if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
+    if (const auto *grouping = exprAs<Grouping>(expression)) {
       return switchCaseConstant(grouping->expression().get(), subjectType);
     }
     if (subjectType.kind == SemanticType::Enum) {
-      const auto *qualified = dynamic_cast<const QualifiedName *>(expression);
+      const auto *qualified = exprAs<QualifiedName>(expression);
       if (qualified == nullptr) {
         return std::nullopt;
       }
@@ -31774,7 +31792,7 @@ private:
                              .enumOwner = enumerator->owner};
     }
     if (subjectType == SemanticType::Char) {
-      const auto *literal = dynamic_cast<const LiteralExpr *>(expression);
+      const auto *literal = exprAs<LiteralExpr>(expression);
       if (literal == nullptr) {
         return std::nullopt;
       }
@@ -31792,11 +31810,9 @@ private:
     }
 
     const Expr *constantExpression = expression;
-    if (const auto *conversion =
-            dynamic_cast<const Conversion *>(constantExpression)) {
+    if (const auto *conversion = exprAs<Conversion>(constantExpression)) {
       constantExpression = conversion->value().get();
-    } else if (const auto *call =
-                   dynamic_cast<const Call *>(constantExpression)) {
+    } else if (const auto *call = exprAs<Call>(constantExpression)) {
       const ResolvedCallInfo *resolution = semanticModel.findCall(*call);
       if (resolution == nullptr ||
           resolution->intrinsic != IntrinsicKind::NumericAliasConversion ||
@@ -32000,8 +32016,7 @@ private:
     }
     if (value.kind == SemanticType::Unexpected && value.arguments.size() == 1) {
       const Expr *errorExpression = expression;
-      if (const auto *unexpected =
-              dynamic_cast<const Unexpected *>(expression)) {
+      if (const auto *unexpected = exprAs<Unexpected>(expression)) {
         errorExpression = unexpected->error().get();
       }
       return isAssignable(target.arguments[1], value.arguments[0],
@@ -32260,87 +32275,60 @@ private:
   }
 
   [[nodiscard]] static Token expressionToken(const Expr &expression) {
-    if (const auto *query = dynamic_cast<const LayoutQuery *>(&expression)) {
-      return query->keyword();
-    }
-    if (const auto *literal = dynamic_cast<const LiteralExpr *>(&expression)) {
-      return literal->token();
-    }
-    if (const auto *variable = dynamic_cast<const Variable *>(&expression)) {
-      return variable->name();
-    }
-    if (const auto *receiver = dynamic_cast<const This *>(&expression)) {
-      return receiver->keyword();
-    }
-    if (const auto *binary = dynamic_cast<const Binary *>(&expression)) {
-      return binary->oper();
-    }
-    if (const auto *logical = dynamic_cast<const Logical *>(&expression)) {
-      return logical->oper();
-    }
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalExpr *>(&expression)) {
-      return conditional->question();
-    }
-    if (const auto *pack = dynamic_cast<const PackExpansion *>(&expression)) {
-      return pack->ellipsis();
-    }
-    if (const auto *fold = dynamic_cast<const PackFold *>(&expression)) {
-      return fold->ellipsis();
-    }
-    if (const auto *unary = dynamic_cast<const Unary *>(&expression)) {
-      return unary->oper();
-    }
-    if (const auto *unexpected =
-            dynamic_cast<const Unexpected *>(&expression)) {
-      return unexpected->keyword();
-    }
-    if (const auto *postfix = dynamic_cast<const Postfix *>(&expression)) {
-      return postfix->oper();
-    }
-    if (const auto *qualified =
-            dynamic_cast<const QualifiedName *>(&expression)) {
-      return qualified->name().last();
-    }
-    if (const auto *assign = dynamic_cast<const Assign *>(&expression)) {
-      return assign->oper();
-    }
-    if (const auto *initializer =
-            dynamic_cast<const ArrayInitializer *>(&expression)) {
-      return initializer->brace();
-    }
-    if (const auto *call = dynamic_cast<const Call *>(&expression)) {
-      return call->paren();
-    }
-    if (const auto *conversion =
-            dynamic_cast<const Conversion *>(&expression)) {
-      return conversion->targetType().name.last();
-    }
-    if (const auto *initializer =
-            dynamic_cast<const DirectInitializer *>(&expression)) {
-      return initializer->brace();
-    }
-    if (const auto *dereference =
-            dynamic_cast<const DereferenceSet *>(&expression)) {
-      return dereference->dereference();
-    }
-    if (const auto *get = dynamic_cast<const Get *>(&expression)) {
-      return get->name();
-    }
-    if (const auto *index = dynamic_cast<const Index *>(&expression)) {
-      return index->bracket();
-    }
-    if (const auto *indexSet = dynamic_cast<const IndexSet *>(&expression)) {
-      return indexSet->bracket();
-    }
-    if (const auto *lambda = dynamic_cast<const Lambda *>(&expression)) {
-      return lambda->bracket();
-    }
-    if (const auto *set = dynamic_cast<const Set *>(&expression)) {
-      return set->name();
-    }
-    if (const auto *grouping = dynamic_cast<const Grouping *>(&expression)) {
-      return expressionToken(grouping->expression());
+    switch (expression.exprKind()) {
+    case ExprKind::Assign:
+      return static_cast<const Assign &>(expression).oper();
+    case ExprKind::ArrayInitializer:
+      return static_cast<const ArrayInitializer &>(expression).brace();
+    case ExprKind::Binary:
+      return static_cast<const Binary &>(expression).oper();
+    case ExprKind::Call:
+      return static_cast<const Call &>(expression).paren();
+    case ExprKind::ConditionalExpr:
+      return static_cast<const ConditionalExpr &>(expression).question();
+    case ExprKind::Conversion:
+      return static_cast<const Conversion &>(expression)
+          .targetType()
+          .name.last();
+    case ExprKind::DirectInitializer:
+      return static_cast<const DirectInitializer &>(expression).brace();
+    case ExprKind::DereferenceSet:
+      return static_cast<const DereferenceSet &>(expression).dereference();
+    case ExprKind::Get:
+      return static_cast<const Get &>(expression).name();
+    case ExprKind::Grouping:
+      return expressionToken(
+          static_cast<const Grouping &>(expression).expression());
+    case ExprKind::Index:
+      return static_cast<const Index &>(expression).bracket();
+    case ExprKind::IndexSet:
+      return static_cast<const IndexSet &>(expression).bracket();
+    case ExprKind::Lambda:
+      return static_cast<const Lambda &>(expression).bracket();
+    case ExprKind::LayoutQuery:
+      return static_cast<const LayoutQuery &>(expression).keyword();
+    case ExprKind::LiteralExpr:
+      return static_cast<const LiteralExpr &>(expression).token();
+    case ExprKind::Logical:
+      return static_cast<const Logical &>(expression).oper();
+    case ExprKind::PackFold:
+      return static_cast<const PackFold &>(expression).ellipsis();
+    case ExprKind::PackExpansion:
+      return static_cast<const PackExpansion &>(expression).ellipsis();
+    case ExprKind::Postfix:
+      return static_cast<const Postfix &>(expression).oper();
+    case ExprKind::QualifiedName:
+      return static_cast<const QualifiedName &>(expression).name().last();
+    case ExprKind::This:
+      return static_cast<const This &>(expression).keyword();
+    case ExprKind::Set:
+      return static_cast<const Set &>(expression).name();
+    case ExprKind::Unary:
+      return static_cast<const Unary &>(expression).oper();
+    case ExprKind::Unexpected:
+      return static_cast<const Unexpected &>(expression).keyword();
+    case ExprKind::Variable:
+      return static_cast<const Variable &>(expression).name();
     }
     return Token{};
   }
@@ -32350,14 +32338,16 @@ private:
   }
 
   [[nodiscard]] static Token callableToken(const ExprPtr &callee) {
-    if (const auto *variable = dynamic_cast<const Variable *>(callee.get())) {
+    if (callee && callee->exprKind() == ExprKind::Variable) {
+      const auto *variable = static_cast<const Variable *>(callee.get());
       return variable->name();
     }
-    if (const auto *qualified =
-            dynamic_cast<const QualifiedName *>(callee.get())) {
+    if (callee && callee->exprKind() == ExprKind::QualifiedName) {
+      const auto *qualified = static_cast<const QualifiedName *>(callee.get());
       return qualified->name().last();
     }
-    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+    if (callee && callee->exprKind() == ExprKind::Get) {
+      const auto *member = static_cast<const Get *>(callee.get());
       return member->name();
     }
     return expressionToken(callee);
@@ -32442,6 +32432,8 @@ private:
   // Mirrors FrontendOptions::toolingOccurrences; reapplied after the
   // model is cleared at the start of each check().
   bool toolingOccurrences = true;
+  FrontendWorkMetrics *workMetrics = nullptr;
+  bool measureTopLevelStatements = false;
   SemanticType currentType = SemanticType::Unknown;
   SemanticType currentReturnType = SemanticType::Unknown;
   std::optional<ClassId> currentClass;
@@ -32493,9 +32485,10 @@ private:
 
 SemanticVisitor::SemanticVisitor(TargetInfo target,
                                  const SourceGraph *sourceGraph,
-                                 bool toolingOccurrences)
+                                 bool toolingOccurrences,
+                                 FrontendWorkMetrics *workMetrics)
     : impl(std::make_unique<Impl>(std::move(target), sourceGraph,
-                                  toolingOccurrences)) {}
+                                  toolingOccurrences, workMetrics)) {}
 
 SemanticVisitor::~SemanticVisitor() = default;
 SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;

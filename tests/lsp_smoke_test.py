@@ -1047,6 +1047,180 @@ def test_semantic_hover(executable, root):
         session.close()
 
 
+def test_documentation_hover(executable, root):
+    dependency_source = (
+        "namespace api {\n"
+        "/// Calculates an unsigned result.\n"
+        "///\n"
+        "/// Supports **Markdown**, `code`, and Unicode: résumé 🙂.\n"
+        "uint64_t calculate(uint64_t value) { return value; }\n"
+        "/// A value supplied by the API.\n"
+        "class Value {\n"
+        "public:\n"
+        "  /// Reads this value.\n"
+        "  uint64_t read() { return 7; }\n"
+        "};\n"
+        "}\n"
+    )
+    dependency_path = root / "documentation-api.gti"
+    dependency_path.write_text(dependency_source, encoding="utf-8")
+    dependency_uri = dependency_path.resolve().as_uri()
+    source = (
+        '#include "documentation-api.gti"\n'
+        "int main() {\n"
+        "  uint64_t result = api::calculate(uint64_t(1));\n"
+        "  api::Value value = api::Value();\n"
+        '  std::println("ready");\n'
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "documentation-hover.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        def hover(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        call = source.index("calculate")
+        selected = hover(2, call + 1)
+        value = selected["contents"]["value"]
+        assert value.startswith(
+            "```gti\nuint64_t api::calculate(uint64_t value)\n```"
+        ), selected
+        assert (
+            "Calculates an unsigned result.\n\n"
+            "Supports **Markdown**, `code`, and Unicode: résumé 🙂."
+            in value
+        ), selected
+        assert selected["range"] == {
+            "start": lsp_position(source, call),
+            "end": lsp_position(source, call + len("calculate")),
+        }
+
+        type_use = source.index("Value value")
+        documented_type = hover(3, type_use + 1)
+        assert "A value supplied by the API." in documented_type["contents"][
+            "value"
+        ], documented_type
+
+        println_call = source.index("println")
+        standard_library = hover(4, println_call + 1)
+        assert (
+            "Writes `value` to standard output followed by a newline."
+            in standard_library["contents"]["value"]
+        ), standard_library
+
+        overlay_source = dependency_source.replace(
+            "Calculates an unsigned result.",
+            "Updated from the unsaved dependency.",
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": dependency_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": overlay_source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == dependency_uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+        updated = hover(5, call + 1)
+        updated_value = updated["contents"]["value"]
+        assert "Updated from the unsaved dependency." in updated_value, updated
+        assert "Calculates an unsigned result." not in updated_value, updated
+
+        incomplete_source = source.replace(
+            "  return 0;\n", "  int unfinished = ;\n  return 0;\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": incomplete_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and bool(message["params"]["diagnostics"])
+        )
+        recovered = hover(6, call + 1)
+        assert "Updated from the unsaved dependency." in recovered["contents"][
+            "value"
+        ], recovered
+    finally:
+        session.close()
+
+
 def test_callable_contract_hover(executable, root):
     source = (
         "T map<T, Operation>(T value, Operation operation) {\n"
@@ -6830,6 +7004,7 @@ def main():
     test_worker_survives_failed_analysis(sys.argv[1], root)
     test_pending_semantic_request_cancellation(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
+    test_documentation_hover(sys.argv[1], root)
     test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
     test_constructor_local_generic_tooling(sys.argv[1], root)

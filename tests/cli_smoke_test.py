@@ -1853,7 +1853,7 @@ def main():
         assert observed.stderr.startswith("gti-opt: GTI MIR optimization remarks")
         assert "gti-opt: safety operations source=" in observed.stderr
         assert report["schema"] == "gti-optimization-report"
-        assert report["version"] == 1
+        assert report["version"] == 2
         assert report["optimizationLevel"] == "O1"
         assert [entry["name"] for entry in report["passes"]] == [
             "scalar-promotion",
@@ -1869,6 +1869,16 @@ def main():
         assert report["safetyOperations"]["source"] >= report[
             "safetyOperations"
         ]["emitted"]
+        assert set(report["safetyOperations"]["families"]) == {
+            "bounds",
+            "storage-state",
+            "arithmetic-overflow",
+        }
+        for counts in report["safetyOperations"]["families"].values():
+            assert counts["source"] >= counts["emitted"]
+            assert counts["staticallyDischarged"] == (
+                counts["source"] - counts["emitted"]
+            )
 
         repeated_before = root / "optimization-before-repeated.mir"
         repeated_after = root / "optimization-after-repeated.mir"

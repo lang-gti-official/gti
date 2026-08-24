@@ -64,14 +64,13 @@ std::string typeRefSpelling(const TypeRef &type) {
 }
 
 std::string callableSpelling(const ExprPtr &callee) {
-  if (const auto *variable = dynamic_cast<const Variable *>(callee.get())) {
+  if (const auto *variable = exprAs<Variable>(callee.get())) {
     return variable->name().lexeme;
   }
-  if (const auto *qualified =
-          dynamic_cast<const QualifiedName *>(callee.get())) {
+  if (const auto *qualified = exprAs<QualifiedName>(callee.get())) {
     return pathSpelling(qualified->name());
   }
-  if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+  if (const auto *member = exprAs<Get>(callee.get())) {
     return member->name().lexeme;
   }
   return "function";
