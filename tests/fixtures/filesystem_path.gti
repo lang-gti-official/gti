@@ -232,6 +232,27 @@ void concatenation() {
   fromEmpty.append("alpha");
   check("append to an empty path adds no separator", fromEmpty, "alpha");
 
+  // The operators share append_path's directory-join contract. Binary /
+  // returns a new owner and leaves both operands unchanged.
+  mut std::filesystem::path operatorLeft = make("/alpha");
+  mut std::filesystem::path operatorRight = make("beta");
+  mut std::filesystem::path operatorResult = operatorLeft / operatorRight;
+  check("operator/ inserts a separator", operatorResult, "/alpha/beta");
+  check("operator/ leaves the left operand unchanged", operatorLeft, "/alpha");
+  check("operator/ leaves the right operand unchanged", operatorRight, "beta");
+
+  operatorLeft /= operatorRight;
+  check("operator/= joins in place", operatorLeft, "/alpha/beta");
+
+  mut std::filesystem::path absoluteOperand = make("/replacement");
+  operatorLeft /= absoluteOperand;
+  check("operator/= replaces with an absolute operand", operatorLeft, "/replacement");
+
+  mut std::filesystem::path filename = make("leaf");
+  mut std::filesystem::path emptyOperand = std::filesystem::path();
+  mut std::filesystem::path trailingResult = filename / emptyOperand;
+  check("operator/ preserves an empty trailing element", trailingResult, "leaf/");
+
   // concat joins without a separator.
   mut std::filesystem::path glued = make("/alpha/beta");
   glued.concat(".txt");

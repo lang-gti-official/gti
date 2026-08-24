@@ -123,16 +123,17 @@ The current implemented foundation includes:
   `parent_path`, `filename`, `stem`, `extension`), the matching `has_*`
   queries, `is_absolute`/`is_relative`, the `clear`, `make_preferred`,
   `remove_filename`, `replace_filename`, `replace_extension`, and `swap`
-  modifiers, `assign`/`append`/`concat`, element-wise `compare` with the
-  ordering and equality operators, and `lexically_normal`. The unit performs no
-  filesystem access: it is pure pathname manipulation. Three departures from
-  C++ are deliberate — a pathname is stored exactly as supplied rather than
-  normalized at construction, `operator+=`/`operator/=` have not yet been
-  added to this source-defined class, and `begin`/`end` are absent because a
-  C++ path iterator walks elements rather than characters and GTI's element
-  iterator awaits the generic iterator work. Copying is explicit through
-  `clone()`. The converting constructor `path(std::string_view)` is declared
-  and checked but not yet callable; see `R-CLASS-VALUE-EMISSION`.
+  modifiers, `assign`/`append`/`concat`, directory joining through `/` and
+  `/=`, element-wise `compare` with the ordering and equality operators, and
+  `lexically_normal`. The unit performs no filesystem access: it is pure
+  pathname manipulation. Three departures from C++ are deliberate — a
+  pathname is stored exactly as supplied rather than normalized at
+  construction, `operator+=` has not yet been added to this source-defined
+  class, and `begin`/`end` are absent because a C++ path iterator walks elements
+  rather than characters and GTI's element iterator awaits the generic
+  iterator work. Copying is explicit through `clone()`. The converting
+  constructor `path(std::string_view)` is declared and checked but not yet
+  callable; see `R-CLASS-VALUE-EMISSION`.
 
 Detailed API contracts remain in source and `stdlib/README.md` until migrated
 into per-component specification sections.

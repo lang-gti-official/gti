@@ -78,8 +78,9 @@ returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
 
 `<std/filesystem>` provides `std::filesystem::path` as pure pathname
 manipulation with no filesystem access. It carries C++'s decomposition and
-`has_*` query set, the modifiers, `assign`/`append`/`concat`, element-wise
-`compare` with ordering and equality operators, and `lexically_normal`.
+`has_*` query set, the modifiers, `assign`/`append`/`concat`, directory joining
+through `/` and `/=`, element-wise `compare` with ordering and equality
+operators, and `lexically_normal`.
 Element-wise comparison is what makes `"/a/b"` and `"/a//b"` equal while
 `"/a/b/"` differs from both, since a trailing separator contributes an empty
 final element. A pathname is stored exactly as supplied; normalization happens
