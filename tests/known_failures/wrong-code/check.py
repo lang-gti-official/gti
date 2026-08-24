@@ -24,6 +24,7 @@ import sys
 import tempfile
 
 HEADER = re.compile(r"//\s*expected exit status:\s*(\d+)")
+LEVELS = ("O0", "O1", "O2", "O3")
 
 
 def expected_status(source: Path) -> int | None:
@@ -57,29 +58,40 @@ def main(argv: list[str]) -> int:
             print(f"{source.name:<44} SKIPPED (no expected-status header)")
             continue
 
-        output = scratch / source.stem
-        built = subprocess.run(
-            [str(gti), str(source), "-O0", "--std", "c++23", "-o", str(output),
-             "--cxx", cxx],
-            capture_output=True, text=True, timeout=600)
-        if built.returncode != 0:
-            # A reproducer that stopped compiling is a change worth seeing,
-            # not silently a pass.
-            print(f"{source.name:<44} CHANGED (no longer compiles)")
-            continue
+        # Every level, not just -O0. These reproduce at all of them, so a fix
+        # that only lands on one would otherwise read as complete.
+        statuses: dict[str, str] = {}
+        for level in LEVELS:
+            output = scratch / f"{source.stem}-{level}"
+            built = subprocess.run(
+                [str(gti), str(source), f"-{level}", "--std", "c++23",
+                 "-o", str(output), "--cxx", cxx],
+                capture_output=True, text=True, timeout=600)
+            if built.returncode != 0:
+                # A reproducer that stopped compiling is a change worth
+                # seeing, not silently a pass.
+                statuses[level] = "no-build"
+                continue
+            try:
+                ran = subprocess.run([str(output)], capture_output=True,
+                                     timeout=120)
+            except subprocess.TimeoutExpired:
+                statuses[level] = "hang"
+                continue
+            statuses[level] = str(ran.returncode)
 
-        try:
-            ran = subprocess.run([str(output)], capture_output=True, timeout=120)
-        except subprocess.TimeoutExpired:
-            print(f"{source.name:<44} CHANGED (hangs)")
-            continue
-
-        if ran.returncode == expected:
-            print(f"{source.name:<44} FIXED (exits {expected} as expected)")
+        correct = {lvl for lvl, got in statuses.items() if got == str(expected)}
+        if len(correct) == len(LEVELS):
+            print(f"{source.name:<44} FIXED (exits {expected} at every level)")
             fixed += 1
+        elif correct:
+            # A partial fix is the outcome most worth shouting about.
+            spread = ", ".join(f"{lvl}={statuses[lvl]}" for lvl in LEVELS)
+            print(f"{source.name:<44} PARTIAL (expected {expected}; {spread})")
         else:
-            print(f"{source.name:<44} STILL-WRONG "
-                  f"(exits {ran.returncode}, expected {expected})")
+            spread = ", ".join(f"{lvl}={statuses[lvl]}" for lvl in LEVELS)
+            print(f"{source.name:<44} STILL-WRONG (expected {expected}; "
+                  f"{spread})")
 
     if fixed:
         print(f"\n{fixed} reproducer(s) now behave correctly — graduate them "
