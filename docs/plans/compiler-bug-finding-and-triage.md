@@ -11,16 +11,12 @@ ctest). `Q-FUZZ-01B` implemented: opt-in parser/formatter/pipeline libFuzzer
 harnesses under `GTI_BUILD_FUZZERS=ON` with tree-wide ASan/UBSan+coverage
 instrumentation, seed corpora, a token dictionary, span/idempotence/
 artifact-or-rejection assertions, and the `fuzzer_smoke` fixed-corpus ctest.
-`Q-FUZZ-01C` implemented: `scripts/debug/reduce_compiler_failure.py` runs
-bundle-derived delta reduction (whole-file drops, ddmin over lines, literal
-simplification) under the exact replay predicate with per-candidate caching,
-atomic resumable progress, and a final re-capture whose signature must equal
-the original; capture output prints the reducer command, and the
-`compiler_debug_tooling` ctest proves diagnostic, runtime-mismatch, and
-crash-signal reductions. The local audit gained `--keep-failures` /
-`--artifacts-dir`, preserving the failing working tree instead of deleting it.
-Slice D (typed differential generation) remains ready for bounded
-implementation.
+`Q-FUZZ-01C` is implemented by the bundle-derived, resumable, atomically
+publishing reducer and its `compiler_failure_reducer` ctest. Capture output
+advertises the reducer, and the local audit can retain failures through
+`--keep-failures` / `--artifacts-dir`. `Q-FUZZ-01D` has an initial typed
+program model and focused model tests; validation through the real compiler
+execution path remains in progress.
 
 This proposal selects a small set of high-yield tools for finding, preserving,
 and reducing GTI compiler failures. It deliberately builds on the compiler
@@ -50,6 +46,141 @@ Operational ordering remains tracked in
 `Q-FUZZ-01`. Its prerequisite, `C-MIG-02`, is complete. This document narrows
 that broad row to the tools with the best expected return for modest
 implementation effort.
+
+## Active Continuation Handoff (2026-08-24)
+
+The active objective is to continue this suite until it exposes the first
+deterministic compiler bug. Do not fix a compiler bug found by this campaign.
+Minimize it, identify the first broken phase, and open a concrete fix proposal
+with the reproducer and evidence. If at least three bounded deterministic
+discovery rounds remain clean after the typed audit is operational, return
+with the suite improvements and the exact coverage run rather than expanding
+the model speculatively.
+
+### Current follow-up implementation
+
+The current Q-FUZZ follow-up adds:
+
+- `scripts/debug/reduce_compiler_failure.py` implements Q-FUZZ-01C with the
+  existing capture probe ladder as its predicate authority, exact and
+  explicitly selected predicates, compiler-result caching, bounded probes,
+  resumable atomic progress, hierarchical source reduction, and atomic
+  publication of a replayable reduced bundle;
+- `tests/compiler_failure_reducer_test.py` and the
+  `compiler_failure_reducer` CTest cover a real semantic diagnostic and
+  injected signal, internal-diagnostic, and runtime-mismatch bundles;
+- capture output now prints the corresponding reducer command;
+- `scripts/debug/typed_program_model.py` defines the first Q-FUZZ-01D typed
+  int32/bool model, evaluator, GTI emitter, independent C++ emitter, and five
+  model-derived transformations: alpha renaming, redundant parentheses, an
+  unused immutable binding, pure-expression extraction, and a bounded
+  algebraic identity;
+- `tests/typed_program_model_test.py` proves deterministic records and source,
+  equivalent transformed evaluation, portable exit values, all five
+  transformations, and all 18 initial node kinds; and
+- `scripts/local_language_audit.py` has been changed to compile and execute
+  original/transformed GTI at its optimization matrix, independent C++ at O0
+  and O3, and compare all results with the evaluator. `--keep-failures` and
+  `--artifacts-dir` preserve a semantic case record and attempt a normal GTI
+  debug bundle on a mismatch.
+
+Evidence already obtained:
+
+```text
+python3 -m py_compile <new and changed Python tools>        PASS
+python3 tests/typed_program_model_test.py .                 PASS
+ctest --test-dir build -R '^compiler_failure_reducer$'     PASS (5.71 s)
+ctest --test-dir build -R '^compiler_debug_tooling$'       PASS (5.52 s)
+git diff --check                                            PASS
+```
+
+The real compiler execution path for the new typed model has **not** yet been
+validated. That is the first continuation step; the model/unit checks alone
+do not prove Q-FUZZ-01D operational.
+
+### Preserve unrelated work
+
+The handoff worktree also contains pre-existing edits that do not belong to
+this campaign:
+
+```text
+stdlib/std/numeric.gti
+stdlib/std/string.gti
+stdlib/std/utility.gti
+tests/compiler_debug_tooling_test.py
+```
+
+Do not restore, reformat, stage, or overwrite them. In particular,
+`compiler_debug_tooling_test.py` already changes its injected termination from
+SIGSEGV to SIGTERM; the reducer work was deliberately added in a separate test
+file so that edit remains intact.
+
+The in-progress standard-library files currently make the ordinary local
+audit fail with exact-argument diagnostics in `std/numeric.gti`. That is not a
+compiler finding. Discovery must use a clean `HEAD` resource snapshot while
+leaving those files untouched:
+
+```sh
+audit_root=$(mktemp -d /tmp/gti-debug-audit.XXXXXX)
+git archive -o "$audit_root/head-resources.tar" HEAD stdlib runtime vendor
+mkdir -p "$audit_root/resources"
+tar -xf "$audit_root/head-resources.tar" -C "$audit_root/resources"
+
+env \
+  GTI_STDLIB_PATH="$audit_root/resources/stdlib" \
+  GTI_RUNTIME_INCLUDE="$audit_root/resources/runtime/include" \
+  GTI_RUNTIME_LIBRARY="$PWD/build/libgti_runtime.a" \
+  GTI_VENDOR_INCLUDE="$audit_root/resources/vendor/expected_lite/include" \
+  python3 scripts/local_language_audit.py --gti build/gti \
+    --generated 1 --skip-mutations --skip-comparisons
+```
+
+Resolve the actual runtime-library filename from the current build rather
+than assuming the example path when it differs. A temporary snapshot was
+created at `/tmp/gti-debug-audit.qBh04F/resources` during this handoff, but a
+continuing agent should treat it as disposable and recreate it when absent.
+
+### Next bounded steps
+
+1. Run the one-case command above. If it fails, first determine whether the
+   typed model emitted syntax outside the implemented language or whether the
+   reference/evaluator is wrong. Fix only the audit implementation for those
+   cases; do not relax a compiler diagnostic or change compiler semantics.
+2. Add focused CTest coverage for the real typed differential path after one
+   case passes. Keep it bounded and deterministic; the optional broad audit
+   must remain absent from CI and release workflows.
+3. Run at least three deterministic discovery rounds against the clean
+   resources. A suitable initial matrix is 10 cases for each of seeds
+   `20260824`, `20260825`, and `20260826`, with mutations and the comparison
+   showcase skipped so a failure belongs to the new model. Use
+   `--keep-failures --artifacts-dir <temporary-directory>` on every round.
+4. If those rounds are clean, run one wider 30-case seed and the existing
+   malformed-source mutations. Do not keep enlarging the semantic subset
+   after these bounded rounds merely to force a finding.
+5. At the first mismatch, internal compiler diagnostic, backend rejection,
+   optimizer drift, or non-deterministic result, stop generation. Re-run the
+   exact seed/case, verify it against a clean resource snapshot, and rule out
+   an evaluator or independent-C++ emitter defect.
+6. Capture the failing GTI source with
+   `capture_compiler_failure.py`, reduce it with
+   `reduce_compiler_failure.py`, and replay the reduced bundle twice. For an
+   optimizer-only mismatch, preserve both O0 and O3 commands and select the
+   exact runtime tuple rather than reducing to a different frontend error.
+7. Do not modify compiler implementation files. Open a GitHub fix proposal
+   containing the minimized GTI source, expected/evaluator/reference result,
+   observed GTI result, affected optimization/standard, first failing phase,
+   replay commands, diagnostic signature, and a scoped regression-test plan.
+   Link or attach only artifacts confirmed not to contain private source.
+8. If no bug surfaces after the bounded rounds, finish Q-FUZZ-01D validation,
+   update this status from working-tree to landed state, run the focused
+   tooling tests plus `git diff --check`, and deliver the suite changes without
+   claiming exhaustive compiler correctness.
+
+Avoid further work on injected process-termination fixtures during this
+continuation. They already have focused coverage and triggered an unrelated
+security heuristic in the development environment. Accepted typed programs,
+ordinary compiler subprocesses, and deterministic result comparison are the
+remaining discovery path.
 
 ## Decision Summary
 

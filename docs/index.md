@@ -138,7 +138,8 @@ description of the implementation.
 - [Performance tooling](plans/performance-tooling.md)
 - [Compiler bug-finding and triage tooling](plans/compiler-bug-finding-and-triage.md)
   — failure bundles/replay and opt-in compiler fuzzers are implemented as
-  `Q-FUZZ-01A/B`; reduction and typed differential generation remain
+  `Q-FUZZ-01A/B`, resumable bundle reduction is implemented as
+  `Q-FUZZ-01C`, and typed differential validation remains in progress
 - [Conditional compilation and configuration flags](plans/conditional-compilation.md)
   — implemented `#define`/`#ifdef` flag axis over target conditionals, its
   design rationale, and LSP inactive-region rendering

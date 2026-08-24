@@ -840,6 +840,20 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     add_test(
+      NAME compiler_failure_reducer
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_failure_reducer_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    set_tests_properties(compiler_failure_reducer PROPERTIES TIMEOUT 600)
+    add_test(
+      NAME typed_program_model
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/typed_program_model_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(
       NAME defined_integer_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/defined_integer_runtime_test.py"
@@ -1090,7 +1104,7 @@ if(BUILD_TESTING)
         temporary_argument_borrow_runtime
         mir_backend_scalar_failure_callgraph_runtime
         random_engine_runtime default_parameters_runtime
-        compiler_debug_tooling filesystem_path_runtime
+        compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
         string_owned_output_runtime
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"

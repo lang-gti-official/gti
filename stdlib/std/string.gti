@@ -3,6 +3,9 @@
 // The storage-backed value, capacity, and indexed operations are implemented.
 // A dynamic string_view remains unavailable until views can retain an
 // owner-tied lifetime.
+#include <std/functional>
+#include <std/numeric>
+
 namespace std {
   namespace detail {
     class storage_sentinel {
@@ -83,9 +86,9 @@ namespace std {
       }
     }
 
-    string<Iterator, Sentinel>(mut Iterator first, Sentinel last)
-      requires std::input_iterator<Iterator> &&
-               std::sentinel_for<Sentinel, Iterator> &&
+  string<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+    requires std::input_iterator<Iterator> &&
+             std::sentinel_for<Sentinel, Iterator> &&
                std::dereferences_to<Iterator, char>
         : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {
       while (first != last) {
@@ -94,8 +97,8 @@ namespace std {
       }
     }
 
-    string(std::size_t begin, std::size_t end, std::string& other)
-        : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {}
+  string(std::size_t begin, std::size_t end, std::string& other)
+      : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {}
 
     string(string& other) = delete;
     string(string&& other) = default;
@@ -357,4 +360,24 @@ namespace std {
     }
     return std::move(result);
   }
+  namespace detail {
+    static std::size_t fnv_64_1a_hasher(std::string& value) {
+      mut uint64_t result = uint64_t(14695981039346656037);
+
+      for (auto& c : value) {
+        uint64_t symbol = uint8_t(c);
+        result = result ^ symbol;
+        result = std::wrapping_mul(result, uint64_t(1099511628211));
+      }
+
+      return result;
+    }
+  }
 }
+
+class std::hash<std::string> {
+public:
+  std::size_t operator()(std::string& value) {
+    return detail::fnv_64_1a_hasher(value);
+  }
+};

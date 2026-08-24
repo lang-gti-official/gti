@@ -1,491 +1,725 @@
 #!/usr/bin/env python3
 
-"""Reduce a captured GTI compiler failure to a minimal reproducer.
+"""Reduce a replayable GTI compiler failure bundle.
 
-Implements the `Q-FUZZ-01C` slice of
-docs/plans/compiler-bug-finding-and-triage.md: a conventional delta-debugging
-loop over an existing `gti-debug-bundle-v1` directory. This is intentionally
-not a semantic GTI reducer — it removes line ranges and simplifies literals,
-and lets the replay predicate decide what may go.
+This is the Q-FUZZ-01C reducer described by
+docs/plans/compiler-bug-finding-and-triage.md. It deliberately does not parse
+GTI or infer language semantics. Every candidate is checked through the same
+bounded probe ladder used by capture_compiler_failure.py, and the default
+predicate is the bundle's exact normalized failure signature.
 
-    python3 scripts/debug/reduce_compiler_failure.py \
-        --gti <compiler> --bundle <bundle-dir> --out <reduced-bundle-dir>
-
-The predicate defaults to the bundle's normalized failure signature: a
-candidate is accepted only when the stage ladder fails at the same stage with
-the same signature, so a reduction can never quietly turn one failure into a
-different one. Explicit predicates are available when the signature is
-stricter than the investigation needs:
-
-    --predicate signature          exact signature match (default)
-    --predicate code=GTI-S2001     any failure carrying this diagnostic code
-    --predicate signal=11          any probe dying on this signal
-    --predicate exit=3             the run stage exiting with this status
-    --predicate regex=<pattern>    the failing probe's stderr matches
-
-Every candidate runs in a fresh bounded subprocess via the capture module's
-own probe ladder, results are cached by content hash, and the current best
-reproducer is written atomically after every improvement so an interrupted
-reduction can resume from --out. The final result is emitted by re-running
-the capture tool on the reduced source, so the output is itself a valid
-bundle whose signature is verified to equal the original.
-
-Exit codes: 0 reduced and verified; 1 usage or environment error;
-3 the final capture no longer matches the original signature.
+An interrupted run can be resumed because the current source graph, result
+cache, and counters are written atomically to a work directory after every
+compiler probe and accepted candidate. The completed reduced bundle is also
+published atomically and remains directly replayable by the capture tool.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
+from typing import Callable
 
-# The capture script owns the bundle schema, probe ladders, and signature
-# normalization; the reducer reuses them rather than growing a second,
-# drifting definition of what a failure is.
-_capture_spec = importlib.util.spec_from_file_location(
-    "gti_capture", Path(__file__).with_name("capture_compiler_failure.py")
-)
-capture = importlib.util.module_from_spec(_capture_spec)
-_capture_spec.loader.exec_module(capture)
+import capture_compiler_failure as capture_tool
 
 
-class ReduceError(Exception):
-    """A usage or environment problem that should abort with exit 1."""
+STATE_SCHEMA = "gti-debug-reduction-state-v1"
+MAX_CACHE_ENTRIES = 20000
 
 
-def load_bundle(bundle: Path) -> dict:
-    manifest_path = bundle / "manifest.json"
-    if not manifest_path.is_file():
-        raise ReduceError(f"{bundle} is not a debug bundle (no manifest.json)")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema") != capture.SCHEMA:
-        raise ReduceError(f"unsupported bundle schema {manifest.get('schema')!r}")
-    if "signature" not in manifest:
-        raise ReduceError("bundle has no failure signature; nothing to preserve")
-    return manifest
+class ReductionError(Exception):
+    """A malformed bundle, invalid option, or unsafe path."""
 
 
-class Predicate:
-    """Decides whether a candidate tree still shows the original failure."""
+class ProbeLimitReached(Exception):
+    """The bounded run stopped with resumable state still on disk."""
 
-    def __init__(self, kind: str, manifest: dict) -> None:
-        self.kind = kind
+
+def atomic_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.parent / f".{path.name}.tmp-{os.getpid()}"
+    temporary.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    os.replace(temporary, path)
+
+
+def safe_relative(path: str) -> Path:
+    relative = Path(path)
+    if relative.is_absolute() or ".." in relative.parts or relative == Path("."):
+        raise ReductionError(f"unsafe bundle source path: {path!r}")
+    return relative
+
+
+def source_graph(bundle: Path) -> dict[str, bytes]:
+    root = bundle / "source"
+    if not root.is_dir():
+        raise ReductionError(f"{bundle} has no source directory")
+    files: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ReductionError(f"bundle source contains a symlink: {path}")
+        if path.is_file():
+            relative = path.relative_to(root)
+            safe_relative(str(relative))
+            files[str(relative)] = path.read_bytes()
+    if not files:
+        raise ReductionError("bundle source graph is empty")
+    return files
+
+
+def encode_sources(files: dict[str, bytes]) -> dict[str, str]:
+    return {
+        path: base64.b64encode(contents).decode("ascii")
+        for path, contents in sorted(files.items())
+    }
+
+
+def decode_sources(files: dict[str, str]) -> dict[str, bytes]:
+    decoded: dict[str, bytes] = {}
+    for path, contents in files.items():
+        safe_relative(path)
+        try:
+            decoded[path] = base64.b64decode(contents, validate=True)
+        except (ValueError, TypeError) as error:
+            raise ReductionError(f"invalid saved source bytes for {path}") from error
+    return decoded
+
+
+def graph_hash(files: dict[str, bytes]) -> str:
+    digest = hashlib.sha256()
+    for path, contents in sorted(files.items()):
+        encoded = path.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(len(contents).to_bytes(8, "big"))
+        digest.update(contents)
+    return digest.hexdigest()
+
+
+def bundle_fingerprint(manifest: dict, files: dict[str, bytes]) -> str:
+    digest = hashlib.sha256()
+    digest.update(json.dumps(manifest, sort_keys=True).encode("utf-8"))
+    digest.update(graph_hash(files).encode("ascii"))
+    return digest.hexdigest()
+
+
+def write_sources(root: Path, files: dict[str, bytes]) -> None:
+    for spelling, contents in files.items():
+        relative = safe_relative(spelling)
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(contents)
+
+
+def failed_output(records: list[dict]) -> str:
+    if not records:
+        return ""
+    record = records[-1]
+    return capture_tool.normalize_text(
+        record.get("_stdout", b"") + b"\n" + record.get("_stderr", b"")
+    )
+
+
+class FailurePredicate:
+    """A bundle-derived predicate over one probe-ladder observation."""
+
+    def __init__(self, manifest: dict, arguments: argparse.Namespace) -> None:
         self.original = manifest["signature"]
-        self.stage = self.original["stage"]
-
-    def holds(self, signature: dict | None, records: list[dict]) -> bool:
-        if signature is None:
-            return False
-        if self.kind == "signature":
-            return signature == self.original
-        if self.kind.startswith("code="):
-            wanted = self.kind.removeprefix("code=")
-            return signature.get("code") == wanted
-        if self.kind.startswith("signal="):
-            return signature.get("signal") == int(self.kind.removeprefix("signal="))
-        if self.kind.startswith("exit="):
-            return (
-                signature.get("stage") == "run"
-                and signature.get("exit") == int(self.kind.removeprefix("exit="))
+        self.mode = arguments.predicate
+        self.stage = arguments.stage or self.original.get("stage")
+        self.signal = (
+            arguments.signal
+            if arguments.signal is not None
+            else self.original.get("signal")
+        )
+        self.code = arguments.diagnostic_code or self.original.get("code")
+        self.message_pattern = arguments.message_regex
+        self.exit_status = (
+            arguments.exit_status
+            if arguments.exit_status is not None
+            else self.original.get("exit")
+        )
+        if self.mode == "message-regex" and not self.message_pattern:
+            raise ReductionError("--predicate message-regex requires --message-regex")
+        if self.mode == "signal" and self.signal is None:
+            raise ReductionError("signal predicate requires --signal or a signal bundle")
+        if self.mode == "diagnostic" and self.code is None:
+            raise ReductionError(
+                "diagnostic predicate requires --diagnostic-code or a diagnostic bundle"
             )
-        if self.kind.startswith("regex="):
-            pattern = self.kind.removeprefix("regex=")
-            stderr = records[-1].get("_stderr", b"") if records else b""
-            return re.search(pattern, stderr.decode("utf-8", "replace")) is not None
-        raise ReduceError(f"unknown predicate {self.kind!r}")
+        if self.mode == "exit-status" and self.exit_status is None:
+            raise ReductionError(
+                "exit-status predicate requires --exit-status or an exit-bearing bundle"
+            )
+        if self.message_pattern:
+            try:
+                re.compile(self.message_pattern)
+            except re.error as error:
+                raise ReductionError(f"invalid --message-regex: {error}") from error
+
+    def descriptor(self) -> dict:
+        return {
+            "mode": self.mode,
+            "stage": self.stage,
+            "signal": self.signal,
+            "diagnostic_code": self.code,
+            "message_regex": self.message_pattern,
+            "exit_status": self.exit_status,
+        }
+
+    def matches(self, observed: dict | None, records: list[dict]) -> bool:
+        if observed is None:
+            return False
+        if self.stage is not None and observed.get("stage") != self.stage:
+            return False
+        if self.mode == "exact":
+            return capture_tool.signatures_match(self.original, observed)
+        if self.mode == "signal":
+            return (
+                observed.get("kind") == "signal"
+                and observed.get("signal") == self.signal
+            )
+        if self.mode == "diagnostic":
+            return (
+                observed.get("kind") == "diagnostic"
+                and observed.get("code") == self.code
+            )
+        if self.mode == "message-regex":
+            return re.search(self.message_pattern, failed_output(records)) is not None
+        if self.mode == "native-build":
+            return observed.get("kind") == "native-toolchain"
+        if self.mode == "exit-status":
+            return observed.get("exit") == self.exit_status
+        if self.mode == "runtime":
+            return (
+                observed.get("kind") == "runtime"
+                and capture_tool.signatures_match(self.original, observed)
+            )
+        raise ReductionError(f"unsupported predicate mode: {self.mode}")
 
 
-class Reduction:
-    """Delta-debugging over the bundle's source graph."""
+class ReductionSession:
+    """Own the resumable candidate state and bounded compiler probes."""
 
     def __init__(
         self,
-        gti: Path,
+        *,
+        bundle: Path,
         manifest: dict,
-        source_root: Path,
-        predicate: Predicate,
-        timeout: int,
-        out: Path,
+        gti: Path,
+        work: Path,
+        predicate: FailurePredicate,
+        max_probes: int,
     ) -> None:
-        self.gti = gti
+        self.bundle = bundle
         self.manifest = manifest
+        self.gti = gti
+        self.work = work
+        self.state_path = work / "progress.json"
         self.predicate = predicate
-        self.timeout = timeout
-        self.out = out
+        self.max_probes = max_probes
+        initial = source_graph(bundle)
+        self.bundle_id = bundle_fingerprint(manifest, initial)
+        self.original_bytes = sum(len(contents) for contents in initial.values())
+        self.current = initial
+        self.cache: dict[str, bool] = {}
+        self.probes = 0
         self.accepted = 0
         self.rejected = 0
-        self.cached = 0
-        self.cache: dict[str, bool] = {}
 
-        # The working tree: what reduction mutates. Resume from a previous
-        # partial result when --out already holds one.
-        self.work = Path(tempfile.mkdtemp(prefix="gti-reduce-work-"))
-        previous = out / "source"
-        template = previous if previous.is_dir() else source_root
-        shutil.copytree(template, self.work / "source")
-        if previous.is_dir():
-            print(f"resuming from previous best in {out}")
-
-        if manifest["mode"] == "direct":
-            self.probes = capture.direct_ladder(manifest["entry"])
+        if self.state_path.is_file():
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            if state.get("schema") != STATE_SCHEMA:
+                raise ReductionError("unsupported reducer progress schema")
+            if state.get("bundle_fingerprint") != self.bundle_id:
+                raise ReductionError("reducer progress belongs to another bundle")
+            if state.get("predicate") != predicate.descriptor():
+                raise ReductionError("reducer progress uses another predicate")
+            if state.get("compiler") != str(gti):
+                raise ReductionError("reducer progress uses another compiler")
+            self.current = decode_sources(state["sources"])
+            self.cache = {
+                str(key): bool(value) for key, value in state.get("cache", {}).items()
+            }
+            self.probes = int(state.get("probes", 0))
+            self.accepted = int(state.get("accepted", 0))
+            self.rejected = int(state.get("rejected", 0))
         else:
-            self.probes = capture.project_ladder()
-        # Stages after the originally failing one can never influence the
-        # predicate — the ladder stops at the first failure — so drop them.
-        stages = [probe.stage for probe in self.probes]
-        if self.predicate.stage in stages:
-            self.probes = self.probes[: stages.index(self.predicate.stage) + 1]
+            work.mkdir(parents=True, exist_ok=True)
+            self.save()
 
-    # -- candidate evaluation ------------------------------------------------
+    def state(self) -> dict:
+        return {
+            "schema": STATE_SCHEMA,
+            "bundle_fingerprint": self.bundle_id,
+            "compiler": str(self.gti),
+            "predicate": self.predicate.descriptor(),
+            "sources": encode_sources(self.current),
+            "cache": self.cache,
+            "probes": self.probes,
+            "accepted": self.accepted,
+            "rejected": self.rejected,
+            "original_bytes": self.original_bytes,
+            "current_bytes": sum(len(contents) for contents in self.current.values()),
+        }
 
-    def tree_hash(self, root: Path) -> str:
-        digest = hashlib.sha256()
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
-                digest.update(str(path.relative_to(root)).encode())
-                digest.update(path.read_bytes())
-        return digest.hexdigest()
+    def save(self) -> None:
+        atomic_json(self.state_path, self.state())
 
-    def shows_failure(self, root: Path) -> bool:
-        key = self.tree_hash(root)
-        if key in self.cache:
-            self.cached += 1
-            return self.cache[key]
-        with tempfile.TemporaryDirectory(prefix="gti-reduce-scratch-") as scratch:
-            records, signature = capture.run_ladder(
-                self.probes, self.gti, root, Path(scratch), self.timeout, None
+    def observe(self, files: dict[str, bytes]) -> tuple[dict | None, list[dict]]:
+        with tempfile.TemporaryDirectory(prefix="gti-reduce-candidate-") as name:
+            root = Path(name)
+            staging = root / "source"
+            scratch = root / "scratch"
+            staging.mkdir()
+            scratch.mkdir()
+            write_sources(staging, files)
+            probes = (
+                capture_tool.direct_ladder(self.manifest["entry"])
+                if self.manifest["mode"] == "direct"
+                else capture_tool.project_ladder()
             )
-        result = self.predicate.holds(signature, records)
-        self.cache[key] = result
-        if result:
-            self.accepted += 1
-        else:
-            self.rejected += 1
+            records, observed = capture_tool.run_ladder(
+                probes,
+                self.gti,
+                staging,
+                scratch,
+                int(self.manifest.get("timeout_seconds", 120)),
+                None,
+            )
+        return observed, records
+
+    def test(self, files: dict[str, bytes]) -> bool:
+        key = graph_hash(files)
+        cached = self.cache.get(key)
+        if cached is not None:
+            return cached
+        if self.probes >= self.max_probes:
+            self.save()
+            raise ProbeLimitReached
+        observed, records = self.observe(files)
+        result = self.predicate.matches(observed, records)
+        self.probes += 1
+        if len(self.cache) < MAX_CACHE_ENTRIES:
+            self.cache[key] = result
+        self.save()
         return result
 
-    def try_candidate(self, mutate) -> bool:
-        """Apply `mutate` to a copy; keep it as the new best when it holds."""
-        candidate = Path(tempfile.mkdtemp(prefix="gti-reduce-cand-"))
-        try:
-            shutil.copytree(self.work / "source", candidate / "source")
-            if not mutate(candidate / "source"):
-                return False
-            if not self.shows_failure(candidate / "source"):
-                return False
-            shutil.rmtree(self.work / "source")
-            shutil.copytree(candidate / "source", self.work / "source")
-            self.save_progress()
+    def try_accept(self, files: dict[str, bytes]) -> bool:
+        if graph_hash(files) == graph_hash(self.current):
+            return False
+        if self.test(files):
+            self.current = files
+            self.accepted += 1
+            self.save()
             return True
-        finally:
-            shutil.rmtree(candidate, ignore_errors=True)
+        self.rejected += 1
+        self.save()
+        return False
 
-    def save_progress(self) -> None:
-        """Atomically publish the current best so interruption loses nothing."""
-        self.out.mkdir(parents=True, exist_ok=True)
-        staging = self.out.parent / f".{self.out.name}.partial-{os.getpid()}"
-        shutil.rmtree(staging, ignore_errors=True)
-        staging.mkdir(parents=True)
-        shutil.copytree(self.work / "source", staging / "source")
-        previous = self.out / "source"
-        if previous.exists():
-            shutil.rmtree(previous)
-        os.replace(staging / "source", previous)
-        shutil.rmtree(staging, ignore_errors=True)
 
-    # -- passes ----------------------------------------------------------------
+def chunk_ranges(size: int, partitions: int) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for part in range(partitions):
+        begin = part * size // partitions
+        end = (part + 1) * size // partitions
+        if begin != end:
+            ranges.append((begin, end))
+    return ranges
 
-    def source_files(self) -> list[Path]:
-        return sorted((self.work / "source").rglob("*.gti"))
 
-    def entry_path(self) -> Path:
-        if self.manifest["mode"] == "direct":
-            return self.work / "source" / self.manifest["entry"]
-        return self.work / "source"
-
-    def drop_whole_files(self) -> None:
-        """Pass 1: remove non-entry source units entirely."""
-        entry = (
-            self.manifest["entry"] if self.manifest["mode"] == "direct" else None
-        )
-        for path in self.source_files():
-            relative = path.relative_to(self.work / "source")
-            if entry is not None and str(relative) == entry:
-                continue
-            self.try_candidate(
-                lambda root, r=relative: ((root / r).unlink(), True)[1]
-            )
-
-    def ddmin_lines(self, relative: Path) -> None:
-        """Pass 2: classic ddmin over the file's lines, coarse to fine."""
-
-        def write(root: Path, kept: list[str]) -> bool:
-            (root / relative).write_text("\n".join(kept) + "\n", encoding="utf-8")
-            return True
-
-        while True:
-            lines = (
-                (self.work / "source" / relative)
-                .read_text(encoding="utf-8")
-                .split("\n")
-            )
-            while lines and lines[-1] == "":
-                lines.pop()
-            if len(lines) <= 1:
-                return
-            chunks = 2
-            improved = False
-            while chunks <= len(lines):
-                size = (len(lines) + chunks - 1) // chunks
-                removed_any = False
-                start = 0
-                while start < len(lines):
-                    kept = lines[:start] + lines[start + size :]
-                    if kept and self.try_candidate(
-                        lambda root, k=list(kept): write(root, k)
-                    ):
-                        lines = kept
-                        improved = True
-                        removed_any = True
-                        # Do not advance: the next chunk now sits at `start`.
-                    else:
-                        start += size
-                if not removed_any:
-                    chunks *= 2
-                else:
-                    chunks = max(2, chunks // 2)
-            if not improved:
-                return
-
-    def sweep_lines(self, relative: Path) -> None:
-        """Pass 2b: try deleting each line individually, to fixpoint.
-
-        Chunked ddmin stalls when interdependent lines straddle chunk
-        boundaries — removing either chunk alone changes the failure. A
-        single-line sweep repeated until nothing more can go dissolves those
-        local minima one dependency at a time.
-        """
-
-        def without(root: Path, index: int) -> bool:
-            lines = (root / relative).read_text(encoding="utf-8").split("\n")
-            if index >= len(lines) or len([l for l in lines if l]) <= 1:
-                return False
-            del lines[index]
-            (root / relative).write_text("\n".join(lines), encoding="utf-8")
-            return True
-
-        while True:
-            removed = False
-            index = 0
-            while True:
-                lines = (
-                    (self.work / "source" / relative)
-                    .read_text(encoding="utf-8")
-                    .split("\n")
-                )
-                if index >= len(lines):
-                    break
-                if lines[index].strip() == "" or self.try_candidate(
-                    lambda root, i=index: without(root, i)
-                ):
-                    if lines[index].strip() == "":
-                        # Blank lines go without a probe run.
-                        if len(lines) > 1 and without(
-                            self.work / "source", index
-                        ):
-                            self.save_progress()
-                            removed = True
-                            continue
-                        index += 1
-                        continue
-                    removed = True
-                    # The next line now sits at `index`.
-                else:
-                    index += 1
-            if not removed:
-                return
-
-    def sweep_windows(self, relative: Path) -> None:
-        """Pass 2c: try deleting short contiguous windows at every offset.
-
-        Declaration shells span lines that must leave together — a
-        `class x {` with its `};`, a three-line function — and neither
-        chunked ddmin (fixed partitions) nor the single-line sweep can take
-        them. Windows of two and three lines at every offset can.
-        """
-
-        def without(root: Path, start: int, size: int) -> bool:
-            lines = (root / relative).read_text(encoding="utf-8").split("\n")
-            if start + size > len(lines) or len(lines) <= size:
-                return False
-            del lines[start : start + size]
-            (root / relative).write_text("\n".join(lines), encoding="utf-8")
-            return True
-
-        for size in (2, 3):
-            start = 0
-            while True:
-                lines = (
-                    (self.work / "source" / relative)
-                    .read_text(encoding="utf-8")
-                    .split("\n")
-                )
-                if start + size > len(lines):
-                    break
-                if self.try_candidate(
-                    lambda root, s=start, z=size: without(root, s, z)
-                ):
-                    pass  # the window at `start` is new content; retry it
-                else:
-                    start += 1
-
-    def simplify_literals(self, relative: Path) -> None:
-        """Pass 3: shrink string and integer literals, line by line."""
-        source = (self.work / "source" / relative).read_text(encoding="utf-8")
-        lines = source.split("\n")
-        for index, line in enumerate(lines):
-            simplified = re.sub(r'"[^"]{2,}"', '"s"', line)
-            simplified = re.sub(r"\b\d{2,}\b", "0", simplified)
-            if simplified == line:
-                continue
-
-            def write(root: Path, i=index, text=simplified) -> bool:
-                current = (
-                    (root / relative).read_text(encoding="utf-8").split("\n")
-                )
-                if i >= len(current):
-                    return False
-                current[i] = text
-                (root / relative).write_text(
-                    "\n".join(current), encoding="utf-8"
-                )
-                return True
-
-            self.try_candidate(write)
-
-    def run(self) -> None:
-        if not self.shows_failure(self.work / "source"):
-            raise ReduceError(
-                "the bundle's own source does not show the failure under the "
-                "selected predicate; nothing can be reduced. Check --predicate, "
-                "the compiler version, and replay the bundle first."
-            )
-        self.drop_whole_files()
-        for path in self.source_files():
-            self.ddmin_lines(path.relative_to(self.work / "source"))
-        # Line and window sweeps unlock each other — removing a call site
-        # frees its callee's shell — so they iterate to a joint fixpoint.
-        while True:
-            accepted_before = self.accepted
-            for path in self.source_files():
-                relative = path.relative_to(self.work / "source")
-                self.sweep_lines(relative)
-                self.sweep_windows(relative)
-            if self.accepted == accepted_before:
+def ddmin_sequence(
+    values: list,
+    candidate: Callable[[list], bool],
+) -> list:
+    """Conventional contiguous-complement delta debugging."""
+    current = values
+    partitions = 2
+    while current:
+        reduced = False
+        for begin, end in chunk_ranges(len(current), min(partitions, len(current))):
+            proposal = current[:begin] + current[end:]
+            if candidate(proposal):
+                current = proposal
+                partitions = max(2, partitions - 1)
+                reduced = True
                 break
-        for path in self.source_files():
-            self.simplify_literals(path.relative_to(self.work / "source"))
-        self.save_progress()
+        if reduced:
+            continue
+        if partitions >= len(current):
+            break
+        partitions = min(len(current), partitions * 2)
+    return current
 
-    def cleanup(self) -> None:
-        shutil.rmtree(self.work, ignore_errors=True)
+
+def reduce_source_units(session: ReductionSession) -> None:
+    protected = {session.manifest["entry"]}
+    if session.manifest["mode"] == "project":
+        protected.add("gti.toml")
+        if "gti.lock" in session.current:
+            protected.add("gti.lock")
+    removable = [path for path in sorted(session.current) if path not in protected]
+
+    def accept_paths(remaining: list[str]) -> bool:
+        keep = protected | set(remaining)
+        proposal = {
+            path: contents
+            for path, contents in session.current.items()
+            if path in keep
+        }
+        return session.try_accept(proposal)
+
+    ddmin_sequence(removable, accept_paths)
 
 
-def total_bytes(root: Path) -> int:
-    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+def masked_structure(text: str) -> str:
+    """Mask comments and literals while preserving offsets and newlines."""
+    result = list(text)
+    index = 0
+    state = "code"
+    quote = ""
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if state == "code":
+            if char == "/" and next_char == "/":
+                result[index] = result[index + 1] = " "
+                index += 2
+                state = "line-comment"
+                continue
+            if char == "/" and next_char == "*":
+                result[index] = result[index + 1] = " "
+                index += 2
+                state = "block-comment"
+                continue
+            if char in ('"', "'"):
+                quote = char
+                result[index] = " "
+                index += 1
+                state = "literal"
+                continue
+        elif state == "line-comment":
+            if char == "\n":
+                state = "code"
+            else:
+                result[index] = " "
+            index += 1
+            continue
+        elif state == "block-comment":
+            if char == "*" and next_char == "/":
+                result[index] = result[index + 1] = " "
+                index += 2
+                state = "code"
+                continue
+            if char != "\n":
+                result[index] = " "
+            index += 1
+            continue
+        else:
+            if char == "\\" and next_char:
+                result[index] = " "
+                if next_char != "\n":
+                    result[index + 1] = " "
+                index += 2
+                continue
+            result[index] = "\n" if char == "\n" else " "
+            if char == quote:
+                state = "code"
+            index += 1
+            continue
+        index += 1
+    return "".join(result)
+
+
+def line_offsets(text: str) -> list[tuple[int, int]]:
+    offsets: list[tuple[int, int]] = []
+    begin = 0
+    for line in text.splitlines(keepends=True):
+        end = begin + len(line)
+        offsets.append((begin, end))
+        begin = end
+    if begin < len(text) or not offsets:
+        offsets.append((begin, len(text)))
+    return offsets
+
+
+def top_level_spans(text: str) -> list[tuple[int, int]]:
+    masked = masked_structure(text)
+    spans: list[tuple[int, int]] = []
+    start = 0
+    depth = 0
+    for begin, end in line_offsets(text):
+        line = masked[begin:end]
+        for char in line:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth = max(0, depth - 1)
+        if depth == 0 and (";" in line or "}" in line or line.lstrip().startswith("#")):
+            if end > start:
+                spans.append((start, end))
+            start = end
+    if start < len(text):
+        spans.append((start, len(text)))
+    return [span for span in spans if span[0] != span[1]]
+
+
+def statement_spans(text: str) -> list[tuple[int, int]]:
+    masked = masked_structure(text)
+    return [
+        (begin, end)
+        for begin, end in line_offsets(text)
+        if ";" in masked[begin:end] or "return" in masked[begin:end]
+    ]
+
+
+def balanced_spans(text: str) -> list[tuple[int, int]]:
+    masked = masked_structure(text)
+    openings = {"(": ")", "[": "]", "{": "}"}
+    closings = {value: key for key, value in openings.items()}
+    stack: list[tuple[str, int]] = []
+    spans: list[tuple[int, int]] = []
+    for index, char in enumerate(masked):
+        if char in openings:
+            stack.append((char, index))
+        elif char in closings:
+            if stack and stack[-1][0] == closings[char]:
+                _, begin = stack.pop()
+                spans.append((begin, index + 1))
+            else:
+                stack.clear()
+    return sorted(spans, key=lambda span: span[1] - span[0], reverse=True)
+
+
+def try_text(session: ReductionSession, path: str, text: str) -> bool:
+    proposal = dict(session.current)
+    proposal[path] = text.encode("utf-8")
+    return session.try_accept(proposal)
+
+
+def greedy_spans(
+    session: ReductionSession,
+    path: str,
+    builder: Callable[[str], list[tuple[int, int]]],
+) -> None:
+    changed = True
+    while changed:
+        changed = False
+        try:
+            text = session.current[path].decode("utf-8")
+        except UnicodeDecodeError:
+            return
+        spans = sorted(builder(text), key=lambda span: span[1] - span[0], reverse=True)
+        for begin, end in spans:
+            if try_text(session, path, text[:begin] + text[end:]):
+                changed = True
+                break
+
+
+def reduce_lines(session: ReductionSession, path: str) -> None:
+    try:
+        text = session.current[path].decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    lines = text.splitlines(keepends=True)
+
+    def accept_lines(remaining: list[str]) -> bool:
+        return try_text(session, path, "".join(remaining))
+
+    ddmin_sequence(lines, accept_lines)
+
+
+def simplify_text(session: ReductionSession, path: str) -> None:
+    try:
+        text = session.current[path].decode("utf-8")
+    except UnicodeDecodeError:
+        return
+
+    identifiers = sorted(
+        set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", text)),
+        key=lambda value: (-len(value), value),
+    )
+    for identifier in identifiers:
+        current = session.current[path].decode("utf-8")
+        proposal = re.sub(rf"\b{re.escape(identifier)}\b", "x", current)
+        try_text(session, path, proposal)
+
+    for pattern, replacement in (
+        (r"\b(?:0[xX][0-9A-Fa-f]+|[0-9]+)\b", "0"),
+        (r'"(?:\\.|[^"\\])*"', '""'),
+        (r"'(?:\\.|[^'\\])'", "'a'"),
+    ):
+        current = session.current[path].decode("utf-8")
+        for match in list(re.finditer(pattern, current))[::-1]:
+            proposal = current[: match.start()] + replacement + current[match.end() :]
+            if try_text(session, path, proposal):
+                current = session.current[path].decode("utf-8")
+
+    current = session.current[path].decode("utf-8")
+    normalized = "\n".join(line.rstrip() for line in current.splitlines())
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip() + "\n"
+    try_text(session, path, normalized)
+
+
+def reduce_sources(session: ReductionSession) -> None:
+    reduce_source_units(session)
+    paths = [path for path in sorted(session.current) if path.endswith(".gti")]
+    for path in paths:
+        if path not in session.current:
+            continue
+        greedy_spans(session, path, top_level_spans)
+        greedy_spans(session, path, statement_spans)
+        reduce_lines(session, path)
+        greedy_spans(session, path, balanced_spans)
+        simplify_text(session, path)
+
+
+def publish(
+    bundle: Path,
+    out: Path,
+    session: ReductionSession,
+    predicate: FailurePredicate,
+) -> None:
+    if out.exists():
+        raise ReductionError(f"{out} already exists; reduced bundles are never overwritten")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    partial = out.parent / f".{out.name}.partial-{os.getpid()}"
+    if partial.exists():
+        shutil.rmtree(partial)
+    shutil.copytree(bundle, partial)
+    try:
+        shutil.rmtree(partial / "source")
+        (partial / "source").mkdir()
+        write_sources(partial / "source", session.current)
+        manifest_path = partial / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["source_files"] = [
+            {
+                "path": path,
+                "sha256": hashlib.sha256(contents).hexdigest(),
+                "bytes": len(contents),
+            }
+            for path, contents in sorted(session.current.items())
+        ]
+        final_bytes = sum(len(contents) for contents in session.current.values())
+        manifest["reduction"] = {
+            "schema": STATE_SCHEMA,
+            "predicate": predicate.descriptor(),
+            "original_bytes": session.original_bytes,
+            "final_bytes": final_bytes,
+            "compiler_probes": session.probes,
+            "accepted_candidates": session.accepted,
+            "rejected_candidates": session.rejected,
+        }
+        atomic_json(manifest_path, manifest)
+        os.replace(partial, out)
+    except BaseException:
+        shutil.rmtree(partial, ignore_errors=True)
+        raise
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Reduce a GTI debug bundle while preserving its failure."
+    )
+    parser.add_argument("--gti", required=True, help="compiler executable")
+    parser.add_argument("--bundle", required=True, help="captured debug bundle")
+    parser.add_argument("--out", required=True, help="reduced bundle to publish")
+    parser.add_argument(
+        "--work-dir",
+        help="resumable state directory (default: hidden directory beside --out)",
+    )
+    parser.add_argument("--max-probes", type=int, default=5000)
+    parser.add_argument(
+        "--predicate",
+        choices=(
+            "exact",
+            "signal",
+            "diagnostic",
+            "message-regex",
+            "native-build",
+            "exit-status",
+            "runtime",
+        ),
+        default="exact",
+    )
+    parser.add_argument("--stage")
+    parser.add_argument("--signal", type=int)
+    parser.add_argument("--diagnostic-code")
+    parser.add_argument("--message-regex")
+    parser.add_argument("--exit-status", type=int)
+    return parser.parse_args()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Reduce a captured GTI compiler failure bundle."
-    )
-    parser.add_argument("--gti", required=True)
-    parser.add_argument("--bundle", required=True)
-    parser.add_argument("--out", required=True,
-                        help="directory for the reduced bundle")
-    parser.add_argument("--predicate", default="signature")
-    parser.add_argument("--timeout", type=int, default=None,
-                        help="per-candidate probe timeout (default: bundle's)")
-    arguments = parser.parse_args()
-
+    arguments = parse_arguments()
     try:
-        gti = Path(arguments.gti).resolve()
-        if not os.access(gti, os.X_OK):
-            raise ReduceError(f"{gti} is not an executable compiler")
+        if arguments.max_probes <= 0:
+            raise ReductionError("--max-probes must be positive")
         bundle = Path(arguments.bundle).resolve()
         out = Path(arguments.out).resolve()
-        if out == bundle:
-            raise ReduceError("--out must differ from --bundle")
-        manifest = load_bundle(bundle)
-        timeout = arguments.timeout or int(manifest.get("timeout_seconds", 120))
-        predicate = Predicate(arguments.predicate, manifest)
-
-        original_bytes = total_bytes(bundle / "source")
-        reduction = Reduction(
-            gti, manifest, bundle / "source", predicate, timeout, out
+        gti = Path(arguments.gti).resolve()
+        if not os.access(gti, os.X_OK):
+            raise ReductionError(f"{gti} is not an executable compiler")
+        manifest_path = bundle / "manifest.json"
+        if not manifest_path.is_file():
+            raise ReductionError(f"{bundle} is not a debug bundle")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("schema") != capture_tool.SCHEMA:
+            raise ReductionError(
+                f"unsupported bundle schema {manifest.get('schema')!r}"
+            )
+        predicate = FailurePredicate(manifest, arguments)
+        work = (
+            Path(arguments.work_dir).resolve()
+            if arguments.work_dir
+            else out.parent / f".{out.name}.reduce-work"
         )
-        try:
-            reduction.run()
-
-            # Emit the final result through the capture tool so the output is
-            # a first-class bundle, then hold it to the original signature.
-            final_bundle = out / "bundle"
-            shutil.rmtree(final_bundle, ignore_errors=True)
-            if manifest["mode"] == "direct":
-                what = ["--source", str(reduction.entry_path())]
-            else:
-                what = ["--project", str(reduction.entry_path())]
-            captured = subprocess.run(
-                [
-                    sys.executable,
-                    str(Path(__file__).with_name("capture_compiler_failure.py")),
-                    "capture", "--gti", str(gti), "--out", str(final_bundle),
-                    "--timeout", str(timeout), *what,
-                ],
-                capture_output=True, text=True, timeout=600, check=False,
-            )
-            if captured.returncode != 0:
-                print(captured.stdout + captured.stderr, file=sys.stderr)
-                raise ReduceError("re-capturing the reduced source failed")
-            final = json.loads(
-                (final_bundle / "manifest.json").read_text(encoding="utf-8")
-            )
-            if (
-                arguments.predicate == "signature"
-                and final["signature"] != manifest["signature"]
-            ):
-                print("reduced source no longer matches the original signature:",
-                      file=sys.stderr)
-                print(f"  original: {json.dumps(manifest['signature'], sort_keys=True)}",
-                      file=sys.stderr)
-                print(f"  reduced:  {json.dumps(final['signature'], sort_keys=True)}",
-                      file=sys.stderr)
-                return 3
-
-            reduced_bytes = total_bytes(out / "source")
-            print(f"reduced: {original_bytes} -> {reduced_bytes} bytes "
-                  f"({reduction.accepted} accepted, {reduction.rejected} rejected, "
-                  f"{reduction.cached} cached)")
-            print(f"  minimized source: {out / 'source'}")
-            print(f"  reduced bundle:   {final_bundle}")
-            print("  replay:           python3 scripts/debug/"
-                  f"capture_compiler_failure.py replay --gti {gti} "
-                  f"--bundle {final_bundle}")
-            return 0
-        finally:
-            reduction.cleanup()
-    except ReduceError as error:
+        session = ReductionSession(
+            bundle=bundle,
+            manifest=manifest,
+            gti=gti,
+            work=work,
+            predicate=predicate,
+            max_probes=arguments.max_probes,
+        )
+        if not session.test(session.current):
+            raise ReductionError("the input bundle no longer satisfies the predicate")
+        reduce_sources(session)
+        if not session.test(session.current):
+            raise ReductionError("the final candidate no longer satisfies the predicate")
+        publish(bundle, out, session, predicate)
+        final_bytes = sum(len(contents) for contents in session.current.values())
+        shutil.rmtree(work, ignore_errors=True)
+        print(f"reduced: {out}")
+        print(f"  bytes:     {session.original_bytes} -> {final_bytes}")
+        print(f"  probes:    {session.probes}")
+        print(f"  candidates: {session.accepted} accepted, {session.rejected} rejected")
+        print(
+            "  replay:    python3 scripts/debug/capture_compiler_failure.py "
+            f"replay --gti <compiler> --bundle {out}"
+        )
+        return 0
+    except ProbeLimitReached:
+        print(
+            f"reduction paused after {arguments.max_probes} compiler probes; "
+            "rerun the same command to resume",
+            file=sys.stderr,
+        )
+        return 4
+    except (ReductionError, OSError, KeyError, ValueError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
