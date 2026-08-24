@@ -21,6 +21,7 @@ that the same fix already handles, which is what makes them worth keeping.
 | `issue-117-nested-capture-emission.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | capture-of-capture is now accepted by semantics but cannot be emitted, so `GTI-S2027` became `GTI-B0001` |
 | `issue-117-indirect-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic reappearing in its own arguments at depth 2; the direct form is fixed |
 | `issue-117-global-element-field-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | `table[0].v = x` on a global array of class; the read and the plain write are fixed |
+| `issue-117-array-of-cleanup-owning-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | an array of a class **with a destructor**; without one it compiles. Reports the same gate #106 was filed with |
 
 ## Memory-safety reproducers
 
@@ -37,7 +38,9 @@ build-fuzz/fuzz/gti_pipeline_fuzzer -runs=1 \
 into the **current directory** by default, so reproducing one of these from
 the repository root litters the tree.
 
-There are currently no quarantined memory-safety reproducers.
+| File | Issue | Symptom |
+| --- | --- | --- |
+| `asan/issue-117-loan-conflict-uaf.gti` | [#107](https://github.com/LukeHHA/gti/issues/107) | the #107 reproducer still reports a heap-use-after-free, now in `reportLoanPlaceConflict`; the freed `Symbol` and the scope-stack table are the same, so only the consumer changed |
 
 ## Wrongly rejected programs
 
