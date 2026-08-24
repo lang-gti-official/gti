@@ -232,6 +232,72 @@ public:
 """
 
 
+INHERITANCE_PRELUDE = """interface Shape {
+  int32_t value();
+};
+
+class Square : public Shape {
+public:
+  Square() {}
+  int32_t value() override { return 7; }
+};
+
+class BaseKind {
+public:
+  BaseKind() {}
+  virtual int32_t value() { return 1; }
+};
+
+class DerivedKind : public BaseKind {
+public:
+  DerivedKind() {}
+  int32_t value() override { return 7; }
+};
+"""
+
+
+def inheritance_shapes() -> list[Shape]:
+    """Polymorphic receivers.
+
+    The matrix had `this`-rooted cells but no inheritance, so a polymorphic
+    receiver was never generated — which is why #113 and #114 survived every
+    earlier sweep. An `interface` base and a plain `class` base behave
+    differently here, so both are crossed with both call shapes.
+    """
+    def inherit(inner: str) -> str:
+        return INHERITANCE_PRELUDE + "\n" + inner
+
+    return [
+        Shape("inheritance", "interface ref call", "", "", "raw",
+              body=inherit("int main() {\n"
+                           "  mut Square square = Square();\n"
+                           "  mut Shape& bound = square;\n"
+                           "  return int(bound.value()) - 7;\n"
+                           "}")),
+        # #113: the same shape with a class base cannot be emitted.
+        Shape("inheritance", "class ref call", "", "", "raw",
+              body=inherit("int main() {\n"
+                           "  mut DerivedKind derived = DerivedKind();\n"
+                           "  mut BaseKind& bound = derived;\n"
+                           "  return int(bound.value()) - 7;\n"
+                           "}")),
+        # #114: accepted as an initializer, refused as an argument.
+        Shape("inheritance", "interface argument", "", "", "raw",
+              body=inherit("int32_t read(Shape& shape) { return shape.value(); }\n"
+                           "int main() {\n"
+                           "  mut Square square = Square();\n"
+                           "  return int(read(square)) - 7;\n"
+                           "}")),
+        Shape("inheritance", "interface bound argument", "", "", "raw",
+              body=inherit("int32_t read(Shape& shape) { return shape.value(); }\n"
+                           "int main() {\n"
+                           "  mut Square square = Square();\n"
+                           "  mut Shape& bound = square;\n"
+                           "  return int(read(bound)) - 7;\n"
+                           "}")),
+    ]
+
+
 def generic_shapes() -> list[Shape]:
     """Generic functions, classes, extent parameters, and packs.
 
@@ -459,7 +525,8 @@ def main() -> int:
     shapes = with_writes(integer_shapes() + parameter_shapes()
                          + capture_shapes() + field_shapes()
                          + pointer_shapes() + nested_capture_shapes()
-                         + enum_shapes() + generic_shapes())
+                         + enum_shapes() + generic_shapes()
+                         + inheritance_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:

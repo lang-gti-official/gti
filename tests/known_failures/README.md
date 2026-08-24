@@ -16,6 +16,7 @@ passing regression, delete it here, and add a row to *Graduated* below.
 | `issue-103-lambda-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | reading a field of a captured class inside a lambda → `GTI-B0001` (MIR verifier) |
 | `issue-104-global-array-index.gti` | [#104](https://github.com/LukeHHA/gti/issues/104) | indexing a global array → `GTI-B0001` (the #100 fix took `Field` chains, not `Index`) |
 | `issue-106-array-of-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | *declaring* a fixed array of any class type → `GTI-B0001`; no read needed |
+| `issue-113-virtual-through-base-reference.gti` | [#113](https://github.com/LukeHHA/gti/issues/113) | a virtual call through a reference to a plain base *class* → `GTI-B0001`; the same shape through an `interface` works |
 
 ## Memory-safety reproducers
 
@@ -47,6 +48,7 @@ no ICE — the defect is the *rule*, so `check.py` cannot classify these either
 | `rejected/issue-108-nested-capture.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | a nested lambda cannot capture the enclosing lambda's capture → `GTI-S2027`, though capturing the outer lambda's local or parameter is fine |
 | `rejected/issue-109-payload-class-diagnostic.gti` | [#109](https://github.com/LukeHHA/gti/issues/109) | the rejection is correct, but `GTI-S2067` prints `'unknown class'` instead of naming the payload field's type |
 | `rejected/issue-110-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic inside its own type arguments yields two distinct specializations → `GTI-S2003` naming the same type on both sides |
+| `rejected/issue-114-interface-argument.gti` | [#114](https://github.com/LukeHHA/gti/issues/114) | passing a concrete type where an interface reference is required → `GTI-S2003`, though binding it to a reference one line earlier is accepted |
 
 ## Confirmed root causes
 
