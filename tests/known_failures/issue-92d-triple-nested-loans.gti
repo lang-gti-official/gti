@@ -1,0 +1,17 @@
+// Reproducer for https://github.com/LukeHHA/gti/issues/92 (variant: three levels).
+//
+// Nesting deeper than two levels raises the same GTI-B0001; the bug is not
+// specific to exactly two active loans.
+
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  for (auto& a : values) {
+    for (auto& b : values) {
+      for (auto& c : values) {
+      }
+    }
+  }
+  return 0;
+}
