@@ -78,8 +78,13 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v43`/`mir-body-v41`.
-Program v42 adds complete verified effect summaries for functions,
+The deterministic serialization is currently `mir-v44`/`mir-body-v42`.
+Program v44/body v42 add exact proof-carrying safety discharges to instructions
+and transformation records. A discharge names one bounds, storage-state, or
+arithmetic-overflow family plus the exact local defined-failure origin and
+outcome; records retain all related MIR block, instruction, value, and place
+identities used by independent replay. Program v42 adds complete verified
+effect summaries for functions,
 constructors, destructors, and lambdas. Program v43/body v41 add scalar block
 parameters, edge arguments, optimizer instruction tombstones, and edge-value
 use provenance. Program/body v41/v40 added the verified range-iteration
@@ -113,10 +118,20 @@ without loans, drop obligations, cleanup boundaries, failure records, or
 frozen program-initialization steps; widening into those schedules is
 recorded work, not an implied capability.
 
+Safety-check optimization does not erase the checked source operation from
+MIR. `MirInstruction::safetyDischarges` records only the exact local failure
+outcomes proved unreachable by canonical body-local analysis. Verification
+requires sorted unique records, a matching failure origin and outcome, and an
+operation/family combination supported by the MIR contract. A checked
+instruction remains failure-capable for every outcome not listed. Canonical
+source MIR must have no discharges; optimization coherence derives each one
+again before the optimized program can be published.
+
 Every destructive rewrite also emits a sorted typed `MirTransformRecord`.
 The stable instruction address is `{MirBodyAddress, MirInstructionId}`, not a
 block-vector index. Records retain the pass, affected identities, source
-provenance, proof kind, and required analysis facts. They remain untrusted:
+provenance, proof kind, required analysis facts, and, for a safety discharge,
+the exact outcome and related places. They remain untrusted:
 `verifyMirOptimizationCoherence` independently replays every record from
 canonical source MIR and exact-compares the result before
 `LoweredProgramBuilder` can seal it. Instruction removal preserves its
