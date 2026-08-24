@@ -4545,6 +4545,16 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     return false;
   }
 
+  [[nodiscard]] bool
+  loweredClassHasConcreteInstance(ClassId declaration) const {
+    return std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
+                       [declaration](const MirClassInstance &instance) {
+                         return instance.declaration == declaration &&
+                                (!instance.type.arguments.empty() ||
+                                 !instance.type.valueArguments.empty());
+                       });
+  }
+
   void emitLoweredVirtualFailureBoundaryWrapper(
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
       const MirFunctionInstance &instance, std::string_view ownerSpelling,
@@ -4971,9 +4981,18 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     const bool generic = loweredOwnerIsGeneric(owner);
     bool emitted = false;
+    const bool hasConcreteOwnerInstance =
+        loweredClassHasConcreteInstance(destructor.owner);
     for (const MirClassInstance &classInstance : mir.classInstances()) {
-      if (classInstance.declaration != destructor.owner ||
-          !classInstance.destructor) {
+      if (classInstance.declaration != destructor.owner) {
+        continue;
+      }
+      const bool concrete = !classInstance.type.arguments.empty() ||
+                            !classInstance.type.valueArguments.empty();
+      if (generic && !concrete) {
+        continue;
+      }
+      if (!classInstance.destructor) {
         continue;
       }
       const std::string ownerSpelling =
@@ -4995,7 +5014,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         break;
       }
     }
-    if (!emitted) {
+    if (!emitted && (!generic || hasConcreteOwnerInstance)) {
       throw std::logic_error(
           "lowered destructor declaration has no concrete MIR instance");
     }
@@ -5110,7 +5129,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << "}\n\n";
         emitted = true;
       }
-      if (!emitted) {
+      if (!emitted && (!loweredOwnerIsGeneric(*classRow) ||
+                       loweredClassHasConcreteInstance(classDeclaration->id))) {
         throw std::logic_error(
             "lowered active-drop class has no lifecycle generated item");
       }

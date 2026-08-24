@@ -199,13 +199,10 @@ python3 scripts/debug/stdlib_include_sweep.py
 ```
 
 That shape had never been tested. Every case in the surface manifest *uses*
-the module it covers, and including a header that declares a generic **without
-instantiating it** is its own failure mode: the destructor declaration is
-lowered with no concrete MIR instance and the compile raises `GTI-B0001`.
-Using the module makes it go away, which is why the surface cases pass while
-the header alone does not. Filed as
-[#116](https://github.com/LukeHHA/gti/issues/116); today the sweep reports
-`19 module(s): 16 ok, 3 failing`.
+the module it covers, while an unused generic declaration legitimately has no
+concrete MIR lifecycle instance. [#116](https://github.com/LukeHHA/gti/issues/116)
+made that absence an internal backend error. The sweep is now a primary CTest
+gate and all 19 shipped modules independently reach C++ emission.
 
 ## Probing the language server
 
@@ -265,6 +262,7 @@ reproducers were removed from this directory.
 | [#113](https://github.com/LukeHHA/gti/issues/113) virtual call through a base-class reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
 | [#114](https://github.com/LukeHHA/gti/issues/114) concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
 | [#115](https://github.com/LukeHHA/gti/issues/115) global/static fixed-array member write | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
+| [#116](https://github.com/LukeHHA/gti/issues/116) include-only generic destructor and optional empty state | `v0.306.1` | `cpp_mir_representation_snapshot`, `stdlib_include_sweep` |
 
 The `formatter/` subdirectory held inputs that are not compiler source (so
 `check.py`'s non-recursive glob skipped them); it is empty now that #96 is

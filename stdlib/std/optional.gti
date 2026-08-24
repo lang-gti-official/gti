@@ -1,7 +1,7 @@
 // C++-familiar API scaffold for <std/optional>.
 // The value constructor is an empty placeholder because GTI does not yet have
-// declaration-only constructor syntax. Checked single-slot storage remains to
-// be implemented.
+// declaration-only constructor syntax. The owner provides the empty state;
+// checked single-slot storage remains to be implemented.
 
 namespace std {
   class optional<T> {
@@ -23,6 +23,6 @@ namespace std {
     void reset() mut;
     mut T & emplace<Args...>(Args... args) mut;
   private:
-    mut std::unique_ptr<T> val;
+    mut std::unique_ptr<T> val = nullptr;
   };
 }
