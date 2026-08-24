@@ -1837,6 +1837,8 @@ private:
   StmtPtr makeRangeForStatement(Token keyword, Mutability bindingMutability,
                                 TypeRef bindingType, Token bindingName,
                                 Token colon, ExprPtr range, StmtPtr body) {
+    const bool mutableElementLoan =
+        bindingMutability == Mutability::Mutable && bindingType.reference;
     const std::string suffix = std::to_string(++generatedNameCounter);
     Token ownerName =
         generatedToken(TokenKind::IDENTIFIER, "__gti_owner_" + suffix, colon);
@@ -1880,18 +1882,22 @@ private:
 
     StmtList lowered;
     auto ownerBinding = std::make_unique<VariableDecl>(
-        Mutability::Immutable, std::move(ownerType), ownerName,
-        std::move(range), std::nullopt, false, std::nullopt, true);
+        mutableElementLoan ? Mutability::Mutable : Mutability::Immutable,
+        std::move(ownerType), ownerName, std::move(range), std::nullopt, false,
+        std::nullopt, true);
     const VariableDecl *ownerBindingPointer = ownerBinding.get();
     lowered.emplace_back(std::move(ownerBinding));
     auto rangeBinding = std::make_unique<VariableDecl>(
-        Mutability::Immutable, std::move(rangeType), rangeName,
-        generatedVariable(ownerName), std::nullopt, true);
+        mutableElementLoan ? Mutability::Mutable : Mutability::Immutable,
+        std::move(rangeType), rangeName, generatedVariable(ownerName),
+        std::nullopt, true);
     const VariableDecl *rangeBindingPointer = rangeBinding.get();
     lowered.emplace_back(std::move(rangeBinding));
     auto iteratorBinding = std::make_unique<VariableDecl>(
         Mutability::Mutable, std::move(iteratorType), iteratorName,
-        generatedMemberCall(rangeName, "begin", colon));
+        generatedMemberCall(rangeName,
+                            mutableElementLoan ? "begin_mut" : "begin", colon),
+        std::nullopt, false, std::nullopt, false, true);
     const VariableDecl *iteratorBindingPointer = iteratorBinding.get();
     lowered.emplace_back(std::move(iteratorBinding));
     auto sentinelBinding = std::make_unique<VariableDecl>(

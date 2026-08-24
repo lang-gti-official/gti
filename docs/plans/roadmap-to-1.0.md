@@ -417,20 +417,23 @@ supply container behavior. The exact canonical
 `std::vector<std::string>` identity used by the implemented hosted `main`
 signature is a bounded program-boundary type check, not container magic.
 
-### Required language and IR work
+### Implemented language and IR substrate
 
-- Implement fixed-array range iteration through a compiler-owned indexed
-  strategy with no pointer decay.
+- Fixed-array range iteration uses a compiler-owned indexed strategy with no
+  pointer decay.
 - Use the implemented single-origin read-only carrier and free/static factory
   propagation for source-defined read-only iterators, cursors, and focused
   view APIs; design mutable, nested, or multi-owner variants separately.
-- Complete range ownership for stable lvalues and owned temporaries evaluated
-  exactly once.
-- End the per-element loan before the increment edge, including on `continue`.
-- Track operations that structurally invalidate iterators. Start
-  conservatively, then add effect metadata for proven non-invalidating element
-  mutation.
-- Support nested read-only iteration and reject overlapping mutable iteration.
+- Stable lvalues and owned temporaries are evaluated exactly once and retain
+  exact range ownership through cleanup.
+- Read-only and mutable per-element loans end before increment and every exit,
+  including `continue` and defined failure.
+- Mutable traversal uses `begin_mut()` and one exclusive whole-owner loan;
+  structural mutation, movement, overlapping reads, and overlapping mutable
+  iteration are conservatively rejected.
+- Nested non-overlapping read-only/mutable iteration is supported. Public
+  effect metadata for proven non-invalidating owner operations remains future
+  refinement.
 
 ### First container wave
 
@@ -438,7 +441,8 @@ The first source-defined `std::vector<T>` slice is implemented over checked
 private storage. It is move-only, constrains elements to `std::movable`, and
 provides default/size construction, observation, reserve, clear, push/pop,
 checked indexed access, indexed insertion/erasure, variadic exact in-place
-`emplace_back`, and conservative read-only iteration. Storage rejects element
+`emplace_back`, read-only iteration, and mutable iteration with conservative
+whole-owner invalidation exclusion. Storage rejects element
 types containing borrowed state. Its by-value pack avoids an intermediate `T`
 but is not C++ perfect forwarding: copyable arguments may be copied at the
 method boundary and a move-only pack is consumed by its first expansion.
@@ -447,9 +451,10 @@ The remaining first-wave work is:
 
 - Complete `std::array<T, N>` with `front`, `back`, fill operations, and
   read-only/mutable iteration.
-- Extend `std::vector<T>` with mutable iteration, precise invalidation, richer
+- Extend `std::vector<T>` with precise public invalidation effects, richer
   construction, iterator-position mutation, and the remaining reviewed
-  foundational surface. Indexed insert/erase is implemented.
+  foundational surface. Indexed insert/erase and mutable range iteration are
+  implemented.
 - Add an owner-tied `std::span<T>`-style borrowed view rather than exposing
   `.data()` or pointer-and-length pairs.
 - Add read-only iteration to `std::string_view` and mutable iteration to

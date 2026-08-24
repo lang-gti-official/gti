@@ -53,16 +53,19 @@ available, and multiple child loans may coexist only over such disjoint
 places. Parent or owner access that overlaps an active child is ill-formed,
 and a read-only loan cannot be upgraded to a mutable child. Indexed, raw, and
 opaque sources do not receive this bounded precise-place treatment. This rule
-does not permit mutable stored-reference fields, returning any local child
-reborrow (mutable or read-only) directly or through a stored carrier, or
-mutable owner-tied range iteration.
+does not generally permit mutable stored-reference fields or returning any
+local child reborrow (mutable or read-only) directly or through a stored
+carrier. L-RANGE-02 adds one bounded exception: a compiler-generated mutable
+range iterator may carry the exact exclusive range loan, and its mutable
+dereference creates one iteration-scoped child loan.
 Existing receiver-tied mutable-reference returns remain governed by their
-narrower rules. Range-for element references are read-only in L-RANGE-01 even
-if a structural iterator's dereference method could produce writable access.
+narrower rules.
 
 A local borrowed-state carrier may retain an ordinary read-only owner
 dependency, but it may not retain a mutable parent loan or a child reborrow.
-The latter shape is limited to non-retained full-expression temporaries.
+The mutable range iterator exception is compiler-generated, confined to its
+range plan, and cannot be named as an ordinary escaping local. Other child
+reborrows remain limited to non-retained full-expression temporaries.
 
 For a receiver- or argument-tied result, the stable place is the selected
 origin expression. The compiler preserves a caller-visible field path such as
@@ -81,12 +84,16 @@ family implements this distinction.
 Local `auto` infers one exact complete value type from its initializer. It does
 not infer globals, fields, parameters, returns, arrays, or untyped braced
 initializers. The range-for forms `auto&` and `mut auto&` infer element borrows;
-plain `auto` does not silently infer a reference. A range-for rejects the
-`mut auto&` form with `GTI-S2083` until mutable iteration is implemented. A
-fixed array is traversed with an exact indexed strategy. An addressable nominal
-range receives a read-only loop loan, while an owned nominal temporary is moved
-into loop storage. Every reference element loan ends before increment or loop
-exit and may neither mutate nor escape its iteration.
+plain `auto` does not silently infer a reference. A fixed array is traversed
+with an exact indexed strategy. A read-only loop receives a shared owner loan.
+A `mut T&` or `mut auto&` loop over an addressable range requires a mutable
+owner and receives an exclusive owner loan; an owned nominal temporary is
+moved into mutable loop storage. A mutable nominal range must resolve exact
+`begin_mut()`, `end()`, comparison, mutable dereference, and prefix-increment
+operations. Every reference element loan ends before increment or loop exit
+and may not escape its iteration. A read-only element cannot mutate; a mutable
+element is one child of the exclusive range loan and is the only overlapping
+mutation path until it ends.
 
 For a raw pointer, leading `mut` controls whether the pointer binding may be
 reseated. Pointee access is writable for `T*` and read-only for `const T*`.

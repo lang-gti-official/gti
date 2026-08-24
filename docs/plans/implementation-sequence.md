@@ -2251,21 +2251,34 @@ name recognition.
 
 ### L-RANGE-02: Mutable Iteration And Invalidation
 
-- **State/role:** ready; prerequisite `L-RANGE-01` is done; systems-readiness
-  implementation.
-- **Scope:** Add one mutable element loan at a time, end it before increment and
-  on every exit, reject overlapping mutable iteration, and classify container
-  operations that invalidate the iterator/range owner. Prove the contract on
-  fixed arrays and `std::vector` before widening it.
-- **Exit gate:** mutation in place, `continue`, `break`, nested read-only loops,
-  reserve/push/clear invalidation, and owner move/drop tests agree across
-  semantics, MIR verification, and runtime. Indexed insertion/erasure is
-  implemented; iterator-position forms and their range interactions remain
-  owned by `L-CONT-01`.
+- **State/role:** done in 0.300.0; systems-readiness capability for in-place
+  container/game workloads.
+- **Implemented scope:** `mut T&` and `mut auto&` range declarations take one
+  exclusive parent loan over a mutable fixed array, mutable nominal lvalue, or
+  owned temporary. Fixed arrays use the existing indexed plan. Nominal ranges
+  select exact `begin_mut()` plus `end()`, comparison, mutable dereference, and
+  prefix increment; the compiler-generated iterator is the confined carrier
+  of that parent. Each iteration creates one mutable child and ends descendants
+  child-first before increment and on `continue`, `break`, `return`, normal
+  cleanup, and failure cleanup. `std::vector` supplies the first mutable
+  checked iterator. Whole-owner conflicts reject reserve, push, clear, moves,
+  overlapping reads/traversals, and other invalidating access while the plan is
+  active.
+- **Non-goals:** public container invalidation traits, simultaneous disjoint
+  mutable element traversal, user-retainable mutable stored iterators,
+  iterator-position insertion/erasure, pointer ranges, or dynamic views.
+- **Exit evidence:** focused semantics/HIR/MIR tests cover exact parent/child
+  identities, immutable owners, missing mutable endpoints, overlap, mutation,
+  escape, owner reuse, forged plans, and child-first endings. Runtime coverage
+  exercises fixed arrays, `std::vector`, empty and owned temporary ranges,
+  nested loops, `continue`, `break`, and `return` at O0/O3 under C++20/C++23,
+  including exact normal/failure temporary cleanup. Formatter, C++ emission,
+  LSP publication/clearing, and incomplete-source recovery are pinned.
+- **Unlocks:** `L-RANGE-03` spans and dynamic views.
 
 ### L-RANGE-03: Spans And Dynamic Views
 
-- **State/role:** blocked; prerequisite is `L-RANGE-02`; systems-readiness
+- **State/role:** ready; prerequisite `L-RANGE-02` is done; systems-readiness
   implementation.
 - **Scope:** Add a focused single-owner span/view first, then dynamic
   `string_view` ownership. Add multi-owner, nested, mutable, or stored
@@ -2734,7 +2747,7 @@ owned by the rows and domain plans above.
 | Indexed partial moves | **complete bounded-first slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |
 | Temporary/active-drop authority | **complete normal-exit lifecycle substrate** | `M-LIFE-01` done; failure rollback and full ordered materialization remain downstream |
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
-| Mutable iteration/views | systems-readiness library critical path | `L-RANGE-01` -> `L-RANGE-03` |
+| Mutable iteration/views | L-RANGE-01/02 complete; dynamic-view systems-readiness work remains | `L-RANGE-03` |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
 | Owned callables and capture | contract complete; confined boundary, exact value-result, repeatable read/mut invocation, consuming once-callable cardinality, MIR-v10 environments/transport, explicit owned move capture, exact same-type generic return, one-field generic owner, and non-capturing same-thread native adapters implemented; broader owner/extraction/concept work remains systems-readiness work shared by algorithms and tasks | `D-CALL-01` and `S-CALL-01` done -> remaining `L-CALL-01`; thread-task extension is `C-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |

@@ -442,16 +442,18 @@ parent.reset();  // the mutable child ended after update
 These are local loan transitions, not stored or escaping lifetime graphs.
 Mutable reference fields, returning any local child reborrow (mutable or
 read-only) directly or through a stored carrier, and mutable owner-tied carrier
-values remain rejected. This does not remove the existing receiver-tied
-mutable-reference return rule described above. The slice also does not make
-mutable owner-tied range iteration available or define range-level and
-per-element loan scopes. Existing structural range syntax and writable yields
-keep their narrower contract.
+values remain rejected outside the compiler-generated range plan. This does
+not remove the existing receiver-tied mutable-reference return rule described
+above. L-RANGE-02 defines the narrow range-level and per-element exception: an
+exclusive parent covers the whole traversal, its one mutable element child is
+confined to the current iteration, and the parent fully reactivates only after
+that child ends.
 
 A local borrowed-state carrier may still retain the existing ordinary
 read-only owner dependency. It cannot retain a mutable parent loan or any child
-reborrow; that shape may be consumed only as a non-retained full-expression
-temporary in this checkpoint.
+reborrow as an ordinary value; that shape may be consumed only as a
+non-retained full-expression temporary or as the compiler-generated mutable
+range iterator.
 
 For a supported local loan, the compiler can end it after its final
 straight-line use, at a reachable `if` merge, or on a branch entry that does
@@ -525,7 +527,11 @@ borrowed state, user-defined destructors, and global/static or captured
 borrowed storage remain rejected. The stored owner-dependency model also
 rejects mutable stored dependencies, multi-origin and dependency-changing
 returns, and assignment that would replace a carrier's dependency. The local
-exclusive-reborrow rules above do not widen that stored-value contract.
+exclusive-reborrow rules above do not widen that stored-value contract. The
+compiler-generated mutable range iterator described below is the one bounded
+exception: it transfers the range's existing exclusive capability into an
+ephemeral iterator rather than creating an independently retainable mutable
+stored dependency.
 Retaining one of these values creates a semantic owner loan, so the owner
 cannot be moved, replaced, or used through a mutable method while that loan
 remains live. Moving the carrier transfers the same loan identity; creating a
@@ -537,12 +543,16 @@ frontend-selected aggregate endpoint. These are GTI lifetime rules; the
 emitted C++ reference field is only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
-to retain one read-only `gti_internal::storage<T>&`. The exception applies only
-to the carrier field and its exact binding constructor parameter. It allows an
-ordinary source-defined iterator to traverse checked storage without exposing
-an address or making the compiler recognize a container name. Application
-fields, locals, parameters, returns, writable stored borrows, and references to
-the private unique-owner capability remain rejected.
+to retain one read-only checked-storage reference, currently
+`gti_internal::storage<T>&` or `gti_internal::prefix_storage<T>&`. A
+compiler-generated mutable range iterator may instead carry one exact writable
+checked-storage dependency from `begin_mut()` until range cleanup. These
+exceptions apply only to the carrier field and its exact binding constructor
+parameter. They allow an ordinary source-defined iterator to traverse checked
+storage without exposing an address or making the compiler recognize a
+container name. Application fields, user-retainable mutable carriers, multiple
+origins, and references to the private unique-owner capability remain
+rejected.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
@@ -552,13 +562,17 @@ reference step; recursive C++ proxy behavior is not exposed. These checked
 nominal operators remain distinct from built-in raw-pointer `*`, `->`, and
 `[]`, which require an unsafe block and create no borrow or loan.
 
-Range-based `for` uses `operator*` through the same receiver-tied rules and
-records a dedicated read-only range loan plus a loop-bounded read-only element
-loan. Both self-contained iterators and the confined owner-tied iterator form
-above are supported. Fixed arrays use an indexed place rather than a pointer;
-an owned nominal temporary is transferred into loop storage and destroyed once
-after all range and element loans end. The compiler does not expose a raw
-pointer or public intrinsic for iteration; see [`ranges.md`](ranges.md).
+Range-based `for` uses `operator*` through the same receiver-tied rules. A
+read-only declaration records a shared range loan and a loop-bounded read-only
+element loan. A `mut T&` or `mut auto&` declaration records one exclusive range
+loan plus one mutable child element loan per iteration. The child ends before
+increment or every loop exit; while the parent remains active it rejects every
+overlapping owner read, mutation, move, drop, or second traversal. Both
+self-contained iterators and confined owner-tied iterators are supported.
+Fixed arrays use an indexed place rather than a pointer; an owned nominal
+temporary is transferred into loop storage and destroyed once after all range
+and element loans end, including failure cleanup. The compiler does not expose
+a raw pointer or public intrinsic for iteration; see [`ranges.md`](ranges.md).
 
 ## Raw Pointers And Ownership
 
@@ -972,7 +986,7 @@ narrow aligned allocation/deallocation runtime calls.
 ## Source-Defined Vector
 
 `std::vector<T>`, imported with `#include <std/vector>`, is now an ordinary GTI
-class over `gti_internal::storage<T>`. Its element type satisfies
+class over `gti_internal::prefix_storage<T>`. Its element type satisfies
 `std::movable`; the storage field makes the vector itself move-only, so transfer
 uses `std::move` and an ordinary copy is rejected. No frontend or backend phase
 recognizes the public `std::vector` name to supply container behavior. The
@@ -997,15 +1011,16 @@ element value but deliberately does not promise C++ forwarding-reference
 behavior; copyable arguments may be copied at the method boundary, while a
 move-only pack is consumed once.
 
-The first iterator is read-only and retains one checked read-only reference to
-the backing storage. It supports the existing structural range protocol, and
-an active iterator prevents mutation, replacement, or movement of the vector.
-The range statement adds its dedicated range and per-iteration element loans;
-an owned vector temporary may be transferred into its hidden loop owner.
-Mutable iteration and invalidation rules, iterator categories,
-iterator-position insertion/erasure, allocator policy, and owner-tied `span`
-remain future work. Indexed insertion and erasure are implemented without
-granting mutable iteration.
+The read-only iterator retains one checked read-only reference to the backing
+storage. `begin_mut()` returns a distinct ephemeral mutable iterator that
+transfers the range's exclusive storage capability and uses checked mutable
+dereference. The range statement adds its dedicated parent range loan and
+per-iteration element child; an owned vector temporary may be transferred into
+its hidden loop owner. Reserve, push, clear, movement, and every other
+overlapping owner operation are rejected while the mutable range is active.
+This is conservative whole-owner invalidation exclusion, not a
+container-specific invalidation trait. Iterator categories, iterator-position
+insertion/erasure, allocator policy, and owner-tied `span` remain future work.
 
 ## Owning Text
 
