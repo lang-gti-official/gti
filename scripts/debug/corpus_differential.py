@@ -64,9 +64,13 @@ def build_and_run(gti: Path, cxx: str, source: Path, output: Path,
     except subprocess.TimeoutExpired:
         return Observation("build-failed", None, "", f"{level}: build timed out")
     if built.returncode != 0:
+        output_text = built.stderr + built.stdout
         first = (built.stderr or built.stdout).strip().split("\n")
+        # Prefix the code explicitly: the first line is truncated below, and
+        # a long path can push the diagnostic code past the cut.
+        code = "GTI-B0001 " if "GTI-B0001" in output_text else ""
         return Observation("build-failed", None, "",
-                           f"{level}: {first[0][:160] if first else ''}")
+                           f"{level}: {code}{first[0][:160] if first else ''}")
     try:
         ran = subprocess.run([str(output)], capture_output=True, text=True,
                              timeout=timeout)
@@ -86,10 +90,16 @@ def compare_program(gti: Path, cxx: str, scratch: Path, source: Path,
     first = build_and_run(gti, cxx, source, scratch / f"{stem}-{baseline}-a",
                           baseline, timeout)
     if first.state != "ran":
-        # Not every example is buildable in a bare checkout (some want
-        # packages or a target). That is not an optimizer finding.
-        return ("skipped" if first.state == "build-failed" else first.state,
-                first.detail)
+        # Not every program is buildable in a bare checkout — some want a
+        # package or a target, and some fixtures are negative tests. None of
+        # that is an optimizer finding. An *internal* error is different: a
+        # silent "skipped" there hides a GTI-B0001 behind a count, which is
+        # how #112 nearly went unnoticed.
+        if first.state == "build-failed":
+            if "GTI-B0001" in first.detail:
+                return "ICE", first.detail
+            return "skipped", first.detail
+        return first.state, first.detail
 
     # A program that disagrees with itself cannot testify about the optimizer.
     repeat = build_and_run(gti, cxx, source, scratch / f"{stem}-{baseline}-b",
@@ -151,7 +161,7 @@ def main() -> int:
             if verdict == "DIVERGENT":
                 divergent.append((source.name, detail))
                 print(f"  {source.name:<40} DIVERGENT  {detail}")
-            elif verdict in {"hang", "crash", "nondet"}:
+            elif verdict in {"hang", "crash", "nondet", "ICE"}:
                 print(f"  {source.name:<40} {verdict:<10} {detail}")
 
     print()

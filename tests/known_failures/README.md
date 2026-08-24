@@ -200,6 +200,13 @@ A program that disagrees with *itself* across two runs at the baseline level
 is reported as `nondet` and excluded, so nondeterminism is not blamed on the
 optimizer.
 
+A program that fails to build is `skipped` — some want a package or a target,
+and some fixtures are negative tests — **except** when the failure is a
+`GTI-B0001`, which is reported as `ICE`. Folding that into a skip count is how
+[#112](https://github.com/LukeHHA/gti/issues/112) nearly went unnoticed: two
+repository fixtures raise an internal error that the suite expects, and a bare
+"5 skipped" said nothing about it.
+
 ## Probing the language server
 
 `scripts/debug/lsp_probe.py` checks two properties of `gti_lsp` that an
