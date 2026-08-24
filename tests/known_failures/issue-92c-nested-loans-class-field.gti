@@ -1,0 +1,23 @@
+// Reproducer for https://github.com/LukeHHA/gti/issues/92 (variant: container held in a class field).
+//
+// The container does not need to be a local; nesting over a field raises the
+// same GTI-B0001 loan conflict.
+
+#include <std/vector>
+
+class holder {
+public:
+  holder() {}
+  mut std::vector<int32_t> items = std::vector<int32_t>();
+};
+
+int main() {
+  mut holder h = holder();
+  mut int32_t total = 0;
+  for (auto& a : h.items) {
+    for (auto& b : h.items) {
+      total = total + a;
+    }
+  }
+  return total;
+}
