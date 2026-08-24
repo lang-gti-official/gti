@@ -1,0 +1,29 @@
+#include <std/format>
+
+int main() {
+  mut auto empty = std::format("plain {{text}}");
+  if (!empty || empty.value() != "plain {text}") {
+    return 1;
+  }
+  mut auto formatted = std::format("{}:{}", int32_t(-4), uint64_t(9));
+  if (!formatted || formatted.value() != "-4:9") {
+    return 2;
+  }
+  auto invalid = std::format("{");
+  if (invalid or invalid.error() != std::format_errc::invalid_format) {
+    return 3;
+  }
+  auto mismatch = std::format("{} {}", int32_t(1));
+  if (mismatch or
+      mismatch.error() != std::format_errc::argument_count_mismatch) {
+    return 4;
+  }
+  auto first = std::try_print("value={}", int32_t(7));
+  auto second = std::try_println(" ok={}", uint8_t(1));
+  auto third = std::try_print("{}");
+  auto fourth = std::try_println("done");
+  if (!first || !second || third or !fourth) {
+    return 5;
+  }
+  return 0;
+}

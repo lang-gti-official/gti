@@ -1,0 +1,37 @@
+#include <std/array>
+
+int read_array(std::array<int32_t, 3>& values) {
+  return values.front() + values.back() + values.at(std::size_t(1)) +
+         values[int32_t(0)];
+}
+
+int main() {
+  int32_t source[3] = {1, 2, 3};
+  mut std::array<int32_t, 3> values = std::array<int32_t, 3>(source);
+  if (values.size() != std::size_t(3) || values.empty() ||
+      read_array(values) != 7) {
+    return 1;
+  }
+  values.fill(4);
+  {
+    mut int32_t& first = values.front();
+    first = 5;
+  }
+  {
+    mut int32_t& last = values.back();
+    last = 7;
+  }
+  {
+    mut int32_t& middle = values.at(int32_t(1));
+    middle = 6;
+  }
+  values[std::size_t(0)] = 5;
+  if (read_array(values) != 23) {
+    return 2;
+  }
+  mut std::array<int32_t, 0> empty = std::array<int32_t, 0>();
+  if (!empty.empty()) {
+    return 3;
+  }
+  return 0;
+}

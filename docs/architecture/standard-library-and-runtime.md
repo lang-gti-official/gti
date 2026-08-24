@@ -37,6 +37,27 @@ container behavior. Semantics also resolves and records the exact public
 append operation used by startup conversion, so the backend does not infer a
 method from the spelling `push_back`.
 
+### Executable Surface Census
+
+`tests/stdlib_surface_manifest.json` is the reviewed evidence ledger for the
+shipped source surface. It fingerprints `stdlib/prelude.gti` and every
+`stdlib/std/*.gti` unit, then classifies each inventoried public operation as
+`executable`, an intentional declaration `scaffold`, or currently
+`unsupported`. A changed or added source unit therefore requires an explicit
+surface review; the manifest does not parse GTI or become API authority.
+
+Every executable entry names at least one minimal concrete fixture and any
+required generic instantiation. The `stdlib_surface` CTest compiles those
+fixtures through the production compiler/native-driver path at O0 and O3 and
+checks exact exit status, stdout, and stderr. Unsupported entries may name one
+bounded expected-diagnostic case; scaffolds never masquerade as executable
+coverage. `stdlib_surface_manifest` additionally injects missing source,
+stale fingerprint, missing executable evidence, and wrong evidence-kind
+mutations. The initial complete census covers 20 source units, 34 classified
+entries, and 21 executable or diagnostic cases, including concrete
+`std::pair` construction/field access and the `std::forward_list` empty,
+front, push, pop, and clear operations.
+
 ## Compiler-Private Capabilities
 
 `gti_internal` declarations represent operations ordinary GTI cannot yet

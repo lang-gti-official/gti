@@ -1,0 +1,23 @@
+class Value {
+public:
+  int32_t value() {
+    return 7;
+  }
+};
+
+int main() {
+  mut std::unique_ptr<Value> owner = std::make_unique<Value>();
+  if (!owner || owner == nullptr || owner->value() != 7 ||
+      (*owner).value() != 7) {
+    return 1;
+  }
+  owner.reset();
+  if (owner || owner != nullptr) {
+    return 2;
+  }
+  owner = nullptr;
+  if (owner) {
+    return 3;
+  }
+  return 0;
+}

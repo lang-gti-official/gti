@@ -1,0 +1,58 @@
+#include <std/tcp>
+
+extern "C" {
+  void gti_test_set_socket_result(int32_t value);
+  int32_t gti_test_close_calls();
+}
+
+int32_t automatic_close_count() {
+  {
+    auto opened = std::tcp::open();
+    if (!opened) {
+      return -1;
+    }
+  }
+  return gti_test_close_calls();
+}
+
+int32_t moved_close_count() {
+  {
+    mut auto opened = std::tcp::socket::open();
+    if (!opened) {
+      return -1;
+    }
+    auto moved = std::move(opened);
+    if (!moved || !moved.value().is_open()) {
+      return -1;
+    }
+  }
+  return gti_test_close_calls();
+}
+
+int32_t failed_close_count() {
+  {
+    mut auto opened = std::tcp::open();
+    if (!opened) {
+      return -1;
+    }
+    auto closed = opened.value().close();
+    if (closed || closed.error() != std::tcp::errc::close_failed) {
+      return -1;
+    }
+  }
+  return gti_test_close_calls();
+}
+
+int main() {
+  gti_test_set_socket_result(-1);
+  auto failed = std::tcp::open();
+  if (failed || failed.error() != std::tcp::errc::open_failed) {
+    return 1;
+  }
+  gti_test_set_socket_result(17);
+  if (automatic_close_count() != 1 || moved_close_count() != 2 ||
+      failed_close_count() != 3) {
+    return 2;
+  }
+  return 0;
+}

@@ -12,9 +12,13 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Literal, Sequence
 
-from debug.typed_program_model import GeneratedCase, generated_case
+from debug.typed_program_model import (
+    TypedAuditCase,
+    composition_case,
+    generated_case,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +38,15 @@ INTERNAL_FAILURE_MARKERS = (
 
 class AuditFailure(RuntimeError):
     """A deterministic audit expectation was not satisfied."""
+
+
+TypedMismatch = Literal["evaluator", "reference", "gti"]
+
+
+def perturbed_snapshot(snapshot: tuple[int, str, str]) -> tuple[int, str, str]:
+    """Return a deterministic, still-portable result distinct from snapshot."""
+
+    return ((snapshot[0] + 1) % 126, snapshot[1], snapshot[2])
 
 
 def run_command(
@@ -102,7 +115,9 @@ def require_fragments(context: str, text: str, fragments: Sequence[str]) -> None
 def resolve_tool(requested: str | None, fallback: Path | str, label: str) -> str:
     candidate = requested or str(fallback)
     if "/" in candidate or "\\" in candidate:
-        path = Path(candidate).expanduser().resolve()
+        # Preserve the executable basename. Resolving a clang++ symlink to
+        # `clang` changes the driver's link mode and omits the C++ runtime.
+        path = Path(candidate).expanduser().absolute()
         if path.is_file():
             return str(path)
     else:
@@ -340,7 +355,7 @@ def cxx_compile_command(
 
 
 def preserve_typed_failure(
-    case: GeneratedCase,
+    case: TypedAuditCase,
     case_root: Path,
     artifacts_root: Path,
     error: AuditFailure,
@@ -403,11 +418,15 @@ def verify_generated_programs(
     timeout: int,
     verbose: bool,
     artifacts_root: Path | None,
+    injected_mismatch: TypedMismatch | None = None,
+    case_factory: Callable[[int, int], TypedAuditCase] = generated_case,
+    source_directory: str = "generated",
+    description: str = "typed differential programs",
 ) -> int:
-    source_root = output_root / "generated"
+    source_root = output_root / source_directory
     source_root.mkdir()
     for index in range(count):
-        case = generated_case(index, seed)
+        case = case_factory(index, seed)
         case_root = source_root / f"case-{index:03d}"
         case_root.mkdir()
         variants = (
@@ -427,6 +446,8 @@ def verify_generated_programs(
 
         try:
             expected = (case.expected, "", "")
+            if injected_mismatch == "evaluator":
+                expected = perturbed_snapshot(expected)
             observed: dict[str, tuple[int, str, str]] = {}
             for name, _ in variants:
                 cxx_source = case_root / f"{name}.cpp"
@@ -450,6 +471,12 @@ def verify_generated_programs(
                     )
                     assert_no_internal_failure(f"typed case {index} {variant}", result)
                     snapshot = (result.returncode, result.stdout, result.stderr)
+                    if (
+                        injected_mismatch == "reference"
+                        and name == "original"
+                        and optimization == "O0"
+                    ):
+                        snapshot = perturbed_snapshot(snapshot)
                     observed[variant] = snapshot
                     if snapshot != expected:
                         raise AuditFailure(
@@ -479,6 +506,13 @@ def verify_generated_programs(
                     )
                     assert_no_internal_failure(f"typed case {index} {variant}", result)
                     snapshot = (result.returncode, result.stdout, result.stderr)
+                    if (
+                        injected_mismatch == "gti"
+                        and name == "original"
+                        and optimization == "O0"
+                        and standard == "c++23"
+                    ):
+                        snapshot = perturbed_snapshot(snapshot)
                     observed[variant] = snapshot
                     if snapshot != expected:
                         raise AuditFailure(
@@ -505,7 +539,7 @@ def verify_generated_programs(
                 raise AuditFailure(f"{error}\npreserved: {preserved}") from error
             raise
     print(
-        f"PASS typed differential programs ({count}, seed {seed}; "
+        f"PASS {description} ({count}, seed {seed}; "
         "evaluator + C++ O0/O3 + GTI optimization matrix)"
     )
     return count
@@ -701,10 +735,17 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=20260809)
     parser.add_argument("--generated", type=int)
+    parser.add_argument("--compositions", type=int)
     parser.add_argument("--mutations", type=int)
     parser.add_argument("--skip-generated", action="store_true")
+    parser.add_argument("--skip-compositions", action="store_true")
     parser.add_argument("--skip-mutations", action="store_true")
     parser.add_argument("--skip-comparisons", action="store_true")
+    parser.add_argument(
+        "--typed-only",
+        action="store_true",
+        help="run only the bounded typed differential program checks",
+    )
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument(
         "--keep-failures",
@@ -753,13 +794,28 @@ def main() -> int:
             if arguments.generated is not None
             else (24 if arguments.full else 8)
         )
+        composition_count = (
+            arguments.compositions
+            if arguments.compositions is not None
+            else (4 if arguments.full else 2)
+        )
         mutation_count = (
             arguments.mutations
             if arguments.mutations is not None
             else (100 if arguments.full else 24)
         )
-        if generated_count < 0 or mutation_count < 0:
-            raise AuditFailure("--generated and --mutations cannot be negative")
+        if generated_count < 0 or composition_count < 0 or mutation_count < 0:
+            raise AuditFailure(
+                "--generated, --compositions, and --mutations cannot be negative"
+            )
+        if (
+            arguments.typed_only
+            and arguments.skip_generated
+            and arguments.skip_compositions
+        ):
+            raise AuditFailure(
+                "--typed-only requires generated or composition checks"
+            )
         artifacts_root = None
         if arguments.keep_failures or arguments.artifacts_dir:
             artifacts_root = Path(
@@ -771,7 +827,7 @@ def main() -> int:
         )
         cxx_fallback = os.environ.get("GTI_CXX") or os.environ.get("CXX") or "c++"
         cxx = resolve_tool(arguments.cxx, cxx_fallback, "C++ compiler")
-        cases = load_manifest()
+        cases = [] if arguments.typed_only else load_manifest()
 
         print(
             "Running full optional language audit..."
@@ -798,15 +854,16 @@ def main() -> int:
             )
         with keeper as temp:
             output_root = Path(temp)
-            verify_contract_cases(
-                cases,
-                gti,
-                cxx,
-                output_root,
-                full=arguments.full,
-                timeout=arguments.timeout,
-                verbose=arguments.verbose,
-            )
+            if not arguments.typed_only:
+                verify_contract_cases(
+                    cases,
+                    gti,
+                    cxx,
+                    output_root,
+                    full=arguments.full,
+                    timeout=arguments.timeout,
+                    verbose=arguments.verbose,
+                )
             if not arguments.skip_generated and generated_count:
                 verify_generated_programs(
                     generated_count,
@@ -819,7 +876,26 @@ def main() -> int:
                     verbose=arguments.verbose,
                     artifacts_root=artifacts_root,
                 )
-            if not arguments.skip_mutations and mutation_count:
+            if not arguments.skip_compositions and composition_count:
+                verify_generated_programs(
+                    composition_count,
+                    arguments.seed,
+                    gti,
+                    cxx,
+                    output_root,
+                    full=arguments.full,
+                    timeout=arguments.timeout,
+                    verbose=arguments.verbose,
+                    artifacts_root=artifacts_root,
+                    case_factory=composition_case,
+                    source_directory="compositions",
+                    description="typed composition programs",
+                )
+            if (
+                not arguments.typed_only
+                and not arguments.skip_mutations
+                and mutation_count
+            ):
                 verify_mutations(
                     mutation_count,
                     arguments.seed,
@@ -829,7 +905,7 @@ def main() -> int:
                     timeout=arguments.timeout,
                     verbose=arguments.verbose,
                 )
-            if arguments.full:
+            if arguments.full and not arguments.typed_only:
                 verify_public_examples(
                     gti,
                     cxx,
@@ -837,7 +913,7 @@ def main() -> int:
                     timeout=arguments.timeout,
                     verbose=arguments.verbose,
                 )
-            if not arguments.skip_comparisons:
+            if not arguments.typed_only and not arguments.skip_comparisons:
                 verify_comparison_showcase(
                     gti,
                     cxx,

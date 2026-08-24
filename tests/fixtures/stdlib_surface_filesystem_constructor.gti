@@ -1,0 +1,6 @@
+#include <std/filesystem>
+
+int main() {
+  mut std::filesystem::path value = std::filesystem::path("alpha/beta");
+  return value == "alpha/beta" ? 0 : 1;
+}
