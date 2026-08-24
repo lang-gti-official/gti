@@ -78,6 +78,9 @@ class Shape:
     # non-mutating method), so no write cell is generated.
     target: str | None = None
     access: str = "read"
+    # A cell whose shape does not fit the declaration/read split supplies the
+    # complete `main` body instead, prelude included by `render`.
+    body: str | None = None
 
     @property
     def label(self) -> str:
@@ -179,6 +182,66 @@ def with_writes(shapes: list[Shape]) -> list[Shape]:
     return paired
 
 
+def pointer_shapes() -> list[Shape]:
+    """Roots reached through a raw pointer, which requires an `unsafe` block."""
+    def wrap(inner: str) -> str:
+        return ("int main() {\n"
+                "  mut leaf obj = leaf();\n"
+                "  mut int32_t total = 0;\n"
+                "  unsafe {\n"
+                f"{inner}\n"
+                "  }\n"
+                "  return int(total) - 7;\n"
+                "}")
+
+    return [
+        Shape("pointer", "deref.field", "", "", "raw",
+              body=wrap("    mut leaf* p = &obj;\n"
+                        "    total = (*p).v;")),
+        Shape("pointer", "arrow.field", "", "", "raw",
+              body=wrap("    mut leaf* p = &obj;\n"
+                        "    total = p->v;")),
+        Shape("pointer", "deref.field (write)", "", "", "raw",
+              body=wrap("    mut leaf* p = &obj;\n"
+                        "    (*p).v = 7;\n"
+                        "    total = obj.v;")),
+        Shape("pointer", "index", "", "", "raw",
+              body=("int main() {\n"
+                    "  mut int32_t cells[4] = {};\n"
+                    "  mut int32_t total = 0;\n"
+                    "  unsafe {\n"
+                    "    mut int32_t* p = &cells[std::size_t(0)];\n"
+                    "    total = p[std::size_t(0)];\n"
+                    "  }\n"
+                    "  return int(total);\n"
+                    "}")),
+    ]
+
+
+def nested_capture_shapes() -> list[Shape]:
+    """By-reference captures, and a capture reached from an inner lambda."""
+    return [
+        Shape("capture-ref", "whole", "", "", "raw",
+              body=("int main() {\n"
+                    "  mut int32_t c = 7;\n"
+                    "  return int([&c]() -> int32_t { return c; }()) - 7;\n"
+                    "}")),
+        Shape("capture-ref", "field", "", "", "raw",
+              body=("int main() {\n"
+                    "  mut node c = node();\n"
+                    "  return int([&c]() -> int32_t { return c.direct; }()) - 7;\n"
+                    "}")),
+        Shape("lambda-in-lambda", "whole", "", "", "raw",
+              body=("int main() {\n"
+                    "  mut int32_t c = 7;\n"
+                    "  auto outer = [c]() -> int32_t {\n"
+                    "    return [c]() -> int32_t { return c; }();\n"
+                    "  };\n"
+                    "  return int(outer()) - 7;\n"
+                    "}")),
+    ]
+
+
 def render(shape: Shape) -> str:
     """The complete .gti source for one cell.
 
@@ -186,6 +249,8 @@ def render(shape: Shape) -> str:
     *runs* returns 0. The sweep only compiles, but keeping the shape uniform
     means these double as runtime reproducers.
     """
+    if shape.body is not None:
+        return PRELUDE + "\n" + shape.body.strip() + "\n"
     parts = [PRELUDE]
     if shape.placement == "global":
         parts.append(shape.declaration.replace("r ", "r ", 1))
@@ -244,7 +309,8 @@ def main() -> int:
         return 1
 
     shapes = with_writes(integer_shapes() + parameter_shapes()
-                         + capture_shapes() + field_shapes())
+                         + capture_shapes() + field_shapes()
+                         + pointer_shapes() + nested_capture_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:
@@ -268,10 +334,11 @@ def main() -> int:
         results.append((shape, state, detail))
 
     width = max(len(s.label) for s, _, _ in results) + 2
-    print(f"{'root':<12}{'projection (access)':<{width}}{'result':<8}detail")
-    print("-" * (12 + width + 8 + 12))
+    roots = max(max(len(s.root) for s, _, _ in results), len("root")) + 2
+    print(f"{'root':<{roots}}{'projection (access)':<{width}}{'result':<8}detail")
+    print("-" * (roots + width + 8 + 12))
     for shape, state, detail in results:
-        print(f"{shape.root:<12}{shape.label:<{width}}{state:<8}{detail}")
+        print(f"{shape.root:<{roots}}{shape.label:<{width}}{state:<8}{detail}")
 
     bugs = [(s, d) for s, state, d in results if state in {"ICE", "crash", "hang"}]
     print()

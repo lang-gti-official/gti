@@ -26,12 +26,27 @@ normal compiler exits with a correct diagnostic and only a sanitizer build
 shows the fault. Run them through the ASan fuzz harness instead:
 
 ```sh
-build-fuzz/fuzz/gti_pipeline_fuzzer -runs=1 tests/known_failures/asan/<file>.gti
+build-fuzz/fuzz/gti_pipeline_fuzzer -runs=1 \
+  -artifact_prefix=/tmp/gti-artifacts/ tests/known_failures/asan/<file>.gti
 ```
+
+`-artifact_prefix` matters: on a crash libFuzzer writes a `crash-<sha>` file
+into the **current directory** by default, so reproducing one of these from
+the repository root litters the tree.
 
 | File | Issue | Symptom |
 | --- | --- | --- |
 | `asan/issue-107-assign-in-and.gti` | [#107](https://github.com/LukeHHA/gti/issues/107) | an assignment as an operand of `and` → heap-use-after-free in `SemanticVisitor::visitAssignExpr` |
+
+## Wrongly rejected programs
+
+`rejected/` holds valid programs the compiler refuses. There is no crash and
+no ICE — the defect is the *rule*, so `check.py` cannot classify these either
+(it sees an ordinary non-zero exit). Compile one and read the diagnostic.
+
+| File | Issue | Symptom |
+| --- | --- | --- |
+| `rejected/issue-108-nested-capture.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | a nested lambda cannot capture the enclosing lambda's capture → `GTI-S2027`, though capturing the outer lambda's local or parameter is fine |
 
 ## Confirmed root causes
 
