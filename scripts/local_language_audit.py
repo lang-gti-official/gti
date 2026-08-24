@@ -603,7 +603,40 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--skip-comparisons", action="store_true")
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--keep-failures",
+        action="store_true",
+        help="preserve the audit working tree when a check fails, instead of "
+        "deleting the evidence with the temporary directory",
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        help="directory to preserve failing working trees under "
+        "(implies --keep-failures)",
+    )
     return parser.parse_args()
+
+
+class _KeepOnFailure:
+    """A working-directory holder that survives failures.
+
+    On clean exit the tree is deleted like a temporary directory; when the
+    audit raises, the tree is left in place and `kept_path` names it so the
+    failure can be captured and reduced instead of vanishing.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.kept_path: Path | None = None
+
+    def __enter__(self) -> str:
+        return str(self.root)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if exc_type is None:
+            shutil.rmtree(self.root, ignore_errors=True)
+        else:
+            self.kept_path = self.root
 
 
 def main() -> int:
@@ -637,7 +670,24 @@ def main() -> int:
             else "Running quick optional language audit..."
         )
         verify_workflow_isolation()
-        with tempfile.TemporaryDirectory(prefix="gti-local-language-audit-") as temp:
+        # With --keep-failures the working tree survives a failure so the
+        # evidence can be captured and reduced (scripts/debug/); by default
+        # it is a temporary directory, deleted either way.
+        keep_failures = arguments.keep_failures or bool(arguments.artifacts_dir)
+        if keep_failures:
+            artifacts_parent = Path(arguments.artifacts_dir or ".").resolve()
+            artifacts_parent.mkdir(parents=True, exist_ok=True)
+            kept_root = Path(
+                tempfile.mkdtemp(
+                    prefix="gti-audit-failure-", dir=artifacts_parent
+                )
+            )
+            keeper = _KeepOnFailure(kept_root)
+        else:
+            keeper = tempfile.TemporaryDirectory(
+                prefix="gti-local-language-audit-"
+            )
+        with keeper as temp:
             output_root = Path(temp)
             verify_contract_cases(
                 cases,
@@ -688,6 +738,15 @@ def main() -> int:
         return 0
     except (AuditFailure, OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
+        kept = getattr(locals().get("keeper"), "kept_path", None)
+        if kept is not None:
+            print(f"failing working tree preserved at: {kept}", file=sys.stderr)
+            print(
+                "capture a failing source from it with: python3 "
+                "scripts/debug/capture_compiler_failure.py capture "
+                "--gti <compiler> --source <file.gti> --out <bundle>",
+                file=sys.stderr,
+            )
         return 1
 
 

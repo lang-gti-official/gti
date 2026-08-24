@@ -11,8 +11,16 @@ ctest). `Q-FUZZ-01B` implemented: opt-in parser/formatter/pipeline libFuzzer
 harnesses under `GTI_BUILD_FUZZERS=ON` with tree-wide ASan/UBSan+coverage
 instrumentation, seed corpora, a token dictionary, span/idempotence/
 artifact-or-rejection assertions, and the `fuzzer_smoke` fixed-corpus ctest.
-Local-audit `--keep-failures` integration and slices C-D remain ready for
-bounded implementation.
+`Q-FUZZ-01C` implemented: `scripts/debug/reduce_compiler_failure.py` runs
+bundle-derived delta reduction (whole-file drops, ddmin over lines, literal
+simplification) under the exact replay predicate with per-candidate caching,
+atomic resumable progress, and a final re-capture whose signature must equal
+the original; capture output prints the reducer command, and the
+`compiler_debug_tooling` ctest proves diagnostic, runtime-mismatch, and
+crash-signal reductions. The local audit gained `--keep-failures` /
+`--artifacts-dir`, preserving the failing working tree instead of deleting it.
+Slice D (typed differential generation) remains ready for bounded
+implementation.
 
 This proposal selects a small set of high-yield tools for finding, preserving,
 and reducing GTI compiler failures. It deliberately builds on the compiler
