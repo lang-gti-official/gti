@@ -218,6 +218,84 @@ def pointer_shapes() -> list[Shape]:
     ]
 
 
+GENERIC_PRELUDE = """class cell<std::default_initializable T> {
+public:
+  cell() {}
+  mut T v = T();
+};
+
+class box<std::default_initializable T> {
+public:
+  box() {}
+  mut T v = T();
+};
+"""
+
+
+def generic_shapes() -> list[Shape]:
+    """Generic functions, classes, extent parameters, and packs.
+
+    Generic instantiation is its own identity problem rather than a place
+    problem, but it lands in the same place: a program the frontend should
+    accept and does not. #110 lives here.
+    """
+    def generic(inner: str) -> str:
+        return GENERIC_PRELUDE + "\n" + inner
+
+    return [
+        Shape("generic", "function", "", "", "raw",
+              body=("T identity<T>(T x) { return x; }\n"
+                    "int main() { return int(identity<int32_t>(7)) - 7; }")),
+        Shape("generic", "class field", "", "", "raw",
+              body=generic("int main() {\n"
+                           "  mut box<int32_t> b = box<int32_t>();\n"
+                           "  return int(b.v);\n"
+                           "}")),
+        Shape("generic", "global instance", "", "", "raw",
+              body=generic("mut box<int32_t> g = box<int32_t>();\n"
+                           "int main() { return int(g.v); }")),
+        Shape("generic", "class argument", "", "", "raw",
+              body=generic("int main() {\n"
+                           "  mut box<leaf> b = box<leaf>();\n"
+                           "  return int(b.v.v) - 7;\n"
+                           "}")),
+        Shape("generic", "distinct nested", "", "", "raw",
+              body=generic("int main() {\n"
+                           "  mut box<cell<int32_t>> b = box<cell<int32_t>>();\n"
+                           "  return int(b.v.v);\n"
+                           "}")),
+        # #110: a generic inside its own arguments yields two specializations.
+        Shape("generic", "self nested", "", "", "raw",
+              body=generic("int main() {\n"
+                           "  mut cell<cell<int32_t>> c = cell<cell<int32_t>>();\n"
+                           "  return int(c.v.v);\n"
+                           "}")),
+        Shape("generic", "self nested indirect", "", "", "raw",
+              body=generic("int main() {\n"
+                           "  mut box<cell<box<int32_t>>> b =\n"
+                           "      box<cell<box<int32_t>>>();\n"
+                           "  return int(b.v.v.v);\n"
+                           "}")),
+        Shape("generic", "extent parameter", "", "", "raw",
+              body=("uint64_t extent<uint64_t N>(int32_t values[N]) {\n"
+                    "  return N;\n"
+                    "}\n"
+                    "int main() {\n"
+                    "  mut int32_t data[4] = {};\n"
+                    "  return int(extent(data)) - 4;\n"
+                    "}")),
+        Shape("generic", "pack fold", "", "", "raw",
+              body=("void consume<T>(T& v) {}\n"
+                    "void each<T...>(T... values) {\n"
+                    "  (consume(values), ...);\n"
+                    "}\n"
+                    "int main() {\n"
+                    "  each<int32_t, int32_t>(3, 4);\n"
+                    "  return 0;\n"
+                    "}")),
+    ]
+
+
 def enum_shapes() -> list[Shape]:
     """Enum and `expected` roots.
 
@@ -381,7 +459,7 @@ def main() -> int:
     shapes = with_writes(integer_shapes() + parameter_shapes()
                          + capture_shapes() + field_shapes()
                          + pointer_shapes() + nested_capture_shapes()
-                         + enum_shapes())
+                         + enum_shapes() + generic_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:

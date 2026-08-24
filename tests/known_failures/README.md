@@ -48,6 +48,7 @@ no ICE — the defect is the *rule*, so `check.py` cannot classify these either
 | --- | --- | --- |
 | `rejected/issue-108-nested-capture.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | a nested lambda cannot capture the enclosing lambda's capture → `GTI-S2027`, though capturing the outer lambda's local or parameter is fine |
 | `rejected/issue-109-payload-class-diagnostic.gti` | [#109](https://github.com/LukeHHA/gti/issues/109) | the rejection is correct, but `GTI-S2067` prints `'unknown class'` instead of naming the payload field's type |
+| `rejected/issue-110-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic inside its own type arguments yields two distinct specializations → `GTI-S2003` naming the same type on both sides |
 
 ## Confirmed root causes
 
@@ -101,7 +102,9 @@ each storage root (local, global, parameter, lambda capture, `this`, raw
 pointer) with each projection chain (none, `.field`, `.field.field`, `[i]`,
 `[i].field`, deref, arrow) in both read and write position, then compiling one
 minimal program per cell. Enum, payload-enum and `expected<T, E>` cells cover
-the aggregate-shaped neighbours of the fixed array that produced #106.
+the aggregate-shaped neighbours of the fixed array that produced #106, and
+generic cells cover instantiation identity, which is not a place problem but
+fails the same way — a program the frontend should accept and does not.
 
 ```sh
 python3 scripts/debug/place_shape_matrix.py
