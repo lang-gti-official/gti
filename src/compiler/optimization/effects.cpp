@@ -942,6 +942,40 @@ MirEffectTraits effects(const MirProgram &program,
   return result;
 }
 
+std::optional<MirEffectSummary>
+exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
+                          const MirInstruction &instruction) {
+  if (!isInvocation(instruction)) {
+    return std::nullopt;
+  }
+  const ExactTargets targets = exactTargets(program, body, instruction);
+  if (targets.boundary || targets.addresses.empty()) {
+    return std::nullopt;
+  }
+  std::optional<MirEffectSummary> result;
+  for (const MirBodyAddress target : targets.addresses) {
+    const MirEffectSummary *summary = summaryForAddress(program, target);
+    if (summary == nullptr) {
+      return std::nullopt;
+    }
+    if (!result) {
+      result = *summary;
+      continue;
+    }
+    result->traits = merge(result->traits, summary->traits);
+    result->receiverEscapes |= summary->receiverEscapes;
+    if (result->argumentsEscape.size() != summary->argumentsEscape.size()) {
+      return std::nullopt;
+    }
+    for (std::size_t index = 0; index < result->argumentsEscape.size();
+         ++index) {
+      result->argumentsEscape[index] =
+          result->argumentsEscape[index] || summary->argumentsEscape[index];
+    }
+  }
+  return result;
+}
+
 MirProgramEffectSummaries
 deriveMirProgramEffectSummaries(const MirProgram &program) {
   std::vector<EffectNode> nodes;

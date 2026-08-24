@@ -1,7 +1,8 @@
 # Optimization
 
-Status: implemented verified local MIR pipeline, first proof-carrying safety
-optimization families, and optimizer observability foundation.
+Status: implemented verified local MIR pipeline, reusable local dataflow and
+SCCP, bounded loop/range and place alias/escape analyses, proof-carrying safety
+optimization families, and optimizer observability.
 
 GTI optimization has one executable-body authority: optimized MIR. The
 frontend still runs a compatibility HIR constant analysis for non-body
@@ -48,12 +49,13 @@ following deterministic local pipeline:
 3. `unreachable-block-cleanup`; and
 4. `dead-unused-computations`.
 
-`-O2` and `-O3` add the following deterministic safety passes between literal
-folding and cleanup:
+`-O2` and `-O3` add the following deterministic passes between literal folding
+and cleanup:
 
-1. `discharge-bounds-checks`;
-2. `discharge-storage-state-checks`; and
-3. `discharge-arithmetic-overflow-checks`.
+1. `sparse-conditional-constants`;
+2. `discharge-bounds-checks`;
+3. `discharge-storage-state-checks`; and
+4. `discharge-arithmetic-overflow-checks`.
 
 Both levels currently derive the same GTI proofs. They still select their
 corresponding native optimization levels. `-O0` and `-O1` do not attach safety
@@ -65,6 +67,15 @@ literal. Every fold candidate is compared by `HirValueId` with the
 compatibility HIR constant analysis; disagreement blocks the rewrite and is
 reported. That shadow result is transitional validation for this pass only.
 MIR provenance and transformation evidence remain production authority.
+
+Sparse conditional constant propagation uses the reusable forward-dataflow
+solver described below. It propagates exact typed literals through admitted
+scalar, non-owning SSA computations and executable branch edges. Exact
+constants become proof-carrying MIR literals and exact branch outcomes use the
+ordinary branch-rewrite path. Unsupported operations become overdefined;
+unknown branches defer their outgoing edges; switch and invoke routing remain
+conservative. The pass does not propagate through places, memory, ownership,
+loans, cleanup, trapping operations, or user-code effects.
 
 Scalar promotion is the first block-parameter client. MIR blocks may receive
 typed scalar, non-owning parameters, and each predecessor edge carries exact
@@ -89,10 +100,11 @@ synchronization.
 the first check-elimination slice. It propagates checked fixed-width integer
 intervals through CFG edges, refines those intervals from branch predicates,
 tracks fixed-array extents, and tracks exact initialized slots in private
-sparse storage. A bounded deterministic worklist and widening keep loops
-finite. Unknown or opaque calls, raw/unsafe memory effects, and other
-unclassified mutation invalidate mutable facts instead of being guessed
-through.
+sparse storage. It is a client of the shared deterministic monotone
+forward-dataflow solver; its existing typed lattice, join, and bounded widening
+remain safety-analysis policy. Unknown or opaque calls, raw/unsafe memory
+effects, and other unclassified mutation invalidate mutable facts instead of
+being guessed through.
 
 The admitted operations are deliberately narrow:
 
@@ -105,9 +117,12 @@ The admitted operations are deliberately narrow:
   operand intervals prove the result remains in the declared GTI domain.
 
 Array writes and borrows, prefix-storage operations, division, remainder,
-shifts, conversions, cross-call facts, aliases, and unproved dynamic indices
-remain checked. This is not a public-library-name optimization and does not
-infer container invariants.
+shifts, conversions, cross-call range facts, and unproved dynamic indices
+remain checked. Place alias facts refine mutable safety state: duplicate
+`must-alias` place IDs share one deterministic fact key, and a write preserves
+facts only for places proved `no-alias`; `must-alias` and `may-alias` facts are
+invalidated. Alias facts do not themselves discharge a check or infer a
+container invariant.
 
 Each proof identifies one exact local defined-failure outcome by family,
 origin, code, and detail. The optimizer attaches a `MirSafetyDischarge` to the
@@ -121,9 +136,9 @@ transformation.
 Durable destructive-edit identity is
 `{MirBodyAddress, MirInstructionId}`; `MirBlockId` identifies a block.
 Vector indexes are implementation details and never appear in optimizer
-evidence. `MirProgramEditor` exposes only current client-backed literal,
-terminator, place-promotion, safety-discharge, dead-instruction, and
-unreachable-block edits.
+evidence. `MirProgramEditor` exposes only current client-backed local-fold and
+sparse literal, terminator, place-promotion, safety-discharge,
+dead-instruction, and unreachable-block edits.
 Each edit batch validates every guarded target before mutation, rewrites a
 copy, repairs derived facts, verifies the complete candidate, and commits
 atomically. Destructive instruction removal leaves a canonical inert
@@ -136,10 +151,12 @@ provenance, exact related identities, replacement payload where applicable,
 and required analysis facts. These records are untrusted claims.
 `verifyMirOptimizationCoherence` starts from canonical source MIR and
 independently replays scalar promotion, literal/compute folds, branch
-selection, exact safety proofs, unreachable cleanup, and dead-computation
-removal. Canonical source MIR containing a pre-attached safety discharge is
-rejected. Replay reruns the canonical safety analysis and exact-compares the
-proof's outcome and related MIR blocks, instructions, values, and places before
+selection, SCCP literal proofs, exact safety proofs, unreachable cleanup, and
+dead-computation removal. Canonical source MIR containing a pre-attached safety
+discharge is rejected. Replay takes one canonical SCCP snapshot before sparse
+edits and exact-compares every replacement literal and related MIR identity.
+It also reruns the canonical safety analysis and exact-compares the proof's
+outcome and related MIR blocks, instructions, values, and places before
 attaching it. It then exact-compares complete MIR structures, including
 initialization and failure schedules. Missing, duplicate, unsorted, stale,
 malformed, or unauthorized records fail closed.
@@ -150,6 +167,37 @@ transformation records do not cross the backend frontier. Current backends and
 a future LLVM backend therefore receive the same self-contained optimized
 representation without reproducing optimization decisions.
 
+## Local Dataflow And Structural Analyses
+
+`runMirForwardDataflow` owns deterministic FIFO scheduling, stable executable
+edge identities, update counts, configurable bounded widening, and a hard
+iteration limit. Each client owns its typed state, transfer, monotone join, and
+widening meaning. Malformed block identities, targets, duplicate edge
+identities, or failure to converge fail closed. The safety regression suite and
+an independent FIFO oracle preserve the pre-migration fixed point; SCCP is the
+first new client.
+
+`analyzeMirLoops` derives natural loops from dominance backedges, merges
+multiple latches with one header, builds a deterministic strict-containment
+loop forest, and marks irreducible multi-entry SCCs. Within reducible loops it
+records side-effect-free scalar invariants and a bounded single-latch affine
+induction family carried by MIR block parameters. An induction requires one
+literal entry value, one positive literal add/subtract step, and may retain one
+invariant relational branch bound. These facts are cached analysis output; no
+loop transformation, symbolic recurrence solver, polyhedral model, or
+unbounded widening is implemented.
+
+`analyzeMirPlaceAliasEscape` derives a body-local dense relation over stable
+MIR places. Equal places are `must-alias`; precise disjoint roots, fields, and
+constant indices are `no-alias`; indirect, dynamic-index, raw-memory, or
+otherwise unresolved relationships are `may-alias`. Escape reasons record
+address taking, returns, retained borrows, non-local stores, raw memory, and
+calls. Only closed exact static call summaries may project receiver or
+argument escape; unresolved, native, virtual, and recursive boundaries remain
+conservative. The analysis does not assert interprocedural pointer identity,
+and raw memory never becomes `no-alias`. Safety-state invalidation is its first
+client. There is no MemorySSA or load/store elimination pass.
+
 ## Pass And Analysis Contract
 
 `MirPass` exposes a stable name and a run operation over `MirPassContext`
@@ -157,14 +205,14 @@ and `MirBodyAnalysisManager`. An outcome contains its deterministic report,
 explicit preservation claim, transformation records, and verification.
 
 The body analysis manager is keyed by stable `MirBodyAddress` plus a
-monotonically increasing revision. It caches only facts consumed by current
-passes: CFG/reachability and acyclicity, dominance, value uses, exact
-instruction effects, scalar-promotion inputs, and canonical safety facts. A
-pass explicitly preserves analyses; an unknown or omitted claim invalidates
-every cached result conservatively. No MIR pointer survives invalidation. The
-safety client owns only its bounded body-local intervals and predicates; a
-general loop framework, alias analysis, memory SSA, inlining, and
-devirtualization remain absent until a concrete pass needs them.
+monotonically increasing revision. It caches CFG/reachability and acyclicity,
+dominance, value uses, exact instruction effects, scalar-promotion inputs,
+canonical safety facts, place alias/escape facts, loop/range facts, and sparse
+constants. A pass explicitly preserves analyses; an unknown or omitted claim
+invalidates every cached result conservatively. No MIR pointer survives
+invalidation. The safety analysis reuses the manager-owned alias snapshot.
+Memory SSA, inlining, devirtualization, and loop or memory transformations
+remain absent until a bounded measured client requires them.
 
 ## Per-Instance Effects
 
@@ -183,6 +231,9 @@ unresolved targets remain maximally conservative unless an existing trusted
 intrinsic or synchronization identity supplies a complete contract. Source
 names never participate.
 
+The same closed exact-summary query is shared with escape analysis; it exposes
+only verified MIR facts and never guesses across an open call boundary.
+
 `verifyMirEffectSummaries` independently derives the least result and rejects
 every under-approximation while permitting conservative over-approximation.
 These effects are optimization safety facts, not predictions about what the
@@ -199,7 +250,7 @@ Optimization output is opt-in:
 --optimization-report <path> deterministic versioned JSON report
 ```
 
-The JSON schema is `gti-optimization-report`, version 2. It includes the
+The JSON schema is `gti-optimization-report`, version 3. It includes the
 selected level, pass statistics, actionable remarks, invalidated analyses,
 stable MIR/source identities, proof kinds, transformation records,
 verification, exact safety outcomes and related places, and exact
@@ -207,6 +258,8 @@ source/emitted/statically-discharged counts per safety family. Counts represent
 local defined-failure outcomes rather than whole instructions. It contains no
 timing or pointer data, so identical inputs produce identical output. GTI proof
 remarks are labelled separately from native Clang/GCC optimization remarks.
+Version 3 adds the `sparse-constant` proof/provenance vocabulary; it does not
+serialize transient lattice, loop, or alias snapshots.
 
 Ordinary compilation captures none of these outputs and remains unchanged when
 the options are absent. The reusable driver provides equivalent opt-in pre-MIR,
@@ -226,11 +279,13 @@ presentation.
 - Native C++/LLVM optimization remains responsible for target instruction
   selection and machine-level work.
 
-The next clients can widen the measured operation families or add sparse
-propagation without changing optimizer ownership or backend inputs. Every new
-family must extend the canonical analysis, typed proof, independent replay,
-backend consumption, per-family report, near-miss coverage, and differential
-runtime evidence together.
+The bounded follow-on milestones are numbered in
+[`implementation-sequence.md`](../plans/implementation-sequence.md). New
+transforms must consume one of these analyses through typed evidence and
+independent replay; analysis availability alone never authorizes a rewrite.
+MemorySSA is introduced only when a measured memory transformation cannot be
+proved from existing place/effect facts.
+
 See [`docs/plans/optimization.md`](../plans/optimization.md) and
 [`docs/plans/performance-tooling.md`](../plans/performance-tooling.md) for the
 supporting transform and observability designs.

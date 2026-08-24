@@ -267,11 +267,14 @@ add_library(
   "src/compiler/mir_printer.cpp"
   "src/compiler/mir_backend.cpp"
   "src/compiler/native_header.cpp"
+  "src/compiler/optimization/alias.cpp"
   "src/compiler/optimization/effects.cpp"
+  "src/compiler/optimization/loops.cpp"
   "src/compiler/optimization/pass.cpp"
   "src/compiler/optimization/report.cpp"
   "src/compiler/optimization/rewrite.cpp"
   "src/compiler/optimization/safety.cpp"
+  "src/compiler/optimization/sccp.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
   "src/compiler/semantic_analyzer.cpp"
@@ -607,6 +610,11 @@ if(BUILD_TESTING)
                  "tests/optimizer_safety_tests.cpp")
   target_link_libraries("gti_optimizer_safety_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_safety COMMAND gti_optimizer_safety_tests)
+
+  add_executable("gti_optimizer_analysis_tests"
+                 "tests/optimizer_analysis_tests.cpp")
+  target_link_libraries("gti_optimizer_analysis_tests" PRIVATE gti_compiler)
+  add_test(NAME optimizer_analyses COMMAND gti_optimizer_analysis_tests)
 
   add_executable("gti_failure_metadata_tests"
                  "tests/failure_metadata_tests.cpp")

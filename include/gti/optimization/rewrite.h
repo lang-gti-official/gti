@@ -66,6 +66,15 @@ public:
                                    MirOperation expectedOperation,
                                    Literal literal);
 
+  // Queues an SCCP-proven literal. Unlike a local compute fold, operands need
+  // not be literal definitions in the same block; apply() reruns canonical
+  // SCCP and requires exact evidence before mutating MIR.
+  void queueSparseConstantReplacement(
+      MirInstructionKey target, MirOperation expectedOperation, Literal literal,
+      std::vector<MirBlockId> relatedBlocks,
+      std::vector<MirInstructionId> relatedInstructions,
+      std::vector<MirValueId> relatedValues);
+
   // Queues the rewrite of one Branch terminator whose condition value's
   // definition is a dominating literal bool into a Goto to the taken
   // target, retaining the condition as BranchFold provenance. Block
@@ -115,6 +124,10 @@ private:
     MirOperation expectedOperation = MirOperation::None;
     Literal literal;
     bool computeFold = false;
+    bool sparseConstant = false;
+    std::vector<MirBlockId> relatedBlocks;
+    std::vector<MirInstructionId> relatedInstructions;
+    std::vector<MirValueId> relatedValues;
   };
 
   struct BranchFold {

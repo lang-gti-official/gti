@@ -3,6 +3,7 @@
 #include "gti/mir.h"
 
 #include <cstddef>
+#include <optional>
 #include <string_view>
 
 namespace lang {
@@ -34,6 +35,13 @@ inline constexpr std::size_t atomicMemoryOrderCount =
 // conservative.
 [[nodiscard]] MirEffectTraits effects(const MirProgram &program,
                                       const MirInstruction &instruction);
+
+// Returns the merged verified summary only when an invocation has a closed,
+// exact static target set. Native, dynamic, unresolved, and private-runtime
+// boundaries return no summary and must remain conservative in clients.
+[[nodiscard]] std::optional<MirEffectSummary>
+exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
+                          const MirInstruction &instruction);
 
 [[nodiscard]] MirProgramEffectSummaries
 deriveMirProgramEffectSummaries(const MirProgram &program);

@@ -701,20 +701,21 @@ instance ID; instructions use stable `MirInstructionId`, and blocks use
 `MirBlockId`. The editor never exposes mutable program vectors or retains
 instruction pointers across an edit.
 
-Current client-backed edits replace a computation with a literal, replace a
-branch terminator, promote one scalar place, tombstone one dead computation,
-or remove one unreachable block. All queued claims are checked before
-mutation and applied to a copy in deterministic identity order. Touched bodies
-have required value-use/CFG facts repaired, then the complete candidate is
-verified before commit. Invalid, stale, duplicate, or malformed batches leave
-the input byte-identical.
+Current client-backed edits replace a computation with a local-fold or SCCP
+literal, replace a branch terminator, promote one scalar place, attach one
+safety discharge, tombstone one dead computation, or remove one unreachable
+block. All queued claims are checked before mutation and applied to a copy in
+deterministic identity order. Touched bodies have required value-use/CFG facts
+repaired, then the complete candidate is verified before commit. Invalid,
+stale, duplicate, or malformed batches leave the input byte-identical.
 
 `MirPass` and the body-scoped `MirBodyAnalysisManager` provide the current
-small pass framework. The manager revisions bodies and caches only
-CFG/reachability, dominance, value uses, effects, and scalar-promotion inputs.
+small pass framework. The manager revisions bodies and caches CFG/reachability,
+dominance, value uses, effects, scalar-promotion inputs, safety proofs,
+place-alias/escape facts, natural-loop/range facts, and sparse constants.
 Explicit preservation retains an analysis; unknown preservation invalidates
 conservatively. There is no arbitrary insertion API, ID compaction,
-incremental dominance update, loop framework, alias analysis, or memory SSA.
+incremental dominance update, memory SSA, or loop/memory transformation.
 
 Semantic analysis chooses proven borrow endpoints; HIR carries them; MIR emits
 and verifies them. Verification is an integrity gate, not an alias or last-use

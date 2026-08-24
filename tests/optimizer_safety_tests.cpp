@@ -211,12 +211,13 @@ int32_t main() {
          "discharged checks");
   const std::string report =
       lang::serializeOptimizationReportJson(o2.report, "O2");
-  expect(report.find("\"version\":2") != std::string::npos &&
+  expect(report.find("\"version\":3") != std::string::npos &&
              report.find("\"families\"") != std::string::npos &&
              report.find("\"safetyDischarge\"") != std::string::npos &&
-             report.find("\"relatedPlaces\"") != std::string::npos,
-         "schema v2 should expose exact safety families, outcomes, and MIR "
-         "proof identities");
+             report.find("\"relatedPlaces\"") != std::string::npos &&
+             report.find("\"safetyChecks\":true") != std::string::npos,
+         "schema v3 should expose exact safety families, outcomes, and MIR "
+         "proof identities plus truthful safety-analysis invalidation");
 
   const auto firstSafetyRecord = std::find_if(
       o2.report.transformations.begin(), o2.report.transformations.end(),

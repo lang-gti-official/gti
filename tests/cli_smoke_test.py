@@ -1853,7 +1853,7 @@ def main():
         assert observed.stderr.startswith("gti-opt: GTI MIR optimization remarks")
         assert "gti-opt: safety operations source=" in observed.stderr
         assert report["schema"] == "gti-optimization-report"
-        assert report["version"] == 2
+        assert report["version"] == 3
         assert report["optimizationLevel"] == "O1"
         assert [entry["name"] for entry in report["passes"]] == [
             "scalar-promotion",

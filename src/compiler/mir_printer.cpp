@@ -1127,6 +1127,16 @@ private:
       }
       break;
     }
+    case MirLiteralProvenanceKind::SparseConstant: {
+      output << "sparse-constant:"
+             << name(value.literalProvenance.sourceOperation);
+      for (std::size_t index = 0;
+           index < value.literalProvenance.sourceValues.size(); ++index) {
+        output << (index == 0 ? ':' : ',') << 'v'
+               << value.literalProvenance.sourceValues[index];
+      }
+      break;
+    }
     case MirLiteralProvenanceKind::Count:
       output << "invalid:v" << value.literalProvenance.sourceValue;
       break;
