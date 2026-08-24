@@ -1,0 +1,6 @@
+// expected exit status: 3 — actual: 0, the comma's last operand is cloned
+int main() {
+  mut int32_t x = 3;
+  mut int32_t y = 8;
+  return (y, x);
+}
