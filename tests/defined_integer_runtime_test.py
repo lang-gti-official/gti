@@ -104,18 +104,43 @@ def build_and_run(
     return True
 
 
-def main() -> int:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: defined_integer_runtime_test.py <gti> <source>")
 
-    compiler = pathlib.Path(sys.argv[1]).resolve()
-    source = pathlib.Path(sys.argv[2]).resolve()
+
+def parse_shard(arguments: list[str]) -> tuple[int, int, list[str]]:
+    """Strip a trailing `--shard K/N` from argv; default is everything.
+
+    Sharding selects whole (optimization, standard) configurations so every
+    case still runs in every selected configuration; the shard union is the
+    full matrix by construction.
+    """
+    if len(arguments) >= 2 and arguments[-2] == "--shard":
+        shard, _, count = arguments[-1].partition("/")
+        return int(shard), int(count), arguments[:-2]
+    return 1, 1, arguments
+
+
+
+def main() -> int:
+    shard, shard_count, arguments = parse_shard(sys.argv)
+    if len(arguments) != 3:
+        raise SystemExit(
+            "usage: defined_integer_runtime_test.py <gti> <source> "
+            "[--shard K/N]"
+        )
+
+    compiler = pathlib.Path(arguments[1]).resolve()
+    source = pathlib.Path(arguments[2]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-defined-integer-") as temporary:
         root = pathlib.Path(temporary)
         boundaries = root / "boundaries.gti"
         boundaries.write_text(boundary_source(), encoding="utf8")
-        for optimization in ("O0", "O3"):
-            for standard in ("c++20", "c++23"):
+        configurations = [
+            (optimization, standard)
+            for optimization in ("O0", "O3")
+            for standard in ("c++20", "c++23")
+        ]
+        for index, (optimization, standard) in enumerate(configurations):
+            if index % shard_count == shard - 1:
                 if not build_and_run(
                     compiler,
                     source,

@@ -61,6 +61,14 @@ local function detect_platform()
   end
 
   if system == "Darwin" and architecture then
+    if architecture == "x64" then
+      -- Intel macOS artifacts stopped publishing after v0.299.0; the last
+      -- Intel-capable release remains installable by pinning that version.
+      error(
+        "gti: darwin-x64 builds are no longer published; the last release "
+          .. "with an Intel macOS archive is v0.299.0"
+      )
+    end
     return "darwin-" .. architecture
   end
   if system == "Linux" and architecture then
