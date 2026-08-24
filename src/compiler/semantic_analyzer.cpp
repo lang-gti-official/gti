@@ -1,9 +1,11 @@
 #include "gti/semantic_analyzer.h"
 
+#include "gti/frontend_work.h"
 #include "semantic_diagnostics.h"
 #include "semantic_spelling.h"
 
 #include <cassert>
+#include <chrono>
 
 namespace lang {
 
@@ -72,9 +74,9 @@ public:
   };
 
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
-                bool toolingOccurrences)
+                bool toolingOccurrences, FrontendWorkMetrics *workMetrics)
       : target(std::move(target)), sourceGraph(sourceGraph),
-        toolingOccurrences(toolingOccurrences) {
+        toolingOccurrences(toolingOccurrences), workMetrics(workMetrics) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
@@ -178,6 +180,7 @@ public:
     lambdaUncapturedLocals.clear();
     currentReturnType = SemanticType::Unknown;
 
+    const auto registrationStart = std::chrono::steady_clock::now();
     registerNamespaces(program.declarations(), {});
     registerNamespaceAliases(program.declarations(), {});
     registerTypeAliases(program.declarations(), {});
@@ -203,10 +206,26 @@ public:
     validateInterfaceCapabilities();
     recordClassTypes();
     recordClassLifecycles();
+    if (workMetrics != nullptr) {
+      workMetrics->semanticRegistrationMicroseconds = static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - registrationStart)
+              .count());
+    }
     beginScope();
+    const auto bodyStart = std::chrono::steady_clock::now();
+    measureTopLevelStatements = workMetrics != nullptr;
     analyze(program.declarations());
+    measureTopLevelStatements = false;
     validateDefaultArgumentCycles();
     endScope();
+    if (workMetrics != nullptr) {
+      workMetrics->semanticBodyMicroseconds = static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - bodyStart)
+              .count());
+    }
+    const auto finalizationStart = std::chrono::steady_clock::now();
     discoverOwnedCallableContracts();
     semanticModel.finalizeCallableForwardings();
     validateOnceCallableForwardings();
@@ -217,6 +236,12 @@ public:
     semanticModel.finalizeCallableArguments();
     finalizeProgramInitialization(program);
     semanticModel.finalizeOccurrences();
+    if (workMetrics != nullptr) {
+      workMetrics->semanticFinalizationMicroseconds = static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - finalizationStart)
+              .count());
+    }
     return !hadError();
   }
 
@@ -26777,11 +26802,18 @@ private:
     LoanFlowContext reachableLoanFlow;
     std::vector<ValueControlFlowContext> reachableValueControlFlow;
     SemanticType reachableType = currentType;
+    const bool measureStatements = measureTopLevelStatements;
+    if (measureStatements) {
+      measureTopLevelStatements = false;
+    }
     for (std::size_t index = 0; index < statements.size(); ++index) {
       const StmtPtr &statement = statements[index];
       loanFlow.currentRegion = region;
       loanFlow.currentOrder = index + 1;
       loanFlow.currentStatement = statement.get();
+      const auto statementStart = measureStatements
+                                      ? std::chrono::steady_clock::now()
+                                      : std::chrono::steady_clock::time_point{};
       if (reachable) {
         analyze(statement);
         reachable = summarizeFlow(statement.get()).canFallThrough;
@@ -26795,6 +26827,21 @@ private:
         }
         analyze(statement);
       }
+      if (measureStatements && workMetrics != nullptr && statement != nullptr) {
+        const std::size_t elapsed = static_cast<std::size_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - statementStart)
+                .count());
+        const SourceUnitId unit = statementSourceUnit(*statement);
+        if (sourceGraph != nullptr && sourceGraph->isCompilerTrusted(unit)) {
+          workMetrics->semanticTrustedBodyMicroseconds += elapsed;
+        } else {
+          workMetrics->semanticApplicationBodyMicroseconds += elapsed;
+        }
+      }
+    }
+    if (measureStatements) {
+      measureTopLevelStatements = true;
     }
     if (hasUnreachableTail) {
       scopes = std::move(reachableScopes);
@@ -32346,6 +32393,8 @@ private:
   // Mirrors FrontendOptions::toolingOccurrences; reapplied after the
   // model is cleared at the start of each check().
   bool toolingOccurrences = true;
+  FrontendWorkMetrics *workMetrics = nullptr;
+  bool measureTopLevelStatements = false;
   SemanticType currentType = SemanticType::Unknown;
   SemanticType currentReturnType = SemanticType::Unknown;
   std::optional<ClassId> currentClass;
@@ -32397,9 +32446,10 @@ private:
 
 SemanticVisitor::SemanticVisitor(TargetInfo target,
                                  const SourceGraph *sourceGraph,
-                                 bool toolingOccurrences)
+                                 bool toolingOccurrences,
+                                 FrontendWorkMetrics *workMetrics)
     : impl(std::make_unique<Impl>(std::move(target), sourceGraph,
-                                  toolingOccurrences)) {}
+                                  toolingOccurrences, workMetrics)) {}
 
 SemanticVisitor::~SemanticVisitor() = default;
 SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;

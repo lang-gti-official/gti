@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <iterator>
 #include <string_view>
 #include <unordered_set>
@@ -426,9 +427,14 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       path, isEntry, isPrelude, std::move(standardLibraryName), role,
       std::move(packageIdentity), std::move(packageRelativePath));
   states.emplace(key, FileState{.state = LoadState::Visiting, .unit = unitId});
+  if (workMetrics != nullptr) {
+    workMetrics->loadedUnits.push_back(key);
+    workMetrics->lexedUnits.push_back(key);
+  }
 
   Lexer lexer;
   std::vector<Token> fileTokens;
+  const auto lexStart = std::chrono::steady_clock::now();
   if (isEntry && entrySource && !entrySourceConsumed) {
     entrySourceConsumed = true;
     fileTokens =
@@ -441,7 +447,16 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   } else {
     fileTokens = lexer.consume(path);
   }
+  if (workMetrics != nullptr) {
+    workMetrics->lexMicroseconds += static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - lexStart)
+            .count());
+  }
   sourceManager.set(key, lexer.sourceText());
+  if (workMetrics != nullptr) {
+    workMetrics->sourceBytes += lexer.sourceText().size();
+  }
 
   for (const LexDiagnostic &diagnostic : lexer.errors()) {
     Diagnostic forwarded = diagnostic;

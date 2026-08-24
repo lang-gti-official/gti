@@ -2,6 +2,7 @@
 
 #include "gti/configuration_flags.h"
 #include "gti/diagnostic.h"
+#include "gti/frontend_work.h"
 #include "gti/source_graph.h"
 #include "gti/target.h"
 #include "gti/token.h"
@@ -21,6 +22,9 @@ using SourceDiagnostic = Diagnostic;
 
 class SourceLoader {
 public:
+  explicit SourceLoader(FrontendWorkMetrics *workMetrics = nullptr)
+      : workMetrics(workMetrics) {}
+
   SourceGraph
   load(const std::filesystem::path &entryPath,
        std::optional<std::string> entrySource = std::nullopt,
@@ -110,6 +114,7 @@ private:
   TargetInfo targetInfo = TargetInfo::host();
   std::unordered_set<std::string> activeFlags;
   std::unordered_set<std::string> declaredFlags;
+  FrontendWorkMetrics *workMetrics = nullptr;
 };
 
 } // namespace lang

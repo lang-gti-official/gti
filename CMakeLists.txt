@@ -1158,9 +1158,19 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
                 "$<TARGET_FILE:gti_lsp>"
       )
+      add_test(
+        NAME lsp_scalability_benchmark_smoke
+        COMMAND
+          "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/scripts/lsp_benchmark.py"
+          --lsp "$<TARGET_FILE:gti_lsp>"
+          --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
+          --output "${CMAKE_CURRENT_BINARY_DIR}/lsp-benchmark-smoke"
+          --dependencies 8 --smoke
+      )
       if(GTI_RELEASE_BUILD)
         set_tests_properties(
-          lsp_protocol block_comment_lsp
+          lsp_protocol block_comment_lsp lsp_scalability_benchmark_smoke
           PROPERTIES ENVIRONMENT
             "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
         )

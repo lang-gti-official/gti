@@ -933,6 +933,7 @@ public:
     FrontendOptions options;
     options.analyzeRecoveredProgram = true;
     options.completionOffset = input.byteOffset;
+    options.workMetrics = input.workMetrics;
     FrontendResult snapshot = Frontend(options).analyze(
         input.entryPath, input.source, input.preludePaths,
         input.sourceOverrides, input.standardLibraryRoots,

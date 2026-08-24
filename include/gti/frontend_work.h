@@ -1,0 +1,53 @@
+#pragma once
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+namespace lang {
+
+// Per-invocation frontend work accounting. Callers provide one instance to a
+// synchronous Frontend invocation; no compiler state or snapshot-local
+// identity is retained here. The LSP benchmark uses the exact unit lists to
+// distinguish useful cache hits from unchanged end-to-end behavior.
+struct FrontendWorkMetrics {
+  std::vector<std::string> loadedUnits;
+  std::vector<std::string> lexedUnits;
+  std::vector<std::string> parsedUnits;
+  std::vector<std::string> semanticallyAnalyzedUnits;
+  std::vector<std::string> lexCacheHits;
+  std::vector<std::string> parseCacheHits;
+  std::size_t sourceBytes = 0;
+  std::size_t sourceLoadMicroseconds = 0;
+  std::size_t lexMicroseconds = 0;
+  std::size_t parseMicroseconds = 0;
+  std::size_t semanticMicroseconds = 0;
+  std::size_t semanticRegistrationMicroseconds = 0;
+  std::size_t semanticBodyMicroseconds = 0;
+  std::size_t semanticTrustedBodyMicroseconds = 0;
+  std::size_t semanticApplicationBodyMicroseconds = 0;
+  std::size_t semanticFinalizationMicroseconds = 0;
+  std::size_t hirMicroseconds = 0;
+
+  void clear() {
+    loadedUnits.clear();
+    lexedUnits.clear();
+    parsedUnits.clear();
+    semanticallyAnalyzedUnits.clear();
+    lexCacheHits.clear();
+    parseCacheHits.clear();
+    sourceBytes = 0;
+    sourceLoadMicroseconds = 0;
+    lexMicroseconds = 0;
+    parseMicroseconds = 0;
+    semanticMicroseconds = 0;
+    semanticRegistrationMicroseconds = 0;
+    semanticBodyMicroseconds = 0;
+    semanticTrustedBodyMicroseconds = 0;
+    semanticApplicationBodyMicroseconds = 0;
+    semanticFinalizationMicroseconds = 0;
+    hirMicroseconds = 0;
+  }
+};
+
+} // namespace lang

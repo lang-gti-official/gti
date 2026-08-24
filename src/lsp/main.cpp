@@ -14,9 +14,11 @@
 #include <atomic>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -39,6 +41,8 @@ namespace {
 using JsonArray = llvm::json::Array;
 using JsonObject = llvm::json::Object;
 using JsonValue = llvm::json::Value;
+
+using SteadyClock = std::chrono::steady_clock;
 
 #if !defined(GTI_BUILD_STDLIB_ROOT)
 #define GTI_BUILD_STDLIB_ROOT ""
@@ -64,6 +68,23 @@ struct SemanticToken {
   std::uint32_t type = 0;
   std::uint32_t modifiers = 0;
 };
+
+std::optional<std::filesystem::path> frontendTracePathFromEnvironment() {
+  const char *configured = std::getenv("GTI_LSP_FRONTEND_TRACE");
+  if (configured == nullptr || *configured == '\0') {
+    return std::nullopt;
+  }
+  return std::filesystem::path(configured);
+}
+
+JsonArray stringArray(const std::vector<std::string> &values) {
+  JsonArray result;
+  result.reserve(values.size());
+  for (const std::string &value : values) {
+    result.emplace_back(value);
+  }
+  return result;
+}
 
 enum SemanticTokenType : std::uint32_t {
   Keyword,
@@ -1433,6 +1454,8 @@ struct DocumentAnalysis {
   std::unordered_set<std::string> dependencies;
   std::string rootPath;
   std::shared_ptr<const lang::FrontendResult> frontend;
+  lang::FrontendWorkMetrics workMetrics;
+  std::uint64_t frontendElapsedMicroseconds = 0;
 };
 
 struct AnalysisSnapshot {
@@ -1456,6 +1479,7 @@ class LanguageServer {
 public:
   explicit LanguageServer(lang::StandardLibraryLayout standardLibrary)
       : standardLibrary(std::move(standardLibrary)),
+        frontendTracePath(frontendTracePathFromEnvironment()),
         analysisWorker(&LanguageServer::runAnalysisWorker, this),
         completionWorker(&LanguageServer::runCompletionWorker, this) {}
 
@@ -2562,6 +2586,7 @@ private:
     // LSP retains it only so editor diagnostics agree with `gti check`; MIR
     // remains code-generation work and is not built for editor snapshots.
     frontendOptions.stopAfter = lang::FrontendPhase::Hir;
+    frontendOptions.workMetrics = &result.workMetrics;
     const lang::driver::ManifestDiscoveryResult discovery =
         lang::driver::discoverProjectManifest(filePath->parent_path());
     if (discovery.succeeded()) {
@@ -2571,10 +2596,15 @@ private:
         frontendOptions.configurationFlags = manifest.manifest->build().defines;
       }
     }
+    const SteadyClock::time_point frontendStart = SteadyClock::now();
     result.frontend = std::make_shared<const lang::FrontendResult>(
         lang::Frontend(frontendOptions)
             .analyze(*filePath, source, {standardLibrary.prelude},
                      request.sourceOverrides, {standardLibrary.root}));
+    result.frontendElapsedMicroseconds = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            SteadyClock::now() - frontendStart)
+            .count());
     const lang::FrontendResult &analysis = *result.frontend;
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
@@ -2847,6 +2877,8 @@ private:
         canceled = canceledRequests.contains(request.idKey);
       }
       if (current && !canceled) {
+        lang::FrontendWorkMetrics workMetrics;
+        const SteadyClock::time_point frontendStart = SteadyClock::now();
         try {
           completion = lang::LanguageQueries().complete(
               {.entryPath = request.entryPath,
@@ -2854,10 +2886,17 @@ private:
                .byteOffset = request.byteOffset,
                .preludePaths = {standardLibrary.prelude},
                .sourceOverrides = request.sourceOverrides,
-               .standardLibraryRoots = {standardLibrary.root}});
+               .standardLibraryRoots = {standardLibrary.root},
+               .workMetrics = &workMetrics});
         } catch (const std::exception &) {
           completion = {};
         }
+        const std::uint64_t elapsedMicroseconds = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                SteadyClock::now() - frontendStart)
+                .count());
+        recordFrontendWork("completion", request.uri, request.generation,
+                           elapsedMicroseconds, workMetrics);
       }
       {
         const std::lock_guard lock(stateMutex);
@@ -2935,6 +2974,9 @@ private:
       GuardedAnalysis guarded = runIsolatedAnalysis(request);
       switch (guarded.status) {
       case GuardedAnalysisStatus::Completed:
+        recordFrontendWork("analysis", request.uri, request.generation,
+                           guarded.analysis->frontendElapsedMicroseconds,
+                           guarded.analysis->workMetrics);
         try {
           publishAnalysis(request, std::move(*guarded.analysis));
         } catch (const std::exception &error) {
@@ -3205,6 +3247,56 @@ private:
     });
   }
 
+  void recordFrontendWork(std::string_view kind, std::string_view uri,
+                          std::uint64_t generation,
+                          std::uint64_t elapsedMicroseconds,
+                          const lang::FrontendWorkMetrics &metrics) const {
+    if (!frontendTracePath) {
+      return;
+    }
+    JsonObject record{
+        {"schema", 1},
+        {"kind", std::string(kind)},
+        {"uri", std::string(uri)},
+        {"generation", static_cast<std::int64_t>(generation)},
+        {"elapsedMicroseconds", static_cast<std::int64_t>(elapsedMicroseconds)},
+        {"sourceBytes", static_cast<std::int64_t>(metrics.sourceBytes)},
+        {"sourceLoadMicroseconds",
+         static_cast<std::int64_t>(metrics.sourceLoadMicroseconds)},
+        {"lexMicroseconds", static_cast<std::int64_t>(metrics.lexMicroseconds)},
+        {"parseMicroseconds",
+         static_cast<std::int64_t>(metrics.parseMicroseconds)},
+        {"semanticMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticMicroseconds)},
+        {"semanticRegistrationMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticRegistrationMicroseconds)},
+        {"semanticBodyMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticBodyMicroseconds)},
+        {"semanticTrustedBodyMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticTrustedBodyMicroseconds)},
+        {"semanticApplicationBodyMicroseconds",
+         static_cast<std::int64_t>(
+             metrics.semanticApplicationBodyMicroseconds)},
+        {"semanticFinalizationMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticFinalizationMicroseconds)},
+        {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
+        {"loadedUnits", stringArray(metrics.loadedUnits)},
+        {"lexedUnits", stringArray(metrics.lexedUnits)},
+        {"parsedUnits", stringArray(metrics.parsedUnits)},
+        {"semanticallyAnalyzedUnits",
+         stringArray(metrics.semanticallyAnalyzedUnits)},
+        {"lexCacheHits", stringArray(metrics.lexCacheHits)},
+        {"parseCacheHits", stringArray(metrics.parseCacheHits)},
+    };
+    const std::string encoded =
+        llvm::formatv("{0}", JsonValue(std::move(record))).str();
+    const std::lock_guard lock(frontendTraceMutex);
+    std::ofstream output(*frontendTracePath, std::ios::app);
+    if (output) {
+      output << encoded << '\n';
+    }
+  }
+
   void flushCompletions() {
     std::unique_lock lock(stateMutex);
     completionCondition.wait(lock, [this] {
@@ -3247,6 +3339,8 @@ private:
   }
 
   lang::StandardLibraryLayout standardLibrary;
+  std::optional<std::filesystem::path> frontendTracePath;
+  mutable std::mutex frontendTraceMutex;
   mutable std::mutex stateMutex;
   std::condition_variable analysisCondition;
   std::condition_variable completionCondition;
