@@ -1048,11 +1048,12 @@ elementBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
 }
 
 // A runtime binding and, until GTI has a separate-compilation failure ABI, an
-// ordinary bodyless free declaration name plain external symbols. Their
-// conservative MIR failure edge cannot be observed through that ABI: a native
-// return is success, and native termination never produces a GTI failure
-// record. Keep these distinct from source-body terminal containment because a
-// plain boundary cannot skip a recoverable caller cleanup edge.
+// ordinary bodyless declaration name plain external symbols. This applies to
+// free functions and nonvirtual member functions alike. Their conservative
+// MIR failure edge cannot be observed through that ABI: a native return is
+// success, and native termination never produces a GTI failure record. Keep
+// these distinct from source-body terminal containment because a plain
+// boundary cannot skip a recoverable caller cleanup edge.
 [[nodiscard]] bool
 plainExternalBoundaryCallee(const MirProgram &program,
                             const MirInstruction &instruction) {
@@ -1063,11 +1064,20 @@ plainExternalBoundaryCallee(const MirProgram &program,
   }
   const MirFunctionInstance *target =
       program.findFunctionInstance(*instruction.functionTarget);
-  if (target == nullptr || target->owner || !target->mayRaiseDefinedFailure ||
+  const bool freeBoundary =
+      target != nullptr && !target->owner && !instruction.receiver;
+  const bool memberBoundary = target != nullptr && target->owner &&
+                              instruction.receiver && !target->staticMember &&
+                              instruction.dispatch == CallDispatch::Static;
+  if (target == nullptr || (!freeBoundary && !memberBoundary) ||
+      !target->mayRaiseDefinedFailure ||
       target->linkage != LanguageLinkage::Gti ||
       (target->definitionKind !=
            MirFunctionInstance::DefinitionKind::Declaration &&
        target->definitionKind !=
+           MirFunctionInstance::DefinitionKind::RuntimeBinding) ||
+      (memberBoundary &&
+       target->definitionKind ==
            MirFunctionInstance::DefinitionKind::RuntimeBinding) ||
       (!target->externalSymbol.empty() &&
        target->definitionKind !=
@@ -24191,6 +24201,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               virtualFailureCallee(program_, instruction) == target;
           const bool failureFreeVirtualTarget =
               failureFreeVirtualCallee(program_, instruction) == target;
+          const bool plainExternalTarget =
+              plainExternalBoundaryCallee(program_, instruction);
           const bool ordinaryStaticTarget =
               target != nullptr &&
               instruction.dispatch == CallDispatch::Static &&
@@ -24207,7 +24219,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     callableInvocationCapability(target->receiverMutability)));
           if (target == nullptr || !target->owner || target->staticMember ||
               (!ordinaryStaticTarget && !virtualFailureTarget &&
-               !failureFreeVirtualTarget) ||
+               !failureFreeVirtualTarget && !plainExternalTarget) ||
               !receiverMutabilityMatches ||
               target->linkage != LanguageLinkage::Gti) {
             {

@@ -945,6 +945,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     set_tests_properties(stdlib_surface PROPERTIES TIMEOUT 1200 PROCESSORS 2)
+    add_test(
+      NAME stdlib_include_sweep
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/scripts/debug/stdlib_include_sweep.py"
+              --gti "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(stdlib_include_sweep PROPERTIES TIMEOUT 600)
     # Sharded by (optimization, standard) configuration; the shard union is
     # the full 2x2 matrix, and the script with no --shard still runs it all.
     foreach(shard RANGE 1 4)
@@ -1239,6 +1246,7 @@ if(BUILD_TESTING)
       set_tests_properties(
         driver_pipeline
         output_determinism binary64_runtime sum_types_runtime
+        stdlib_include_sweep
         defined_integer_runtime_1of4 defined_integer_runtime_2of4
         defined_integer_runtime_3of4 defined_integer_runtime_4of4
         expected_wrong_state_runtime returned_class_field_runtime

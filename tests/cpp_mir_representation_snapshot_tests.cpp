@@ -1618,6 +1618,66 @@ int main() {
          "lifecycle cleanup should be a contracted production family");
 }
 
+void testUnusedGenericDestructorNeedsNoConcreteDefinition() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cpp-mir-representation-unused-generic-destructor.gti", R"(
+class UnusedOwner<T> {
+public:
+  UnusedOwner() {}
+  ~UnusedOwner() {}
+};
+
+int main() { return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "an unused generic destructor should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O0,
+                                        .target = lang::TargetInfo::host()});
+  lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
+  expect(optimized.valid() && lowered.valid(),
+         "an unused generic destructor should produce LoweredProgram");
+  if (!optimized.valid() || !lowered.valid()) {
+    return;
+  }
+
+  lang::CppMirRepresentationSnapshotBuild snapshot =
+      lang::buildCppMirRepresentationSnapshot(*lowered.program);
+  expect(snapshot.valid() &&
+             thunkCount(*snapshot.snapshot,
+                        lang::CppMirThunkKind::LifecycleCleanup) == 0,
+         "an uninstantiated generic should require no concrete lifecycle "
+         "thunk");
+  if (!snapshot.valid()) {
+    return;
+  }
+  const lang::CppMirProgramPlan plan =
+      lang::planCppMirProgram(optimized.mir, std::move(*snapshot.snapshot));
+  expect(plan.complete() && plan.issues.empty() && plan.unsupported.empty(),
+         "an unused generic destructor should remain a complete C++ plan");
+
+  try {
+    const lang::BackendArtifact artifact =
+        gti_test::emitCpp(frontend, optimized.sourceMir, optimized.mir,
+                          optimized.report.transformations);
+    expect(!artifact.contents.empty(),
+           "an unused generic destructor should emit a C++ artifact");
+  } catch (const std::logic_error &) {
+    expect(false,
+           "an unused generic destructor should not require a concrete MIR "
+           "instance");
+  }
+}
+
 void testConcreteInstanceGeneratedItemRows() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "cpp-mir-representation-concrete-instances.gti", R"(
@@ -1747,6 +1807,7 @@ int main() {
   testClosureAndCallableRows();
   testDeclarationAdapterGeneratedItemRows();
   testLifecycleCleanupGeneratedItemRows();
+  testUnusedGenericDestructorNeedsNoConcreteDefinition();
   testConcreteInstanceGeneratedItemRows();
 
   if (failures != 0) {
