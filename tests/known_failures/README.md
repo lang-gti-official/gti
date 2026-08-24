@@ -122,6 +122,31 @@ that a backend change broke a shape nobody thought to test. `error` cells are
 kept for the same reason — #109 was found by reading one, where the rejection
 was right but its message could not name the type it rejected.
 
+## Probing the language server
+
+`scripts/debug/lsp_probe.py` checks two properties of `gti_lsp` that an
+ASCII-only, single-shot test cannot see.
+
+```sh
+python3 scripts/debug/lsp_probe.py
+python3 scripts/debug/lsp_probe.py --check staleness
+```
+
+*Position encoding.* The server advertises `positionEncoding: utf-16`, so its
+ranges are UTF-16 code units — which agree with bytes and codepoints for ASCII
+and with neither elsewhere. Each case puts a different width of character
+before a declaration on the same line and checks that slicing the line by the
+returned range reproduces the declaration. A byte-counting server fails from
+the Latin-1 case on; a codepoint-counting one fails only on the emoji case.
+
+*Edit staleness.* The server reuses frontend source units across edits, so the
+hazard is answering from a snapshot the user already edited away. The check
+renames the only declaration through `didChange` and requires the old name to
+disappear.
+
+Both currently pass. The target is optional — configure with
+`-DGTI_BUILD_LSP=ON` if `build/gti_lsp` is missing.
+
 ## Checking status
 
 `check.py` compiles each compiler reproducer with a given `gti` and reports
