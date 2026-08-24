@@ -367,7 +367,7 @@ module.exports = grammar({
       seq(
         field("name", $._qualified_identifier),
         "<",
-        commaSep1(field("argument", $.identifier)),
+        commaSep1(field("argument", $.type)),
         ">",
       ),
 
@@ -484,6 +484,7 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
+        optional(field("constraints", $.requires_clause)),
         optional(field("initializers", $.constructor_initializer_list)),
         choice(
           field("body", $.block),

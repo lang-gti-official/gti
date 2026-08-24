@@ -153,18 +153,22 @@ symbol; exact typing, constant evaluation, and generic deferral belong to
 semantics.
 
 `ConceptDecl` retains every written type parameter and concept application.
-`FunctionDecl` optionally retains a `RequiresClause` containing the `requires`
-token and its conjunction of applications. The parser enforces only the
+`FunctionDecl` and `ConstructorDecl` optionally retain a `RequiresClause`
+containing the `requires` token and its conjunction of applications. Concept
+applications retain `TypeRef` arguments so semantics can distinguish visible
+generic parameters from closed exact types. The parser enforces only the
 bounded application grammar and rejects disjunction; concept identity, arity,
-visible type-parameter arguments, capability composition, and call viability
-belong to semantic analysis.
+argument closure, capability composition, and call viability belong to
+semantic analysis.
 
 `ArrayInitializer` is reused for fixed-array declarations and for braces in a
 call argument list. The parser records only the written elements; it does not
 invent an element type, an extent type, or an initializer-list object.
 `ConstructorDecl` retains constructor-local generic parameters after the
-constructor name. Semantics decides whether a call supplies one exact
-fixed-array context and whether a constructor value parameter is inferable.
+constructor name and its optional trailing requirements before an initializer
+list. Semantics owns their nested scope, exact inference, constraint
+validation, and whether a constructor value parameter is inferable from one
+fixed-array context.
 
 `FunctionDecl` also retains one receiver mode. Ordinary members are read-only
 or use trailing `mut`; `operator()` alone may use trailing `&&` for the

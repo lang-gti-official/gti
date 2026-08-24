@@ -696,9 +696,21 @@ def main():
             "if (character == ' ') { found_separator = true; } } "
             "mut std::string copy = value.clone(); "
             "bool cloned = copy == value; copy[0] = 'E'; "
+            "mut std::string range_copy = "
+            "std::string(value.begin(), value.end()); "
+            "mut std::string empty_source = std::string(\"\"); "
+            "mut std::string empty_copy = "
+            "std::string(empty_source.begin(), empty_source.end()); "
+            "mut std::string one_source = std::string(\"x\"); "
+            "mut std::string one_copy = "
+            "std::string(one_source.begin(), one_source.end()); "
+            "value.push_back('!'); "
             "if (literal.size() == 6 and literal[0] == 'e' and cloned and "
             "traversed == 14 and found_separator and "
-            "value == \"engine runtime\" and copy[0] == 'E') { return 0; } "
+            "value == \"engine runtime!\" and "
+            "range_copy == \"engine runtime\" and empty_copy.empty() and "
+            "one_copy == \"x\" and copy[0] == 'E') { "
+            "return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )
@@ -723,6 +735,23 @@ def main():
             ]
         )
         run([str(standard_string_cpp20)])
+        for standard in ("c++20", "c++23"):
+            for optimization in ("-O1", "-O3"):
+                standard_string_optimized = (
+                    root / f"standard-string-{standard}-{optimization[1:].lower()}"
+                )
+                run(
+                    [
+                        gti,
+                        str(standard_string_source),
+                        "-o",
+                        str(standard_string_optimized),
+                        "--std",
+                        standard,
+                        optimization,
+                    ]
+                )
+                run([str(standard_string_optimized)])
 
         standard_vector_source = root / "standard-vector.gti"
         standard_vector_executable = root / "standard-vector"
@@ -1417,6 +1446,63 @@ def main():
         )
         run([str(range_cpp20)])
 
+        readonly_range_source = root / "readonly-range-loans.gti"
+        readonly_range_source.write_text(
+            "interface IteratorContract<T> { T& operator*(); "
+            "void operator++() mut; };\n"
+            "class Iterator : public IteratorContract<int> { "
+            "mut int current; public: "
+            "Iterator(int value) : current(value) {} "
+            "int& operator*() override { return this.current; } "
+            "void operator++() mut override { this.current++; } "
+            "bool operator!=(Iterator& other) { "
+            "return this.current != other.current; } };\n"
+            "class Range { int first; int last; int marker; public: "
+            "Range(int first, int last, int marker) "
+            ": first(first), last(last), marker(marker) {} "
+            "Range(Range& other) = delete; "
+            "Range(Range&& other) = default; "
+            "~Range() { std::println(this.marker); } "
+            "Iterator begin() { return Iterator(this.first); } "
+            "Iterator end() { return Iterator(this.last); } };\n"
+            "int fixed_ranges() { int first[3] = {1, 2, 3}; "
+            "int second[2] = {4, 5}; mut int total = 0; "
+            "for (auto& left : first) { for (int right : second) { "
+            "if (right == 4) { continue; } total += left + right; } } "
+            "return total; }\n"
+            "int complete_temporary() { mut int total = 0; "
+            "for (auto& value : Range(1, 5, 70)) { "
+            "if (value == 2) { continue; } "
+            "if (value == 4) { break; } total += value; } "
+            "for (auto& value : Range(0, 0, 80)) { return value; } "
+            "return total; }\n"
+            "int return_from_temporary() { "
+            "for (auto& value : Range(3, 6, 90)) { "
+            "if (value == 4) { return value; } } return 0; }\n"
+            "int main() { int result = fixed_ranges() + "
+            "complete_temporary() + return_from_temporary(); "
+            "std::println(result); return result - 29; }\n",
+            encoding="utf-8",
+        )
+        for standard in ("c++20", "c++23"):
+            for optimization in ("-O0", "-O3"):
+                readonly_range_executable = root / (
+                    f"readonly-range-{standard}-{optimization[1:]}"
+                )
+                run(
+                    [
+                        gti,
+                        str(readonly_range_source),
+                        "-o",
+                        str(readonly_range_executable),
+                        "--std",
+                        standard,
+                        optimization,
+                    ]
+                )
+                readonly_range_result = run([str(readonly_range_executable)])
+                assert readonly_range_result.stdout == "70\n80\n90\n29\n"
+
         variadic_source = root / "variadic-generics.gti"
         variadic_executable = root / "variadic-generics"
         variadic_source.write_text(
@@ -2079,9 +2165,11 @@ def main():
             "int call_reference<Operation>(Operation operation, "
             "mut int& value) { return operation(value); }\n"
             "int call_null_once<Operation>(Operation operation) { "
-            "return std::move(operation)(nullptr); }\n"
+            "int* pointer = nullptr; "
+            "return std::move(operation)(pointer); }\n"
             "int call_pointer_once<Operation>(Operation operation, "
-            "int* pointer) { return std::move(operation)(pointer); }\n"
+            "int* pointer) { const int* read_only = pointer; "
+            "return std::move(operation)(read_only); }\n"
             "int main() { Exact read = Exact(1); Exact changed = Exact(1); "
             "Exact consumed = Exact(1); "
             "MutableFallback fallback = MutableFallback(1); "

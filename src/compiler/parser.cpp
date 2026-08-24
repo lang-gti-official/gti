@@ -301,11 +301,9 @@ private:
   ConceptApplication conceptApplication() {
     NamePath name = parseNamePath();
     consume(TokenKind::LESS, "Expect '<' after concept name.");
-    std::vector<Token> arguments;
+    std::vector<TypeRef> arguments;
     do {
-      arguments.emplace_back(
-          consume(TokenKind::IDENTIFIER,
-                  "Expect a type argument in concept application."));
+      arguments.emplace_back(parseType());
     } while (match({TokenKind::COMMA}));
     consume(TokenKind::GREATER, "Expect '>' after concept arguments.");
     return {std::move(name), std::move(arguments)};
@@ -884,6 +882,22 @@ private:
                   "Constructors do not have receiver mutability qualifiers.");
     }
 
+    std::optional<RequiresClause> requiresClause;
+    if (match({TokenKind::REQUIRES})) {
+      Token keyword = previous();
+      std::vector<ConceptApplication> requirements;
+      do {
+        requirements.emplace_back(conceptApplication());
+      } while (match({TokenKind::AND}));
+      if (check(TokenKind::OR)) {
+        throw error(peek(),
+                    "Requires clauses currently support conjunction only; "
+                    "'||' and 'or' are not supported.");
+      }
+      requiresClause =
+          RequiresClause{std::move(keyword), std::move(requirements)};
+    }
+
     std::vector<ConstructorInitializer> initializers;
     if (match({TokenKind::COLON})) {
       do {
@@ -924,7 +938,7 @@ private:
               "Expect ';' after special constructor declaration.");
       return std::make_unique<ConstructorDecl>(
           std::move(name), std::move(genericParameters), std::move(parameters),
-          std::move(initializers),
+          std::move(requiresClause), std::move(initializers),
           SpecialMemberSpecifier{.equal = std::move(equal),
                                  .keyword = std::move(keyword),
                                  .kind = kind},
@@ -935,7 +949,8 @@ private:
     auto body = std::make_unique<BlockStmt>(blockItems());
     return std::make_unique<ConstructorDecl>(
         std::move(name), std::move(genericParameters), std::move(parameters),
-        std::move(initializers), std::nullopt, std::move(body));
+        std::move(requiresClause), std::move(initializers), std::nullopt,
+        std::move(body));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
@@ -1823,6 +1838,8 @@ private:
                                 TypeRef bindingType, Token bindingName,
                                 Token colon, ExprPtr range, StmtPtr body) {
     const std::string suffix = std::to_string(++generatedNameCounter);
+    Token ownerName =
+        generatedToken(TokenKind::IDENTIFIER, "__gti_owner_" + suffix, colon);
     Token rangeName =
         generatedToken(TokenKind::IDENTIFIER, "__gti_range_" + suffix, colon);
     Token iteratorName = generatedToken(TokenKind::IDENTIFIER,
@@ -1830,25 +1847,25 @@ private:
     Token sentinelName = generatedToken(TokenKind::IDENTIFIER,
                                         "__gti_sentinel_" + suffix, colon);
 
+    TypeRef ownerType(generatedToken(TokenKind::AUTO, "auto", colon));
     TypeRef rangeType(generatedToken(TokenKind::AUTO, "auto", colon));
     rangeType.reference = generatedToken(TokenKind::AMPERSAND, "&", colon);
-    const Mutability rangeMutability =
-        bindingMutability == Mutability::Mutable && bindingType.reference
-            ? Mutability::Mutable
-            : Mutability::Immutable;
 
     TypeRef iteratorType(generatedToken(TokenKind::AUTO, "auto", colon));
     TypeRef sentinelType(generatedToken(TokenKind::AUTO, "auto", colon));
 
     StmtList loopBody;
-    loopBody.emplace_back(std::make_unique<VariableDecl>(
+    auto elementBinding = std::make_unique<VariableDecl>(
         bindingMutability, bindingType, bindingName,
         std::make_unique<Unary>(generatedToken(TokenKind::STAR, "*", colon),
-                                generatedVariable(iteratorName)),
-        std::nullopt, true));
+                                generatedVariable(iteratorName),
+                                generatedVariable(rangeName)),
+        std::nullopt, true);
+    const VariableDecl *elementBindingPointer = elementBinding.get();
+    loopBody.emplace_back(std::move(elementBinding));
     loopBody.emplace_back(std::move(body));
 
-    StmtPtr coreLoop = std::make_unique<ForStmt>(
+    auto coreLoop = std::make_unique<ForStmt>(
         std::make_unique<EmptyStmt>(
             generatedToken(TokenKind::SEMICOLON, ";", colon)),
         std::make_unique<Binary>(
@@ -1859,22 +1876,37 @@ private:
             generatedToken(TokenKind::PLUS_PLUS, "++", colon),
             generatedVariable(iteratorName)),
         std::make_unique<BlockStmt>(std::move(loopBody)));
+    const ForStmt *coreLoopPointer = coreLoop.get();
 
     StmtList lowered;
-    lowered.emplace_back(std::make_unique<VariableDecl>(
-        rangeMutability, std::move(rangeType), rangeName, std::move(range)));
-    lowered.emplace_back(std::make_unique<VariableDecl>(
+    auto ownerBinding = std::make_unique<VariableDecl>(
+        Mutability::Immutable, std::move(ownerType), ownerName,
+        std::move(range), std::nullopt, false, std::nullopt, true);
+    const VariableDecl *ownerBindingPointer = ownerBinding.get();
+    lowered.emplace_back(std::move(ownerBinding));
+    auto rangeBinding = std::make_unique<VariableDecl>(
+        Mutability::Immutable, std::move(rangeType), rangeName,
+        generatedVariable(ownerName), std::nullopt, true);
+    const VariableDecl *rangeBindingPointer = rangeBinding.get();
+    lowered.emplace_back(std::move(rangeBinding));
+    auto iteratorBinding = std::make_unique<VariableDecl>(
         Mutability::Mutable, std::move(iteratorType), iteratorName,
-        generatedMemberCall(rangeName, "begin", colon)));
-    lowered.emplace_back(std::make_unique<VariableDecl>(
+        generatedMemberCall(rangeName, "begin", colon));
+    const VariableDecl *iteratorBindingPointer = iteratorBinding.get();
+    lowered.emplace_back(std::move(iteratorBinding));
+    auto sentinelBinding = std::make_unique<VariableDecl>(
         Mutability::Immutable, std::move(sentinelType), sentinelName,
-        generatedMemberCall(rangeName, "end", colon)));
+        generatedMemberCall(rangeName, "end", colon));
+    const VariableDecl *sentinelBindingPointer = sentinelBinding.get();
+    lowered.emplace_back(std::move(sentinelBinding));
     lowered.emplace_back(std::move(coreLoop));
 
     return std::make_unique<RangeForStmt>(
         std::move(keyword), bindingMutability, std::move(bindingType),
         std::move(bindingName), std::move(colon),
-        std::make_unique<BlockStmt>(std::move(lowered)));
+        std::make_unique<BlockStmt>(std::move(lowered)), ownerBindingPointer,
+        rangeBindingPointer, iteratorBindingPointer, sentinelBindingPointer,
+        elementBindingPointer, coreLoopPointer);
   }
 
   StmtPtr switchStatement() {

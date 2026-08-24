@@ -2879,6 +2879,15 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.borrowOrigin != BorrowOriginKind::None &&
       !instruction.successResultDrop &&
       instruction.definedFailure.propagation != FailurePropagationKind::None;
+  const bool transferredBorrowedCallResult =
+      instruction.kind == MirInstructionKind::Call && instruction.loan &&
+      instruction.borrowOrigin != BorrowOriginKind::None &&
+      instruction.successResultDrop && instruction.result &&
+      instruction.info.type.kind == SemanticType::Class &&
+      instruction.info.category == ValueCategory::Value &&
+      instruction.info.traits.movable &&
+      instruction.info.traits.containsBorrowedState &&
+      instruction.definedFailure.propagation != FailurePropagationKind::None;
   const bool directInitializationResult =
       (instruction.kind == MirInstructionKind::Call ||
        instruction.kind == MirInstructionKind::Construct) &&
@@ -2888,7 +2897,9 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.info.traits.drop == DropKind::Lexical;
   if (instruction.definedFailure.empty() ||
       (instruction.destination && !trivialCommitDestination) ||
-      (instruction.loan && !borrowedCallResult) || !statePreservingOwnership ||
+      (instruction.loan && !borrowedCallResult &&
+       !transferredBorrowedCallResult) ||
+      !statePreservingOwnership ||
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
   }
@@ -2913,6 +2924,9 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   }
   if (borrowedCallResult) {
     return true;
+  }
+  if (transferredBorrowedCallResult) {
+    return instruction.info.traits.drop == DropKind::Lexical;
   }
   if (directInitializationResult) {
     return true;
@@ -2982,7 +2996,8 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
         "hosted-startup body identity or return contract is invalid");
   }
   if (!body.loans.empty() || !body.fullExpressions.empty() ||
-      !body.programConstantSubstitutions.empty()) {
+      !body.programConstantSubstitutions.empty() ||
+      !body.rangeIterations.empty()) {
     return failure(body, owner,
                    "hosted-startup body retains source-only tables");
   }
@@ -3728,6 +3743,108 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
              });
 }
 
+[[nodiscard]] MirVerificationResult
+verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
+  for (std::size_t index = 0; index < body.rangeIterations.size(); ++index) {
+    const MirRangeIteration &range = body.rangeIterations[index];
+    const MirPlace *ownerPlace = body.findPlace(range.owner);
+    const MirPlace *rangePlace = body.findPlace(range.rangeCarrier);
+    const MirPlace *iteratorPlace = body.findPlace(range.iterator);
+    const MirPlace *sentinelPlace = body.findPlace(range.sentinel);
+    const MirPlace *elementPlace = body.findPlace(range.element);
+    const MirLoan *rangeLoan = body.findLoan(range.rangeLoan);
+    const MirLoan *elementLoan = body.findLoan(range.elementLoan);
+    const MirBlock *conditionEntry = body.findBlock(range.conditionEntryBlock);
+    const MirBlock *condition = body.findBlock(range.conditionBlock);
+    const MirBlock *bodyBlock = body.findBlock(range.bodyBlock);
+    const MirBlock *increment = body.findBlock(range.incrementBlock);
+    const MirBlock *cleanup = body.findBlock(range.cleanupBlock);
+    const MirBlock *exit = body.findBlock(range.exitBlock);
+    if (range.id != index + 1 || range.hirStatement == 0 ||
+        range.coreLoop == 0 || ownerPlace == nullptr || rangePlace == nullptr ||
+        iteratorPlace == nullptr || sentinelPlace == nullptr ||
+        elementPlace == nullptr || rangeLoan == nullptr ||
+        conditionEntry == nullptr || condition == nullptr ||
+        bodyBlock == nullptr || increment == nullptr || cleanup == nullptr ||
+        exit == nullptr) {
+      return failure(body, owner,
+                     "range iteration inventory contains an invalid identity");
+    }
+    const auto carries = [](const MirLoan &loan, HirBindingId binding) {
+      return binding != 0 &&
+             std::find(loan.carriers.begin(), loan.carriers.end(), binding) !=
+                 loan.carriers.end();
+    };
+    if (range.elementAccess != AccessMode::ReadOnly ||
+        rangeLoan->access != AccessMode::ReadOnly || rangeLoan->escapes ||
+        (range.elementLoan != 0 &&
+         (elementLoan == nullptr ||
+          elementLoan->access != AccessMode::ReadOnly ||
+          elementLoan->escapes))) {
+      return failure(body, owner,
+                     "read-only range iteration contains a writable or "
+                     "escaping loan");
+    }
+    if (!carries(*rangeLoan, rangePlace->binding) ||
+        (range.elementLoan != 0 &&
+         !carries(*elementLoan, elementPlace->binding))) {
+      return failure(body, owner,
+                     "range iteration loan does not retain its exact carrier");
+    }
+    if (condition->terminator.kind != MirTerminatorKind::Branch ||
+        condition->terminator.target != range.bodyBlock ||
+        increment->terminator.kind != MirTerminatorKind::Goto ||
+        increment->terminator.target != range.conditionEntryBlock ||
+        cleanup->terminator.kind != MirTerminatorKind::Goto ||
+        cleanup->terminator.target != range.exitBlock) {
+      return failure(
+          body, owner,
+          "range iteration has no exact compare/body/increment "
+          "control-flow cycle (condition-kind=" +
+              std::to_string(static_cast<int>(condition->terminator.kind)) +
+              ", condition-target=" +
+              std::to_string(condition->terminator.target) + ", body=" +
+              std::to_string(range.bodyBlock) + ", increment-kind=" +
+              std::to_string(static_cast<int>(increment->terminator.kind)) +
+              ", increment-target=" +
+              std::to_string(increment->terminator.target) +
+              ", condition=" + std::to_string(range.conditionEntryBlock) + ")",
+          range.conditionBlock);
+    }
+    if (range.strategy == RangeIterationStrategy::FixedArray &&
+        (range.rangeType.kind != SemanticType::Array ||
+         range.rangeType.arrayLengthParameterId != 0 ||
+         range.rangeType.arrayLength != range.arrayLength ||
+         range.arrayLength == 0 || range.iteratorType != SemanticType::UInt64 ||
+         range.sentinelType != SemanticType::UInt64)) {
+      return failure(body, owner,
+                     "fixed-array range iteration lost its indexed strategy");
+    }
+    if (range.ownsRangeTemporary !=
+        (ownerPlace->type.kind != SemanticType::Reference)) {
+      return failure(body, owner,
+                     "range owner temporary classification is inconsistent");
+    }
+    if (range.ownsRangeTemporary &&
+        ownerPlace->traits.drop == DropKind::Lexical) {
+      const MirDropObligation *drop = body.findDropObligation(range.ownerDrop);
+      if (drop == nullptr || drop->place != range.owner ||
+          !drop->dropType.requiresActiveCleanup) {
+        return failure(body, owner,
+                       "owned range temporary lacks its exact cleanup "
+                       "obligation");
+      }
+    } else if (range.ownerDrop != 0) {
+      const MirDropObligation *drop = body.findDropObligation(range.ownerDrop);
+      if (drop == nullptr || drop->place != range.owner) {
+        return failure(body, owner,
+                       "range owner cleanup targets a different place");
+      }
+    }
+  }
+  return {};
+}
+
 } // namespace
 
 MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
@@ -4340,6 +4457,77 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              input.lifecycle.front().target == 0 &&
              !input.lifecycle.front().conditional;
     };
+    const auto validBorrowedTemporaryMoveInput =
+        [&](const MirInstruction &input, const MirOperand &operand) {
+          if (input.callInputRole != MirCallInputRole::Argument ||
+              input.preparedParameterDrop || input.destination || input.loan ||
+              input.info.type.kind != SemanticType::Class ||
+              !input.info.traits.movable ||
+              !input.info.traits.containsBorrowedState ||
+              operand.kind != MirOperandKind::Value) {
+            return false;
+          }
+          const MirValue *source = body.findValue(operand.value);
+          const MirInstruction *producer =
+              source == nullptr ? nullptr
+                                : linearValueDefinition(body, operand.value);
+          if (source == nullptr || producer == nullptr ||
+              source->sourceValue != input.hirValue ||
+              source->info.type != input.info.type ||
+              source->info.category != ValueCategory::Value ||
+              !source->info.traits.containsBorrowedState ||
+              !sameCallInputTraits(source->info.traits, input.info.traits) ||
+              producer->kind != MirInstructionKind::Call ||
+              !producer->functionTarget || producer->constructorTarget ||
+              producer->lambdaTarget || producer->bodyTarget ||
+              producer->callableInvocation ||
+              producer->intrinsic != IntrinsicKind::None || !producer->result ||
+              *producer->result != source->id ||
+              producer->hirValue != input.hirValue || !producer->loan ||
+              producer->borrowOrigin == BorrowOriginKind::None ||
+              producer->successResultDrop == std::nullopt ||
+              !sameCallInputTraits(producer->info.traits, input.info.traits)) {
+            return false;
+          }
+          const MirLoan *retained = body.findLoan(*producer->loan);
+          const MirPlace *loanSource =
+              retained == nullptr ? nullptr : body.findPlace(retained->source);
+          if (retained == nullptr || loanSource == nullptr ||
+              retained->kind != MirLoanKind::Stored || retained->entry ||
+              retained->escapes || retained->storedField != 0 ||
+              !retained->carriers.empty() ||
+              retained->producedBy != input.hirValue) {
+            return false;
+          }
+
+          const MirDropObligation *drop = nullptr;
+          const MirPlace *slot = nullptr;
+          for (const MirDropObligation &candidate : body.dropObligations) {
+            if (candidate.kind != MirDropObligationKind::Value ||
+                candidate.value != source->sourceValue ||
+                candidate.dropType.type != input.info.type) {
+              continue;
+            }
+            if (drop != nullptr) {
+              return false;
+            }
+            drop = &candidate;
+            slot = body.findPlace(candidate.place);
+          }
+          return drop != nullptr && slot != nullptr &&
+                 producer->successResultDrop == drop->id &&
+                 slot->root == MirPlaceRootKind::Value &&
+                 slot->value == source->id && slot->projections.empty() &&
+                 slot->type == input.info.type &&
+                 slot->traits.containsBorrowedState &&
+                 input.lifecycle.size() == 1 &&
+                 input.lifecycle.front().kind ==
+                     MirLifecycleEventKind::TransferOut &&
+                 input.lifecycle.front().source == drop->id &&
+                 input.lifecycle.front().target == 0 &&
+                 !input.lifecycle.front().conditional &&
+                 !input.lifecycle.front().failureCleanup;
+        };
     const auto validTemporaryReceiverInput =
         [&](const MirInstruction &input, const MirOperand &operand,
             MirOperandKind expectedOperand) {
@@ -4607,6 +4795,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return validClassCopyInput(instruction, operand);
       case HirCallInputKind::MoveValue:
         return validClassMoveInput(instruction, operand);
+      case HirCallInputKind::MoveBorrowedTemporary:
+        return validBorrowedTemporaryMoveInput(instruction, operand);
       case HirCallInputKind::ReadBorrow:
         return !instruction.preparedParameterDrop &&
                instruction.lifecycle.empty() &&
@@ -5052,8 +5242,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                               SemanticType::Reference;
               break;
             case MirInstructionKind::CallInput:
-              consuming = index == 0 && instruction.callInputKind ==
-                                            HirCallInputKind::MoveValue;
+              consuming =
+                  index == 0 &&
+                  (instruction.callInputKind == HirCallInputKind::MoveValue ||
+                   instruction.callInputKind ==
+                       HirCallInputKind::MoveBorrowedTemporary);
               break;
             case MirInstructionKind::Compute:
               consuming = instruction.operation == MirOperation::Aggregate ||
@@ -6693,7 +6886,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             (mutableStorageInput || temporaryReadArgument ||
              (parameter.kind == SemanticType::Class
                   ? (argument->callInputKind == HirCallInputKind::CopyValue ||
-                     argument->callInputKind == HirCallInputKind::MoveValue)
+                     argument->callInputKind == HirCallInputKind::MoveValue ||
+                     (invocation.kind == MirInstructionKind::Construct &&
+                      parameter == argument->info.type &&
+                      parameter == argument->operands.front().type &&
+                      argument->info.traits.containsBorrowedState &&
+                      argument->callInputKind ==
+                          HirCallInputKind::MoveBorrowedTemporary))
                   : argument->callInputKind ==
                         (parameter.kind != SemanticType::Reference
                              ? HirCallInputKind::Value
@@ -6747,7 +6946,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }
         const bool owningInput =
             input->callInputKind == HirCallInputKind::CopyValue ||
-            input->callInputKind == HirCallInputKind::MoveValue;
+            input->callInputKind == HirCallInputKind::MoveValue ||
+            input->callInputKind == HirCallInputKind::MoveBorrowedTemporary;
         if (invocation.kind == MirInstructionKind::Call && owningInput) {
           if (!input->preparedParameterDrop ||
               !preparedDrops.insert(*input->preparedParameterDrop).second) {
@@ -7198,6 +7398,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   if (MirVerificationResult ownership = verifyMirOwnershipFlow(body, owner);
       !ownership.valid()) {
     return ownership;
+  }
+  if (MirVerificationResult ranges = verifyMirRangeIterations(body, owner);
+      !ranges.valid()) {
+    return ranges;
   }
   return verifyMirLoanFlow(body, owner);
 }
@@ -8348,8 +8552,10 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          return prepared != nullptr &&
                                 prepared->kind ==
                                     MirInstructionKind::CallInput &&
-                                prepared->callInputKind ==
-                                    HirCallInputKind::MoveValue &&
+                                (prepared->callInputKind ==
+                                     HirCallInputKind::MoveValue ||
+                                 prepared->callInputKind ==
+                                     HirCallInputKind::MoveBorrowedTemporary) &&
                                 transfersOut(*prepared);
                        }));
       const bool transfersOwnership =
@@ -11531,7 +11737,8 @@ hasCanonicalEmptyStaticInitializerBody(const MirBody &body,
       body.blocks.size() != 1 || !body.places.empty() || !body.loans.empty() ||
       !body.fullExpressions.empty() || !body.cleanupBoundaries.empty() ||
       !body.dropObligations.empty() || !body.failureRecords.empty() ||
-      !body.programConstantSubstitutions.empty() || !body.values.empty() ||
+      !body.programConstantSubstitutions.empty() ||
+      !body.rangeIterations.empty() || !body.values.empty() ||
       !body.valueUses.empty() ||
       body.placeDomain.snapshot != module.placeDomain.snapshot ||
       body.placeDomain.body == 0 || body.placeDomain == module.placeDomain) {
@@ -11594,7 +11801,8 @@ verifyMirProgramInitialization(const MirProgram &program) {
         !module.cleanupBoundaries.empty() || !module.dropObligations.empty() ||
         !module.failureRecords.empty() ||
         !module.programConstantSubstitutions.empty() ||
-        !module.values.empty() || !module.valueUses.empty()) {
+        !module.rangeIterations.empty() || !module.values.empty() ||
+        !module.valueUses.empty()) {
       return false;
     }
     MirBlock expected;

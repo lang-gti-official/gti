@@ -910,8 +910,8 @@ standard-library need, and tooling impact.
 
 The maintained sequence, blockers, parallel lanes, and current ready queue live
 in [`implementation-sequence.md`](implementation-sequence.md). At this
-checkpoint the source executable-body cutover is complete. All 2,867 reviewed
-body identities across 62 examples use verified optimized MIR and the general
+checkpoint the source executable-body cutover is complete. All 2,962 reviewed
+body identities across 63 examples use verified optimized MIR and the general
 C++ body emitter. The no-MIR emitter and executable AST statement route are
 gone; the exact census and two-endpoint corpus oracle guard that result.
 

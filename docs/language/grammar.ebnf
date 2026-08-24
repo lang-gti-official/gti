@@ -384,6 +384,7 @@ access-specifier       = ( "public" | "private" ) ":" ;
 
 constructor-declaration
                        = IDENTIFIER [ generic-parameter-clause ] parameter-clause
+                         [ requires-clause ]
                          [ constructor-initializer-list ] block
                        | IDENTIFIER special-constructor-parameter-clause
                          special-member-specifier ;
@@ -1133,7 +1134,8 @@ pack-expansion         = IDENTIFIER "..." ;
    graph.
 
    A trailing requires clause is a bounded conjunction of concept applications
-   whose arguments name visible non-pack generic type parameters. It can
+   whose arguments are visible non-pack generic type parameters or closed exact
+   types containing no unresolved type/value parameter. It can
    express exact multi-type relationships, such as
    `std::sentinel_for<Sentinel, Iterator>`,
    and its facts are active while the symbolic body is checked. Concrete
@@ -1147,7 +1149,15 @@ pack-expansion         = IDENTIFIER "..." ;
 
    Inline and trailing constraints affect validity only. They do not
    distinguish overload signatures, rank candidates, provide SFINAE, or select
-   specializations. A trailing clause is semantically rejected on an operator
+   specializations. A generic constructor may declare inferred local type
+   parameters and carry the same inline and trailing requirements. Its local
+   parameters cover only its parameters, requirements, initializer list,
+   defaults, and body; they are never explicit call arguments and do not
+   escape to later class members. Constructor-local packs remain unsupported,
+   and the existing local `uint64_t` form remains restricted to an inferred
+   fixed-array extent.
+
+   A trailing clause is semantically rejected on an operator
    or a virtual, pure, overriding, or interface method. Concept disjunction,
    negation, general requires-expressions, arbitrary expression requirements,
    and concept, partial, or constraint-selected specialization are not

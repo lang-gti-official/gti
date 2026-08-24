@@ -173,8 +173,8 @@ shadow infrastructure:
    gate covers O0/O1/O3 and C++20/C++23; broader signatures, lifecycle failure,
    initialization, double failure, embedding, and callbacks remain separate
    work rather than implied completion of M-FAIL-01.
-7. **Final authority cutover — done (`M-BACK-02`).** All 2,867 reviewed source
-   body identities across 62 examples emit through `CppMirBodyEmitter` from
+7. **Final authority cutover — done (`M-BACK-02`).** All 2,962 reviewed source
+   body identities across 63 examples emit through `CppMirBodyEmitter` from
    verified optimized MIR and copied representation rows. Functions,
    constructors, destructors, lambdas, class initializers, module
    initialization, hosted startup, generic specializations, ownership,
@@ -905,8 +905,8 @@ analysis, HIR, MIR, and the backend.
 
 ### M-BACK-02: Complete MIR Body-Family Migration
 
-- **State/role:** complete for source executable bodies. All 2,867 reviewed
-  body identities across 62 examples use the verified-MIR production route.
+- **State/role:** complete for source executable bodies. All 2,962 reviewed
+  body identities across 63 examples use the verified-MIR production route.
   The named families below are historical migration stages, not current
   selectors or fallback authorities.
 - **Completed scalar-CFG scope:** `scalar-cfg-v1` admits fixed-width integers,
@@ -2229,21 +2229,29 @@ name recognition.
 
 ### L-RANGE-01: Dedicated Range And Element Loans
 
-- **State/role:** ready; prerequisites `M-OWN-02` and `M-LIFE-01` are done;
-  systems-readiness implementation for container/game workloads.
-- **Scope:** Represent the range owner, iterator/sentinel, per-iteration
-  element place, access mode, increment edge, `continue`, `break`, and owned
-  range temporary explicitly. Start with fixed arrays, then the existing
-  structural protocol.
+- **State/role:** done in 0.299.0; systems-readiness capability for
+  container/game workloads.
+- **Implemented scope:** Semantics records an exact read-only range plan for
+  fixed-array indexed traversal and the existing nominal structural protocol.
+  HIR and MIR retain the owner, range carrier, iterator/sentinel, per-iteration
+  element place, access mode, selected operations, loans, loop edges, array
+  extent, and owned-temporary/drop identity. Addressable ranges are borrowed;
+  prvalues transfer into loop storage without copying a move-only owner.
+  Element loans end before increment and every exit. MIR verifies normal,
+  `continue`, `break`, `return`, nested-loop, and defined-failure cleanup before
+  backend admission.
 - **Non-goals:** pointer decay, generic view pipelines, parallel iteration, or
   mutable container iteration in the same slice.
-- **Exit gate:** fixed-array value/read-only iteration and owned temporary range
-  tests have exact HIR/MIR cleanup with no backend lifetime extension.
+- **Exit evidence:** fixed-array value/read-only and owned temporary range tests
+  cover empty/non-empty, nested loops, `break`, `continue`, `return`, move-only
+  owners, mutation/escape/reuse rejection, forged HIR/MIR rejection,
+  C++20/C++23 O0/O3 runtime cleanup, and LSP publication/clearing without
+  backend lifetime extension.
 - **Unlocks:** mutable iteration and range invalidation.
 
 ### L-RANGE-02: Mutable Iteration And Invalidation
 
-- **State/role:** blocked; prerequisite is `L-RANGE-01`; systems-readiness
+- **State/role:** ready; prerequisite `L-RANGE-01` is done; systems-readiness
   implementation.
 - **Scope:** Add one mutable element loan at a time, end it before increment and
   on every exit, reject overlapping mutable iteration, and classify container
@@ -2736,14 +2744,14 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, input-iterator/sentinel accumulation, confined exact-result numeric operations, and exact qualified class specialization are implemented; public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; `D-CALL-01` done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires` on functions/methods/constructors, constructor-local inferred type generics, closed exact requirement arguments, input-iterator/sentinel/exact-dereference relations, confined exact-result numeric operations, and exact qualified class specialization are implemented; public callable, complete-range, and hash capabilities remain client work | ADR 009 and ADR 020; constructor-local proposal done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, partial specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
 | MIR transformations | first client required | bounded editor in `O-MIR-01`, not framework-first |
-| MIR-backed C++ emission | **ADR 016 complete** | 2,867/2,867 reviewed corpus bodies use the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
+| MIR-backed C++ emission | **ADR 016 complete** | 2,962/2,962 reviewed corpus bodies use the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
 | `LoopInfo`/incremental dominance | **measured defer** | stable editor, invalidation, concrete loop client |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |

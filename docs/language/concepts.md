@@ -19,9 +19,13 @@ concept readable_as<Iterator, T> =
     std::accumulates_into<Iterator, T>;
 ```
 
-Every application argument is an identifier naming one of the declaration's
-own type parameters. An application must supply the referenced concept's exact
-arity, but may map, reorder, or reuse the enclosing parameters. Concept names
+Every application argument is either one of the declaration's visible
+non-pack type parameters or a closed exact type containing no unresolved
+type/value parameter. An application must supply the referenced concept's
+exact arity, but may map, reorder, or reuse enclosing parameters. A closed
+argument such as `char` supplies an exact fact but does not participate in
+generic inference. Dependent compound arguments such as `Wrapper<T>`, packs,
+values, and expressions remain outside this bounded grammar. Concept names
 follow ordinary namespace and direct-source-unit visibility. They may be
 declared after use within a visible source unit. Definitions may use `&&` or
 `and`; cycles and disjunction are rejected.
@@ -41,9 +45,10 @@ trailing clause below.
 
 ## Trailing `requires`
 
-A generic free function or non-polymorphic method may append a bounded
-requirements clause after its parameter list and receiver `mut` qualifier,
-when present:
+A generic free function, non-polymorphic method, or ordinary generic
+constructor may append a bounded requirements clause after its parameter list
+and receiver `mut` qualifier, when present. For a constructor the clause comes
+before its initializer-list colon:
 
 ```gti
 T consume<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, mut T init)
@@ -60,9 +65,9 @@ The implemented clause has exactly this form:
 requires concept-application (&& concept-application)*
 ```
 
-`and` is an equivalent conjunction spelling. Every argument must name a
-non-pack type parameter visible on that declaration, and every application
-must have the declared arity. Arbitrary types, packs, values, expressions,
+`and` is an equivalent conjunction spelling. Every argument must be a visible
+non-pack type parameter or closed exact type, and every application must have
+the declared arity. Dependent compound types, packs, values, expressions,
 nested requirements, boolean predicates, `||`/`or`, and negation are not
 accepted in this clause.
 
@@ -111,6 +116,9 @@ concept input_iterator<I> = gti_internal::input_iterator_capability<I>;
 
 concept sentinel_for<Sentinel, Iterator> =
     gti_internal::sentinel_for_capability<Sentinel, Iterator>;
+
+concept dereferences_to<Iterator, T> =
+    gti_internal::dereferences_to_capability<Iterator, T>;
 }
 ```
 
@@ -122,10 +130,12 @@ The current structural capability set is intentionally small:
   ownership rules;
 - `sentinel_for<S, I>` requires an exact public read-only
   `bool I::operator!=(S&)`; and
-- `accumulates_into<I, T>` requires public read-only `I::operator*()` to return
-  a checked reference whose referent is exactly `T`.
+- `dereferences_to<I, T>` requires public read-only `I::operator*()` to return
+  a checked reference whose referent is exactly `T`; and
+- `accumulates_into<I, T>` is the numeric-library composition of that same
+  exact relationship.
 
-The last rule is a deliberate first version. It supports homogeneous numeric
+The exact-referent rule is a deliberate first version. It supports homogeneous numeric
 accumulation but not an iterator element type that merely converts to, or can
 otherwise be added into, a different accumulator type. A later heterogeneous
 contract requires a separately specified exact operation relationship; native
@@ -166,8 +176,8 @@ SFINAE, implicit conversion, and overload ranking do not decide GTI validity.
 
 ## Standard-library client
 
-`<std/numeric>` uses the bounded model to implement `std::accumulate` in
-ordinary GTI source:
+`<std/iterator>` and `<std/numeric>` use the bounded model to expose
+`std::dereferences_to` and implement `std::accumulate` in ordinary GTI source:
 
 ```gti
 T accumulate<Iterator, Sentinel, std::numeric T>(
@@ -187,6 +197,12 @@ The explicit `T(...)` preserves GTI's checked numeric-conversion and
 assignment rules for narrow integer types. The compiler recognizes none of the
 public names `std::accumulate`, `std::input_iterator`, `std::sentinel_for`, or
 `std::accumulates_into`.
+
+`<std/string>` uses the closed exact argument in
+`std::dereferences_to<Iterator, char>` for its constructor-local generic
+iterator/sentinel constructor. `std::string(source.begin(), source.end())`
+copies characters into independent owning storage and retains neither the
+iterators nor the source loan after construction.
 
 ## Deliberate exclusions and extension rule
 

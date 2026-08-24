@@ -5946,29 +5946,49 @@ int32_t main() {
   const lang::MirFunctionInstance *selected = nullptr;
   const lang::MirLoan *borrow = nullptr;
   const lang::MirPlace *source = nullptr;
+  const lang::MirPlace *carrier = nullptr;
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
-    for (const lang::MirLoan &candidate : function.body.loans) {
-      const lang::MirPlace *candidateSource =
-          function.body.findPlace(candidate.source);
-      if (candidateSource != nullptr &&
-          candidateSource->type.kind == lang::SemanticType::Reference &&
-          candidateSource->root == lang::MirPlaceRootKind::Binding &&
-          candidateSource->projections.empty()) {
-        selected = &function;
-        borrow = &candidate;
-        source = candidateSource;
-        break;
-      }
+    if (function.body.rangeIterations.empty() ||
+        function.parameterBindings.empty()) {
+      continue;
     }
-    if (selected != nullptr) {
+    const lang::MirRangeIteration &range =
+        function.body.rangeIterations.front();
+    const lang::MirLoan *candidateBorrow =
+        function.body.findLoan(range.rangeLoan);
+    const lang::MirPlace *candidateSource =
+        candidateBorrow == nullptr
+            ? nullptr
+            : function.body.findPlace(candidateBorrow->source);
+    const auto candidateCarrier = std::find_if(
+        function.body.places.begin(), function.body.places.end(),
+        [&](const lang::MirPlace &place) {
+          return place.root == lang::MirPlaceRootKind::Binding &&
+                 place.binding == function.parameterBindings.front() &&
+                 place.projections.empty() &&
+                 place.type.kind == lang::SemanticType::Reference;
+        });
+    if (candidateSource != nullptr &&
+        candidateSource->root == lang::MirPlaceRootKind::Binding &&
+        candidateSource->binding == function.parameterBindings.front() &&
+        candidateSource->projections.size() == 1 &&
+        candidateSource->projections.front().kind ==
+            lang::MirProjectionKind::Dereference &&
+        candidateCarrier != function.body.places.end()) {
+      selected = &function;
+      borrow = candidateBorrow;
+      source = candidateSource;
+      carrier = &*candidateCarrier;
       break;
     }
   }
-  expect(selected != nullptr && borrow != nullptr && source != nullptr,
-         "the range fixture should retain a borrow sourced by its reference "
-         "parameter carrier");
-  if (selected == nullptr || borrow == nullptr || source == nullptr) {
+  expect(selected != nullptr && borrow != nullptr && source != nullptr &&
+             carrier != nullptr,
+         "the range fixture should retain a borrow sourced by the explicit "
+         "referent of its reference parameter carrier");
+  if (selected == nullptr || borrow == nullptr || source == nullptr ||
+      carrier == nullptr) {
     return;
   }
 
@@ -5988,14 +6008,14 @@ int32_t main() {
       emitter.emitFailureBodyText(address, "reference-parameter-range-v0", 1)
           .text;
   const std::string assignment =
-      "__gti_mir_loan_" + std::to_string(borrow->id) + " = __gti_mir_p_" +
-      std::to_string(source->id) + ";";
+      "__gti_mir_loan_" + std::to_string(borrow->id) + " = &(*__gti_mir_p_" +
+      std::to_string(carrier->id) + ");";
   expect(text.find(assignment) != std::string::npos &&
              text.find("__gti_mir_loan_" + std::to_string(borrow->id) +
-                       " = &__gti_mir_p_" + std::to_string(source->id)) ==
+                       " = &__gti_mir_p_" + std::to_string(carrier->id)) ==
                  std::string::npos,
-         "borrowing a reference parameter should copy its referent pointer "
-         "carrier rather than take the carrier's address");
+         "borrowing a reference parameter should address its explicit "
+         "referent rather than take the pointer carrier's address");
 }
 
 void testCopyParameterFieldPublicationAdmission() {
@@ -6198,6 +6218,72 @@ int main() {
          "inventing either discarded SSA lifetime");
 }
 
+void testFailureFormSubscriptCompatibilityBoundary() {
+  lang::FrontendResult frontend = analyze("subscript-boundary.gti", R"(
+class Indexed {
+  mut int elements[1] = {1};
+
+public:
+  int& operator[](uint64_t index) { return this.elements[index]; }
+  mut int& operator[](uint64_t index) mut { return this.elements[index]; }
+};
+
+int mutate(mut Indexed& indexed) {
+  indexed[uint64_t(0)] *= 2;
+  return indexed[uint64_t(0)];
+}
+
+int main() {
+  mut Indexed indexed = Indexed();
+  indexed[uint64_t(0)] += 1;
+  return mutate(indexed) - 4;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the reduced failure-capable subscript fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t selectedBoundaries = 0;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (function.overloadedOperator &&
+        *function.overloadedOperator == lang::OverloadedOperator::Subscript &&
+        lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(frontend.mir, map,
+                                                          function.id)) {
+      ++selectedBoundaries;
+    }
+  }
+  expect(selectedBoundaries == 2,
+         "the compatibility places should select the exact read-only and "
+         "mutable subscript boundary instances");
+
+  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
+  std::size_t normalDefinitions = 0;
+  bool checkedReferenceCompound = false;
+  std::istringstream lines(artifact.contents);
+  for (std::string line; std::getline(lines, line);) {
+    normalDefinitions +=
+        line.find("Indexed::__gti_fn_") != std::string::npos &&
+        line.find("___gti_operator_subscript(") != std::string::npos &&
+        line.find(" {") != std::string::npos;
+    checkedReferenceCompound =
+        checkedReferenceCompound ||
+        (line.find("mir_checked_compound_multiply_v1(") != std::string::npos &&
+         line.find("___gti_operator_subscript(") != std::string::npos);
+  }
+  expect(normalDefinitions == 2,
+         "the C++ artifact should define both ordinary subscript boundaries "
+         "instead of leaving compatibility calls unresolved");
+  expect(checkedReferenceCompound,
+         "a reference-projected class subscript should preserve the checked "
+         "compound operation instead of degrading it to assignment");
+}
+
 void testNativeCallbackFactoryBody() {
   lang::FrontendResult frontend =
       analyzeWithStandardLibrary("native_callback_factory.gti", R"(
@@ -6352,6 +6438,7 @@ int main() {
   testReferenceParameterBorrowUsesReferentCarrier();
   testCopyParameterFieldPublicationAdmission();
   testAdjacentClassCopyAssignmentFusion();
+  testFailureFormSubscriptCompatibilityBoundary();
   testNativeCallbackFactoryBody();
   testDeducedCallableTemplateEmission();
   testReferenceReturnFailureAbi();

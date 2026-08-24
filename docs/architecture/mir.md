@@ -78,8 +78,11 @@ global/static validity. MIR verification also rejects represented
 synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
-The deterministic serialization is currently `mir-v39`/`mir-body-v39`
-(v39 added verified call-scoped loans for fresh read-only temporary arguments;
+The deterministic serialization is currently `mir-v41`/`mir-body-v40`.
+Program/body v41/v40 add the verified read-only range-iteration inventory;
+program v40 added ordered constructor-local type/value arguments to concrete
+MIR constructor identities while body v39 was unchanged. Program/body v39 added
+verified call-scoped loans for fresh read-only temporary arguments;
 v38 added caller-expanded default-argument provenance to ordered call inputs
 and explicit-argument counts to constructor initializers; v31 added the
 prefix-initialized storage type kind and its intrinsic
@@ -763,6 +766,17 @@ producer/target, borrowed state, an escaping result, producer/input reordering,
 premature or missing loan ending, and a missing or duplicate drop. The backend
 therefore consumes a complete schedule rather than relying on C++ reference
 lifetime rules.
+
+An ordinary-constructor argument may use `MoveBorrowedTemporary` only for the
+corresponding HIR input: one exact fresh GTI call result of the same concrete
+class type as the selected by-value parameter. Lowering assigns the successful
+producer result its one value-drop obligation, emits the move checkpoint, and
+reparents that obligation to the constructor parameter before construction.
+Verification requires the producer, parameter, concrete constructor instance,
+input order, full-expression, and success/failure cleanup edges to agree. It
+also rejects a copy, duplicate transfer, abandoned producer drop, or second
+destruction. The role is intentionally not available to general borrowed-state
+class arguments.
 
 Other calls and expression families still rely on ordered MIR produced by
 recursive lowering rather than a dedicated verifier-visible materialization

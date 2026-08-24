@@ -1692,7 +1692,7 @@
               "name": "argument",
               "content": {
                 "type": "SYMBOL",
-                "name": "identifier"
+                "name": "type"
               }
             },
             {
@@ -1709,7 +1709,7 @@
                     "name": "argument",
                     "content": {
                       "type": "SYMBOL",
-                      "name": "identifier"
+                      "name": "type"
                     }
                   }
                 ]
@@ -2331,6 +2331,22 @@
             "type": "SYMBOL",
             "name": "parameter_clause"
           }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "constraints",
+              "content": {
+                "type": "SYMBOL",
+                "name": "requires_clause"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "CHOICE",

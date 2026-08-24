@@ -191,8 +191,9 @@ Eligibility is deliberately narrow: the
 target is concrete and non-intrinsic; argument cardinality exactly matches the
 selected parameters after caller-side default expansion; no pack expansion is
 present; and every
-parameter is either a supported scalar/reference form or an exact class value
-without borrowed state. Mutable temporary permission remains confined to
+parameter is either a supported scalar/reference form, an exact class value
+without borrowed state, or the narrowly scheduled constructor input described
+below. Mutable temporary permission remains confined to
 ordinary methods and reusable `operator()`; existing non-borrowing read-only
 operators selected on an admitted fresh temporary also receive a plan so MIR
 does not reconstruct their receiver. Lambdas, unresolved deferred callables,
@@ -211,6 +212,15 @@ unwrapped producer, exact read-only parameter type, written parameter index,
 and enclosing full-expression identity. HIR rejects duplicate, omitted, or
 out-of-range semantic indices and never infers this role from a class-shaped
 argument on its own.
+An ordinary constructor may instead receive `MoveBorrowedTemporary` for an
+exact fresh GTI call result whose class value carries borrowed state. This is a
+transfer into the selected constructor parameter, not a copy and not a loan of
+the producer. The input retains the producer, parameter index, concrete
+parameter type, and full-expression identity so MIR can reparent the one
+source drop to the constructor parameter and verify single destruction. This
+bounded route is what permits a move-only iterator result such as
+`source.begin()` to initialize an inferred constructor parameter without
+weakening ordinary class-value admission.
 This preserves a once-callable requirement even when exact overload selection
 legitimately falls back to a read or mutable target. Ordinary constructors
 require an exact constructor target and at least one parameter;
@@ -219,7 +229,8 @@ remain unscheduled. The plan
 names a function receiver, when present, once and records each argument in
 source order with its exact concrete parameter type. Constructors have no
 receiver. An input role is value, class-copy value, class-move value, read
-borrow, mutable borrow, read temporary borrow, or mutable temporary borrow. A
+borrow, mutable borrow, read temporary borrow, mutable temporary borrow, or
+move-borrowed temporary. A
 class place is eligible only when it can be copied;
 a class value is eligible only when it can be moved. The operand vector remains
 source provenance; MIR consumes the plan as schedule authority for these
@@ -316,7 +327,12 @@ receive this map: `LoweredProgramBuilder` consumes any required construction
 evidence before publishing the backend contract.
 
 Function and constructor instance keys retain type arguments and `uint64_t`
-value arguments separately. Contextual braces have already become a concrete
+value arguments separately. A constructor key combines its selected
+declaration, concrete owner, and ordered constructor-local arguments; its row
+also retains substituted parameter types and the first instantiation site.
+MIR and the detached lowered inventory copy those arguments and parameters so
+later verification never reconstructs inference from native layout.
+Contextual braces have already become a concrete
 fixed-array `HirValue` under the selected parameter type; HIR does not infer
 their element type or extent. Forwarding one symbolic array extent to another
 generic declaration preserves the parameter identity until concrete

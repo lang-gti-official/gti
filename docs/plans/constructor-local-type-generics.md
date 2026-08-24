@@ -1,9 +1,11 @@
 # GTI Constructor-Local Type Generics And Constraints Proposal
 
-> **Plan status:** Implementation proposal. This document does not describe
-> current language behavior.
+> **Plan status:** Implemented. Canonical current behavior is specified by
+> [`static-semantics.md`](../language/static-semantics.md),
+> [`concepts.md`](../language/concepts.md), and
+> [`ranges.md`](../language/ranges.md).
 
-Status: ready for implementation scheduling
+Status: complete
 
 This proposal adds inferred constructor-local type parameters and bounded
 trailing requirements. Its first user-facing client is construction of an
@@ -70,10 +72,11 @@ define `std::accumulates_into<I, T>` in `<std/numeric>` as library vocabulary
 over that same relationship. The compiler must not recognize `std::string`,
 `std::dereferences_to`, or `std::accumulates_into` by public spelling.
 
-## Current Baseline
+## Baseline At Proposal Time
 
-The implementation already contains much of the required representation, but
-that latent plumbing is not current language support:
+Before this proposal was implemented, the repository already contained much
+of the required representation, but that latent plumbing was not language
+support:
 
 - the parser accepts a generic-parameter list after a constructor name;
 - `ConstructorDecl` and `ConstructorInfo` retain constructor-local generic
@@ -87,7 +90,7 @@ that latent plumbing is not current language support:
 - all constructor bodies execute from verified MIR through the general backend
   route.
 
-Current semantics deliberately rejects every constructor-local type parameter
+The baseline semantics deliberately rejected every constructor-local type parameter
 with `GTI-S2026`. Only an inferred immutable `uint64_t N` that is the complete
 extent of a by-value fixed-array parameter is accepted. `ConstructorDecl` also
 has no `RequiresClause`; bounded trailing requirements currently belong only to
@@ -97,6 +100,24 @@ The implementation must therefore remove a semantic restriction and complete
 the constraint, candidate, tooling, verification, and declaration-emission
 paths. It must not treat the pre-existing fields as evidence that the feature
 already works.
+
+## Implementation Outcome
+
+The completed slice keeps constructor-local type parameters inference-only and
+checks their constraints after exact argument inference. Concrete constructor
+identity includes the owner, source declaration, local type/value arguments,
+and substituted parameter types through HIR, MIR, and `LoweredProgram`.
+Formatter, Tree-sitter, language-query, and LSP surfaces preserve the symbolic
+declaration and selected concrete signature.
+
+The standard `std::string` iterator/sentinel constructor is the acceptance
+client. Its fresh `begin()`/`end()` results, including the move-only owner-tied
+iterator, use bounded constructor-input schedules; no general implicit
+conversion, borrowed-state copy, CTAD, specialization, or overload ranking was
+added. Focused regressions cover
+successful iterator/sentinel construction, stable distinct instances, failed
+and conflicting inference, unsatisfied requirements, local-parameter scope,
+lowered-metadata mutation, incomplete LSP input, and native C++20/C++23 builds.
 
 ## Decision Summary
 

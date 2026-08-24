@@ -1336,6 +1336,209 @@ def test_requires_tooling(executable, root):
         session.close()
 
 
+def test_constructor_local_generic_tooling(executable, root):
+    source = (
+        "class Box {\n"
+        "public:\n"
+        "  Box<std::numeric Value>(Value value)\n"
+        "    requires std::copyable<Value> {}\n"
+        "};\n"
+        "int main() {\n"
+        "  Box value = Box(1);\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "constructor-local-generic-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]}
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"]["semanticTokensProvider"][
+            "legend"
+        ]["tokenTypes"]
+        type_parameter_token = token_types.index("typeParameter")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+
+        declaration = source.index("Box<std::numeric")
+        construction = source.rindex("Box(1)")
+        parameter_declaration = source.index("Value>")
+        parameter_type_use = source.index("Value value")
+        requirement_use = source.index("Value>", parameter_type_use)
+
+        def request(request_id, method, offset, extra=None):
+            params = {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(source, offset),
+            }
+            if extra:
+                params.update(extra)
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        declared_hover = request(2, "textDocument/hover", declaration + 1)
+        assert declared_hover["contents"]["value"].startswith(
+            "```gti\n"
+            "Box<std::numeric Value>(Value value) "
+            "requires std::copyable<Value>\n```"
+        ), declared_hover
+
+        selected_hover = request(3, "textDocument/hover", construction + 1)
+        selected_signature = (
+            "Box::Box<int32_t>(int32_t value) "
+            "requires std::copyable<int32_t>"
+        )
+        assert selected_hover["contents"]["value"].startswith(
+            f"```gti\n{selected_signature}\n```"
+        ), selected_hover
+
+        definition = request(4, "textDocument/definition", construction + 1)
+        assert definition == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, declaration),
+                "end": lsp_position(source, declaration + len("Box")),
+            },
+        }, definition
+
+        references = request(
+            5,
+            "textDocument/references",
+            construction + 1,
+            {"context": {"includeDeclaration": True}},
+        )
+        assert [entry["range"]["start"] for entry in references] == [
+            lsp_position(source, declaration),
+            lsp_position(source, construction),
+        ], references
+
+        parameter_definition = request(
+            6, "textDocument/definition", requirement_use + 1
+        )
+        assert parameter_definition["range"] == {
+            "start": lsp_position(source, parameter_declaration),
+            "end": lsp_position(
+                source, parameter_declaration + len("Value")
+            ),
+        }, parameter_definition
+
+        parameter_references = request(
+            7,
+            "textDocument/references",
+            parameter_type_use + 1,
+            {"context": {"includeDeclaration": True}},
+        )
+        assert [entry["range"]["start"] for entry in parameter_references] == [
+            lsp_position(source, parameter_declaration),
+            lsp_position(source, parameter_type_use),
+            lsp_position(source, requirement_use),
+        ], parameter_references
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 8)[
+                "result"
+            ]["data"]
+        )
+        for offset in (
+            parameter_declaration,
+            parameter_type_use,
+            requirement_use,
+        ):
+            position = lsp_position(source, offset)
+            assert tokens[(position["line"], position["character"])][
+                "type"
+            ] == type_parameter_token
+
+        signature = request(
+            9,
+            "textDocument/signatureHelp",
+            construction + len("Box("),
+        )
+        assert signature["signatures"][0]["label"] == selected_signature
+        assert signature["signatures"][0]["parameters"] == [
+            {"label": "int32_t value"}
+        ]
+
+        incomplete = source.replace(
+            "requires std::copyable<Value> {}",
+            "requires std::copyable<",
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": incomplete}],
+                },
+            }
+        )
+        incomplete_publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        assert incomplete_publication["diagnostics"], incomplete_publication
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+            and not message["params"]["diagnostics"]
+        )
+        recovered_hover = request(10, "textDocument/hover", construction + 1)
+        assert selected_signature in recovered_hover["contents"]["value"]
+    finally:
+        session.close()
+
+
 def test_semantic_definition(executable, root):
     dependency_source = (
         "namespace math {\n"
@@ -6333,6 +6536,7 @@ def main():
     test_semantic_hover(sys.argv[1], root)
     test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
+    test_constructor_local_generic_tooling(sys.argv[1], root)
     test_contextual_array_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_exact_qualified_specialization_tooling(sys.argv[1], root)
@@ -6363,6 +6567,7 @@ def main():
     test_rename_tooling(sys.argv[1], root)
     test_signature_help_tooling(sys.argv[1], root)
     test_mutable_temporary_receiver_tooling(sys.argv[1], root)
+    test_read_only_range_loan_tooling(sys.argv[1], root)
     test_temporary_argument_borrow_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
     library_source = (
@@ -7342,6 +7547,110 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         assert signature and signature["signatures"][0]["label"].endswith(
             "inspect() mut"
         ), signature
+    finally:
+        session.close()
+
+
+def test_read_only_range_loan_tooling(executable, root):
+    invalid_source = (
+        "int main() {\n"
+        "  int values[2] = {1, 2};\n"
+        "  for (mut auto& value : values) { value = 3; }\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    valid_source = (
+        "int main() {\n"
+        "  int values[2] = {1, 2};\n"
+        "  mut int total = 0;\n"
+        "  for (auto& value : values) { total += value; }\n"
+        "  return total - 3;\n"
+        "}\n"
+    )
+    incomplete_source = (
+        "int main() {\n"
+        "  int values[2] = {1, 2};\n"
+        "  for (auto& value : values\n"
+        "}\n"
+    )
+    path = root / "read-only-range-loan.gti"
+    path.write_text(invalid_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": invalid_source,
+                    }
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        diagnostics = invalid["params"]["diagnostics"]
+        assert any(item.get("code") == "GTI-S2083" for item in diagnostics), diagnostics
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and not message["params"]["diagnostics"]
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": incomplete_source}],
+                },
+            }
+        )
+        incomplete = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )
+        incomplete_diagnostics = incomplete["params"]["diagnostics"]
+        assert incomplete_diagnostics, incomplete
+        assert not any(
+            item.get("code") == "GTI-S2083" for item in incomplete_diagnostics
+        ), incomplete_diagnostics
     finally:
         session.close()
 

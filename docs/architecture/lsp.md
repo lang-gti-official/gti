@@ -74,9 +74,11 @@ Declaration hover retains the symbolic generic
 contract, while
 selected-call hover applies the compiler-recorded generic type and value
 arguments so the same contract is rendered with concrete types and inferred
-fixed-array extents. Generic-constructor declaration hover retains its
-constructor-local `uint64_t` parameter, while selected construction hover uses
-the exact value and parameter array type from `ResolvedConstructionInfo`. Method
+fixed-array extents. Generic-constructor declaration hover retains its symbolic
+local type/value parameters and requirements, while selected construction
+hover substitutes the exact inferred arguments, requirements, and parameter
+types from `ResolvedConstructionInfo`. Definition, references, and signature
+help keep the generic constructor declaration's semantic identity. Method
 calls also apply the concrete receiver specialization retained in
 `ResolvedCallInfo::dispatchOwner`, including generic class type arguments.
 Forwarding-only parameters are identified without inventing a signature. The
@@ -205,6 +207,14 @@ and related declaration; a newer valid snapshot clears it. Signature help
 renders the exact selected borrowed overload when the fallback tier is active
 and the exact by-value overload when the ordinary tier wins. The protocol
 layer does not classify producers, rank candidates, or extend lifetimes.
+
+Range-for diagnostics follow the same boundary. A mutable element-reference
+request or unsupported range publishes compiler-owned `GTI-S2083`; changing to
+a valid read-only fixed-array or structural range clears it on the next
+document version. Incomplete range syntax publishes recovered parser
+diagnostics without retaining stale semantic range errors. The protocol layer
+does not infer a range protocol, loan lifetime, array strategy, or temporary
+ownership from punctuation.
 
 ## Document State
 

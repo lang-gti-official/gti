@@ -46,6 +46,13 @@ struct LoweredProgramTestAccess {
   functionInstances(LoweredProgram &program) {
     return program.functionInstances_;
   }
+
+  static std::vector<LoweredConstructorInstance> &
+  constructorInstances(LoweredProgram &program) {
+    return program.constructorInstances_;
+  }
+
+  static MirProgram &mir(LoweredProgram &program) { return program.mir_; }
 };
 
 } // namespace lang
@@ -136,6 +143,11 @@ public:
   ~Cleanup() { this.value = 0; }
 };
 
+class GenericConstruction {
+public:
+  GenericConstruction<Left, Right>(Left left, Right right) {}
+};
+
 namespace demo {
 class Marker<T> {
 public:
@@ -172,6 +184,7 @@ int main() {
   }
   Counter counter = Counter();
   Cleanup cleanup = Cleanup();
+  GenericConstruction generic = GenericConstruction(1, true);
   demo::Marker<int32_t> marker{};
   return identity<int32_t>(counter.read()) + process_seed + apply_offset(0) +
          marker.read() - 4;
@@ -217,7 +230,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v2") == 0 &&
+  expect(firstText.find("lowered-program-v3") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =
@@ -288,7 +301,7 @@ void testDetachedDeterministicProgram() {
               *first, lang::LoweredGeneratedItemKind::LifecycleCleanup) == 1 &&
           generatedCount(
               *first,
-              lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter) == 1,
+              lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter) == 2,
       "the lowered program should own startup, initialization, and native "
       "callback/declaration/lifecycle/concrete-instance adapter contracts "
       "without frontend pointers");
@@ -342,9 +355,18 @@ void testDetachedDeterministicProgram() {
          "ordinary-class payload");
   const auto concrete = std::find_if(
       first->generatedItems().begin(), first->generatedItems().end(),
-      [](const lang::LoweredGeneratedItem &item) {
+      [&](const lang::LoweredGeneratedItem &item) {
+        const auto *payload =
+            std::get_if<lang::LoweredConcreteInstanceAdapterItem>(
+                &item.payload);
+        const lang::LoweredDeclaration *source =
+            first->findDeclaration(item.sourceDeclaration);
         return item.identity.kind ==
-               lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter;
+                   lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter &&
+               payload != nullptr &&
+               payload->kind ==
+                   lang::LoweredConcreteInstanceAdapterKind::Function &&
+               source != nullptr && source->name == "identity";
       });
   const auto *concretePayload =
       concrete == first->generatedItems().end()
@@ -680,6 +702,50 @@ void testMutationRejection() {
     expect(hasIssue(lang::verifyLoweredProgram(missingInstance),
                     lang::LoweredProgramIssueKind::InvalidInstanceInventory),
            "deleting concrete-instance metadata should be rejected");
+  }
+
+  lang::LoweredProgram forgedConstructorArgument = original;
+  auto &constructorInstances =
+      lang::LoweredProgramTestAccess::constructorInstances(
+          forgedConstructorArgument);
+  const auto genericConstructor =
+      std::find_if(constructorInstances.begin(), constructorInstances.end(),
+                   [](const lang::LoweredConstructorInstance &instance) {
+                     return instance.typeArguments.size() == 2;
+                   });
+  expect(genericConstructor != constructorInstances.end(),
+         "the mutation fixture should contain a constructor-local generic "
+         "instance");
+  if (genericConstructor != constructorInstances.end()) {
+    std::swap(genericConstructor->typeArguments[0],
+              genericConstructor->typeArguments[1]);
+    expect(hasIssue(lang::verifyLoweredProgram(forgedConstructorArgument),
+                    lang::LoweredProgramIssueKind::InvalidInstanceInventory),
+           "reordering constructor-local type arguments without changing "
+           "the MIR identity should be rejected");
+
+    lang::LoweredProgram forgedConstructorParameter = original;
+    lang::MirProgram &mir =
+        lang::LoweredProgramTestAccess::mir(forgedConstructorParameter);
+    auto &mirConstructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            mir.constructorInstances());
+    const auto concrete =
+        std::find_if(mirConstructors.begin(), mirConstructors.end(),
+                     [](const lang::MirConstructorInstance &instance) {
+                       return instance.typeArguments.size() == 2;
+                     });
+    if (concrete != mirConstructors.end() &&
+        !concrete->parameterTypes.empty()) {
+      concrete->parameterTypes.front() = lang::SemanticType::Bool;
+    }
+    expect(
+        concrete != mirConstructors.end() &&
+            !concrete->parameterTypes.empty() &&
+            hasIssue(lang::verifyLoweredProgram(forgedConstructorParameter),
+                     lang::LoweredProgramIssueKind::InvalidInstanceInventory),
+        "substituting a constructor parameter type without changing its "
+        "concrete generic identity should be rejected");
   }
 
   lang::LoweredProgram duplicateSymbol = original;

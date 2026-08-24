@@ -1758,6 +1758,7 @@ private:
     }
 
     std::unordered_set<HirValueId> temporaryBorrowValues;
+    std::unordered_set<HirValueId> borrowedMoveValues;
     for (const HirValue &call : body.values) {
       if (!call.callPlan) {
         continue;
@@ -1772,13 +1773,16 @@ private:
       for (const HirCallArgument &argument : call.callPlan->arguments) {
         if (argument.kind == HirCallInputKind::ReadTemporaryBorrow) {
           temporaryBorrowValues.insert(argument.value);
+        } else if (argument.kind == HirCallInputKind::MoveBorrowedTemporary) {
+          borrowedMoveValues.insert(argument.value);
         }
       }
     }
     for (HirValue &value : body.values) {
       if (value.fullExpression == 0 ||
           (!materializesDropValue(value) &&
-           !temporaryBorrowValues.contains(value.id))) {
+           !temporaryBorrowValues.contains(value.id) &&
+           !borrowedMoveValues.contains(value.id))) {
         continue;
       }
       const HirDropObligationId id = body.dropObligations.size() + 1;
@@ -1918,12 +1922,83 @@ private:
           body);
     }
     if (const auto *rangeFor = dynamic_cast<const RangeForStmt *>(statement)) {
-      return appendStatement(
-          {.kind = HirStatementKind::RangeFor,
-           .source = statement,
-           .body = lowerStatement(rangeFor->lowered().get(), model,
-                                  classArguments, classValueArguments, body)},
-          body);
+      const std::optional<HirStatementId> loweredBody =
+          lowerStatement(rangeFor->lowered().get(), model, classArguments,
+                         classValueArguments, body);
+      const ResolvedRangeIterationInfo *resolved =
+          model.findRangeIteration(*rangeFor);
+      const auto bindingFor = [&](const VariableDecl *declaration) {
+        const auto found =
+            std::find_if(body.bindings.begin(), body.bindings.end(),
+                         [&](const HirBinding &binding) {
+                           return binding.variable == declaration;
+                         });
+        return found == body.bindings.end() ? HirBindingId{0} : found->id;
+      };
+      const auto valueFor = [&](const ExprPtr &expression) {
+        if (!expression) {
+          return HirValueId{0};
+        }
+        const auto found = std::find_if(
+            body.values.begin(), body.values.end(), [&](const HirValue &value) {
+              return value.source == expression.get();
+            });
+        return found == body.values.end() ? HirValueId{0} : found->id;
+      };
+      const auto statementFor = [&](const Stmt *source) {
+        const auto found =
+            std::find_if(body.statements.begin(), body.statements.end(),
+                         [&](const HirStatement &candidate) {
+                           return candidate.source == source;
+                         });
+        return found == body.statements.end() ? HirStatementId{0} : found->id;
+      };
+      HirRangeIteration range;
+      if (resolved != nullptr) {
+        range.strategy = resolved->strategy;
+        range.rangeType = resolved->rangeType;
+        range.iteratorType = resolved->iteratorType;
+        range.sentinelType = resolved->sentinelType;
+        range.elementType = resolved->elementType;
+        range.elementAccess = resolved->elementAccess;
+        range.rangeLoan = resolved->rangeLoan;
+        range.elementLoan = resolved->elementLoan;
+        range.beginFunction = resolved->beginFunction;
+        range.endFunction = resolved->endFunction;
+        range.compareFunction = resolved->compareFunction;
+        range.dereferenceFunction = resolved->dereferenceFunction;
+        range.incrementFunction = resolved->incrementFunction;
+        range.arrayLength = resolved->arrayLength;
+        range.ownsRangeTemporary = resolved->ownsRangeTemporary;
+      }
+      range.owner = bindingFor(rangeFor->ownerBinding());
+      range.rangeCarrier = bindingFor(rangeFor->rangeBinding());
+      range.iterator = bindingFor(rangeFor->iteratorBinding());
+      range.sentinel = bindingFor(rangeFor->sentinelBinding());
+      range.element = bindingFor(rangeFor->elementBinding());
+      range.source = rangeFor->ownerBinding() == nullptr
+                         ? 0
+                         : valueFor(rangeFor->ownerBinding()->initializer());
+      range.begin = rangeFor->iteratorBinding() == nullptr
+                        ? 0
+                        : valueFor(rangeFor->iteratorBinding()->initializer());
+      range.end = rangeFor->sentinelBinding() == nullptr
+                      ? 0
+                      : valueFor(rangeFor->sentinelBinding()->initializer());
+      range.elementAccessValue =
+          rangeFor->elementBinding() == nullptr
+              ? 0
+              : valueFor(rangeFor->elementBinding()->initializer());
+      range.coreLoop = statementFor(rangeFor->coreLoop());
+      if (rangeFor->coreLoop() != nullptr) {
+        range.comparison = valueFor(rangeFor->coreLoop()->condition());
+        range.increment = valueFor(rangeFor->coreLoop()->increment());
+      }
+      return appendStatement({.kind = HirStatementKind::RangeFor,
+                              .source = statement,
+                              .body = loweredBody,
+                              .rangeIteration = std::move(range)},
+                             body);
     }
     if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
       if (ifStatement->isConstexpr()) {
@@ -2360,6 +2435,71 @@ private:
 
       result.push_back({.parameterIndex = index,
                         .value = source,
+                        .parameterType = parameter,
+                        .kind = kind,
+                        .defaultArgument = index >= explicitArgumentCount});
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::optional<std::vector<HirCallArgument>>
+  orderedConstructorArguments(const HirValue &constructor,
+                              const std::vector<HirValueId> &arguments,
+                              const std::vector<SemanticType> &parameterTypes,
+                              const HirBody &body,
+                              std::size_t explicitArgumentCount) const {
+    if (!constructor.constructorTarget ||
+        constructor.constructorKind != ConstructorKind::Ordinary ||
+        constructor.intrinsic != IntrinsicKind::None) {
+      return std::nullopt;
+    }
+    if (std::optional<std::vector<HirCallArgument>> ordinary = orderedArguments(
+            arguments, parameterTypes, body, explicitArgumentCount)) {
+      return ordinary;
+    }
+    if (arguments.size() != parameterTypes.size()) {
+      return std::nullopt;
+    }
+
+    std::vector<HirCallArgument> result;
+    result.reserve(arguments.size());
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const HirValue *input = body.findValue(arguments[index]);
+      const SemanticType &parameter = parameterTypes[index];
+      if (input == nullptr || input->kind == HirValueKind::PackExpansion) {
+        return std::nullopt;
+      }
+
+      HirCallInputKind kind = HirCallInputKind::Value;
+      if (parameter.kind == SemanticType::Reference) {
+        kind = parameter.referenceAccess == AccessMode::Mutable
+                   ? HirCallInputKind::MutableBorrow
+                   : HirCallInputKind::ReadBorrow;
+      } else if (orderedValueParameterType(parameter)) {
+        kind = HirCallInputKind::Value;
+      } else if (parameter.kind != SemanticType::Class ||
+                 input->info.type != parameter) {
+        return std::nullopt;
+      } else if (input->info.category == ValueCategory::Place &&
+                 input->info.traits.copyable &&
+                 !input->info.traits.containsBorrowedState) {
+        kind = HirCallInputKind::CopyValue;
+      } else if (input->info.category == ValueCategory::Value &&
+                 input->info.traits.movable &&
+                 !input->info.traits.containsBorrowedState) {
+        kind = HirCallInputKind::MoveValue;
+      } else if (input->kind == HirValueKind::Call && input->functionTarget &&
+                 input->borrowOrigin != BorrowOriginKind::None &&
+                 input->info.category == ValueCategory::Value &&
+                 input->info.traits.movable &&
+                 input->info.traits.containsBorrowedState) {
+        kind = HirCallInputKind::MoveBorrowedTemporary;
+      } else {
+        return std::nullopt;
+      }
+
+      result.push_back({.parameterIndex = index,
+                        .value = input->id,
                         .parameterType = parameter,
                         .kind = kind,
                         .defaultArgument = index >= explicitArgumentCount});
@@ -2956,9 +3096,25 @@ private:
         lowerOperand(set->value());
       }
     } else if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
-      kind = HirValueKind::Unary;
-      operation = unary->oper().kind;
-      lowerOperand(unary->right());
+      const SemanticType *rangeType =
+          unary->rangeObject() ? model.findType(*unary->rangeObject())
+                               : nullptr;
+      const SemanticType *concreteRangeType = rangeType;
+      if (concreteRangeType != nullptr &&
+          concreteRangeType->kind == SemanticType::Reference &&
+          concreteRangeType->arguments.size() == 1) {
+        concreteRangeType = &concreteRangeType->arguments.front();
+      }
+      if (concreteRangeType != nullptr &&
+          concreteRangeType->kind == SemanticType::Array) {
+        kind = HirValueKind::Index;
+        lowerOperand(unary->rangeObject());
+        lowerOperand(unary->right());
+      } else {
+        kind = HirValueKind::Unary;
+        operation = unary->oper().kind;
+        lowerOperand(unary->right());
+      }
     } else if (const auto *unexpected = dynamic_cast<const Unexpected *>(raw)) {
       kind = HirValueKind::Unexpected;
       lowerOperand(unexpected->error());
@@ -3442,8 +3598,9 @@ private:
               ? dynamic_cast<const DirectInitializer *>(raw)->arguments().size()
               : value.parameterTypes.size();
       if (std::optional<std::vector<HirCallArgument>> plannedArguments =
-              orderedArguments(arguments, value.parameterTypes, body,
-                               explicitArgumentCount)) {
+              orderedConstructorArguments(value, arguments,
+                                          value.parameterTypes, body,
+                                          explicitArgumentCount)) {
         value.callPlan = HirCallPlan{.receiver = std::nullopt,
                                      .arguments = std::move(*plannedArguments)};
       }
