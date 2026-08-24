@@ -3,18 +3,17 @@
 // it is intentionally not redeclared here.
 
 namespace std {
-struct pair<T, U> {
-  mut T first;
-  mut U second;
+  struct pair<T, U> {
+    mut T first;
+    mut U second;
 
-  pair(T first_value, U second_value)
-      : first(std::move(first_value)), second(std::move(second_value)) {}
-};
+    pair(T first_value, U second_value) : first(std::move(first_value)), second(std::move(second_value)) {}
+  };
 
-pair<T, U> make_pair<T, U>(T first, U second) {
-  return pair<T, U>(std::move(first), std::move(second));
-}
+  pair<T, U> make_pair<T, U>(T first, U second) {
+    return pair<T, U>(std::move(first), std::move(second));
+  }
 
-void swap<T>(mut T& left, mut T& right);
-T exchange<T, U>(mut T& object, U new_value);
+  void swap<T>(mut T& left, mut T& right);
+  T exchange<T, U>(mut T& object, U new_value);
 }

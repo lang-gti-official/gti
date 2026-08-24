@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 
+from debug.typed_program_model import GeneratedCase, generated_case
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 AUDIT_ROOT = REPOSITORY_ROOT / "tests" / "local-language-audit"
@@ -324,36 +326,70 @@ def verify_contract_cases(
     return len(cases)
 
 
-def generated_program(index: int, seed: int) -> str:
-    generator = random.Random(seed + index * 7919)
-    values = [generator.randint(1, 20) for _ in range(4)]
-    iterations = generator.randint(1, 8)
-    increment = generator.randint(1, 7)
-    multiplier = generator.randint(2, 5)
-    subtraction = generator.randint(0, 12)
-    expected = (sum(values) + iterations * increment) * multiplier - subtraction
-    literal_values = ", ".join(str(value) for value in values)
-    return f"""int compute() {{
-  int values[4] = {{{literal_values}}};
-  mut int total = 0;
-  for (mut int index = 0; index < 4; index++) {{
-    total += values[index];
-  }}
-  for (mut int index = 0; index < {iterations}; index++) {{
-    total += {increment};
-  }}
-  total = total * {multiplier};
-  total -= {subtraction};
-  return total;
-}}
+def cxx_compile_command(
+    cxx: str, source: Path, output: Path, optimization: str
+) -> list[str]:
+    return [
+        cxx,
+        "-std=c++23",
+        f"-{optimization}",
+        str(source),
+        "-o",
+        str(output),
+    ]
 
-int main() {{
-  if (compute() == {expected} and {expected} > 0) {{
-    return 0;
-  }}
-  return 1;
-}}
-"""
+
+def preserve_typed_failure(
+    case: GeneratedCase,
+    case_root: Path,
+    artifacts_root: Path,
+    error: AuditFailure,
+    gti: str,
+    timeout: int,
+    verbose: bool,
+) -> Path:
+    artifacts_root.mkdir(parents=True, exist_ok=True)
+    destination = artifacts_root / f"typed-{case.seed}-{case.index:04d}"
+    suffix = 1
+    while destination.exists():
+        destination = artifacts_root / f"typed-{case.seed}-{case.index:04d}-{suffix}"
+        suffix += 1
+    partial = destination.parent / f".{destination.name}.partial-{os.getpid()}"
+    shutil.copytree(case_root, partial)
+    (partial / "failure.json").write_text(
+        json.dumps(
+            {
+                "schema": "gti-typed-audit-failure-v1",
+                "error": str(error),
+                "case": case.semantic_record(),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original_source = partial / "original.gti"
+    capture_command = [
+        sys.executable,
+        str(REPOSITORY_ROOT / "scripts/debug/capture_compiler_failure.py"),
+        "capture",
+        "--gti",
+        gti,
+        "--source",
+        str(original_source),
+        "--out",
+        str(partial / "gti-debug-bundle"),
+        "--timeout",
+        str(timeout),
+    ]
+    captured = run_command(
+        capture_command, timeout=max(timeout * 5, 30), verbose=verbose
+    )
+    (partial / "capture.stdout").write_text(captured.stdout, encoding="utf-8")
+    (partial / "capture.stderr").write_text(captured.stderr, encoding="utf-8")
+    os.replace(partial, destination)
+    return destination
 
 
 def verify_generated_programs(
@@ -366,44 +402,112 @@ def verify_generated_programs(
     full: bool,
     timeout: int,
     verbose: bool,
+    artifacts_root: Path | None,
 ) -> int:
     source_root = output_root / "generated"
     source_root.mkdir()
     for index in range(count):
-        source = source_root / f"generated-{index:03d}.gti"
-        source.write_text(generated_program(index, seed), encoding="utf-8")
-        baseline: tuple[int, str, str] | None = None
-        for optimization, standard in matrix(full):
-            variant = f"{optimization}-{standard}"
-            executable = source_root / f"generated-{index:03d}-{variant}"
-            command = compile_command(
-                gti, cxx, source, executable, optimization, standard
+        case = generated_case(index, seed)
+        case_root = source_root / f"case-{index:03d}"
+        case_root.mkdir()
+        variants = (
+            ("original", case.original),
+            (case.transformation, case.transformed),
+        )
+        for name, program in variants:
+            (case_root / f"{name}.gti").write_text(
+                program.emit("gti"), encoding="utf-8"
             )
-            compile_successfully(
-                f"generated program {index} {variant}",
-                command,
-                timeout=timeout,
-                verbose=verbose,
+            (case_root / f"{name}.cpp").write_text(
+                program.emit("cpp"), encoding="utf-8"
             )
-            result = run_executable(
-                f"generated program {index} {variant}",
-                executable,
-                timeout=timeout,
-                verbose=verbose,
-            )
-            snapshot = (result.returncode, result.stdout, result.stderr)
-            if snapshot != (0, "", ""):
+        (case_root / "semantic-case.json").write_text(
+            case.semantic_json(), encoding="utf-8"
+        )
+
+        try:
+            expected = (case.expected, "", "")
+            observed: dict[str, tuple[int, str, str]] = {}
+            for name, _ in variants:
+                cxx_source = case_root / f"{name}.cpp"
+                for optimization in ("O0", "O3"):
+                    variant = f"reference-{name}-{optimization}"
+                    executable = case_root / variant
+                    command = cxx_compile_command(
+                        cxx, cxx_source, executable, optimization
+                    )
+                    compile_successfully(
+                        f"typed case {index} {variant}",
+                        command,
+                        timeout=timeout,
+                        verbose=verbose,
+                    )
+                    result = run_executable(
+                        f"typed case {index} {variant}",
+                        executable,
+                        timeout=timeout,
+                        verbose=verbose,
+                    )
+                    assert_no_internal_failure(f"typed case {index} {variant}", result)
+                    snapshot = (result.returncode, result.stdout, result.stderr)
+                    observed[variant] = snapshot
+                    if snapshot != expected:
+                        raise AuditFailure(
+                            f"typed case {index} independent C++ {variant} disagreed "
+                            f"with the evaluator\nexpected: {expected!r}\n"
+                            f"actual: {snapshot!r}"
+                        )
+
+                gti_source = case_root / f"{name}.gti"
+                for optimization, standard in matrix(full):
+                    variant = f"gti-{name}-{optimization}-{standard}"
+                    executable = case_root / variant
+                    command = compile_command(
+                        gti, cxx, gti_source, executable, optimization, standard
+                    )
+                    compile_successfully(
+                        f"typed case {index} {variant}",
+                        command,
+                        timeout=timeout,
+                        verbose=verbose,
+                    )
+                    result = run_executable(
+                        f"typed case {index} {variant}",
+                        executable,
+                        timeout=timeout,
+                        verbose=verbose,
+                    )
+                    assert_no_internal_failure(f"typed case {index} {variant}", result)
+                    snapshot = (result.returncode, result.stdout, result.stderr)
+                    observed[variant] = snapshot
+                    if snapshot != expected:
+                        raise AuditFailure(
+                            f"typed case {index} {variant} disagreed with the evaluator\n"
+                            f"expected: {expected!r}\nactual: {snapshot!r}"
+                        )
+
+            if len(set(observed.values())) != 1:
                 raise AuditFailure(
-                    f"generated program {index} {variant} failed: {snapshot!r}\n"
-                    f"--- source ---\n{source.read_text(encoding='utf-8')}"
+                    f"typed case {index} optimization or metamorphic output drifted: "
+                    f"{observed!r}"
                 )
-            if baseline is None:
-                baseline = snapshot
-            elif snapshot != baseline:
-                raise AuditFailure(
-                    f"generated program {index} drifted for {variant}"
+        except AuditFailure as error:
+            if artifacts_root is not None:
+                preserved = preserve_typed_failure(
+                    case,
+                    case_root,
+                    artifacts_root,
+                    error,
+                    gti,
+                    timeout,
+                    verbose,
                 )
-    print(f"PASS generated semantic programs ({count}, seed {seed})")
+                raise AuditFailure(f"{error}\npreserved: {preserved}") from error
+            raise
+    print(
+        f"PASS typed differential programs ({count}, seed {seed}; "
+        "evaluator + C++ O0/O3 + GTI optimization matrix)"
+    )
     return count
 
 
@@ -602,6 +706,15 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--skip-mutations", action="store_true")
     parser.add_argument("--skip-comparisons", action="store_true")
     parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument(
+        "--keep-failures",
+        action="store_true",
+        help="preserve a generated mismatch and a GTI debug bundle",
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        help="failure destination (implies --keep-failures)",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
         "--keep-failures",
@@ -656,6 +769,11 @@ def main() -> int:
         )
         if generated_count < 0 or mutation_count < 0:
             raise AuditFailure("--generated and --mutations cannot be negative")
+        artifacts_root = None
+        if arguments.keep_failures or arguments.artifacts_dir:
+            artifacts_root = Path(
+                arguments.artifacts_dir or "gti-audit-failures"
+            ).expanduser().resolve()
 
         gti = resolve_tool(
             arguments.gti, REPOSITORY_ROOT / "build" / "gti", "GTI compiler"
@@ -708,6 +826,7 @@ def main() -> int:
                     full=arguments.full,
                     timeout=arguments.timeout,
                     verbose=arguments.verbose,
+                    artifacts_root=artifacts_root,
                 )
             if not arguments.skip_mutations and mutation_count:
                 verify_mutations(

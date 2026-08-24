@@ -561,13 +561,21 @@ failing compiler actually produced — and replays a bundle distinguishing
 reproduced, disappeared, and replaced failures. `compiler_debug_tooling` in
 CTest covers it with injected failures.
 
+`scripts/debug/reduce_compiler_failure.py` consumes that bundle and applies a
+bounded command-preserving reduction without parsing GTI. Every candidate runs
+through the capture tool's fresh probe ladder and must preserve the selected
+bundle-derived predicate. Progress and its result cache are atomic and
+resumable; the final reduced bundle is published atomically and remains
+replayable. `compiler_failure_reducer` covers a real semantic diagnostic plus
+injected signal, internal-diagnostic, and runtime-mismatch predicates.
+
 ```sh
 python3 scripts/debug/capture_compiler_failure.py capture \
     --gti build/gti --source bad.gti --out bundle
 python3 scripts/debug/capture_compiler_failure.py replay \
     --gti build/gti --bundle bundle
 python3 scripts/debug/reduce_compiler_failure.py \
-    --gti build/gti --bundle bundle --out bundle-reduced
+    --gti build/gti --bundle bundle --out bundle.reduced
 ```
 
 The reducer shrinks a bundle to a minimal reproducer under the bundle's own

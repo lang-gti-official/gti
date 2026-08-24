@@ -480,7 +480,7 @@ def capture(arguments: argparse.Namespace) -> int:
     print("  replay:    python3 scripts/debug/capture_compiler_failure.py "
           f"replay --gti <compiler> --bundle {out}")
     print("  reduce:    python3 scripts/debug/reduce_compiler_failure.py "
-          f"--gti <compiler> --bundle {out} --out {out}-reduced")
+          f"--gti <compiler> --bundle {out} --out {out}.reduced")
     return 0
 
 
