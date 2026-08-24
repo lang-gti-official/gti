@@ -807,6 +807,12 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_release_version.py"
     )
     add_test(
+      NAME nightly_asset_sync
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/nightly_asset_sync_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/scripts/sync_nightly_assets.py"
+    )
+    add_test(
       NAME mir_census_regression
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_census_test.py"
