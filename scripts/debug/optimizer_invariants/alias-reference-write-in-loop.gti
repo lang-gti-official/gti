@@ -1,0 +1,16 @@
+// expected exit status: 3
+// A mutable reference parameter aliases the caller's local, so a loop that
+// calls through it three times must be observed as three increments. Loop
+// dataflow that assumes the local is unmodified across the call would return
+// 0 here.
+void bump(mut int32_t& target) {
+  target = target + 1;
+}
+
+int main() {
+  mut int32_t x = 0;
+  for (mut int32_t step = 0; step < 3; step++) {
+    bump(x);
+  }
+  return int(x);
+}

@@ -150,7 +150,17 @@ other *and* with the value the model computes in Python.
 ```sh
 python3 scripts/debug/optimizer_differential.py --count 24
 python3 scripts/debug/optimizer_differential.py --levels O0 O2
+python3 scripts/debug/optimizer_differential.py --count 0   # invariants only
 ```
+
+Alongside the generated corpus it runs hand-written invariants from
+`scripts/debug/optimizer_invariants/`, each declaring its expected exit status
+in a first-line comment. The generated programs are int32/bool arithmetic and
+cannot express the properties an optimizer is most likely to break, so those
+are written by hand: that a dynamically out-of-range index still produces its
+defined runtime failure, that an in-range one still reads what was written,
+and that a write through an aliasing mutable reference is observed across a
+loop.
 
 Two reasons it earns its place next to `local_language_audit.py`, which
 already builds at `O0` and `O3`:

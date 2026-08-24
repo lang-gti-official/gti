@@ -1,0 +1,12 @@
+// expected exit status: 70
+// A dynamically out-of-range index must produce the defined runtime failure
+// at every level. Discharging this check as "proven" would turn a specified
+// failure into a silent bad read.
+int main() {
+  mut int32_t cells[4] = {};
+  mut std::size_t index = std::size_t(0);
+  for (mut int32_t step = 0; step < 10; step++) {
+    index = index + std::size_t(1);
+  }
+  return int(cells[index]);
+}
