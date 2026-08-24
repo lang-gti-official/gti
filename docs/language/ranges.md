@@ -107,6 +107,12 @@ range)` and `for (auto& value : range)` bind a loop-bounded, non-escaping,
 read-only non-null reference. Assigning through that reference or storing,
 capturing, or returning it beyond the iteration is ill-formed.
 
+Read-only loans are shared: nested or otherwise simultaneous read-only
+traversals may retain the same local, field, or owned range. Each traversal
+still owns a distinct range plan and loop-bounded element loan. A mutable
+traversal remains exclusive and therefore cannot overlap either another
+traversal or an ordinary read of the same owner.
+
 ## Mutable structural protocol
 
 `for (mut T& value : range)` and `for (mut auto& value : range)` request

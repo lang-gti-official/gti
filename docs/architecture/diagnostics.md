@@ -162,6 +162,11 @@ diagnostics or letting a backend message choose either identity.
   missing operand or delimiter. `GTI-P0004` owns `defined(...)` used as an
   ordinary GTI expression. Both keep the condition language confined to
   compile-time directives and preserve parsing of every conditional branch.
+- `GTI-P0005` owns source nesting that exceeds the parser's shared structural
+  depth budget. Point at the first token beyond the limit, state the exact
+  limit, and suggest splitting the expression, type, or statement into
+  shallower parts. Recover through the ordinary parser boundary and do not
+  offer a fix-it: extracting or regrouping source requires programmer intent.
 - `GTI-S2075` is a warning for a configuration flag referenced by a valid
   condition but declared nowhere in the loaded program, including its initial
   CLI/manifest set. Point at the flag name, suggest checking its spelling or

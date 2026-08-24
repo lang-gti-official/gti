@@ -17,6 +17,20 @@ class Parser::Impl {
 private:
   class ParseError {};
 
+  static constexpr std::size_t maximumNestingDepth = 64;
+
+  class NestingGuard {
+  public:
+    explicit NestingGuard(std::size_t &depth) : depth(depth) { ++this->depth; }
+    ~NestingGuard() { --depth; }
+
+    NestingGuard(const NestingGuard &) = delete;
+    NestingGuard &operator=(const NestingGuard &) = delete;
+
+  private:
+    std::size_t &depth;
+  };
+
   enum class ItemContext {
     Declaration,
     ClassMember,
@@ -76,6 +90,7 @@ public:
 private:
   void reset() {
     current = 0;
+    nestingDepth = 0;
     diagnostics.clear();
     currentClassName.reset();
     currentClassKind.reset();
@@ -88,6 +103,7 @@ private:
   // returned node so tooling can consume enclosing declaration ranges
   // without re-deriving structure from punctuation.
   StmtPtr declaration() {
+    const NestingGuard nesting = enterNesting(peek());
     const Token start = peek();
     StmtPtr result = declarationWithoutExtent();
     stampExtent(result, start);
@@ -1136,6 +1152,7 @@ private:
   }
 
   TypeRef parseType() {
+    const NestingGuard nesting = enterNesting(peek());
     std::optional<Token> pointeeConst;
     if (match({TokenKind::CONST})) {
       pointeeConst = previous();
@@ -1571,6 +1588,7 @@ private:
   }
 
   CompileCondition compileUnaryCondition() {
+    const NestingGuard nesting = enterNesting(peek());
     if (match({TokenKind::BANG})) {
       Token oper = previous();
       return CompileCondition::unary(CompileCondition::Kind::Not,
@@ -1665,6 +1683,7 @@ private:
   }
 
   StmtPtr statement() {
+    const NestingGuard nesting = enterNesting(peek());
     if (match({TokenKind::UNSAFE})) {
       Token keyword = previous();
       consume(TokenKind::LEFT_BRACE, "Expect '{' after 'unsafe'.");
@@ -2005,6 +2024,7 @@ private:
   }
 
   ExprPtr assignment() {
+    const NestingGuard nesting = enterNesting(peek());
     ExprPtr expr = conditional();
 
     if (match({TokenKind::EQUAL, TokenKind::PLUS_EQUAL, TokenKind::MINUS_EQUAL,
@@ -2154,6 +2174,7 @@ private:
     if (match({TokenKind::BANG, TokenKind::MINUS, TokenKind::PLUS,
                TokenKind::PLUS_PLUS, TokenKind::MINUS_MINUS, TokenKind::STAR,
                TokenKind::AMPERSAND, TokenKind::TILDE})) {
+      const NestingGuard nesting = enterNesting(peek());
       Token oper = previous();
       return std::make_unique<Unary>(oper, unary());
     }
@@ -2704,6 +2725,21 @@ private:
     return ParseError{};
   }
 
+  [[nodiscard]] NestingGuard enterNesting(const Token &token) {
+    if (nestingDepth >= maximumNestingDepth) {
+      missingTokenError = false;
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-P0005", DiagnosticPhase::Parsing, token,
+                         "Source nesting exceeds the parser limit of " +
+                             std::to_string(maximumNestingDepth) + ".");
+      diagnostic.hints.emplace_back(
+          "Split the expression, type, or statement into shallower parts.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      throw ParseError{};
+    }
+    return NestingGuard(nestingDepth);
+  }
+
   ParseError conditionError(const Token &token, std::string_view message) {
     missingTokenError = false;
     diagnostics.push_back(makeDiagnostic("GTI-P0003", DiagnosticPhase::Parsing,
@@ -2861,6 +2897,7 @@ private:
   std::vector<Token> tokens;
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
+  std::size_t nestingDepth = 0;
   std::size_t generatedNameCounter = 0;
   std::optional<Token> currentClassName;
   std::optional<ClassKind> currentClassKind;

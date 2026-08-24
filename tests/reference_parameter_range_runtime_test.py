@@ -34,11 +34,28 @@ int32_t sum(std::vector<int32_t>& values) {
   return total;
 }
 
+int32_t nested_sum(std::vector<int32_t>& values) {
+  mut int32_t pair_total = 0;
+  for (int32_t left : values) {
+    for (int32_t right : values) {
+      pair_total += left + right;
+    }
+  }
+
+  mut int32_t triple_count = 0;
+  for (int32_t first : values) {
+    for (int32_t second : values) {
+      for (int32_t third : values) { triple_count += 1; }
+    }
+  }
+  return pair_total - 28 + triple_count - 8;
+}
+
 int32_t main() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
   values.push_back(3);
   values.push_back(4);
-  return sum(values) - 7;
+  return sum(values) - 7 + nested_sum(values);
 }
 """
 

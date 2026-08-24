@@ -48,6 +48,9 @@ public:
       state.sourceNewlines = 0;
       const Lexeme *previous = previousSignificant(lexemes, index);
       const Lexeme *next = nextSignificant(lexemes, index);
+      if (needsLexicalSeparator(lexemes, index)) {
+        state.requireLexicalSeparator();
+      }
 
       switch (lexeme.kind) {
       case Kind::Directive:
@@ -463,12 +466,14 @@ private:
 
     void append(std::string_view text) {
       writeIndent();
+      beforeAppend();
       output.append(text);
       lineHasContent = true;
     }
 
     void appendUnindented(std::string_view text) {
       atLineStart = false;
+      beforeAppend();
       output.append(text);
       lineHasContent = true;
     }
@@ -479,6 +484,7 @@ private:
         writeIndentColumns(level * options.indentWidth);
         atLineStart = false;
       }
+      beforeAppend();
       output.append(text);
       lineHasContent = true;
     }
@@ -497,8 +503,22 @@ private:
         writeIndentColumns(columns);
         atLineStart = false;
       }
+      beforeAppend();
       output.append(text);
       lineHasContent = true;
+    }
+
+    void requireLexicalSeparator() { lexicalSeparatorRequired = true; }
+
+    void beforeAppend() {
+      if (!lexicalSeparatorRequired) {
+        return;
+      }
+      if (!output.empty() && output.back() != ' ' && output.back() != '\t' &&
+          output.back() != '\n') {
+        output.push_back(' ');
+      }
+      lexicalSeparatorRequired = false;
     }
 
     void trimSpaces() {
@@ -524,6 +544,7 @@ private:
       lineHasContent = false;
       directiveLine = false;
       includeLine = false;
+      lexicalSeparatorRequired = false;
     }
 
     void emptyLines(std::size_t count) {
@@ -698,6 +719,7 @@ private:
     bool directiveLine = false;
     bool includeLine = false;
     bool requiresClauseOpen = false;
+    bool lexicalSeparatorRequired = false;
   };
 
   static bool isIdentifierStart(char value) {
@@ -1336,6 +1358,67 @@ private:
       }
     }
     return result;
+  }
+
+  static bool sameLexemes(const std::vector<Lexeme> &actual,
+                          const std::vector<const Lexeme *> &expected) {
+    if (actual.size() != expected.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < actual.size(); ++index) {
+      if (actual[index].kind != expected[index]->kind ||
+          actual[index].text != expected[index]->text) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool retokenizes(const std::vector<const Lexeme *> &window) {
+    std::string joined;
+    for (const Lexeme *lexeme : window) {
+      joined += lexeme->text;
+    }
+    return !sameLexemes(scan(joined), window);
+  }
+
+  static bool needsLexicalSeparator(const std::vector<Lexeme> &lexemes,
+                                    std::size_t index) {
+    const Lexeme &current = lexemes[index];
+    if (current.kind == Kind::Newline || current.kind == Kind::Directive ||
+        isComment(current.kind)) {
+      return false;
+    }
+
+    std::vector<const Lexeme *> preceding;
+    for (std::size_t cursor = index; cursor > 0 && preceding.size() < 2;) {
+      --cursor;
+      const Lexeme &candidate = lexemes[cursor];
+      if (candidate.kind == Kind::Newline) {
+        continue;
+      }
+      if (candidate.kind == Kind::Directive || isComment(candidate.kind)) {
+        break;
+      }
+      preceding.push_back(&candidate);
+    }
+    if (preceding.empty()) {
+      return false;
+    }
+
+    const std::vector<const Lexeme *> adjacent{preceding.front(), &current};
+    if (retokenizes(adjacent)) {
+      return true;
+    }
+    if (preceding.size() < 2) {
+      return false;
+    }
+
+    const std::vector<const Lexeme *> priorPair{preceding[1], preceding[0]};
+    if (retokenizes(priorPair)) {
+      return false;
+    }
+    return retokenizes({preceding[1], preceding[0], &current});
   }
 
   static const Lexeme *previousSignificant(const std::vector<Lexeme> &lexemes,
