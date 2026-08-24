@@ -303,6 +303,9 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
         existing.internalLinkage || symbol.internalLinkage;
     existing.compilerPrivate =
         existing.compilerPrivate || symbol.compilerPrivate;
+    if (!existing.documentationMarkdown && symbol.documentationMarkdown) {
+      existing.documentationMarkdown = std::move(symbol.documentationMarkdown);
+    }
     return found->second;
   }
 
@@ -321,6 +324,19 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
   symbolRecords.emplace_back(std::move(symbol));
   symbolsByDeclaration.emplace(key, id);
   return id;
+}
+
+void SemanticDatabase::setSymbolDocumentation(
+    SymbolId symbol, std::string documentationMarkdown) {
+  if (symbol == 0 || symbol <= baseSymbolCount) {
+    return;
+  }
+  const SymbolId local = symbol - baseSymbolCount;
+  if (local > symbolRecords.size()) {
+    return;
+  }
+  symbolRecords[local - 1].documentationMarkdown =
+      std::move(documentationMarkdown);
 }
 
 [[nodiscard]] SymbolId
@@ -1792,6 +1808,12 @@ void SemanticModel::recordCompilerCapabilityType(
 
 SymbolId SemanticModel::recordSymbol(SymbolRecord symbol) {
   return semanticDatabase.recordSymbol(std::move(symbol));
+}
+
+void SemanticModel::setSymbolDocumentation(SymbolId symbol,
+                                           std::string documentationMarkdown) {
+  semanticDatabase.setSymbolDocumentation(symbol,
+                                          std::move(documentationMarkdown));
 }
 
 [[nodiscard]] SymbolId

@@ -2704,8 +2704,8 @@ artifact policy stay in `gti_driver`, never `gti_compiler` or the LSP.
 
 | ID | State | Scope and dependency |
 | --- | --- | --- |
-| `T-LSP-01` | ready | Retain documentation comments/declaration extents once and expose them through compiler symbols, hover, completion, and generated API docs. |
-| `T-LSP-02` | references/highlights/document symbols/rename complete; signature help ready | Current-snapshot references, document highlights, hierarchical document symbols over parser-recorded extents, and fail-closed function-local rename are implemented through `LanguageQueries` with protocol tests. The remaining sub-slice is signature help from the selected overload and argument position. |
+| `T-LSP-01` | hover complete; completion/API docs ready | `///` Markdown is retained once on declarations and exact compiler symbols, and hover publishes it at declarations and resolved uses across dirty dependency overlays. Completion, signature help, and generated API docs remain consumers of the same value. |
+| `T-LSP-02` | complete for current snapshots | Current-snapshot references, document highlights, hierarchical document symbols over parser-recorded extents, fail-closed function-local rename, and signature help from the selected overload and argument position are implemented through `LanguageQueries` with protocol tests. Project-wide coverage remains gated on `T-LSP-04/05`. |
 | `T-LSP-03` | measured defer | Extract document/snapshot service boundaries when a concrete feature makes the current server class costly to evolve. |
 | `T-LSP-04` | blocked | After `B-PROJECT-05`, consume driver-owned `ProjectFacts` without fetching/building and with dirty buffers authoritative. |
 | `T-LSP-05` | measured defer | A durable project index only after unopened-file references/rename proves a client. |
@@ -2741,7 +2741,7 @@ owned by the rows and domain plans above.
 | Public threads/atomics/mutex | **systems-readiness work-queue profile** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
 | Evaluation order | **contract adopted; bounded ordinary call/constructor schedule implemented; systems-readiness implementation required** | `D-EXEC-01` and `M-LIFE-01` done; scalar/reference plus eligible class-copy/class-move ordinary-call and concrete ordinary-constructor HIR/MIR order landed; remaining `M-EXEC-01` and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01`, `I-CAP-01`, and `M-LIFE-01` done -> `M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
-| Source text and documentation comments | **systems-readiness contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
+| Source text and documentation comments | **hover contract/tooling complete; broader consumers remain** | `///` retention and hover are complete in `T-LSP-01`; completion, signature help, broader library coverage, and generated API documentation remain |
 | Target/data-layout facts and `sizeof`/`alignof` | **complete bounded systems-readiness substrate** | `S-LAYOUT-01` and `S-LAYOUT-02` done; aggregate/native layout remains client-driven |
 | Compiler-private capability visibility | **complete** | `I-CAP-01` done; trusted source roles, exact private type identity, `GTI-S2058`, and compiler-owned LSP filtering |
 | Indexed partial moves | **complete bounded-first slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |

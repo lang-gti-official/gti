@@ -98,10 +98,18 @@ block comment is ordinary comment text. Comment delimiters inside string and
 character literals remain literal content. An unterminated block comment is
 ill-formed and is diagnosed at its opening delimiter.
 
-**Specification gap:** Documentation-comment syntax and its attachment to
-declarations are planned but not yet specified. When introduced, documentation
-must be retained as declaration metadata rather than interpreted separately by
-the LSP.
+`///` introduces a documentation line. A contiguous group of documentation
+lines attaches to the declaration whose first token appears on the immediately
+following line. A blank line, an ordinary line comment, a block comment, or
+another token breaks the attachment. The lexer removes the three-slash prefix
+and one optional following space from each line, then joins the lines with
+newlines. Empty `///` lines therefore form Markdown paragraph breaks.
+
+The resulting Markdown is declaration metadata. It has no runtime or name
+lookup effect, and ordinary `//` and `/* ... */` comments never become API
+documentation. Compiler queries expose the same retained value at declaration,
+type-use, member-use, construction, and selected-call sites; an editor protocol
+must not rescan nearby source text to infer documentation.
 
 ## 2.6 Source Units And Includes
 

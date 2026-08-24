@@ -90,12 +90,14 @@ spellings select binary32 and `d`/`D` selects binary64. The compiled lexer
 passes the original decimal digits directly to the private `APFloat`
 implementation; it never converts through host `double`.
 
-The lexer discards `//` line comments and non-nesting `/* ... */` block
-comments while preserving following token offsets and line numbers. An
-unterminated block comment produces `GTI-L0011` at its opening delimiter and
-stops later phases without parser cascades. The formatter and editor tooling
-scan comments separately. Documentation-comment retention is therefore not yet
-a compiler semantic capability.
+The lexer discards ordinary `//` line comments and non-nesting `/* ... */`
+block comments while preserving following token offsets and line numbers. A
+contiguous `///` block is instead normalized as Markdown leading trivia on the
+next declaration token; the parser transfers it to the declaration and
+semantics attaches it to the exact tooling symbol. An unterminated block
+comment produces `GTI-L0011` at its opening delimiter and stops later phases
+without parser cascades. The formatter and lexical editor highlighting still
+scan written comment ranges separately.
 
 ## Parser And AST
 
@@ -219,11 +221,13 @@ records the editor occurrence table. Compilation leaves it off; the LSP
 leaves it on.
 
 `FrontendOptions::stopAfter` selects the last phase the pipeline runs:
-`Semantics`, `Hir`, or the default `Mir`. A consumer that never reads HIR or
-MIR (the LSP) requests `Semantics`; skipped phases keep their validity flags
-false, so code generation stays disabled. The semantic model is moved out of
-the analyzer once its last reader (HIR instance reanalysis) has finished
-rather than deep-copied.
+`Semantics`, `Hir`, or the default `Mir`. Completion returns after semantic
+context capture. Ordinary editor snapshots request `Hir` so concrete generic
+instance reanalysis publishes the same source-level diagnostics as `gti
+check`, but the LSP does not query HIR directly and never builds MIR. Skipped
+phases keep their validity flags false, so code generation stays disabled. The
+semantic model is moved out of the analyzer once its last reader (HIR instance
+reanalysis) has finished rather than deep-copied.
 
 ## Boundaries
 

@@ -656,8 +656,17 @@ public:
   }
   void setExtent(SourceSpan extent) { extent_ = std::move(extent); }
 
+  [[nodiscard]] const std::optional<std::string> &
+  documentationMarkdown() const {
+    return documentationMarkdown_;
+  }
+  void setDocumentationMarkdown(std::string documentation) {
+    documentationMarkdown_ = std::move(documentation);
+  }
+
 private:
   std::optional<SourceSpan> extent_;
+  std::optional<std::string> documentationMarkdown_;
 };
 
 using StmtPtr = std::unique_ptr<Stmt>;
