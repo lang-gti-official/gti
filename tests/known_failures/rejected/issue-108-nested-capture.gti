@@ -1,0 +1,7 @@
+int main() {
+  mut int32_t c = 7;
+  auto outer = [c]() -> int32_t {
+    return [c]() -> int32_t { return c; }();
+  };
+  return int(outer()) - 7;
+}

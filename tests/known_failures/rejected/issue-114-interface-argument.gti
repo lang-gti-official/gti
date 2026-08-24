@@ -1,0 +1,21 @@
+interface Shape {
+  int32_t value();
+};
+
+class Square : public Shape {
+public:
+  Square() {}
+  int32_t value() override {
+    return 3;
+  }
+};
+
+int32_t read(Shape& shape) {
+  return shape.value();
+}
+
+int main() {
+  mut Square square = Square();
+  // Rejected, though `mut Shape& bound = square;` then `read(bound)` compiles.
+  return int(read(square));
+}

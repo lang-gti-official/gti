@@ -1,0 +1,13 @@
+// expected exit status: 3
+// The converse of bounds-failure-preserved: an in-range index is exactly the
+// case a check-discharging optimizer should simplify, and it must still read
+// the value that was written.
+int main() {
+  mut int32_t cells[4] = {};
+  cells[std::size_t(2)] = 3;
+  mut std::size_t index = std::size_t(0);
+  for (mut int32_t step = 0; step < 2; step++) {
+    index = index + std::size_t(1);
+  }
+  return int(cells[index]);
+}
