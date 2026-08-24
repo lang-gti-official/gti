@@ -566,7 +566,15 @@ python3 scripts/debug/capture_compiler_failure.py capture \
     --gti build/gti --source bad.gti --out bundle
 python3 scripts/debug/capture_compiler_failure.py replay \
     --gti build/gti --bundle bundle
+python3 scripts/debug/reduce_compiler_failure.py \
+    --gti build/gti --bundle bundle --out bundle-reduced
 ```
+
+The reducer shrinks a bundle to a minimal reproducer under the bundle's own
+replay predicate — the same stage must fail with the same signature — so a
+reduction can never quietly become a different bug. The local audit's
+`--keep-failures` (or `--artifacts-dir`) preserves a failing working tree for
+exactly this pipeline instead of deleting it with the temporary directory.
 
 `fuzz/` holds opt-in libFuzzer harnesses for the parser, formatter, and the
 whole analysis-to-backend pipeline. They exist only under
