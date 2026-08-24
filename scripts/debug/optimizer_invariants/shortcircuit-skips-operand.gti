@@ -1,0 +1,20 @@
+// expected exit status: 7
+// `and` must not evaluate its right operand when the left is false, and `or`
+// must not when the left is true. A side effect is the only way to observe
+// this, so the counter must still read zero.
+mut int32_t calls = 0;
+
+bool bump() {
+  calls = calls + 1;
+  return true;
+}
+
+int main() {
+  if (false and bump()) {
+    return 1;
+  }
+  if (true or bump()) {
+    return int(calls) + 7;
+  }
+  return 2;
+}

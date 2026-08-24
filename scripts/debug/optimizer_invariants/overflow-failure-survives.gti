@@ -1,0 +1,11 @@
+// expected exit status: 70
+// Signed overflow through the `+` operator is a defined runtime failure, not a
+// wrap. The operands are visible constants, so an optimizer that
+// constant-folds them must fold to the failure rather than to -2147483648.
+// tests/defined_integer_runtime_test.py covers std::checked_add, the library
+// form; this covers the operator at every level.
+int main() {
+  mut int32_t big = 2147483647;
+  mut int32_t result = big + 1;
+  return int(result);
+}
