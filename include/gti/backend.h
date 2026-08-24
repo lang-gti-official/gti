@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -16,6 +17,14 @@ struct BackendArtifact {
   BackendArtifactKind kind = BackendArtifactKind::Source;
   std::string contents;
   std::string extension;
+};
+
+// A verified GTI program can reach a backend capability that is deliberately
+// not implemented yet. This is distinct from an invariant failure: drivers
+// must publish it as a stable limitation diagnostic rather than an ICE.
+class BackendUnsupportedError : public std::runtime_error {
+public:
+  using std::runtime_error::runtime_error;
 };
 
 class Backend {

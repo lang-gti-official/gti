@@ -136,6 +136,24 @@ private:
   bool invoked = false;
 };
 
+class UnsupportedBackend final : public lang::Backend {
+public:
+  [[nodiscard]] std::string_view name() const override {
+    return "unsupported-test";
+  }
+
+  [[nodiscard]] lang::BackendArtifact
+  generate(const lang::LoweredProgram &) override {
+    invoked = true;
+    throw lang::BackendUnsupportedError("missing bounded test capability");
+  }
+
+  [[nodiscard]] bool wasInvoked() const { return invoked; }
+
+private:
+  bool invoked = false;
+};
+
 bool writeFile(const std::filesystem::path &path, std::string_view contents) {
   std::ofstream output(path);
   output << contents;
@@ -348,6 +366,35 @@ void testBackendExceptionBoundary() {
                  std::string::npos,
          "an exception from backend name metadata should not defeat the "
          "generation exception boundary");
+
+  UnsupportedBackend unsupportedBackend;
+  const lang::driver::CompilationResult unsupported =
+      lang::driver::compileWithBackend(request, unsupportedBackend);
+  const auto unsupportedDiagnostic = std::find_if(
+      unsupported.diagnostics.begin(), unsupported.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-B0003";
+      });
+  expect(unsupportedBackend.wasInvoked() && !unsupported.succeeded() &&
+             unsupported.status ==
+                 lang::driver::CompilationStatus::BackendFailure &&
+             !unsupported.artifact &&
+             unsupportedDiagnostic != unsupported.diagnostics.end() &&
+             unsupportedDiagnostic->phase == lang::DiagnosticPhase::Backend &&
+             unsupportedDiagnostic->primary.source ==
+                 canonicalSource.string() &&
+             unsupportedDiagnostic->message.find("unsupported-test") !=
+                 std::string::npos &&
+             unsupportedDiagnostic->message.find(
+                 "missing bounded test capability") != std::string::npos &&
+             std::none_of(unsupported.diagnostics.begin(),
+                          unsupported.diagnostics.end(),
+                          [](const lang::Diagnostic &diagnostic) {
+                            return diagnostic.code == "GTI-B0001";
+                          }) &&
+             unsupportedDiagnostic->hints.empty(),
+         "a classified backend limitation should use GTI-B0003 without "
+         "asking the user to report an internal compiler error");
 }
 
 void testProcessInvocation(const std::filesystem::path &testExecutable) {

@@ -681,9 +681,31 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
     const CppMirProgramEmissionAnalysis emission =
         CppMirBodyEmitter(program.mir(), emissionMap).analyzeProgram();
     bool emissionReady = emission.ready();
+    bool knownLimitationsOnly = true;
+    bool sawKnownLimitation = false;
     const CppMirBodyEmissionIssue *unresolvedIssue = nullptr;
+    const auto retainMostSpecificIssue =
+        [&](const CppMirBodyEmissionIssue &candidate) {
+          if (unresolvedIssue == nullptr ||
+              (unresolvedIssue->kind ==
+                   CppMirBodyEmissionIssueKind::UnsupportedTextVocabulary &&
+               candidate.kind !=
+                   CppMirBodyEmissionIssueKind::UnsupportedTextVocabulary)) {
+            unresolvedIssue = &candidate;
+          }
+        };
     if (!emissionReady) {
       emissionReady = emission.issues.empty();
+      for (const CppMirBodyEmissionIssue &issue : emission.issues) {
+        retainMostSpecificIssue(issue);
+        if (issue.kind == CppMirBodyEmissionIssueKind::
+                              MissingPartialConstructionRollbackMir) {
+          sawKnownLimitation = true;
+        } else if (issue.kind !=
+                   CppMirBodyEmissionIssueKind::UnsupportedTextVocabulary) {
+          knownLimitationsOnly = false;
+        }
+      }
       for (const CppMirBodyEmissionAnalysis &body : emission.bodies) {
         if (body.ready()) {
           continue;
@@ -691,28 +713,39 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
         if (!specializedBodyTextIsReady(program, standard, emissionRows,
                                         body)) {
           emissionReady = false;
-          if (!body.issues.empty()) {
-            unresolvedIssue = &body.issues.front();
+          for (const CppMirBodyEmissionIssue &issue : body.issues) {
+            retainMostSpecificIssue(issue);
+            if (issue.kind == CppMirBodyEmissionIssueKind::
+                                  MissingPartialConstructionRollbackMir) {
+              sawKnownLimitation = true;
+            } else if (issue.kind !=
+                       CppMirBodyEmissionIssueKind::UnsupportedTextVocabulary) {
+              knownLimitationsOnly = false;
+            }
           }
-          break;
         }
       }
     }
     if (!emissionReady) {
       std::string detail =
           "verified MIR program is outside the complete C++ text vocabulary";
-      if (unresolvedIssue == nullptr && !emission.issues.empty()) {
-        unresolvedIssue = &emission.issues.front();
-      }
       if (unresolvedIssue != nullptr) {
         detail += ": " + unresolvedIssue->detail + " (body-kind " +
                   std::to_string(
                       static_cast<std::size_t>(unresolvedIssue->body.kind)) +
                   " owner " + std::to_string(unresolvedIssue->body.owner) + ')';
       }
-      addIssue(build,
-               CppMirRepresentationSnapshotIssueKind::UnsupportedMirEmission,
-               std::move(detail));
+      // UnsupportedTextVocabulary is a summary, including on callers whose
+      // exact target carries the concrete issue. It cannot establish a known
+      // limitation by itself and does not override a specific root cause. Any
+      // other concrete issue keeps the program on the internal-error path.
+      const bool knownLimitation = sawKnownLimitation && knownLimitationsOnly;
+      addIssue(
+          build,
+          knownLimitation
+              ? CppMirRepresentationSnapshotIssueKind::KnownBackendLimitation
+              : CppMirRepresentationSnapshotIssueKind::UnsupportedMirEmission,
+          std::move(detail));
     }
   }
 

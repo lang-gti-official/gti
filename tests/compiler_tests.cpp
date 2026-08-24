@@ -17343,11 +17343,10 @@ int invoke(Renderable& renderable) {
 
 int main() {
   Sprite sprite{4};
-  Renderable& renderable = sprite;
   Box<int> box{3};
   Reader<int>& reader = box;
   int inherited_overload = sprite.tick(1.5);
-  return invoke(renderable) + inherited_overload + sprite.inherited_tick() +
+  return invoke(sprite) + inherited_overload + sprite.inherited_tick() +
          reader.read() - 28;
 }
 )";
@@ -17665,13 +17664,11 @@ int main() {
                         "Cannot construct abstract class 'Missing'"),
       "derived construction should initialize bases and reject abstract "
       "objects");
-  expect(
-      hasDiagnostic(invalid.diagnostics,
-                    "Member 'secret' of 'PrivateState' is private") &&
-          hasDiagnostic(invalid.diagnostics, "Cannot initialize 'sliced'") &&
-          hasDiagnostic(invalid.diagnostics, "parameter requires 'Abstract&'"),
-      "private state, object slicing, and implicit call upcasts should stay "
-      "rejected");
+  expect(hasDiagnostic(invalid.diagnostics,
+                       "Member 'secret' of 'PrivateState' is private") &&
+             hasDiagnostic(invalid.diagnostics, "Cannot initialize 'sliced'"),
+         "private state access and object slicing should stay rejected while "
+         "public-derived lvalues bind to base reference parameters");
 }
 
 void testInheritedGenericTargetInstances() {

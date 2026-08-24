@@ -11975,6 +11975,73 @@ virtualFailureCallee(const MirProgram &program,
   return target;
 }
 
+// MIR conservatively gives every virtual call an Invoke edge. When the exact
+// closed virtual family materialized in this program is entirely failure-free,
+// the ordinary C++ virtual call is the complete execution and the failure edge
+// is unreachable. Keep this proof separate from virtualFailureCallee(): a
+// family containing any failure-capable override must retain the transformed
+// status ABI instead.
+[[nodiscard]] const MirFunctionInstance *
+failureFreeVirtualCallee(const MirProgram &program,
+                         const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.dispatch != CallDispatch::Virtual ||
+      instruction.definedFailure.propagation !=
+          FailurePropagationKind::VirtualCall ||
+      !instruction.functionTarget || !instruction.receiver ||
+      instruction.intrinsic != IntrinsicKind::None) {
+    return nullptr;
+  }
+  const MirFunctionInstance *target =
+      program.findFunctionInstance(*instruction.functionTarget);
+  const MirClassInstance *owner =
+      target == nullptr || !target->owner
+          ? nullptr
+          : program.findClassInstance(*target->owner);
+  if (target == nullptr || owner == nullptr || !target->virtualMethod ||
+      target->pureVirtual || target->staticMember ||
+      target->mayRaiseDefinedFailure ||
+      target->definitionKind != MirDefinitionKind::Source ||
+      target->linkage != LanguageLinkage::Gti ||
+      owner->type != instruction.dispatchOwner ||
+      target->parameterTypes != instruction.parameterTypes ||
+      target->virtualRoots.empty()) {
+    return nullptr;
+  }
+  const auto sameContract = [&](const MirFunctionInstance &candidate) {
+    return candidate.returnType == target->returnType &&
+           candidate.parameterTypes == target->parameterTypes &&
+           candidate.receiverMutability == target->receiverMutability &&
+           candidate.overloadedOperator == target->overloadedOperator &&
+           candidate.returnBorrowOrigin == target->returnBorrowOrigin &&
+           candidate.returnBorrowParameter == target->returnBorrowParameter &&
+           candidate.returnBorrowAccess == target->returnBorrowAccess;
+  };
+  for (const MirFunctionInstance &candidate : program.functionInstances()) {
+    if (!candidate.owner || !candidate.virtualMethod ||
+        !sameContract(candidate) ||
+        std::none_of(candidate.virtualRoots.begin(),
+                     candidate.virtualRoots.end(), [&](FunctionId root) {
+                       return std::find(target->virtualRoots.begin(),
+                                        target->virtualRoots.end(),
+                                        root) != target->virtualRoots.end();
+                     })) {
+      continue;
+    }
+    const MirClassInstance *candidateOwner =
+        program.findClassInstance(*candidate.owner);
+    if (candidateOwner == nullptr ||
+        !classTypeIsOrDerivesFrom(program, candidateOwner->type, owner->id) ||
+        candidate.pureVirtual || candidate.staticMember ||
+        candidate.mayRaiseDefinedFailure ||
+        candidate.definitionKind != MirDefinitionKind::Source ||
+        candidate.linkage != LanguageLinkage::Gti) {
+      return nullptr;
+    }
+  }
+  return target;
+}
+
 [[nodiscard]] const MirFunctionInstance *
 transformedFailureCallee(const MirProgram &program,
                          const CppMirBodyEmissionMap &representations,
@@ -18261,6 +18328,16 @@ private:
         output << "continue;\n";
         return;
       }
+      if (producer != nullptr &&
+          failureFreeVirtualCallee(program, *producer) != nullptr) {
+        emitEdgeArguments(block, terminator.target, terminator.targetArguments,
+                          0, facts);
+        writeIndent();
+        output << "__gti_mir_bb = " << terminator.target << ";\n";
+        writeIndent();
+        output << "continue;\n";
+        return;
+      }
       if (failureForm && producer != nullptr &&
           callableValueInvocation(*producer)) {
         if (hasEdgeArguments) {
@@ -24112,6 +24189,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const bool virtualFailureTarget =
               target != nullptr &&
               virtualFailureCallee(program_, instruction) == target;
+          const bool failureFreeVirtualTarget =
+              failureFreeVirtualCallee(program_, instruction) == target;
           const bool ordinaryStaticTarget =
               target != nullptr &&
               instruction.dispatch == CallDispatch::Static &&
@@ -24127,7 +24206,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 *instruction.callableInvocation ==
                     callableInvocationCapability(target->receiverMutability)));
           if (target == nullptr || !target->owner || target->staticMember ||
-              (!ordinaryStaticTarget && !virtualFailureTarget) ||
+              (!ordinaryStaticTarget && !virtualFailureTarget &&
+               !failureFreeVirtualTarget) ||
               !receiverMutabilityMatches ||
               target->linkage != LanguageLinkage::Gti) {
             {
@@ -24802,6 +24882,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           invokeTarget->linkage == LanguageLinkage::Gti &&
           (invokeTarget->definitionKind == MirDefinitionKind::Source ||
            virtualFailureCallee(program_, *producer) == invokeTarget);
+      if (producer->kind == MirInstructionKind::Call &&
+          failureFreeVirtualCallee(program_, *producer) == invokeTarget) {
+        continue;
+      }
       if ((!transformedGtiCall &&
            (terminallyContainedPlainCallee(program_, representations_,
                                            *producer) ||
