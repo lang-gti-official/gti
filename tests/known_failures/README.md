@@ -15,6 +15,12 @@ These are the shapes left broken by an otherwise-landed fix — see
 [#117](https://github.com/LukeHHA/gti/issues/117). Each has a passing sibling
 that the same fix already handles, which is what makes them worth keeping.
 
+Every closed issue from this branch has now been probed around, not just the
+ones where a gap surfaced by accident. Six fixes covered their family — #109,
+#111, #112, #113, #114 and #116 — and the six below did not. The fixes that
+held are largely the ones whose issues enumerated the family explicitly, which
+is a lesson about how the issues were written as much as how they were fixed.
+
 | File | Left over from | Symptom |
 | --- | --- | --- |
 | `issue-117-iife-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | a captured field read in an *immediately-invoked* lambda; binding the lambda first works |
@@ -22,6 +28,7 @@ that the same fix already handles, which is what makes them worth keeping.
 | `issue-117-indirect-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic reappearing in its own arguments at depth 2; the direct form is fixed |
 | `issue-117-global-element-field-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | `table[0].v = x` on a global array of class; the read and the plain write are fixed |
 | `issue-117-array-of-cleanup-owning-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | an array of a class **with a destructor**; without one it compiles. Reports the same gate #106 was filed with |
+| `issue-117-static-element-field-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | the same `[0].v = x` failure through a static class field rather than a global — one defect, two surfaces |
 
 ## Memory-safety reproducers
 
