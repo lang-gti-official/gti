@@ -18,6 +18,7 @@ passing regression, delete it here, and add a row to *Graduated* below.
 | `issue-106-array-of-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | *declaring* a fixed array of any class type → `GTI-B0001`; no read needed |
 | `issue-113-virtual-through-base-reference.gti` | [#113](https://github.com/LukeHHA/gti/issues/113) | a virtual call through a reference to a plain base *class* → `GTI-B0001`; the same shape through an `interface` works |
 | `issue-115-global-array-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | *writing* a global or static array element → `GTI-B0001` at a different gate than #104's read |
+| `issue-116-uninstantiated-generic-destructor.gti` | [#116](https://github.com/LukeHHA/gti/issues/116) | a generic class with a destructor that is never instantiated → `GTI-B0001`; instantiating it once fixes it |
 
 ## Memory-safety reproducers
 
@@ -227,12 +228,15 @@ python3 scripts/debug/stdlib_include_sweep.py
 ```
 
 That shape had never been tested. Every case in the surface manifest *uses*
-the module it covers, and including a header that declares a generic **without
-instantiating it** is its own failure mode: the destructor declaration is
-lowered with no concrete MIR instance and the compile raises `GTI-B0001`.
-Using the module makes it go away, which is why the surface cases pass while
-the header alone does not. Filed as
-[#116](https://github.com/LukeHHA/gti/issues/116); today the sweep reports
+the module it covers, and a header that declares a generic class with a
+destructor cannot be compiled unless something instantiates it — the
+destructor is lowered with no concrete MIR instance and the compile raises
+`GTI-B0001`. Using the module makes it go away, which is why the surface cases
+pass while the header alone does not.
+
+That reduces to eight lines with no standard library at all, which is how
+[#116](https://github.com/LukeHHA/gti/issues/116) is now filed; the stdlib
+headers were only the first place it surfaced. Today the sweep reports
 `19 module(s): 16 ok, 3 failing`.
 
 ## Probing the language server

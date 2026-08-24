@@ -256,6 +256,63 @@ public:
 """
 
 
+def declaration_shapes() -> list[Shape]:
+    """Declarations that are never used.
+
+    Every other cell in this file uses what it declares, which is why #116
+    survived: the defect is in the *absence* of a use. A generic class that
+    declares a destructor and is never instantiated cannot be compiled, while
+    the same class instantiated once is fine.
+    """
+    return [
+        # #116, reduced from three stdlib headers to eight lines.
+        Shape("declaration", "generic dtor unused", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  ~boxed() {}\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        # The controls that isolate it: each ingredient alone is fine.
+        Shape("declaration", "generic dtor used", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  ~boxed() {}\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  mut boxed<int32_t> used = boxed<int32_t>();\n"
+                    "  return 0;\n"
+                    "}")),
+        Shape("declaration", "generic no dtor", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "plain dtor unused", "", "", "raw",
+              body=("class boxed {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  ~boxed() {}\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "unused function", "", "", "raw",
+              body=("int32_t never_called(int32_t x) { return x + 1; }\n"
+                    "T identity<T>(T x) { return x; }\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "unreachable statement", "", "", "raw",
+              body=("int32_t pick() {\n"
+                    "  return 7;\n"
+                    "  return 9;\n"
+                    "}\n"
+                    "int main() {\n"
+                    "  mut int32_t unused_local = 11;\n"
+                    "  return int(pick()) - 7;\n"
+                    "}")),
+    ]
+
+
 def language_surface_shapes() -> list[Shape]:
     """Constructs with no place-projection angle, kept as controls.
 
@@ -635,7 +692,7 @@ def main() -> int:
                          + pointer_shapes() + nested_capture_shapes()
                          + enum_shapes() + generic_shapes()
                          + inheritance_shapes() + static_shapes()
-                         + language_surface_shapes())
+                         + language_surface_shapes() + declaration_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:
