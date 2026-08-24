@@ -63,6 +63,7 @@ assertions.
 | `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
+| `nightly_asset_sync` | upload-before-prune publication and exact rolling-release asset synchronization, including retired-platform removal and empty-input rejection |
 | `benchmark_harness` | strict benchmark descriptors, path containment, correctness records, deterministic interleaving, and threshold-free smoke execution |
 
 Tree-sitter corpus and shipped-source parsing, Neovim plugin smoke tests, and
