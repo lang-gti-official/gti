@@ -163,8 +163,16 @@ in a first-line comment. The generated programs are int32/bool arithmetic and
 cannot express the properties an optimizer is most likely to break, so those
 are written by hand: that a dynamically out-of-range index still produces its
 defined runtime failure, that an in-range one still reads what was written,
-and that a write through an aliasing mutable reference is observed across a
-loop.
+that a write through an aliasing mutable reference is observed across a loop,
+that `and`/`or` skip the operand they are supposed to skip, that destructors
+run in reverse construction order, and that signed overflow through `+`
+remains a defined failure rather than folding to a wrap.
+
+Those last three are specified runtime behaviour with no other guard across
+levels. `tests/evaluation_order_runtime_test.py` already covers strict
+left-to-right evaluation at O0 and O3, so that one is deliberately not
+duplicated here, and `tests/defined_integer_runtime_test.py` covers
+`std::checked_add` — the library form — rather than the operator.
 
 Two reasons it earns its place next to `local_language_audit.py`, which
 already builds at `O0` and `O3`:
