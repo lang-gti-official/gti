@@ -14959,6 +14959,67 @@ int main() { return 0; }
          "parser should recover and keep later declarations");
 }
 
+void testParserNestingLimit() {
+  const auto nested = [](std::string_view prefix, std::string_view value,
+                         std::string_view suffix, std::size_t depth) {
+    std::string result;
+    result.reserve(prefix.size() * depth + value.size() +
+                   suffix.size() * depth);
+    for (std::size_t index = 0; index < depth; ++index) {
+      result += prefix;
+    }
+    result += value;
+    for (std::size_t index = 0; index < depth; ++index) {
+      result += suffix;
+    }
+    return result;
+  };
+
+  const std::array<std::pair<std::string, std::string>, 4> cases{{
+      {"parentheses",
+       "int32_t f() { return " + nested("(", "0", ")", 600) + "; }"},
+      {"unary", "bool f() { return " + nested("!", "true", "", 600) + "; }"},
+      {"calls",
+       "int32_t g(int32_t value) { return value; } int32_t f() { return " +
+           nested("g(", "1", ")", 600) + "; }"},
+      {"statements", "int32_t f() { " +
+                         nested("if (true) {", "return 0;", "}", 600) +
+                         " return 0; }"},
+  }};
+
+  for (const auto &[name, source] : cases) {
+    const std::string recoverableSource =
+        source + " int32_t recovered() { return 0; }";
+    lang::Lexer lexer;
+    lang::Parser parser(lexer.scan(recoverableSource, "deep-" + name + ".gti"));
+    const lang::Program program = parser.parse();
+    const lang::Diagnostic *diagnostic =
+        findDiagnosticByCode(parser.errors(), "GTI-P0005");
+    expect(
+        diagnostic != nullptr &&
+            countDiagnosticCode(parser.errors(), "GTI-P0005") == 1 &&
+            diagnostic->message ==
+                "Source nesting exceeds the parser limit of 64." &&
+            diagnostic->hints ==
+                std::vector<std::string>{"Split the expression, type, or "
+                                         "statement into shallower parts."} &&
+            diagnostic->primary.start < recoverableSource.size() &&
+            diagnostic->fixes.empty() &&
+            findTopLevelFunction(program, "recovered") != nullptr,
+        "deep " + name +
+            " should stop at one structured parser-depth diagnostic and "
+            "recover the following declaration");
+  }
+
+  lang::Lexer shallowLexer;
+  lang::Parser shallowParser(shallowLexer.scan(
+      "int32_t f() { return " + nested("(", "0", ")", 32) + "; }",
+      "shallow-nesting.gti"));
+  (void)shallowParser.parse();
+  expect(!shallowParser.hadError(),
+         "ordinary bounded source nesting should remain accepted");
+}
+
 void testSemanticDiagnostics() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -19546,6 +19607,50 @@ int main() {
              normalTemporaryDrop && failureTemporaryDrop,
          "MIR should preserve loop-bounded read-only loans and exact-once "
          "owned-range cleanup on normal and defined-failure paths");
+
+  const lang::FrontendResult sharedTraversal = lang::Frontend().analyze(
+      "nested-read-only-range-loans.gti", R"(
+#include <std/string>
+#include <std/vector>
+
+class Holder {
+public:
+  Holder() {}
+  mut std::vector<int32_t> items = std::vector<int32_t>();
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  for (auto& first : values) {
+    for (auto& second : values) {
+      for (auto& third : values) {}
+    }
+  }
+
+  mut Holder holder = Holder();
+  for (auto& first : holder.items) {
+    for (auto& second : holder.items) {}
+  }
+
+  mut std::string text = std::string("ab");
+  mut int32_t count = 0;
+  for (auto& first : text) {
+    for (auto& second : text) { count += 1; }
+  }
+  return count - 4;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!sharedTraversal.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : sharedTraversal.diagnostics) {
+      std::cerr << "Unexpected nested read-only range diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(sharedTraversal.canGenerateCode() && sharedTraversal.mir.valid() &&
+             lang::verifyMirProgram(sharedTraversal.mir).valid(),
+         "nested and triple read-only traversals of the same local or field "
+         "range should coexist through verified MIR loans");
 
   lang::HirProgram invalidHir = frontend.hir;
   bool corruptedHirRange = false;
@@ -28359,6 +28464,39 @@ int main() {
   expect(lang::Formatter().format(formatted) == formatted,
          "formatting should be idempotent");
 
+  const std::string separatedAmpersands = lang::Formatter().format("& &m");
+  expect(separatedAmpersands == "& &m\n" &&
+             lang::Formatter().format(separatedAmpersands) ==
+                 separatedAmpersands,
+         "formatting must preserve a source token boundary between adjacent "
+         "ampersands");
+  for (const std::string_view boundary :
+       {"+ +value", "- -value", "/ *p", "/ /p", ". . .", "1 . 2"}) {
+    const std::string boundaryFormatted = lang::Formatter().format(boundary);
+    lang::Lexer sourceLexer;
+    lang::Lexer formattedLexer;
+    const std::vector<lang::Token> sourceTokens = sourceLexer.scan(
+        std::string(boundary), "formatter-boundary-source.gti");
+    const std::vector<lang::Token> formattedTokens = formattedLexer.scan(
+        boundaryFormatted, "formatter-boundary-formatted.gti");
+    const bool tokenEquivalent =
+        sourceTokens.size() == formattedTokens.size() &&
+        !sourceTokens.empty() &&
+        sourceTokens.back().kind == lang::TokenKind::END_OF_FILE &&
+        formattedTokens.back().kind == lang::TokenKind::END_OF_FILE &&
+        std::equal(sourceTokens.begin(), std::prev(sourceTokens.end()),
+                   formattedTokens.begin(),
+                   [](const lang::Token &source, const lang::Token &formatted) {
+                     return source.kind == formatted.kind &&
+                            source.lexeme == formatted.lexeme;
+                   });
+    expect(tokenEquivalent &&
+               lang::Formatter().format(boundaryFormatted) == boundaryFormatted,
+           "maximal-munch token boundaries should remain formatter-"
+           "equivalent and idempotent for '" +
+               std::string(boundary) + "'");
+  }
+
   const std::string staticFormatted = lang::Formatter().format(
       "static mut int count=0;class Registry{public:static int value=1;"
       "static int current(){return value;}};");
@@ -30639,6 +30777,7 @@ int main(int argc, char **argv) {
   testComparisonOperatorFormattingStability();
   testIntegerBitwiseAndModuloOperators();
   testCheckedArithmeticAndCompoundAssignments();
+  testParserNestingLimit();
   testParserRecovery();
   testSemanticDiagnostics();
   testDiagnosticFoundation();
