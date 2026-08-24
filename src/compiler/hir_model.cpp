@@ -261,15 +261,22 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                      source->elementBinding()->initializer()) &&
           exactValue(range->increment, source->coreLoop()->increment());
       const bool exactLoans =
-          rangeLoan != nullptr && rangeLoan->access == AccessMode::ReadOnly &&
+          rangeLoan != nullptr && rangeLoan->access == range->elementAccess &&
           std::find(rangeLoan->carriers.begin(), rangeLoan->carriers.end(),
                     range->rangeCarrier) != rangeLoan->carriers.end() &&
           (!referenceElement ||
            (elementLoan != nullptr &&
-            elementLoan->access == AccessMode::ReadOnly &&
+            elementLoan->access == range->elementAccess &&
             std::find(elementLoan->carriers.begin(),
                       elementLoan->carriers.end(),
-                      range->element) != elementLoan->carriers.end()));
+                      range->element) != elementLoan->carriers.end() &&
+            (range->elementAccess == AccessMode::ReadOnly ||
+             (range->elementLoan != range->rangeLoan &&
+              elementLoan->parent == range->rangeLoan)))) &&
+          (range->elementAccess == AccessMode::ReadOnly ||
+           range->strategy != RangeIterationStrategy::Structural ||
+           std::find(rangeLoan->carriers.begin(), rangeLoan->carriers.end(),
+                     range->iterator) != rangeLoan->carriers.end());
       const bool exactStrategy =
           range != nullptr &&
           ((range->strategy == RangeIterationStrategy::FixedArray &&

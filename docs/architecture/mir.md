@@ -79,7 +79,9 @@ synchronization operations in the single-threaded profile, so a backend or
 transform cannot introduce concurrent behavior after semantic checks.
 
 The deterministic serialization is currently `mir-v41`/`mir-body-v40`.
-Program/body v41/v40 add the verified read-only range-iteration inventory;
+Program/body v41/v40 added the verified range-iteration inventory. Its existing
+access and loan fields now carry both read-only L-RANGE-01 plans and mutable
+L-RANGE-02 parent/child plans without a schema change;
 program v40 added ordered constructor-local type/value arguments to concrete
 MIR constructor identities while body v39 was unchanged. Program/body v39 added
 verified call-scoped loans for fresh read-only temporary arguments;
@@ -697,6 +699,25 @@ overlapping use of a suspended parent, a read-only-to-mutable transition, or
 inconsistent active/suspended state at a CFG join. The precise place model for
 this slice is limited to stable roots with named-field and checked-dereference
 projections; it does not claim indexed, raw, or opaque provenance.
+
+`MirRangeIteration` is the bounded exception for an indexed mutable element.
+It names the exact owner/range/iterator/sentinel bindings, strategy, access
+mode, parent range loan, child element loan, condition/body/increment/cleanup
+blocks, and owned-temporary drop. A fixed-array plan ties its dynamic index
+place to that inventory rather than claiming general indexed-place
+disjointness. A structural mutable plan carries the exclusive parent through
+the compiler-generated iterator returned by `begin_mut()`; mutable dereference
+creates only the named child. Lowering ends descendants child-first before
+increment and on `continue`, `break`, `return`, normal cleanup, and failure
+cleanup. An escaping owned temporary is impossible because its drop follows
+the final parent loan on every path.
+
+Verification requires semantic, HIR, and MIR access modes to agree; a mutable
+element loan must be a non-escaping child of the exact mutable range parent.
+It rejects a detached or widened child, overlapping active owner use, missing
+or premature `EndBorrow`, inconsistent loop edges, and a mismatched or missing
+temporary drop. The backend consumes this verified plan. It does not infer
+range lookup, invalidation, or cleanup from emitted C++.
 
 `MirPrinter` must remain deterministic and address-free so tests and future
 tooling can compare snapshots.

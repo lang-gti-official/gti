@@ -3975,6 +3975,11 @@ private:
                                           !candidate.escapes;
                                  }),
                   after.end());
+      after.erase(std::remove_if(after.begin(), after.end(),
+                                 [&](MirLoanId loan) {
+                                   return output.loans[loan - 1].escapes;
+                                 }),
+                  after.end());
     }
   }
 
@@ -4059,7 +4064,8 @@ private:
   }
 
   [[nodiscard]] std::vector<MirLoanId>
-  childFirstLoans(const std::vector<SemanticLoanId> &loans) {
+  childFirstLoans(const std::vector<SemanticLoanId> &loans,
+                  const std::vector<Scope> *scopeState = nullptr) {
     std::vector<MirLoanId> result;
     result.reserve(loans.size());
     for (const SemanticLoanId semanticLoan : loans) {
@@ -4069,19 +4075,58 @@ private:
         result.push_back(loan);
       }
     }
-    const auto depth = [&](MirLoanId loan) {
-      std::size_t result = 0;
+    const std::vector<Scope> &activeScopes =
+        scopeState == nullptr ? scopes : *scopeState;
+    const auto descendsFromSelected = [&](MirLoanId candidate) {
       std::unordered_set<MirLoanId> visited;
-      while (loan != 0 && loan <= output.loans.size() &&
-             visited.insert(loan).second) {
-        ++result;
-        loan = output.loans[loan - 1].parent;
+      MirLoanId parent = candidate;
+      while (parent != 0 && parent <= output.loans.size() &&
+             visited.insert(parent).second) {
+        parent = output.loans[parent - 1].parent;
+        if (std::find(result.begin(), result.end(), parent) != result.end()) {
+          return true;
+        }
       }
-      return result;
+      return false;
     };
+    for (const MirLoan &loan : output.loans) {
+      if (loanIsActive(activeScopes, loan.id) &&
+          descendsFromSelected(loan.id) &&
+          std::find(result.begin(), result.end(), loan.id) == result.end()) {
+        result.push_back(loan.id);
+      }
+    }
     std::stable_sort(result.begin(), result.end(),
                      [&](MirLoanId left, MirLoanId right) {
-                       return depth(left) > depth(right);
+                       return loanDepth(left) > loanDepth(right);
+                     });
+    return result;
+  }
+
+  [[nodiscard]] std::size_t loanDepth(MirLoanId loan) const {
+    std::size_t result = 0;
+    std::unordered_set<MirLoanId> visited;
+    while (loan != 0 && loan <= output.loans.size() &&
+           visited.insert(loan).second) {
+      ++result;
+      loan = output.loans[loan - 1].parent;
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<MirLoanId>
+  childFirstMirLoans(const std::vector<MirLoanId> &loans) const {
+    std::vector<MirLoanId> result;
+    result.reserve(loans.size());
+    for (const MirLoanId loan : loans) {
+      if (loan != 0 && loan <= output.loans.size() &&
+          std::find(result.begin(), result.end(), loan) == result.end()) {
+        result.push_back(loan);
+      }
+    }
+    std::stable_sort(result.begin(), result.end(),
+                     [&](MirLoanId left, MirLoanId right) {
+                       return loanDepth(left) > loanDepth(right);
                      });
     return result;
   }
@@ -4136,7 +4181,7 @@ private:
   void normalizeSemanticLoanState(
       const std::vector<SemanticLoanId> &loans, std::vector<Scope> &scopeState,
       std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState) {
-    for (const MirLoanId loan : childFirstLoans(loans)) {
+    for (const MirLoanId loan : childFirstLoans(loans, &scopeState)) {
       if (mustReachBorrowedReturn(loan)) {
         continue;
       }
@@ -4885,6 +4930,14 @@ private:
     const MirLoanId existing = loanForValue(valueId);
     const HirLoan *desired = binding == 0 ? nullptr : loanForBinding(binding);
     if (desired != nullptr) {
+      const bool exactRangeElement = std::any_of(
+          source.statements.begin(), source.statements.end(),
+          [&](const HirStatement &statement) {
+            return statement.rangeIteration &&
+                   statement.rangeIteration->elementLoan ==
+                       desired->semanticLoan &&
+                   statement.rangeIteration->elementAccessValue == valueId;
+          });
       if (const auto found = semanticLoans.find(desired->semanticLoan);
           found != semanticLoans.end()) {
         if (existing != 0 && existing != found->second) {
@@ -4904,7 +4957,15 @@ private:
 
       MirLoanId parent = 0;
       if (desired->parent != 0) {
-        const MirPlaceId desiredSource = placeForLoan(*desired, value);
+        // Mutable range elements have a concrete indexed/dereference place
+        // even though their semantic overlap identity is deliberately rooted
+        // at the protected owner. Use that concrete place for transient-chain
+        // reconciliation as well as for the child loan below; materializing a
+        // scalar place directly at the parent range loan would invent an
+        // unspellable alias and lose the runtime element selection.
+        const MirPlaceId desiredSource = exactRangeElement
+                                             ? placeForValue(valueId)
+                                             : placeForLoan(*desired, value);
         if (desiredSource == 0) {
           return {};
         }
@@ -4929,7 +4990,8 @@ private:
                  transient->access == AccessMode::Mutable) &&
                 transient->carriers.empty() && !transient->escapes &&
                 loanIsActive(scopes, transientId) &&
-                sameBorrowSource(transient->source, desiredSource) &&
+                (sameBorrowSource(transient->source, desiredSource) ||
+                 exactRangeElement) &&
                 (transientChain.empty() ? transient->producedBy == valueId
                                         : transient->producedBy != 0);
             if (!compatible) {
@@ -5010,14 +5072,6 @@ private:
       // emission.
       MirPlaceId sourcePlace = placeForValue(valueId);
       const MirPlace *concreteSource = output.findPlace(sourcePlace);
-      const bool exactRangeElement = std::any_of(
-          source.statements.begin(), source.statements.end(),
-          [&](const HirStatement &statement) {
-            return statement.rangeIteration &&
-                   statement.rangeIteration->elementLoan ==
-                       desired->semanticLoan &&
-                   statement.rangeIteration->elementAccessValue == valueId;
-          });
       if (concreteSource == nullptr ||
           ((!concreteSource->key || *concreteSource->key != desired->place) &&
            !exactRangeElement)) {
@@ -5091,6 +5145,19 @@ private:
 
   void markStoredBorrow(HirValueId valueId, SymbolId field, AccessMode access) {
     if (const MirLoanId sourceLoan = loanForValue(valueId); sourceLoan != 0) {
+      MirLoan &source = output.loans[sourceLoan - 1];
+      if (access == AccessMode::Mutable && source.entry &&
+          source.kind == MirLoanKind::Parameter &&
+          source.access == AccessMode::Mutable) {
+        // A mutable reference parameter is already the unique capability for
+        // its referent. Storing it in the constructed value transfers that
+        // capability; creating a sibling BorrowWrite would incorrectly model
+        // two simultaneous exclusive loans over the same place.
+        source.kind = MirLoanKind::Stored;
+        source.storedField = field;
+        source.escapes = true;
+        return;
+      }
       const MirPlaceId sourcePlace = output.loans[sourceLoan - 1].source;
       const MirLoanId stored = createLoan(MirLoanKind::Stored, sourcePlace,
                                           access, valueId, 0, field);
@@ -5121,9 +5188,6 @@ private:
     loan.access = access;
     loan.storedField = field;
     loan.escapes = true;
-    for (Scope &scope : scopes) {
-      std::erase(scope.loans, borrow.loan);
-    }
   }
 
   void registerDrop(HirBindingId bindingId, MirPlaceId place) {
@@ -5252,12 +5316,12 @@ private:
                                        : *sharedConsumedDrops;
     std::vector<MirLoanId> &endedLoans =
         sharedEndedLoans == nullptr ? localEndedLoans : *sharedEndedLoans;
-    for (auto loan = scope.loans.rbegin(); loan != scope.loans.rend(); ++loan) {
-      if (!containsLoan(endedLoans, *loan)) {
-        endedLoans.push_back(*loan);
+    for (const MirLoanId loan : childFirstMirLoans(scope.loans)) {
+      if (!containsLoan(endedLoans, loan)) {
+        endedLoans.push_back(loan);
       }
       (void)appendInstruction(
-          {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
+          {.kind = MirInstructionKind::EndBorrow, .loan = loan});
     }
     std::vector<MirDropObligationId> cleanup;
     cleanup.reserve(scope.drops.size());
@@ -6236,7 +6300,8 @@ private:
                          statement.endedLoans.end(),
                          loan) != statement.endedLoans.end();
       });
-      for (const MirLoanId loan : childFirstLoans(endedOnEveryArm)) {
+      for (const MirLoanId loan :
+           childFirstLoans(endedOnEveryArm, &exitScopes)) {
         if (loanIsActive(exitScopes, loan)) {
           removeLoanFromState(loan, exitScopes, exitBindingLoans);
         }

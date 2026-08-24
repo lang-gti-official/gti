@@ -120,8 +120,8 @@ remains bodyless because GTI cannot yet move a value out through a mutable
 reference. Iterators remain a later library layer. The language now defines
 the structural `begin`/`end` iterator protocol and range-based `for`
 independently of `std::array`; adding array iterators remains ordinary library
-work once fixed-array owner dependencies or the compiler-owned fixed-array
-iteration strategy are implemented. See
+work. The compiler-owned fixed-array strategy now supports read-only and
+mutable parent/element loans without pointer decay. See
 [`docs/language/ranges.md`](../docs/language/ranges.md) for that
 lifetime boundary.
 
@@ -147,14 +147,14 @@ Front/back, mutable `at`, resize, shrink-to-fit, and pop-back are implemented;
 `swap` remains bodyless until moving through mutable references is expressible.
 
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
-class over `gti_internal::storage<T>` and imported with
+class over `gti_internal::prefix_storage<T>` and imported with
 `#include <std/vector>`. `T` must satisfy `std::movable`, and the vector itself is
 move-only. The first working surface includes default and size construction,
 construction from one contextual `T[N]` value,
 size/capacity observation, reserve, clear, push/pop, indexed insert/erase,
 checked `at` and `operator[]`, front/back, both resize forms, shrink-to-fit,
-variadic `emplace_back`, explicit copyable-element `clone`, and read-only
-structural iteration. The size constructor value-initializes its elements; it
+variadic `emplace_back`, explicit copyable-element `clone`, and read-only plus
+mutable structural iteration. The size constructor value-initializes its elements; it
 is not a reserve-only constructor. The fixed-array constructor is ordinary GTI
 source:
 `std::vector<int>({1, 2, 3})` infers `N` from the brace count and copies each
@@ -176,10 +176,13 @@ receiver-tied reference. GTI does not implement C++ forwarding references:
 the method receives an immutable by-value pack, so copyable arguments may be
 copied at that boundary and a pack containing a move-only argument is consumed
 by its first expansion. The read-only iterator retains one checked storage
-borrow and therefore prevents vector mutation or movement while live. Mutable
-iteration, precise invalidation effects, owned temporary ranges,
-iterator-position mutation, allocator customization, and a complete C++
-`vector` API remain future work.
+borrow. `begin_mut()` returns a separate compiler-confined iterator carrying
+the exclusive range loan; mutable dereference returns the current element's
+loop-bounded child loan through checked storage access. Reserve, push, clear,
+movement, and other overlapping owner operations are rejected while that range
+is active. Owned vector temporaries are supported and destroyed once after
+range cleanup. Precise public invalidation effects, iterator-position mutation,
+allocator customization, and a complete C++ `vector` API remain future work.
 `swap` remains bodyless because the current ownership model deliberately
 forbids moving an owner out through a mutable reference.
 

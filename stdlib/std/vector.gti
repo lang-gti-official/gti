@@ -1,6 +1,5 @@
-// The storage-backed value, capacity, indexed operations, and move-aware
-// insertion/erasure are implemented. Mutable iteration still requires
-// stronger owner-loan invalidation support.
+// The storage-backed value, capacity, indexed operations, move-aware
+// insertion/erasure, and bounded read-only/mutable iteration are implemented.
 namespace std {
 namespace detail {
 class vector_sentinel {
@@ -24,6 +23,37 @@ public:
 
   T& operator*() {
     return gti_internal::prefix_storage_read(this.data, this.current_position);
+  }
+
+  void operator++() mut {
+    this.current_position++;
+  }
+
+  bool operator!=(vector_sentinel& sentinel) {
+    return this.current_position != sentinel.position();
+  }
+};
+
+// This mutable storage dependency is an ephemeral standard-library carrier.
+// Semantics permits it only when the compiler-generated range iterator keeps
+// it on the range's exclusive loan; ordinary local storage remains rejected.
+class vector_mut_iterator<T> {
+  mut gti_internal::prefix_storage<T>& data;
+  mut size_t current_position;
+
+public:
+  vector_mut_iterator(mut gti_internal::prefix_storage<T>& source,
+                      size_t position)
+      : data(source), current_position(position) {}
+
+  T& operator*() {
+    return gti_internal::prefix_storage_read(this.data,
+                                              this.current_position);
+  }
+
+  mut T& operator*() mut {
+    return gti_internal::prefix_storage_read_mut(this.data,
+                                                  this.current_position);
   }
 
   void operator++() mut {
@@ -130,6 +160,10 @@ public:
 
   detail::vector_iterator<T> begin() {
     return detail::vector_iterator<T>(this.data, size_t(0));
+  }
+
+  detail::vector_mut_iterator<T> begin_mut() mut {
+    return detail::vector_mut_iterator<T>(this.data, size_t(0));
   }
 
   detail::vector_sentinel end() {

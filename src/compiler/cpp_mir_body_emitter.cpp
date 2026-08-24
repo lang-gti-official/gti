@@ -1313,6 +1313,25 @@ stagedConstructorFieldPublication(const MirProgram &program,
 // referent and disconnect the field from the parameter. Recognize only the
 // exact load/source/initializer relation already proven by the bijective
 // stored-reference schedule.
+[[nodiscard]] bool
+transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
+                                  const MirLoan &stored,
+                                  const MirPlace &source) {
+  return initializer.storesReference && initializer.field != 0 &&
+         initializer.borrowAccess == AccessMode::Mutable &&
+         initializer.targetType.kind == SemanticType::Reference &&
+         initializer.targetType.referenceAccess == AccessMode::Mutable &&
+         source.root == MirPlaceRootKind::Binding && source.binding != 0 &&
+         source.projections.empty() && source.type == initializer.targetType &&
+         source.access == AccessMode::Mutable &&
+         stored.kind == MirLoanKind::Stored && stored.source == source.id &&
+         stored.access == AccessMode::Mutable && stored.semanticLoan != 0 &&
+         stored.parent == 0 && stored.producedBy == 0 && stored.entry &&
+         stored.escapes && stored.storedField == initializer.field &&
+         stored.carriers.size() == 1 &&
+         stored.carriers.front() == source.binding;
+}
+
 [[nodiscard]] const MirConstructorInitializer *
 storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
                                 std::uint64_t owner,
@@ -1359,10 +1378,22 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
     }
     const MirPlace *source =
         stored == nullptr ? nullptr : body.findPlace(stored->source);
+    const MirPlace *loaded = body.findPlace(instruction.operands.front().place);
     const MirValue *result = body.findValue(*instruction.result);
-    if (stored != nullptr && source != nullptr && result != nullptr &&
+    const bool directPublication =
+        stored != nullptr && source != nullptr &&
         stored->source == instruction.operands.front().place &&
-        source->type == instruction.info.type &&
+        source->type == instruction.info.type;
+    const bool transferredPublication =
+        stored != nullptr && source != nullptr && loaded != nullptr &&
+        transferredMutableStoredParameter(initializer, *stored, *source) &&
+        loaded->root == MirPlaceRootKind::Binding &&
+        loaded->binding == source->binding && loaded->projections.size() == 1 &&
+        loaded->projections.front().kind == MirProjectionKind::Dereference &&
+        source->type.arguments.size() == 1 &&
+        source->type.arguments.front() == loaded->type &&
+        loaded->type == instruction.info.type;
+    if ((directPublication || transferredPublication) && result != nullptr &&
         result->info.type == instruction.info.type) {
       return &initializer;
     }
@@ -18627,13 +18658,21 @@ cppMirStoredReferenceBindings(const MirConstructorInstance &constructor) {
       return std::nullopt;
     }
     loanUsed[storedIndex] = true;
-    // The loan source must be the dereference carrier of one reference
-    // parameter: the initializer list then binds the field straight to the
-    // C++ reference parameter.
+    // Ordinarily the loan source is the dereference carrier of one reference
+    // parameter. A mutable reference parameter already is the unique entry
+    // capability, so lowering transfers that exact loan into the field rather
+    // than creating a second exclusive sibling; that bounded shape retains
+    // the reference carrier as its source. Both forms bind the field straight
+    // to the C++ reference parameter.
     const MirPlace *source = constructor.body.findPlace(stored->source);
-    if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
-        source->projections.size() != 1 ||
-        source->projections.front().kind != MirProjectionKind::Dereference) {
+    const bool dereferenceCarrier =
+        source != nullptr && source->root == MirPlaceRootKind::Binding &&
+        source->projections.size() == 1 &&
+        source->projections.front().kind == MirProjectionKind::Dereference;
+    const bool transferredMutable =
+        source != nullptr &&
+        transferredMutableStoredParameter(initializer, *stored, *source);
+    if (!dereferenceCarrier && !transferredMutable) {
       return std::nullopt;
     }
     const auto parameter =

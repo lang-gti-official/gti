@@ -5,8 +5,8 @@
 
 Status: implementation proposal
 
-The prerequisite order for the remaining mutable-iteration, invalidation, and
-dynamic-view work is maintained in
+The prerequisite order for the remaining dynamic-view and foundational
+range-algorithm work is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). The phases below
 remain the detailed range design and include already implemented foundations.
 
@@ -20,7 +20,8 @@ The current implemented syntax remains documented in
 [`docs/language/ownership-and-lifetimes.md`](../language/ownership-and-lifetimes.md),
 and compiler phase authority in
 [`docs/architecture/overview.md`](../architecture/overview.md). This proposal
-extends those contracts; it does not describe already shipped behavior.
+contains both implemented foundations and remaining proposals; the canonical
+documents above own shipped behavior.
 The separate
 [`constructor-local type generics and constraints proposal`](constructor-local-type-generics.md)
 defines the inferred iterator/sentinel constructor surface needed to construct
@@ -30,21 +31,19 @@ object constructor or change the range protocol described here.
 Implementation progress includes prefix `operator++`, range-for syntax, the
 nominal member protocol, fixed-array indexed traversal, owned temporary ranges,
 source-mapped generated core operations, exact semantic/HIR/MIR range and
-read-only element-loan plans, exit/failure cleanup, and one confined read-only
-stored-reference carrier for owner-tied iterators. The first
-source-defined `std::vector<T>` slice uses that carrier for read-only iteration
-without exposing a pointer. One pre-existing unshared retained carrier can now
-remain active over ordinary loop backedges and end at the unified loop exit.
-The same single read-only owner dependency can now pass through calls,
-concrete generic carrier relays, moves, returns, and drops. Free and static
-factories may return a cursor or view derived from one eligible read-only
-parameter. Bounded local exclusive reborrows now suspend and reactivate mutable
-parents over stable root, field, and checked-dereference places, but they do not
-create an owner-tied mutable iterator value or a range/element loan protocol.
-Only stable lvalue ranges are accepted. Fixed-array iteration, owned temporary
-ranges, mutable owner-tied iterators, dedicated range/element loan scopes, and
-broader invalidation tracking remain proposal work and are not implied by that
-subset. A separate bounded generic-algorithm slice is also implemented:
+read-only and mutable parent/element-loan plans, child-first exit/failure
+cleanup, and confined read-only plus compiler-generated mutable owner-tied
+iterators. The source-defined `std::vector<T>` supplies `begin()` and the
+distinct mutable endpoint `begin_mut()` without exposing a pointer. Mutable
+fixed-array, vector-lvalue, and owned-temporary traversal is implemented, and
+whole-owner conflicts reject invalidation, movement, overlap, and escape while
+the exclusive range loan is active. A single read-only owner dependency can
+also pass through calls, concrete generic carrier relays, moves, returns, and
+drops; free and static factories may return a cursor or view derived from one
+eligible read-only parameter. Broader dynamic views, public invalidation
+effects, multiple origins, and user-retainable mutable borrowed-state carriers
+remain proposal work. A separate bounded generic-algorithm slice is also
+implemented:
 multi-parameter concepts, validity-only trailing `requires`, public
 `std::input_iterator`/`std::sentinel_for`/`std::accumulates_into`, and
 source-defined `std::accumulate` over an iterator plus possibly distinct
@@ -81,7 +80,8 @@ ownership would import complexity without an immediate standard-library use.
    range-declaration rule, not general `auto` reference inference.
 
 3. Define one static, member-based nominal range protocol. A user-defined range
-   supplies `begin()` and `end()`. Its iterator supplies `operator*()`, prefix
+   supplies `begin()` and `end()` for read-only traversal and `begin_mut()` for
+   mutable-reference traversal. Its iterator supplies `operator*()`, prefix
    `operator++()`, and `operator!=(Sentinel&)`. Do not use ADL, free
    `begin`/`end`, traits, C++ customization-point objects, or an interface base
    class.
@@ -253,17 +253,16 @@ and drops, while source-level invalidation checks keep the owner stable. The
 C++ backend reference field is not the source of these rules.
 
 This deliberately confined aggregate form is sufficient for a source-defined
-read-only iterator over vector, string, or another user range. It avoids a
-special `gti_internal::storage_cursor<T>` and keeps iterator policy in the
-standard library. Mutable stored owner references, more than one lifetime
-dependency, nested borrowed aggregates, global/captured/storage escape,
-dependency-changing assignment, and dedicated range/element loan relationships
-remain future work. Bounded local exclusive children may temporarily suspend a
-mutable parent and then reactivate it, but they cannot be stored in this
-iterator carrier or escape through it. Loan-wide last-use analysis can preserve
-multiple read-only aliases of a retained iterator across backedges and end
-their shared loan after the lowered loop, but that does not model an iteration
-loan or child element loan.
+read-only iterator over vector, string, or another user range. L-RANGE-02 adds
+one compiler-generated mutable form: the iterator created by `begin_mut()`
+transfers the exact exclusive range capability and cannot be retained as an
+ordinary mutable borrowed-state value. It avoids a special
+`gti_internal::storage_cursor<T>` and keeps iterator policy in the standard
+library. General mutable stored owner references, more than one lifetime
+dependency, nested borrowed aggregates, global/captured/storage escape, and
+dependency-changing assignment remain future work. The range plan now owns
+the parent/child relationship and ends the element child before every
+increment or exit.
 An index alone is still insufficient; dereference must use the tracked owner
 dependency rather than an unchecked raw pointer.
 It may not be stored globally, returned without a valid owner relationship, or
@@ -273,6 +272,8 @@ Within the implemented confined representation:
 
 - `std::string` and the first `std::vector<T>` slice provide read-only
   source-defined iterators over checked storage;
+- `std::vector<T>` additionally provides a separate mutable iterator confined
+  to compiler-generated range storage;
 - fixed arrays still require the compiler-owned indexed strategy below;
 - the backend must not smuggle an unchecked owner pointer into a source-defined
   iterator; and
@@ -292,14 +293,16 @@ Iterator R::begin();
 Sentinel R::end();
 ```
 
-For mutable element iteration, the selected `begin()` must be callable through
-a mutable receiver and yield an iterator capable of writable dereference.
-Read-only or value iteration uses read-only access unless the only sound
+For mutable element iteration, semantics instead selects exact
+`MutableIterator R::begin_mut() mut` and requires writable dereference. Keeping
+the endpoint distinct prevents a normal read-only `begin()` call from silently
+acquiring an exclusive loan. Read-only or value iteration uses read-only access
+unless the only sound
 protocol requires mutation, as may eventually be the case for explicitly
 single-pass input ranges. Such input ranges require a separate reviewed rule;
 ordinary containers do not silently mutate during read-only iteration.
 
-`begin()` and `end()`:
+`begin()`, `begin_mut()`, and `end()`:
 
 - are ordinary members found through the range type's existing member lookup;
 - may return different exact types;
@@ -479,12 +482,10 @@ not merely a name specialized by a library author.
 
 ## Iterator And Element Loans
 
-This section remains proposed semantics. The implemented ordinary loop-loan
-flow preserves one pre-existing local loan, including all of its read-only
-alias carriers, until a unified loop exit; it does not yet create the
-range-level or child element loans described below. The implemented local
-exclusive-reborrow transition likewise does not imply that per-iteration
-protocol.
+This section is implemented for fixed arrays and the exact nominal protocol.
+The compiler records range-level and per-iteration element loans directly in
+semantics, HIR, and MIR; ordinary loop-loan preservation is not used as a
+substitute for the range plan.
 
 Creating the iterator establishes an iteration loan over the range owner. The
 loan lasts until loop exit because `begin`, comparison, dereference, and
@@ -499,8 +500,8 @@ loan. Its lexical region is one iteration body:
 - `break`, `return`, and other exits end it during cleanup;
 - it does not escape through a return, stored reference, or escaping callable.
 
-The first implementation may conservatively retain the range-level loan for
-the whole loop while still ending the element loan per iteration. This is
+The implementation conservatively retains the range-level loan for the whole
+loop while ending the element loan per iteration. This is
 enough to prevent vector reallocation and use-after-invalidation without
 requiring complete non-lexical lifetime analysis.
 
@@ -647,8 +648,9 @@ algorithms. It provides:
 - `reserve`, `clear`, push, pop, and indexed insert/erase operations;
 - checked `at` and `operator[]`;
 - variadic exact in-place `emplace_back` over a by-value pack;
-- move-only lifecycle over `gti_internal::storage<T>`; and
-- read-only iteration through the confined one-owner iterator contract.
+- move-only lifecycle over `gti_internal::prefix_storage<T>`; and
+- read-only plus compiler-confined mutable iteration through one-owner
+  iterator contracts.
 
 `emplace_back` constructs `T` directly in its final slot and returns a writable
 receiver-tied reference. It is not C++ perfect forwarding: copyable arguments
@@ -661,11 +663,12 @@ behavior. The hosted-entry signature's exact
 protocol.
 
 This is a container milestone checkpoint rather than completion of the range
-proposal. Indexed insertion and erasure use checked private slot shifts, while
-mutable iteration, precise structural-invalidation effects, broader nested
-stored readers, and dynamic views remain required before vector can claim the
-full iteration contract below. Range statements themselves now carry the
-dedicated read-only range/element loan scopes and may own a temporary vector.
+proposal. Indexed insertion and erasure use checked private slot shifts.
+Mutable iteration is implemented through `begin_mut()` and conservative
+whole-owner invalidation exclusion; precise public structural-invalidation
+effects, broader nested stored readers, and dynamic views remain future work.
+Range statements carry dedicated read-only or mutable range/element loan
+scopes and may own a temporary vector.
 
 `std::array<T, N>`, `std::string`, and `std::string_view` should adopt the same
 protocol where their ownership permits it. Mutable iterators are unavailable
@@ -815,7 +818,7 @@ authoritative until a dedicated optimization architecture is adopted.
 
 ## Implementation Plan
 
-### Phase 1: Syntax, fixed arrays, and IR shape
+### Phase 1: Syntax, fixed arrays, and IR shape — implemented
 
 - Add `RangeForStmt` syntax and formatting.
 - Parse the range declaration without changing existing three-clause `for`.
@@ -827,29 +830,30 @@ authoritative until a dedicated optimization architecture is adopted.
 - Ship parser, formatter, Tree-sitter, Vim/Neovim, compiler, CLI, and LSP tests
   together.
 
-### Phase 2: Nominal member protocol
+### Phase 2: Nominal member protocol — implemented through L-RANGE-02
 
-- Extend the implemented one-owner read-only iterator value toward mutable and
-  precisely scoped iteration loans only when those guarantees are represented
-  in semantics, HIR, and MIR. Reuse the bounded local child-loan transition,
-  but do not treat it as a mutable stored owner dependency.
+- Retain one-owner read-only iterators and the compiler-confined mutable
+  iterator value with precise parent/child range loans represented in
+  semantics, HIR, and MIR.
 - Add restricted prefix `operator++` member declarations.
-- Resolve exact member `begin`, `end`, dereference, comparison, and increment.
+- Resolve exact member `begin`/`begin_mut`, `end`, dereference, comparison, and
+  increment.
 - Support distinct iterator and sentinel types.
 - Add targeted diagnostics for every malformed operation.
 - Preserve concrete generic protocol instances through HIR and MIR.
 - Emit only resolved operations in the C++ backend.
 
-### Phase 3: Standard containers
+### Phase 3: Standard containers — vector mutable iteration implemented
 
 - The first source-defined `std::vector<T>` slice is implemented for movable
   elements, including variadic in-place construction, indexed insertion and
-  erasure, and read-only iteration.
+  erasure, read-only iteration, and compiler-confined mutable iteration.
 - Read-only iterators are implemented for `std::vector` and owning strings;
-  `std::array` iteration and mutable container iterators remain.
+  mutable `std::vector` iteration is implemented, while a public `std::array`
+  iterator surface remains separate from built-in fixed-array traversal.
 - Add read-only iteration to `std::string_view`.
-- Test structural invalidation, mutable element access, nested readers, early
-  exits, and owned temporary ranges.
+- Structural invalidation, mutable element access, nested readers, early exits,
+  and owned temporary vector ranges are covered by compiler and runtime tests.
 
 ### Phase 4: Range algorithms and callable parameters
 
@@ -918,8 +922,10 @@ behavior, formatting idempotence, LSP diagnostics, and editor queries.
 These questions should be answered through implementation experience without
 changing the initial safety contract:
 
-1. Should the read-only and mutable forms use separate iterator types, receiver
-   overloads on one iterator type, or permit both library patterns?
+1. **Resolved for L-RANGE-02:** mutable traversal uses a separate
+   `begin_mut()` endpoint. Its returned iterator type may differ from
+   `begin()`; `std::vector` uses separate types, while an iterator may still
+   expose both read-only and mutable receiver overloads internally.
 2. Should a future single-pass input range be allowed to mutate its traversal
    state during otherwise read-only iteration, and how is that visible?
 3. Which explicit source model, if any, should extend the implemented direct

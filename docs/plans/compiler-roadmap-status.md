@@ -1233,23 +1233,26 @@ endpoints or place aliasing, but it validates exclusive child/parent identity,
 suspension and reactivation, and requires predecessor loan states to agree at
 every reachable join.
 
-### Milestone 2: containers, iterators, and ranges - first container slice
+### Milestone 2: containers, iterators, and ranges - mutable range slice
 
-Structural range `for`, source-defined read-only iterators, and one confined
-stored-reference owner dependency exist. The first ordinary source-defined
+Structural range `for`, fixed-array indexed traversal, owned temporary ranges,
+source-defined read-only iterators, and one confined stored-reference owner
+dependency exist. L-RANGE-02 additionally supplies `mut T&`/`mut auto&`
+iteration with exact exclusive parent and per-iteration mutable child loans.
+The first ordinary source-defined
 `std::vector<T>` now uses private checked storage for default/size construction,
 observation, reserve, clear, push/pop, checked access, variadic exact in-place
-`emplace_back`, indexed insertion/erasure, movement, and conservative read-only
-iteration. Its element type must be movable and cannot contain borrowed state.
-The vector name has no compiler privilege.
+`emplace_back`, indexed insertion/erasure, movement, read-only iteration, and
+mutable iteration through a separate `begin_mut()` endpoint. Whole-owner
+conflicts conservatively reject invalidation, overlap, and movement. Its
+element type must be movable and cannot contain borrowed state. The vector name
+has no compiler privilege.
 
 This does not complete the milestone. Free/static factories can now return one
 direct read-only owner-tied cursor or view, including through a concrete
-generic carrier relay, but fixed-array range iteration, owned temporary ranges,
-per-iteration element loans, mutable iteration, nested/multi-owner views, and
-precise invalidation effects remain incomplete. Bounded local exclusive
-reborrows provide a prerequisite for mutable access, but they do not create the
-range-level or per-iteration loan protocol by themselves.
+generic carrier relay. Nested/multi-owner dynamic views, public precise
+invalidation effects, broader container surfaces, and general user-retainable
+mutable borrowed-state carriers remain incomplete.
 
 ### Milestone 3: callables and generic capabilities - confined invocation
 

@@ -225,15 +225,18 @@ diagnostics or letting a backend message choose either identity.
   library names receive no compiler exception. Suppress constructor and
   lifecycle cascades caused only by the impossible layout; passive unions and
   native records retain their representation-specific diagnostics.
-- `GTI-S2083` owns a range-for form outside the implemented read-only range
-  contract. Point at the element binding for a requested mutable reference and
-  at the source `:` for an unsupported range type. Explain that L-RANGE-01
-  accepts fixed arrays and nominal classes with the exact structural protocol,
-  and suggest a read-only `T&`/`auto&` binding or a mutable by-value copy where
-  applicable. Do not offer a fix-it: changing aliasing versus copying requires
-  user intent. Ordinary protocol-member diagnostics may accompany an invalid
-  nominal class, but the LSP must publish this compiler diagnostic unchanged
-  and clear it when a newer snapshot becomes valid.
+- `GTI-S2083` owns a range-for form outside the implemented read-only or
+  mutable range contract. Point at the element binding when a mutable
+  reference has an immutable owner or the range lacks a mutable endpoint; point
+  at the source `:` for an unsupported range type. Explain that fixed arrays
+  and nominal classes with the exact structural protocol are accepted. For a
+  mutable nominal range, name the required `begin_mut()` and mutable
+  dereference path; for an immutable owner, suggest declaring it mutable or
+  choosing a read-only binding. Do not offer a fix-it: changing owner access,
+  aliasing, or copying requires user intent. Ordinary protocol-member
+  diagnostics may accompany an invalid nominal class, but the LSP must publish
+  this compiler diagnostic unchanged and clear it when a newer snapshot
+  becomes valid.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
   type requires active cleanup while GTI has no global/static shutdown plan.
   Point at the binding name, attach the first exact declared-cleanup, base, or
