@@ -89,6 +89,7 @@ enum class MirTransformKind {
 enum class MirTransformProofKind {
   IdentityFold,
   ComputeFold,
+  SparseConstant,
   BranchFold,
   UnreachableBlock,
   DeadUnusedComputation,
@@ -145,6 +146,7 @@ struct MirTransformRequiredAnalyses {
   bool dominance = false;
   bool scalarPromotion = false;
   bool safetyChecks = false;
+  bool sparseConstants = false;
 
   friend bool operator==(const MirTransformRequiredAnalyses &,
                          const MirTransformRequiredAnalyses &) = default;
@@ -479,6 +481,7 @@ enum class MirLiteralProvenanceKind {
   Source,
   IdentityFold,
   ComputeFold,
+  SparseConstant,
   Count,
 };
 
@@ -490,7 +493,9 @@ enum class MirLiteralProvenanceKind {
 // the exact literal. A compute fold retains the folded operation and its
 // exact operand values, each of which must dominate the rewritten
 // instruction and carry a literal the operation re-evaluates to this
-// instruction's literal.
+// instruction's literal. A sparse constant retains the original operation and
+// the complete SCCP evidence value set; optimization coherence reruns SCCP on
+// canonical MIR before accepting it.
 struct MirLiteralProvenance {
   MirLiteralProvenanceKind kind = MirLiteralProvenanceKind::None;
   MirValueId sourceValue = 0;

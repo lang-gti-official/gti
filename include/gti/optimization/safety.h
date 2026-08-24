@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/mir.h"
+#include "gti/optimization/alias.h"
 
 #include <vector>
 
@@ -36,6 +37,12 @@ struct MirSafetyAnalysis {
 // branch predicates, fixed-array extents, or tracked private-storage state.
 [[nodiscard]] MirSafetyAnalysis
 analyzeMirSafetyChecks(const MirProgram &program, MirBodyAddress address);
+
+// Reuses an analysis-manager-owned alias snapshot when one is already
+// available. The uncached entry point above remains the canonical replay API.
+[[nodiscard]] MirSafetyAnalysis
+analyzeMirSafetyChecks(const MirProgram &program, MirBodyAddress address,
+                       const MirPlaceAliasEscapeAnalysis &aliases);
 
 [[nodiscard]] constexpr MirTransformProofKind
 mirSafetyTransformProof(MirSafetyCheckFamily family) {

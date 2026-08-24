@@ -513,6 +513,7 @@ foldLiteralIdentities(MirProgram &program,
     result.report.invalidation.controlFlow |= edited.invalidation.controlFlow;
     result.report.invalidation.reachability |= edited.invalidation.reachability;
     result.report.invalidation.dominance |= edited.invalidation.dominance;
+    result.report.invalidation.safetyChecks |= edited.invalidation.safetyChecks;
     result.transformations.insert(result.transformations.end(),
                                   edited.transformations.begin(),
                                   edited.transformations.end());
@@ -534,6 +535,7 @@ void mergeEditReport(OptimizationPassReport &report,
   report.invalidation.controlFlow |= edited.invalidation.controlFlow;
   report.invalidation.reachability |= edited.invalidation.reachability;
   report.invalidation.dominance |= edited.invalidation.dominance;
+  report.invalidation.safetyChecks |= edited.invalidation.safetyChecks;
 }
 
 [[nodiscard]] std::vector<MirBodyAddress>
@@ -673,6 +675,111 @@ public:
 
 private:
   const OptimizationResult &compatibility;
+};
+
+class SparseConditionalConstantPass final : public MirPass {
+public:
+  [[nodiscard]] std::string_view name() const override {
+    return "sparse-conditional-constants";
+  }
+
+  [[nodiscard]] MirPassOutcome run(MirPassContext &context,
+                                   MirBodyAnalysisManager &analyses) override {
+    MirPassOutcome outcome;
+    outcome.report.name = std::string(name());
+    outcome.report.iterations = 1;
+    MirProgramEditor editor(context.program, outcome.report.name);
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(context.program)) {
+      const MirBody *body = findMirBody(context.program, address);
+      const MirCfgAnalysis *cfg = analyses.cfg(context.program, address);
+      const MirDominanceInfo *dominance =
+          analyses.dominance(context.program, address);
+      const auto *uses = analyses.valueUses(context.program, address);
+      const MirSccpAnalysis *sccp =
+          analyses.sparseConstants(context.program, address);
+      ++outcome.report.analyzedBodies;
+      if (body == nullptr || cfg == nullptr || dominance == nullptr ||
+          uses == nullptr || sccp == nullptr) {
+        outcome.verification.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .message = "SCCP could not derive its required MIR analyses"});
+        return outcome;
+      }
+      if (!sccp->complete) {
+        ++outcome.report.missed;
+        outcome.report.remarks.push_back(
+            {.kind = OptimizationRemarkKind::Missed,
+             .pass = outcome.report.name,
+             .message = "not propagated: executable control remained "
+                        "unknown within the bounded SCCP lattice",
+             .body = address});
+        continue;
+      }
+
+      std::vector<MirValueId> queuedValues;
+      for (const MirBlock &block : body->blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          if (instruction.tombstone ||
+              instruction.kind != MirInstructionKind::Compute ||
+              instruction.operation == MirOperation::Literal ||
+              !instruction.result) {
+            continue;
+          }
+          const MirSccpValueFact *fact = sccp->find(*instruction.result);
+          if (fact == nullptr || fact->kind != MirSccpLatticeKind::Constant ||
+              !fact->literal) {
+            continue;
+          }
+          ++outcome.report.candidates;
+          editor.queueSparseConstantReplacement(
+              {.body = address, .instruction = instruction.id},
+              instruction.operation, *fact->literal, fact->evidence.blocks,
+              fact->evidence.instructions, fact->evidence.values);
+          queuedValues.push_back(*instruction.result);
+        }
+      }
+
+      const bool pathSensitiveSchedules =
+          !body->loans.empty() || !body->dropObligations.empty() ||
+          !body->cleanupBoundaries.empty() || !body->failureRecords.empty() ||
+          std::any_of(body->blocks.begin(), body->blocks.end(),
+                      [](const MirBlock &block) {
+                        return block.programInitializationStep != 0;
+                      });
+      if (pathSensitiveSchedules || address.kind != MirBodyKind::Function) {
+        continue;
+      }
+      for (const MirSccpBranchFact &branch : sccp->branches) {
+        const MirBlock *block = body->findBlock(branch.block);
+        const MirInstruction *condition =
+            definingInstruction(*body, branch.condition);
+        if (block == nullptr || condition == nullptr ||
+            block->terminator.kind != MirTerminatorKind::Branch ||
+            (condition->operation != MirOperation::Literal &&
+             std::find(queuedValues.begin(), queuedValues.end(),
+                       branch.condition) == queuedValues.end())) {
+          continue;
+        }
+        ++outcome.report.candidates;
+        editor.queueBranchFold(address, branch.block, branch.condition,
+                               branch.taken);
+      }
+    }
+    if (editor.pendingPatchCount() == 0 &&
+        editor.pendingBranchFoldCount() == 0) {
+      outcome.preserved = MirPreservedAnalyses::all();
+      return outcome;
+    }
+    const MirEditResult edited = editor.apply();
+    mergeEditReport(outcome.report, edited);
+    outcome.transformations = edited.transformations;
+    outcome.verification = edited.verification;
+    outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
+                                       : MirPreservedAnalyses::all();
+    return outcome;
+  }
 };
 
 [[nodiscard]] std::optional<MirSafetyCheckFamily>
@@ -1076,6 +1183,7 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
 
     ScalarPromotionPass scalarPromotion;
     LiteralIdentityFoldPass literalFolding(*compatibility);
+    SparseConditionalConstantPass sparseConstants;
     SafetyCheckEliminationPass boundsChecks(MirSafetyCheckFamily::Bounds);
     SafetyCheckEliminationPass storageChecks(
         MirSafetyCheckFamily::StorageState);
@@ -1086,8 +1194,8 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
     if (!execute(scalarPromotion) || !execute(literalFolding) ||
         ((request.level == OptimizationLevel::O2 ||
           request.level == OptimizationLevel::O3) &&
-         (!execute(boundsChecks) || !execute(storageChecks) ||
-          !execute(overflowChecks))) ||
+         (!execute(sparseConstants) || !execute(boundsChecks) ||
+          !execute(storageChecks) || !execute(overflowChecks))) ||
         !execute(unreachableCleanup) || !execute(deadComputations)) {
       return result;
     }

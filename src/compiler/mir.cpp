@@ -2,6 +2,7 @@
 #include "gti/mir_dominance.h"
 #include "gti/optimization/effects.h"
 #include "gti/optimization/safety.h"
+#include "gti/optimization/sccp.h"
 
 #include <algorithm>
 #include <functional>
@@ -169,13 +170,15 @@ bool mirTransformRecordLess(const MirTransformRecord &left,
                   left.requiredAnalyses.reachability,
                   left.requiredAnalyses.dominance,
                   left.requiredAnalyses.scalarPromotion,
-                  left.requiredAnalyses.safetyChecks) <
+                  left.requiredAnalyses.safetyChecks,
+                  left.requiredAnalyses.sparseConstants) <
          std::tie(right.requiredAnalyses.valueUses,
                   right.requiredAnalyses.effects,
                   right.requiredAnalyses.reachability,
                   right.requiredAnalyses.dominance,
                   right.requiredAnalyses.scalarPromotion,
-                  right.requiredAnalyses.safetyChecks);
+                  right.requiredAnalyses.safetyChecks,
+                  right.requiredAnalyses.sparseConstants);
 }
 
 bool hasMirSafetyDischarge(const MirInstruction &instruction,
@@ -4866,6 +4869,18 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                                sourceValue != *instruction.result &&
                                body.findValue(sourceValue) != nullptr;
                       });
+      const bool sparseConstantShape =
+          provenance.kind == MirLiteralProvenanceKind::SparseConstant &&
+          provenance.sourceValue == 0 &&
+          provenance.sourceOperation != MirOperation::None &&
+          provenance.sourceOperation != MirOperation::Literal &&
+          !provenance.sourceValues.empty() &&
+          std::all_of(provenance.sourceValues.begin(),
+                      provenance.sourceValues.end(),
+                      [&](MirValueId sourceValue) {
+                        return sourceValue != 0 &&
+                               body.findValue(sourceValue) != nullptr;
+                      });
       return instruction.operands.empty() && instruction.literal &&
              literalMatchesType(*instruction.literal, resultType) &&
              ((provenance.kind == MirLiteralProvenanceKind::Source &&
@@ -4874,7 +4889,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                provenance.sourceValue != 0 &&
                provenance.sourceValue != *instruction.result &&
                source != nullptr && source->info.type == resultType) ||
-              computeFoldShape);
+              computeFoldShape || sparseConstantShape);
     }
     case MirOperation::EnumConstant:
       return instruction.operands.empty() && instruction.enumOwner &&
@@ -16274,6 +16289,82 @@ verifyMirOptimizationCoherence(const MirProgram &source,
     if (!progress) {
       break;
     }
+  }
+
+  // Sparse constants are replayed as one snapshot-scoped batch after local
+  // folds. SCCP is rerun before any sparse edit, so one replacement cannot
+  // manufacture the evidence used to authorize another replacement.
+  struct SparseSnapshot {
+    MirBodyAddress address;
+    MirSccpAnalysis analysis;
+  };
+  std::vector<SparseSnapshot> sparseSnapshots;
+  for (const MirTransformRecord &record : records) {
+    if (record.kind != MirTransformKind::ReplaceInstruction ||
+        record.proof != MirTransformProofKind::SparseConstant ||
+        std::any_of(sparseSnapshots.begin(), sparseSnapshots.end(),
+                    [&](const SparseSnapshot &snapshot) {
+                      return snapshot.address == record.body;
+                    })) {
+      continue;
+    }
+    sparseSnapshots.push_back(
+        {.address = record.body,
+         .analysis = analyzeMirSccp(candidate, record.body)});
+  }
+  for (std::size_t index = 0; index < records.size(); ++index) {
+    const MirTransformRecord &record = records[index];
+    if (consumed[index] ||
+        record.kind != MirTransformKind::ReplaceInstruction ||
+        record.proof != MirTransformProofKind::SparseConstant) {
+      continue;
+    }
+    MirBody *body = findMirBody(candidate, record.body);
+    const InstructionLocation location =
+        body == nullptr ? InstructionLocation{}
+                        : findInstruction(*body, record.instruction);
+    const auto snapshot =
+        std::find_if(sparseSnapshots.begin(), sparseSnapshots.end(),
+                     [&](const SparseSnapshot &value) {
+                       return value.address == record.body;
+                     });
+    const MirSccpValueFact *fact =
+        snapshot != sparseSnapshots.end() && location.instruction != nullptr &&
+                location.instruction->result
+            ? snapshot->analysis.find(*location.instruction->result)
+            : nullptr;
+    const MirTransformRequiredAnalyses requiredSparse{.valueUses = true,
+                                                      .reachability = true,
+                                                      .dominance = true,
+                                                      .sparseConstants = true};
+    if (location.block == nullptr || location.instruction == nullptr ||
+        fact == nullptr || !snapshot->analysis.complete ||
+        location.block->id != record.block || record.place != 0 ||
+        !record.replacementLiteral || !record.relatedPlaces.empty() ||
+        location.instruction->kind != MirInstructionKind::Compute ||
+        location.instruction->operation == MirOperation::Literal ||
+        fact->kind != MirSccpLatticeKind::Constant ||
+        fact->literal != record.replacementLiteral ||
+        record.sourceValue != location.instruction->hirValue ||
+        record.sourceStatement != location.instruction->hirStatement ||
+        record.relatedBlocks != fact->evidence.blocks ||
+        record.relatedInstructions != fact->evidence.instructions ||
+        record.relatedValues != fact->evidence.values ||
+        record.requiredAnalyses != requiredSparse) {
+      reject(record.body,
+             "sparse-constant record does not replay from canonical SCCP",
+             record.block, record.instruction);
+      return result;
+    }
+    MirInstruction &instruction = *location.instruction;
+    instruction.literalProvenance = {
+        .kind = MirLiteralProvenanceKind::SparseConstant,
+        .sourceOperation = instruction.operation,
+        .sourceValues = record.relatedValues};
+    instruction.operation = MirOperation::Literal;
+    instruction.operands.clear();
+    instruction.literal = record.replacementLiteral;
+    consumed[index] = true;
   }
 
   for (std::size_t index = 0; index < records.size(); ++index) {

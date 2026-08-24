@@ -69,7 +69,7 @@ struct OptimizationReport {
   }
 };
 
-inline constexpr std::uint32_t optimizationReportSchemaVersion = 2;
+inline constexpr std::uint32_t optimizationReportSchemaVersion = 3;
 
 // Presentation is kept outside the optimizer and uses only verified report
 // data. The JSON schema is versioned independently from MIR serialization.

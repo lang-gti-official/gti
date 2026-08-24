@@ -61,6 +61,8 @@ namespace {
     return "identity-fold";
   case MirTransformProofKind::ComputeFold:
     return "compute-fold";
+  case MirTransformProofKind::SparseConstant:
+    return "sparse-constant";
   case MirTransformProofKind::BranchFold:
     return "branch-fold";
   case MirTransformProofKind::UnreachableBlock:
@@ -186,7 +188,8 @@ void writeRequiredAnalyses(std::ostream &output,
          << ",\"scalarPromotion\":"
          << (analyses.scalarPromotion ? "true" : "false")
          << ",\"safetyChecks\":" << (analyses.safetyChecks ? "true" : "false")
-         << '}';
+         << ",\"sparseConstants\":"
+         << (analyses.sparseConstants ? "true" : "false") << '}';
 }
 
 void writeSafetyDischarge(std::ostream &output,

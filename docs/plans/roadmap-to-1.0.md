@@ -762,14 +762,20 @@ Implemented foundation:
 6. O2/O3 proof-carrying discharge of exact fixed-array read bounds,
    sparse-storage read bounds/initialization, and checked integer
    add/subtract/multiply/negate overflow outcomes.
+7. Deterministic monotone local dataflow with executable-edge tracking and
+   proof-carrying scalar SCCP.
+8. Dominance-derived natural-loop forests with bounded invariant/affine range
+   facts, plus body-local place alias/escape facts used by safety invalidation.
 
 Remaining sequence:
 
-1. Add sparse propagation and broader predicate facts as measured local
-   clients.
+1. Consume the bounded loop/range facts for one measured safety family under
+   `O-MIR-08` without introducing a general loop transform.
 2. Widen check elimination one operation family at a time with recorded
    GTI-level proofs and differential evidence.
-3. Consider inlining or devirtualization only after call effects, lifetime,
+3. Add one alias-safe local memory family under `O-MIR-09`; introduce
+   MemorySSA only if that measured client requires it.
+4. Consider inlining or devirtualization only after call effects, lifetime,
    layout, closed-world, and cost gates are complete.
 
 Systems readiness requires one checked executable representation to control behavior. It does

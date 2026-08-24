@@ -1,5 +1,6 @@
 #include "gti/optimization/rewrite.h"
 #include "gti/optimization/safety.h"
+#include "gti/optimization/sccp.h"
 
 #include <algorithm>
 #include <tuple>
@@ -107,6 +108,20 @@ void MirProgramEditor::queueComputeFoldReplacement(
                      .expectedOperation = expectedOperation,
                      .literal = std::move(literal),
                      .computeFold = true});
+}
+
+void MirProgramEditor::queueSparseConstantReplacement(
+    MirInstructionKey target, MirOperation expectedOperation, Literal literal,
+    std::vector<MirBlockId> relatedBlocks,
+    std::vector<MirInstructionId> relatedInstructions,
+    std::vector<MirValueId> relatedValues) {
+  patches.push_back({.target = target,
+                     .expectedOperation = expectedOperation,
+                     .literal = std::move(literal),
+                     .sparseConstant = true,
+                     .relatedBlocks = std::move(relatedBlocks),
+                     .relatedInstructions = std::move(relatedInstructions),
+                     .relatedValues = std::move(relatedValues)});
 }
 
 void MirProgramEditor::queueBranchFold(MirBodyAddress body, MirBlockId block,
@@ -231,7 +246,25 @@ MirEditResult MirProgramEditor::apply() {
                "MIR replacement target is not the expected computation");
       continue;
     }
-    if (patch.computeFold) {
+    if (patch.sparseConstant) {
+      const MirSccpAnalysis analysis =
+          analyzeMirSccp(program, patch.target.body);
+      const MirSccpValueFact *fact =
+          instruction.result ? analysis.find(*instruction.result) : nullptr;
+      if (!analysis.complete || fact == nullptr ||
+          fact->kind != MirSccpLatticeKind::Constant ||
+          fact->literal != std::optional<Literal>{patch.literal} ||
+          patch.expectedOperation == MirOperation::Literal ||
+          fact->evidence.blocks != patch.relatedBlocks ||
+          fact->evidence.instructions != patch.relatedInstructions ||
+          fact->evidence.values != patch.relatedValues) {
+        addError(result, patch.target.body, location.block->id,
+                 patch.target.instruction,
+                 "MIR sparse-constant replacement does not replay from "
+                 "canonical SCCP facts");
+        continue;
+      }
+    } else if (patch.computeFold) {
       const bool valueOperands =
           !instruction.operands.empty() && instruction.operands.size() <= 2 &&
           std::all_of(instruction.operands.begin(), instruction.operands.end(),
@@ -397,16 +430,28 @@ MirEditResult MirProgramEditor::apply() {
     MirTransformRecord record{
         .pass = pass,
         .kind = MirTransformKind::ReplaceInstruction,
-        .proof = patch.computeFold ? MirTransformProofKind::ComputeFold
-                                   : MirTransformProofKind::IdentityFold,
+        .proof = patch.sparseConstant ? MirTransformProofKind::SparseConstant
+                 : patch.computeFold  ? MirTransformProofKind::ComputeFold
+                                      : MirTransformProofKind::IdentityFold,
         .body = patch.target.body,
         .block = location.block->id,
         .instruction = instruction.id,
         .sourceValue = instruction.hirValue,
         .sourceStatement = instruction.hirStatement,
         .replacementLiteral = patch.literal,
-        .requiredAnalyses = {.valueUses = true, .dominance = true}};
-    if (patch.computeFold) {
+        .relatedBlocks = patch.relatedBlocks,
+        .relatedInstructions = patch.relatedInstructions,
+        .relatedValues = patch.relatedValues,
+        .requiredAnalyses = {.valueUses = true,
+                             .reachability = patch.sparseConstant,
+                             .dominance = true,
+                             .sparseConstants = patch.sparseConstant}};
+    if (patch.sparseConstant) {
+      replacement.literalProvenance =
+          MirLiteralProvenance{.kind = MirLiteralProvenanceKind::SparseConstant,
+                               .sourceOperation = instruction.operation,
+                               .sourceValues = patch.relatedValues};
+    } else if (patch.computeFold) {
       MirLiteralProvenance provenance{.kind =
                                           MirLiteralProvenanceKind::ComputeFold,
                                       .sourceOperation = instruction.operation};
@@ -736,6 +781,7 @@ MirEditResult MirProgramEditor::apply() {
   result.valueUsesRebuilt = true;
   result.invalidation.instructionFacts = true;
   result.invalidation.valueUses = true;
+  result.invalidation.safetyChecks = true;
   if (!queuedBranchFolds.empty()) {
     result.invalidation.controlFlow = true;
     result.invalidation.reachability = true;
@@ -756,10 +802,6 @@ MirEditResult MirProgramEditor::apply() {
   if (!queuedDeadInstructions.empty()) {
     result.invalidation.instructionFacts = true;
     result.invalidation.valueUses = true;
-  }
-  if (!queuedSafetyDischarges.empty()) {
-    result.invalidation.instructionFacts = true;
-    result.invalidation.safetyChecks = true;
   }
   std::sort(result.transformations.begin(), result.transformations.end(),
             mirTransformRecordLess);

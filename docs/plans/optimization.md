@@ -4,9 +4,11 @@
 > boundary is documented in
 > [`docs/architecture/optimization.md`](../architecture/optimization.md).
 
-Status: accepted; Milestones 1 through 3, the first local Milestone 4 pipeline,
-and the first bounded Milestone 5 safety slice are implemented. Broader
-Milestone 5 families and Milestone 6 remain capability-gated.
+Status: accepted; Milestones 1 through 5 are implemented for their bounded
+local families. Milestone 6 has verified per-instance effects and exact closed
+call-summary queries, but no interprocedural transformation. Follow-on work is
+tracked as numbered O-MIR milestones in
+[`implementation-sequence.md`](implementation-sequence.md).
 
 Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
 in this proposal. `BackendInput`, HIR replacement-table emission, mixed AST/HIR
@@ -25,11 +27,21 @@ bounds, initialized-storage-state, and arithmetic-overflow discharge passes
 backed by canonical body-local proofs. O-MIR-03 and the first O-MIR-04 slice are
 no longer blocked.
 
+Implementation update (2026-08-24): O-MIR-05 adds one deterministic monotone
+forward-dataflow substrate, migrates safety analysis without changing its
+lattice or accepted proofs, and enables proof-carrying SCCP at O2/O3. O-MIR-06
+adds dominance-derived natural-loop forests, bounded invariant and affine
+induction facts. O-MIR-07 adds body-local place alias/escape facts and uses
+them to preserve disjoint safety state across writes. The latter two are
+analysis foundations, not loop or memory transformations.
+
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). Infrastructure
 continues to land only with a real client: the current analysis cache exists
 for scalar promotion, folding, unreachable cleanup, and dead computation
-removal, while loop/range/alias/interprocedural frameworks remain deferred.
+removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
+facts are the bounded prerequisite for the next measured loop client;
+interprocedural transformations remain deferred.
 
 This proposal defines how GTI grows from typed-HIR compatibility folding into
 a maintainable optimizer without making AST shape, the C++ emitter, or a
@@ -108,8 +120,11 @@ printing.
 `OptimizedProgram`. At O1 and above the implemented pipeline performs
 conservative scalar promotion, literal/compute/branch folding, unreachable
 cleanup, and dead unused computation removal. The small analysis manager
-caches only facts consumed by these passes and revisions/invalidate them
-explicitly.
+caches CFG, dominance, value-use, effect, promotion, safety, sparse-constant,
+natural-loop/range, and place alias/escape facts and revises/invalidates them
+explicitly. O2/O3 additionally run proof-carrying SCCP and the implemented
+safety-discharge families. Alias analysis already narrows safety-state
+invalidation; loop/range facts do not yet authorize a transformation.
 
 Every edit is expressed by stable MIR identity and typed proof evidence.
 `verifyMirOptimizationCoherence` independently replays those records from
@@ -167,10 +182,11 @@ An optimized MIR program must be valid input to every backend. No backend may
 select a different GTI transformation because of emitted language, host
 compiler, or platform spelling.
 
-MIR is not yet ready for every optimization. General temporary lifetime,
-precise aliasing, call effects, concrete object layout, ABI, and some primitive
-edge semantics remain incomplete. The capability gates below make those gaps
-explicit instead of allowing passes to guess.
+MIR is not yet ready for every optimization. Body-local place alias/escape and
+verified call effects are available, but memory versions, interprocedural
+pointer identity, general temporary lifetime, concrete object layout, ABI, and
+some primitive edge semantics remain incomplete. The capability gates below
+make those gaps explicit instead of allowing passes to guess.
 
 ## Proposed Pipeline
 
@@ -296,15 +312,17 @@ revision. A transformation explicitly preserves or invalidates analyses.
 Unknown preservation invalidates the cache conservatively. Analyses never
 silently mutate MIR.
 
-Initial reusable analyses should be introduced only as demanded by a pass:
+Current reusable analyses, each introduced with a concrete client or the
+nearest bounded prerequisite, are:
 
 - predecessor/successor and reachability information;
 - dominator trees;
 - value definition/use queries;
-- local liveness;
 - call graph and conservative call effects;
 - place alias/escape facts;
-- integer ranges and known predicates.
+- natural-loop, invariant, affine induction, and relational-bound facts;
+- sparse typed constants and executable edges; and
+- safety-specific integer ranges and known predicates.
 
 Do not add an analysis because mature compilers commonly have one. Add it with
 the first transformation and tests that demonstrate its contract.
@@ -407,8 +425,8 @@ level may run the same pass set as a lower one.
 | --- | --- | --- |
 | `-O0` | no transforming passes; optional validation and dumps only | request native `-O0` |
 | `-O1` | bounded local canonicalization, constant folding, branch simplification, unreachable cleanup, and removal of unused non-trapping computations | request native `-O1` |
-| `-O2` | function-local dataflow, sparse propagation, range proofs, check elimination, and alias-safe load/store work after their gates exist | request native `-O2` |
-| `-O3` | evidence-backed interprocedural work such as devirtualization or inlining only after call effects, cost policy, lifetime, and layout contracts exist | request native `-O3` |
+| `-O2` | O1 plus proof-carrying SCCP and bounded bounds/storage/overflow check discharge; loop/range and alias/escape facts are available only to validated clients | request native `-O2` |
+| `-O3` | currently the same GTI middle-end transforms as O2; interprocedural work remains gated by closed-world, cost, lifetime, and layout contracts | request native `-O3` |
 
 Size-oriented optimization is a future independent policy; do not silently
 make `-O2` or `-O3` mean size optimization. Debuggability options and remark
@@ -416,30 +434,35 @@ verbosity are also independent of semantic optimization level.
 
 ## Capability-Gated Pass Roadmap
 
-| Pass family | Authoritative IR | Required capabilities before implementation |
-| --- | --- | --- |
-| typed constant folding | MIR operations | exact constant representation; operation edge semantics; trap classification; constant replacement rewrite |
-| CFG simplification | MIR blocks and terminators | predecessor/successor repair; reachability; cleanup-edge preservation; block verifier |
-| dead-value elimination | MIR instructions and indexed uses | complete effect/trap table; drop/loan awareness; definition/use repair |
-| sparse constant propagation | MIR CFG and values | dominance or executable-edge analysis; mutation barriers; typed lattice; CFG rewrite |
-| copy propagation | MIR values and places | dominance; exact type/access preservation; move and loan barriers |
-| redundant load/store removal | MIR places | place alias and escape analysis; call write effects; projection overlap; lifetime boundaries |
-| bounds/check elimination | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
-| devirtualization | HIR instance graph plus MIR calls | closed-world reachability; exact receiver proof; override graph; lifecycle/layout compatibility |
-| inlining | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness |
+| Pass family | Status | Authoritative IR | Required capabilities |
+| --- | --- | --- | --- |
+| typed constant folding | bounded family implemented | MIR operations | exact constant representation; operation edge semantics; trap classification; constant replacement rewrite |
+| CFG simplification | bounded branch/unreachable family implemented | MIR blocks and terminators | predecessor/successor repair; reachability; cleanup-edge preservation; block verifier |
+| dead-value elimination | bounded family implemented | MIR instructions and indexed uses | complete effect/trap table; drop/loan awareness; definition/use repair |
+| sparse constant propagation | bounded scalar SSA family implemented | MIR CFG and values | executable-edge solver; typed lattice; typed proof/replay; CFG rewrite |
+| copy propagation | deferred to a measured client | MIR values and places | dominance; exact type/access preservation; move and loan barriers |
+| redundant load/store removal | analysis gates partly complete; transform absent | MIR places | place alias/escape; exact call effects; memory versions or a proved local substitute; lifetime boundaries |
+| bounds/check elimination | bounded read/storage/arithmetic families implemented | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
+| loop optimization | analysis gate complete; transform absent | MIR loops and values | natural-loop forest; invariants/inductions; transform-specific legality and replay; cost evidence |
+| devirtualization | deferred | HIR instance graph plus MIR calls | closed-world reachability; exact receiver proof; override graph; lifecycle/layout compatibility |
+| inlining | deferred | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness |
 
 Do not implement a pass when one of its gates is represented only by C++
 emission behavior. Add the missing backend-neutral fact first.
 
-The likely local sequence after infrastructure is:
+The implemented local sequence is:
 
 1. MIR constant folding;
 2. conditional and switch simplification;
 3. unreachable block removal;
 4. dead non-trapping value removal;
-5. sparse propagation and another CFG cleanup;
-6. range-based check elimination;
-7. place optimizations only after alias and effects are explicit.
+5. sparse propagation and another CFG cleanup; and
+6. range-based check elimination.
+
+Loop/range and place alias/escape analyses are now explicit prerequisites, not
+implemented transforms. Their next clients are bounded by O-MIR-08 through
+O-MIR-10 in `implementation-sequence.md`; this document does not leave an
+open-ended "future propagation" phase.
 
 Each cleanup repetition must be intentional and bounded in the configured
 pipeline.
@@ -652,13 +675,15 @@ Acceptance criteria:
 
 ### Milestone 4: local CFG and value optimization
 
-Status: first production slice complete.
+Status: complete for the bounded local scalar/CFG family.
 
 - Implemented scalar block parameters/edge arguments, conservative acyclic
   scalar promotion, bounded branch simplification, reachability cleanup, and
   dead non-trapping value removal.
-- Sparse propagation and additional CFG/value work remain future clients and
-  must bring only their required dominance/effect/predicate analyses.
+- Implemented deterministic executable-edge dataflow and typed scalar SCCP at
+  O2/O3. Sparse literal and branch edits carry exact evidence and are replayed
+  independently from source MIR.
+- Further CFG/value work is assigned only through numbered O-MIR milestones.
 
 Acceptance criteria:
 
@@ -674,10 +699,13 @@ Acceptance criteria:
 fixed-array read bounds, exact sparse-storage read bounds/initialization, and
 checked integer add/subtract/multiply/negate overflow outcomes can be
 discharged at O2/O3. Canonical analysis, typed outcome metadata, controlled
-editing, independent replay, backend consumption, schema-v2 per-family
+editing, independent replay, backend consumption, schema-v3 per-family
 reporting, near-miss tests, and O0/O2/O3 native-`-O0` differential evidence are
 implemented together. Array writes/borrows, prefix storage, remaining numeric
-operators, aliases, and interprocedural proofs remain future measured slices.
+operators, and interprocedural range proofs remain future measured slices.
+Schema v3 additionally records sparse-constant proof vocabulary. Place alias
+facts now preserve known-disjoint safety state across writes but do not
+discharge checks.
 
 - Represent checked integer operations and their failure categories explicitly
   enough for range proofs to discharge individual checks.
@@ -709,7 +737,12 @@ Acceptance criteria:
 
 ### Milestone 6: interprocedural optimization
 
-- Add conservative call effects and closed-world reachability.
+Status: effect-summary foundation complete; transforms deferred.
+
+- Conservative per-instance call effects and exact closed static-summary
+  queries are implemented and independently verified.
+- Closed-world reachability, devirtualization, and inlining are not
+  implemented.
 - Consider devirtualization and inlining only after temporary lifetime, cleanup,
   layout, and cost-model requirements are met.
 
@@ -724,8 +757,10 @@ Acceptance criteria:
 
 Resolve these before the pass families that depend on them:
 
-- a complete instruction/intrinsic/call effect model;
-- place alias and escape rules across calls and returned references;
+- memory versioning for transformations that must distinguish intervening
+  writes; add MemorySSA only after a measured client proves existing place and
+  effect facts insufficient;
+- transform-specific loop legality, failure-order proof, and cost evidence;
 - general temporary lifetime and active-drop transitions in MIR;
 - backend-neutral object layout, data layout, virtual tables, and calling
   conventions;

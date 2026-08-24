@@ -1,10 +1,11 @@
 #include "gti/optimization/safety.h"
 
 #include "gti/checked_integer.h"
+#include "gti/optimization/alias.h"
+#include "gti/optimization/dataflow.h"
 #include "gti/optimization/effects.h"
 
 #include <algorithm>
-#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -285,6 +286,19 @@ integerForPlace(const MirBody &body, const AbstractState &state,
   Evidence evidence;
   addPlace(evidence, place);
   return fullIntegerFact(*domain, std::move(evidence));
+}
+
+[[nodiscard]] MirPlaceId
+canonicalPlace(const MirPlaceAliasEscapeAnalysis &aliases, MirPlaceId place) {
+  if (place == 0 || place > aliases.placeCount) {
+    return place;
+  }
+  for (MirPlaceId candidate = 1; candidate <= aliases.placeCount; ++candidate) {
+    if (aliases.relation(place, candidate) == MirAliasRelation::MustAlias) {
+      return candidate;
+    }
+  }
+  return place;
 }
 
 [[nodiscard]] std::optional<IntegerFact>
@@ -576,16 +590,11 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
                     projected.projections.begin());
 }
 
-[[nodiscard]] bool preciseDirectRoot(const MirPlace &place) {
-  return place.projections.empty() &&
-         ((place.root == MirPlaceRootKind::Binding && place.binding != 0) ||
-          (place.root == MirPlaceRootKind::Symbol && place.symbol != 0));
-}
-
-void invalidatePlaceRoot(const MirBody &body, AbstractState &state,
-                         MirPlaceId destination) {
+void invalidatePlaceRoot(const MirBody &body,
+                         const MirPlaceAliasEscapeAnalysis &aliases,
+                         AbstractState &state, MirPlaceId destination) {
   const MirPlace *written = body.findPlace(destination);
-  if (written == nullptr || !preciseDirectRoot(*written)) {
+  if (written == nullptr) {
     state.integerPlaces.clear();
     state.loadedOrigins.clear();
     state.storageValues.clear();
@@ -593,25 +602,18 @@ void invalidatePlaceRoot(const MirBody &body, AbstractState &state,
     state.storages.clear();
     return;
   }
-  const auto sameRoot = [&](MirPlaceId place) {
-    const MirPlace *candidate = body.findPlace(place);
-    return candidate != nullptr && candidate->root == written->root &&
-           candidate->binding == written->binding &&
-           candidate->symbol == written->symbol &&
-           candidate->capture == written->capture &&
-           candidate->temporary == written->temporary &&
-           candidate->value == written->value &&
-           candidate->loan == written->loan;
+  const auto overlaps = [&](MirPlaceId place) {
+    return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
   std::erase_if(state.integerPlaces,
-                [&](const auto &entry) { return sameRoot(entry.first); });
+                [&](const auto &entry) { return overlaps(entry.first); });
   std::erase_if(state.loadedOrigins,
-                [&](const auto &entry) { return sameRoot(entry.second); });
+                [&](const auto &entry) { return overlaps(entry.second); });
   std::erase_if(state.storages,
-                [&](const auto &entry) { return sameRoot(entry.first); });
+                [&](const auto &entry) { return overlaps(entry.first); });
   for (auto iterator = state.storageOrigins.begin();
        iterator != state.storageOrigins.end();) {
-    if (!sameRoot(iterator->second)) {
+    if (!overlaps(iterator->second)) {
       ++iterator;
       continue;
     }
@@ -686,7 +688,9 @@ fixedArrayIndex(const MirBody &body, const AbstractState &state,
 }
 
 [[nodiscard]] std::optional<StorageFact>
-storageForOperand(const AbstractState &state, const MirOperand &operand) {
+storageForOperand(const AbstractState &state,
+                  const MirPlaceAliasEscapeAnalysis &aliases,
+                  const MirOperand &operand) {
   if (operand.value != 0) {
     const auto origin = state.storageOrigins.find(operand.value);
     if (origin != state.storageOrigins.end()) {
@@ -702,7 +706,8 @@ storageForOperand(const AbstractState &state, const MirOperand &operand) {
     }
   }
   if (operand.place != 0) {
-    const auto storage = state.storages.find(operand.place);
+    const auto storage =
+        state.storages.find(canonicalPlace(aliases, operand.place));
     if (storage != state.storages.end()) {
       return storage->second;
     }
@@ -711,9 +716,12 @@ storageForOperand(const AbstractState &state, const MirOperand &operand) {
 }
 
 [[nodiscard]] std::optional<MirPlaceId>
-storageOriginForOperand(const AbstractState &state, const MirOperand &operand) {
-  if (operand.place != 0 && state.storages.contains(operand.place)) {
-    return operand.place;
+storageOriginForOperand(const AbstractState &state,
+                        const MirPlaceAliasEscapeAnalysis &aliases,
+                        const MirOperand &operand) {
+  const MirPlaceId place = canonicalPlace(aliases, operand.place);
+  if (place != 0 && state.storages.contains(place)) {
+    return place;
   }
   const auto origin = state.storageOrigins.find(operand.value);
   return origin == state.storageOrigins.end()
@@ -729,8 +737,10 @@ void killUnknownMemory(AbstractState &state) {
   state.storageOrigins.clear();
 }
 
-void applyInstruction(const MirBody &body, const MirBlock &block,
-                      const MirInstruction &instruction, AbstractState &state) {
+void applyInstruction(const MirBody &body,
+                      const MirPlaceAliasEscapeAnalysis &aliases,
+                      const MirBlock &block, const MirInstruction &instruction,
+                      AbstractState &state) {
   if (!state.reachable || instruction.tombstone) {
     return;
   }
@@ -754,20 +764,21 @@ void applyInstruction(const MirBody &body, const MirBlock &block,
       instruction.operands.size() == 1) {
     const MirOperand &source = instruction.operands.front();
     if (source.place != 0) {
+      const MirPlaceId sourcePlace = canonicalPlace(aliases, source.place);
       if (const std::optional<IntegerFact> fact =
-              integerForPlace(body, state, source.place)) {
+              integerForPlace(body, state, sourcePlace)) {
         IntegerFact loaded = *fact;
         add(loaded.evidence, block.id);
         addInstruction(loaded.evidence, instruction.id);
         addValue(loaded.evidence, *instruction.result);
         addPlace(loaded.evidence, source.place);
         state.integers[*instruction.result] = std::move(loaded);
-        state.loadedOrigins[*instruction.result] = source.place;
+        state.loadedOrigins[*instruction.result] = sourcePlace;
       }
-      const auto storage = state.storages.find(source.place);
+      const auto storage = state.storages.find(sourcePlace);
       if (storage != state.storages.end()) {
         state.storageValues[*instruction.result] = storage->second;
-        state.storageOrigins[*instruction.result] = source.place;
+        state.storageOrigins[*instruction.result] = sourcePlace;
       }
     }
     return;
@@ -776,12 +787,17 @@ void applyInstruction(const MirBody &body, const MirBlock &block,
        instruction.kind == MirInstructionKind::Assign ||
        instruction.kind == MirInstructionKind::Move) &&
       instruction.destination && !instruction.operands.empty()) {
-    const MirPlaceId destination = *instruction.destination;
+    const MirPlaceId destination =
+        canonicalPlace(aliases, *instruction.destination);
+    const MirOperand &source = instruction.operands.front();
     const std::optional<IntegerFact> fact =
-        integerForOperand(body, state, instruction.operands.front());
+        source.place != 0
+            ? integerForPlace(body, state,
+                              canonicalPlace(aliases, source.place))
+            : integerForOperand(body, state, source);
     const std::optional<StorageFact> storage =
-        storageForOperand(state, instruction.operands.front());
-    invalidatePlaceRoot(body, state, destination);
+        storageForOperand(state, aliases, source);
+    invalidatePlaceRoot(body, aliases, state, destination);
     if (fact) {
       IntegerFact stored = *fact;
       add(stored.evidence, block.id);
@@ -809,7 +825,7 @@ void applyInstruction(const MirBody &body, const MirBlock &block,
         effect.maySynchronize) {
       killUnknownMemory(state);
     } else {
-      invalidatePlaceRoot(body, state, *instruction.destination);
+      invalidatePlaceRoot(body, aliases, state, *instruction.destination);
     }
     return;
   }
@@ -846,7 +862,7 @@ void applyInstruction(const MirBody &body, const MirBlock &block,
       instruction.intrinsic == IntrinsicKind::StorageDestroy;
   if (storageOperation && instruction.operands.size() >= 2) {
     const std::optional<MirPlaceId> origin =
-        storageOriginForOperand(state, instruction.operands[0]);
+        storageOriginForOperand(state, aliases, instruction.operands[0]);
     const std::optional<IntegerFact> index =
         integerForOperand(body, state, instruction.operands[1]);
     std::optional<StorageFact> updated;
@@ -904,11 +920,12 @@ void applyInstruction(const MirBody &body, const MirBlock &block,
 }
 
 [[nodiscard]] BlockTransfer
-transferBlock(const MirBody &body, const MirBlock &block, AbstractState state) {
+transferBlock(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+              const MirBlock &block, AbstractState state) {
   BlockTransfer result;
   for (const MirInstruction &instruction : block.instructions) {
     result.before.insert_or_assign(instruction.id, state);
-    applyInstruction(body, block, instruction, state);
+    applyInstruction(body, aliases, block, instruction, state);
   }
   result.output = std::move(state);
   return result;
@@ -1117,46 +1134,36 @@ struct Edge {
   return result;
 }
 
-[[nodiscard]] std::vector<AbstractState> solveStates(const MirBody &body) {
+[[nodiscard]] std::vector<AbstractState>
+solveStates(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases) {
+  AbstractState entry;
+  entry.reachable = true;
+  const MirForwardDataflowResult<AbstractState> solved = runMirForwardDataflow(
+      body, std::move(entry),
+      [&](const MirBlock &block, const AbstractState &incoming) {
+        const BlockTransfer transfer =
+            transferBlock(body, aliases, block, incoming);
+        std::vector<MirForwardDataflowEdge<AbstractState>> result;
+        std::size_t ordinal = 0;
+        for (Edge &edge : outgoingEdges(body, block, transfer)) {
+          result.push_back({.target = edge.target,
+                            .ordinal = ordinal++,
+                            .state = std::move(edge.state)});
+        }
+        return result;
+      },
+      [](AbstractState &target, const AbstractState &incoming,
+         MirDataflowMergeContext context) {
+        return mergeInto(target, incoming, context.widen);
+      });
+  if (!solved.converged()) {
+    return {};
+  }
   std::vector<AbstractState> incoming(body.blocks.size());
-  if (body.entry == 0 || body.entry > body.blocks.size()) {
-    return {};
-  }
-  incoming[body.entry - 1].reachable = true;
-  std::deque<MirBlockId> worklist{body.entry};
-  std::vector<bool> queued(body.blocks.size());
-  queued[body.entry - 1] = true;
-  std::vector<std::size_t> updates(body.blocks.size());
-  std::size_t iterations = 0;
-  const std::size_t iterationLimit =
-      std::max<std::size_t>(128, body.blocks.size() * 64);
-  while (!worklist.empty() && iterations++ < iterationLimit) {
-    const MirBlockId id = worklist.front();
-    worklist.pop_front();
-    queued[id - 1] = false;
-    const MirBlock *block = body.findBlock(id);
-    if (block == nullptr) {
-      return {};
+  for (std::size_t index = 0; index < solved.incoming.size(); ++index) {
+    if (solved.incoming[index]) {
+      incoming[index] = *solved.incoming[index];
     }
-    const BlockTransfer transfer =
-        transferBlock(body, *block, incoming[id - 1]);
-    for (Edge &edge : outgoingEdges(body, *block, transfer)) {
-      if (edge.target == 0 || edge.target > incoming.size()) {
-        return {};
-      }
-      const bool widen = updates[edge.target - 1] >= 4;
-      if (!mergeInto(incoming[edge.target - 1], edge.state, widen)) {
-        continue;
-      }
-      ++updates[edge.target - 1];
-      if (!queued[edge.target - 1]) {
-        worklist.push_back(edge.target);
-        queued[edge.target - 1] = true;
-      }
-    }
-  }
-  if (!worklist.empty()) {
-    return {};
   }
   return incoming;
 }
@@ -1200,6 +1207,7 @@ void appendProof(MirSafetyAnalysis &analysis, MirBodyAddress address,
 }
 
 void collectProofs(MirBodyAddress address, const MirBody &body,
+                   const MirPlaceAliasEscapeAnalysis &aliases,
                    const std::vector<AbstractState> &incoming,
                    MirSafetyAnalysis &analysis) {
   for (const MirBlock &block : body.blocks) {
@@ -1256,9 +1264,9 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
           instruction.operands.size() >= 2;
       if (storageRead) {
         const std::optional<StorageFact> storage =
-            storageForOperand(state, instruction.operands[0]);
+            storageForOperand(state, aliases, instruction.operands[0]);
         const std::optional<MirPlaceId> origin =
-            storageOriginForOperand(state, instruction.operands[0]);
+            storageOriginForOperand(state, aliases, instruction.operands[0]);
         const std::optional<IntegerFact> index =
             integerForOperand(body, state, instruction.operands[1]);
         if (storage && index && within(*index, storage->capacity)) {
@@ -1282,7 +1290,7 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
           }
         }
       }
-      applyInstruction(body, block, instruction, state);
+      applyInstruction(body, aliases, block, instruction, state);
     }
   }
 }
@@ -1325,16 +1333,23 @@ MirSafetyAnalysis::find(MirInstructionId instruction,
 
 MirSafetyAnalysis analyzeMirSafetyChecks(const MirProgram &program,
                                          MirBodyAddress address) {
+  return analyzeMirSafetyChecks(program, address,
+                                analyzeMirPlaceAliasEscape(program, address));
+}
+
+MirSafetyAnalysis
+analyzeMirSafetyChecks(const MirProgram &program, MirBodyAddress address,
+                       const MirPlaceAliasEscapeAnalysis &aliases) {
   MirSafetyAnalysis result;
   const MirBody *body = findMirBody(program, address);
   if (body == nullptr) {
     return result;
   }
-  const std::vector<AbstractState> incoming = solveStates(*body);
+  const std::vector<AbstractState> incoming = solveStates(*body, aliases);
   if (incoming.empty()) {
     return result;
   }
-  collectProofs(address, *body, incoming, result);
+  collectProofs(address, *body, aliases, incoming, result);
   std::sort(result.proofs.begin(), result.proofs.end(), proofLess);
   result.proofs.erase(std::unique(result.proofs.begin(), result.proofs.end()),
                       result.proofs.end());

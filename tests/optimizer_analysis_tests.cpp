@@ -1,0 +1,696 @@
+#include "gti/frontend.h"
+#include "gti/mir_dominance.h"
+#include "gti/optimization/alias.h"
+#include "gti/optimization/dataflow.h"
+#include "gti/optimization/loops.h"
+#include "gti/optimization/safety.h"
+#include "gti/optimizer.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <deque>
+#include <iostream>
+#include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace {
+
+int failures = 0;
+
+struct DataflowTestState {
+  int upper = 0;
+
+  friend bool operator==(const DataflowTestState &,
+                         const DataflowTestState &) = default;
+};
+
+void expect(bool condition, std::string_view message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+lang::MirBody schedulingBody() {
+  lang::MirBody body;
+  body.entry = 1;
+  body.blocks = {
+      {.id = 1,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 2}},
+      {.id = 2,
+       .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                      .target = 2,
+                      .elseTarget = 3}},
+      {.id = 3, .terminator = {.kind = lang::MirTerminatorKind::Return}},
+  };
+  return body;
+}
+
+struct LegacyDataflowResult {
+  std::vector<std::optional<DataflowTestState>> incoming;
+  std::vector<lang::MirDataflowEdgeId> executableEdges;
+  bool widened = false;
+};
+
+LegacyDataflowResult legacySchedulingSolve(const lang::MirBody &body) {
+  LegacyDataflowResult result;
+  result.incoming.resize(body.blocks.size());
+  result.incoming[body.entry - 1] = DataflowTestState{};
+  std::vector<std::size_t> updateCounts(body.blocks.size());
+  std::vector<bool> queued(body.blocks.size(), false);
+  std::deque<lang::MirBlockId> worklist{body.entry};
+  queued[body.entry - 1] = true;
+
+  while (!worklist.empty()) {
+    const lang::MirBlockId source = worklist.front();
+    worklist.pop_front();
+    queued[source - 1] = false;
+    const DataflowTestState incoming = *result.incoming[source - 1];
+    std::vector<lang::MirForwardDataflowEdge<DataflowTestState>> edges;
+    if (source == 1) {
+      edges.push_back({.target = 2, .ordinal = 0, .state = incoming});
+    } else if (source == 2) {
+      edges.push_back({.target = 2,
+                       .ordinal = 0,
+                       .state = {.upper = std::min(8, incoming.upper + 1)}});
+      edges.push_back({.target = 3, .ordinal = 1, .state = incoming});
+    }
+    for (const auto &edge : edges) {
+      result.executableEdges.push_back(
+          {.source = source, .target = edge.target, .ordinal = edge.ordinal});
+      std::optional<DataflowTestState> &target =
+          result.incoming[edge.target - 1];
+      bool changed = false;
+      if (!target) {
+        target = edge.state;
+        changed = true;
+      } else {
+        const int before = target->upper;
+        if (updateCounts[edge.target - 1] >= 2 &&
+            edge.state.upper > target->upper) {
+          target->upper = 8;
+          result.widened = true;
+        } else {
+          target->upper = std::max(target->upper, edge.state.upper);
+        }
+        changed = before != target->upper;
+      }
+      if (!changed) {
+        continue;
+      }
+      ++updateCounts[edge.target - 1];
+      if (!queued[edge.target - 1]) {
+        worklist.push_back(edge.target);
+        queued[edge.target - 1] = true;
+      }
+    }
+  }
+  std::sort(result.executableEdges.begin(), result.executableEdges.end());
+  result.executableEdges.erase(
+      std::unique(result.executableEdges.begin(), result.executableEdges.end()),
+      result.executableEdges.end());
+  return result;
+}
+
+void testForwardDataflowScheduling() {
+  const lang::MirBody body = schedulingBody();
+  bool widened = false;
+  const auto solve = [&]() {
+    return lang::runMirForwardDataflow(
+        body, DataflowTestState{},
+        [](const lang::MirBlock &block, const DataflowTestState &incoming) {
+          std::vector<lang::MirForwardDataflowEdge<DataflowTestState>> edges;
+          if (block.id == 1) {
+            edges.push_back({.target = 2, .ordinal = 0, .state = incoming});
+          } else if (block.id == 2) {
+            edges.push_back(
+                {.target = 2,
+                 .ordinal = 0,
+                 .state = {.upper = std::min(8, incoming.upper + 1)}});
+            edges.push_back({.target = 3, .ordinal = 1, .state = incoming});
+          }
+          return edges;
+        },
+        [&](DataflowTestState &target, const DataflowTestState &incoming,
+            lang::MirDataflowMergeContext context) {
+          const int before = target.upper;
+          if (context.widen && incoming.upper > target.upper) {
+            target.upper = 8;
+            widened = true;
+          } else {
+            target.upper = std::max(target.upper, incoming.upper);
+          }
+          return before != target.upper;
+        },
+        {.iterationLimit = 32, .widenAfterUpdates = 2});
+  };
+  const auto first = solve();
+  const auto second = solve();
+  const LegacyDataflowResult legacy = legacySchedulingSolve(body);
+  expect(first.converged() && second.converged() &&
+             first.incoming == second.incoming &&
+             first.executableEdges == second.executableEdges &&
+             first.incoming == legacy.incoming &&
+             first.executableEdges == legacy.executableEdges && widened &&
+             legacy.widened,
+         "forward dataflow should be deterministic and invoke bounded "
+         "widening while retaining the independent legacy FIFO result");
+  expect(first.incoming.size() == 3 && first.incoming[1] && first.incoming[2] &&
+             first.incoming[1]->upper == 8 && first.incoming[2]->upper == 8 &&
+             first.executable({.source = 2, .target = 2, .ordinal = 0}) &&
+             first.executable({.source = 2, .target = 3, .ordinal = 1}),
+         "forward dataflow should retain the legacy FIFO fixed point and "
+         "track executable edge identities");
+
+  const auto duplicate = lang::runMirForwardDataflow(
+      body, DataflowTestState{},
+      [](const lang::MirBlock &block, const DataflowTestState &state) {
+        if (block.id != 1) {
+          return std::vector<lang::MirForwardDataflowEdge<DataflowTestState>>{};
+        }
+        return std::vector<lang::MirForwardDataflowEdge<DataflowTestState>>{
+            {.target = 2, .ordinal = 0, .state = state},
+            {.target = 2, .ordinal = 0, .state = state}};
+      },
+      [](DataflowTestState &, const DataflowTestState &,
+         lang::MirDataflowMergeContext) { return false; });
+  const auto bounded = lang::runMirForwardDataflow(
+      body, DataflowTestState{},
+      [](const lang::MirBlock &block, const DataflowTestState &state) {
+        std::vector<lang::MirForwardDataflowEdge<DataflowTestState>> edges;
+        if (block.id == 1) {
+          edges.push_back({.target = 2, .ordinal = 0, .state = state});
+        } else if (block.id == 2) {
+          edges.push_back(
+              {.target = 2, .ordinal = 0, .state = {.upper = state.upper + 1}});
+        }
+        return edges;
+      },
+      [](DataflowTestState &target, const DataflowTestState &incoming,
+         lang::MirDataflowMergeContext) {
+        if (incoming.upper <= target.upper) {
+          return false;
+        }
+        target = incoming;
+        return true;
+      },
+      {.iterationLimit = 4, .widenAfterUpdates = 0});
+  expect(duplicate.status == lang::MirDataflowStatus::InvalidControlFlow &&
+             bounded.status == lang::MirDataflowStatus::IterationLimit,
+         "forward dataflow should reject duplicate edge identities and stop "
+         "a non-converging client at its explicit iteration bound");
+}
+
+lang::MirOperand valueOperand(lang::MirValueId value, lang::SemanticType type) {
+  return {.kind = lang::MirOperandKind::Value, .value = value, .type = type};
+}
+
+lang::MirInstruction literalInstruction(lang::MirInstructionId instruction,
+                                        lang::MirValueId value,
+                                        std::uint64_t literal) {
+  return {.id = instruction,
+          .kind = lang::MirInstructionKind::Compute,
+          .result = value,
+          .operation = lang::MirOperation::Literal,
+          .literal = lang::Literal{literal},
+          .literalProvenance = {.kind = lang::MirLiteralProvenanceKind::Source},
+          .info = {.type = lang::SemanticType::UInt64}};
+}
+
+lang::MirBody affineLoopBody() {
+  lang::MirBody body;
+  body.entry = 1;
+  body.returnType = lang::SemanticType::UInt64;
+  body.values = {
+      {.id = 1,
+       .info = {.type = lang::SemanticType::UInt64},
+       .definitionBlock = 2},
+      {.id = 2,
+       .info = {.type = lang::SemanticType::UInt64},
+       .definitionBlock = 1,
+       .definition = 1},
+      {.id = 3,
+       .info = {.type = lang::SemanticType::UInt64},
+       .definitionBlock = 1,
+       .definition = 2},
+      {.id = 4,
+       .info = {.type = lang::SemanticType::UInt64},
+       .definitionBlock = 3,
+       .definition = 5},
+      {.id = 5,
+       .info = {.type = lang::SemanticType::UInt64},
+       .definitionBlock = 1,
+       .definition = 3},
+      {.id = 6,
+       .info = {.type = lang::SemanticType::Bool},
+       .definitionBlock = 2,
+       .definition = 4},
+      {.id = 7,
+       .info = {.type = lang::SemanticType::UInt64},
+       .definitionBlock = 2,
+       .definition = 6},
+  };
+  body.blocks = {
+      {.id = 1,
+       .instructions = {literalInstruction(1, 2, 0),
+                        literalInstruction(2, 3, 1),
+                        literalInstruction(3, 5, 8)},
+       .terminator = {.kind = lang::MirTerminatorKind::Goto,
+                      .target = 2,
+                      .targetArguments = {valueOperand(
+                          2, lang::SemanticType::UInt64)}}},
+      {.id = 2,
+       .parameters = {{.value = 1, .type = lang::SemanticType::UInt64}},
+       .instructions =
+           {{.id = 6,
+             .kind = lang::MirInstructionKind::Compute,
+             .result = 7,
+             .operands = {valueOperand(3, lang::SemanticType::UInt64)},
+             .operation = lang::MirOperation::Identity,
+             .info = {.type = lang::SemanticType::UInt64}},
+            {.id = 4,
+             .kind = lang::MirInstructionKind::Compute,
+             .result = 6,
+             .operands = {valueOperand(1, lang::SemanticType::UInt64),
+                          valueOperand(5, lang::SemanticType::UInt64)},
+             .operation = lang::MirOperation::Less,
+             .info = {.type = lang::SemanticType::Bool}}},
+       .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                      .value = valueOperand(6, lang::SemanticType::Bool),
+                      .target = 3,
+                      .elseTarget = 4}},
+      {.id = 3,
+       .instructions =
+           {{.id = 5,
+             .kind = lang::MirInstructionKind::Compute,
+             .result = 4,
+             .operands = {valueOperand(1, lang::SemanticType::UInt64),
+                          valueOperand(3, lang::SemanticType::UInt64)},
+             .operation = lang::MirOperation::Add,
+             .info = {.type = lang::SemanticType::UInt64}}},
+       .terminator = {.kind = lang::MirTerminatorKind::Goto,
+                      .target = 2,
+                      .targetArguments = {valueOperand(
+                          4, lang::SemanticType::UInt64)}}},
+      {.id = 4,
+       .terminator = {.kind = lang::MirTerminatorKind::Return,
+                      .value = valueOperand(1, lang::SemanticType::UInt64)}},
+  };
+  return body;
+}
+
+void testNaturalLoopAndInduction() {
+  const lang::MirBody body = affineLoopBody();
+  const std::optional<lang::MirDominanceInfo> dominance =
+      lang::computeMirDominance(body);
+  const lang::MirLoopAnalysis loops =
+      dominance ? lang::analyzeMirLoops(body, *dominance)
+                : lang::MirLoopAnalysis{};
+  const lang::MirNaturalLoop *loop = loops.loopForHeader(2);
+  expect(dominance && !loops.hasIrreducibleControlFlow && loop != nullptr &&
+             loop->blocks == std::vector<lang::MirBlockId>{2, 3} &&
+             loop->latches == std::vector<lang::MirBlockId>{3} &&
+             loop->invariantValues == std::vector<lang::MirValueId>{7} &&
+             loop->inductions.size() == 1,
+         "loop analysis should derive the natural loop and its single latch");
+  if (loop != nullptr && loop->inductions.size() == 1) {
+    const lang::MirAffineInductionFact &induction = loop->inductions.front();
+    expect(induction.parameter == 1 && induction.stepMagnitude == 1 &&
+               !induction.decreasing && induction.range &&
+               induction.range->relation == lang::MirOperation::Less &&
+               induction.range->constrainedSuccessor == 3,
+           "loop analysis should recognize a bounded affine block-parameter "
+           "induction and its relational continuation fact");
+  }
+}
+
+lang::MirBody nestedLoopBody() {
+  lang::MirBody body;
+  body.entry = 1;
+  body.blocks = {
+      {.id = 1,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 2}},
+      {.id = 2,
+       .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                      .target = 3,
+                      .elseTarget = 7}},
+      {.id = 3,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4}},
+      {.id = 4,
+       .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                      .target = 5,
+                      .elseTarget = 6}},
+      {.id = 5,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4}},
+      {.id = 6,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 2}},
+      {.id = 7, .terminator = {.kind = lang::MirTerminatorKind::Return}},
+  };
+  return body;
+}
+
+lang::MirBody irreducibleBody() {
+  lang::MirBody body;
+  body.entry = 1;
+  body.blocks = {
+      {.id = 1,
+       .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                      .target = 2,
+                      .elseTarget = 3}},
+      {.id = 2,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4}},
+      {.id = 3,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4}},
+      {.id = 4,
+       .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                      .target = 2,
+                      .elseTarget = 5}},
+      {.id = 5, .terminator = {.kind = lang::MirTerminatorKind::Return}},
+  };
+  return body;
+}
+
+void testLoopForestAndIrreducibleControl() {
+  const lang::MirBody nested = nestedLoopBody();
+  const std::optional<lang::MirDominanceInfo> nestedDominance =
+      lang::computeMirDominance(nested);
+  const lang::MirLoopAnalysis forest =
+      nestedDominance ? lang::analyzeMirLoops(nested, *nestedDominance)
+                      : lang::MirLoopAnalysis{};
+  const lang::MirNaturalLoop *outer = forest.loopForHeader(2);
+  const lang::MirNaturalLoop *inner = forest.loopForHeader(4);
+  expect(outer != nullptr && inner != nullptr && forest.loops.size() == 2 &&
+             !outer->parent && outer->children == std::vector<std::size_t>{1} &&
+             outer->depth == 0 && inner->parent == 0 && inner->depth == 1,
+         "loop analysis should build a deterministic strict-containment "
+         "forest for nested natural loops");
+
+  const lang::MirBody irreducible = irreducibleBody();
+  const std::optional<lang::MirDominanceInfo> irreducibleDominance =
+      lang::computeMirDominance(irreducible);
+  const lang::MirLoopAnalysis irreducibleAnalysis =
+      irreducibleDominance
+          ? lang::analyzeMirLoops(irreducible, *irreducibleDominance)
+          : lang::MirLoopAnalysis{};
+  expect(irreducibleAnalysis.hasIrreducibleControlFlow,
+         "loop analysis should mark a multi-entry strongly connected region "
+         "instead of manufacturing a natural-loop proof");
+}
+
+lang::MirPlace bindingPlace(lang::MirPlaceId id, lang::HirBindingId binding) {
+  return {
+      .id = id, .root = lang::MirPlaceRootKind::Binding, .binding = binding};
+}
+
+void testPlaceRelations() {
+  lang::MirPlace root = bindingPlace(1, 1);
+  lang::MirPlace same = bindingPlace(2, 1);
+  lang::MirPlace other = bindingPlace(3, 2);
+  lang::MirPlace leftField = bindingPlace(4, 1);
+  leftField.projections.push_back(
+      {.kind = lang::MirProjectionKind::Field, .field = 10});
+  lang::MirPlace rightField = bindingPlace(5, 1);
+  rightField.projections.push_back(
+      {.kind = lang::MirProjectionKind::Field, .field = 11});
+  lang::MirPlace dynamicLeft = bindingPlace(6, 1);
+  dynamicLeft.projections.push_back(
+      {.kind = lang::MirProjectionKind::Index, .index = 1});
+  lang::MirPlace dynamicRight = bindingPlace(7, 1);
+  dynamicRight.projections.push_back(
+      {.kind = lang::MirProjectionKind::Index, .index = 2});
+  lang::MirPlace raw = bindingPlace(8, 2);
+  raw.projections.push_back({.kind = lang::MirProjectionKind::RawDereference});
+  lang::MirPlace loan = {
+      .id = 9, .root = lang::MirPlaceRootKind::Loan, .loan = 1};
+  lang::MirPlace value = {
+      .id = 10, .root = lang::MirPlaceRootKind::Value, .value = 1};
+  lang::MirPlace temporary = {
+      .id = 11, .root = lang::MirPlaceRootKind::Temporary, .temporary = 1};
+  lang::MirPlace otherTemporary = {
+      .id = 12, .root = lang::MirPlaceRootKind::Temporary, .temporary = 2};
+  lang::MirPlace constantLeft = bindingPlace(13, 1);
+  constantLeft.projections.push_back(
+      {.kind = lang::MirProjectionKind::Index, .constantIndex = 0});
+  lang::MirPlace constantRight = bindingPlace(14, 1);
+  constantRight.projections.push_back(
+      {.kind = lang::MirProjectionKind::Index, .constantIndex = 1});
+
+  expect(lang::mirPlaceRelation(root, same) ==
+                 lang::MirAliasRelation::MustAlias &&
+             lang::mirPlaceRelation(root, other) ==
+                 lang::MirAliasRelation::NoAlias &&
+             lang::mirPlaceRelation(leftField, rightField) ==
+                 lang::MirAliasRelation::NoAlias &&
+             lang::mirPlaceRelation(dynamicLeft, dynamicRight) ==
+                 lang::MirAliasRelation::MayAlias &&
+             lang::mirPlaceRelation(other, raw) ==
+                 lang::MirAliasRelation::MayAlias &&
+             lang::mirPlaceRelation(root, loan) ==
+                 lang::MirAliasRelation::MayAlias &&
+             lang::mirPlaceRelation(root, value) ==
+                 lang::MirAliasRelation::MayAlias &&
+             lang::mirPlaceRelation(temporary, otherTemporary) ==
+                 lang::MirAliasRelation::NoAlias &&
+             lang::mirPlaceRelation(constantLeft, constantRight) ==
+                 lang::MirAliasRelation::NoAlias,
+         "place analysis should distinguish exact roots and disjoint fields "
+         "while keeping borrowed, value-rooted, dynamic, and raw memory "
+         "conservative");
+  const std::vector<const lang::MirPlace *> places = {
+      &root,        &same,           &other,        &leftField,    &rightField,
+      &dynamicLeft, &dynamicRight,   &raw,          &loan,         &value,
+      &temporary,   &otherTemporary, &constantLeft, &constantRight};
+  bool symmetric = true;
+  for (const lang::MirPlace *left : places) {
+    for (const lang::MirPlace *right : places) {
+      symmetric = symmetric && lang::mirPlaceRelation(*left, *right) ==
+                                   lang::mirPlaceRelation(*right, *left);
+    }
+  }
+  expect(symmetric, "place alias relations should be symmetric");
+}
+
+const lang::MirFunctionInstance *
+findMirFunction(const lang::FrontendResult &frontend, std::string_view name) {
+  const auto found =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [&](const lang::MirFunctionInstance &function) {
+                     const lang::HirFunctionInstance *hir =
+                         frontend.hir.findFunctionInstance(function.id);
+                     return hir != nullptr && hir->source != nullptr &&
+                            hir->source->name().lexeme == name;
+                   });
+  return found == frontend.mir.functionInstances().end() ? nullptr : &*found;
+}
+
+void testExactCallEscapeAnalysis() {
+  const std::string source = R"(
+class Box {
+public:
+  mut int value = 1;
+  mut int& get() mut { return this.value; }
+};
+
+int& relay(int& source) { return source; }
+
+int use_receiver_relay() {
+  mut Box box = Box();
+  mut int& alias = box.get();
+  return alias;
+}
+
+int use_argument_relay() {
+  int value = 1;
+  int& alias = relay(value);
+  return alias;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-alias-escape.gti", source);
+  const lang::MirFunctionInstance *receiver =
+      findMirFunction(frontend, "use_receiver_relay");
+  const lang::MirFunctionInstance *argument =
+      findMirFunction(frontend, "use_argument_relay");
+  expect(frontend.canGenerateCode() && receiver != nullptr &&
+             argument != nullptr,
+         "alias escape fixture should pass the frontend");
+  if (!frontend.canGenerateCode() || receiver == nullptr ||
+      argument == nullptr) {
+    return;
+  }
+  const auto hasExactEscape = [&](const lang::MirFunctionInstance &function) {
+    const lang::MirPlaceAliasEscapeAnalysis analysis =
+        lang::analyzeMirPlaceAliasEscape(
+            frontend.mir,
+            {.kind = lang::MirBodyKind::Function, .owner = function.id});
+    return std::any_of(analysis.escapes.begin(), analysis.escapes.end(),
+                       [](const lang::MirPlaceEscapeFact &fact) {
+                         return fact.has(lang::MirPlaceEscapeReason::ExactCall);
+                       });
+  };
+  expect(hasExactEscape(*receiver) && hasExactEscape(*argument),
+         "escape analysis should project verified receiver and argument "
+         "escape summaries onto the caller's originating MIR places");
+}
+
+void testUnknownCallEscapeAnalysis() {
+  const std::string source = R"(
+extern "C" {
+  void opaque(int32_t* value);
+}
+
+int32_t unknown_escape() {
+  mut int32_t value = 0;
+  unsafe {
+    opaque(&value);
+  }
+  return value;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-alias-unknown.gti", source);
+  const lang::MirFunctionInstance *function =
+      findMirFunction(frontend, "unknown_escape");
+  expect(frontend.canGenerateCode() && function != nullptr,
+         "unknown-call escape fixture should pass the frontend");
+  if (!frontend.canGenerateCode() || function == nullptr) {
+    return;
+  }
+  const lang::MirPlaceAliasEscapeAnalysis analysis =
+      lang::analyzeMirPlaceAliasEscape(
+          frontend.mir,
+          {.kind = lang::MirBodyKind::Function, .owner = function->id});
+  expect(std::any_of(analysis.escapes.begin(), analysis.escapes.end(),
+                     [](const lang::MirPlaceEscapeFact &fact) {
+                       return fact.has(lang::MirPlaceEscapeReason::UnknownCall);
+                     }),
+         "native and unresolved call boundaries should conservatively mark "
+         "originating places as escaping");
+}
+
+void testAliasAwareSafetyInvalidation() {
+  const std::string source = R"(
+class Pair {
+public:
+  mut int index = 0;
+  mut int other = 0;
+};
+
+int disjoint_field_read() {
+  mut Pair pair = Pair();
+  pair.index = 1;
+  pair.other = 9;
+  int values[2] = {4, 5};
+  return values[pair.index];
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-alias-safety.gti", source);
+  const lang::MirFunctionInstance *function =
+      findMirFunction(frontend, "disjoint_field_read");
+  expect(frontend.canGenerateCode() && function != nullptr,
+         "alias-aware safety fixture should pass the frontend");
+  if (!frontend.canGenerateCode() || function == nullptr) {
+    return;
+  }
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = function->id};
+  const lang::MirSafetyAnalysis safety =
+      lang::analyzeMirSafetyChecks(frontend.mir, address);
+  const bool provedBounds = std::any_of(
+      safety.proofs.begin(), safety.proofs.end(),
+      [](const lang::MirSafetyProof &proof) {
+        return proof.discharge.family == lang::MirSafetyCheckFamily::Bounds;
+      });
+  expect(provedBounds,
+         "a write to a proved-disjoint field should preserve the tracked "
+         "index range used by a later fixed-array bounds proof");
+}
+
+void testSparseConditionalConstants() {
+  const std::string source = R"(
+int32_t selected(bool choose) {
+  mut int32_t value = 0;
+  if (choose) {
+    value = 7;
+  } else {
+    value = 7;
+  }
+  if (value == 7) {
+    return 1;
+  }
+  return 0;
+}
+
+int32_t main() { return selected(true) == 1 ? 0 : 1; }
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-sccp.gti", source);
+  expect(frontend.canGenerateCode(), "SCCP fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizedProgram optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O2});
+  const lang::OptimizedProgram repeated =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O2});
+  const bool sparseProof = std::any_of(
+      optimized.report.transformations.begin(),
+      optimized.report.transformations.end(),
+      [](const lang::MirTransformRecord &record) {
+        return record.proof == lang::MirTransformProofKind::SparseConstant;
+      });
+  const std::string report =
+      lang::serializeOptimizationReportJson(optimized.report, "O2");
+  expect(
+      optimized.valid() && repeated.valid() && optimized.mir == repeated.mir &&
+          optimized.report.transformations == repeated.report.transformations &&
+          sparseProof &&
+          report.find("\"sparseConstants\":true") != std::string::npos,
+      "O2 SCCP should replace a value proven constant only after equal "
+      "executable-edge arguments meet, with replayable sparse evidence "
+      "recorded in the versioned report");
+
+  std::vector<lang::MirTransformRecord> forged =
+      optimized.report.transformations;
+  const auto sparse =
+      std::find_if(forged.begin(), forged.end(), [](const auto &record) {
+        return record.proof == lang::MirTransformProofKind::SparseConstant;
+      });
+  if (sparse != forged.end()) {
+    sparse->relatedValues.push_back(
+        std::numeric_limits<lang::MirValueId>::max());
+    std::sort(forged.begin(), forged.end(), lang::mirTransformRecordLess);
+  }
+  expect(sparse != forged.end() && !lang::verifyMirOptimizationCoherence(
+                                        frontend.mir, optimized.mir, forged)
+                                        .valid(),
+         "SCCP coherence replay should reject forged sparse evidence");
+}
+
+} // namespace
+
+int main() {
+  testForwardDataflowScheduling();
+  testNaturalLoopAndInduction();
+  testLoopForestAndIrreducibleControl();
+  testPlaceRelations();
+  testExactCallEscapeAnalysis();
+  testUnknownCallEscapeAnalysis();
+  testAliasAwareSafetyInvalidation();
+  testSparseConditionalConstants();
+  if (failures != 0) {
+    std::cerr << failures << " optimizer analysis test(s) failed\n";
+    return 1;
+  }
+  std::cout << "optimizer analysis tests passed\n";
+  return 0;
+}
