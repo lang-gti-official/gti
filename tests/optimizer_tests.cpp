@@ -2,6 +2,7 @@
 #include "gti/mir_dominance.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/effects.h"
+#include "gti/optimization/pass.h"
 #include "gti/optimization/rewrite.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
@@ -54,6 +55,16 @@ findHirFunction(const lang::FrontendResult &frontend, const std::string &name) {
                             instance.source->name().lexeme == name;
                    });
   return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
+}
+
+const lang::OptimizationPassReport *
+findPass(const lang::OptimizationReport &report, std::string_view name) {
+  const auto found =
+      std::find_if(report.passes.begin(), report.passes.end(),
+                   [&](const lang::OptimizationPassReport &pass) {
+                     return pass.name == name;
+                   });
+  return found == report.passes.end() ? nullptr : &*found;
 }
 
 bool hasIntegerValue(const std::optional<lang::CheckedIntegerOutcome> &outcome,
@@ -1076,11 +1087,11 @@ int main() {
       lang::OptimizationRequest{.hir = frontend.hir,
                                 .mir = frontend.mir,
                                 .level = lang::OptimizationLevel::O2});
+  const lang::OptimizationPassReport *ownedFold =
+      findPass(optimized.report, "fold-literal-identities");
   expect(optimized.valid() && optimized.report.verificationEnabled &&
-             optimized.report.passes.size() == 1 &&
-             optimized.report.passes.front().name ==
-                 "fold-literal-identities" &&
-             optimized.report.passes.front().shadowMismatches == 0,
+             optimized.report.passes.size() == 4 && ownedFold != nullptr &&
+             ownedFold->shadowMismatches == 0,
          "the owned MIR pipeline should verify and report its bounded shadow "
          "transform");
 
@@ -2031,7 +2042,9 @@ int main() {
   expect(o0.valid() && o0.report.passes.empty() &&
              lang::MirPrinter().print(o0.sourceMir) == original &&
              lang::MirPrinter().print(o0.mir) == original &&
-             lang::verifyMirOptimizationCoherence(o0.sourceMir, o0.mir).valid(),
+             lang::verifyMirOptimizationCoherence(o0.sourceMir, o0.mir,
+                                                  o0.report.transformations)
+                 .valid(),
          "O0 should preserve the owned MIR snapshot byte-for-byte and schedule "
          "no transform");
 
@@ -2040,12 +2053,14 @@ int main() {
                                 .mir = frontend.mir,
                                 .level = lang::OptimizationLevel::O1,
                                 .compatibility = &compatibility});
-  expect(o1.valid() && o1.report.passes.size() == 1,
-         "O1 should run one verified shadow transform");
-  if (!o1.valid() || o1.report.passes.size() != 1) {
+  const lang::OptimizationPassReport *fold =
+      findPass(o1.report, "fold-literal-identities");
+  expect(o1.valid() && o1.report.passes.size() == 4 && fold != nullptr,
+         "O1 should run the four verified local MIR passes");
+  if (!o1.valid() || fold == nullptr) {
     return;
   }
-  const lang::OptimizationPassReport &report = o1.report.passes.front();
+  const lang::OptimizationPassReport &report = *fold;
   expect(
       report.name == "fold-literal-identities" && report.changed &&
           report.appliedEdits != 0 &&
@@ -2056,14 +2071,15 @@ int main() {
           !report.invalidation.reachability && !report.invalidation.dominance,
       "the literal-identity report should expose exact edits, shadow "
       "agreement, repair, and bounded invalidation");
-  expect(
-      lang::verifyMirProgram(o1.mir).valid() &&
-          lang::MirPrinter().print(o1.sourceMir) == original &&
-          lang::verifyMirOptimizationCoherence(o1.sourceMir, o1.mir).valid() &&
-          lang::MirPrinter().print(o1.mir) != original &&
-          lang::MirPrinter().print(frontend.mir) == original,
-      "the shadow pass should produce valid changed MIR without mutating "
-      "the retained source or frontend-owned input");
+  expect(lang::verifyMirProgram(o1.mir).valid() &&
+             lang::MirPrinter().print(o1.sourceMir) == original &&
+             lang::verifyMirOptimizationCoherence(o1.sourceMir, o1.mir,
+                                                  o1.report.transformations)
+                 .valid() &&
+             lang::MirPrinter().print(o1.mir) != original &&
+             lang::MirPrinter().print(frontend.mir) == original,
+         "the shadow pass should produce valid changed MIR without mutating "
+         "the retained source or frontend-owned input");
 
   lang::MirProgram forgedHeader = o1.mir;
   auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
@@ -2074,7 +2090,8 @@ int main() {
         !forgedFunctions.front().constexprFunction;
   }
   expect(changedHeader && lang::verifyMirProgram(forgedHeader).valid() &&
-             !lang::verifyMirOptimizationCoherence(o1.sourceMir, forgedHeader)
+             !lang::verifyMirOptimizationCoherence(o1.sourceMir, forgedHeader,
+                                                   o1.report.transformations)
                   .valid(),
          "optimization coherence should reject a generically valid constexpr "
          "header mutation omitted by the MIR printer");
@@ -2102,7 +2119,8 @@ int main() {
   expect(changedDomain && lang::verifyMirProgram(forgedDomain).valid() &&
              lang::MirPrinter().print(forgedDomain) ==
                  lang::MirPrinter().print(o1.mir) &&
-             !lang::verifyMirOptimizationCoherence(o1.sourceMir, forgedDomain)
+             !lang::verifyMirOptimizationCoherence(o1.sourceMir, forgedDomain,
+                                                   o1.report.transformations)
                   .valid(),
          "optimization coherence should compare the exact place snapshot "
          "even though the MIR printer normalizes that identity");
@@ -2176,8 +2194,8 @@ int main() {
                                       .owner = replacementEntry == nullptr
                                                    ? 0
                                                    : replacementEntry->id} &&
-             !lang::verifyMirOptimizationCoherence(o1.sourceMir,
-                                                   forgedHostedAddress)
+             !lang::verifyMirOptimizationCoherence(
+                  o1.sourceMir, forgedHostedAddress, o1.report.transformations)
                   .valid(),
          "optimization coherence should freeze the exact final hosted body "
          "address even after a structurally valid entry retarget");
@@ -2192,9 +2210,7 @@ int main() {
                                 .level = lang::OptimizationLevel::O1,
                                 .compatibility = &independentCompatibility});
   const lang::OptimizationPassReport *independentReport =
-      independentO1.report.passes.size() == 1
-          ? &independentO1.report.passes.front()
-          : nullptr;
+      findPass(independentO1.report, "fold-literal-identities");
   expect(independent.canGenerateCode() && independentO1.valid() &&
              independentReport != nullptr &&
              lang::MirPrinter().print(independentO1.mir) ==
@@ -2207,8 +2223,13 @@ int main() {
          "independent analyses should produce byte-identical shadow MIR and "
          "deterministic pass reports");
 
+  struct TestInstructionAddress {
+    lang::MirBodyAddress body;
+    lang::MirBlockId block = 0;
+    std::size_t index = 0;
+  };
   struct PatchCandidate {
-    lang::MirInstructionAddress address;
+    TestInstructionAddress address;
     lang::MirInstructionId instruction = 0;
     lang::MirValueId sourceValue = 0;
     lang::Literal literal;
@@ -2334,9 +2355,11 @@ int main() {
                                 .mir = o1.mir,
                                 .level = lang::OptimizationLevel::O1,
                                 .compatibility = &compatibility});
-  expect(!repeated.valid() && repeated.report.passes.size() == 1 &&
-             !repeated.report.passes.front().changed &&
-             repeated.report.passes.front().appliedEdits == 0 &&
+  const lang::OptimizationPassReport *repeatedFold =
+      findPass(repeated.report, "fold-literal-identities");
+  expect(!repeated.valid() && repeated.report.passes.size() == 4 &&
+             repeatedFold != nullptr && !repeatedFold->changed &&
+             repeatedFold->appliedEdits == 0 &&
              lang::MirPrinter().print(repeated.mir) ==
                  lang::MirPrinter().print(o1.mir),
          "an already optimized program must not masquerade as the canonical "
@@ -2362,9 +2385,11 @@ int main() {
           .level = lang::OptimizationLevel::O1,
           .options = lang::OptimizationOptions{.verifyMir = false},
           .compatibility = &compatibility});
+  const lang::OptimizationPassReport *uncheckedFold =
+      findPass(unchecked.report, "fold-literal-identities");
   expect(unchecked.valid() && !unchecked.report.verificationEnabled &&
-             unchecked.report.passes.size() == 1 &&
-             unchecked.report.passes.front().changed,
+             unchecked.report.passes.size() == 4 && uncheckedFold != nullptr &&
+             uncheckedFold->changed,
          "disabling pipeline verification should not disable the shadow "
          "transform or its atomic editor safety boundary");
 
@@ -2375,7 +2400,7 @@ int main() {
   }
 
   const auto instructionAt = [](lang::MirProgram &program,
-                                lang::MirInstructionAddress address) {
+                                TestInstructionAddress address) {
     if (address.body.kind != lang::MirBodyKind::Function ||
         address.body.owner == 0 ||
         address.body.owner > program.functionInstances().size()) {
@@ -2470,20 +2495,19 @@ int main() {
 
   const auto queue = [](lang::MirProgramEditor &editor,
                         const PatchCandidate &candidate) {
-    editor.queueLiteralReplacement(candidate.address, candidate.instruction,
-                                   lang::MirOperation::Identity,
-                                   candidate.literal);
+    editor.queueLiteralReplacement(
+        {.body = candidate.address.body, .instruction = candidate.instruction},
+        lang::MirOperation::Identity, candidate.literal);
   };
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid);
+    lang::MirProgramEditor editor(invalid, "editor-atomicity-test");
     queue(editor, candidates.front());
-    lang::MirInstructionAddress outside = candidates.back().address;
-    outside.index = std::numeric_limits<std::size_t>::max();
-    editor.queueLiteralReplacement(outside, candidates.back().instruction,
-                                   lang::MirOperation::Identity,
-                                   candidates.back().literal);
+    editor.queueLiteralReplacement(
+        {.body = candidates.back().address.body,
+         .instruction = std::numeric_limits<lang::MirInstructionId>::max()},
+        lang::MirOperation::Identity, candidates.back().literal);
     const lang::MirEditResult edited = editor.apply();
     expect(!edited.valid() && !edited.changed &&
                lang::MirPrinter().print(invalid) == before,
@@ -2492,7 +2516,7 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid);
+    lang::MirProgramEditor editor(invalid, "editor-duplicate-test");
     queue(editor, candidates.front());
     queue(editor, candidates.front());
     const lang::MirEditResult edited = editor.apply();
@@ -2503,9 +2527,10 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid);
+    lang::MirProgramEditor editor(invalid, "editor-stale-id-test");
     editor.queueLiteralReplacement(
-        candidates.front().address, candidates.front().instruction + 1,
+        {.body = candidates.front().address.body,
+         .instruction = std::numeric_limits<lang::MirInstructionId>::max()},
         lang::MirOperation::Identity, candidates.front().literal);
     const lang::MirEditResult edited = editor.apply();
     expect(!edited.valid() && !edited.changed &&
@@ -2515,9 +2540,10 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid);
+    lang::MirProgramEditor editor(invalid, "editor-type-test");
     editor.queueLiteralReplacement(
-        candidates.front().address, candidates.front().instruction,
+        {.body = candidates.front().address.body,
+         .instruction = candidates.front().instruction},
         lang::MirOperation::Identity, lang::Literal{true});
     const lang::MirEditResult edited = editor.apply();
     expect(!edited.valid() && !edited.changed &&
@@ -2529,9 +2555,10 @@ int main() {
   {
     lang::MirProgram invalid = frontend.mir;
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid);
+    lang::MirProgramEditor editor(invalid, "editor-domain-test");
     editor.queueLiteralReplacement(
-        candidates.front().address, candidates.front().instruction,
+        {.body = candidates.front().address.body,
+         .instruction = candidates.front().instruction},
         lang::MirOperation::Identity,
         lang::Literal{std::numeric_limits<std::uint64_t>::max()});
     const lang::MirEditResult edited = editor.apply();
@@ -2555,7 +2582,7 @@ int main() {
               .body);
     }
     const std::string before = lang::MirPrinter().print(invalid);
-    lang::MirProgramEditor editor(invalid);
+    lang::MirProgramEditor editor(invalid, "editor-proof-test");
     queue(editor, candidates.front());
     const lang::MirEditResult edited = editor.apply();
     expect(identity != nullptr && !edited.valid() && !edited.changed &&
@@ -2566,8 +2593,8 @@ int main() {
 
   lang::MirProgram forward = frontend.mir;
   lang::MirProgram reverse = frontend.mir;
-  lang::MirProgramEditor forwardEditor(forward);
-  lang::MirProgramEditor reverseEditor(reverse);
+  lang::MirProgramEditor forwardEditor(forward, "editor-order-test");
+  lang::MirProgramEditor reverseEditor(reverse, "editor-order-test");
   for (const PatchCandidate &candidate : candidates) {
     queue(forwardEditor, candidate);
   }
@@ -2582,6 +2609,7 @@ int main() {
   const lang::MirEditResult reverseEdit = reverseEditor.apply();
   expect(forwardEdit.valid() && reverseEdit.valid() && forwardEdit.changed &&
              reverseEdit.changed &&
+             forwardEdit.transformations == reverseEdit.transformations &&
              lang::MirPrinter().print(forward) ==
                  lang::MirPrinter().print(reverse) &&
              lang::MirPrinter().print(forward) ==
@@ -3001,6 +3029,97 @@ void testMirDominanceAndValueAvailability() {
                  "terminator place access") != std::string::npos,
          "an operand-free scalar declaration must not establish definite "
          "initialization for a later place read");
+
+  lang::MirBody scalarMerge = finish(lang::MirBody{
+      .kind = lang::MirBodyKind::Function,
+      .entry = 1,
+      .returnType = lang::SemanticType::Int32,
+      .blocks = {{.id = 1,
+                  .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                                 .value =
+                                     lang::MirOperand{
+                                         .kind = lang::MirOperandKind::Constant,
+                                         .literal = lang::Literal{true},
+                                         .type = lang::SemanticType::Bool},
+                                 .target = 2,
+                                 .elseTarget = 3}},
+                 {.id = 2,
+                  .instructions = {literalInstruction(1, 1)},
+                  .terminator = {.kind = lang::MirTerminatorKind::Goto,
+                                 .target = 4,
+                                 .targetArguments =
+                                     {{.kind = lang::MirOperandKind::Value,
+                                       .value = 1,
+                                       .type = lang::SemanticType::Int32}}}},
+                 {.id = 3,
+                  .instructions = {literalInstruction(2, 2)},
+                  .terminator = {.kind = lang::MirTerminatorKind::Goto,
+                                 .target = 4,
+                                 .targetArguments =
+                                     {{.kind = lang::MirOperandKind::Value,
+                                       .value = 2,
+                                       .type = lang::SemanticType::Int32}}}},
+                 {.id = 4,
+                  .parameters = {{.value = 3,
+                                  .type = lang::SemanticType::Int32,
+                                  .sourceValue = 3}},
+                  .instructions = {identityInstruction(3, 4, 3)},
+                  .terminator =
+                      {.kind = lang::MirTerminatorKind::Return,
+                       .value =
+                           lang::MirOperand{.kind = lang::MirOperandKind::Value,
+                                            .value = 4,
+                                            .type =
+                                                lang::SemanticType::Int32}}}},
+      .values = {
+          {.id = 1,
+           .sourceValue = 1,
+           .info = intInfo,
+           .definitionBlock = 2,
+           .definition = 1},
+          {.id = 2,
+           .sourceValue = 2,
+           .info = intInfo,
+           .definitionBlock = 3,
+           .definition = 2},
+          {.id = 3, .sourceValue = 3, .info = intInfo, .definitionBlock = 4},
+          {.id = 4,
+           .sourceValue = 4,
+           .info = intInfo,
+           .definitionBlock = 4,
+           .definition = 3}}});
+  expect(lang::verifyMirBody(scalarMerge).valid() &&
+             scalarMerge.valueUses[0].size() == 1 &&
+             scalarMerge.valueUses[0].front().kind ==
+                 lang::MirValueUseKind::EdgeArgument &&
+             scalarMerge.valueUses[2].size() == 1,
+         "typed block parameters should merge branch-local scalar values and "
+         "participate in the exact value-use index");
+
+  lang::MirBody missingEdgeArgument = scalarMerge;
+  missingEdgeArgument.blocks[1].terminator.targetArguments.clear();
+  (void)lang::rebuildMirValueUses(missingEdgeArgument);
+  expect(!lang::verifyMirBody(missingEdgeArgument).valid(),
+         "every predecessor must supply the exact block-parameter arity");
+
+  lang::MirBody wrongEdgeType = scalarMerge;
+  wrongEdgeType.blocks[1].terminator.targetArguments.front().type =
+      lang::SemanticType::UInt32;
+  (void)lang::rebuildMirValueUses(wrongEdgeType);
+  expect(!lang::verifyMirBody(wrongEdgeType).valid(),
+         "block arguments must match their parameter type exactly");
+
+  lang::MirBody owningParameter = scalarMerge;
+  owningParameter.blocks.back().parameters.front().type =
+      lang::SemanticType::classType(1);
+  owningParameter.values[2].info.type = lang::SemanticType::classType(1);
+  owningParameter.blocks[1].terminator.targetArguments.front().type =
+      lang::SemanticType::classType(1);
+  owningParameter.blocks[2].terminator.targetArguments.front().type =
+      lang::SemanticType::classType(1);
+  (void)lang::rebuildMirValueUses(owningParameter);
+  expect(!lang::verifyMirBody(owningParameter).valid(),
+         "the initial merge vocabulary must reject owning and class values");
 }
 
 void testMirEffectClassification() {
@@ -3193,6 +3312,117 @@ void testMirEffectClassification() {
              !atomicStore.reorderable,
          "a release atomic store should remain a non-reorderable write "
          "barrier");
+
+  const lang::FrontendResult summaries =
+      lang::Frontend().analyze("mir-effect-summaries.gti", R"(
+int effect_leaf(int value) {
+  return value;
+}
+
+int effect_caller(int value) {
+  return effect_leaf(value);
+}
+
+int effect_recursive(int value) {
+  if (value == 0) {
+    return 0;
+  }
+  return effect_recursive(value - 1);
+}
+)");
+  const lang::HirFunctionInstance *leafHir =
+      findHirFunction(summaries, "effect_leaf");
+  const lang::HirFunctionInstance *callerHir =
+      findHirFunction(summaries, "effect_caller");
+  const lang::HirFunctionInstance *recursiveHir =
+      findHirFunction(summaries, "effect_recursive");
+  const lang::MirFunctionInstance *leaf =
+      leafHir == nullptr ? nullptr
+                         : summaries.mir.findFunctionInstance(leafHir->id);
+  const lang::MirFunctionInstance *caller =
+      callerHir == nullptr ? nullptr
+                           : summaries.mir.findFunctionInstance(callerHir->id);
+  const lang::MirFunctionInstance *recursive =
+      recursiveHir == nullptr
+          ? nullptr
+          : summaries.mir.findFunctionInstance(recursiveHir->id);
+  const lang::MirInstruction *exactCall = nullptr;
+  if (caller != nullptr && leaf != nullptr) {
+    for (const lang::MirBlock &block : caller->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == leaf->id;
+          });
+      if (found != block.instructions.end()) {
+        exactCall = &*found;
+        break;
+      }
+    }
+  }
+  const lang::MirEffectTraits conservativeCall =
+      exactCall == nullptr ? lang::MirEffectTraits{}
+                           : lang::effects(*exactCall);
+  const lang::MirEffectTraits refinedCall =
+      exactCall == nullptr ? lang::MirEffectTraits{}
+                           : lang::effects(summaries.mir, *exactCall);
+  lang::MirInstruction unresolvedCall =
+      exactCall == nullptr
+          ? lang::MirInstruction{.kind = lang::MirInstructionKind::Call}
+          : *exactCall;
+  unresolvedCall.functionTarget.reset();
+  unresolvedCall.bodyTarget.reset();
+  const lang::MirEffectTraits unresolvedEffects =
+      lang::effects(summaries.mir, unresolvedCall);
+  expect(
+      summaries.canGenerateCode() && leaf != nullptr && caller != nullptr &&
+          recursive != nullptr && exactCall != nullptr &&
+          conservativeCall.readsUnknownMemory &&
+          conservativeCall.writesUnknownMemory &&
+          !refinedCall.readsUnknownMemory && !refinedCall.writesUnknownMemory &&
+          refinedCall.invokesUserCode && unresolvedEffects.readsUnknownMemory &&
+          unresolvedEffects.writesUnknownMemory &&
+          unresolvedEffects.invokesUserCode &&
+          unresolvedEffects.maySynchronize &&
+          recursive->effectSummary.traits.readsUnknownMemory &&
+          recursive->effectSummary.traits.writesUnknownMemory &&
+          recursive->effectSummary.traits.maySynchronize &&
+          recursive->effectSummary.argumentsEscape == std::vector<bool>{true},
+      "exact acyclic static calls should consume verified target effects "
+      "while recursive cycles remain conservative");
+
+  if (leaf != nullptr) {
+    lang::MirProgram underApproximated = summaries.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        underApproximated.functionInstances());
+    functions[leaf->id - 1].effectSummary.traits.mayTrap = false;
+    functions[leaf->id - 1].effectSummary.traits.readsPlace = false;
+    expect(!lang::verifyMirProgram(underApproximated).valid(),
+           "MIR verification should reject an under-approximated concrete "
+           "effect summary");
+
+    lang::MirProgram overApproximated = summaries.mir;
+    auto &overFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        overApproximated.functionInstances());
+    overFunctions[leaf->id - 1].effectSummary.traits = lang::effects(
+        lang::MirInstruction{.kind = lang::MirInstructionKind::Call});
+    overFunctions[leaf->id - 1].effectSummary.argumentsEscape.assign(
+        leaf->parameterTypes.size(), true);
+    expect(lang::verifyMirProgram(overApproximated).valid(),
+           "MIR verification should permit a conservative effect "
+           "over-approximation");
+
+    lang::MirProgram declarationBoundary = summaries.mir;
+    auto &declarationFunctions =
+        const_cast<std::vector<lang::MirFunctionInstance> &>(
+            declarationBoundary.functionInstances());
+    declarationFunctions[leaf->id - 1].definitionKind =
+        lang::MirDefinitionKind::Declaration;
+    expect(!lang::verifyMirProgram(declarationBoundary).valid(),
+           "a declaration boundary should invalidate a source-body effect "
+           "under-approximation");
+  }
 }
 
 void testDefinedFailureIdentityAndPropagation() {
@@ -3408,7 +3638,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v40\n") &&
+  expect(dump.starts_with("mir-body-v41\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -6529,7 +6759,9 @@ int main() { if (lt()) { return 0; } return 1; }
                                 .level = lang::OptimizationLevel::O1,
                                 .compatibility = &compatibility});
   expect(o1.valid() && lang::verifyMirProgram(o1.mir).valid() &&
-             lang::verifyMirOptimizationCoherence(o1.sourceMir, o1.mir).valid(),
+             lang::verifyMirOptimizationCoherence(o1.sourceMir, o1.mir,
+                                                  o1.report.transformations)
+                 .valid(),
          "the folded program should verify with coherent retained source");
   const std::string optimized = lang::MirPrinter().print(o1.mir);
   expect(optimized.find("compute-fold:less:") != std::string::npos,
@@ -6578,14 +6810,16 @@ void testBinaryFloatComputeFold() {
                                 .compatibility = &compatibility});
   const std::string printed = lang::MirPrinter().print(optimized.mir);
   expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid() &&
-             lang::verifyMirOptimizationCoherence(optimized.sourceMir,
-                                                  optimized.mir)
+             lang::verifyMirOptimizationCoherence(
+                 optimized.sourceMir, optimized.mir,
+                 optimized.report.transformations)
                  .valid() &&
              printed.find("compute-fold:convert:") != std::string::npos &&
              printed.find("compute-fold:add:") != std::string::npos,
          "O1 should fold binary-float conversion and arithmetic with "
          "replayable MIR provenance");
-  expect(!lang::verifyMirOptimizationCoherence(optimized.mir, optimized.mir)
+  expect(!lang::verifyMirOptimizationCoherence(optimized.mir, optimized.mir,
+                                               optimized.report.transformations)
               .valid(),
          "optimized compute-fold provenance must not be accepted as a "
          "canonical source MIR snapshot");
@@ -6622,7 +6856,9 @@ int main() { if (pick() == 3) { return 0; } return 1; }
                                 .level = lang::OptimizationLevel::O1,
                                 .compatibility = &compatibility});
   expect(o1.valid() && lang::verifyMirProgram(o1.mir).valid() &&
-             lang::verifyMirOptimizationCoherence(o1.sourceMir, o1.mir).valid(),
+             lang::verifyMirOptimizationCoherence(o1.sourceMir, o1.mir,
+                                                  o1.report.transformations)
+                 .valid(),
          "the folded branch should verify with coherent retained source");
   const std::string optimized = lang::MirPrinter().print(o1.mir);
   expect(optimized.find("provenance=branch-fold:v") != std::string::npos &&
@@ -6653,11 +6889,13 @@ int main() { if (pick() == 3) { return 0; } return 1; }
       lang::rebuildMirReachability(const_cast<lang::MirBody &>(candidate.body));
     }
   }
-  expect(
-      redirected &&
-          !lang::verifyMirOptimizationCoherence(o1.sourceMir, forged).valid(),
-      "a forged branch-fold target must fail the coherence replay");
-  expect(!lang::verifyMirOptimizationCoherence(o1.mir, o1.mir).valid(),
+  expect(redirected && !lang::verifyMirOptimizationCoherence(
+                            o1.sourceMir, forged, o1.report.transformations)
+                            .valid(),
+         "a forged branch-fold target must fail the coherence replay");
+  expect(!lang::verifyMirOptimizationCoherence(o1.mir, o1.mir,
+                                               o1.report.transformations)
+              .valid(),
          "optimized branch-fold provenance must not be accepted as a "
          "canonical source MIR snapshot");
 }
@@ -6758,6 +6996,252 @@ int main() {
          "independent analyses of one source must print identical MIR");
 }
 
+void testMirPassInfrastructureAndReports() {
+  const std::string source = R"(
+int promoted_branch(bool condition) {
+  mut int value = 1;
+  if (condition) {
+    value = 2;
+  } else {
+    value = 3;
+  }
+  return value;
+}
+
+int promoted_loop(int count) {
+  mut int value = 0;
+  mut int index = 0;
+  while (index < count) {
+    value = value + index;
+    index++;
+  }
+  return value;
+}
+
+int retained_borrow() {
+  mut int value = 4;
+  mut int& alias = value;
+  return alias;
+}
+
+int failure_sensitive(int divisor) {
+  mut int value = 8;
+  value = value / divisor;
+  return value;
+}
+
+int folded_branch() {
+  if (1 < 2) {
+    return 5;
+  }
+  return 6;
+}
+
+int main() {
+  if (promoted_branch(true) != 2) { return 1; }
+  if (promoted_loop(4) != 6) { return 2; }
+  if (retained_borrow() != 4) { return 3; }
+  if (failure_sensitive(2) != 4) { return 4; }
+  if (folded_branch() != 5) { return 5; }
+  return 0;
+}
+)";
+  const lang::FrontendResult first =
+      lang::Frontend().analyze("optimizer-pass-foundation.gti", source);
+  const lang::FrontendResult second =
+      lang::Frontend().analyze("optimizer-pass-foundation.gti", source);
+  const lang::HirFunctionInstance *promotedHir =
+      findHirFunction(first, "promoted_branch");
+  expect(first.canGenerateCode() && second.canGenerateCode() &&
+             promotedHir != nullptr,
+         "the scalar-promotion and reporting fixture should reach MIR");
+  if (!first.canGenerateCode() || !second.canGenerateCode() ||
+      promotedHir == nullptr) {
+    return;
+  }
+
+  const lang::MirBodyAddress promotedAddress{
+      .kind = lang::MirBodyKind::Function, .owner = promotedHir->id};
+  lang::MirBodyAnalysisManager analyses;
+  const lang::MirCfgAnalysis *cfg = analyses.cfg(first.mir, promotedAddress);
+  const lang::MirDominanceInfo *dominance =
+      analyses.dominance(first.mir, promotedAddress);
+  const auto *uses = analyses.valueUses(first.mir, promotedAddress);
+  const auto *effectFacts = analyses.effects(first.mir, promotedAddress);
+  const lang::MirScalarPromotionInputs *promotionInputs =
+      analyses.scalarPromotionInputs(first.mir, promotedAddress);
+  const bool hasPromotionCandidate =
+      promotionInputs != nullptr && !promotionInputs->candidates.empty();
+  const std::vector<std::string> selectivelyInvalidated = analyses.invalidate(
+      promotedAddress,
+      lang::MirPreservedAnalyses::only({lang::MirAnalysisKind::CfgReachability,
+                                        lang::MirAnalysisKind::ValueUses}));
+  expect(cfg != nullptr && dominance != nullptr && uses != nullptr &&
+             effectFacts != nullptr && promotionInputs != nullptr,
+         "the body analysis manager should derive every client-backed "
+         "analysis");
+  expect(hasPromotionCandidate,
+         "scalar-promotion analysis should identify the branch-local scalar");
+  expect(analyses.revision(promotedAddress) == 1 &&
+             selectivelyInvalidated ==
+                 std::vector<std::string>{"dominance", "effects",
+                                          "scalar-promotion-inputs"},
+         "selective invalidation should advance the body revision and report "
+         "only discarded analyses");
+  expect(analyses.cfg(first.mir, promotedAddress) == cfg &&
+             analyses.valueUses(first.mir, promotedAddress) == uses,
+         "exact preservation claims should retain cached CFG and value uses");
+
+  (void)analyses.dominance(first.mir, promotedAddress);
+  (void)analyses.effects(first.mir, promotedAddress);
+  (void)analyses.scalarPromotionInputs(first.mir, promotedAddress);
+  const std::vector<std::string> fullyInvalidated =
+      analyses.invalidate(promotedAddress, lang::MirPreservedAnalyses::none());
+  expect(analyses.revision(promotedAddress) == 2 &&
+             fullyInvalidated ==
+                 std::vector<std::string>{"cfg-reachability", "dominance",
+                                          "value-uses", "effects",
+                                          "scalar-promotion-inputs"},
+         "an unknown preservation claim should conservatively invalidate every "
+         "cached body analysis in deterministic order");
+
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizedProgram optimized =
+      pipeline.run({.hir = first.hir,
+                    .mir = first.mir,
+                    .level = lang::OptimizationLevel::O1});
+  const lang::OptimizedProgram repeated =
+      pipeline.run({.hir = second.hir,
+                    .mir = second.mir,
+                    .level = lang::OptimizationLevel::O1});
+  const std::vector<std::string> expectedPasses{
+      "scalar-promotion", "fold-literal-identities",
+      "unreachable-block-cleanup", "dead-unused-computations"};
+  std::vector<std::string> actualPasses;
+  for (const lang::OptimizationPassReport &pass : optimized.report.passes) {
+    actualPasses.push_back(pass.name);
+  }
+  const lang::OptimizationPassReport *promotion =
+      findPass(optimized.report, "scalar-promotion");
+  const bool loanMiss =
+      promotion != nullptr &&
+      std::any_of(promotion->remarks.begin(), promotion->remarks.end(),
+                  [](const lang::OptimizationRemark &remark) {
+                    return remark.kind ==
+                               lang::OptimizationRemarkKind::Missed &&
+                           remark.message.find("loan") != std::string::npos;
+                  });
+  const bool failureMiss =
+      promotion != nullptr &&
+      std::any_of(promotion->remarks.begin(), promotion->remarks.end(),
+                  [](const lang::OptimizationRemark &remark) {
+                    return remark.kind ==
+                               lang::OptimizationRemarkKind::Missed &&
+                           remark.message.find("failure-sensitive") !=
+                               std::string::npos;
+                  });
+  const lang::MirFunctionInstance *promoted =
+      optimized.mir.findFunctionInstance(promotedHir->id);
+  const bool hasMergeParameter =
+      promoted != nullptr &&
+      std::any_of(promoted->body.blocks.begin(), promoted->body.blocks.end(),
+                  [](const lang::MirBlock &block) {
+                    return !block.parameters.empty();
+                  });
+  const bool hasEdgeArgument =
+      promoted != nullptr &&
+      std::any_of(promoted->body.blocks.begin(), promoted->body.blocks.end(),
+                  [](const lang::MirBlock &block) {
+                    return !block.terminator.targetArguments.empty() ||
+                           !block.terminator.elseArguments.empty() ||
+                           std::any_of(block.terminator.switchTargets.begin(),
+                                       block.terminator.switchTargets.end(),
+                                       [](const lang::MirSwitchTarget &target) {
+                                         return !target.arguments.empty();
+                                       });
+                  });
+  const bool hasTombstone =
+      promoted != nullptr &&
+      std::any_of(promoted->body.blocks.begin(), promoted->body.blocks.end(),
+                  [](const lang::MirBlock &block) {
+                    return std::any_of(
+                        block.instructions.begin(), block.instructions.end(),
+                        [](const lang::MirInstruction &instruction) {
+                          return instruction.tombstone;
+                        });
+                  });
+  expect(optimized.valid() && repeated.valid() &&
+             actualPasses == expectedPasses && promotion != nullptr &&
+             promotion->changed && promotion->candidates != 0 &&
+             promotion->missed != 0 && loanMiss && failureMiss &&
+             hasMergeParameter && hasEdgeArgument && hasTombstone &&
+             optimized.report.safety.sourceOperations >=
+                 optimized.report.safety.emittedOperations &&
+             optimized.report.safety.staticallyDischarged ==
+                 optimized.report.safety.sourceOperations -
+                     optimized.report.safety.emittedOperations,
+         "O1 should promote only the proved scalar, retain borrow and failure "
+         "near misses, and report exact safety-operation counts");
+
+  const std::string json =
+      lang::serializeOptimizationReportJson(optimized.report, "O1");
+  const std::string repeatedJson =
+      lang::serializeOptimizationReportJson(repeated.report, "O1");
+  const std::string remarks =
+      lang::formatOptimizationRemarks(optimized.report, "O1");
+  expect(json == repeatedJson &&
+             json.find("\"schema\":\"gti-optimization-report\"") !=
+                 std::string::npos &&
+             json.find("\"version\":1") != std::string::npos &&
+             json.find("\"proof\":\"scalar-promotion\"") != std::string::npos &&
+             remarks.starts_with("gti-opt: GTI MIR optimization remarks") &&
+             remarks.find("safety operations source=") != std::string::npos,
+         "optimizer presentation should be deterministic, versioned, and "
+         "visibly distinct from native compiler remarks");
+
+  const auto expectMalformedRecordRejected =
+      [&](lang::MirTransformProofKind proof, auto forge,
+          const std::string &message) {
+        std::vector<lang::MirTransformRecord> forged =
+            optimized.report.transformations;
+        const auto found =
+            std::find_if(forged.begin(), forged.end(),
+                         [&](const lang::MirTransformRecord &record) {
+                           return record.proof == proof;
+                         });
+        expect(found != forged.end(), message + " should have proof evidence");
+        if (found == forged.end()) {
+          return;
+        }
+        forge(*found);
+        std::sort(forged.begin(), forged.end(), lang::mirTransformRecordLess);
+        expect(!lang::verifyMirOptimizationCoherence(first.mir, optimized.mir,
+                                                     forged)
+                    .valid(),
+               message);
+      };
+  expectMalformedRecordRejected(
+      lang::MirTransformProofKind::ScalarPromotion,
+      [](lang::MirTransformRecord &record) {
+        record.relatedValues.push_back(
+            std::numeric_limits<lang::MirValueId>::max());
+      },
+      "coherence replay should reject forged scalar-promotion evidence");
+  expectMalformedRecordRejected(
+      lang::MirTransformProofKind::DeadUnusedComputation,
+      [](lang::MirTransformRecord &record) {
+        record.requiredAnalyses.effects = false;
+      },
+      "coherence replay should reject forged dead-computation evidence");
+  expectMalformedRecordRejected(
+      lang::MirTransformProofKind::UnreachableBlock,
+      [](lang::MirTransformRecord &record) {
+        record.relatedBlocks.push_back(
+            std::numeric_limits<lang::MirBlockId>::max());
+      },
+      "coherence replay should reject forged unreachable-block evidence");
+}
+
 int main() {
   lang::installCrashHandlers("gti_optimizer_tests");
   testComparisonComputeFold();
@@ -6765,6 +7249,7 @@ int main() {
   testBranchLiteralFold();
   testBranchFoldRequiresDominatingCondition();
   testCrossAnalysisDeterminism();
+  testMirPassInfrastructureAndReports();
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();
   testOrderedCallInputVerification();

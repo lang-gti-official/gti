@@ -13,9 +13,11 @@ int main() {
   const lang::driver::CompilationRequest compilation(
       "main.gti", lang::standardLibraryLayout("stdlib"),
       lang::TargetInfo{.os = "linux", .vendor = "unknown", .arch = "x86_64"},
-      lang::OptimizationLevel::O2, lang::CppStandard::Cpp23);
+      lang::OptimizationLevel::O2, lang::CppStandard::Cpp23, {}, {},
+      {.capturePreMir = true, .capturePostMir = true, .captureReport = true});
   if (compilation.entry() != "main.gti" || compilation.target().os != "linux" ||
-      compilation.standardLibrary().prelude != "stdlib/prelude.gti") {
+      compilation.standardLibrary().prelude != "stdlib/prelude.gti" ||
+      !compilation.optimizationOutputs().requested()) {
     return 1;
   }
 

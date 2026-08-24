@@ -163,11 +163,12 @@ lang::OptimizedProgram optimize(const lang::FrontendResult &frontend,
                                            .compatibility = &compatibility});
 }
 
-lang::BackendArtifact emit(const lang::FrontendResult &frontend,
-                           const lang::MirProgram &mir,
-                           const lang::OptimizationResult &compatibility) {
+lang::BackendArtifact
+emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
+     const lang::OptimizationResult &compatibility,
+     const std::vector<lang::MirTransformRecord> &transformations = {}) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir);
+  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
 }
 
 void testVerifiedMirRouteAndOptimizationCoherence() {
@@ -263,9 +264,9 @@ void testVerifiedMirRouteAndOptimizationCoherence() {
          "the O1 transformed production MIR input should be fully verified");
   if (o1.valid()) {
     const lang::BackendArtifact o1Artifact =
-        emit(frontend, o1.mir, o1Compatibility);
+        emit(frontend, o1.mir, o1Compatibility, o1.report.transformations);
     const lang::BackendArtifact o1WithO0Compatibility =
-        emit(frontend, o1.mir, o0Compatibility);
+        emit(frontend, o1.mir, o0Compatibility, o1.report.transformations);
     expect(count(o1Artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
                                       "function-instance") == 10,
            "the same bodies should remain selected after MIR optimization");

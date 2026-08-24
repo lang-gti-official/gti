@@ -75,6 +75,117 @@ struct MirBodyAddress {
                          const MirBodyAddress &) = default;
 };
 
+enum class MirTransformKind {
+  ReplaceInstruction,
+  RemoveInstruction,
+  ReplaceTerminator,
+  RemoveBlock,
+  PromotePlace,
+  Count,
+};
+
+enum class MirTransformProofKind {
+  IdentityFold,
+  ComputeFold,
+  BranchFold,
+  UnreachableBlock,
+  DeadUnusedComputation,
+  ScalarPromotion,
+  Count,
+};
+
+// Analyses whose exact facts justify one optimizer transformation. These are
+// proof inputs, not cache-preservation claims; the optimizer's analysis manager
+// owns invalidation separately.
+struct MirTransformRequiredAnalyses {
+  bool valueUses = false;
+  bool effects = false;
+  bool reachability = false;
+  bool dominance = false;
+  bool scalarPromotion = false;
+
+  friend bool operator==(const MirTransformRequiredAnalyses &,
+                         const MirTransformRequiredAnalyses &) = default;
+};
+
+// Stable, deterministic evidence for one source-MIR to optimized-MIR edit.
+// The verifier treats this record as an untrusted claim and independently
+// replays it against canonical source MIR before LoweredProgram construction.
+// Backends never receive these records.
+struct MirTransformRecord {
+  std::string pass;
+  MirTransformKind kind = MirTransformKind::ReplaceInstruction;
+  MirTransformProofKind proof = MirTransformProofKind::IdentityFold;
+  MirBodyAddress body;
+  MirBlockId block = 0;
+  MirInstructionId instruction = 0;
+  MirPlaceId place = 0;
+  HirValueId sourceValue = 0;
+  HirStatementId sourceStatement = 0;
+  // Replacement payloads are untrusted claims. Coherence replay derives the
+  // same literal independently before applying an instruction replacement.
+  std::optional<Literal> replacementLiteral;
+  std::vector<MirBlockId> relatedBlocks;
+  std::vector<MirInstructionId> relatedInstructions;
+  std::vector<MirValueId> relatedValues;
+  MirTransformRequiredAnalyses requiredAnalyses;
+
+  friend bool operator==(const MirTransformRecord &,
+                         const MirTransformRecord &) = default;
+};
+
+[[nodiscard]] bool mirTransformRecordLess(const MirTransformRecord &left,
+                                          const MirTransformRecord &right);
+
+// Conservative instruction and callable-body effects. A false field is a
+// proof obligation: verification independently derives the least summary that
+// the current MIR can justify and rejects an under-approximation. True fields
+// may conservatively over-approximate behavior.
+struct MirEffectTraits {
+  bool readsPlace = false;
+  bool writesPlace = false;
+  bool readsUnknownMemory = false;
+  bool writesUnknownMemory = false;
+  bool allocates = false;
+  bool invokesRuntime = false;
+  bool mayTrap = false;
+  bool startsLoan = false;
+  bool endsLoan = false;
+  bool dependsOnLoan = false;
+  bool copiesValue = false;
+  bool movesValue = false;
+  bool initializesValue = false;
+  bool dropsValue = false;
+  bool invokesUserCode = false;
+  bool targetDependent = false;
+  bool maySynchronize = false;
+  bool speculatable = false;
+  bool removableWhenUnused = false;
+  bool reorderable = false;
+
+  friend bool operator==(const MirEffectTraits &,
+                         const MirEffectTraits &) = default;
+};
+
+struct MirEffectSummary {
+  MirEffectTraits traits;
+  bool receiverEscapes = false;
+  std::vector<bool> argumentsEscape;
+
+  friend bool operator==(const MirEffectSummary &,
+                         const MirEffectSummary &) = default;
+};
+
+struct MirProgramEffectSummaries {
+  std::vector<MirEffectSummary> functions;
+  std::vector<MirEffectSummary> constructors;
+  std::vector<MirEffectSummary> destructors;
+  std::vector<MirEffectSummary> lambdas;
+
+  friend bool operator==(const MirProgramEffectSummaries &,
+                         const MirProgramEffectSummaries &) = default;
+};
+
 enum class MirPlaceRootKind {
   Binding,
   Symbol,
@@ -349,6 +460,10 @@ struct MirLiteralProvenance {
 struct MirInstruction {
   MirInstructionId id = 0;
   MirInstructionKind kind = MirInstructionKind::Compute;
+  // Destructive optimizer removal preserves the stable instruction and
+  // result identities as an inert slot. A tombstone has one canonical shape,
+  // is never executable, and is admitted only by MIR verification/coherence.
+  bool tombstone = false;
   MirHostedStartupOperationId hostedStartupOperation = 0;
   HirValueId hirValue = 0;
   HirStatementId hirStatement = 0;
@@ -415,6 +530,29 @@ struct MirInstruction {
                          const MirInstruction &) = default;
 };
 
+[[nodiscard]] MirInstruction
+makeMirInstructionTombstone(const MirInstruction &instruction);
+
+struct MirScalarPromotionRewrite {
+  MirPlaceId place = 0;
+  std::vector<MirBlockId> parameterBlocks;
+  std::vector<MirInstructionId> replacedInstructions;
+  std::vector<MirInstructionId> removedInstructions;
+  std::vector<MirValueId> createdValues;
+
+  friend bool operator==(const MirScalarPromotionRewrite &,
+                         const MirScalarPromotionRewrite &) = default;
+};
+
+struct MirBody;
+
+// Applies the canonical conservative scalar-to-SSA rewrite used by both the
+// optimizer editor and source/optimized coherence replay. Failure leaves the
+// body byte-identical. The current client is deliberately acyclic and excludes
+// failure, ownership, loan, raw-memory, synchronization, and cleanup state.
+[[nodiscard]] std::optional<MirScalarPromotionRewrite>
+rewriteMirScalarPlace(MirBody &body, MirPlaceId place);
+
 struct MirProgramConstantSubstitution {
   HirValueId hirValue = 0;
   ConstantValue constant;
@@ -440,6 +578,7 @@ enum class MirTerminatorKind {
 struct MirSwitchTarget {
   std::optional<SwitchCaseValue> value;
   MirBlockId target = 0;
+  std::vector<MirOperand> arguments;
 
   friend bool operator==(const MirSwitchTarget &,
                          const MirSwitchTarget &) = default;
@@ -475,6 +614,8 @@ struct MirTerminator {
   MirFailureRecordId failureRecord = 0;
   MirBlockId target = 0;
   MirBlockId elseTarget = 0;
+  std::vector<MirOperand> targetArguments;
+  std::vector<MirOperand> elseArguments;
   std::vector<MirSwitchTarget> switchTargets;
   std::vector<MirLifecycleEvent> successLifecycle;
   MirTerminatorProvenance provenance;
@@ -483,11 +624,28 @@ struct MirTerminator {
                          const MirTerminator &) = default;
 };
 
+struct MirBlockParameter {
+  MirValueId value = 0;
+  SemanticType type = SemanticType::Unknown;
+  HirValueId sourceValue = 0;
+  HirStatementId sourceStatement = 0;
+
+  friend bool operator==(const MirBlockParameter &,
+                         const MirBlockParameter &) = default;
+};
+
+// The first block-argument vocabulary is intentionally confined to scalar,
+// non-owning values. Class values, owners, references, arrays, closures, and
+// storage records retain their existing place/lifecycle representation until
+// a client can preserve those semantics across CFG edges.
+[[nodiscard]] bool isMirBlockParameterType(const SemanticType &type);
+
 struct MirBlock {
   MirBlockId id = 0;
   ProgramInitializationStepId programInitializationStep = 0;
   MirFailureRecordId failureParameter = 0;
   MirFailureRecordId activeFailure = 0;
+  std::vector<MirBlockParameter> parameters;
   std::vector<MirInstruction> instructions;
   MirTerminator terminator;
   bool reachable = false;
@@ -521,6 +679,7 @@ enum class MirValueUseKind {
   InstructionOperand,
   InstructionReceiver,
   Terminator,
+  EdgeArgument,
   PlaceRoot,
   PlaceIndex,
 };
@@ -531,6 +690,8 @@ struct MirValueUse {
   MirBlockId block = 0;
   MirInstructionId instruction = 0;
   MirPlaceId place = 0;
+  MirBlockId edgeTarget = 0;
+  std::size_t edgeIndex = 0;
   std::size_t operandIndex = 0;
 
   friend bool operator==(const MirValueUse &, const MirValueUse &) = default;
@@ -850,6 +1011,7 @@ struct MirFunctionInstance {
   // This does not summarize allocation, user-code, synchronization, or other
   // O-MIR-02 effect dimensions.
   bool mayRaiseDefinedFailure = true;
+  MirEffectSummary effectSummary;
   MirBody body;
 
   friend bool operator==(const MirFunctionInstance &,
@@ -907,6 +1069,7 @@ struct MirConstructorInstance {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
+  MirEffectSummary effectSummary;
   std::vector<MirConstructorInitializer> initializers;
   MirBody body;
 
@@ -919,6 +1082,7 @@ struct MirDestructorInstance {
   HirClassInstanceId owner = 0;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
+  MirEffectSummary effectSummary;
   MirBody body;
 
   friend bool operator==(const MirDestructorInstance &,
@@ -936,6 +1100,7 @@ struct MirLambdaInstance {
   std::vector<LambdaCaptureMode> captureModes;
   std::vector<SymbolId> captureSymbols;
   std::vector<bool> captureRequiresActiveCleanup;
+  MirEffectSummary effectSummary;
   MirBody body;
 
   friend bool operator==(const MirLambdaInstance &,
@@ -1203,9 +1368,9 @@ public:
 
 private:
   friend class MirLowerer;
-  friend MirVerificationResult
-  verifyMirOptimizationCoherence(const MirProgram &source,
-                                 const MirProgram &optimized);
+  friend MirVerificationResult verifyMirOptimizationCoherence(
+      const MirProgram &source, const MirProgram &optimized,
+      const std::vector<MirTransformRecord> &records);
 
   bool valid_ = true;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
@@ -1242,6 +1407,36 @@ struct MirComputeFoldOperand {
   SemanticType type;
 };
 
+struct MirDeadInstructionRewrite {
+  MirBodyAddress body;
+  MirBlockId block = 0;
+  MirInstructionId instruction = 0;
+  HirValueId sourceValue = 0;
+  HirStatementId sourceStatement = 0;
+  std::optional<MirValueId> result;
+
+  friend bool operator==(const MirDeadInstructionRewrite &,
+                         const MirDeadInstructionRewrite &) = default;
+};
+
+struct MirUnreachableBlockRewrite {
+  MirBlockId block = 0;
+  HirValueId sourceValue = 0;
+  HirStatementId sourceStatement = 0;
+  std::vector<MirInstructionId> removedInstructions;
+
+  friend bool operator==(const MirUnreachableBlockRewrite &,
+                         const MirUnreachableBlockRewrite &) = default;
+};
+
+// Canonical destructive rewrites used by both pass/editor application and
+// source-MIR coherence replay. Failure leaves the supplied MIR byte-identical.
+[[nodiscard]] std::optional<MirDeadInstructionRewrite>
+rewriteMirDeadInstruction(MirProgram &program, MirBodyAddress body,
+                          MirInstructionId instruction);
+[[nodiscard]] std::optional<MirUnreachableBlockRewrite>
+rewriteMirUnreachableBlock(MirBody &body, MirBlockId block);
+
 // The single evaluation authority for MIR compute folds: the optimizer
 // derives a fold through it and the verifier replays the same call, so a
 // folded literal can never disagree with its proof. Returns nothing for
@@ -1253,12 +1448,12 @@ evaluateMirComputeFold(MirOperation operation,
                        const SemanticType &resultType);
 
 // Verifies that `optimized` is exactly `source` plus rewrites admitted by the
-// controlled MIR editor. The current rewrite vocabulary contains only the
-// verifier-proven Compute/Identity -> Compute/Literal identity fold; no CFG,
-// operand, call, lifecycle, or metadata rewrite is authorized.
+// controlled MIR editor. Every transformation record is treated as an
+// untrusted claim and replayed through the canonical rewrite authority.
 [[nodiscard]] MirVerificationResult
 verifyMirOptimizationCoherence(const MirProgram &source,
-                               const MirProgram &optimized);
+                               const MirProgram &optimized,
+                               const std::vector<MirTransformRecord> &records);
 
 struct MirDefinedFailureEffects {
   std::vector<bool> functions;

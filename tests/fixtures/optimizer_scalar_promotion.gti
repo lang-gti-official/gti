@@ -1,0 +1,47 @@
+int promoted_branch(bool condition) {
+  mut int value = 1;
+  if (condition) {
+    value = 2;
+  } else {
+    value = 3;
+  }
+  return value;
+}
+
+int promoted_loop(int count) {
+  mut int value = 0;
+  mut int index = 0;
+  while (index < count) {
+    value = value + index;
+    index++;
+  }
+  return value;
+}
+
+int retained_borrow() {
+  mut int value = 4;
+  mut int& alias = value;
+  return alias;
+}
+
+int failure_sensitive(int divisor) {
+  mut int value = 8;
+  value = value / divisor;
+  return value;
+}
+
+int main() {
+  if (promoted_branch(true) != 2) {
+    return 1;
+  }
+  if (promoted_loop(4) != 6) {
+    return 2;
+  }
+  if (retained_borrow() != 4) {
+    return 3;
+  }
+  if (failure_sensitive(2) != 4) {
+    return 4;
+  }
+  return 0;
+}

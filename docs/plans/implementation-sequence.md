@@ -2528,11 +2528,12 @@ complete.
 
 ### O-MIR-01: First Shadow Transform With Its Minimal Editor
 
-- **State/role:** done in 0.94.0; systems-readiness implementation foundation.
-- **Scope:** Port one current constant fold or local simplification to MIR in
-  shadow mode. In the same slice add only the `{block,index}` addressing,
-  accumulate/apply patching, use repair/dirty state, verification, and analysis
-  invalidation that this transform consumes.
+- **State/role:** complete and superseded by stable proof-carrying rewrite
+  infrastructure; systems-readiness implementation foundation.
+- **Scope:** The original shadow slice introduced one constant fold and a
+  minimal editor. Its temporary block-index addressing has since been removed;
+  current edits use stable `{MirBodyAddress, MirInstructionId}` evidence,
+  atomic apply/repair, verification, and explicit analysis invalidation.
 - **Non-goals:** a general pass manager with no transforms, incremental
   dominance, `LoopInfo`, or new optimizations justified only by LLVM
   availability.
@@ -2542,50 +2543,52 @@ complete.
   `M-BACK-01`/`scalar-leaf-v1` plus eligible M-BACK-02 `scalar-cfg-v1` and
   `scalar-direct-call-v1` bodies; broader shadow-fold coverage was not their
   prerequisite.
-- **Evidence:** primitive integer, binary32/binary64, character, boolean, and null
-  grouping identities fold at `-O1+` through an atomic body/`{block,index}`
-  editor. Every edit matches the HIR compatibility constant, rebuilds value
-  uses, preserves IDs/CFG/dominance, and is freshly verified. Strings, dynamic
-  values, arithmetic, and conversions remain conservative near-misses. O0 is
-  byte-identical; malformed/stale/duplicate batches are atomic failures.
+- **Evidence:** the compatibility fold now uses stable
+  `{MirBodyAddress, MirInstructionId}` identity and typed transformation
+  records. Independent source-MIR replay validates every replacement before
+  `LoweredProgram` publication. Primitive integer, binary32/binary64,
+  character, boolean, and null grouping identities fold at `-O1+`; strings,
+  trapping operations, and dynamic values remain conservative near-misses.
+  O0 is byte-identical and malformed/stale/duplicate records fail closed.
 
 ### O-MIR-02: Per-Instance Effects
 
-- **State/role:** in progress; the defined-failure dimension is implemented,
-  while read/write/allocation/trap/user-code/drop/synchronization dimensions
-  remain ready systems-readiness and concurrency prerequisites.
-- **Implemented defined-failure dimension:** MIR v20 introduced function
-  definition provenance plus `mayRaiseDefinedFailure`. MIR v21 makes the
-  canonical result cover functions, constructors, and destructors. The function
-  component retains the exact acyclic scalar/static-call proof and adds the
-  class-default-cleanup shape. A separate exact proof covers passive-scalar-
-  class constructor initializer stages, matching source destructors, and free-
-  function graphs. `owned-lifecycle-call-v1` consumes that proof only after its
-  additional atomic graph and exact source/MIR lifecycle coherence succeeds.
-  The two-pass lowerer
-  derives those facts from complete MIR, normalizes only calls to proved-false
-  exact targets, and verifies the final program. Public verification
-  independently proves every stored false claim while permitting conservative
-  true and requiring call propagation to agree with the stored target fact.
-- **Remaining scope:** Derive conservative read/write/allocation/trap/
-  user-code/drop/synchronization summaries from MIR bodies, handle recursion
-  and unknown external calls, and use summaries only to refine the existing
-  conservative effect API.
+- **State/role:** complete foundation; broader effect precision is
+  client-gated.
+- **Implemented:** every concrete function, constructor, destructor, and
+  lambda carries a verified summary for place/unknown-memory access,
+  allocation, runtime and user-code invocation, traps, moves, drops, loans,
+  synchronization, and receiver/argument escape. A deterministic call-graph
+  fixed point derives summaries from complete MIR. Exact acyclic static calls
+  may refine instruction effects; recursive SCCs, virtual dispatch,
+  declarations, native boundaries, and unresolved calls remain conservative.
+  Verification rejects under-approximation and permits conservative
+  over-approximation. The older defined-failure facts remain their separate
+  exact failure contract.
+- **Remaining scope:** add precision only with a measured transformation that
+  can prove an existing conservative boundary more exactly.
 - **Exit gate:** separate-compilation assumptions are not invented; unknown or
   recursive calls remain safe barriers; focused optimizer tests cover each
   effect dimension.
 
 ### O-MIR-03: Local CFG/Value Optimization
 
-- **State/role:** blocked; prerequisites are `O-MIR-01`, `O-MIR-02`, and
-  MIR-backed emission for the affected family.
-- **Scope:** Add CFG simplification, unreachable cleanup, and dead nontrapping
-  value removal one pass at a time. Recompute dominance after CFG edits.
+- **State/role:** first production slice complete; sparse propagation and
+  predicate/range clients remain future work.
+- **Implemented:** scalar non-owning block parameters and edge arguments,
+  conservative acyclic scalar-place promotion, bounded literal/compute/branch
+  folding, unreachable-block cleanup, and dead unused computation removal.
+  The small pass/analysis manager caches only CFG/reachability, dominance,
+  value uses, effects, and promotion inputs with revisioned conservative
+  invalidation. Current transformations are deterministic, typed,
+  independently replayed, and consumed by both current backend paths.
+- **Scope:** add sparse propagation and further CFG/value work one client at a
+  time, extending proof records and verifier coverage with each transform.
 - **Non-goals:** inlining, devirtualization, bounds-check removal, or loop
   analysis without a concrete proof/client.
-- **Exit gate:** each individual pass preserves verifier validity, deterministic
-  printing, failure/effect/loan/drop behavior, and O0/O1/O3 differential
-  runtime results before the next pass is added.
+- **Exit gate:** satisfied for the implemented local pipeline by verifier,
+  report determinism, native-`-O0` structural tests, and O0/O1/O2/O3
+  differential runtime coverage. Apply the same gate to every later pass.
 
 ### O-MIR-04: Proof-Carrying Safety Optimization
 

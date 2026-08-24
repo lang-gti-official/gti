@@ -1,8 +1,12 @@
 #include "gti/optimization/effects.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace lang {
 namespace {
@@ -15,12 +19,23 @@ constexpr MirEffectTraits harmless() {
 constexpr MirEffectTraits trapping() { return {.mayTrap = true}; }
 
 constexpr MirEffectTraits unknownEffects() {
-  return {.readsUnknownMemory = true,
+  return {.readsPlace = true,
+          .writesPlace = true,
+          .readsUnknownMemory = true,
           .writesUnknownMemory = true,
+          .allocates = true,
           .invokesRuntime = true,
           .mayTrap = true,
+          .startsLoan = true,
+          .endsLoan = true,
+          .dependsOnLoan = true,
+          .copiesValue = true,
+          .movesValue = true,
+          .initializesValue = true,
+          .dropsValue = true,
           .invokesUserCode = true,
-          .targetDependent = true};
+          .targetDependent = true,
+          .maySynchronize = true};
 }
 
 constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
@@ -537,8 +552,14 @@ MirEffectTraits effects(SynchronizationOperationKind kind) {
   return enumEffects(kind, synchronizationEffects);
 }
 
-MirEffectTraits effects(const MirInstruction &instruction) {
-  MirEffectTraits result;
+namespace {
+
+[[nodiscard]] MirEffectTraits
+finishInstructionEffects(const MirInstruction &instruction,
+                         MirEffectTraits result) {
+  if (instruction.tombstone) {
+    return harmless();
+  }
   if (instruction.kind == MirInstructionKind::Call &&
       instruction.intrinsic != IntrinsicKind::None) {
     result = effects(instruction.intrinsic);
@@ -546,7 +567,7 @@ MirEffectTraits effects(const MirInstruction &instruction) {
              instruction.synchronization.kind !=
                  SynchronizationOperationKind::None) {
     result = effects(instruction.synchronization.kind);
-  } else {
+  } else if (result == MirEffectTraits{}) {
     result = effects(instruction.kind);
   }
   result = merge(result, effects(instruction.operation));
@@ -642,6 +663,591 @@ MirEffectTraits effects(const MirInstruction &instruction) {
     result.speculatable = false;
     result.removableWhenUnused = false;
     result.reorderable = false;
+  }
+  return result;
+}
+
+[[nodiscard]] MirEffectTraits
+exactInvocationShell(const MirInstruction &instruction) {
+  MirEffectTraits result;
+  switch (instruction.kind) {
+  case MirInstructionKind::Call:
+  case MirInstructionKind::CallBody:
+    result.invokesUserCode = true;
+    break;
+  case MirInstructionKind::Construct:
+    result.initializesValue = true;
+    result.invokesUserCode = true;
+    break;
+  case MirInstructionKind::Drop:
+    result.writesPlace = true;
+    result.dropsValue = true;
+    result.invokesUserCode = true;
+    break;
+  default:
+    result = effects(instruction.kind);
+    break;
+  }
+  return finishInstructionEffects(instruction, result);
+}
+
+[[nodiscard]] const MirEffectSummary *
+summaryForAddress(const MirProgram &program, MirBodyAddress address) {
+  switch (address.kind) {
+  case MirBodyKind::Function: {
+    const MirFunctionInstance *instance =
+        program.findFunctionInstance(address.owner);
+    return instance != nullptr &&
+                   instance->definitionKind == MirDefinitionKind::Source
+               ? &instance->effectSummary
+               : nullptr;
+  }
+  case MirBodyKind::Constructor: {
+    const MirConstructorInstance *instance =
+        program.findConstructorInstance(address.owner);
+    return instance != nullptr &&
+                   instance->definitionKind == MirDefinitionKind::Source
+               ? &instance->effectSummary
+               : nullptr;
+  }
+  case MirBodyKind::Destructor: {
+    const MirDestructorInstance *instance =
+        program.findDestructorInstance(address.owner);
+    return instance != nullptr &&
+                   instance->definitionKind == MirDefinitionKind::Source
+               ? &instance->effectSummary
+               : nullptr;
+  }
+  case MirBodyKind::Lambda: {
+    const MirLambdaInstance *instance = program.findLambda(address.owner);
+    return instance == nullptr ? nullptr : &instance->effectSummary;
+  }
+  case MirBodyKind::Module:
+  case MirBodyKind::FieldInitializers:
+  case MirBodyKind::StaticFieldInitializers:
+  case MirBodyKind::HostedStartup:
+    return nullptr;
+  }
+  return nullptr;
+}
+
+struct ExactTargets {
+  bool boundary = false;
+  std::vector<MirBodyAddress> addresses;
+};
+
+[[nodiscard]] ExactTargets exactTargets(const MirProgram &program,
+                                        const MirBody &body,
+                                        const MirInstruction &instruction) {
+  ExactTargets result;
+  if (instruction.kind == MirInstructionKind::Call &&
+      (instruction.intrinsic != IntrinsicKind::None ||
+       instruction.synchronization.kind !=
+           SynchronizationOperationKind::None)) {
+    return result;
+  }
+  if (instruction.kind == MirInstructionKind::Call) {
+    if (instruction.dispatch != CallDispatch::Static ||
+        instruction.nativeCallbackAdapter) {
+      result.boundary = true;
+      return result;
+    }
+    if (instruction.functionTarget) {
+      result.addresses.push_back(
+          {.kind = MirBodyKind::Function,
+           .owner = static_cast<std::size_t>(*instruction.functionTarget)});
+    } else if (instruction.constructorTarget) {
+      result.addresses.push_back(
+          {.kind = MirBodyKind::Constructor,
+           .owner = static_cast<std::size_t>(*instruction.constructorTarget)});
+    } else if (instruction.lambdaTarget) {
+      result.addresses.push_back(
+          {.kind = MirBodyKind::Lambda,
+           .owner = static_cast<std::size_t>(*instruction.lambdaTarget)});
+    } else if (instruction.bodyTarget) {
+      result.addresses.push_back(*instruction.bodyTarget);
+    } else {
+      result.boundary = true;
+    }
+  } else if (instruction.kind == MirInstructionKind::Construct) {
+    if (instruction.constructorTarget) {
+      result.addresses.push_back(
+          {.kind = MirBodyKind::Constructor,
+           .owner = static_cast<std::size_t>(*instruction.constructorTarget)});
+    } else {
+      result.boundary = true;
+    }
+  } else if (instruction.kind == MirInstructionKind::CallBody) {
+    if (instruction.bodyTarget) {
+      result.addresses.push_back(*instruction.bodyTarget);
+    } else {
+      result.boundary = true;
+    }
+  } else if (instruction.kind == MirInstructionKind::Drop) {
+    for (const MirLifecycleEvent &event : instruction.lifecycle) {
+      if (event.kind != MirLifecycleEventKind::Drop || event.source == 0 ||
+          event.source > body.dropObligations.size()) {
+        continue;
+      }
+      const MirDropObligation &obligation =
+          body.dropObligations[event.source - 1];
+      if (obligation.dropType.destructor) {
+        result.addresses.push_back({.kind = MirBodyKind::Destructor,
+                                    .owner = static_cast<std::size_t>(
+                                        *obligation.dropType.destructor)});
+      }
+    }
+    if (result.addresses.empty()) {
+      result.boundary = true;
+    }
+  }
+  std::sort(
+      result.addresses.begin(), result.addresses.end(),
+      [](MirBodyAddress left, MirBodyAddress right) {
+        return std::pair{static_cast<std::size_t>(left.kind), left.owner} <
+               std::pair{static_cast<std::size_t>(right.kind), right.owner};
+      });
+  result.addresses.erase(
+      std::unique(result.addresses.begin(), result.addresses.end()),
+      result.addresses.end());
+  for (const MirBodyAddress address : result.addresses) {
+    if (summaryForAddress(program, address) == nullptr) {
+      result.boundary = true;
+    }
+  }
+  return result;
+}
+
+[[nodiscard]] bool isInvocation(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call ||
+         instruction.kind == MirInstructionKind::Construct ||
+         instruction.kind == MirInstructionKind::Drop ||
+         instruction.kind == MirInstructionKind::CallBody;
+}
+
+struct EffectNode {
+  MirBodyAddress address;
+  const MirBody *body = nullptr;
+  std::size_t parameterCount = 0;
+  bool hasReceiver = false;
+  bool exactDefinition = false;
+  MirEffectSummary local;
+  std::vector<std::size_t> callees;
+  bool unknownBoundary = false;
+};
+
+[[nodiscard]] std::optional<std::size_t>
+findNode(const std::vector<EffectNode> &nodes, MirBodyAddress address) {
+  const auto found =
+      std::find_if(nodes.begin(), nodes.end(), [&](const EffectNode &node) {
+        return node.address == address;
+      });
+  return found == nodes.end()
+             ? std::nullopt
+             : std::optional<std::size_t>{static_cast<std::size_t>(
+                   std::distance(nodes.begin(), found))};
+}
+
+[[nodiscard]] MirEffectSummary conservativeSummary(std::size_t arguments,
+                                                   bool hasReceiver) {
+  MirEffectSummary result;
+  result.traits = unknownEffects();
+  result.receiverEscapes = hasReceiver;
+  result.argumentsEscape.assign(arguments, true);
+  return result;
+}
+
+void mergeSummary(MirEffectSummary &left, const MirEffectSummary &right) {
+  left.traits = merge(left.traits, right.traits);
+}
+
+[[nodiscard]] bool effectTraitsCover(const MirEffectTraits &claimed,
+                                     const MirEffectTraits &required) {
+#define GTI_EFFECT_REQUIRE(field) (!required.field || claimed.field)
+#define GTI_EFFECT_GUARANTEE(field) (!claimed.field || required.field)
+  return GTI_EFFECT_REQUIRE(readsPlace) && GTI_EFFECT_REQUIRE(writesPlace) &&
+         GTI_EFFECT_REQUIRE(readsUnknownMemory) &&
+         GTI_EFFECT_REQUIRE(writesUnknownMemory) &&
+         GTI_EFFECT_REQUIRE(allocates) && GTI_EFFECT_REQUIRE(invokesRuntime) &&
+         GTI_EFFECT_REQUIRE(mayTrap) && GTI_EFFECT_REQUIRE(startsLoan) &&
+         GTI_EFFECT_REQUIRE(endsLoan) && GTI_EFFECT_REQUIRE(dependsOnLoan) &&
+         GTI_EFFECT_REQUIRE(copiesValue) && GTI_EFFECT_REQUIRE(movesValue) &&
+         GTI_EFFECT_REQUIRE(initializesValue) &&
+         GTI_EFFECT_REQUIRE(dropsValue) &&
+         GTI_EFFECT_REQUIRE(invokesUserCode) &&
+         GTI_EFFECT_REQUIRE(targetDependent) &&
+         GTI_EFFECT_REQUIRE(maySynchronize) &&
+         GTI_EFFECT_GUARANTEE(speculatable) &&
+         GTI_EFFECT_GUARANTEE(removableWhenUnused) &&
+         GTI_EFFECT_GUARANTEE(reorderable);
+#undef GTI_EFFECT_REQUIRE
+#undef GTI_EFFECT_GUARANTEE
+}
+
+[[nodiscard]] bool summaryCovers(const MirEffectSummary &claimed,
+                                 const MirEffectSummary &required) {
+  return claimed.argumentsEscape.size() == required.argumentsEscape.size() &&
+         effectTraitsCover(claimed.traits, required.traits) &&
+         (!required.receiverEscapes || claimed.receiverEscapes) &&
+         std::equal(required.argumentsEscape.begin(),
+                    required.argumentsEscape.end(),
+                    claimed.argumentsEscape.begin(),
+                    [](bool requiredEscape, bool claimedEscape) {
+                      return !requiredEscape || claimedEscape;
+                    });
+}
+
+} // namespace
+
+MirEffectTraits effects(const MirInstruction &instruction) {
+  return finishInstructionEffects(instruction, {});
+}
+
+MirEffectTraits effects(const MirProgram &program,
+                        const MirInstruction &instruction) {
+  if (!isInvocation(instruction)) {
+    return effects(instruction);
+  }
+  const MirBody *body = nullptr;
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    const MirBody *candidate = findMirBody(program, address);
+    if (candidate == nullptr) {
+      continue;
+    }
+    const bool contains =
+        std::any_of(candidate->blocks.begin(), candidate->blocks.end(),
+                    [&](const MirBlock &block) {
+                      return std::any_of(block.instructions.begin(),
+                                         block.instructions.end(),
+                                         [&](const MirInstruction &value) {
+                                           return &value == &instruction;
+                                         });
+                    });
+    if (contains) {
+      body = candidate;
+      break;
+    }
+  }
+  if (body == nullptr) {
+    return effects(instruction);
+  }
+  const ExactTargets targets = exactTargets(program, *body, instruction);
+  if (targets.boundary || targets.addresses.empty()) {
+    return effects(instruction);
+  }
+  MirEffectTraits result = exactInvocationShell(instruction);
+  for (const MirBodyAddress target : targets.addresses) {
+    result = merge(result, summaryForAddress(program, target)->traits);
+  }
+  return result;
+}
+
+MirProgramEffectSummaries
+deriveMirProgramEffectSummaries(const MirProgram &program) {
+  std::vector<EffectNode> nodes;
+  nodes.reserve(program.functionInstances().size() +
+                program.constructorInstances().size() +
+                program.destructorInstances().size() +
+                program.lambdaInstances().size());
+  for (const MirFunctionInstance &instance : program.functionInstances()) {
+    nodes.push_back(
+        {.address = {.kind = MirBodyKind::Function, .owner = instance.id},
+         .body = &instance.body,
+         .parameterCount = instance.parameterTypes.size(),
+         .hasReceiver = instance.owner.has_value() && !instance.staticMember,
+         .exactDefinition =
+             instance.definitionKind == MirDefinitionKind::Source});
+  }
+  for (const MirConstructorInstance &instance :
+       program.constructorInstances()) {
+    nodes.push_back(
+        {.address = {.kind = MirBodyKind::Constructor, .owner = instance.id},
+         .body = &instance.body,
+         .parameterCount = instance.parameterTypes.size(),
+         .hasReceiver = true,
+         .exactDefinition =
+             instance.definitionKind == MirDefinitionKind::Source});
+  }
+  for (const MirDestructorInstance &instance : program.destructorInstances()) {
+    nodes.push_back(
+        {.address = {.kind = MirBodyKind::Destructor, .owner = instance.id},
+         .body = &instance.body,
+         .hasReceiver = true,
+         .exactDefinition =
+             instance.definitionKind == MirDefinitionKind::Source});
+  }
+  for (const MirLambdaInstance &instance : program.lambdaInstances()) {
+    nodes.push_back(
+        {.address = {.kind = MirBodyKind::Lambda, .owner = instance.id},
+         .body = &instance.body,
+         .parameterCount = instance.parameterTypes.size(),
+         .hasReceiver = !instance.captureTypes.empty(),
+         .exactDefinition = true});
+  }
+
+  for (EffectNode &node : nodes) {
+    node.local.traits = harmless();
+    node.local.argumentsEscape.assign(node.parameterCount, false);
+    if (!node.exactDefinition || node.body == nullptr) {
+      node.local = conservativeSummary(node.parameterCount, node.hasReceiver);
+      node.unknownBoundary = true;
+      continue;
+    }
+
+    if (node.address.kind == MirBodyKind::Function) {
+      const MirFunctionInstance *function =
+          program.findFunctionInstance(node.address.owner);
+      if (function != nullptr) {
+        node.local.receiverEscapes =
+            function->returnBorrowOrigin == BorrowOriginKind::Receiver;
+        if (function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+            function->returnBorrowParameter != 0 &&
+            function->returnBorrowParameter <=
+                node.local.argumentsEscape.size()) {
+          node.local.argumentsEscape[function->returnBorrowParameter - 1] =
+              true;
+        }
+      }
+    } else if (node.address.kind == MirBodyKind::Constructor) {
+      const MirConstructorInstance *constructor =
+          program.findConstructorInstance(node.address.owner);
+      if (constructor != nullptr) {
+        node.local.receiverEscapes =
+            constructor->borrowOrigin == BorrowOriginKind::Receiver;
+        if (constructor->borrowOrigin == BorrowOriginKind::Argument &&
+            constructor->borrowParameter != 0 &&
+            constructor->borrowParameter <= node.local.argumentsEscape.size()) {
+          node.local.argumentsEscape[constructor->borrowParameter - 1] = true;
+        }
+      }
+    }
+
+    for (const MirLoan &loan : node.body->loans) {
+      if (!loan.escapes || loan.source == 0 ||
+          loan.source > node.body->places.size()) {
+        continue;
+      }
+      const MirPlace &source = node.body->places[loan.source - 1];
+      if (source.root == MirPlaceRootKind::This) {
+        node.local.receiverEscapes = true;
+      }
+      const auto parameter =
+          std::find_if(node.body->places.begin(), node.body->places.end(),
+                       [&](const MirPlace &place) {
+                         return place.id == loan.source && place.binding != 0;
+                       });
+      if (parameter == node.body->places.end()) {
+        continue;
+      }
+      const auto markParameter = [&](const auto &instance) {
+        const auto found =
+            std::find(instance.parameterBindings.begin(),
+                      instance.parameterBindings.end(), parameter->binding);
+        if (found != instance.parameterBindings.end()) {
+          node.local.argumentsEscape[static_cast<std::size_t>(
+              std::distance(instance.parameterBindings.begin(), found))] = true;
+        }
+      };
+      if (node.address.kind == MirBodyKind::Function) {
+        if (const MirFunctionInstance *function =
+                program.findFunctionInstance(node.address.owner)) {
+          markParameter(*function);
+        }
+      } else if (node.address.kind == MirBodyKind::Constructor) {
+        if (const MirConstructorInstance *constructor =
+                program.findConstructorInstance(node.address.owner)) {
+          markParameter(*constructor);
+        }
+      } else if (node.address.kind == MirBodyKind::Lambda) {
+        if (const MirLambdaInstance *lambda =
+                program.findLambda(node.address.owner)) {
+          markParameter(*lambda);
+        }
+      }
+    }
+
+    for (const MirBlock &block : node.body->blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        const ExactTargets targets =
+            exactTargets(program, *node.body, instruction);
+        if (isInvocation(instruction) && !targets.addresses.empty() &&
+            !targets.boundary) {
+          node.local.traits =
+              merge(node.local.traits, exactInvocationShell(instruction));
+          for (const MirBodyAddress target : targets.addresses) {
+            const std::optional<std::size_t> targetNode =
+                findNode(nodes, target);
+            if (!targetNode) {
+              node.unknownBoundary = true;
+              continue;
+            }
+            node.callees.push_back(*targetNode);
+          }
+        } else {
+          const MirEffectTraits instructionEffects = effects(instruction);
+          node.local.traits = merge(node.local.traits, instructionEffects);
+          if (isInvocation(instruction) &&
+              (targets.boundary || targets.addresses.empty()) &&
+              instruction.intrinsic == IntrinsicKind::None &&
+              instruction.synchronization.kind ==
+                  SynchronizationOperationKind::None) {
+            node.unknownBoundary = true;
+          }
+          if (instructionEffects.invokesUserCode &&
+              !isInvocation(instruction)) {
+            node.unknownBoundary = true;
+          }
+        }
+      }
+      switch (block.terminator.kind) {
+      case MirTerminatorKind::PropagateFailure:
+      case MirTerminatorKind::ContainFailure:
+      case MirTerminatorKind::TerminateCleanupFailure:
+      case MirTerminatorKind::Exit:
+        node.local.traits.mayTrap = true;
+        break;
+      case MirTerminatorKind::None:
+      case MirTerminatorKind::Goto:
+      case MirTerminatorKind::Branch:
+      case MirTerminatorKind::Switch:
+      case MirTerminatorKind::Invoke:
+      case MirTerminatorKind::Return:
+      case MirTerminatorKind::Unreachable:
+        break;
+      }
+    }
+    std::sort(node.callees.begin(), node.callees.end());
+    node.callees.erase(std::unique(node.callees.begin(), node.callees.end()),
+                       node.callees.end());
+    if (node.unknownBoundary || node.local.traits.writesUnknownMemory) {
+      node.local.receiverEscapes = node.hasReceiver;
+      std::fill(node.local.argumentsEscape.begin(),
+                node.local.argumentsEscape.end(), true);
+    }
+  }
+
+  std::vector<bool> recursive(nodes.size(), false);
+  for (std::size_t start = 0; start < nodes.size(); ++start) {
+    std::vector<std::size_t> pending = nodes[start].callees;
+    std::vector<bool> visited(nodes.size(), false);
+    while (!pending.empty() && !recursive[start]) {
+      const std::size_t current = pending.back();
+      pending.pop_back();
+      if (current == start) {
+        recursive[start] = true;
+        break;
+      }
+      if (current >= nodes.size() || visited[current]) {
+        continue;
+      }
+      visited[current] = true;
+      pending.insert(pending.end(), nodes[current].callees.begin(),
+                     nodes[current].callees.end());
+    }
+  }
+
+  std::vector<MirEffectSummary> summaries;
+  summaries.reserve(nodes.size());
+  for (std::size_t index = 0; index < nodes.size(); ++index) {
+    summaries.push_back(recursive[index]
+                            ? conservativeSummary(nodes[index].parameterCount,
+                                                  nodes[index].hasReceiver)
+                            : nodes[index].local);
+  }
+  for (std::size_t round = 0; round <= nodes.size(); ++round) {
+    std::vector<MirEffectSummary> next = summaries;
+    for (std::size_t index = 0; index < nodes.size(); ++index) {
+      if (recursive[index]) {
+        continue;
+      }
+      for (const std::size_t callee : nodes[index].callees) {
+        mergeSummary(next[index], summaries[callee]);
+        if (summaries[callee].receiverEscapes ||
+            std::any_of(summaries[callee].argumentsEscape.begin(),
+                        summaries[callee].argumentsEscape.end(),
+                        [](bool value) { return value; })) {
+          next[index].receiverEscapes = nodes[index].hasReceiver;
+          std::fill(next[index].argumentsEscape.begin(),
+                    next[index].argumentsEscape.end(), true);
+        }
+      }
+    }
+    if (next == summaries) {
+      break;
+    }
+    summaries = std::move(next);
+    if (round == nodes.size()) {
+      for (std::size_t index = 0; index < nodes.size(); ++index) {
+        summaries[index] = conservativeSummary(nodes[index].parameterCount,
+                                               nodes[index].hasReceiver);
+      }
+    }
+  }
+
+  MirProgramEffectSummaries result;
+  std::size_t next = 0;
+  for (std::size_t index = 0; index < program.functionInstances().size();
+       ++index) {
+    result.functions.push_back(std::move(summaries[next++]));
+  }
+  for (std::size_t index = 0; index < program.constructorInstances().size();
+       ++index) {
+    result.constructors.push_back(std::move(summaries[next++]));
+  }
+  for (std::size_t index = 0; index < program.destructorInstances().size();
+       ++index) {
+    result.destructors.push_back(std::move(summaries[next++]));
+  }
+  for (std::size_t index = 0; index < program.lambdaInstances().size();
+       ++index) {
+    result.lambdas.push_back(std::move(summaries[next++]));
+  }
+  return result;
+}
+
+MirVerificationResult verifyMirEffectSummaries(const MirProgram &program) {
+  MirVerificationResult result;
+  const MirProgramEffectSummaries required =
+      deriveMirProgramEffectSummaries(program);
+  const auto reject = [&](MirBodyAddress address, std::string message) {
+    result.errors.push_back({.bodyKind = address.kind,
+                             .owner = address.owner,
+                             .message = std::move(message)});
+  };
+  if (required.functions.size() != program.functionInstances().size() ||
+      required.constructors.size() != program.constructorInstances().size() ||
+      required.destructors.size() != program.destructorInstances().size() ||
+      required.lambdas.size() != program.lambdaInstances().size()) {
+    reject({}, "derived MIR effect summary cardinality is invalid");
+    return result;
+  }
+  for (std::size_t index = 0; index < required.functions.size(); ++index) {
+    if (!summaryCovers(program.functionInstances()[index].effectSummary,
+                       required.functions[index])) {
+      reject({.kind = MirBodyKind::Function, .owner = index + 1},
+             "function effect summary under-approximates its MIR body");
+    }
+  }
+  for (std::size_t index = 0; index < required.constructors.size(); ++index) {
+    if (!summaryCovers(program.constructorInstances()[index].effectSummary,
+                       required.constructors[index])) {
+      reject({.kind = MirBodyKind::Constructor, .owner = index + 1},
+             "constructor effect summary under-approximates its MIR body");
+    }
+  }
+  for (std::size_t index = 0; index < required.destructors.size(); ++index) {
+    if (!summaryCovers(program.destructorInstances()[index].effectSummary,
+                       required.destructors[index])) {
+      reject({.kind = MirBodyKind::Destructor, .owner = index + 1},
+             "destructor effect summary under-approximates its MIR body");
+    }
+  }
+  for (std::size_t index = 0; index < required.lambdas.size(); ++index) {
+    if (!summaryCovers(program.lambdaInstances()[index].effectSummary,
+                       required.lambdas[index])) {
+      reject({.kind = MirBodyKind::Lambda, .owner = index + 1},
+             "lambda effect summary under-approximates its MIR body");
+    }
   }
   return result;
 }

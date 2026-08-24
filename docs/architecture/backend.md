@@ -69,7 +69,8 @@ public views are const, and its identities are stable within the value. It
 contains:
 
 - target-resolved backend-neutral target and layout facts;
-- verified optimized MIR and canonical failure metadata;
+- verified optimized MIR, scalar block parameters/edge arguments, per-instance
+  effects, and canonical failure metadata;
 - every body identity, role, definition kind, source span, and generated-item
   requirement;
 - a flat active declaration tree preserving source order, namespace nesting,
@@ -140,6 +141,21 @@ module initialization, hosted startup, and boundary shells all use this route.
 Unsupported operations, places, lifetimes, failure edges, or representation
 facts reject the complete program before output; there is no AST/HIR body
 fallback.
+
+Optimizer tombstones are verified inert proof slots and emit no operation.
+For a scalar block parameter, the C++ MIR body emitter owns one backend-private
+edge slot. Every `Goto`, `Branch`, `Invoke`, or `Switch` predecessor
+publishes its verified arguments to those slots before transferring control;
+the destination block reads the corresponding MIR values. Preflight scans the
+same edge operands and rejects missing type/representation rows. This is a
+representation of MIR value merging, not reconstruction of a source local or
+an independent C++-level phi decision.
+
+The backend receives neither canonical source MIR nor optimizer records.
+`LoweredProgramBuilder` has already replayed those untrusted records and
+sealed exact source-to-optimized coherence. Consequently another executable
+backend can consume the same block parameters, effects, and transformed MIR
+without rerunning a GTI optimization decision.
 
 For a verified temporary receiver input, the body emitter publishes the exact
 producer result into its MIR value-rooted lifetime slot or exact CFG-promoted

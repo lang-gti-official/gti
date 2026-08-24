@@ -172,11 +172,12 @@ lang::OptimizedProgram optimize(const lang::FrontendResult &frontend,
                                            .compatibility = &compatibility});
 }
 
-lang::BackendArtifact emit(const lang::FrontendResult &frontend,
-                           const lang::MirProgram &mir,
-                           const lang::OptimizationResult &compatibility) {
+lang::BackendArtifact
+emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
+     const lang::OptimizationResult &compatibility,
+     const std::vector<lang::MirTransformRecord> &transformations = {}) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir);
+  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
 }
 
 void expectEmissionRejected(const lang::FrontendResult &frontend,
@@ -352,11 +353,11 @@ void testSelectedFamily(const std::filesystem::path &fixture) {
   const lang::BackendArtifact o0Artifact =
       emit(frontend, o0.mir, o0Compatibility);
   const lang::BackendArtifact o1Artifact =
-      emit(frontend, o1.mir, o1Compatibility);
+      emit(frontend, o1.mir, o1Compatibility, o1.report.transformations);
   const lang::BackendArtifact o3Artifact =
-      emit(frontend, o3.mir, o3Compatibility);
+      emit(frontend, o3.mir, o3Compatibility, o3.report.transformations);
   const lang::BackendArtifact o1WithO0Compatibility =
-      emit(frontend, o1.mir, o0Compatibility);
+      emit(frontend, o1.mir, o0Compatibility, o1.report.transformations);
   expectSelectedDefinitions(o0Artifact.contents);
   expectSelectedDefinitions(o1Artifact.contents);
   expectSelectedDefinitions(o3Artifact.contents);
@@ -364,7 +365,8 @@ void testSelectedFamily(const std::filesystem::path &fixture) {
   const lang::LoweredProgramBuild missingSource =
       lang::LoweredProgramBuilder().build(frontend.program, frontend.semantics,
                                           frontend.hir, lang::MirProgram{},
-                                          o0.mir, lang::TargetInfo::host());
+                                          o0.mir, o0.report.transformations,
+                                          lang::TargetInfo::host());
   expect(!missingSource.valid(),
          "LoweredProgram construction must fail closed without canonical "
          "pre-optimization MIR");
@@ -518,8 +520,8 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  const lang::BackendArtifact artifact =
-      emit(frontend, optimized.mir, compatibility);
+  const lang::BackendArtifact artifact = emit(
+      frontend, optimized.mir, compatibility, optimized.report.transformations);
   expect(memberDefinition(artifact.contents, "mask").find(marker) !=
              std::string_view::npos,
          "a this-free read-only member of a concrete class should emit from "
@@ -651,8 +653,8 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  const lang::BackendArtifact artifact =
-      emit(frontend, optimized.mir, compatibility);
+  const lang::BackendArtifact artifact = emit(
+      frontend, optimized.mir, compatibility, optimized.report.transformations);
   expect(memberDefinition(artifact.contents, "read_other").find(marker) ==
              std::string_view::npos,
          "a field read on a non-receiver object lies outside the family and "
@@ -702,8 +704,8 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  const lang::BackendArtifact artifact =
-      emit(frontend, optimized.mir, compatibility);
+  const lang::BackendArtifact artifact = emit(
+      frontend, optimized.mir, compatibility, optimized.report.transformations);
   expect(memberDefinition(artifact.contents, "combined").find(marker) !=
              std::string_view::npos,
          "a member calling a proved-failure-free free function should emit "
@@ -753,8 +755,8 @@ int main() {
   // definition stays for unadmitted instantiations, and the declaration-
   // keyed substituted-body hazard that once regressed examples 07/17 does
   // not apply to the per-instance form.
-  const lang::BackendArtifact artifact =
-      emit(frontend, optimized.mir, compatibility);
+  const lang::BackendArtifact artifact = emit(
+      frontend, optimized.mir, compatibility, optimized.report.transformations);
   expect(specializedMemberDefinition(artifact.contents, "Wrap<std::int32_t>",
                                      "matches")
                  .find(marker) != std::string_view::npos,

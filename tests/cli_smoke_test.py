@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import pathlib
 import re
 import shlex
@@ -1820,6 +1821,134 @@ def main():
             expected=64,
         )
         assert "cannot be used together" in kept.stderr
+
+        pre_optimization_mir = root / "optimization-before.mir"
+        post_optimization_mir = root / "optimization-after.mir"
+        optimization_report = root / "optimization-report.json"
+        observed_cpp = root / "optimization-observed.cpp"
+        observed = run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-cpp",
+                "-O1",
+                "--dump-mir-before",
+                str(pre_optimization_mir),
+                "--dump-mir-after",
+                str(post_optimization_mir),
+                "--optimization-remarks",
+                "--optimization-report",
+                str(optimization_report),
+                "-o",
+                str(observed_cpp),
+            ]
+        )
+        before_text = pre_optimization_mir.read_text(encoding="utf-8")
+        after_text = post_optimization_mir.read_text(encoding="utf-8")
+        report_text = optimization_report.read_text(encoding="utf-8")
+        report = json.loads(report_text)
+        assert before_text.startswith("mir-v")
+        assert after_text.startswith("mir-v")
+        assert before_text != after_text
+        assert observed.stderr.startswith("gti-opt: GTI MIR optimization remarks")
+        assert "gti-opt: safety operations source=" in observed.stderr
+        assert report["schema"] == "gti-optimization-report"
+        assert report["version"] == 1
+        assert report["optimizationLevel"] == "O1"
+        assert [entry["name"] for entry in report["passes"]] == [
+            "scalar-promotion",
+            "fold-literal-identities",
+            "unreachable-block-cleanup",
+            "dead-unused-computations",
+        ]
+        assert report["verification"] == {
+            "enabled": True,
+            "inputValid": True,
+            "outputValid": True,
+        }
+        assert report["safetyOperations"]["source"] >= report[
+            "safetyOperations"
+        ]["emitted"]
+
+        repeated_before = root / "optimization-before-repeated.mir"
+        repeated_after = root / "optimization-after-repeated.mir"
+        repeated_report = root / "optimization-report-repeated.json"
+        repeated_cpp = root / "optimization-observed-repeated.cpp"
+        run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-cpp",
+                "-O1",
+                "--dump-mir-before",
+                str(repeated_before),
+                "--dump-mir-after",
+                str(repeated_after),
+                "--optimization-report",
+                str(repeated_report),
+                "-o",
+                str(repeated_cpp),
+            ]
+        )
+        assert repeated_before.read_text(encoding="utf-8") == before_text
+        assert repeated_after.read_text(encoding="utf-8") == after_text
+        assert repeated_report.read_text(encoding="utf-8") == report_text
+
+        o0_before = root / "optimization-o0-before.mir"
+        o0_after = root / "optimization-o0-after.mir"
+        o0_report = root / "optimization-o0-report.json"
+        o0_observed_cpp = root / "optimization-o0-observed.cpp"
+        run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-cpp",
+                "-O0",
+                "--dump-mir-before",
+                str(o0_before),
+                "--dump-mir-after",
+                str(o0_after),
+                "--optimization-report",
+                str(o0_report),
+                "-o",
+                str(o0_observed_cpp),
+            ]
+        )
+        assert o0_before.read_text(encoding="utf-8") == o0_after.read_text(
+            encoding="utf-8"
+        )
+        assert json.loads(o0_report.read_text(encoding="utf-8"))["passes"] == []
+
+        duplicate_observation_path = run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-cpp",
+                "--dump-mir-before",
+                str(pre_optimization_mir),
+                "--dump-mir-after",
+                str(pre_optimization_mir),
+                "-o",
+                str(root / "duplicate-observation.cpp"),
+            ],
+            expected=64,
+        )
+        assert "must use different output paths" in duplicate_observation_path.stderr
+        source_before_collision = optimization_source.read_text(encoding="utf-8")
+        source_collision = run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-cpp",
+                "--optimization-report",
+                str(optimization_source),
+                "-o",
+                str(root / "source-collision.cpp"),
+            ],
+            expected=64,
+        )
+        assert "refusing to overwrite loaded source" in source_collision.stderr
+        assert optimization_source.read_text(encoding="utf-8") == source_before_collision
 
         optimization_executable = root / "optimization"
         optimized_build = run(
