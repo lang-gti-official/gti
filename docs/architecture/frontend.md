@@ -237,9 +237,10 @@ grouping, and unary parsing share a structural depth budget of 64. Crossing
 that budget produces parser-owned `GTI-P0005` at the first token beyond the
 limit and unwinds through ordinary recovery; it never relies on a process
 signal or native stack exhaustion. The bound also keeps recovered syntax safe
-for the LSP's smaller worker stack and downstream AST visitors. The diagnostic
-suggests splitting the source into shallower parts and has no fix-it because no
-single rewrite preserves intent.
+for downstream AST visitors. LSP frontend workers have an explicit stack budget
+large enough to reach this source-level limit even in unoptimized builds. The
+diagnostic suggests splitting the source into shallower parts and has no fix-it
+because no single rewrite preserves intent.
 
 ## Frontend Result And Gates
 

@@ -28,6 +28,13 @@ context. `lsp_protocol` covers the recovery path with
 through the worker and then requires ordinary analysis and a semantic request
 to still succeed.
 
+The two long-lived frontend workers also reserve 8 MiB stacks through
+`llvm::thread`. This lets the compiler's 64-level parser budget publish
+`GTI-P0005` before Darwin's smaller default secondary-thread stack is
+exhausted, including completion's independent frontend analysis. The protocol
+regression then edits and formats the same document, proving that both workers
+and shared state remain usable.
+
 What remains is the stronger guarantee, not the state-safety one: in-process
 recovery cannot undo heap damage that occurred before a fatal signal. Moving
 analysis to a subprocess and treating process termination as the recovery

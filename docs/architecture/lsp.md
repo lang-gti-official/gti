@@ -299,6 +299,10 @@ configured cache limits and observed estimated occupancy.
 Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
 requests without adopting clangd's per-translation-unit scheduler complexity.
+Both queues use one long-lived LLVM thread with an explicit 8 MiB stack. That
+avoids Darwin's 512 KiB secondary-thread default and ensures the compiler's
+bounded-depth recovery runs before native stack exhaustion in debug builds,
+without creating a new thread for every edit or completion request.
 
 Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
 compiler-owned discovery point for concrete generic instances, so stopping at

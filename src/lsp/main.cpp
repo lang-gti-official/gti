@@ -11,6 +11,7 @@
 #include "frontend_snapshot_state.h"
 
 #include <llvm/Support/JSON.h>
+#include <llvm/Support/thread.h>
 
 #include <algorithm>
 #include <atomic>
@@ -32,7 +33,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -45,6 +45,13 @@ using JsonObject = llvm::json::Object;
 using JsonValue = llvm::json::Value;
 
 using SteadyClock = std::chrono::steady_clock;
+
+// Darwin's default secondary-thread stack is too small for the recursive
+// frontend in an unoptimized build: native exhaustion can otherwise precede
+// the compiler's structured 64-level parser diagnostic. Keep the two workers
+// long-lived, but give both compiler-facing queues the same practical stack
+// budget as an ordinary compiler process.
+constexpr unsigned frontendWorkerStackSize = 8U * 1024U * 1024U;
 
 #if !defined(GTI_BUILD_STDLIB_ROOT)
 #define GTI_BUILD_STDLIB_ROOT ""
@@ -1486,8 +1493,10 @@ public:
   explicit LanguageServer(lang::StandardLibraryLayout standardLibrary)
       : standardLibrary(std::move(standardLibrary)),
         frontendTracePath(frontendTracePathFromEnvironment()),
-        analysisWorker(&LanguageServer::runAnalysisWorker, this),
-        completionWorker(&LanguageServer::runCompletionWorker, this) {}
+        analysisWorker(std::optional<unsigned>{frontendWorkerStackSize},
+                       [this] { runAnalysisWorker(); }),
+        completionWorker(std::optional<unsigned>{frontendWorkerStackSize},
+                         [this] { runCompletionWorker(); }) {}
 
   ~LanguageServer() {
     stopCompletionWorker();
@@ -3455,8 +3464,8 @@ private:
   bool preferredCodeActions = false;
   bool hierarchicalDocumentSymbols = false;
   std::atomic<std::uint64_t> nextServerRequestId{1};
-  std::thread analysisWorker;
-  std::thread completionWorker;
+  llvm::thread analysisWorker;
+  llvm::thread completionWorker;
 };
 
 } // namespace
