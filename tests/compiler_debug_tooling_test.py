@@ -46,12 +46,16 @@ def manifest_of(bundle: Path) -> dict:
 
 
 STUB_COMPILER = r'''#!/usr/bin/env python3
-import os, signal, sys, time
+import os, pathlib, signal, sys, time
 source = next((a for a in sys.argv[1:] if a.endswith(".gti")), "")
 if source.endswith("crash.gti"):
     os.kill(os.getpid(), signal.SIGSEGV)
 if source.endswith("hang.gti"):
     time.sleep(3600)
+# Content-triggered crash, so reduction tests can strip unrelated lines
+# while the crashing line keeps the stub dying.
+if source and "GTI_STUB_CRASH_TOKEN" in pathlib.Path(source).read_text():
+    os.kill(os.getpid(), signal.SIGSEGV)
 sys.exit(0)
 '''
 
@@ -63,6 +67,7 @@ def main() -> int:
     gti = Path(sys.argv[1]).resolve()
     root = Path(sys.argv[2]).resolve()
     script = root / "scripts/debug/capture_compiler_failure.py"
+    reducer = root / "scripts/debug/reduce_compiler_failure.py"
 
     with tempfile.TemporaryDirectory(prefix="gti-debug-tooling-") as name:
         temp = Path(name)
@@ -240,6 +245,103 @@ root = "src/tests/main.gti"
         check(hung.returncode == 0 and hang_signature["kind"] == "timeout",
               "injected hang produces a timeout signature",
               json.dumps(hang_signature))
+
+        # --- Q-FUZZ-01C: reduction preserves the exact failure -------------
+
+        # Capture output advertises the reducer (exit-gate item).
+        check("reduce_compiler_failure.py" in captured.stdout,
+              "capture output prints the reducer command")
+
+        # A diagnostic buried in unrelated declarations reduces to the
+        # failure alone, without becoming a different diagnostic.
+        noisy = temp / "noisy.gti"
+        noisy.write_text(
+            "class unrelated_alpha {\n"
+            "public:\n"
+            "  unrelated_alpha() {}\n"
+            "  int32_t weight() { return 12; }\n"
+            "};\n"
+            "\n"
+            "int32_t unrelated_beta(int32_t value) {\n"
+            "  return value * 3;\n"
+            "}\n"
+            "\n"
+            "int main() {\n"
+            "  mut unrelated_alpha helper = unrelated_alpha();\n"
+            "  int32_t noise = unrelated_beta(helper.weight());\n"
+            "  return undefined_name + noise;\n"
+            "}\n",
+            encoding="utf-8")
+        noisy_bundle = temp / "noisy-bundle"
+        run_tool(script, "capture", "--gti", str(gti),
+                 "--source", str(noisy), "--out", str(noisy_bundle))
+        reduced_out = temp / "noisy-reduced"
+        reduced = run_tool(reducer, "--gti", str(gti),
+                           "--bundle", str(noisy_bundle),
+                           "--out", str(reduced_out))
+        minimized = (reduced_out / "source/noisy.gti").read_text(
+            encoding="utf-8")
+        check(reduced.returncode == 0
+              and "undefined_name" in minimized
+              and "unrelated_alpha" not in minimized
+              and len(minimized) < 200,
+              "diagnostic reduces to the failure without the noise",
+              reduced.stdout + reduced.stderr + "\n" + minimized)
+        reduced_manifest = manifest_of(reduced_out / "bundle")
+        check(reduced_manifest["signature"]
+              == manifest_of(noisy_bundle)["signature"],
+              "reduced bundle carries the identical signature")
+
+        # A runtime mismatch reduces while its observable tuple is held.
+        drifted_noise = temp / "drift-noisy.gti"
+        drifted_noise.write_text(
+            "int32_t dead_helper() { return 7; }\n"
+            "int32_t dead_other() { return 9; }\n"
+            "int main() { return 3; }\n",
+            encoding="utf-8")
+        drift_noisy_bundle = temp / "drift-noisy-bundle"
+        run_tool(script, "capture", "--gti", str(gti),
+                 "--source", str(drifted_noise),
+                 "--out", str(drift_noisy_bundle))
+        drift_reduced_out = temp / "drift-reduced"
+        drift_reduced = run_tool(reducer, "--gti", str(gti),
+                                 "--bundle", str(drift_noisy_bundle),
+                                 "--out", str(drift_reduced_out))
+        drift_minimized = (
+            drift_reduced_out / "source/drift-noisy.gti"
+        ).read_text(encoding="utf-8")
+        check(drift_reduced.returncode == 0
+              and "dead_helper" not in drift_minimized
+              and manifest_of(drift_reduced_out / "bundle")["signature"]
+              == manifest_of(drift_noisy_bundle)["signature"],
+              "runtime mismatch reduces with its output tuple held",
+              drift_reduced.stdout + drift_reduced.stderr)
+
+        # A crash-shaped signal reduces deterministically under the stub.
+        crash_noise = temp / "crash-noisy.gti"
+        crash_noise.write_text(
+            "// filler line one\n"
+            "// filler line two\n"
+            "// GTI_STUB_CRASH_TOKEN\n"
+            "// filler line three\n",
+            encoding="utf-8")
+        crash_noise_bundle = temp / "crash-noisy-bundle"
+        run_tool(script, "capture", "--gti", str(stub),
+                 "--source", str(crash_noise),
+                 "--out", str(crash_noise_bundle))
+        crash_reduced_out = temp / "crash-reduced"
+        crash_reduced = run_tool(reducer, "--gti", str(stub),
+                                 "--bundle", str(crash_noise_bundle),
+                                 "--out", str(crash_reduced_out))
+        crash_minimized = (
+            crash_reduced_out / "source/crash-noisy.gti"
+        ).read_text(encoding="utf-8")
+        check(crash_reduced.returncode == 0
+              and "GTI_STUB_CRASH_TOKEN" in crash_minimized
+              and "filler" not in crash_minimized,
+              "signal reduces to the crashing line alone",
+              crash_reduced.stdout + crash_reduced.stderr
+              + "\n" + crash_minimized)
 
     if FAILURES:
         print(f"\n{len(FAILURES)} of the checks failed", file=sys.stderr)
