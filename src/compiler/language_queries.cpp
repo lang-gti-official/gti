@@ -654,6 +654,13 @@ public:
     if (result.signature.empty() || result.signature == "unknown") {
       return std::nullopt;
     }
+    if (occurrence->symbol != 0) {
+      if (const SymbolRecord *symbol =
+              semantics.database().findSymbol(occurrence->symbol);
+          symbol != nullptr && symbol->documentationMarkdown) {
+        result.documentationMarkdown = symbol->documentationMarkdown;
+      }
+    }
     if (hoveredFunction != nullptr) {
       appendCallableContractNotes(result, semantics, *hoveredFunction,
                                   hoveredCall, types);

@@ -34,12 +34,17 @@ analysis to a subprocess and treating process termination as the recovery
 boundary is the option if that is ever required. Do not broaden the current
 guard around more protocol or stateful work.
 
-### 1. Retain documentation comments and declaration extents
+### 1. Retain documentation comments and declaration extents - hover implemented
 
-Preserve `///` comments as lexer trivia or declaration-attached data, normalize
-their Markdown once, and attach it to compiler symbols. Hover, completion,
-signature help, and generated API documentation should consume the same value
-for standard and third-party source.
+The lexer now normalizes contiguous `///` blocks as leading trivia, the parser
+transfers them onto declarations, and semantic analysis attaches the Markdown
+to exact compiler symbols. Hover consumes that value for declarations and
+resolved uses, including selected calls/constructors, included source, and
+dirty dependency overlays.
+
+Completion, signature help, generated API documentation, and broader standard
+library documentation remain to consume the same value; they must not add a
+second comment parser or documentation store.
 
 Statement-level declaration extents are implemented: the parser stamps every
 statement funnel result with its first-through-last-token span, and document

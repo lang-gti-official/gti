@@ -345,6 +345,23 @@ public:
     return requiresActiveCleanup(type, query);
   }
 
+  void attachDeclarationDocumentation(SymbolId symbol,
+                                      const Stmt &declaration) {
+    const std::optional<std::string> &documentation =
+        declaration.documentationMarkdown();
+    if (symbol != 0 && documentation && !documentation->empty()) {
+      semanticModel.setSymbolDocumentation(symbol, *documentation);
+    }
+  }
+
+  void attachTokenDocumentation(SymbolId symbol, const Token &declaration) {
+    if (symbol != 0 && declaration.leadingDocumentationMarkdown &&
+        !declaration.leadingDocumentationMarkdown->empty()) {
+      semanticModel.setSymbolDocumentation(
+          symbol, *declaration.leadingDocumentationMarkdown);
+    }
+  }
+
   // Concrete instance reanalysis runs on this visitor inside a detach/
   // restore bracket instead of copying the whole visitor per instance. The
   // bracket detaches the accumulated model and diagnostics, analysis writes
@@ -544,6 +561,7 @@ public:
     const SymbolId symbol = recordToolingSymbol(
         stmt.name(), SymbolKind::Enum,
         info == nullptr ? stmt.name().lexeme : info->qualifiedName, type);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -560,6 +578,7 @@ public:
           (info == nullptr ? stmt.name().lexeme : info->qualifiedName) +
               "::" + enumerator.name.lexeme,
           type);
+      attachTokenDocumentation(enumeratorSymbol, enumerator.name);
       semanticModel.recordOccurrence(
           {.sourceUnit = currentSourceUnit,
            .span = tokenSpan(enumerator.name),
@@ -642,6 +661,7 @@ public:
             ? typeSpelling(type)
             : qualifiedName(info.namespaceScope, stmt.name().lexeme),
         type, false, !stmt.isForwardDeclaration());
+    attachDeclarationDocumentation(symbol, stmt);
     OccurrenceRole roles = OccurrenceRole::Declaration;
     if (!stmt.isForwardDeclaration()) {
       roles |= OccurrenceRole::Definition;
@@ -787,6 +807,7 @@ public:
         qualifiedName(owner.namespaceScope,
                       owner.name.lexeme + "::" + stmt.name().lexeme),
         ownerType, false, true, constructorAccess(owner, &stmt));
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -1156,6 +1177,7 @@ public:
                       owner.name.lexeme + "::~" + stmt.name().lexeme),
         SemanticType::classType(*currentClass), false, true,
         AccessModifier::Public);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -1533,6 +1555,7 @@ public:
     const Token &functionToken =
         stmt.operatorName() ? stmt.operatorName()->symbol : stmt.name();
     const SymbolId functionSymbol = recordFunctionSymbol(stmt);
+    attachDeclarationDocumentation(functionSymbol, stmt);
     OccurrenceRole functionRoles = OccurrenceRole::Declaration;
     if (stmt.body()) {
       functionRoles |= OccurrenceRole::Definition;
@@ -2025,6 +2048,7 @@ public:
         recordToolingSymbol(stmt.name(), SymbolKind::NamespaceAlias,
                             qualifiedName(currentNamespace, stmt.name().lexeme),
                             SemanticType::Unknown);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -2039,6 +2063,7 @@ public:
         recordToolingSymbol(stmt.name(), SymbolKind::Namespace,
                             qualifiedName(currentNamespace, stmt.name().lexeme),
                             SemanticType::Unknown);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -2557,6 +2582,7 @@ public:
       const SymbolId symbol =
           recordBindingOccurrence(binding.name(), element.binding.type, false,
                                   SemanticBindingKind::LocalVariable);
+      attachDeclarationDocumentation(symbol, stmt);
       element.declaration = &binding;
       element.binding.symbol = symbol;
       semanticModel.record(binding, element.binding);
@@ -2587,6 +2613,7 @@ public:
         info == nullptr ? qualifiedName(currentNamespace, stmt.name().lexeme)
                         : info->qualifiedName,
         type);
+    attachDeclarationDocumentation(symbol, stmt);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
@@ -2605,6 +2632,7 @@ public:
       return;
     }
     const RegisteredConcept &conceptInfo = concepts[found->second - 1];
+    attachDeclarationDocumentation(conceptInfo.symbol, stmt);
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                     .span = tokenSpan(stmt.name()),
                                     .kind = SemanticOccurrenceKind::Symbol,
@@ -2664,6 +2692,7 @@ public:
     const SymbolId symbol = recordBindingOccurrence(
         stmt.name(), declaredType, stmt.isMutable(), bindingKind,
         bindingKind == SemanticBindingKind::StaticField, internalLinkage);
+    attachDeclarationDocumentation(symbol, stmt);
     BindingInfo info =
         bindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
                                                    : AccessMode::ReadOnly);
@@ -8617,6 +8646,7 @@ private:
         declaration.name(), inferredType, declaration.isMutable(),
         local ? SemanticBindingKind::LocalVariable
               : SemanticBindingKind::GlobalVariable);
+    attachDeclarationDocumentation(symbol, declaration);
     const std::optional<ConstantValue> constant = constexprBindingValue(
         declaration, inferredType,
         diagnostics.size() == declarationDiagnosticStart &&

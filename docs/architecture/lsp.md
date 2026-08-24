@@ -29,6 +29,15 @@ tokens with UTF-16 lengths; delimiters inside literals are excluded. The
 protocol layer must not repeat name lookup, overload selection, type rendering,
 or declaration parsing.
 
+Contiguous `///` blocks are normalized by the lexer as leading trivia on the
+following declaration token. The parser transfers that Markdown onto the
+declaration, and semantic analysis attaches the same value to the exact
+`SymbolRecord`. Hover reads documentation through the occurrence's selected
+symbol, so declaration, type, field, constructor, and overload-selected call
+sites agree across entry files, included sources, and dirty dependency
+overlays. The protocol adapter places the documentation after the canonical GTI
+signature and does not search source text for comments.
+
 Compile-time conditions retain loader-resolved inactive token spans in each
 `SourceUnit`. Semantic tokens apply the `inactiveCode` modifier to those spans;
 the loader also retains the exact `defined` operator and configuration-flag
@@ -329,8 +338,9 @@ meaning from punctuation.
 
 ## Current Limits
 
-- Documentation comments are not retained by the compiler, so hover's optional
-  Markdown documentation field is normally empty.
+- Retained documentation is currently consumed by hover. Completion,
+  signature help, and generated API reference output do not yet publish the
+  same compiler-owned Markdown.
 - Definition, references, document highlights, and rename are implemented
   from exact resolved symbols. Rename is deliberately limited to
   function-local names: identities visible outside the entry document's

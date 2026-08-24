@@ -85,6 +85,8 @@ void Lexer::reset(std::string sourceName) {
   start = 0;
   current = 0;
   line = 1;
+  pendingDocumentationMarkdown.reset();
+  pendingDocumentationLastLine = 0;
 }
 
 bool Lexer::isAtEnd() const { return current >= source.length(); }
@@ -189,10 +191,10 @@ void Lexer::scanToken() {
     break;
   case '/':
     if (match('/')) {
-      while (peek() != '\n' && !isAtEnd()) {
-        advance();
-      }
+      lineComment();
     } else if (match('*')) {
+      pendingDocumentationMarkdown.reset();
+      pendingDocumentationLastLine = 0;
       blockComment();
     } else {
       addToken(match('=') ? TokenKind::SLASH_EQUAL : TokenKind::SLASH);
@@ -261,6 +263,50 @@ void Lexer::addToken(TokenKind token) { addToken(token, std::monostate{}); }
 void Lexer::addToken(TokenKind kind, Literal literal) {
   std::string text = source.substr(start, current - start);
   tokens.emplace_back(kind, text, std::move(literal), start, line, sourceName);
+  if (kind != TokenKind::END_OF_FILE && pendingDocumentationMarkdown) {
+    if (line <= pendingDocumentationLastLine + 1) {
+      tokens.back().leadingDocumentationMarkdown =
+          std::make_shared<const std::string>(
+              std::move(*pendingDocumentationMarkdown));
+    }
+    pendingDocumentationMarkdown.reset();
+    pendingDocumentationLastLine = 0;
+  }
+}
+
+void Lexer::lineComment() {
+  const bool documentation = peek() == '/';
+  if (documentation) {
+    advance();
+  }
+  const std::size_t contentStart = current;
+  while (peek() != '\n' && !isAtEnd()) {
+    advance();
+  }
+
+  if (!documentation) {
+    pendingDocumentationMarkdown.reset();
+    pendingDocumentationLastLine = 0;
+    return;
+  }
+
+  std::size_t contentEnd = current;
+  if (contentEnd > contentStart && source[contentEnd - 1] == '\r') {
+    --contentEnd;
+  }
+  std::string content = source.substr(contentStart, contentEnd - contentStart);
+  if (!content.empty() && content.front() == ' ') {
+    content.erase(content.begin());
+  }
+
+  if (!pendingDocumentationMarkdown ||
+      line != pendingDocumentationLastLine + 1) {
+    pendingDocumentationMarkdown = std::move(content);
+  } else {
+    *pendingDocumentationMarkdown += '\n';
+    *pendingDocumentationMarkdown += content;
+  }
+  pendingDocumentationLastLine = line;
 }
 
 void Lexer::blockComment() {

@@ -1471,6 +1471,7 @@ struct SymbolRecord {
   bool internalLinkage = false;
   bool generated = false;
   bool compilerPrivate = false;
+  std::optional<std::string> documentationMarkdown;
 };
 
 // Byte-exact source geometry of one call's argument list, recorded by the
@@ -1563,6 +1564,9 @@ private:
   void rebase(const SemanticDatabase *baseDatabase);
 
   SymbolId recordSymbol(SymbolRecord symbol);
+
+  void setSymbolDocumentation(SymbolId symbol,
+                              std::string documentationMarkdown);
 
   [[nodiscard]] SymbolId
   symbolForDeclaration(SourceUnitId sourceUnit, const SourceSpan &span,
@@ -2113,6 +2117,9 @@ private:
                                     CompilerCapabilityTypeKind kind);
 
   SymbolId recordSymbol(SymbolRecord symbol);
+
+  void setSymbolDocumentation(SymbolId symbol,
+                              std::string documentationMarkdown);
 
   [[nodiscard]] SymbolId
   symbolForDeclaration(SourceUnitId sourceUnit, const SourceSpan &span,

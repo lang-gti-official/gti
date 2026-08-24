@@ -225,6 +225,7 @@ private:
           declaration = typedDeclaration(true, std::nullopt, false, false, true,
                                          LanguageLinkage::C);
         }
+        stampExtent(declaration, declarationStart);
         const auto *function =
             dynamic_cast<const FunctionDecl *>(declaration.get());
         if (function == nullptr) {
@@ -1355,7 +1356,13 @@ private:
   }
 
   void stampExtent(const StmtPtr &statement, const Token &start) const {
-    if (statement == nullptr || current == 0) {
+    if (statement == nullptr) {
+      return;
+    }
+    if (start.leadingDocumentationMarkdown) {
+      statement->setDocumentationMarkdown(*start.leadingDocumentationMarkdown);
+    }
+    if (current == 0) {
       return;
     }
     const Token &last = previous();
