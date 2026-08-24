@@ -81,7 +81,7 @@ The holes cluster, and fixing one pair routinely leaves its neighbours broken
 
 `scripts/debug/place_shape_matrix.py` enumerates that space directly, crossing
 each storage root (local, global, parameter, lambda capture, `this`, raw
-pointer) with each projection chain (none, `.field`, `.field.field`, `[i]`,
+pointer, static field) with each projection chain (none, `.field`, `.field.field`, `[i]`,
 `[i].field`, deref, arrow) in both read and write position, then compiling one
 minimal program per cell. Enum, payload-enum and `expected<T, E>` cells cover
 the aggregate-shaped neighbours of the fixed array that produced #106, and
@@ -187,6 +187,25 @@ count is how [#112](https://github.com/LukeHHA/gti/issues/112) nearly went
 unnoticed. A specifically classified, bounded backend capability gap may use
 `GTI-B0003`; an unclassified rejection remains a compiler defect and therefore
 stays visible as `ICE`.
+
+## Sweeping the standard library by include
+
+`scripts/debug/stdlib_include_sweep.py` compiles each module under
+`stdlib/std/` on its own — one `#include` and an empty `main` — so a failure
+is attributable to the header alone.
+
+```sh
+python3 scripts/debug/stdlib_include_sweep.py
+```
+
+That shape had never been tested. Every case in the surface manifest *uses*
+the module it covers, and including a header that declares a generic **without
+instantiating it** is its own failure mode: the destructor declaration is
+lowered with no concrete MIR instance and the compile raises `GTI-B0001`.
+Using the module makes it go away, which is why the surface cases pass while
+the header alone does not. Filed as
+[#116](https://github.com/LukeHHA/gti/issues/116); today the sweep reports
+`19 module(s): 16 ok, 3 failing`.
 
 ## Probing the language server
 

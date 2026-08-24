@@ -258,6 +258,114 @@ public:
 """
 
 
+def language_surface_shapes() -> list[Shape]:
+    """Constructs with no place-projection angle, kept as controls.
+
+    None of these has ever failed. They are here because the two most recent
+    findings both came from roots the matrix could not generate, so the cost
+    of a cell is much lower than the cost of a blind spot.
+
+    `global range-for` is the interesting one: iterating a global array works
+    while *indexing* the same array does not (#104), because the loop takes
+    the symbol's address into a pointer place first. It is a passing control
+    that documents where a working spelling already exists.
+    """
+    return [
+        Shape("namespace", "qualified field", "", "", "raw",
+              body=("namespace app {\n"
+                    "mut leaf shared = leaf();\n"
+                    "}\n"
+                    "int main() { return int(app::shared.v) - 7; }")),
+        Shape("callable", "default argument", "", "", "raw",
+              body=("int32_t offset(int32_t base, int32_t delta = 7) {\n"
+                    "  return base + delta;\n"
+                    "}\n"
+                    "int main() { return int(offset(0)) - 7; }")),
+        Shape("directive", "ifdef selection", "", "", "raw",
+              body=("#define DEBUG_MODE\n"
+                    "#ifdef DEBUG_MODE\n"
+                    "int32_t selected() { return 7; }\n"
+                    "#else\n"
+                    "int32_t selected() { return 1; }\n"
+                    "#endif\n"
+                    "int main() { return int(selected()) - 7; }")),
+        Shape("local", "range-for", "", "", "raw",
+              body=("int main() {\n"
+                    "  mut int32_t total = 7;\n"
+                    "  mut int32_t cells[3] = {};\n"
+                    "  for (int32_t value : cells) { total = total + value; }\n"
+                    "  return int(total) - 7;\n"
+                    "}")),
+        Shape("global", "range-for", "", "", "raw",
+              body=("mut int32_t cells[3] = {};\n"
+                    "int main() {\n"
+                    "  mut int32_t total = 7;\n"
+                    "  for (int32_t value : cells) { total = total + value; }\n"
+                    "  return int(total) - 7;\n"
+                    "}")),
+    ]
+
+
+def static_shapes() -> list[Shape]:
+    """Static class fields — a storage root the matrix had no cells for.
+
+    A static field is symbol-rooted like a global, so the two should behave
+    alike; they do, including in failing. Keeping both means a fix that
+    handles one and forgets the other shows up immediately.
+    """
+    return [
+        Shape("static", "scalar", "", "", "raw",
+              body=("class counter {\n"
+                    "public:\n"
+                    "  counter() {}\n"
+                    "  static mut int32_t total = 0;\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  counter::total = 7;\n"
+                    "  return int(counter::total) - 7;\n"
+                    "}")),
+        Shape("static", "class field", "", "", "raw",
+              body=("class holder {\n"
+                    "public:\n"
+                    "  holder() {}\n"
+                    "  static mut leaf shared = leaf();\n"
+                    "};\n"
+                    "int main() { return int(holder::shared.v) - 7; }")),
+        # Same shape as #104, reached through a static rather than a global.
+        Shape("static", "indexed load", "", "", "raw",
+              body=("class holder {\n"
+                    "public:\n"
+                    "  holder() {}\n"
+                    "  static mut int32_t table[4] = {};\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  return int(holder::table[std::size_t(0)]);\n"
+                    "}")),
+        # #115: the write path fails at a different gate than the read.
+        Shape("static", "indexed store", "", "", "raw",
+              body=("class holder {\n"
+                    "public:\n"
+                    "  holder() {}\n"
+                    "  static mut int32_t table[4] = {};\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  holder::table[std::size_t(0)] = 7;\n"
+                    "  return 0;\n"
+                    "}")),
+        Shape("static", "destructor runs", "", "", "raw",
+              body=("mut int32_t witness = 0;\n"
+                    "class tracked {\n"
+                    "public:\n"
+                    "  tracked() {}\n"
+                    "  ~tracked() { witness = 7; }\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  { mut tracked t = tracked(); }\n"
+                    "  return int(witness) - 7;\n"
+                    "}")),
+    ]
+
+
 def inheritance_shapes() -> list[Shape]:
     """Polymorphic receivers.
 
@@ -530,7 +638,8 @@ def main() -> int:
                          + capture_shapes() + field_shapes()
                          + pointer_shapes() + nested_capture_shapes()
                          + enum_shapes() + generic_shapes()
-                         + inheritance_shapes())
+                         + inheritance_shapes() + static_shapes()
+                         + language_surface_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:
