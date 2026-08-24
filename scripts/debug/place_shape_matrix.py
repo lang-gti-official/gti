@@ -258,6 +258,42 @@ public:
 """
 
 
+def constexpr_limit_shapes() -> list[Shape]:
+    """Programs that exceed the bounded constexpr evaluator's limits.
+
+    `docs/language/grammar.ebnf` gives the evaluator "one 4096-step budget and
+    a 64-call-depth limit". Both currently report `GTI-S2057` cleanly, and the
+    depth boundary is exactly where documented — 63 nested calls evaluate, 64
+    do not. These are `error` cells rather than `ok` ones, and that is the
+    point: a limit that starts reporting `ICE`, or that stops firing and hangs
+    instead, changes the cell.
+    """
+    recurse = ("constexpr int32_t deep(int32_t n) {{\n"
+               "  if (n <= 0) {{\n"
+               "    return 0;\n"
+               "  }}\n"
+               "  return deep(n - 1) + 1;\n"
+               "}}\n"
+               "static constexpr int32_t value = deep({n});\n"
+               "int main() {{ return int(value) - int(value); }}")
+    return [
+        Shape("constexpr", "depth 63 (under)", "", "", "raw",
+              body=recurse.format(n=63)),
+        Shape("constexpr", "depth 64 (over)", "", "", "raw",
+              body=recurse.format(n=64)),
+        Shape("constexpr", "step budget", "", "", "raw",
+              body=("constexpr int32_t spin(int32_t n) {\n"
+                    "  mut int32_t total = 0;\n"
+                    "  for (mut int32_t i = 0; i < n; i++) {\n"
+                    "    total = total + 1;\n"
+                    "  }\n"
+                    "  return total;\n"
+                    "}\n"
+                    "static constexpr int32_t value = spin(1000);\n"
+                    "int main() { return int(value) - int(value); }")),
+    ]
+
+
 def declaration_shapes() -> list[Shape]:
     """Declarations that are never used.
 
@@ -725,7 +761,8 @@ def main() -> int:
                          + pointer_shapes() + nested_capture_shapes()
                          + enum_shapes() + generic_shapes()
                          + inheritance_shapes() + static_shapes()
-                         + language_surface_shapes() + declaration_shapes())
+                         + language_surface_shapes() + declaration_shapes()
+                         + constexpr_limit_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:
