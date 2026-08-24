@@ -1,0 +1,15 @@
+// Reproducer for https://github.com/LukeHHA/gti/issues/100
+//
+// Any member access on a global class-typed variable raises GTI-B0001.
+// Declaring the global is fine; reading or writing a field is not. A local
+// of the same class, and a global scalar, both compile.
+
+class thing {
+public:
+  thing() {}
+  mut int32_t value = 0;
+};
+
+mut thing g = thing();
+
+int main() { return int(g.value); }

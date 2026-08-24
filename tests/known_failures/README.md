@@ -22,6 +22,9 @@ passing regression and delete it here.
 | `issue-93c-parser-deep-calls.gti` | [#93](https://github.com/LukeHHA/gti/issues/93) | …deeply nested calls |
 | `issue-93d-parser-deep-if.gti` | [#93](https://github.com/LukeHHA/gti/issues/93) | …deeply nested `if` statements (a *statement* form) |
 | `issue-95-global-no-main.gti` | [#95](https://github.com/LukeHHA/gti/issues/95) | a global variable with no `main` → `GTI-B0001` |
+| `issue-100-global-class-member.gti` | [#100](https://github.com/LukeHHA/gti/issues/100) | any member access on a global class-typed variable → `GTI-B0001` |
+| `issue-101-pair.gti` | [#101](https://github.com/LukeHHA/gti/issues/101) | `std::make_pair` → `GTI-B0001` in the stdlib body |
+| `issue-101-forward-list.gti` | [#101](https://github.com/LukeHHA/gti/issues/101) | `forward_list::push_front` → `GTI-B0001` in its own body |
 
 ## Formatter reproducers
 
