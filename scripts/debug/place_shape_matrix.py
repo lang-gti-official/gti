@@ -218,6 +218,76 @@ def pointer_shapes() -> list[Shape]:
     ]
 
 
+def enum_shapes() -> list[Shape]:
+    """Enum and `expected` roots.
+
+    Payload enums and `expected<T, E>` are aggregate-shaped like the fixed
+    array that produced #106, so they are the natural neighbours to check.
+    Every cell here currently passes or is refused by a deliberate rule; they
+    are kept so a regression in that surface shows up as a changed cell.
+    """
+    return [
+        Shape("enum", "unit value", "", "", "raw",
+              body=("enum class color { red, green };\n"
+                    "int main() {\n"
+                    "  mut color c = color::red;\n"
+                    "  if (c == color::red) { return 0; }\n"
+                    "  return 1;\n"
+                    "}")),
+        Shape("enum", "payload construct", "", "", "raw",
+              body=("enum class shape { circle(int32_t r), square };\n"
+                    "int main() {\n"
+                    "  mut shape s = shape::circle(7);\n"
+                    "  return 0;\n"
+                    "}")),
+        Shape("enum", "payload switch binding", "", "", "raw",
+              body=("enum class shape { circle(int32_t r), square };\n"
+                    "int main() {\n"
+                    "  mut shape s = shape::circle(7);\n"
+                    "  switch (s) {\n"
+                    "  case shape::circle(r):\n"
+                    "    return int(r) - 7;\n"
+                    "  case shape::square:\n"
+                    "    return 1;\n"
+                    "  }\n"
+                    "}")),
+        Shape("enum", "global payload switch", "", "", "raw",
+              body=("enum class shape { circle(int32_t r), square };\n"
+                    "mut shape g = shape::circle(7);\n"
+                    "int main() {\n"
+                    "  switch (g) {\n"
+                    "  case shape::circle(r):\n"
+                    "    return int(r) - 7;\n"
+                    "  case shape::square:\n"
+                    "    return 1;\n"
+                    "  }\n"
+                    "}")),
+        # Refused by a deliberate rule, but the message cannot name the type
+        # it is refusing — see #109.
+        Shape("enum", "class payload", "", "", "raw",
+              body=("enum class holder { one(leaf l), none };\n"
+                    "int main() { return 0; }")),
+        # Refused because an enum has no default value; a sensible rule.
+        Shape("enum", "array of enums", "", "", "raw",
+              body=("enum class color { red, green };\n"
+                    "int main() {\n"
+                    "  mut color cells[2] = {};\n"
+                    "  return 0;\n"
+                    "}")),
+        Shape("expected", "round trip", "", "", "raw",
+              body=("enum class fault { bad };\n"
+                    "expected<int32_t, fault> make(int32_t v) {\n"
+                    "  if (v < 0) { return unexpected(fault::bad); }\n"
+                    "  return v;\n"
+                    "}\n"
+                    "int main() {\n"
+                    "  mut expected<int32_t, fault> r = make(7);\n"
+                    "  if (r.has_value()) { return int(r.value()) - 7; }\n"
+                    "  return 1;\n"
+                    "}")),
+    ]
+
+
 def nested_capture_shapes() -> list[Shape]:
     """By-reference captures, and a capture reached from an inner lambda."""
     return [
@@ -310,7 +380,8 @@ def main() -> int:
 
     shapes = with_writes(integer_shapes() + parameter_shapes()
                          + capture_shapes() + field_shapes()
-                         + pointer_shapes() + nested_capture_shapes())
+                         + pointer_shapes() + nested_capture_shapes()
+                         + enum_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:
