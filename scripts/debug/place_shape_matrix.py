@@ -297,6 +297,35 @@ def declaration_shapes() -> list[Shape]:
                     "  ~boxed() {}\n"
                     "};\n"
                     "int main() { return 0; }")),
+        # #116's boundary. Each of these is an uninstantiated declaration and
+        # each compiles, so the defect is narrower than "unused declarations
+        # break": it needs a generic class with a destructor and no reference
+        # anywhere. A fix must keep all of these passing.
+        Shape("declaration", "generic operator unused", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  bool operator==(boxed<T>& other) { return true; }\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "interface unimplemented", "", "", "raw",
+              body=("interface Shape {\n"
+                    "  int32_t value();\n"
+                    "};\n"
+                    "int main() { return 0; }")),
+        Shape("declaration", "payload enum unused", "", "", "raw",
+              body=("enum class shape { circle(int32_t r), square };\n"
+                    "int main() { return 0; }")),
+        # Naming the generic in a signature counts as instantiation, even
+        # though the function is never called.
+        Shape("declaration", "generic in unused signature", "", "", "raw",
+              body=("class boxed<T> {\n"
+                    "public:\n"
+                    "  boxed() {}\n"
+                    "  ~boxed() {}\n"
+                    "};\n"
+                    "int32_t never_called(boxed<int32_t>& held) { return 1; }\n"
+                    "int main() { return 0; }")),
         Shape("declaration", "unused function", "", "", "raw",
               body=("int32_t never_called(int32_t x) { return x + 1; }\n"
                     "T identity<T>(T x) { return x; }\n"

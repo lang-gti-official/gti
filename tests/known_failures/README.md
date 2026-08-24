@@ -239,6 +239,21 @@ That reduces to eight lines with no standard library at all, which is how
 headers were only the first place it surfaced. Today the sweep reports
 `19 module(s): 16 ok, 3 failing`.
 
+## Multi-file programs
+
+Nothing in this directory or in `place_shape_matrix.py` is multi-file — every
+cell is a single source. Probed by hand and currently clean:
+
+- an include cycle is refused with `GTI-I0001` naming the offending file
+- a diamond (`A` includes `B` and `C`, both include `D`) loads `D` once and
+  compiles, as the grammar's "loaded once" note promises
+- a generic instantiated in one unit satisfies the whole program, so #116
+  does not fire when the use is in a different file from the declaration
+
+Extending the matrix to emit multi-file cells would be a real change rather
+than a new entry; it is not worth it while this surface is clean, but the gap
+is worth knowing about.
+
 ## Probing the language server
 
 `scripts/debug/lsp_probe.py` checks two properties of `gti_lsp` that an
