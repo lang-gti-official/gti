@@ -746,16 +746,26 @@ randomness, formatting, and testing. No example imports `gti_internal`.
 This work may proceed beside the language milestones, but it must converge
 before the release candidate.
 
-1. Add deterministic MIR printing, controlled editing, effect tables, pass
-   management, analysis invalidation, and verification.
-2. Port current constant folding to MIR in shadow mode.
-3. Make the C++ backend consume optimized MIR one complete body/operation
-   family at a time.
-4. Retire source-expression replacement as an optimization authority.
-5. Add CFG simplification, unreachable cleanup, and dead non-trapping value
-   elimination.
-6. Add range and bounds-check elimination only with recorded GTI-level proofs.
-7. Define conservative call effects before inlining or devirtualization.
+Implemented foundation:
+
+1. Deterministic MIR printing, stable typed editing, independent proof replay,
+   pass management, body-revisioned analysis invalidation, and verification.
+2. MIR scalar block parameters/edge arguments, acyclic scalar promotion,
+   literal/compute/branch folding, unreachable cleanup, and dead non-trapping
+   value elimination.
+3. Complete conservative per-instance call effects with exact acyclic static
+   refinement and conservative recursion/virtual/native boundaries.
+4. One optimized `LoweredProgram` consumed by every executable backend, with
+   no source-expression execution authority.
+5. Opt-in pre/post MIR, human remarks, versioned JSON reports, and exact current
+   safety-operation counts.
+
+Remaining sequence:
+
+1. Add sparse propagation and predicate facts as measured local clients.
+2. Add range and bounds-check elimination only with recorded GTI-level proofs.
+3. Consider inlining or devirtualization only after call effects, lifetime,
+   layout, closed-world, and cost gates are complete.
 
 Systems readiness requires one checked executable representation to control behavior. It does
 not require an LLVM backend or aggressive `-O3`. Correct `-O0`, deterministic

@@ -9830,6 +9830,9 @@ private:
 
   void scanInstruction(const MirBody &body, const MirBlock &block,
                        const MirInstruction &instruction) {
+    if (instruction.tombstone) {
+      return;
+    }
     const CppMirEmissionEncoding kind =
         classifyCppMirInstructionKind(instruction.kind);
     if (kind == CppMirEmissionEncoding::Invalid) {
@@ -10197,7 +10200,16 @@ private:
     if (terminator.value) {
       scanOperand(*terminator.value, block.id, 0);
     }
+    for (const MirOperand &argument : terminator.targetArguments) {
+      scanOperand(argument, block.id, 0);
+    }
+    for (const MirOperand &argument : terminator.elseArguments) {
+      scanOperand(argument, block.id, 0);
+    }
     for (const MirSwitchTarget &target : terminator.switchTargets) {
+      for (const MirOperand &argument : target.arguments) {
+        scanOperand(argument, block.id, 0);
+      }
       if (!target.value) {
         continue;
       }
@@ -15140,6 +15152,9 @@ private:
 
   void emitInstruction(const MirBlock &block, const MirInstruction &instruction,
                        const ScalarBodyFacts &facts) {
+    if (instruction.tombstone) {
+      return;
+    }
     if (facts.kind == MirBodyKind::Module &&
         moduleDataOnlyInitialization(program, instruction) != nullptr) {
       writeIndent();
@@ -17219,14 +17234,82 @@ private:
     output << '-' << value.magnitude;
   }
 
+  void emitEdgeArguments(const MirBlock &source, MirBlockId target,
+                         const std::vector<MirOperand> &arguments,
+                         std::size_t edge, const ScalarBodyFacts &facts) {
+    const MirBlock *destination = facts.body.findBlock(target);
+    if (destination == nullptr ||
+        destination->parameters.size() != arguments.size()) {
+      throw std::logic_error(
+          "verified MIR edge lost its block-argument signature");
+    }
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const MirBlockParameter &parameter = destination->parameters[index];
+      if (!isMirBlockParameterType(parameter.type) ||
+          arguments[index].type != parameter.type) {
+        throw std::logic_error(
+            "verified MIR edge carries an unsupported block argument");
+      }
+      writeIndent();
+      output << typeSpelling(parameter.type) << " __gti_mir_edge_" << source.id
+             << '_' << edge << '_' << index << " = ";
+      if (arguments[index].kind == MirOperandKind::Constant &&
+          arguments[index].literal) {
+        emitLiteral(*arguments[index].literal, arguments[index].type);
+      } else {
+        emitOperand(arguments[index]);
+      }
+      output << ";\n";
+    }
+    // Evaluate every incoming operand before publishing any parameter. This
+    // gives block arguments their parallel-assignment semantics even when an
+    // edge permutes values that are themselves parameters of the source.
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      writeIndent();
+      output << "__gti_mir_v_" << destination->parameters[index].value
+             << " = __gti_mir_edge_" << source.id << '_' << edge << '_' << index
+             << ";\n";
+    }
+  }
+
   void emitTerminator(const MirBlock &block, const ScalarBodyFacts &facts) {
     const MirTerminator &terminator = block.terminator;
     switch (terminator.kind) {
     case MirTerminatorKind::Invoke: {
       const MirInstruction *producer =
           findInstruction(facts.body, terminator.invokeInstruction);
+      const bool hasEdgeArguments = !terminator.targetArguments.empty() ||
+                                    !terminator.elseArguments.empty();
+      const auto emitConditionalEdgeTransfer =
+          [&](const std::string &condition) {
+            writeIndent();
+            output << "if (" << condition << ") {\n";
+            ++indentation;
+            emitEdgeArguments(block, terminator.target,
+                              terminator.targetArguments, 0, facts);
+            writeIndent();
+            output << "__gti_mir_bb = " << terminator.target << ";\n";
+            --indentation;
+            writeIndent();
+            output << "} else {\n";
+            ++indentation;
+            emitEdgeArguments(block, terminator.elseTarget,
+                              terminator.elseArguments, 1, facts);
+            writeIndent();
+            output << "__gti_mir_bb = " << terminator.elseTarget << ";\n";
+            --indentation;
+            writeIndent();
+            output << "}\n";
+            writeIndent();
+            output << "continue;\n";
+          };
       if (failureForm && producer != nullptr &&
           callableValueInvocation(*producer)) {
+        if (hasEdgeArguments) {
+          emitConditionalEdgeTransfer("__gti_mir_call_success_" +
+                                      std::to_string(producer->id));
+          return;
+        }
         writeIndent();
         output << "__gti_mir_bb = __gti_mir_call_success_" << producer->id
                << " ? " << terminator.target << " : " << terminator.elseTarget
@@ -17254,6 +17337,8 @@ private:
         // The fused literal or template callee contains its failure
         // terminally; the edge is a plain goto and the else block never
         // runs.
+        emitEdgeArguments(block, terminator.target, terminator.targetArguments,
+                          0, facts);
         writeIndent();
         output << "__gti_mir_bb = " << terminator.target << ";\n";
         writeIndent();
@@ -17288,6 +17373,8 @@ private:
              producer->localFailureSites.empty() &&
              producer->definedFailure.propagation ==
                  FailurePropagationKind::Constructor)) {
+          emitEdgeArguments(block, terminator.target,
+                            terminator.targetArguments, 0, facts);
           writeIndent();
           output << "__gti_mir_bb = " << terminator.target << ";\n";
           writeIndent();
@@ -17299,6 +17386,11 @@ private:
       }
       if (producer != nullptr && producer->kind == MirInstructionKind::Drop &&
           failureDestructorTarget(program, facts.body, *producer) != nullptr) {
+        if (hasEdgeArguments) {
+          emitConditionalEdgeTransfer("__gti_mir_drop_success_" +
+                                      std::to_string(producer->id));
+          return;
+        }
         writeIndent();
         output << "__gti_mir_bb = __gti_mir_drop_success_" << producer->id
                << " ? " << terminator.target << " : " << terminator.elseTarget
@@ -17308,6 +17400,11 @@ private:
         return;
       }
       if (producer != nullptr && transformedConstructor(*producer) != nullptr) {
+        if (hasEdgeArguments) {
+          emitConditionalEdgeTransfer("__gti_mir_construct_success_" +
+                                      std::to_string(producer->id));
+          return;
+        }
         writeIndent();
         output << "__gti_mir_bb = __gti_mir_construct_success_" << producer->id
                << " ? " << terminator.target << " : " << terminator.elseTarget
@@ -17336,6 +17433,8 @@ private:
             producer->localFailureSites.empty() &&
             producer->definedFailure.propagation ==
                 FailurePropagationKind::Constructor))) {
+        emitEdgeArguments(block, terminator.target, terminator.targetArguments,
+                          0, facts);
         writeIndent();
         output << "__gti_mir_bb = " << terminator.target << ";\n";
         writeIndent();
@@ -17344,6 +17443,11 @@ private:
       }
       if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
           transformedCallee(*producer) != nullptr) {
+        if (hasEdgeArguments) {
+          emitConditionalEdgeTransfer("__gti_mir_call_success_" +
+                                      std::to_string(producer->id));
+          return;
+        }
         writeIndent();
         output << "__gti_mir_bb = __gti_mir_call_success_" << producer->id
                << " ? " << terminator.target << " : " << terminator.elseTarget
@@ -17386,6 +17490,8 @@ private:
       output << "if (__gti_mir_failure_status_" << producer->id
              << ".code == GTI_FAILURE_CODE_NONE_V1) {\n";
       ++indentation;
+      emitEdgeArguments(block, terminator.target, terminator.targetArguments, 0,
+                        facts);
       writeIndent();
       output << "__gti_mir_bb = " << terminator.target << ";\n";
       --indentation;
@@ -17393,6 +17499,8 @@ private:
       output << "} else {\n";
       ++indentation;
       emitFailureRecordWrite(*producer);
+      emitEdgeArguments(block, terminator.elseTarget, terminator.elseArguments,
+                        1, facts);
       writeIndent();
       output << "__gti_mir_bb = " << terminator.elseTarget << ";\n";
       --indentation;
@@ -17471,12 +17579,40 @@ private:
     }
     switch (terminator.kind) {
     case MirTerminatorKind::Goto:
+      emitEdgeArguments(block, terminator.target, terminator.targetArguments, 0,
+                        facts);
       writeIndent();
       output << "__gti_mir_bb = " << terminator.target << ";\n";
       writeIndent();
       output << "continue;\n";
       return;
     case MirTerminatorKind::Branch:
+      if (!terminator.targetArguments.empty() ||
+          !terminator.elseArguments.empty()) {
+        writeIndent();
+        output << "if (";
+        emitOperand(*terminator.value);
+        output << ") {\n";
+        ++indentation;
+        emitEdgeArguments(block, terminator.target, terminator.targetArguments,
+                          0, facts);
+        writeIndent();
+        output << "__gti_mir_bb = " << terminator.target << ";\n";
+        --indentation;
+        writeIndent();
+        output << "} else {\n";
+        ++indentation;
+        emitEdgeArguments(block, terminator.elseTarget,
+                          terminator.elseArguments, 1, facts);
+        writeIndent();
+        output << "__gti_mir_bb = " << terminator.elseTarget << ";\n";
+        --indentation;
+        writeIndent();
+        output << "}\n";
+        writeIndent();
+        output << "continue;\n";
+        return;
+      }
       writeIndent();
       output << "__gti_mir_bb = ";
       emitOperand(*terminator.value);
@@ -17516,21 +17652,46 @@ private:
           emitSwitchInteger(target.value->value, target.value->type);
           output << "):\n";
         }
+        const bool scopedArguments = !target.arguments.empty();
+        if (scopedArguments) {
+          writeIndent();
+          output << "{\n";
+        }
         ++indentation;
+        emitEdgeArguments(block, target.target, target.arguments,
+                          static_cast<std::size_t>(
+                              &target - terminator.switchTargets.data()) +
+                              1,
+                          facts);
         writeIndent();
         output << "__gti_mir_bb = " << target.target << ";\n";
         writeIndent();
         output << "break;\n";
         --indentation;
+        if (scopedArguments) {
+          writeIndent();
+          output << "}\n";
+        }
       }
       writeIndent();
       output << "default:\n";
+      const bool scopedDefaultArguments = !terminator.targetArguments.empty();
+      if (scopedDefaultArguments) {
+        writeIndent();
+        output << "{\n";
+      }
       ++indentation;
+      emitEdgeArguments(block, terminator.target, terminator.targetArguments, 0,
+                        facts);
       writeIndent();
       output << "__gti_mir_bb = " << terminator.target << ";\n";
       writeIndent();
       output << "break;\n";
       --indentation;
+      if (scopedDefaultArguments) {
+        writeIndent();
+        output << "}\n";
+      }
       --indentation;
       writeIndent();
       output << "}\n";
@@ -21029,6 +21190,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                        between.receiver->value) != pendingStaged.end();
     };
     for (const MirInstruction &instruction : block.instructions) {
+      // Destructive MIR rewrites preserve stable instruction identities as
+      // canonical tombstones. They have no runtime vocabulary and must be
+      // ignored by the admission probe just as they are by the scanner and
+      // emitter.
+      if (instruction.tombstone) {
+        continue;
+      }
       if (!pendingStaged.empty()) {
         const bool consumingFailureConstructor =
             failureForm && instruction.kind == MirInstructionKind::Construct &&

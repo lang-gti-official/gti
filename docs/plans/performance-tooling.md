@@ -3,13 +3,15 @@
 > **Plan status:** Non-canonical future tooling plan. Existing verification is
 > documented in [`docs/architecture/verification.md`](../architecture/verification.md).
 
-Status: Milestone 1 in progress; the hermetic runner and first checked-vector
-workload are implemented, while the remaining workload breadth is queued
+Status: Milestone 1 remains in progress; the deterministic GTI optimization
+reporting and pre/post MIR subset of Milestones 3 and 4 is implemented.
 
 Operational ordering and completed foundations are tracked in
-[`implementation-sequence.md`](implementation-sequence.md). `--time-trace` and
-deterministic MIR printing are already implemented; the next independent row
-is the general benchmark harness, not a second implementation of those tools.
+[`implementation-sequence.md`](implementation-sequence.md). `--time-trace`,
+deterministic MIR printing, pre/post MIR dumps, GTI optimization remarks,
+versioned JSON reports, and exact current safety-operation counts are
+implemented. Compiler pass timing and the broader benchmark harness remain
+independent work.
 
 This document proposes general performance tooling for the GTI compiler and
 for programs compiled by GTI. It is not tied to CHIP-8 or any other example.
@@ -455,33 +457,13 @@ semantic inputs or cache identities.
 
 ### Optimization statistics and remarks
 
-`OptimizationResult` already records constant replacements and exposes a
-folded-expression count. Generalize this into deterministic per-pass reports:
+`OptimizationReport` now records deterministic per-pass statistics, applied
+and actionable missed remarks, analysis invalidation, stable MIR/HIR
+identities, proof kinds, typed transformation records, and input/output
+verification. `optimizationReportSchemaVersion` is independent from MIR
+serialization and currently version 1.
 
-```cpp
-enum class OptimizationRemarkKind {
-  Applied,
-  Missed,
-  Analysis,
-};
-
-struct OptimizationRemark {
-  std::string pass;
-  OptimizationRemarkKind kind;
-  HirValueId value;
-  std::optional<SourceSpan> source;
-  std::string code;
-  std::string message;
-};
-
-struct OptimizationPassStatistics {
-  std::string pass;
-  std::uint64_t valuesVisited;
-  std::uint64_t transformations;
-};
-```
-
-The exact storage types may change, but retain these rules:
+The implementation retains these rules:
 
 - statistics are deterministic for identical compiler inputs;
 - remarks use HIR or MIR identity and source provenance;
@@ -492,19 +474,24 @@ The exact storage types may change, but retain these rules:
 - a backend cannot claim the native compiler removed an operation unless it
   consumed a native optimization record proving that fact.
 
-Proposed CLI forms are:
+Implemented CLI forms are:
 
 ```sh
 gti main.gti -O2 --optimization-report build/optimization.json -o main
 gti main.gti -O2 --optimization-remarks -o main
 ```
 
-The human report may summarize pass counts. The JSON report retains individual
-remarks, values, source spans, selected target, and optimization level.
+The human report summarizes verified decisions and current safety counts. The
+JSON report retains individual remarks, stable body/block/instruction/place and
+source identities, required proof/analysis facts, selected optimization level,
+pass statistics, and verification. Identical inputs produce byte-identical
+reports; timing is deliberately absent.
 
 ### Safety-operation reporting
 
-The C++ backend should count representation operations by semantic category:
+The current report counts exact MIR safety operations before optimization,
+after optimization, and statically discharged by the verified GTI transform.
+More specific future categories include:
 
 ```text
 fixed-array bounds checks emitted
@@ -517,9 +504,11 @@ storage checks emitted
 checks statically discharged by GTI
 ```
 
-These are static emitted-operation counts, not runtime execution counts and not
-proof of final machine-code cost. The native compiler may inline or eliminate
-them later. Label the report accordingly.
+These are static IR/emission counts, not runtime execution counts and not proof
+of final machine-code cost. The native compiler may inline or eliminate them
+later. The current generic source/emitted/discharged counts are labelled
+accordingly and are extended into named families only when MIR identities make
+that count exact.
 
 Range analysis should report a discharged check only when GTI proves the
 required predicate at the language level. Do not remove checks merely because
@@ -531,18 +520,15 @@ the program being measured.
 
 ## IR Inspection
 
-Add deterministic, developer-oriented printers for the existing typed HIR and
-structural MIR before adding more optimization passes:
-
-`MirPrinter` now provides the structural MIR half as a compiled API. It is used
-for identity-pipeline tests but is not yet exposed through the CLI; HIR printing,
-snapshot path policy, and the options below remain proposed.
+The deterministic structural `MirPrinter` is exposed before and after GTI
+optimization:
 
 ```sh
-gti main.gti --dump-hir build/main.hir -o main
-gti main.gti --dump-mir build/main.mir -o main
-gti main.gti -O2 --dump-ir-directory build/ir -o main
+gti main.gti -O2 --dump-mir-before build/main.before.mir \
+  --dump-mir-after build/main.after.mir -o main
 ```
+
+HIR dumping and a multi-snapshot directory remain proposed.
 
 Requirements:
 
@@ -723,11 +709,16 @@ Acceptance criteria:
 
 ### Milestone 3: optimization and safety reports
 
-- Generalize `OptimizationResult` to retain per-pass deterministic statistics.
-- Add applied, missed, and analysis remarks with source provenance.
-- Add backend safety-operation counts.
-- Provide human summaries and versioned JSON.
-- Test counts and remarks on focused HIR/MIR fixtures.
+Status: implemented foundation.
+
+- `OptimizationReport` retains per-pass deterministic statistics, applied and
+  actionable missed remarks, invalidation, typed proof records, and
+  verification.
+- Human GTI remarks and versioned JSON are opt-in.
+- Exact current MIR safety-operation counts report source, emitted, and
+  statically discharged operations.
+- Focused compiler, CLI, driver, installed-library, and differential runtime
+  tests cover the contract.
 
 Acceptance criteria:
 
@@ -738,7 +729,12 @@ Acceptance criteria:
 
 ### Milestone 4: IR and native inspection
 
-- Add deterministic HIR and MIR printers.
+Status: pre/post MIR inspection implemented; remaining native inspection is
+planned.
+
+- Deterministic MIR printing and explicit pre/post optimizer dumps are
+  implemented.
+- Add deterministic HIR printing.
 - Add retained temporary/assembly and structured build-report options.
 - Support optional native optimization records when the selected compiler
   advertises them.

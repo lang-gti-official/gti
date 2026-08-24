@@ -346,7 +346,8 @@ int main() {
          "the owned MIR pipeline should optimize the fixture");
   std::unique_ptr<lang::Backend> backend = std::make_unique<lang::CppBackend>();
   const lang::LoweredProgram lowered = gti_test::lowerProgram(
-      frontend, optimizedProgram.sourceMir, optimizedProgram.mir);
+      frontend, optimizedProgram.sourceMir, optimizedProgram.mir,
+      lang::TargetInfo::host(), optimizedProgram.report.transformations);
   const lang::BackendArtifact artifact = backend->generate(lowered);
   expect(backend->name() == "cpp" &&
              artifact.kind == lang::BackendArtifactKind::Source &&
@@ -1172,7 +1173,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v40\n") &&
+  expect(dump.starts_with("mir-body-v41\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5896,7 +5897,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v40\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v41\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7911,7 +7912,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v41 ") &&
+  expect(mirDump.starts_with("mir-v43 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -22253,7 +22254,7 @@ int main() {
               "_dynamic_step__gti_mir_failure("
               "::__gti_program::IteratorContract & __gti_mir_arg_0, "
               "const ::__gti_program::DerivedEnd & __gti_mir_arg_1") !=
-              std::string::npos &&
+              std::string_view::npos &&
           exactBridgeCpp.find(
               "exact_type<const ::__gti_program::GenericComparable<T, N> &>") !=
               std::string::npos &&
@@ -26665,7 +26666,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v41 ") &&
+             mirDump.starts_with("mir-v43 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

@@ -16,8 +16,8 @@ for the current implementation when a document is stale or ambiguous.
   values.
 - [MIR](architecture/mir.md) — control-flow graphs, values, places, ownership
   effects, cleanup, and verification.
-- [Optimization](architecture/optimization.md) — HIR constant analysis,
-  controlled MIR editing, and source-to-optimized coherence.
+- [Optimization](architecture/optimization.md) — verified local MIR passes,
+  stable proof replay, per-instance effects, and optimizer observability.
 - [Backend](architecture/backend.md) — the verified-MIR body contract, sealed
   C++ representation planning, and native compilation handoff.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,

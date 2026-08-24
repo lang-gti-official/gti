@@ -12,9 +12,20 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace lang::driver {
+
+struct OptimizationOutputRequest {
+  bool capturePreMir = false;
+  bool capturePostMir = false;
+  bool captureReport = false;
+
+  [[nodiscard]] bool requested() const {
+    return capturePreMir || capturePostMir || captureReport;
+  }
+};
 
 class CompilationRequest final {
 public:
@@ -22,7 +33,8 @@ public:
                      StandardLibraryLayout standardLibrary, TargetInfo target,
                      OptimizationLevel optimization, CppStandard cppStandard,
                      std::vector<PackageSourceRoot> packageSourceRoots = {},
-                     ConfigurationFlags configurationFlags = {});
+                     ConfigurationFlags configurationFlags = {},
+                     OptimizationOutputRequest optimizationOutputs = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -31,6 +43,7 @@ public:
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
+  [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
 
 private:
   std::filesystem::path entryPath;
@@ -40,6 +53,7 @@ private:
   CppStandard backendStandard;
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
+  OptimizationOutputRequest requestedOptimizationOutputs;
 };
 
 enum class CompilationStatus {
@@ -68,6 +82,9 @@ struct CompilationResult {
   SourceManager sources;
   std::vector<Diagnostic> diagnostics;
   std::vector<MirVerificationError> mirErrors;
+  std::optional<std::string> preOptimizationMir;
+  std::optional<std::string> postOptimizationMir;
+  std::optional<OptimizationReport> optimizationReport;
 
   [[nodiscard]] bool succeeded() const {
     return status == CompilationStatus::Success && artifact.has_value();

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -6380,6 +6381,182 @@ callback make_callback() {
          "the callback factory should return its exact adapter thunk");
 }
 
+void testInvokePublishesScalarEdgeArguments() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-invoke-arguments.gti", R"(
+int main() {
+  int offset = 3;
+  auto add_offset = [offset](int value) -> int {
+    return offset + value;
+  };
+  auto copied = add_offset;
+  int doubled = [](int value) -> int {
+    return value * 2;
+  }(4);
+  return copied(doubled) - 11;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the invoke-edge fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMapRows rows =
+      buildRows(frontend, frontend.mir);
+  const lang::CppMirBodyEmissionMap canonicalMap(rows);
+  const lang::CppMirBodyEmitter canonicalEmitter(frontend.mir, canonicalMap);
+  lang::MirProgram program = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      program.functionInstances());
+  lang::MirBody *selectedBody = nullptr;
+  lang::MirBodyAddress address;
+  lang::MirBlock *invoke = nullptr;
+  for (lang::MirFunctionInstance &function : functions) {
+    if (function.definitionKind != lang::MirDefinitionKind::Source) {
+      continue;
+    }
+    const lang::MirBodyAddress candidate{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+    if (!canonicalEmitter.analyze(candidate).ready() ||
+        (!canonicalEmitter.supportsFailureBodyText(candidate) &&
+         !canonicalEmitter.supportsBodyText(candidate))) {
+      continue;
+    }
+    for (lang::MirBlock &block : function.body.blocks) {
+      if (block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+          block.terminator.target != 0) {
+        selectedBody = &function.body;
+        address = candidate;
+        invoke = &block;
+        break;
+      }
+    }
+    if (invoke != nullptr) {
+      break;
+    }
+  }
+  if (invoke == nullptr) {
+    auto &lambdas = const_cast<std::vector<lang::MirLambdaInstance> &>(
+        program.lambdaInstances());
+    for (lang::MirLambdaInstance &lambda : lambdas) {
+      const lang::MirBodyAddress candidate{.kind = lang::MirBodyKind::Lambda,
+                                           .owner = lambda.id};
+      if (!canonicalEmitter.analyze(candidate).ready() ||
+          (!canonicalEmitter.supportsFailureBodyText(candidate) &&
+           !canonicalEmitter.supportsBodyText(candidate))) {
+        continue;
+      }
+      for (lang::MirBlock &block : lambda.body.blocks) {
+        if (block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+            block.terminator.target != 0) {
+          selectedBody = &lambda.body;
+          address = candidate;
+          invoke = &block;
+          break;
+        }
+      }
+      if (invoke != nullptr) {
+        break;
+      }
+    }
+  }
+  expect(selectedBody != nullptr && invoke != nullptr,
+         "the checked callable should lower one admitted source invoke edge");
+  if (selectedBody == nullptr || invoke == nullptr) {
+    return;
+  }
+
+  lang::MirBody &body = *selectedBody;
+  lang::MirBlock *destination = body.findBlock(invoke->terminator.target);
+  expect(destination != nullptr && destination->failureParameter == 0 &&
+             destination->parameters.empty(),
+         "the invoke success block should accept a scalar test parameter");
+  if (destination == nullptr || destination->failureParameter != 0 ||
+      !destination->parameters.empty()) {
+    return;
+  }
+
+  lang::HirValueId sourceValue = 1;
+  for (const lang::MirValue &value : body.values) {
+    sourceValue = std::max(sourceValue, value.sourceValue + 1);
+  }
+  const lang::MirValueId parameterValue = body.values.size() + 1;
+  destination->parameters.push_back({.value = parameterValue,
+                                     .type = lang::SemanticType::Int32,
+                                     .sourceValue = sourceValue});
+  body.values.push_back({.id = parameterValue,
+                         .sourceValue = sourceValue,
+                         .info = {.type = lang::SemanticType::Int32},
+                         .definitionBlock = destination->id});
+
+  const lang::MirOperand argument{.kind = lang::MirOperandKind::Constant,
+                                  .literal = lang::Literal{std::uint64_t{7}},
+                                  .type = lang::SemanticType::Int32};
+  for (lang::MirBlock &predecessor : body.blocks) {
+    lang::MirTerminator &terminator = predecessor.terminator;
+    if ((terminator.kind == lang::MirTerminatorKind::Goto ||
+         terminator.kind == lang::MirTerminatorKind::Branch ||
+         terminator.kind == lang::MirTerminatorKind::Switch ||
+         terminator.kind == lang::MirTerminatorKind::Invoke) &&
+        terminator.target == destination->id) {
+      terminator.targetArguments.push_back(argument);
+    }
+    if ((terminator.kind == lang::MirTerminatorKind::Branch ||
+         terminator.kind == lang::MirTerminatorKind::Invoke) &&
+        terminator.elseTarget == destination->id) {
+      terminator.elseArguments.push_back(argument);
+    }
+    if (terminator.kind == lang::MirTerminatorKind::Switch) {
+      for (lang::MirSwitchTarget &target : terminator.switchTargets) {
+        if (target.target == destination->id) {
+          target.arguments.push_back(argument);
+        }
+      }
+    }
+  }
+  (void)lang::rebuildMirValueUses(body);
+  const lang::MirVerificationResult verification =
+      lang::verifyMirProgram(program);
+  for (const lang::MirVerificationError &error : verification.errors) {
+    std::cerr << "invoke argument MIR issue: " << error.message << '\n';
+  }
+  expect(verification.valid(),
+         "an invoke edge carrying a scalar block argument should remain valid "
+         "MIR");
+  if (!verification.valid()) {
+    return;
+  }
+
+  const lang::CppMirBodyEmissionMap emissionMap(rows);
+  const lang::CppMirBodyEmitter emitter(program, emissionMap);
+  const lang::CppMirBodyEmissionAnalysis analysis = emitter.analyze(address);
+  for (const lang::CppMirBodyEmissionIssue &issue : analysis.issues) {
+    std::cerr << "invoke argument emission issue: " << issue.detail << '\n';
+  }
+  const bool failureBody = emitter.supportsFailureBodyText(address);
+  const bool plainBody = emitter.supportsBodyText(address);
+  expect(analysis.ready() && (failureBody || plainBody),
+         "the invoke edge with a scalar argument should remain inside the C++ "
+         "failure-body vocabulary");
+  if (!failureBody && !plainBody) {
+    return;
+  }
+
+  const std::string text =
+      failureBody
+          ? emitter.emitFailureBodyText(address, "invoke-edge-arguments-v0", 1)
+                .text
+          : emitter.emitBodyText(address, "invoke-edge-arguments-v0", 1).text;
+  const std::string edgeTemporary =
+      "__gti_mir_edge_" + std::to_string(invoke->id) + "_0_0";
+  const std::string parameter = "__gti_mir_v_" + std::to_string(parameterValue);
+  expect(text.find(edgeTemporary + " = static_cast<") != std::string::npos &&
+             text.find(parameter + " = " + edgeTemporary) != std::string::npos,
+         "C++ emission should evaluate and publish invoke edge arguments "
+         "before entering the success block");
+}
+
 // The tests are independent, so CI shards them across parallel ctest
 // entries: `--shard K/N` runs every Nth test starting at K-1 (interleaved,
 // which balances the skewed per-test durations better than contiguous
@@ -6496,6 +6673,8 @@ constexpr NamedTest kTests[] = {
     {"testFailureFormSubscriptCompatibilityBoundary",
      testFailureFormSubscriptCompatibilityBoundary},
     {"testNativeCallbackFactoryBody", testNativeCallbackFactoryBody},
+    {"testInvokePublishesScalarEdgeArguments",
+     testInvokePublishesScalarEdgeArguments},
     {"testDeducedCallableTemplateEmission",
      testDeducedCallableTemplateEmission},
     {"testReferenceReturnFailureAbi", testReferenceReturnFailureAbi},

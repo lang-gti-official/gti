@@ -33,39 +33,76 @@ namespace {
                     static_cast<std::size_t>(address.kind)};
 }
 
-[[nodiscard]] bool addressLess(const MirInstructionAddress &left,
-                               const MirInstructionAddress &right) {
+[[nodiscard]] bool keyLess(const MirInstructionKey &left,
+                           const MirInstructionKey &right) {
   if (bodyKey(left.body) != bodyKey(right.body)) {
     return bodyKey(left.body) < bodyKey(right.body);
   }
-  return std::tie(left.block, left.index) < std::tie(right.block, right.index);
+  return left.instruction < right.instruction;
 }
 
-void addError(MirEditResult &result, MirInstructionAddress address,
+struct ConstInstructionLocation {
+  const MirBlock *block = nullptr;
+  const MirInstruction *instruction = nullptr;
+};
+
+struct InstructionLocation {
+  MirBlock *block = nullptr;
+  MirInstruction *instruction = nullptr;
+};
+
+[[nodiscard]] ConstInstructionLocation findInstruction(const MirBody &body,
+                                                       MirInstructionId id) {
+  for (const MirBlock &block : body.blocks) {
+    const auto found =
+        std::find_if(block.instructions.begin(), block.instructions.end(),
+                     [id](const MirInstruction &instruction) {
+                       return instruction.id == id;
+                     });
+    if (found != block.instructions.end()) {
+      return {.block = &block, .instruction = &*found};
+    }
+  }
+  return {};
+}
+
+[[nodiscard]] InstructionLocation findInstruction(MirBody &body,
+                                                  MirInstructionId id) {
+  for (MirBlock &block : body.blocks) {
+    const auto found =
+        std::find_if(block.instructions.begin(), block.instructions.end(),
+                     [id](const MirInstruction &instruction) {
+                       return instruction.id == id;
+                     });
+    if (found != block.instructions.end()) {
+      return {.block = &block, .instruction = &*found};
+    }
+  }
+  return {};
+}
+
+void addError(MirEditResult &result, MirBodyAddress body, MirBlockId block,
               MirInstructionId instruction, std::string message) {
-  result.verification.errors.push_back({.bodyKind = address.body.kind,
-                                        .owner = address.body.owner,
-                                        .block = address.block,
+  result.verification.errors.push_back({.bodyKind = body.kind,
+                                        .owner = body.owner,
+                                        .block = block,
                                         .instruction = instruction,
                                         .message = std::move(message)});
 }
 
 } // namespace
 
-void MirProgramEditor::queueLiteralReplacement(
-    MirInstructionAddress address, MirInstructionId expectedInstruction,
-    MirOperation expectedOperation, Literal literal) {
-  patches.push_back({.address = address,
-                     .expectedInstruction = expectedInstruction,
+void MirProgramEditor::queueLiteralReplacement(MirInstructionKey target,
+                                               MirOperation expectedOperation,
+                                               Literal literal) {
+  patches.push_back({.target = target,
                      .expectedOperation = expectedOperation,
                      .literal = std::move(literal)});
 }
 
 void MirProgramEditor::queueComputeFoldReplacement(
-    MirInstructionAddress address, MirInstructionId expectedInstruction,
-    MirOperation expectedOperation, Literal literal) {
-  patches.push_back({.address = address,
-                     .expectedInstruction = expectedInstruction,
+    MirInstructionKey target, MirOperation expectedOperation, Literal literal) {
+  patches.push_back({.target = target,
                      .expectedOperation = expectedOperation,
                      .literal = std::move(literal),
                      .computeFold = true});
@@ -80,52 +117,89 @@ void MirProgramEditor::queueBranchFold(MirBodyAddress body, MirBlockId block,
                          .taken = taken});
 }
 
+void MirProgramEditor::queueScalarPromotion(MirBodyAddress body,
+                                            MirPlaceId place) {
+  scalarPromotions.push_back({.body = body, .place = place});
+}
+
+void MirProgramEditor::queueDeadInstructionRemoval(MirInstructionKey target) {
+  deadInstructions.push_back(target);
+}
+
+void MirProgramEditor::queueUnreachableBlockRemoval(MirBodyAddress body,
+                                                    MirBlockId block) {
+  unreachableBlocks.push_back({.body = body, .block = block});
+}
+
 MirEditResult MirProgramEditor::apply() {
   MirEditResult result;
   std::vector<LiteralReplacement> queued = std::move(patches);
   patches.clear();
   std::vector<BranchFold> queuedBranchFolds = std::move(branchFolds);
   branchFolds.clear();
-  if (queued.empty() && queuedBranchFolds.empty()) {
+  std::vector<ScalarPromotion> queuedScalarPromotions =
+      std::move(scalarPromotions);
+  scalarPromotions.clear();
+  std::vector<MirInstructionKey> queuedDeadInstructions =
+      std::move(deadInstructions);
+  deadInstructions.clear();
+  std::vector<UnreachableBlock> queuedUnreachableBlocks =
+      std::move(unreachableBlocks);
+  unreachableBlocks.clear();
+  if (queued.empty() && queuedBranchFolds.empty() &&
+      queuedScalarPromotions.empty() && queuedDeadInstructions.empty() &&
+      queuedUnreachableBlocks.empty()) {
     return result;
   }
 
   std::sort(
       queued.begin(), queued.end(),
       [](const LiteralReplacement &left, const LiteralReplacement &right) {
-        return addressLess(left.address, right.address);
+        return keyLess(left.target, right.target);
       });
+  std::sort(queuedBranchFolds.begin(), queuedBranchFolds.end(),
+            [](const BranchFold &left, const BranchFold &right) {
+              return std::tuple{bodyKey(left.body), left.block} <
+                     std::tuple{bodyKey(right.body), right.block};
+            });
+  std::sort(queuedScalarPromotions.begin(), queuedScalarPromotions.end(),
+            [](const ScalarPromotion &left, const ScalarPromotion &right) {
+              return std::tuple{bodyKey(left.body), left.place} <
+                     std::tuple{bodyKey(right.body), right.place};
+            });
+  std::sort(queuedDeadInstructions.begin(), queuedDeadInstructions.end(),
+            keyLess);
+  std::sort(queuedUnreachableBlocks.begin(), queuedUnreachableBlocks.end(),
+            [](const UnreachableBlock &left, const UnreachableBlock &right) {
+              return std::tuple{bodyKey(left.body), left.block} <
+                     std::tuple{bodyKey(right.body), right.block};
+            });
 
   for (std::size_t index = 0; index < queued.size(); ++index) {
     const LiteralReplacement &patch = queued[index];
-    if (index != 0 && patch.address == queued[index - 1].address) {
-      addError(result, patch.address, patch.expectedInstruction,
+    if (index != 0 && patch.target == queued[index - 1].target) {
+      addError(result, patch.target.body, 0, patch.target.instruction,
                "duplicate MIR instruction replacement");
       continue;
     }
-    const MirBody *target = findMirBody(program, patch.address.body);
+    const MirBody *target = findMirBody(program, patch.target.body);
     if (target == nullptr) {
-      addError(result, patch.address, patch.expectedInstruction,
+      addError(result, patch.target.body, 0, patch.target.instruction,
                "MIR replacement body does not exist");
       continue;
     }
-    const MirBlock *block = target->findBlock(patch.address.block);
-    if (block == nullptr || patch.address.index >= block->instructions.size()) {
-      addError(result, patch.address, patch.expectedInstruction,
-               "MIR replacement address is outside the body");
+    const ConstInstructionLocation location =
+        findInstruction(*target, patch.target.instruction);
+    if (patch.target.instruction == 0 || location.instruction == nullptr) {
+      addError(result, patch.target.body, 0, patch.target.instruction,
+               "MIR replacement instruction does not exist");
       continue;
     }
-    const MirInstruction &instruction =
-        block->instructions[patch.address.index];
-    if (patch.expectedInstruction == 0 ||
-        instruction.id != patch.expectedInstruction) {
-      addError(result, patch.address, patch.expectedInstruction,
-               "MIR replacement target is stale");
-      continue;
-    }
+    const MirInstruction &instruction = *location.instruction;
     if (instruction.kind != MirInstructionKind::Compute ||
         instruction.operation != patch.expectedOperation) {
-      addError(result, patch.address, patch.expectedInstruction,
+      addError(result, patch.target.body, location.block->id,
+               patch.target.instruction,
                "MIR replacement target is not the expected computation");
       continue;
     }
@@ -139,7 +213,8 @@ MirEditResult MirProgramEditor::apply() {
                       });
       if (patch.expectedOperation == MirOperation::Identity ||
           patch.expectedOperation == MirOperation::Literal || !valueOperands) {
-        addError(result, patch.address, patch.expectedInstruction,
+        addError(result, patch.target.body, location.block->id,
+                 patch.target.instruction,
                  "MIR compute-fold replacement is missing its exact value "
                  "operands");
         continue;
@@ -148,7 +223,8 @@ MirEditResult MirProgramEditor::apply() {
                instruction.operands.size() != 1 ||
                instruction.operands.front().kind != MirOperandKind::Value ||
                instruction.operands.front().value == 0) {
-      addError(result, patch.address, patch.expectedInstruction,
+      addError(result, patch.target.body, location.block->id,
+               patch.target.instruction,
                "MIR literal replacement is missing its exact identity "
                "source");
       continue;
@@ -158,7 +234,8 @@ MirEditResult MirProgramEditor::apply() {
           constantIntegerDomain(instruction.info.type);
       if (!domain ||
           !evaluateConstantLiteral(Literal{*integer}, *domain).value) {
-        addError(result, patch.address, patch.expectedInstruction,
+        addError(result, patch.target.body, location.block->id,
+                 patch.target.instruction,
                  "MIR integer literal replacement is outside its result "
                  "domain");
       }
@@ -168,7 +245,14 @@ MirEditResult MirProgramEditor::apply() {
     return result;
   }
 
-  for (const BranchFold &fold : queuedBranchFolds) {
+  for (std::size_t index = 0; index < queuedBranchFolds.size(); ++index) {
+    const BranchFold &fold = queuedBranchFolds[index];
+    if (index != 0 && fold.body == queuedBranchFolds[index - 1].body &&
+        fold.block == queuedBranchFolds[index - 1].block) {
+      addError(result, fold.body, fold.block, 0,
+               "duplicate MIR branch replacement");
+      continue;
+    }
     const MirBody *target = findMirBody(program, fold.body);
     const MirBlock *block =
         target == nullptr ? nullptr : target->findBlock(fold.block);
@@ -179,8 +263,63 @@ MirEditResult MirProgramEditor::apply() {
         block->terminator.value->value != fold.expectedCondition ||
         (fold.taken ? block->terminator.target
                     : block->terminator.elseTarget) == 0) {
-      addError(result, {.body = fold.body, .block = fold.block}, 0,
+      addError(result, fold.body, fold.block, 0,
                "MIR branch fold target is not the expected literal branch");
+    }
+  }
+  if (!result.verification.valid()) {
+    return result;
+  }
+
+  for (std::size_t index = 0; index < queuedScalarPromotions.size(); ++index) {
+    const ScalarPromotion &promotion = queuedScalarPromotions[index];
+    if (index != 0 &&
+        promotion.body == queuedScalarPromotions[index - 1].body &&
+        promotion.place == queuedScalarPromotions[index - 1].place) {
+      addError(result, promotion.body, 0, 0, "duplicate MIR scalar promotion");
+      continue;
+    }
+    const MirBody *source = findMirBody(program, promotion.body);
+    MirBody replay = source == nullptr ? MirBody{} : *source;
+    if (source == nullptr || promotion.place == 0 ||
+        !rewriteMirScalarPlace(replay, promotion.place)) {
+      addError(result, promotion.body, 0, 0,
+               "MIR scalar promotion claim is not proven by its source body");
+    }
+  }
+  if (!result.verification.valid()) {
+    return result;
+  }
+
+  for (std::size_t index = 0; index < queuedUnreachableBlocks.size(); ++index) {
+    const UnreachableBlock &cleanup = queuedUnreachableBlocks[index];
+    if (index != 0 && cleanup.body == queuedUnreachableBlocks[index - 1].body &&
+        cleanup.block == queuedUnreachableBlocks[index - 1].block) {
+      addError(result, cleanup.body, cleanup.block, 0,
+               "duplicate MIR unreachable-block removal");
+      continue;
+    }
+    const MirBody *source = findMirBody(program, cleanup.body);
+    MirBody replay = source == nullptr ? MirBody{} : *source;
+    if (source == nullptr || cleanup.block == 0 ||
+        !rewriteMirUnreachableBlock(replay, cleanup.block)) {
+      addError(result, cleanup.body, cleanup.block, 0,
+               "MIR unreachable-block removal is not proven by reachability "
+               "and schedule facts");
+    }
+  }
+  for (std::size_t index = 0; index < queuedDeadInstructions.size(); ++index) {
+    const MirInstructionKey &cleanup = queuedDeadInstructions[index];
+    if (index != 0 && cleanup == queuedDeadInstructions[index - 1]) {
+      addError(result, cleanup.body, 0, cleanup.instruction,
+               "duplicate MIR dead-instruction removal");
+      continue;
+    }
+    MirProgram replay = program;
+    if (!rewriteMirDeadInstruction(replay, cleanup.body, cleanup.instruction)) {
+      addError(result, cleanup.body, 0, cleanup.instruction,
+               "MIR dead-instruction removal is not proven by exact uses and "
+               "effects");
     }
   }
   if (!result.verification.valid()) {
@@ -190,36 +329,52 @@ MirEditResult MirProgramEditor::apply() {
   MirProgram candidate = program;
   std::vector<MirBodyAddress> touched;
   for (const LiteralReplacement &patch : queued) {
-    MirBody *target = findMirBody(candidate, patch.address.body);
-    MirBlock *block =
-        target == nullptr ? nullptr : target->findBlock(patch.address.block);
-    if (block == nullptr || patch.address.index >= block->instructions.size()) {
-      addError(result, patch.address, patch.expectedInstruction,
-               "MIR replacement address became invalid before mutation");
+    MirBody *target = findMirBody(candidate, patch.target.body);
+    InstructionLocation location =
+        target == nullptr ? InstructionLocation{}
+                          : findInstruction(*target, patch.target.instruction);
+    if (location.instruction == nullptr || location.block == nullptr) {
+      addError(result, patch.target.body, 0, patch.target.instruction,
+               "MIR replacement instruction became invalid before mutation");
       return result;
     }
-    MirInstruction &instruction = block->instructions[patch.address.index];
+    MirInstruction &instruction = *location.instruction;
     MirInstruction replacement = instruction;
+    MirTransformRecord record{
+        .pass = pass,
+        .kind = MirTransformKind::ReplaceInstruction,
+        .proof = patch.computeFold ? MirTransformProofKind::ComputeFold
+                                   : MirTransformProofKind::IdentityFold,
+        .body = patch.target.body,
+        .block = location.block->id,
+        .instruction = instruction.id,
+        .sourceValue = instruction.hirValue,
+        .sourceStatement = instruction.hirStatement,
+        .replacementLiteral = patch.literal,
+        .requiredAnalyses = {.valueUses = true, .dominance = true}};
     if (patch.computeFold) {
       MirLiteralProvenance provenance{.kind =
                                           MirLiteralProvenanceKind::ComputeFold,
                                       .sourceOperation = instruction.operation};
       for (const MirOperand &operand : instruction.operands) {
         provenance.sourceValues.push_back(operand.value);
+        record.relatedValues.push_back(operand.value);
       }
       replacement.literalProvenance = std::move(provenance);
     } else {
       replacement.literalProvenance = MirLiteralProvenance{
           .kind = MirLiteralProvenanceKind::IdentityFold,
           .sourceValue = instruction.operands.front().value};
+      record.relatedValues.push_back(instruction.operands.front().value);
     }
     replacement.operation = MirOperation::Literal;
     replacement.operands.clear();
     replacement.literal = patch.literal;
     instruction = std::move(replacement);
-    if (std::find(touched.begin(), touched.end(), patch.address.body) ==
+    result.transformations.push_back(std::move(record));
+    if (std::find(touched.begin(), touched.end(), patch.target.body) ==
         touched.end()) {
-      touched.push_back(patch.address.body);
+      touched.push_back(patch.target.body);
     }
   }
 
@@ -232,6 +387,7 @@ MirEditResult MirProgramEditor::apply() {
       }
     }
     MirTerminator &terminator = block->terminator;
+    const MirTerminator sourceTerminator = terminator;
     // The folded condition must be a literal bool in the candidate (the
     // literal patches above may be what folded it) agreeing with the
     // taken direction.
@@ -248,19 +404,198 @@ MirEditResult MirProgramEditor::apply() {
       }
     }
     if (condition == nullptr || *condition != fold.taken) {
-      addError(result, {.body = fold.body, .block = fold.block}, 0,
+      addError(result, fold.body, fold.block, 0,
                "MIR branch fold condition is not the agreed literal");
       continue;
     }
     terminator.kind = MirTerminatorKind::Goto;
+    terminator.targetArguments =
+        fold.taken ? terminator.targetArguments : terminator.elseArguments;
     terminator.target = fold.taken ? terminator.target : terminator.elseTarget;
     terminator.elseTarget = 0;
+    terminator.elseArguments.clear();
     terminator.value.reset();
     terminator.provenance =
         MirTerminatorProvenance{.kind = MirTerminatorProvenanceKind::BranchFold,
                                 .foldSourceValue = fold.expectedCondition};
+    result.transformations.push_back(
+        {.pass = pass,
+         .kind = MirTransformKind::ReplaceTerminator,
+         .proof = MirTransformProofKind::BranchFold,
+         .body = fold.body,
+         .block = fold.block,
+         .sourceValue = sourceTerminator.hirValue,
+         .sourceStatement = sourceTerminator.hirStatement,
+         .relatedBlocks = {sourceTerminator.target,
+                           sourceTerminator.elseTarget},
+         .relatedValues = {fold.expectedCondition},
+         .requiredAnalyses = {
+             .valueUses = true, .reachability = true, .dominance = true}});
     if (std::find(touched.begin(), touched.end(), fold.body) == touched.end()) {
       touched.push_back(fold.body);
+    }
+  }
+  for (const ScalarPromotion &promotion : queuedScalarPromotions) {
+    const MirBody *source = findMirBody(program, promotion.body);
+    MirBody *target = findMirBody(candidate, promotion.body);
+    if (source == nullptr || target == nullptr) {
+      addError(result, promotion.body, 0, 0,
+               "MIR scalar promotion body became invalid before mutation");
+      continue;
+    }
+    const MirPlace *sourcePlace = source->findPlace(promotion.place);
+    const std::optional<MirScalarPromotionRewrite> rewrite =
+        rewriteMirScalarPlace(*target, promotion.place);
+    if (sourcePlace == nullptr || !rewrite) {
+      addError(result, promotion.body, 0, 0,
+               "MIR scalar promotion failed during atomic mutation");
+      continue;
+    }
+
+    MirTransformRecord placeRecord{
+        .pass = pass,
+        .kind = MirTransformKind::PromotePlace,
+        .proof = MirTransformProofKind::ScalarPromotion,
+        .body = promotion.body,
+        .place = promotion.place,
+        .sourceValue = sourcePlace->sourceValue,
+        .relatedBlocks = rewrite->parameterBlocks,
+        .relatedInstructions = rewrite->replacedInstructions,
+        .relatedValues = rewrite->createdValues,
+        .requiredAnalyses = {.valueUses = true,
+                             .effects = true,
+                             .reachability = true,
+                             .dominance = true,
+                             .scalarPromotion = true}};
+    placeRecord.relatedInstructions.insert(
+        placeRecord.relatedInstructions.end(),
+        rewrite->removedInstructions.begin(),
+        rewrite->removedInstructions.end());
+    std::sort(placeRecord.relatedInstructions.begin(),
+              placeRecord.relatedInstructions.end());
+    result.transformations.push_back(std::move(placeRecord));
+
+    for (const MirInstructionId instructionId : rewrite->replacedInstructions) {
+      const ConstInstructionLocation before =
+          findInstruction(*source, instructionId);
+      const InstructionLocation after = findInstruction(*target, instructionId);
+      if (before.instruction == nullptr || before.block == nullptr ||
+          after.instruction == nullptr || after.block == nullptr) {
+        addError(result, promotion.body, 0, instructionId,
+                 "MIR scalar replacement lost its stable instruction");
+        continue;
+      }
+      std::vector<MirValueId> values;
+      if (before.instruction->result) {
+        values.push_back(*before.instruction->result);
+      }
+      for (const MirOperand &operand : after.instruction->operands) {
+        if (operand.kind == MirOperandKind::Value) {
+          values.push_back(operand.value);
+        }
+      }
+      result.transformations.push_back(
+          {.pass = pass,
+           .kind = MirTransformKind::ReplaceInstruction,
+           .proof = MirTransformProofKind::ScalarPromotion,
+           .body = promotion.body,
+           .block = before.block->id,
+           .instruction = instructionId,
+           .place = promotion.place,
+           .sourceValue = before.instruction->hirValue,
+           .sourceStatement = before.instruction->hirStatement,
+           .relatedValues = std::move(values),
+           .requiredAnalyses = {.valueUses = true,
+                                .effects = true,
+                                .reachability = true,
+                                .dominance = true,
+                                .scalarPromotion = true}});
+    }
+    for (const MirInstructionId instructionId : rewrite->removedInstructions) {
+      const ConstInstructionLocation before =
+          findInstruction(*source, instructionId);
+      if (before.instruction == nullptr || before.block == nullptr) {
+        addError(result, promotion.body, 0, instructionId,
+                 "MIR scalar removal lost its stable instruction");
+        continue;
+      }
+      result.transformations.push_back(
+          {.pass = pass,
+           .kind = MirTransformKind::RemoveInstruction,
+           .proof = MirTransformProofKind::ScalarPromotion,
+           .body = promotion.body,
+           .block = before.block->id,
+           .instruction = instructionId,
+           .place = promotion.place,
+           .sourceValue = before.instruction->hirValue,
+           .sourceStatement = before.instruction->hirStatement,
+           .relatedValues =
+               before.instruction->result
+                   ? std::vector<MirValueId>{*before.instruction->result}
+                   : std::vector<MirValueId>{},
+           .requiredAnalyses = {.valueUses = true,
+                                .effects = true,
+                                .reachability = true,
+                                .dominance = true,
+                                .scalarPromotion = true}});
+    }
+    if (std::find(touched.begin(), touched.end(), promotion.body) ==
+        touched.end()) {
+      touched.push_back(promotion.body);
+    }
+  }
+  for (const UnreachableBlock &cleanup : queuedUnreachableBlocks) {
+    MirBody *target = findMirBody(candidate, cleanup.body);
+    const std::optional<MirUnreachableBlockRewrite> rewrite =
+        target == nullptr ? std::nullopt
+                          : rewriteMirUnreachableBlock(*target, cleanup.block);
+    if (!rewrite) {
+      addError(result, cleanup.body, cleanup.block, 0,
+               "MIR unreachable-block removal failed during atomic mutation");
+      continue;
+    }
+    result.transformations.push_back(
+        {.pass = pass,
+         .kind = MirTransformKind::RemoveBlock,
+         .proof = MirTransformProofKind::UnreachableBlock,
+         .body = cleanup.body,
+         .block = cleanup.block,
+         .sourceValue = rewrite->sourceValue,
+         .sourceStatement = rewrite->sourceStatement,
+         .relatedInstructions = rewrite->removedInstructions,
+         .requiredAnalyses = {.valueUses = true,
+                              .effects = true,
+                              .reachability = true,
+                              .dominance = true}});
+    if (std::find(touched.begin(), touched.end(), cleanup.body) ==
+        touched.end()) {
+      touched.push_back(cleanup.body);
+    }
+  }
+  for (const MirInstructionKey &cleanup : queuedDeadInstructions) {
+    const std::optional<MirDeadInstructionRewrite> rewrite =
+        rewriteMirDeadInstruction(candidate, cleanup.body, cleanup.instruction);
+    if (!rewrite) {
+      addError(result, cleanup.body, 0, cleanup.instruction,
+               "MIR dead-instruction removal failed during atomic mutation");
+      continue;
+    }
+    result.transformations.push_back(
+        {.pass = pass,
+         .kind = MirTransformKind::RemoveInstruction,
+         .proof = MirTransformProofKind::DeadUnusedComputation,
+         .body = cleanup.body,
+         .block = rewrite->block,
+         .instruction = rewrite->instruction,
+         .sourceValue = rewrite->sourceValue,
+         .sourceStatement = rewrite->sourceStatement,
+         .relatedValues = rewrite->result
+                              ? std::vector<MirValueId>{*rewrite->result}
+                              : std::vector<MirValueId>{},
+         .requiredAnalyses = {.valueUses = true, .effects = true}});
+    if (std::find(touched.begin(), touched.end(), cleanup.body) ==
+        touched.end()) {
+      touched.push_back(cleanup.body);
     }
   }
   if (!result.verification.valid()) {
@@ -270,7 +605,7 @@ MirEditResult MirProgramEditor::apply() {
   for (MirBodyAddress address : touched) {
     MirBody *target = findMirBody(candidate, address);
     if (target == nullptr || !rebuildMirValueUses(*target)) {
-      addError(result, {.body = address}, 0,
+      addError(result, address, 0, 0,
                "MIR replacement produced invalid value uses");
     }
     rebuildMirReachability(*target);
@@ -286,7 +621,13 @@ MirEditResult MirProgramEditor::apply() {
 
   program = std::move(candidate);
   result.changed = true;
-  result.appliedPatches = queued.size() + queuedBranchFolds.size();
+  result.appliedPatches = queued.size() + queuedBranchFolds.size() +
+                          queuedDeadInstructions.size() +
+                          queuedUnreachableBlocks.size();
+  for (const ScalarPromotion &promotion : queuedScalarPromotions) {
+    (void)promotion;
+    ++result.appliedPatches;
+  }
   result.valueUsesRebuilt = true;
   result.invalidation.instructionFacts = true;
   result.invalidation.valueUses = true;
@@ -295,6 +636,24 @@ MirEditResult MirProgramEditor::apply() {
     result.invalidation.reachability = true;
     result.invalidation.dominance = true;
   }
+  if (!queuedScalarPromotions.empty()) {
+    result.invalidation.instructionFacts = true;
+    result.invalidation.valueUses = true;
+    result.invalidation.dominance = true;
+  }
+  if (!queuedUnreachableBlocks.empty()) {
+    result.invalidation.instructionFacts = true;
+    result.invalidation.valueUses = true;
+    result.invalidation.controlFlow = true;
+    result.invalidation.reachability = true;
+    result.invalidation.dominance = true;
+  }
+  if (!queuedDeadInstructions.empty()) {
+    result.invalidation.instructionFacts = true;
+    result.invalidation.valueUses = true;
+  }
+  std::sort(result.transformations.begin(), result.transformations.end(),
+            mirTransformRecordLess);
   return result;
 }
 

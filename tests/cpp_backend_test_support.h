@@ -10,17 +10,18 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace gti_test {
 
-inline lang::LoweredProgram
-lowerProgram(const lang::FrontendResult &frontend,
-             const lang::MirProgram &sourceMir,
-             const lang::MirProgram &optimizedMir,
-             const lang::TargetInfo &target = lang::TargetInfo::host()) {
+inline lang::LoweredProgram lowerProgram(
+    const lang::FrontendResult &frontend, const lang::MirProgram &sourceMir,
+    const lang::MirProgram &optimizedMir,
+    const lang::TargetInfo &target = lang::TargetInfo::host(),
+    const std::vector<lang::MirTransformRecord> &transformations = {}) {
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, sourceMir,
-      optimizedMir, target);
+      optimizedMir, transformations, target);
   if (!lowered.valid()) {
     throw std::logic_error(
         lowered.issues.empty()
@@ -53,7 +54,8 @@ emitCpp(const lang::FrontendResult &frontend,
         "test fixture did not produce a coherent optimized MIR program");
   }
   const lang::LoweredProgram lowered =
-      lowerProgram(frontend, optimized.sourceMir, optimized.mir, target);
+      lowerProgram(frontend, optimized.sourceMir, optimized.mir, target,
+                   optimized.report.transformations);
   return lang::CppBackend(standard).generate(lowered);
 }
 
@@ -64,6 +66,17 @@ emitCpp(const lang::FrontendResult &frontend, const lang::MirProgram &sourceMir,
         lang::TargetInfo target = lang::TargetInfo::host()) {
   const lang::LoweredProgram lowered =
       lowerProgram(frontend, sourceMir, optimizedMir, target);
+  return lang::CppBackend(standard).generate(lowered);
+}
+
+inline lang::BackendArtifact
+emitCpp(const lang::FrontendResult &frontend, const lang::MirProgram &sourceMir,
+        const lang::MirProgram &optimizedMir,
+        const std::vector<lang::MirTransformRecord> &transformations,
+        lang::CppStandard standard = lang::CppStandard::Cpp23,
+        lang::TargetInfo target = lang::TargetInfo::host()) {
+  const lang::LoweredProgram lowered =
+      lowerProgram(frontend, sourceMir, optimizedMir, target, transformations);
   return lang::CppBackend(standard).generate(lowered);
 }
 

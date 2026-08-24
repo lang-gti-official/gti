@@ -138,7 +138,8 @@ void expectLoweredRowsDeterministic(const lang::FrontendResult &frontend,
   }
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, lang::TargetInfo::host());
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
   expect(lowered.valid(),
          std::string(fixture) + " should produce a lowered program");
   if (!lowered.valid()) {
@@ -380,7 +381,7 @@ int main() {
   const lang::LoweredProgramBuild driftedBuild =
       lang::LoweredProgramBuilder().build(frontend.program, frontend.semantics,
                                           frontend.hir, frontend.mir, drifted,
-                                          lang::TargetInfo::host());
+                                          {}, lang::TargetInfo::host());
   expect(!driftedBuild.valid(),
          "LoweredProgram construction should reject valid MIR callback rows "
          "that drift from their exact HIR adapter identities");
@@ -513,7 +514,7 @@ namespace selected = alpha;
   const lang::LoweredProgramBuild mixedProgram =
       lang::LoweredProgramBuilder().build(
           otherProgram.program, analyzed.semantics, analyzed.hir, analyzed.mir,
-          analyzed.mir, lang::TargetInfo::host());
+          analyzed.mir, {}, lang::TargetInfo::host());
   expect(!mixedProgram.valid(),
          "LoweredProgram construction should reject separately owned "
          "frontend snapshots even when their source bytes match");
@@ -525,7 +526,7 @@ namespace selected = alpha;
   const lang::LoweredProgramBuild mixedGraph =
       lang::LoweredProgramBuilder().build(
           analyzed.program, analyzed.semantics, differentGraph, analyzed.mir,
-          analyzed.mir, lang::TargetInfo::host());
+          analyzed.mir, {}, lang::TargetInfo::host());
   expect(!mixedGraph.valid(),
          "LoweredProgram construction should reject source-graph provenance "
          "drift before a backend can observe it");
@@ -550,7 +551,7 @@ using Selected = int32_t;
   const lang::LoweredProgramBuild mixedProfile =
       lang::LoweredProgramBuilder().build(
           conditional.program, conditional.semantics, conditional.hir,
-          conditional.mir, conditional.mir, otherProfile);
+          conditional.mir, conditional.mir, {}, otherProfile);
   expect(!mixedProfile.valid(),
          "LoweredProgram construction should reject a backend target that "
          "differs from the analyzed target seal");
@@ -1299,7 +1300,7 @@ void testAtomicBackendRouteAndIncoherentRejection() {
   const lang::LoweredProgramBuild staleBuild =
       lang::LoweredProgramBuilder().build(
           stale.program, frontend.semantics, frontend.hir, frontend.mir,
-          frontend.mir, lang::TargetInfo::host());
+          frontend.mir, {}, lang::TargetInfo::host());
   expect(!staleBuild.valid(),
          "LoweredProgram construction should reject an incoherent frontend "
          "snapshot before a backend can observe it");
@@ -1468,7 +1469,8 @@ int main() {
                                         .target = lang::TargetInfo::host()});
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, lang::TargetInfo::host());
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
   expect(optimized.valid() && lowered.valid(),
          "the declaration-adapter fixture should produce LoweredProgram");
   if (!optimized.valid() || !lowered.valid()) {
@@ -1554,7 +1556,8 @@ int main() {
                                         .target = lang::TargetInfo::host()});
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, lang::TargetInfo::host());
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
   expect(optimized.valid() && lowered.valid(),
          "the lifecycle-cleanup fixture should produce LoweredProgram");
   if (!optimized.valid() || !lowered.valid()) {
@@ -1646,7 +1649,8 @@ int main() {
                                         .target = lang::TargetInfo::host()});
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, lang::TargetInfo::host());
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
   expect(optimized.valid() && lowered.valid(),
          "the concrete-instance fixture should produce LoweredProgram");
   if (!optimized.valid() || !lowered.valid()) {

@@ -213,7 +213,8 @@ void testPresenceAndNoArgumentSchedules() {
                                       .owner =
                                           dynamicPlan ? dynamicPlan->entry : 0},
          "HostedStartup/<entry> should be the last deterministic MIR body");
-  expect(lang::verifyMirOptimizationCoherence(dynamic.mir, dynamic.mir).valid(),
+  expect(lang::verifyMirOptimizationCoherence(dynamic.mir, dynamic.mir, {})
+             .valid(),
          "identity optimization should retain hosted-startup authority");
 }
 
@@ -391,7 +392,7 @@ void testOwnedScheduleAndPrinter() {
          "effects");
 
   const std::string dump = lang::MirPrinter().print(owned.mir);
-  expect(dump.starts_with("mir-v41 valid=") &&
+  expect(dump.starts_with("mir-v43 valid=") &&
              dump.find("hosted-startup kind=") != std::string::npos &&
              dump.find("hosted-operation @") != std::string::npos &&
              dump.find("hosted-startup-body") != std::string::npos &&
