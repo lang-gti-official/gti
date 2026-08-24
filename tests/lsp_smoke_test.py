@@ -367,6 +367,25 @@ def test_parser_depth_and_formatter_token_boundaries(executable, root):
         }, diagnostic
         assert "fixes" not in diagnostic["data"], diagnostic
 
+        # Completion performs its own frontend analysis on a separate worker.
+        # It must receive the same bounded source without exhausting the
+        # platform's secondary-thread stack or terminating the server.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 20,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(deep_source, deep_source.index("0")),
+                },
+            }
+        )
+        deep_completion = session.receive_until(
+            lambda message: message.get("id") == 20
+        )["result"]
+        assert isinstance(deep_completion["items"], list), deep_completion
+
         boundary_source = "& &m"
         session.send(
             {

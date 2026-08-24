@@ -17,10 +17,6 @@ passing regression and delete it here.
 | `issue-92b-nested-loans-string.gti` | [#92](https://github.com/LukeHHA/gti/issues/92) | …same over a `std::string` |
 | `issue-92c-nested-loans-class-field.gti` | [#92](https://github.com/LukeHHA/gti/issues/92) | …same over a container held in a class field |
 | `issue-92d-triple-nested-loans.gti` | [#92](https://github.com/LukeHHA/gti/issues/92) | …same at three levels of nesting |
-| `issue-93-parser-deep-nesting.gti` | [#93](https://github.com/LukeHHA/gti/issues/93) | deeply nested `(` → parser stack overflow, signal 11 |
-| `issue-93b-parser-deep-unary.gti` | [#93](https://github.com/LukeHHA/gti/issues/93) | …deeply nested unary `!` |
-| `issue-93c-parser-deep-calls.gti` | [#93](https://github.com/LukeHHA/gti/issues/93) | …deeply nested calls |
-| `issue-93d-parser-deep-if.gti` | [#93](https://github.com/LukeHHA/gti/issues/93) | …deeply nested `if` statements (a *statement* form) |
 | `issue-95-global-no-main.gti` | [#95](https://github.com/LukeHHA/gti/issues/95) | a global variable with no `main` → `GTI-B0001` |
 | `issue-101-pair.gti` | [#101](https://github.com/LukeHHA/gti/issues/101) | `std::make_pair` → `GTI-B0001` in the stdlib body |
 | `issue-101-forward-list.gti` | [#101](https://github.com/LukeHHA/gti/issues/101) | `forward_list::push_front` → `GTI-B0001` in its own body |
