@@ -665,7 +665,15 @@ if(BUILD_TESTING)
                  "tests/cpp_mir_body_emitter_tests.cpp")
   target_link_libraries("gti_cpp_mir_body_emitter_tests"
                         PRIVATE gti_cpp_backend)
-  add_test(NAME cpp_mir_body_emitter COMMAND gti_cpp_mir_body_emitter_tests)
+  # Sharded: the binary runs 63 independent tests whose serial time under
+  # sanitizers (~14 minutes) was the CI wall-time long pole. Four interleaved
+  # shards keep every test running exactly once while ctest --parallel packs
+  # them onto idle cores. `gti_cpp_mir_body_emitter_tests` with no arguments
+  # still runs everything for local use.
+  foreach(shard RANGE 1 4)
+    add_test(NAME cpp_mir_body_emitter_${shard}of4
+             COMMAND gti_cpp_mir_body_emitter_tests --shard ${shard}/4)
+  endforeach()
 
   add_executable(
     "gti_cpp_mir_representation_snapshot_tests"
@@ -853,13 +861,18 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/typed_program_model_test.py"
               "${CMAKE_CURRENT_SOURCE_DIR}"
     )
-    add_test(
-      NAME defined_integer_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${CMAKE_CURRENT_SOURCE_DIR}/tests/defined_integer_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-              "${CMAKE_CURRENT_SOURCE_DIR}/examples/46-defined-integer-arithmetic.gti"
-    )
+    # Sharded by (optimization, standard) configuration; the shard union is
+    # the full 2x2 matrix, and the script with no --shard still runs it all.
+    foreach(shard RANGE 1 4)
+      add_test(
+        NAME defined_integer_runtime_${shard}of4
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/defined_integer_runtime_test.py"
+                "$<TARGET_FILE:gti>"
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/46-defined-integer-arithmetic.gti"
+                --shard ${shard}/4
+      )
+    endforeach()
     add_test(
       NAME binary64_runtime
       COMMAND "${Python3_EXECUTABLE}"
@@ -976,8 +989,11 @@ if(BUILD_TESTING)
     )
     set_tests_properties(temporary_argument_borrow_runtime
                          PROPERTIES TIMEOUT 300)
+    # Sharded by (optimization, standard) configuration; three shards of two
+    # configurations each, union = the full six-configuration matrix.
+    foreach(shard RANGE 1 3)
     add_test(
-      NAME mir_backend_scalar_failure_callgraph_runtime
+      NAME mir_backend_scalar_failure_callgraph_runtime_${shard}of3
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mir_backend_scalar_failure_callgraph_runtime_test.py"
               "$<TARGET_FILE:gti>"
@@ -1000,9 +1016,11 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_unsigned_subtraction_overflow.gti"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_unsigned_multiplication_overflow.gti"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_array_user_near_miss.gti"
+              --shard ${shard}/3
     )
-    set_tests_properties(mir_backend_scalar_failure_callgraph_runtime
-                         PROPERTIES TIMEOUT 300 PROCESSORS 4)
+    set_tests_properties(mir_backend_scalar_failure_callgraph_runtime_${shard}of3
+                         PROPERTIES TIMEOUT 300 PROCESSORS 2)
+    endforeach()
     add_test(
       NAME native_record_c_oracle
       COMMAND "${Python3_EXECUTABLE}"
@@ -1091,7 +1109,9 @@ if(BUILD_TESTING)
       # test-only resource layout.
       set_tests_properties(
         driver_pipeline
-        output_determinism defined_integer_runtime binary64_runtime sum_types_runtime
+        output_determinism binary64_runtime sum_types_runtime
+        defined_integer_runtime_1of4 defined_integer_runtime_2of4
+        defined_integer_runtime_3of4 defined_integer_runtime_4of4
         expected_wrong_state_runtime returned_class_field_runtime
         reference_parameter_range_runtime evaluation_order_runtime
         native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle
@@ -1102,7 +1122,9 @@ if(BUILD_TESTING)
         mir_backend_owned_lifecycle_runtime
         mir_class_value_lifecycle_runtime mutable_temporary_receiver_runtime
         temporary_argument_borrow_runtime
-        mir_backend_scalar_failure_callgraph_runtime
+        mir_backend_scalar_failure_callgraph_runtime_1of3
+        mir_backend_scalar_failure_callgraph_runtime_2of3
+        mir_backend_scalar_failure_callgraph_runtime_3of3
         random_engine_runtime default_parameters_runtime
         compiler_debug_tooling compiler_failure_reducer filesystem_path_runtime
         string_owned_output_runtime

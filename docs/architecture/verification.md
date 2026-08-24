@@ -53,7 +53,7 @@ assertions.
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
 | `mir_census_regression` | exact reviewed per-example MIR body ownership for all 2,962 identities across 63 examples |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
-| `cpp_mir_body_emitter` | generic MIR body-emission classification and a corpus sweep requiring every frontend-produced body to be coherent and text-ready |
+| `cpp_mir_body_emitter_1of4`..`4of4` | generic MIR body-emission classification and a corpus sweep requiring every frontend-produced body to be coherent and text-ready; sharded into four interleaved ctest entries so the suite parallelizes (the binary with no arguments still runs all 63 tests) |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `cpp_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |
