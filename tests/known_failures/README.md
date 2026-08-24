@@ -47,6 +47,7 @@ no ICE — the defect is the *rule*, so `check.py` cannot classify these either
 | File | Issue | Symptom |
 | --- | --- | --- |
 | `rejected/issue-108-nested-capture.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | a nested lambda cannot capture the enclosing lambda's capture → `GTI-S2027`, though capturing the outer lambda's local or parameter is fine |
+| `rejected/issue-109-payload-class-diagnostic.gti` | [#109](https://github.com/LukeHHA/gti/issues/109) | the rejection is correct, but `GTI-S2067` prints `'unknown class'` instead of naming the payload field's type |
 
 ## Confirmed root causes
 
@@ -96,9 +97,11 @@ The holes cluster, and fixing one pair routinely leaves its neighbours broken
 (#104 is precisely the neighbour #100's fix missed).
 
 `scripts/debug/place_shape_matrix.py` enumerates that space directly, crossing
-each storage root (local, global, parameter, lambda capture, `this`) with each
-projection chain (none, `.field`, `.field.field`, `[i]`, `[i].field`) in both
-read and write position, then compiling one minimal program per cell.
+each storage root (local, global, parameter, lambda capture, `this`, raw
+pointer) with each projection chain (none, `.field`, `.field.field`, `[i]`,
+`[i].field`, deref, arrow) in both read and write position, then compiling one
+minimal program per cell. Enum, payload-enum and `expected<T, E>` cells cover
+the aggregate-shaped neighbours of the fixed array that produced #106.
 
 ```sh
 python3 scripts/debug/place_shape_matrix.py
@@ -109,6 +112,12 @@ It exits non-zero listing every `GTI-B0001` cell. It found #106, and its cells
 are what establish the *scope* claims in #103, #104 and #106 — that writes fail
 exactly where reads do, that `this` and parameter roots are unaffected, and
 that an unprojected capture is fine while any projected one is not.
+
+Cells that already pass are kept deliberately. Most of the grid is green, and
+that is the point: a green cell turning red is the cheapest possible signal
+that a backend change broke a shape nobody thought to test. `error` cells are
+kept for the same reason — #109 was found by reading one, where the rejection
+was right but its message could not name the type it rejected.
 
 ## Checking status
 
