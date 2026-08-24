@@ -1,0 +1,18 @@
+// #117 item 3. cell<cell<int32_t>> now compiles (the #110 fix); the indirect
+// form, where the outer generic reappears at depth 2, still fails.
+class cell<std::default_initializable T> {
+public:
+  cell() {}
+  mut T v = T();
+};
+
+class box<std::default_initializable T> {
+public:
+  box() {}
+  mut T v = T();
+};
+
+int main() {
+  mut box<cell<box<int32_t>>> b = box<cell<box<int32_t>>>();
+  return int(b.v.v.v);
+}

@@ -1,0 +1,15 @@
+// #117 item 4. Reads of table[0], writes of table[0], and reads of
+// table[0].v all compile after the #104/#115 fixes. The mixed Index+Field
+// chain in write position does not.
+class leaf {
+public:
+  leaf() {}
+  mut int32_t v = 0;
+};
+
+mut leaf table[2] = {};
+
+int main() {
+  table[std::size_t(0)].v = 7;
+  return int(table[std::size_t(0)].v) - 7;
+}
