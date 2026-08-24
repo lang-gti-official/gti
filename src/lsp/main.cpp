@@ -8,6 +8,8 @@
 #include "gti/support.h"
 #include "gti/token.h"
 
+#include "frontend_snapshot_state.h"
+
 #include <llvm/Support/JSON.h>
 
 #include <algorithm>
@@ -1414,6 +1416,7 @@ struct AnalysisRequest {
   std::uint64_t generation = 0;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::unordered_map<std::string, std::uint64_t> documentGenerations;
+  lang::lsp::FrontendSourceSnapshot frontendSources;
 };
 
 struct CompletionRequest {
@@ -1425,6 +1428,7 @@ struct CompletionRequest {
   std::uint64_t generation = 0;
   std::size_t byteOffset = 0;
   std::unordered_map<std::string, std::string> sourceOverrides;
+  lang::lsp::FrontendSourceSnapshot frontendSources;
   bool snippetSupport = false;
 };
 
@@ -1456,6 +1460,8 @@ struct DocumentAnalysis {
   std::shared_ptr<const lang::FrontendResult> frontend;
   lang::FrontendWorkMetrics workMetrics;
   std::uint64_t frontendElapsedMicroseconds = 0;
+  std::unordered_map<std::string, lang::lsp::FrontendSourceIdentity>
+      sourceIdentities;
 };
 
 struct AnalysisSnapshot {
@@ -1644,6 +1650,14 @@ private:
                                                 {"version", GTI_VERSION}}}};
   }
 
+  // Must run under stateMutex. A generation change makes every older row
+  // unreachable and erases the learned digest. Obsolete rows remain subject
+  // to the cache's global LRU instead of destroying ASTs on the protocol
+  // thread while the editor is sending a change.
+  void invalidateFrontendSourceLocked(std::string_view canonicalPath) {
+    frontendSnapshots.invalidate(canonicalPath);
+  }
+
   void didOpen(const JsonValue *params) {
     const JsonValue *document = member(params, "textDocument");
     const std::string clientUri = stringMember(document, "uri");
@@ -1658,13 +1672,20 @@ private:
       clientUris[uri] = clientUri;
       openClientUris[uri].insert(clientUri);
       documents[uri] = stringMember(document, "text");
+      if (const std::optional<std::filesystem::path> path =
+              filePathFromUri(uri)) {
+        const std::string canonical = canonicalPath(*path).string();
+        invalidateFrontendSourceLocked(canonical);
+      }
       const std::optional<std::int64_t> version =
           integerMember(document, "version");
       if (version) {
         documentVersions[uri] = *version;
       }
       semanticTokenCache.erase(uri);
-      analysisSnapshots.erase(uri);
+      // Generation checks make the prior snapshot inaccessible to requests.
+      // Retaining it until replacement keeps its large frontend graph from
+      // being destroyed synchronously on the protocol thread.
       requests.push_back(
           makeAnalysisRequestLocked(uri, version, ++analysisGenerations[uri]));
       std::unordered_set<std::string> affected;
@@ -1698,11 +1719,17 @@ private:
         clientUris[uri] = clientUri;
         openClientUris[uri].insert(clientUri);
         documents[uri] = source;
+        if (const std::optional<std::filesystem::path> path =
+                filePathFromUri(uri)) {
+          const std::string canonical = canonicalPath(*path).string();
+          invalidateFrontendSourceLocked(canonical);
+        }
         if (version) {
           documentVersions[uri] = *version;
         }
         semanticTokenCache.erase(uri);
-        analysisSnapshots.erase(uri);
+        // Keep the stale snapshot alive until the worker publishes its
+        // replacement; all readers require an exact generation match.
         requests.push_back(makeAnalysisRequestLocked(
             uri, version, ++analysisGenerations[uri]));
         std::unordered_set<std::string> affected;
@@ -1754,6 +1781,11 @@ private:
         }
       }
       documents.erase(uri);
+      if (const std::optional<std::filesystem::path> path =
+              filePathFromUri(uri)) {
+        const std::string canonical = canonicalPath(*path).string();
+        invalidateFrontendSourceLocked(canonical);
+      }
       documentVersions.erase(uri);
       semanticTokenCache.erase(uri);
       analysisSnapshots.erase(uri);
@@ -1802,6 +1834,10 @@ private:
         if (documents.contains(uri)) {
           continue;
         }
+        if (changedPath) {
+          const std::string canonical = canonicalPath(*changedPath).string();
+          invalidateFrontendSourceLocked(canonical);
+        }
         affected.insert(uri);
         invalidateDependentsLocked(uri, affected, requests);
       }
@@ -1811,7 +1847,6 @@ private:
           (void)documentSource;
           affected.insert(documentUri);
           semanticTokenCache.erase(documentUri);
-          analysisSnapshots.erase(documentUri);
           const auto version = documentVersions.find(documentUri);
           requests.push_back(makeAnalysisRequestLocked(
               documentUri,
@@ -2402,6 +2437,7 @@ private:
         request.source = source;
         request.generation = generation->second;
         request.snippetSupport = completionSnippets;
+        request.frontendSources = frontendSnapshots.capture();
         for (const auto &[documentUri, documentSource] : documents) {
           const std::optional<std::filesystem::path> path =
               filePathFromUri(documentUri);
@@ -2587,6 +2623,9 @@ private:
     // remains code-generation work and is not built for editor snapshots.
     frontendOptions.stopAfter = lang::FrontendPhase::Hir;
     frontendOptions.workMetrics = &result.workMetrics;
+    frontendOptions.cache = request.frontendSources.cache;
+    frontendOptions.sourceGenerations = request.frontendSources.generations;
+    frontendOptions.sourceDigests = request.frontendSources.digests;
     const lang::driver::ManifestDiscoveryResult discovery =
         lang::driver::discoverProjectManifest(filePath->parent_path());
     if (discovery.succeeded()) {
@@ -2608,6 +2647,16 @@ private:
     const lang::FrontendResult &analysis = *result.frontend;
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
+      const auto generation =
+          request.frontendSources.generations.find(loadedSource);
+      result.sourceIdentities.emplace(
+          loadedSource,
+          lang::lsp::FrontendSourceIdentity{
+              .generation =
+                  generation == request.frontendSources.generations.end()
+                      ? 0
+                      : generation->second,
+              .digest = unit.sourceDigest});
       if (unit.id != analysis.sourceGraph.entryUnit() &&
           loadedSource != rootPath) {
         result.dependencies.insert(
@@ -2640,6 +2689,7 @@ private:
         request.documentGenerations[documentUri] = current->second;
       }
     }
+    request.frontendSources = frontendSnapshots.capture();
     return request;
   }
 
@@ -2658,7 +2708,6 @@ private:
         diagnosticsByRoot.erase(previous);
       }
       pendingAnalyses.erase(rootUri);
-      analysisSnapshots.erase(rootUri);
       const std::uint64_t generation = ++analysisGenerations[rootUri];
       if (documents.contains(rootUri)) {
         const auto version = documentVersions.find(rootUri);
@@ -2887,7 +2936,10 @@ private:
                .preludePaths = {standardLibrary.prelude},
                .sourceOverrides = request.sourceOverrides,
                .standardLibraryRoots = {standardLibrary.root},
-               .workMetrics = &workMetrics});
+               .workMetrics = &workMetrics,
+               .cache = request.frontendSources.cache,
+               .sourceGenerations = request.frontendSources.generations,
+               .sourceDigests = request.frontendSources.digests});
         } catch (const std::exception &) {
           completion = {};
         }
@@ -3060,6 +3112,7 @@ private:
     std::vector<DiagnosticPublication> publications;
     std::optional<AnalysisRequest> retry;
     std::deque<PendingSemanticRequest> semanticRequests;
+    std::shared_ptr<const lang::FrontendResult> retiredFrontend;
     {
       const std::lock_guard lock(stateMutex);
       const auto generation = analysisGenerations.find(request.uri);
@@ -3092,6 +3145,9 @@ private:
                 : std::optional<std::int64_t>(version->second),
             ++analysisGenerations[request.uri]);
       } else {
+        for (const auto &[path, identity] : analysis.sourceIdentities) {
+          frontendSnapshots.publish(path, identity);
+        }
         std::unordered_set<std::string> affected{request.uri};
         if (const auto previous = diagnosticsByRoot.find(request.uri);
             previous != diagnosticsByRoot.end()) {
@@ -3104,6 +3160,10 @@ private:
         }
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         dependenciesByRoot[request.uri] = std::move(analysis.dependencies);
+        if (const auto previous = analysisSnapshots.find(request.uri);
+            previous != analysisSnapshots.end()) {
+          retiredFrontend = previous->second.frontend;
+        }
         analysisSnapshots[request.uri] = {
             .generation = request.generation,
             .rootPath = std::move(analysis.rootPath),
@@ -3131,6 +3191,8 @@ private:
     publish(std::move(publications));
     dispatchSemanticRequests(std::move(semanticRequests));
     requestSemanticTokenRefresh();
+    // `retiredFrontend` is intentionally released after diagnostics and
+    // queued semantic replies have been sent, outside `stateMutex`.
   }
 
   void requestSemanticTokenRefresh() {
@@ -3280,6 +3342,11 @@ private:
         {"semanticFinalizationMicroseconds",
          static_cast<std::int64_t>(metrics.semanticFinalizationMicroseconds)},
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
+        {"semanticBorrowSummaryCandidateInspections",
+         static_cast<std::int64_t>(
+             metrics.semanticBorrowSummaryCandidateInspections)},
+        {"semanticBorrowSummaryFunctions",
+         static_cast<std::int64_t>(metrics.semanticBorrowSummaryFunctions)},
         {"loadedUnits", stringArray(metrics.loadedUnits)},
         {"lexedUnits", stringArray(metrics.lexedUnits)},
         {"parsedUnits", stringArray(metrics.parsedUnits)},
@@ -3288,6 +3355,16 @@ private:
         {"lexCacheHits", stringArray(metrics.lexCacheHits)},
         {"parseCacheHits", stringArray(metrics.parseCacheHits)},
     };
+    const lang::FrontendCacheStats cacheStats =
+        frontendSnapshots.cache()->stats();
+    record["cache"] = JsonObject{
+        {"entries", static_cast<std::int64_t>(cacheStats.entries)},
+        {"estimatedBytes",
+         static_cast<std::int64_t>(cacheStats.estimatedBytes)},
+        {"maximumEntries",
+         static_cast<std::int64_t>(cacheStats.limits.maximumEntries)},
+        {"maximumEstimatedBytes",
+         static_cast<std::int64_t>(cacheStats.limits.maximumEstimatedBytes)}};
     const std::string encoded =
         llvm::formatv("{0}", JsonValue(std::move(record))).str();
     const std::lock_guard lock(frontendTraceMutex);
@@ -3341,6 +3418,7 @@ private:
   lang::StandardLibraryLayout standardLibrary;
   std::optional<std::filesystem::path> frontendTracePath;
   mutable std::mutex frontendTraceMutex;
+  lang::lsp::FrontendSnapshotState frontendSnapshots;
   mutable std::mutex stateMutex;
   std::condition_variable analysisCondition;
   std::condition_variable completionCondition;

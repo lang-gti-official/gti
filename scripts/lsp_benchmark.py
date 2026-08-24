@@ -368,9 +368,131 @@ def summary(samples):
     return result
 
 
-def compare_to_baseline(current, baseline_path):
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    baseline_summary = baseline["summary"]
+def matching_trace(sample, kind, filename, generation=None, last=False):
+    matches = [
+        record
+        for record in sample["frontendTrace"]
+        if record.get("kind") == kind
+        and record.get("uri", "").endswith("/" + filename)
+        and (generation is None or record.get("generation") == generation)
+    ]
+    if not matches:
+        raise AssertionError(
+            f"missing {kind} trace for {filename} generation {generation}"
+        )
+    return matches[-1] if last else matches[0]
+
+
+def unit_names(record, field):
+    return [pathlib.Path(value).name for value in record.get(field, [])]
+
+
+def stage_work_summary(records):
+    fields = (
+        "loadedUnits",
+        "lexedUnits",
+        "parsedUnits",
+        "semanticallyAnalyzedUnits",
+        "lexCacheHits",
+        "parseCacheHits",
+    )
+    result = {}
+    for field in fields:
+        counts = [len(record.get(field, [])) for record in records]
+        result[field] = {
+            "medianCount": statistics.median(counts),
+            "representativeUnits": unit_names(records[0], field),
+        }
+    return result
+
+
+def frontend_work_summary(samples, dependency_count):
+    cold = [matching_trace(sample, "analysis", "main.gti", 1) for sample in samples]
+    repeated = [
+        matching_trace(sample, "analysis", "main.gti", 2) for sample in samples
+    ]
+    completion = [
+        matching_trace(sample, "completion", "main.gti", 2)
+        for sample in samples
+    ]
+    dirty_dependency = [
+        matching_trace(sample, "analysis", "dep_00.gti", 2)
+        for sample in samples
+    ]
+    dirty_dependant = [
+        matching_trace(sample, "analysis", "main.gti", 4) for sample in samples
+    ]
+    superseded = [
+        matching_trace(sample, "analysis", "main.gti", last=True)
+        for sample in samples
+    ]
+
+    expected_unchanged = {"prelude.gti"} | {
+        f"dep_{index:02d}.gti" for index in range(dependency_count)
+    }
+    root_only_reuse = all(
+        unit_names(record, "lexedUnits") == ["main.gti"]
+        and unit_names(record, "parsedUnits") == ["main.gti"]
+        and expected_unchanged.issubset(set(unit_names(record, "lexCacheHits")))
+        and expected_unchanged.issubset(set(unit_names(record, "parseCacheHits")))
+        for record in repeated
+    )
+    dependency_scope = all(
+        set(unit_names(record, "lexedUnits")) <= {"dep_00.gti"}
+        and set(unit_names(record, "parsedUnits")) <= {"dep_00.gti", "main.gti"}
+        and not (
+            set(unit_names(record, "parsedUnits"))
+            & (
+                {"prelude.gti"}
+                | {
+                    f"dep_{index:02d}.gti"
+                    for index in range(1, dependency_count)
+                }
+            )
+        )
+        for record in dirty_dependant
+    ) and all(
+        set(unit_names(record, "lexedUnits")) <= {"dep_00.gti"}
+        and set(unit_names(record, "parsedUnits")) <= {"dep_00.gti"}
+        for record in dirty_dependency
+    )
+    all_records = [
+        record for sample in samples for record in sample["frontendTrace"]
+    ]
+    cache_records = [record["cache"] for record in all_records if "cache" in record]
+    if not cache_records:
+        raise AssertionError("frontend trace did not report cache memory policy")
+    memory_bounded = all(
+        record["entries"] <= record["maximumEntries"]
+        and record["estimatedBytes"] <= record["maximumEstimatedBytes"]
+        for record in cache_records
+    )
+    return {
+        "coldDiagnostics": stage_work_summary(cold),
+        "repeatedEditDiagnostics": stage_work_summary(repeated),
+        "completion": stage_work_summary(completion),
+        "dirtyDependencyDiagnostics": stage_work_summary(dirty_dependency),
+        "dirtyDependantDiagnostics": stage_work_summary(dirty_dependant),
+        "supersededDiagnostics": stage_work_summary(superseded),
+        "cache": {
+            "maximumObservedEntries": max(record["entries"] for record in cache_records),
+            "maximumObservedEstimatedBytes": max(
+                record["estimatedBytes"] for record in cache_records
+            ),
+            "maximumEntries": cache_records[0]["maximumEntries"],
+            "maximumEstimatedBytes": cache_records[0]["maximumEstimatedBytes"],
+        },
+        "invariants": {
+            "rootOnlyEditReusesDependencies": root_only_reuse,
+            "dependencyEditInvalidationIsScoped": dependency_scope,
+            "cacheMemoryRemainsBounded": memory_bounded,
+        },
+    }
+
+
+def compare_to_summary(
+    current, baseline_summary, baseline_description, work_invariants_met
+):
     repeated_before = baseline_summary["repeatedEditDiagnostics"][
         "medianMilliseconds"
     ]
@@ -380,10 +502,13 @@ def compare_to_baseline(current, baseline_path):
     repeated_reduction = (repeated_before - repeated_after) / repeated_before
     cold_regression = (cold_after - cold_before) / cold_before
     return {
-        "baseline": str(baseline_path.resolve()),
+        "baseline": baseline_description,
         "repeatedEditReductionPercent": repeated_reduction * 100.0,
         "coldOpenRegressionPercent": cold_regression * 100.0,
-        "targetMet": repeated_reduction >= 0.30 and cold_regression <= 0.10,
+        "workInvariantsMet": work_invariants_met,
+        "targetMet": repeated_reduction >= 0.30
+        and cold_regression <= 0.10
+        and work_invariants_met,
     }
 
 
@@ -400,7 +525,13 @@ def parse_args():
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--dependencies", type=int, default=16)
-    parser.add_argument("--baseline", type=pathlib.Path)
+    baseline = parser.add_mutually_exclusive_group()
+    baseline.add_argument("--baseline", type=pathlib.Path)
+    baseline.add_argument(
+        "--baseline-lsp",
+        type=pathlib.Path,
+        help="alternate an unchanged baseline binary with the current binary",
+    )
     parser.add_argument("--smoke", action="store_true")
     return parser.parse_args()
 
@@ -408,9 +539,14 @@ def parse_args():
 def main():
     args = parse_args()
     executable = args.lsp.resolve()
+    baseline_executable = (
+        args.baseline_lsp.resolve() if args.baseline_lsp else None
+    )
     standard_library = args.stdlib.resolve()
     if not executable.is_file():
         raise SystemExit(f"gti_lsp does not exist: {executable}")
+    if baseline_executable is not None and not baseline_executable.is_file():
+        raise SystemExit(f"baseline gti_lsp does not exist: {baseline_executable}")
     if not (standard_library / "prelude.gti").is_file():
         raise SystemExit(f"GTI standard library is incomplete: {standard_library}")
     runs = 1 if args.smoke else args.runs
@@ -423,18 +559,29 @@ def main():
     run_root = output / f"run-{time.time_ns()}-{os.getpid()}"
     run_root.mkdir()
     all_samples = []
+    baseline_samples = []
     for iteration in range(warmups + runs):
-        iteration_root = run_root / f"iteration-{iteration:03d}"
-        iteration_root.mkdir()
-        sample = run_workload(
-            executable,
-            standard_library,
-            iteration_root / "fixture",
-            iteration_root,
-            args.dependencies,
-        )
-        if iteration >= warmups:
-            all_samples.append(sample)
+        variants = [("current", executable)]
+        if baseline_executable is not None:
+            variants.append(("baseline", baseline_executable))
+            if iteration % 2 != 0:
+                variants.reverse()
+        for label, variant_executable in variants:
+            iteration_root = run_root / f"{label}-iteration-{iteration:03d}"
+            iteration_root.mkdir()
+            sample = run_workload(
+                variant_executable,
+                standard_library,
+                iteration_root / "fixture",
+                iteration_root,
+                args.dependencies,
+            )
+            if iteration < warmups:
+                continue
+            if label == "baseline":
+                baseline_samples.append(sample)
+            else:
+                all_samples.append(sample)
 
     version = subprocess.run(
         [str(executable), "--version"],
@@ -443,7 +590,7 @@ def main():
         text=True,
     ).stdout.strip()
     report = {
-        "schema": 1,
+        "schema": 2,
         "benchmark": "gti-lsp-scalability",
         "lsp": str(executable),
         "lspVersion": version,
@@ -460,10 +607,39 @@ def main():
             "smoke": args.smoke,
         },
         "summary": summary(all_samples),
+        "frontendWorkSummary": frontend_work_summary(
+            all_samples, args.dependencies
+        ),
         "samples": all_samples,
     }
+    work_invariants_met = all(
+        report["frontendWorkSummary"]["invariants"].values()
+    )
     if args.baseline:
-        report["comparison"] = compare_to_baseline(report["summary"], args.baseline)
+        baseline_report = json.loads(args.baseline.read_text(encoding="utf-8"))
+        report["comparison"] = compare_to_summary(
+            report["summary"],
+            baseline_report["summary"],
+            str(args.baseline.resolve()),
+            work_invariants_met,
+        )
+    elif baseline_executable is not None:
+        baseline_version = subprocess.run(
+            [str(baseline_executable), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        report["baselineLsp"] = str(baseline_executable)
+        report["baselineLspVersion"] = baseline_version
+        report["baselineSummary"] = summary(baseline_samples)
+        report["baselineSamples"] = baseline_samples
+        report["comparison"] = compare_to_summary(
+            report["summary"],
+            report["baselineSummary"],
+            str(baseline_executable),
+            work_invariants_met,
+        )
     report_path = args.json.resolve() if args.json else run_root / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
