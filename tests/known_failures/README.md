@@ -11,7 +11,16 @@ passing regression, delete it here, and add a row to *Graduated* below.
 
 ## Compiler reproducers
 
-There are currently no quarantined compiler reproducers.
+These are the shapes left broken by an otherwise-landed fix — see
+[#117](https://github.com/LukeHHA/gti/issues/117). Each has a passing sibling
+that the same fix already handles, which is what makes them worth keeping.
+
+| File | Left over from | Symptom |
+| --- | --- | --- |
+| `issue-117-iife-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | a captured field read in an *immediately-invoked* lambda; binding the lambda first works |
+| `issue-117-nested-capture-emission.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | capture-of-capture is now accepted by semantics but cannot be emitted, so `GTI-S2027` became `GTI-B0001` |
+| `issue-117-indirect-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic reappearing in its own arguments at depth 2; the direct form is fixed |
+| `issue-117-global-element-field-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | `table[0].v = x` on a global array of class; the read and the plain write are fixed |
 
 ## Memory-safety reproducers
 

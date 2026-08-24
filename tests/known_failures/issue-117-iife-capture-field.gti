@@ -1,0 +1,12 @@
+// #117 item 1. Binding the lambda first compiles; invoking it immediately
+// does not. Same class, same capture, same field read.
+class holder {
+public:
+  holder() {}
+  mut int32_t value = 4;
+};
+
+int main() {
+  mut holder h = holder();
+  return int([h]() -> int32_t { return h.value; }()) - 4;
+}

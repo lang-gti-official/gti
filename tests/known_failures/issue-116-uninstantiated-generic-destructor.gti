@@ -1,9 +1,0 @@
-class holder<T> {
-public:
-  holder() {}
-  ~holder() {}
-};
-
-int main() {
-  return 3;
-}
