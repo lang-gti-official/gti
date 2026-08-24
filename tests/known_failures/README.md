@@ -216,6 +216,25 @@ stderr already contains `GTI-B0001` as `expected-ICE`. The manifest stays the
 single source of truth rather than a list hardcoded here, and when #112 is
 fixed those entries stop matching on their own.
 
+## Sweeping the standard library by include
+
+`scripts/debug/stdlib_include_sweep.py` compiles each module under
+`stdlib/std/` on its own — one `#include` and an empty `main` — so a failure
+is attributable to the header alone.
+
+```sh
+python3 scripts/debug/stdlib_include_sweep.py
+```
+
+That shape had never been tested. Every case in the surface manifest *uses*
+the module it covers, and including a header that declares a generic **without
+instantiating it** is its own failure mode: the destructor declaration is
+lowered with no concrete MIR instance and the compile raises `GTI-B0001`.
+Using the module makes it go away, which is why the surface cases pass while
+the header alone does not. Filed as
+[#116](https://github.com/LukeHHA/gti/issues/116); today the sweep reports
+`19 module(s): 16 ok, 3 failing`.
+
 ## Probing the language server
 
 `scripts/debug/lsp_probe.py` checks two properties of `gti_lsp` that an
