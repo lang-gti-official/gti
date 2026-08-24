@@ -1,0 +1,16 @@
+mut int32_t witness = 0;
+
+class tracked {
+public:
+  tracked() {}
+  ~tracked() {
+    witness = witness + 1;
+  }
+};
+
+int main() {
+  {
+    mut tracked items[3] = {};
+  }
+  return int(witness);
+}
