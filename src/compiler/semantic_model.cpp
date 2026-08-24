@@ -1041,6 +1041,17 @@ SemanticModel::findConstruction(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findConstruction(expression);
 }
 
+[[nodiscard]] const ResolvedConstructionInfo *
+SemanticModel::findArrayElementConstruction(
+    const ArrayInitializer &initializer) const {
+  const auto found = arrayElementConstructions.find(&initializer);
+  if (found != arrayElementConstructions.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr
+                         : base->findArrayElementConstruction(initializer);
+}
+
 [[nodiscard]] const ResolvedConstructorInitializerInfo *
 SemanticModel::findConstructorInitializer(
     const ConstructorInitializer &initializer) const {
@@ -1079,7 +1090,7 @@ SemanticModel::findResolvedSymbol(const Expr &expression) const {
 }
 
 [[nodiscard]] std::size_t SemanticModel::resolvedConstructionCount() const {
-  return constructions.size() +
+  return constructions.size() + arrayElementConstructions.size() +
          (base == nullptr ? 0 : base->resolvedConstructionCount());
 }
 
@@ -1781,6 +1792,11 @@ void SemanticModel::record(const ClassDecl &declaration,
 void SemanticModel::record(const Expr &expression,
                            ResolvedConstructionInfo info) {
   constructions.insert_or_assign(&expression, std::move(info));
+}
+
+void SemanticModel::recordArrayElementConstruction(
+    const ArrayInitializer &initializer, ResolvedConstructionInfo info) {
+  arrayElementConstructions.insert_or_assign(&initializer, std::move(info));
 }
 
 void SemanticModel::record(const ConstructorInitializer &initializer,

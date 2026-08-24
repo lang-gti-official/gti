@@ -62,7 +62,8 @@ struct MirPlaceAliasEscapeAnalysis {
                          const MirPlaceAliasEscapeAnalysis &) = default;
 };
 
-[[nodiscard]] MirAliasRelation mirPlaceRelation(const MirPlace &left,
+[[nodiscard]] MirAliasRelation mirPlaceRelation(const MirProgram &program,
+                                                const MirPlace &left,
                                                 const MirPlace &right);
 
 [[nodiscard]] MirPlaceAliasEscapeAnalysis

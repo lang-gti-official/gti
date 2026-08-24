@@ -1887,6 +1887,9 @@ public:
   [[nodiscard]] const ResolvedConstructionInfo *
   findConstruction(const Expr &expression) const;
 
+  [[nodiscard]] const ResolvedConstructionInfo *
+  findArrayElementConstruction(const ArrayInitializer &initializer) const;
+
   [[nodiscard]] const ResolvedConstructorInitializerInfo *
   findConstructorInitializer(const ConstructorInitializer &initializer) const;
 
@@ -2110,6 +2113,9 @@ private:
 
   void record(const Expr &expression, ResolvedConstructionInfo info);
 
+  void recordArrayElementConstruction(const ArrayInitializer &initializer,
+                                      ResolvedConstructionInfo info);
+
   void record(const ConstructorInitializer &initializer,
               ResolvedConstructorInitializerInfo info);
 
@@ -2222,6 +2228,8 @@ private:
   std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
+  std::unordered_map<const ArrayInitializer *, ResolvedConstructionInfo>
+      arrayElementConstructions;
   std::unordered_map<const ConstructorInitializer *,
                      ResolvedConstructorInitializerInfo>
       constructorInitializers;

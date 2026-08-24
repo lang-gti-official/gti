@@ -14,7 +14,7 @@
     "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
     "stdlib/std/memory.gti": "caf67131d2756d28c8f99507f374ecbe86ecea7ef68d24e2b92fe31ce99cc4e5",
     "stdlib/std/numeric.gti": "0ce4f0056bc9d79823c8371fc2838181a40aabbd62e9636e65a4bdd0eeee93fc",
-    "stdlib/std/optional.gti": "115abc9cb76ce78b2713552724440ec43d5b7a2ff018b3eb243845bafe79d183",
+    "stdlib/std/optional.gti": "5960da4941df427ab1514ec12dbd6c5666deb77a6cbefa46613dffa96b4f53ab",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/span.gti": "bf8f46e6326ec5d436575e69aab3337610df70a8e38fcfd33ff877bc2a202e58",
     "stdlib/std/string.gti": "70e0a61fa362352950c2131903ec302c50fa2e879dd971c4795e09c84386316b",
@@ -67,13 +67,13 @@
       }
     },
     {
-      "id": "filesystem-constructor-unsupported",
+      "id": "filesystem-constructor-backend-limitation",
       "mode": "diagnostic",
       "source": "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
       "optimization": "O0",
       "expected": {
         "exit_code": 65,
-        "stderr_contains": ["GTI-B0001", "complete C++ text vocabulary", "__gti_entry"]
+        "stderr_contains": ["GTI-B0003", "does not yet support", "construction-rollback obligation"]
       }
     },
     {
@@ -167,14 +167,11 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
-      "id": "unique-ptr-upcast-unsupported",
-      "mode": "diagnostic",
+      "id": "unique-ptr-upcast",
+      "mode": "run",
       "source": "tests/fixtures/stdlib_surface_unique_ptr_upcast.gti",
-      "optimization": "O0",
-      "expected": {
-        "exit_code": 65,
-        "stderr_contains": ["GTI-B0001", "complete C++ text vocabulary", "__gti_entry"]
-      }
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "utility-make-pair",
@@ -367,8 +364,8 @@
       "source": "stdlib/std/filesystem.gti",
       "status": "unsupported",
       "operations": ["std::filesystem::path::path(string_view)"],
-      "case_ids": ["filesystem-constructor-unsupported"],
-      "reason": "The declared converting constructor currently reaches an unsupported verified-MIR C++ text shape; callers use path() followed by assign().",
+      "case_ids": ["filesystem-constructor-backend-limitation"],
+      "reason": "The declared converting constructor requires partial-construction rollback authority that MIR does not yet provide; callers use path() followed by assign(). The C++ backend reports this bounded gap as GTI-B0003.",
       "evidence": ["tests/fixtures/stdlib_surface_filesystem_constructor.gti", "stdlib/README.md"],
       "required_instantiations": []
     },
@@ -512,7 +509,7 @@
       "source": "stdlib/std/optional.gti",
       "status": "scaffold",
       "operations": ["std::optional public surface"],
-      "reason": "The optional class is a declaration scaffold with no state or operation bodies.",
+      "reason": "The optional class has an explicit empty unique-owner state, but its value constructor and operation bodies remain scaffolds.",
       "evidence": ["stdlib/std/optional.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
     },
     {
@@ -543,12 +540,11 @@
       "evidence": ["tests/fixtures/stdlib_surface_unique_ptr.gti", "stdlib/prelude.gti"]
     },
     {
-      "id": "prelude.unsupported-unique-ptr-upcast",
+      "id": "prelude.unique-ptr-upcast",
       "source": "stdlib/prelude.gti",
-      "status": "unsupported",
+      "status": "executable",
       "operations": ["std::unique_ptr::upcast", "std::upcast_unique"],
-      "case_ids": ["unique-ptr-upcast-unsupported"],
-      "reason": "The source-defined upcast currently reaches an unsupported verified-MIR C++ text shape in the caller.",
+      "case_ids": ["unique-ptr-upcast"],
       "evidence": ["tests/fixtures/stdlib_surface_unique_ptr_upcast.gti", "stdlib/prelude.gti"],
       "required_instantiations": ["Base/Derived"]
     },

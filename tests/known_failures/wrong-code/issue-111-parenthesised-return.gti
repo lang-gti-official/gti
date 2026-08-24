@@ -1,5 +1,0 @@
-// expected exit status: 3
-int main() {
-  mut int32_t total = 3;
-  return (total);
-}

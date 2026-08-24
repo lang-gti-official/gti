@@ -4,6 +4,7 @@
 #include "cpp_mir_program_plan.h"
 #include "cpp_mir_representation_snapshot.h"
 #include "cpp_representation.h"
+#include "gti/backend.h"
 #include "gti/lowered_program.h"
 #include "gti/mir.h"
 
@@ -39,9 +40,19 @@ public:
     CppMirRepresentationSnapshotBuild snapshot =
         buildCppMirRepresentationSnapshot(loweredProgram, standard);
     if (!snapshot.valid()) {
-      const std::string detail = snapshot.issues.empty()
+      const auto internal =
+          std::find_if(snapshot.issues.begin(), snapshot.issues.end(),
+                       [](const CppMirRepresentationSnapshotIssue &issue) {
+                         return issue.kind !=
+                                CppMirRepresentationSnapshotIssueKind::
+                                    KnownBackendLimitation;
+                       });
+      if (internal == snapshot.issues.end() && !snapshot.issues.empty()) {
+        throw BackendUnsupportedError(snapshot.issues.front().detail);
+      }
+      const std::string detail = internal == snapshot.issues.end()
                                      ? "unknown snapshot-builder failure"
-                                     : snapshot.issues.front().detail;
+                                     : internal->detail;
       throw std::logic_error(
           "C++ emitter requires a coherent representation snapshot: " + detail);
     }
@@ -2606,8 +2617,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     return found == generalEmissionMap->symbols().end() ? nullptr : &*found;
   }
 
-  [[nodiscard]] bool loweredRuntimeClassLifetimeSlot(
-      const LoweredStorageDeclaration &storage) const {
+  [[nodiscard]] bool
+  loweredRuntimeLifetimeSlot(const LoweredStorageDeclaration &storage) const {
     const CppMirSymbolRepresentation *row =
         loweredStorageRepresentation(storage);
     return row != nullptr && row->runtimeLifetimeSlot;
@@ -2615,7 +2626,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
   void emitLoweredStorageRepresentationType(
       const LoweredStorageDeclaration &storage) {
-    if (loweredRuntimeClassLifetimeSlot(storage)) {
+    if (loweredRuntimeLifetimeSlot(storage)) {
       output << "::gti_internal::backend::mir_lifetime_slot<";
       emitSemanticType(storage.type);
       output << ", true>";
@@ -4534,6 +4545,16 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     return false;
   }
 
+  [[nodiscard]] bool
+  loweredClassHasConcreteInstance(ClassId declaration) const {
+    return std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
+                       [declaration](const MirClassInstance &instance) {
+                         return instance.declaration == declaration &&
+                                (!instance.type.arguments.empty() ||
+                                 !instance.type.valueArguments.empty());
+                       });
+  }
+
   void emitLoweredVirtualFailureBoundaryWrapper(
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
       const MirFunctionInstance &instance, std::string_view ownerSpelling,
@@ -4960,9 +4981,18 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     const bool generic = loweredOwnerIsGeneric(owner);
     bool emitted = false;
+    const bool hasConcreteOwnerInstance =
+        loweredClassHasConcreteInstance(destructor.owner);
     for (const MirClassInstance &classInstance : mir.classInstances()) {
-      if (classInstance.declaration != destructor.owner ||
-          !classInstance.destructor) {
+      if (classInstance.declaration != destructor.owner) {
+        continue;
+      }
+      const bool concrete = !classInstance.type.arguments.empty() ||
+                            !classInstance.type.valueArguments.empty();
+      if (generic && !concrete) {
+        continue;
+      }
+      if (!classInstance.destructor) {
         continue;
       }
       const std::string ownerSpelling =
@@ -4984,7 +5014,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         break;
       }
     }
-    if (!emitted) {
+    if (!emitted && (!generic || hasConcreteOwnerInstance)) {
       throw std::logic_error(
           "lowered destructor declaration has no concrete MIR instance");
     }
@@ -5099,7 +5129,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         output << "}\n\n";
         emitted = true;
       }
-      if (!emitted) {
+      if (!emitted && (!loweredOwnerIsGeneric(*classRow) ||
+                       loweredClassHasConcreteInstance(classDeclaration->id))) {
         throw std::logic_error(
             "lowered active-drop class has no lifecycle generated item");
       }

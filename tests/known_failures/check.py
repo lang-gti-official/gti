@@ -5,10 +5,9 @@
     python3 tests/known_failures/check.py <gti>
 
 Every .gti file here reproduces an open compiler bug. This helper compiles
-each one and prints STILL-FAILING (crash or GTI-B0001 internal error, as
-expected today) or FIXED (compiled cleanly — the bug is resolved and the
-reproducer should graduate into the owning suite). It is deliberately not a
-CTest: these inputs crash the compiler, and CI must not run them.
+each one and distinguishes crashes/internal errors, classified backend
+limitations, clean diagnostics, and successful compilation. It is deliberately
+not a CTest: these inputs describe open bugs and may still crash the compiler.
 """
 
 from __future__ import annotations
@@ -38,6 +37,8 @@ def main() -> int:
             status = f"STILL-FAILING (signal {-result.returncode}, crash)"
         elif "GTI-B0001" in output:
             status = "STILL-FAILING (GTI-B0001 internal error)"
+        elif "GTI-B0003" in output:
+            status = "CHANGED (GTI-B0003 classified backend limitation)"
         elif result.returncode != 0:
             # A clean diagnostic is the intended fixed state for the parser
             # crash; for the loan ICE the intended fixed state is a clean

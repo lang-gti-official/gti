@@ -49,6 +49,7 @@ struct MirForwardDataflowOptions {
 enum class MirDataflowStatus {
   Converged,
   InvalidControlFlow,
+  NonMonotoneTransfer,
   IterationLimit,
 };
 
@@ -69,12 +70,82 @@ template <typename State> struct MirForwardDataflowResult {
   }
 };
 
+namespace mir_dataflow_detail {
+
+[[nodiscard]] inline bool validEdge(const MirBody &body, MirBlockId target,
+                                    const std::vector<MirOperand> &arguments) {
+  return target != 0 && target <= body.blocks.size() &&
+         body.blocks[target - 1].parameters.size() == arguments.size();
+}
+
+[[nodiscard]] inline bool validControlFlow(const MirBody &body,
+                                           const MirBlock &block) {
+  const MirTerminator &terminator = block.terminator;
+  switch (terminator.kind) {
+  case MirTerminatorKind::Goto:
+    return validEdge(body, terminator.target, terminator.targetArguments);
+  case MirTerminatorKind::Branch:
+  case MirTerminatorKind::Invoke:
+    return validEdge(body, terminator.target, terminator.targetArguments) &&
+           validEdge(body, terminator.elseTarget, terminator.elseArguments);
+  case MirTerminatorKind::Switch:
+    return validEdge(body, terminator.target, terminator.targetArguments) &&
+           std::all_of(
+               terminator.switchTargets.begin(), terminator.switchTargets.end(),
+               [&](const MirSwitchTarget &target) {
+                 return validEdge(body, target.target, target.arguments);
+               });
+  case MirTerminatorKind::Return:
+  case MirTerminatorKind::PropagateFailure:
+  case MirTerminatorKind::Unreachable:
+  case MirTerminatorKind::Exit:
+  case MirTerminatorKind::ContainFailure:
+  case MirTerminatorKind::TerminateCleanupFailure:
+    return true;
+  case MirTerminatorKind::None:
+    return false;
+  }
+  return false;
+}
+
+[[nodiscard]] inline bool
+canonicalEdge(const MirBlock &block, MirBlockId target, std::size_t ordinal) {
+  const MirTerminator &terminator = block.terminator;
+  switch (terminator.kind) {
+  case MirTerminatorKind::Goto:
+    return ordinal == 0 && target == terminator.target;
+  case MirTerminatorKind::Branch:
+  case MirTerminatorKind::Invoke:
+    return (ordinal == 0 && target == terminator.target) ||
+           (ordinal == 1 && target == terminator.elseTarget);
+  case MirTerminatorKind::Switch:
+    if (ordinal == 0) {
+      return target == terminator.target;
+    }
+    return ordinal <= terminator.switchTargets.size() &&
+           target == terminator.switchTargets[ordinal - 1].target;
+  case MirTerminatorKind::None:
+  case MirTerminatorKind::Return:
+  case MirTerminatorKind::PropagateFailure:
+  case MirTerminatorKind::Unreachable:
+  case MirTerminatorKind::Exit:
+  case MirTerminatorKind::ContainFailure:
+  case MirTerminatorKind::TerminateCleanupFailure:
+    return false;
+  }
+  return false;
+}
+
+} // namespace mir_dataflow_detail
+
 // Deterministic monotone forward solver for body-local MIR analyses.
 //
 // `transfer(block, incoming)` returns only currently executable outgoing
-// edges. `merge(target, incoming, context)` must implement a monotone join and
-// return true exactly when `target` changed. Finite lattices may ignore
-// context.widen; interval-like clients use it to guarantee bounded ascent.
+// edges. Once a canonical edge slot is executable for a source, later
+// transfers for that source must retain it. `merge(target, incoming, context)`
+// must implement a monotone join and return true exactly when `target` changed.
+// Finite lattices may ignore context.widen; interval-like clients use it to
+// guarantee bounded ascent.
 // The solver owns scheduling, executable-edge tracking, widening cadence, and
 // convergence limits, while clients retain authority over their typed domain.
 template <typename State, typename Transfer, typename Merge>
@@ -89,7 +160,8 @@ runMirForwardDataflow(const MirBody &body, State entryState,
     return result;
   }
   for (std::size_t index = 0; index < body.blocks.size(); ++index) {
-    if (body.blocks[index].id != index + 1) {
+    if (body.blocks[index].id != index + 1 ||
+        !mir_dataflow_detail::validControlFlow(body, body.blocks[index])) {
       return result;
     }
   }
@@ -97,6 +169,8 @@ runMirForwardDataflow(const MirBody &body, State entryState,
   result.incoming[body.entry - 1] = std::move(entryState);
   std::deque<MirBlockId> worklist{body.entry};
   std::vector<bool> queued(body.blocks.size(), false);
+  std::vector<std::vector<MirDataflowEdgeId>> sourceExecutable(
+      body.blocks.size());
   queued[body.entry - 1] = true;
   const std::size_t iterationLimit =
       options.iterationLimit == 0
@@ -126,19 +200,37 @@ runMirForwardDataflow(const MirBody &body, State entryState,
                        return std::pair{left.ordinal, left.target} <
                               std::pair{right.ordinal, right.target};
                      });
-    std::optional<MirDataflowEdgeId> previousEdge;
-    for (MirForwardDataflowEdge<State> &edge : edges) {
-      if (edge.target == 0 || edge.target > body.blocks.size()) {
+    std::vector<MirDataflowEdgeId> currentExecutable;
+    currentExecutable.reserve(edges.size());
+    for (const MirForwardDataflowEdge<State> &edge : edges) {
+      if (edge.target == 0 || edge.target > body.blocks.size() ||
+          !mir_dataflow_detail::canonicalEdge(*block, edge.target,
+                                              edge.ordinal)) {
         result.status = MirDataflowStatus::InvalidControlFlow;
         return result;
       }
+      currentExecutable.push_back(MirDataflowEdgeId{
+          .source = source, .target = edge.target, .ordinal = edge.ordinal});
+    }
+    std::sort(currentExecutable.begin(), currentExecutable.end());
+    if (std::adjacent_find(currentExecutable.begin(),
+                           currentExecutable.end()) !=
+        currentExecutable.end()) {
+      result.status = MirDataflowStatus::InvalidControlFlow;
+      return result;
+    }
+    const std::vector<MirDataflowEdgeId> &previousExecutable =
+        sourceExecutable[source - 1];
+    if (!std::includes(currentExecutable.begin(), currentExecutable.end(),
+                       previousExecutable.begin(), previousExecutable.end())) {
+      result.status = MirDataflowStatus::NonMonotoneTransfer;
+      return result;
+    }
+    sourceExecutable[source - 1] = std::move(currentExecutable);
+
+    for (MirForwardDataflowEdge<State> &edge : edges) {
       const MirDataflowEdgeId identity{
           .source = source, .target = edge.target, .ordinal = edge.ordinal};
-      if (previousEdge && *previousEdge == identity) {
-        result.status = MirDataflowStatus::InvalidControlFlow;
-        return result;
-      }
-      previousEdge = identity;
       const auto insertion =
           std::lower_bound(result.executableEdges.begin(),
                            result.executableEdges.end(), identity);

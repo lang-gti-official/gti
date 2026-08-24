@@ -35,6 +35,17 @@ induction facts. O-MIR-07 adds body-local place alias/escape facts and uses
 them to preserve disjoint safety state across writes. The latter two are
 analysis foundations, not loop or memory transformations.
 
+Implementation update (2026-08-25): the O-MIR-05 through O-MIR-07 exit gates
+are reconciled as complete. The shared solver now validates canonical
+terminator slots and block-argument arity, rejects executable-edge retraction,
+and preserves switch-default flow in the migrated safety client. Loop analysis
+rejects repeated-edge block-argument ambiguity. Alias analysis treats union
+fields as overlapping and analysis caches reject cross-program snapshot reuse.
+The remaining optimizer sequence is explicitly limited to O-MIR-08
+(loop-derived bounds proof), O-MIR-09 (one measured alias-safe memory family),
+and O-MIR-10 (one measured interprocedural family); none is implied complete by
+the analysis foundations.
+
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). Infrastructure
 continues to land only with a real client: the current analysis cache exists

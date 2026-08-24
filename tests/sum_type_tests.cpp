@@ -249,6 +249,21 @@ int main() { return 0; }
 }
 
 void testPayloadEnumDiagnostics() {
+  const lang::FrontendResult classPayload = analyze("payload-class.gti", R"(
+class leaf {
+public:
+  leaf() {}
+  mut int32_t value = 7;
+};
+enum class holder { one(leaf value), none };
+int main() { return 0; }
+)");
+  expect(hasCode(classPayload, "GTI-S2067") &&
+             hasMessage(classPayload, "Payload field type 'leaf'") &&
+             !hasMessage(classPayload, "unknown class"),
+         "payload diagnostics should spell a registered class identity even "
+         "before complete class-member metadata is recorded");
+
   const lang::FrontendResult backing = analyze("payload-backing.gti", R"(
 enum class Result : uint8_t { ok(int32_t value), error };
 int main() { return 0; }

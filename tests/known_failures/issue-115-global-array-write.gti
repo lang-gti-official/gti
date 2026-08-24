@@ -1,6 +1,0 @@
-mut int32_t table[4] = {};
-
-int main() {
-  table[std::size_t(0)] = 3;
-  return 0;
-}

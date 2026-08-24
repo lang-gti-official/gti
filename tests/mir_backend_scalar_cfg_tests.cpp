@@ -195,8 +195,19 @@ void expectEmissionRejected(const lang::FrontendResult &frontend,
 
 void expectSelectedDefinitions(std::string_view generated) {
   constexpr std::string_view selected[] = {
-      "cfg_not",   "cfg_char",   "cfg_bits",  "cfg_less", "cfg_choose",
-      "cfg_local", "cfg_switch", "cfg_short", "cfg_loop", "cfg_fold",
+      "cfg_not",
+      "cfg_char",
+      "cfg_bits",
+      "cfg_less",
+      "cfg_choose",
+      "cfg_local",
+      "cfg_switch",
+      "cfg_short",
+      "cfg_loop",
+      "cfg_fold",
+      "cfg_grouped_local",
+      "cfg_comma_local",
+      "cfg_grouped_condition",
   };
   for (const std::string_view name : selected) {
     expect(functionDefinition(generated, name).find(marker) !=

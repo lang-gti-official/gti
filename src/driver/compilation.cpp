@@ -98,6 +98,23 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
     result.diagnostics.emplace_back(std::move(diagnostic));
     return result;
   };
+  const auto backendLimitation = [&](std::string detail) {
+    const SourceUnit *entry = std::as_const(frontend.sourceGraph)
+                                  .findUnit(frontend.sourceGraph.entryUnit());
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-B0003", DiagnosticPhase::Backend,
+                       SourceSpan{entry == nullptr ? request.entry().string()
+                                                   : entry->path.string(),
+                                  0, 0, 1},
+                       "Backend '" + backendName +
+                           "' does not yet support this valid GTI program: " +
+                           std::move(detail));
+    result.status = CompilationStatus::BackendFailure;
+    result.sources = std::move(frontend.sources);
+    result.diagnostics = std::move(frontend.diagnostics);
+    result.diagnostics.emplace_back(std::move(diagnostic));
+    return result;
+  };
 
   LoweredProgramBuild loweredBuild = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir,
@@ -114,6 +131,8 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
 
   try {
     result.artifact = backend.generate(loweredProgram);
+  } catch (const BackendUnsupportedError &exception) {
+    return backendLimitation(exception.what());
   } catch (const std::exception &exception) {
     return backendFailure(exception.what());
   } catch (...) {

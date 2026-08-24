@@ -26,6 +26,47 @@ def main() -> int:
     source_text = """\
 #include <std/vector>
 
+class DispatchBase {
+public:
+  DispatchBase() {}
+  virtual int32_t value() {
+    return 1;
+  }
+};
+
+class DispatchDerived : public DispatchBase {
+public:
+  DispatchDerived() {}
+  int32_t value() override {
+    return 3;
+  }
+};
+
+interface Shape {
+  int32_t area();
+};
+
+class Square : public Shape {
+public:
+  Square() {}
+  int32_t area() override {
+    return 5;
+  }
+};
+
+int32_t read_base(DispatchBase& value) {
+  return value.value();
+}
+
+int32_t read_bound(mut DispatchDerived& value) {
+  mut DispatchBase& bound = value;
+  return bound.value();
+}
+
+int32_t read_shape(Shape& value) {
+  return value.area();
+}
+
 int32_t sum(std::vector<int32_t>& values) {
   mut int32_t total = 0;
   for (int32_t value : values) {
@@ -55,7 +96,10 @@ int32_t main() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
   values.push_back(3);
   values.push_back(4);
-  return sum(values) - 7 + nested_sum(values);
+  mut DispatchDerived derived = DispatchDerived();
+  mut Square square = Square();
+  return sum(values) - 7 + nested_sum(values) + read_bound(derived) - 3 +
+         read_base(derived) - 3 + read_shape(square) - 5;
 }
 """
 

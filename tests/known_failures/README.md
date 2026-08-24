@@ -11,14 +11,7 @@ passing regression, delete it here, and add a row to *Graduated* below.
 
 ## Compiler reproducers
 
-| File | Issue | Symptom |
-| --- | --- | --- |
-| `issue-103-lambda-capture-field.gti` | [#103](https://github.com/LukeHHA/gti/issues/103) | reading a field of a captured class inside a lambda → `GTI-B0001` (MIR verifier) |
-| `issue-104-global-array-index.gti` | [#104](https://github.com/LukeHHA/gti/issues/104) | indexing a global array → `GTI-B0001` (the #100 fix took `Field` chains, not `Index`) |
-| `issue-106-array-of-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | *declaring* a fixed array of any class type → `GTI-B0001`; no read needed |
-| `issue-113-virtual-through-base-reference.gti` | [#113](https://github.com/LukeHHA/gti/issues/113) | a virtual call through a reference to a plain base *class* → `GTI-B0001`; the same shape through an `interface` works |
-| `issue-115-global-array-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | *writing* a global or static array element → `GTI-B0001` at a different gate than #104's read |
-| `issue-116-uninstantiated-generic-destructor.gti` | [#116](https://github.com/LukeHHA/gti/issues/116) | a generic class with a destructor that is never instantiated → `GTI-B0001`; instantiating it once fixes it |
+There are currently no quarantined compiler reproducers.
 
 ## Memory-safety reproducers
 
@@ -35,9 +28,7 @@ build-fuzz/fuzz/gti_pipeline_fuzzer -runs=1 \
 into the **current directory** by default, so reproducing one of these from
 the repository root litters the tree.
 
-| File | Issue | Symptom |
-| --- | --- | --- |
-| `asan/issue-107-assign-in-and.gti` | [#107](https://github.com/LukeHHA/gti/issues/107) | an assignment as an operand of `and` → heap-use-after-free in `SemanticVisitor::visitAssignExpr` |
+There are currently no quarantined memory-safety reproducers.
 
 ## Wrongly rejected programs
 
@@ -45,35 +36,24 @@ the repository root litters the tree.
 no ICE — the defect is the *rule*, so `check.py` cannot classify these either
 (it sees an ordinary non-zero exit). Compile one and read the diagnostic.
 
-| File | Issue | Symptom |
-| --- | --- | --- |
-| `rejected/issue-108-nested-capture.gti` | [#108](https://github.com/LukeHHA/gti/issues/108) | a nested lambda cannot capture the enclosing lambda's capture → `GTI-S2027`, though capturing the outer lambda's local or parameter is fine |
-| `rejected/issue-109-payload-class-diagnostic.gti` | [#109](https://github.com/LukeHHA/gti/issues/109) | the rejection is correct, but `GTI-S2067` prints `'unknown class'` instead of naming the payload field's type |
-| `rejected/issue-110-self-nested-generic.gti` | [#110](https://github.com/LukeHHA/gti/issues/110) | a generic inside its own type arguments yields two distinct specializations → `GTI-S2003` naming the same type on both sides |
-| `rejected/issue-114-interface-argument.gti` | [#114](https://github.com/LukeHHA/gti/issues/114) | passing a concrete type where an interface reference is required → `GTI-S2003`, though binding it to a reference one line earlier is accepted |
+There are currently no quarantined wrongly rejected programs.
 
 ## Confirmed root causes
 
-Each was located by instrumenting the rejecting gate with
+Previous root causes were located by instrumenting the rejecting gate with
 `scripts/debug/explain_rejection.py`, not inferred from reading the source.
-They share the `GTI-B0001` code but are four independent defects in two
-subsystems.
 
 Anchors are symbol names and diagnostic strings because **line numbers drift**
 — grep the anchor, or re-run the tool, rather than trusting the parenthesised
 line.
 
-| Issue | Subsystem | Gate |
-| --- | --- | --- |
-| #101 | C++ emitter | `cpp_mir_body_emitter.cpp`, `cppMirOwnedParameterFieldBindings` — no move/drop proof for a constructor taking owned parameters into fields |
-| #103 | MIR verifier | `mir.cpp`, `"lambda capture place does not match its exact environment field"` (~15694) — `place.type` is the *projected field's* type but is compared against `captureTypes[...]`, the whole capture's type, so any field projection mismatches |
-| #104 | C++ emitter | `cpp_mir_body_emitter.cpp`, `fieldStorage` (~20676) — a symbol-rooted place admits a chain of `Field` projections but not `Index` |
-| #106 | C++ emitter | `cpp_mir_body_emitter.cpp`, `MissingAggregateRollbackMir` (~9707) — an `Aggregate` whose element drop is non-trivial is admitted only by `failureFreeFixedArrayAggregateMove` or `passiveFixedArrayConstructAggregate`, and default-initializing an array of class elements matches neither |
+The previously confirmed root causes are retained in the graduated regression
+tests below rather than duplicated here.
 
 ## Finding the gate for a new GTI-B0001
 
-`scripts/debug/explain_rejection.py` automates what located every root cause
-in the table above: it temporarily instruments the rejecting subsystem,
+`scripts/debug/explain_rejection.py` automates what located the graduated root
+causes below: it temporarily instruments the rejecting subsystem,
 rebuilds, runs the reproducer, names the gates that fired with their guarding
 comment, and always restores the source.
 
@@ -132,11 +112,7 @@ is no crash, no ICE, and no diagnostic, so `check.py` sees an ordinary
 successful compile. Build one and compare its exit status against the comment
 at the top of the file.
 
-| File | Issue | Symptom |
-| --- | --- | --- |
-| `wrong-code/issue-111-parenthesised-return.gti` | [#111](https://github.com/LukeHHA/gti/issues/111) | `return (local);` returns 0 — the parenthesised form allocates a second MIR place and reads it unwritten |
-| `wrong-code/issue-111-parenthesised-condition.gti` | [#111](https://github.com/LukeHHA/gti/issues/111) | `if ((flag))` reads the same unwritten place, so **the wrong branch runs** |
-| `wrong-code/issue-111-comma-operand.gti` | [#111](https://github.com/LukeHHA/gti/issues/111) | `(y, x)` — the comma's last operand takes the same clone path |
+There are currently no quarantined wrong-code reproducers.
 
 `wrong-code/check.py` builds and runs each one, comparing its exit status
 against the `// expected exit status: N` header on its first line:
@@ -213,17 +189,12 @@ is reported as `nondet` and excluded, so nondeterminism is not blamed on the
 optimizer.
 
 A program that fails to build is `skipped` — some want a package or a target,
-and some fixtures are negative tests — **except** when the failure is a
-`GTI-B0001`, which is reported as `ICE`. Folding that into a skip count is how
-[#112](https://github.com/LukeHHA/gti/issues/112) nearly went unnoticed: two
-repository fixtures raise an internal error that the suite expects, and a bare
-"5 skipped" said nothing about it.
-
-Those two would then be reported on every run, so the tool reads
-`tests/stdlib_surface_manifest.json` and classifies a case whose expected
-stderr already contains `GTI-B0001` as `expected-ICE`. The manifest stays the
-single source of truth rather than a list hardcoded here, and when #112 is
-fixed those entries stop matching on their own.
+and some fixtures are negative tests — except that `GTI-B0001` is reported as
+`ICE` and `GTI-B0003` as `unsupported`. Folding internal errors into a skip
+count is how [#112](https://github.com/LukeHHA/gti/issues/112) nearly went
+unnoticed. A specifically classified, bounded backend capability gap may use
+`GTI-B0003`; an unclassified rejection remains a compiler defect and therefore
+stays visible as `ICE`.
 
 ## Sweeping the standard library by include
 
@@ -236,16 +207,10 @@ python3 scripts/debug/stdlib_include_sweep.py
 ```
 
 That shape had never been tested. Every case in the surface manifest *uses*
-the module it covers, and a header that declares a generic class with a
-destructor cannot be compiled unless something instantiates it — the
-destructor is lowered with no concrete MIR instance and the compile raises
-`GTI-B0001`. Using the module makes it go away, which is why the surface cases
-pass while the header alone does not.
-
-That reduces to eight lines with no standard library at all, which is how
-[#116](https://github.com/LukeHHA/gti/issues/116) is now filed; the stdlib
-headers were only the first place it surfaced. Today the sweep reports
-`19 module(s): 16 ok, 3 failing`.
+the module it covers, while an unused generic declaration legitimately has no
+concrete MIR lifecycle instance. [#116](https://github.com/LukeHHA/gti/issues/116)
+made that absence an internal backend error. The sweep is now a primary CTest
+gate and all 19 shipped modules independently reach C++ emission.
 
 ## Multi-file programs
 
@@ -309,6 +274,18 @@ reproducers were removed from this directory.
 | [#95](https://github.com/LukeHHA/gti/issues/95) global with no `main` | `5d26719` | `tests/cpp_mir_representation_snapshot_tests.cpp` |
 | [#96](https://github.com/LukeHHA/gti/issues/96) formatter not idempotent | `5d26719` | `tests/lsp_smoke_test.py` |
 | [#100](https://github.com/LukeHHA/gti/issues/100) global class member access | `ca18fac` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
+| [#103](https://github.com/LukeHHA/gti/issues/103) projected lambda capture | `v0.306.1` | `tests/mir_class_value_lifecycle_runtime_test.py` |
+| [#104](https://github.com/LukeHHA/gti/issues/104) global fixed-array indexing | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
+| [#106](https://github.com/LukeHHA/gti/issues/106) fixed arrays of class values | `v0.306.1` | `tests/fixtures/fixed_array_class_lifecycle.gti`, `tests/fixed_array_class_lifecycle_runtime_test.py` |
+| [#107](https://github.com/LukeHHA/gti/issues/107) assignment in a logical operand | `v0.306.1` | `tests/compiler_tests.cpp` |
+| [#108](https://github.com/LukeHHA/gti/issues/108) nested capture of an enclosing capture | `v0.306.1` | `tests/compiler_tests.cpp` |
+| [#109](https://github.com/LukeHHA/gti/issues/109) payload-class diagnostic spelling | `v0.306.1` | `tests/sum_type_tests.cpp` |
+| [#110](https://github.com/LukeHHA/gti/issues/110) self-nested generic identity | `v0.306.1` | `tests/returned_class_field_runtime_test.py` |
+| [#111](https://github.com/LukeHHA/gti/issues/111) grouped binding and comma operands | `v0.306.1` | `tests/fixtures/mir_backend_scalar_cfg.gti`, `tests/mir_backend_scalar_cfg_runtime_test.py` |
+| [#113](https://github.com/LukeHHA/gti/issues/113) virtual call through a base-class reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
+| [#114](https://github.com/LukeHHA/gti/issues/114) concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
+| [#115](https://github.com/LukeHHA/gti/issues/115) global/static fixed-array member write | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
+| [#116](https://github.com/LukeHHA/gti/issues/116) include-only generic destructor and optional empty state | `v0.306.1` | `cpp_mir_representation_snapshot`, `stdlib_include_sweep` |
 
 The `formatter/` subdirectory held inputs that are not compiler source (so
 `check.py`'s non-recursive glob skipped them); it is empty now that #96 is

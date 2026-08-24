@@ -945,6 +945,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     set_tests_properties(stdlib_surface PROPERTIES TIMEOUT 1200 PROCESSORS 2)
+    add_test(
+      NAME stdlib_include_sweep
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/scripts/debug/stdlib_include_sweep.py"
+              --gti "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(stdlib_include_sweep PROPERTIES TIMEOUT 600)
     # Sharded by (optimization, standard) configuration; the shard union is
     # the full 2x2 matrix, and the script with no --shard still runs it all.
     foreach(shard RANGE 1 4)
@@ -1094,6 +1101,15 @@ if(BUILD_TESTING)
     )
     set_tests_properties(mir_class_value_lifecycle_runtime PROPERTIES TIMEOUT 180)
     add_test(
+      NAME fixed_array_class_lifecycle_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixed_array_class_lifecycle_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/fixed_array_class_lifecycle.gti"
+    )
+    set_tests_properties(fixed_array_class_lifecycle_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mutable_temporary_receiver_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
@@ -1230,6 +1246,7 @@ if(BUILD_TESTING)
       set_tests_properties(
         driver_pipeline
         output_determinism binary64_runtime sum_types_runtime
+        stdlib_include_sweep
         defined_integer_runtime_1of4 defined_integer_runtime_2of4
         defined_integer_runtime_3of4 defined_integer_runtime_4of4
         expected_wrong_state_runtime returned_class_field_runtime
@@ -1242,7 +1259,8 @@ if(BUILD_TESTING)
         mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
         mir_backend_class_default_cleanup_runtime
         mir_backend_owned_lifecycle_runtime
-        mir_class_value_lifecycle_runtime mutable_temporary_receiver_runtime
+        mir_class_value_lifecycle_runtime fixed_array_class_lifecycle_runtime
+        mutable_temporary_receiver_runtime
         temporary_argument_borrow_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3
         mir_backend_scalar_failure_callgraph_runtime_2of3

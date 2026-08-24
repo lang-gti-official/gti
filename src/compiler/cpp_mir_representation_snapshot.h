@@ -16,6 +16,7 @@ namespace lang {
 // lowered program; they cannot author body/data/thunk support claims.
 enum class CppMirRepresentationSnapshotIssueKind {
   InvalidLoweredProgram,
+  KnownBackendLimitation,
   UnsupportedMirEmission,
 };
 
