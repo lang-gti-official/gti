@@ -1,0 +1,9 @@
+class empty {
+public:
+  empty() {}
+};
+
+int main() {
+  mut empty items[2] = {};
+  return 0;
+}
