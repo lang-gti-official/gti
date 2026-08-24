@@ -1,0 +1,12 @@
+int main() {
+  std::string_view view = "abc";
+  if (view.size() != std::size_t(3) || view.empty() || view[1] != 'b') {
+    return 1;
+  }
+  std::print("prelude ");
+  std::print('o');
+  std::print(int32_t(4));
+  std::println(uint64_t(2));
+  std::println('!');
+  return 0;
+}

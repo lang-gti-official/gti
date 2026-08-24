@@ -269,3 +269,9 @@ public:
     requires std::input_iterator<Iterator> &&
              std::dereferences_to<Iterator, char> {}
 };
+
+class DefaultedLifecycleHighlight {
+public:
+  DefaultedLifecycleHighlight() = default;
+  ~DefaultedLifecycleHighlight() = default;
+};

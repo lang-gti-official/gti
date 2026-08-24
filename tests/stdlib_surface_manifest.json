@@ -1,0 +1,675 @@
+{
+  "schema": "gti-stdlib-surface-v1",
+  "source_fingerprints": {
+    "stdlib/prelude.gti": "964870a3cad69dc9a3564280e7aa0468b09730e5530bf544e9566d0020ea83ac",
+    "stdlib/std/algorithm.gti": "c9461e8f0cb4d2e651863ccb06898823b64a03408702da743757d3ab8b22fca0",
+    "stdlib/std/array.gti": "930d822a75b92267f555682b8f1a7cb4e8a092a38b098d9d9f0de1b719dc8ca3",
+    "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
+    "stdlib/std/cstdio.gti": "4e6cd6798ab2f4991c10427e5a5481491bced5594c70a19155003c94e561769b",
+    "stdlib/std/filesystem.gti": "86b60462c0daa83a992e11ebe7248a14aa531b71301276949507dc4e8b08b722",
+    "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
+    "stdlib/std/forward_list.gti": "137c9b10c3d791a06c6e77743355f5d11f5d1f5a6aa6ffc1692063f8f126698a",
+    "stdlib/std/functional.gti": "3ea6296239a363f484b85fa7c23dbcb3a441cbeb496e1e39a500cc4d3510ecf2",
+    "stdlib/std/iterator.gti": "c1b27a7dfbcb5dd60048049f61cc9caafa637d8b2f36d8ddd7a44c06bf93cb30",
+    "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
+    "stdlib/std/memory.gti": "caf67131d2756d28c8f99507f374ecbe86ecea7ef68d24e2b92fe31ce99cc4e5",
+    "stdlib/std/numeric.gti": "0ce4f0056bc9d79823c8371fc2838181a40aabbd62e9636e65a4bdd0eeee93fc",
+    "stdlib/std/optional.gti": "115abc9cb76ce78b2713552724440ec43d5b7a2ff018b3eb243845bafe79d183",
+    "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
+    "stdlib/std/span.gti": "bf8f46e6326ec5d436575e69aab3337610df70a8e38fcfd33ff877bc2a202e58",
+    "stdlib/std/string.gti": "70e0a61fa362352950c2131903ec302c50fa2e879dd971c4795e09c84386316b",
+    "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
+    "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
+    "stdlib/std/vector.gti": "6115ac17db61843b1edaf815e79dd360b2bfc7da9e658b7988f3bf3acd1482e1"
+  },
+  "cases": [
+    {
+      "id": "algorithm",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_algorithm.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "array",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_array.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cmath",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_cmath.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cstdio",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_cstdio.gti",
+      "optimizations": ["O0", "O3"],
+      "stdin": "Q",
+      "files": {
+        "bytes.bin": {"encoding": "hex", "contents": "41005a"}
+      },
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "filesystem",
+      "mode": "run",
+      "source": "tests/fixtures/filesystem_path.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "filesystem path: all checks passed\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "filesystem-constructor-unsupported",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": ["GTI-B0001", "complete C++ text vocabulary", "__gti_entry"]
+      }
+    },
+    {
+      "id": "format",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_format.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "value=7 ok=1\ndone\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "forward-list-empty",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_forward_list_empty.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "forward-list-operations",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_forward_list.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "functional",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_functional.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "iterator",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_iterator.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "numeric",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_numeric.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "prelude-output",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_prelude_output.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "prelude o42\n!\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "random",
+      "mode": "run",
+      "source": "tests/fixtures/random_engine.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "random: all checks passed\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "string",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_string.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "tcp",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_tcp.gti",
+      "native_sources": ["tests/fixtures/stdlib_surface_tcp_stub.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "unique-ptr",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_unique_ptr.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "unique-ptr-upcast-unsupported",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/stdlib_surface_unique_ptr_upcast.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": ["GTI-B0001", "complete C++ text vocabulary", "__gti_entry"]
+      }
+    },
+    {
+      "id": "utility-make-pair",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_utility.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "utility-pair-constructor",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_utility_pair.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "vector",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_vector.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    }
+  ],
+  "entries": [
+    {
+      "id": "algorithm.executable",
+      "source": "stdlib/std/algorithm.gti",
+      "status": "executable",
+      "operations": [
+        "std::all_of",
+        "std::any_of",
+        "std::clamp",
+        "std::count_if",
+        "std::find_if",
+        "std::find_if_not",
+        "std::max",
+        "std::min",
+        "std::none_of"
+      ],
+      "case_ids": ["algorithm"],
+      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates"],
+      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "stdlib/std/algorithm.gti"]
+    },
+    {
+      "id": "algorithm.scaffold",
+      "source": "stdlib/std/algorithm.gti",
+      "status": "scaffold",
+      "operations": [
+        "std::copy",
+        "std::count",
+        "std::find",
+        "std::for_each",
+        "std::reverse",
+        "std::sort",
+        "std::transform"
+      ],
+      "reason": "These declarations have no GTI bodies and require callable result, output-iterator, or stronger iterator contracts.",
+      "evidence": ["stdlib/std/algorithm.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "array.executable",
+      "source": "stdlib/std/array.gti",
+      "status": "executable",
+      "operations": [
+        "std::array::array",
+        "std::array::at",
+        "std::array::back",
+        "std::array::empty",
+        "std::array::fill",
+        "std::array::front",
+        "std::array::operator[]",
+        "std::array::size"
+      ],
+      "case_ids": ["array"],
+      "required_instantiations": ["std::array<int32_t, 0>", "std::array<int32_t, 3>"],
+      "evidence": ["tests/fixtures/stdlib_surface_array.gti", "stdlib/std/array.gti"]
+    },
+    {
+      "id": "array.scaffold",
+      "source": "stdlib/std/array.gti",
+      "status": "scaffold",
+      "operations": ["std::array::swap"],
+      "reason": "swap is bodyless because moving a value out through a mutable reference is not expressible yet.",
+      "evidence": ["stdlib/std/array.gti", "stdlib/README.md"]
+    },
+    {
+      "id": "cmath.executable",
+      "source": "stdlib/std/cmath.gti",
+      "status": "executable",
+      "operations": ["std::abs(float)", "std::isfinite(float)", "std::isinf(float)", "std::isnan(float)"],
+      "case_ids": ["cmath"],
+      "required_instantiations": [],
+      "evidence": ["tests/fixtures/stdlib_surface_cmath.gti", "stdlib/std/cmath.gti"]
+    },
+    {
+      "id": "cmath.scaffold",
+      "source": "stdlib/std/cmath.gti",
+      "status": "scaffold",
+      "operations": [
+        "std::acos(float)",
+        "std::asin(float)",
+        "std::atan(float)",
+        "std::atan2(float,float)",
+        "std::cbrt(float)",
+        "std::ceil(float)",
+        "std::cos(float)",
+        "std::exp(float)",
+        "std::floor(float)",
+        "std::fmod(float,float)",
+        "std::log(float)",
+        "std::log10(float)",
+        "std::pow(float,float)",
+        "std::round(float)",
+        "std::sin(float)",
+        "std::sqrt(float)",
+        "std::tan(float)",
+        "std::trunc(float)"
+      ],
+      "reason": "The arithmetic, rounding, power, logarithmic, and trigonometric declarations are bodyless.",
+      "evidence": ["stdlib/std/cmath.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "cstdio.executable",
+      "source": "stdlib/std/cstdio.gti",
+      "status": "executable",
+      "operations": [
+        "std::FILE::close",
+        "std::FILE::get",
+        "std::FILE::is_open",
+        "std::fclose",
+        "std::fgetc",
+        "std::fopen",
+        "std::getchar"
+      ],
+      "case_ids": ["cstdio"],
+      "required_instantiations": [],
+      "evidence": ["tests/fixtures/stdlib_surface_cstdio.gti", "docs/language/io.md"]
+    },
+    {
+      "id": "filesystem.executable",
+      "source": "stdlib/std/filesystem.gti",
+      "status": "executable",
+      "operations": [
+        "std::filesystem::path::append",
+        "std::filesystem::path::append_path",
+        "std::filesystem::path::assign",
+        "std::filesystem::path::assign_path",
+        "std::filesystem::path::clear",
+        "std::filesystem::path::clone",
+        "std::filesystem::path::compare",
+        "std::filesystem::path::concat",
+        "std::filesystem::path::empty",
+        "std::filesystem::path::extension",
+        "std::filesystem::path::filename",
+        "std::filesystem::path::has_extension",
+        "std::filesystem::path::has_filename",
+        "std::filesystem::path::has_parent_path",
+        "std::filesystem::path::has_relative_path",
+        "std::filesystem::path::has_root_directory",
+        "std::filesystem::path::has_root_name",
+        "std::filesystem::path::has_root_path",
+        "std::filesystem::path::has_stem",
+        "std::filesystem::path::is_absolute",
+        "std::filesystem::path::is_relative",
+        "std::filesystem::path::lexically_normal",
+        "std::filesystem::path::make_preferred",
+        "std::filesystem::path::operator comparisons",
+        "std::filesystem::path::operator/",
+        "std::filesystem::path::operator/=",
+        "std::filesystem::path::parent_path",
+        "std::filesystem::path::path()",
+        "std::filesystem::path::relative_path",
+        "std::filesystem::path::remove_filename",
+        "std::filesystem::path::replace_extension",
+        "std::filesystem::path::replace_filename",
+        "std::filesystem::path::root_directory",
+        "std::filesystem::path::root_name",
+        "std::filesystem::path::root_path",
+        "std::filesystem::path::size",
+        "std::filesystem::path::stem",
+        "std::filesystem::path::string",
+        "std::filesystem::path::swap"
+      ],
+      "case_ids": ["filesystem"],
+      "required_instantiations": [],
+      "evidence": ["tests/fixtures/filesystem_path.gti", "stdlib/std/filesystem.gti"]
+    },
+    {
+      "id": "filesystem.unsupported-constructor",
+      "source": "stdlib/std/filesystem.gti",
+      "status": "unsupported",
+      "operations": ["std::filesystem::path::path(string_view)"],
+      "case_ids": ["filesystem-constructor-unsupported"],
+      "reason": "The declared converting constructor currently reaches an unsupported verified-MIR C++ text shape; callers use path() followed by assign().",
+      "evidence": ["tests/fixtures/stdlib_surface_filesystem_constructor.gti", "stdlib/README.md"],
+      "required_instantiations": []
+    },
+    {
+      "id": "format.executable",
+      "source": "stdlib/std/format.gti",
+      "status": "executable",
+      "operations": ["std::format", "std::try_print", "std::try_println"],
+      "case_ids": ["format"],
+      "required_instantiations": ["zero arguments", "int32_t,uint64_t integral pack"],
+      "evidence": ["tests/fixtures/stdlib_surface_format.gti", "stdlib/std/format.gti"]
+    },
+    {
+      "id": "forward-list.empty",
+      "source": "stdlib/std/forward_list.gti",
+      "status": "executable",
+      "operations": ["std::forward_list::empty", "std::forward_list::forward_list"],
+      "case_ids": ["forward-list-empty"],
+      "required_instantiations": ["std::forward_list<int32_t>"],
+      "evidence": ["tests/fixtures/stdlib_surface_forward_list_empty.gti", "stdlib/std/forward_list.gti"]
+    },
+    {
+      "id": "forward-list.front-operations",
+      "source": "stdlib/std/forward_list.gti",
+      "status": "executable",
+      "operations": [
+        "std::forward_list::clear",
+        "std::forward_list::front",
+        "std::forward_list::pop_front",
+        "std::forward_list::push_front"
+      ],
+      "case_ids": ["forward-list-operations"],
+      "evidence": ["tests/fixtures/stdlib_surface_forward_list.gti", "stdlib/std/forward_list.gti"],
+      "required_instantiations": ["std::forward_list<int32_t>"]
+    },
+    {
+      "id": "forward-list.scaffold",
+      "source": "stdlib/std/forward_list.gti",
+      "status": "scaffold",
+      "operations": [
+        "std::forward_list::begin",
+        "std::forward_list::emplace_front",
+        "std::forward_list::end",
+        "std::forward_list::merge",
+        "std::forward_list::remove",
+        "std::forward_list::resize",
+        "std::forward_list::reverse",
+        "std::forward_list::sort",
+        "std::forward_list::swap",
+        "std::forward_list::unique"
+      ],
+      "reason": "These declarations are bodyless pending nullable owner-tied traversal and mutation/invalidation proofs.",
+      "evidence": ["stdlib/std/forward_list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "functional.executable",
+      "source": "stdlib/std/functional.gti",
+      "status": "executable",
+      "operations": ["std::equal_to::operator()", "std::greater::operator()", "std::less::operator()", "std::not_equal_to::operator()"],
+      "case_ids": ["functional"],
+      "required_instantiations": ["comparison function objects<int32_t>"],
+      "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "stdlib/std/functional.gti"]
+    },
+    {
+      "id": "functional.scaffold",
+      "source": "stdlib/std/functional.gti",
+      "status": "scaffold",
+      "operations": ["std::hash<T>::operator()"],
+      "reason": "The generic customization primary is declaration-only and the canonical language document does not promise primitive hash implementations.",
+      "evidence": ["stdlib/std/functional.gti", "docs/language/standard-library.md"]
+    },
+    {
+      "id": "iterator.executable",
+      "source": "stdlib/std/iterator.gti",
+      "status": "executable",
+      "operations": ["std::advance(Iterator&,size_t)", "std::distance", "std::next(Iterator)", "std::next(Iterator,size_t)"],
+      "case_ids": ["iterator"],
+      "required_instantiations": ["audit_iterator/audit_iterator"],
+      "evidence": ["tests/fixtures/stdlib_surface_iterator.gti", "stdlib/std/iterator.gti"]
+    },
+    {
+      "id": "iterator.scaffold",
+      "source": "stdlib/std/iterator.gti",
+      "status": "scaffold",
+      "operations": ["std::advance(Iterator&,ptrdiff_t)", "std::next(Iterator,ptrdiff_t)", "std::prev"],
+      "reason": "Signed movement and prev are bodyless until GTI has a bidirectional iterator contract.",
+      "evidence": ["stdlib/std/iterator.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "list.scaffold",
+      "source": "stdlib/std/list.gti",
+      "status": "scaffold",
+      "operations": ["std::list public surface"],
+      "reason": "The move-only shape is present, but node storage and operation bodies are absent.",
+      "evidence": ["stdlib/std/list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "memory.scaffold",
+      "source": "stdlib/std/memory.gti",
+      "status": "scaffold",
+      "operations": ["std::make_shared", "std::shared_ptr public surface", "std::weak_ptr public surface"],
+      "reason": "shared_ptr, weak_ptr, and make_shared are declaration-only.",
+      "evidence": ["stdlib/std/memory.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "numeric.executable",
+      "source": "stdlib/std/numeric.gti",
+      "status": "executable",
+      "operations": [
+        "std::accumulate",
+        "std::checked_add",
+        "std::checked_mul",
+        "std::checked_sub",
+        "std::gcd",
+        "std::inner_product",
+        "std::lcm",
+        "std::midpoint",
+        "std::saturating_add",
+        "std::saturating_mul",
+        "std::saturating_sub",
+        "std::transform_reduce",
+        "std::wrapping_add",
+        "std::wrapping_mul",
+        "std::wrapping_sub"
+      ],
+      "case_ids": ["numeric"],
+      "required_instantiations": ["audit_iterator/int32_t", "int8_t", "int32_t", "uint8_t"],
+      "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/defined_integer_runtime_test.py"]
+    },
+    {
+      "id": "numeric.unsupported-hash-specializations",
+      "source": "stdlib/std/numeric.gti",
+      "status": "unsupported",
+      "operations": ["std::hash<uint16_t>", "std::hash<uint32_t>", "std::hash<uint64_t>", "std::hash<uint8_t>"],
+      "reason": "Latent specialization bodies exist, but the canonical standard-library contract explicitly does not ship primitive hash implementations or a hashability capability.",
+      "evidence": ["stdlib/std/numeric.gti", "docs/language/standard-library.md"],
+      "required_instantiations": []
+    },
+    {
+      "id": "optional.scaffold",
+      "source": "stdlib/std/optional.gti",
+      "status": "scaffold",
+      "operations": ["std::optional public surface"],
+      "reason": "The optional class is a declaration scaffold with no state or operation bodies.",
+      "evidence": ["stdlib/std/optional.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "prelude.output",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["std::print", "std::println", "std::string_view::empty", "std::string_view::operator[]", "std::string_view::size"],
+      "case_ids": ["prelude-output"],
+      "required_instantiations": ["std::print<int32_t>", "std::println<uint64_t>"],
+      "evidence": ["tests/fixtures/stdlib_surface_prelude_output.gti", "stdlib/prelude.gti"]
+    },
+    {
+      "id": "prelude.unique-ptr",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": [
+        "std::make_unique",
+        "std::unique_ptr::operator bool",
+        "std::unique_ptr::operator!=nullptr",
+        "std::unique_ptr::operator*",
+        "std::unique_ptr::operator->",
+        "std::unique_ptr::operator==nullptr",
+        "std::unique_ptr::operator=nullptr",
+        "std::unique_ptr::reset"
+      ],
+      "case_ids": ["unique-ptr"],
+      "required_instantiations": ["std::unique_ptr<Value>"],
+      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr.gti", "stdlib/prelude.gti"]
+    },
+    {
+      "id": "prelude.unsupported-unique-ptr-upcast",
+      "source": "stdlib/prelude.gti",
+      "status": "unsupported",
+      "operations": ["std::unique_ptr::upcast", "std::upcast_unique"],
+      "case_ids": ["unique-ptr-upcast-unsupported"],
+      "reason": "The source-defined upcast currently reaches an unsupported verified-MIR C++ text shape in the caller.",
+      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr_upcast.gti", "stdlib/prelude.gti"],
+      "required_instantiations": ["Base/Derived"]
+    },
+    {
+      "id": "random.executable",
+      "source": "stdlib/std/random.gti",
+      "status": "executable",
+      "operations": ["std::random_device::operator()", "std::random_engine::operator()", "std::random_engine::random_engine"],
+      "case_ids": ["random"],
+      "required_instantiations": [],
+      "evidence": ["tests/fixtures/random_engine.gti", "stdlib/std/random.gti"]
+    },
+    {
+      "id": "span.scaffold",
+      "source": "stdlib/std/span.gti",
+      "status": "scaffold",
+      "operations": ["std::span public surface"],
+      "reason": "span has a declaration-only read-only indexed shape and no source construction.",
+      "evidence": ["stdlib/std/span.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "string.executable",
+      "source": "stdlib/std/string.gti",
+      "status": "executable",
+      "operations": [
+        "std::string::append",
+        "std::string::at",
+        "std::string::back",
+        "std::string::begin",
+        "std::string::capacity",
+        "std::string::clear",
+        "std::string::clone",
+        "std::string::empty",
+        "std::string::end",
+        "std::string::front",
+        "std::string::operator comparisons",
+        "std::string::operator[]",
+        "std::string::pop_back",
+        "std::string::push_back",
+        "std::string::reserve",
+        "std::string::resize",
+        "std::string::shrink_to_fit",
+        "std::string::size",
+        "std::to_string"
+      ],
+      "case_ids": ["string"],
+      "required_instantiations": ["std::to_string for every fixed-width integer family"],
+      "evidence": ["tests/fixtures/stdlib_surface_string.gti", "stdlib/std/string.gti"]
+    },
+    {
+      "id": "string.scaffold",
+      "source": "stdlib/std/string.gti",
+      "status": "scaffold",
+      "operations": ["std::string::swap"],
+      "reason": "swap is bodyless until moving through mutable references is expressible.",
+      "evidence": ["stdlib/std/string.gti", "stdlib/README.md"]
+    },
+    {
+      "id": "tcp.executable",
+      "source": "stdlib/std/tcp.gti",
+      "status": "executable",
+      "operations": ["std::tcp::open", "std::tcp::socket::close", "std::tcp::socket::is_open", "std::tcp::socket::open"],
+      "case_ids": ["tcp"],
+      "required_instantiations": [],
+      "evidence": ["tests/fixtures/stdlib_surface_tcp.gti", "tests/fixtures/stdlib_surface_tcp_stub.cpp", "docs/language/tcp.md"]
+    },
+    {
+      "id": "utility.pair",
+      "source": "stdlib/std/utility.gti",
+      "status": "executable",
+      "operations": ["std::make_pair", "std::pair::first", "std::pair::pair", "std::pair::second"],
+      "case_ids": ["utility-make-pair", "utility-pair-constructor"],
+      "evidence": ["tests/fixtures/stdlib_surface_utility.gti", "tests/fixtures/stdlib_surface_utility_pair.gti", "stdlib/std/utility.gti"],
+      "required_instantiations": ["std::pair<int32_t,int64_t>"]
+    },
+    {
+      "id": "utility.scaffold",
+      "source": "stdlib/std/utility.gti",
+      "status": "scaffold",
+      "operations": ["std::exchange", "std::swap"],
+      "reason": "swap and exchange are declaration-only because moving through a mutable reference is not yet expressible.",
+      "evidence": ["stdlib/std/utility.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "vector.executable",
+      "source": "stdlib/std/vector.gti",
+      "status": "executable",
+      "operations": [
+        "std::vector::at",
+        "std::vector::back",
+        "std::vector::begin",
+        "std::vector::begin_mut",
+        "std::vector::capacity",
+        "std::vector::clear",
+        "std::vector::clone",
+        "std::vector::emplace_back",
+        "std::vector::empty",
+        "std::vector::end",
+        "std::vector::erase",
+        "std::vector::front",
+        "std::vector::insert",
+        "std::vector::operator[]",
+        "std::vector::pop_back",
+        "std::vector::push_back",
+        "std::vector::reserve",
+        "std::vector::resize",
+        "std::vector::shrink_to_fit",
+        "std::vector::size",
+        "std::vector::vector"
+      ],
+      "case_ids": ["vector"],
+      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])"],
+      "evidence": ["tests/fixtures/stdlib_surface_vector.gti", "stdlib/std/vector.gti"]
+    },
+    {
+      "id": "vector.scaffold",
+      "source": "stdlib/std/vector.gti",
+      "status": "scaffold",
+      "operations": ["std::vector::swap"],
+      "reason": "swap is bodyless because moving an owner out through a mutable reference is forbidden.",
+      "evidence": ["stdlib/std/vector.gti", "stdlib/README.md"]
+    }
+  ]
+}

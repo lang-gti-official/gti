@@ -35,7 +35,8 @@ assertions.
 | `compiler_pipeline` / `mutable_range_runtime` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
 | `string_owned_output_runtime` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
-| `optimizer_foundation` | Stable body/instruction rewrite identity; typed destructive transformation records and independent replay; conservative per-instance effect fixed points; typed scalar block parameters and edge arguments; dominance/value-use verification; body revisions and bounded analysis invalidation; scalar promotion, local folding, unreachable cleanup, and dead-computation removal; O0 identity; deterministic reports; malformed-proof and conservative near-miss rejection |
+| `optimizer_foundation` | Stable body/instruction rewrite identity; typed destructive transformation records and independent replay; conservative per-instance effect fixed points; typed scalar block parameters and edge arguments; dominance/value-use verification; body revisions and bounded analysis invalidation across CFG/effect/promotion/safety/alias/loop/SCCP caches; scalar promotion, local folding, SCCP, unreachable cleanup, and dead-computation removal; O0 identity; deterministic schema-v3 reports; malformed-proof and conservative near-miss rejection |
+| `optimizer_analyses` | Independent FIFO dataflow equivalence and executable-edge/widening determinism; natural-loop forest, invariant, affine induction, and relational-bound facts; symmetric must/no/may-alias projection rules, conservative loan/value/raw roots, and exact/unknown-call escape; SCCP merge propagation, deterministic replay, and forged-evidence rejection |
 | `lowered_program_contract` | deterministic independent construction; complete declaration, symbol, body, instance, and generated-family inventory; standalone contract-client printing; and missing, duplicate, stale, reordered, unrooted, cyclic, or forged-record rejection |
 | `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
 | `backend_lowered_program_boundary` | structural prohibition on frontend includes/types, `BackendInput`, source-MIR/optimizer inputs, and builder leakage across production backend files and the standalone contract client |
@@ -48,20 +49,25 @@ assertions.
 | `mir_backend_scalar_direct_call_runtime` | direct-call and failure-propagating bodies through the general route at O0/O1/O3 under C++20/C++23, including marker counts, optimized-literal evidence, and qualified cross-namespace target identity |
 | `mir_backend_class_default_cleanup` | function/destructor provenance and failure effects; strict lifetime-slot construction/destruction; declared constructors, fields, nested scopes, branches, and checked destructors through the general route; and fail-closed literal, obligation, cleanup-timing, summary, missing-drop, and reordered-drop mutations |
 | `mir_backend_class_default_cleanup_runtime` | selected class-default construction and reverse cleanup at O0/O1/O3 under C++20/C++23, including return-before-cleanup behavior, repeat-call state, exact function/destructor markers, explicit slot construction/destruction, and the engaged-slot guard |
+| `defaulted_lifecycle_runtime` | explicit structural default construction/destruction, declaration-initialized scalar and nested-class fields, state-bearing base construction, absent source lifecycle bodies, and explicit MIR lifetime slots at O0/O3 under C++20/C++23 |
 | `mir_backend_owned_lifecycle` | exact function/constructor/destructor general emission; scalar-field initializer binding and destructor source coherence; constructed/moved/prepared/transferred/dropped schedule authority; checked cleanup; strict lifetime slots; and fail-closed graph, stage, operation, literal, place, CFG, call, transfer, and drop mutations |
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_census_regression` | exact reviewed per-example MIR body ownership for all 2,962 identities across 63 examples |
+| `mir_census_regression` | exact reviewed per-example MIR body ownership for all 3,433 identities across 64 examples |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
-| `cpp_mir_body_emitter_1of4`..`4of4` | generic MIR body-emission classification, typed edge publication, and a corpus sweep requiring every frontend-produced body to be coherent and text-ready; sharded into four interleaved ctest entries so the suite parallelizes (the binary with no arguments still runs all 64 tests) |
+| `cpp_mir_body_emitter_1of4`..`4of4` | generic MIR body-emission classification, typed edge publication, exact move-only receiver-field replacement schedules, and a corpus sweep requiring every frontend-produced body to be coherent and text-ready; sharded into four interleaved ctest entries so the suite parallelizes (the binary with no arguments still runs all 68 tests) |
+| `typed_program_model` | deterministic serialization, evaluation, GTI/C++ source generation, metamorphic transforms, and complete feature census for the bounded scalar and four pairwise composition scenarios |
+| `typed_differential_smoke` | one fixed real-compiler differential batch comparing original/transformed GTI, the independent evaluator, and independent C++ at O0/O3, plus injected evaluator/reference/GTI drift and retained evidence |
+| `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
+| `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, plus bounded expected diagnostics for unsupported surfaces |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `cpp_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |
 | `driver_pipeline` / `driver_library_boundary` | requests, artifacts, resources, native tools, driver archive |
 | `project_model` | manifests, plans, profiles, targets, native inputs, path safety |
 | `cli_workflow` / `project_cli_workflow` | end-to-end direct and project commands |
-| `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits |
+| `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits, and bounded-depth analysis/completion worker survival |
 | `frontend_cache_invalidation` | cached/uncached semantic and diagnostic equivalence, immutable AST hover, root/dependency/unrelated invalidation, dirty-overlay/disk transitions, configuration identity, stale source generations, and entry/estimated-byte LRU bounds |
 | `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, cancellation/supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
@@ -500,7 +506,7 @@ Two complementary gates replace it:
   identical body ownership at both endpoints, and compares exit status,
   stdout, and stderr.
 
-The reviewed corpus currently contains 2,962 MIR body identities across 63
+The reviewed corpus currently contains 3,433 MIR body identities across 64
 examples. The two-endpoint corpus matrix covers source and optimized MIR plus
 both supported C++ standards without retaining eight duplicate full-corpus
 jobs. Focused runtime matrices continue to exercise intermediate optimization
@@ -542,15 +548,30 @@ source, deterministic C++ output, and `-O0`/`-O3` behavior. `--full` also
 exercises C++20/C++23 paths, numbered examples, and GTI/C++ comparison
 fixtures.
 
+The typed portion has one deterministic gating slice without turning the broad
+audit into CI. `typed_differential_smoke` runs one scalar case and all four
+bounded composition scenarios through the real compiler. For each case it
+compares the model evaluator with original and transformed GTI and with
+independently emitted portable C++ at O0/O3. The composition set deliberately
+stops at local/field/global storage, scalar/class/bounded-generic values,
+member access, free/member call and argument/return flow, and one safe
+read-only borrow. Ownership, cleanup, concurrency, and native interoperation
+remain outside this independent model. Injected evaluator, reference-C++, and
+GTI mismatches must be distinguished and retain `failure.json`, both source
+forms, the semantic case, and capture logs.
+
 ```sh
 python3 scripts/local_language_audit.py
 python3 scripts/local_language_audit.py --full
+python3 scripts/local_language_audit.py --typed-only --generated 1 \
+    --compositions 4 --seed 20260824
 ```
 
-It is not registered in CMake, CI, or the release workflow. A bug it finds
-must receive a minimal deterministic regression in the normal owning suite.
-Snapshots should assert stable codes and narrow semantic/runtime markers, not
-entire generated files or incidental paths.
+The broad audit is not registered in CMake, CI, or the release workflow; only
+the bounded `typed_differential_smoke` slice above is a CTest. A bug found by
+either path must receive a minimal deterministic regression in the normal
+owning suite. Snapshots should assert stable codes and narrow semantic/runtime
+markers, not entire generated files or incidental paths.
 
 For a substantial compiler change, the broad local sequence is:
 
@@ -565,7 +586,7 @@ Use focused tests first; do not turn every change into the full audit matrix.
 
 ## Failure Capture And Opt-In Fuzzing
 
-Two `Q-FUZZ-01` facilities support debugging beyond the deterministic suites
+The `Q-FUZZ-01` facilities support debugging beyond the deterministic suites
 (design: [`compiler-bug-finding-and-triage.md`](../plans/compiler-bug-finding-and-triage.md)).
 
 `scripts/debug/capture_compiler_failure.py` turns one failing direct source or
@@ -598,8 +619,9 @@ reduction can never quietly become a different bug. The local audit's
 `--keep-failures` (or `--artifacts-dir`) preserves a failing working tree for
 exactly this pipeline instead of deleting it with the temporary directory.
 
-`fuzz/` holds opt-in libFuzzer harnesses for the parser, formatter, and the
-whole analysis-to-backend pipeline. They exist only under
+`fuzz/` holds opt-in libFuzzer harnesses for the parser, formatter, the whole
+analysis-to-backend pipeline, and a bounded two/three-unit source-loader
+composition. They exist only under
 `GTI_BUILD_FUZZERS=ON` (Clang required; tree-wide
 `fuzzer-no-link,address,undefined` instrumentation; never installed), and the
 `fuzzer_smoke` test runs each fixed seed corpus deterministically. Coverage
@@ -607,7 +629,8 @@ exploration is an explicit local activity, never a merge gate:
 
 ```sh
 cmake -S . -B build-fuzz -G Ninja -DGTI_BUILD_FUZZERS=ON -DGTI_BUILD_LSP=OFF
-cmake --build build-fuzz --target gti_parser_fuzzer
+cmake --build build-fuzz --target gti_parser_fuzzer \
+    gti_formatter_fuzzer gti_pipeline_fuzzer gti_source_loader_fuzzer
 mkdir -p /tmp/gti-fuzz-work
 build-fuzz/fuzz/gti_parser_fuzzer -dict=fuzz/dictionary/gti.dict \
     -max_len=65536 /tmp/gti-fuzz-work fuzz/corpus/parser
@@ -617,6 +640,19 @@ libFuzzer writes every discovered input into the *first* corpus directory, so
 always put a scratch work directory first and the checked-in seeds second —
 the repository corpus stays curated, and `-merge=1` is how a genuinely
 coverage-increasing input is promoted into it deliberately.
+
+The formatter property compares significant production-lexer token kinds and
+normalized spellings whenever the original input is lexer-clean, in addition
+to byte idempotence; comments remain trivia and recovered lexical input makes
+no token-equivalence claim. The pipeline takes two fresh snapshots and compares
+acceptance, complete diagnostics, source/phase facts, optimizer reports,
+classified lowering disposition, and nonempty MIR/C++ artifacts. Every
+diagnostic, related span, and fix-it is range-checked against its owning source.
+The source-loader target reuses `Frontend` source overrides for a fixed quoted
+include chain and compares complete fresh source-graph snapshots without
+writing files or parsing includes itself. `fuzzer_smoke` contains a gated
+negative perturbation for every strengthened property as well as the
+replayable generic crash-artifact check.
 
 A finding follows the standing rule: capture it as a bundle, reduce it, and
 land a minimal deterministic regression in the owning suite.

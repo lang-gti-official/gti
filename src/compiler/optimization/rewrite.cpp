@@ -1,4 +1,6 @@
 #include "gti/optimization/rewrite.h"
+#include "gti/optimization/safety.h"
+#include "gti/optimization/sccp.h"
 
 #include <algorithm>
 #include <tuple>
@@ -108,6 +110,20 @@ void MirProgramEditor::queueComputeFoldReplacement(
                      .computeFold = true});
 }
 
+void MirProgramEditor::queueSparseConstantReplacement(
+    MirInstructionKey target, MirOperation expectedOperation, Literal literal,
+    std::vector<MirBlockId> relatedBlocks,
+    std::vector<MirInstructionId> relatedInstructions,
+    std::vector<MirValueId> relatedValues) {
+  patches.push_back({.target = target,
+                     .expectedOperation = expectedOperation,
+                     .literal = std::move(literal),
+                     .sparseConstant = true,
+                     .relatedBlocks = std::move(relatedBlocks),
+                     .relatedInstructions = std::move(relatedInstructions),
+                     .relatedValues = std::move(relatedValues)});
+}
+
 void MirProgramEditor::queueBranchFold(MirBodyAddress body, MirBlockId block,
                                        MirValueId expectedCondition,
                                        bool taken) {
@@ -131,6 +147,12 @@ void MirProgramEditor::queueUnreachableBlockRemoval(MirBodyAddress body,
   unreachableBlocks.push_back({.body = body, .block = block});
 }
 
+void MirProgramEditor::queueSafetyDischarge(MirInstructionKey target,
+                                            MirSafetyDischarge discharge) {
+  safetyDischarges.push_back(
+      {.target = target, .discharge = std::move(discharge)});
+}
+
 MirEditResult MirProgramEditor::apply() {
   MirEditResult result;
   std::vector<LiteralReplacement> queued = std::move(patches);
@@ -146,9 +168,12 @@ MirEditResult MirProgramEditor::apply() {
   std::vector<UnreachableBlock> queuedUnreachableBlocks =
       std::move(unreachableBlocks);
   unreachableBlocks.clear();
+  std::vector<SafetyDischarge> queuedSafetyDischarges =
+      std::move(safetyDischarges);
+  safetyDischarges.clear();
   if (queued.empty() && queuedBranchFolds.empty() &&
       queuedScalarPromotions.empty() && queuedDeadInstructions.empty() &&
-      queuedUnreachableBlocks.empty()) {
+      queuedUnreachableBlocks.empty() && queuedSafetyDischarges.empty()) {
     return result;
   }
 
@@ -174,6 +199,24 @@ MirEditResult MirProgramEditor::apply() {
               return std::tuple{bodyKey(left.body), left.block} <
                      std::tuple{bodyKey(right.body), right.block};
             });
+  std::sort(
+      queuedSafetyDischarges.begin(), queuedSafetyDischarges.end(),
+      [](const SafetyDischarge &left, const SafetyDischarge &right) {
+        return std::tuple{
+                   bodyKey(left.target.body),
+                   left.target.instruction,
+                   static_cast<std::size_t>(left.discharge.family),
+                   left.discharge.origin,
+                   static_cast<std::size_t>(left.discharge.outcome.code),
+                   static_cast<std::size_t>(left.discharge.outcome.detail)} <
+               std::tuple{
+                   bodyKey(right.target.body),
+                   right.target.instruction,
+                   static_cast<std::size_t>(right.discharge.family),
+                   right.discharge.origin,
+                   static_cast<std::size_t>(right.discharge.outcome.code),
+                   static_cast<std::size_t>(right.discharge.outcome.detail)};
+      });
 
   for (std::size_t index = 0; index < queued.size(); ++index) {
     const LiteralReplacement &patch = queued[index];
@@ -203,7 +246,25 @@ MirEditResult MirProgramEditor::apply() {
                "MIR replacement target is not the expected computation");
       continue;
     }
-    if (patch.computeFold) {
+    if (patch.sparseConstant) {
+      const MirSccpAnalysis analysis =
+          analyzeMirSccp(program, patch.target.body);
+      const MirSccpValueFact *fact =
+          instruction.result ? analysis.find(*instruction.result) : nullptr;
+      if (!analysis.complete || fact == nullptr ||
+          fact->kind != MirSccpLatticeKind::Constant ||
+          fact->literal != std::optional<Literal>{patch.literal} ||
+          patch.expectedOperation == MirOperation::Literal ||
+          fact->evidence.blocks != patch.relatedBlocks ||
+          fact->evidence.instructions != patch.relatedInstructions ||
+          fact->evidence.values != patch.relatedValues) {
+        addError(result, patch.target.body, location.block->id,
+                 patch.target.instruction,
+                 "MIR sparse-constant replacement does not replay from "
+                 "canonical SCCP facts");
+        continue;
+      }
+    } else if (patch.computeFold) {
       const bool valueOperands =
           !instruction.operands.empty() && instruction.operands.size() <= 2 &&
           std::all_of(instruction.operands.begin(), instruction.operands.end(),
@@ -322,6 +383,32 @@ MirEditResult MirProgramEditor::apply() {
                "effects");
     }
   }
+  for (std::size_t index = 0; index < queuedSafetyDischarges.size(); ++index) {
+    const SafetyDischarge &claim = queuedSafetyDischarges[index];
+    if (index != 0 &&
+        claim.target == queuedSafetyDischarges[index - 1].target &&
+        claim.discharge == queuedSafetyDischarges[index - 1].discharge) {
+      addError(result, claim.target.body, 0, claim.target.instruction,
+               "duplicate MIR safety-check discharge");
+      continue;
+    }
+    const MirBody *body = findMirBody(program, claim.target.body);
+    const ConstInstructionLocation location =
+        body == nullptr ? ConstInstructionLocation{}
+                        : findInstruction(*body, claim.target.instruction);
+    const MirSafetyAnalysis analysis =
+        analyzeMirSafetyChecks(program, claim.target.body);
+    if (body == nullptr || location.block == nullptr ||
+        location.instruction == nullptr ||
+        hasMirSafetyDischarge(*location.instruction, claim.discharge) ||
+        analysis.find(claim.target.instruction, claim.discharge) == nullptr) {
+      addError(result, claim.target.body,
+               location.block == nullptr ? 0 : location.block->id,
+               claim.target.instruction,
+               "MIR safety-check discharge is not proven by canonical MIR "
+               "analysis");
+    }
+  }
   if (!result.verification.valid()) {
     return result;
   }
@@ -343,16 +430,28 @@ MirEditResult MirProgramEditor::apply() {
     MirTransformRecord record{
         .pass = pass,
         .kind = MirTransformKind::ReplaceInstruction,
-        .proof = patch.computeFold ? MirTransformProofKind::ComputeFold
-                                   : MirTransformProofKind::IdentityFold,
+        .proof = patch.sparseConstant ? MirTransformProofKind::SparseConstant
+                 : patch.computeFold  ? MirTransformProofKind::ComputeFold
+                                      : MirTransformProofKind::IdentityFold,
         .body = patch.target.body,
         .block = location.block->id,
         .instruction = instruction.id,
         .sourceValue = instruction.hirValue,
         .sourceStatement = instruction.hirStatement,
         .replacementLiteral = patch.literal,
-        .requiredAnalyses = {.valueUses = true, .dominance = true}};
-    if (patch.computeFold) {
+        .relatedBlocks = patch.relatedBlocks,
+        .relatedInstructions = patch.relatedInstructions,
+        .relatedValues = patch.relatedValues,
+        .requiredAnalyses = {.valueUses = true,
+                             .reachability = patch.sparseConstant,
+                             .dominance = true,
+                             .sparseConstants = patch.sparseConstant}};
+    if (patch.sparseConstant) {
+      replacement.literalProvenance =
+          MirLiteralProvenance{.kind = MirLiteralProvenanceKind::SparseConstant,
+                               .sourceOperation = instruction.operation,
+                               .sourceValues = patch.relatedValues};
+    } else if (patch.computeFold) {
       MirLiteralProvenance provenance{.kind =
                                           MirLiteralProvenanceKind::ComputeFold,
                                       .sourceOperation = instruction.operation};
@@ -598,6 +697,57 @@ MirEditResult MirProgramEditor::apply() {
       touched.push_back(cleanup.body);
     }
   }
+  for (const SafetyDischarge &claim : queuedSafetyDischarges) {
+    MirBody *target = findMirBody(candidate, claim.target.body);
+    InstructionLocation location =
+        target == nullptr ? InstructionLocation{}
+                          : findInstruction(*target, claim.target.instruction);
+    const MirSafetyAnalysis analysis =
+        analyzeMirSafetyChecks(candidate, claim.target.body);
+    const MirSafetyProof *proof =
+        analysis.find(claim.target.instruction, claim.discharge);
+    if (location.block == nullptr || location.instruction == nullptr ||
+        proof == nullptr) {
+      addError(result, claim.target.body, 0, claim.target.instruction,
+               "MIR safety-check proof became invalid before mutation");
+      continue;
+    }
+    location.instruction->safetyDischarges.push_back(claim.discharge);
+    std::sort(
+        location.instruction->safetyDischarges.begin(),
+        location.instruction->safetyDischarges.end(),
+        [](const MirSafetyDischarge &left, const MirSafetyDischarge &right) {
+          return std::tuple{static_cast<std::size_t>(left.family), left.origin,
+                            static_cast<std::size_t>(left.outcome.code),
+                            static_cast<std::size_t>(left.outcome.detail)} <
+                 std::tuple{static_cast<std::size_t>(right.family),
+                            right.origin,
+                            static_cast<std::size_t>(right.outcome.code),
+                            static_cast<std::size_t>(right.outcome.detail)};
+        });
+    result.transformations.push_back(
+        {.pass = pass,
+         .kind = MirTransformKind::DischargeSafetyCheck,
+         .proof = mirSafetyTransformProof(claim.discharge.family),
+         .body = claim.target.body,
+         .block = location.block->id,
+         .instruction = claim.target.instruction,
+         .sourceValue = location.instruction->hirValue,
+         .sourceStatement = location.instruction->hirStatement,
+         .safetyDischarge = claim.discharge,
+         .relatedBlocks = proof->relatedBlocks,
+         .relatedInstructions = proof->relatedInstructions,
+         .relatedValues = proof->relatedValues,
+         .relatedPlaces = proof->relatedPlaces,
+         .requiredAnalyses = {.valueUses = true,
+                              .reachability = true,
+                              .dominance = true,
+                              .safetyChecks = true}});
+    if (std::find(touched.begin(), touched.end(), claim.target.body) ==
+        touched.end()) {
+      touched.push_back(claim.target.body);
+    }
+  }
   if (!result.verification.valid()) {
     return result;
   }
@@ -621,9 +771,9 @@ MirEditResult MirProgramEditor::apply() {
 
   program = std::move(candidate);
   result.changed = true;
-  result.appliedPatches = queued.size() + queuedBranchFolds.size() +
-                          queuedDeadInstructions.size() +
-                          queuedUnreachableBlocks.size();
+  result.appliedPatches =
+      queued.size() + queuedBranchFolds.size() + queuedDeadInstructions.size() +
+      queuedUnreachableBlocks.size() + queuedSafetyDischarges.size();
   for (const ScalarPromotion &promotion : queuedScalarPromotions) {
     (void)promotion;
     ++result.appliedPatches;
@@ -631,6 +781,7 @@ MirEditResult MirProgramEditor::apply() {
   result.valueUsesRebuilt = true;
   result.invalidation.instructionFacts = true;
   result.invalidation.valueUses = true;
+  result.invalidation.safetyChecks = true;
   if (!queuedBranchFolds.empty()) {
     result.invalidation.controlFlow = true;
     result.invalidation.reachability = true;

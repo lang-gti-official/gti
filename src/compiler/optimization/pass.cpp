@@ -279,10 +279,15 @@ analyzeScalarPromotion(const MirProgram &program, MirBodyAddress address,
 } // namespace
 
 std::string_view name(MirAnalysisKind kind) {
-  constexpr std::array names{
-      std::string_view{"cfg-reachability"}, std::string_view{"dominance"},
-      std::string_view{"value-uses"}, std::string_view{"effects"},
-      std::string_view{"scalar-promotion-inputs"}};
+  constexpr std::array names{std::string_view{"cfg-reachability"},
+                             std::string_view{"dominance"},
+                             std::string_view{"value-uses"},
+                             std::string_view{"effects"},
+                             std::string_view{"scalar-promotion-inputs"},
+                             std::string_view{"safety-checks"},
+                             std::string_view{"place-alias-escape"},
+                             std::string_view{"loops"},
+                             std::string_view{"sparse-constants"}};
   const std::size_t index = static_cast<std::size_t>(kind);
   return index < names.size() ? names[index] : "invalid";
 }
@@ -435,6 +440,61 @@ MirBodyAnalysisManager::scalarPromotionInputs(const MirProgram &program,
   return &*cached.scalarPromotionInputs;
 }
 
+const MirSafetyAnalysis *
+MirBodyAnalysisManager::safetyChecks(const MirProgram &program,
+                                     MirBodyAddress address) {
+  Entry &cached = entry(address);
+  if (!cached.safetyChecks) {
+    const MirPlaceAliasEscapeAnalysis *aliases =
+        placeAliasEscape(program, address);
+    if (findMirBody(program, address) == nullptr || aliases == nullptr) {
+      return nullptr;
+    }
+    cached.safetyChecks = analyzeMirSafetyChecks(program, address, *aliases);
+  }
+  return &*cached.safetyChecks;
+}
+
+const MirPlaceAliasEscapeAnalysis *
+MirBodyAnalysisManager::placeAliasEscape(const MirProgram &program,
+                                         MirBodyAddress address) {
+  Entry &cached = entry(address);
+  if (!cached.placeAliasEscape) {
+    if (findMirBody(program, address) == nullptr) {
+      return nullptr;
+    }
+    cached.placeAliasEscape = analyzeMirPlaceAliasEscape(program, address);
+  }
+  return &*cached.placeAliasEscape;
+}
+
+const MirLoopAnalysis *MirBodyAnalysisManager::loops(const MirProgram &program,
+                                                     MirBodyAddress address) {
+  Entry &cached = entry(address);
+  if (!cached.loops) {
+    const MirBody *body = findMirBody(program, address);
+    const MirDominanceInfo *dominanceInfo = dominance(program, address);
+    if (body == nullptr || dominanceInfo == nullptr) {
+      return nullptr;
+    }
+    cached.loops = analyzeMirLoops(*body, *dominanceInfo);
+  }
+  return &*cached.loops;
+}
+
+const MirSccpAnalysis *
+MirBodyAnalysisManager::sparseConstants(const MirProgram &program,
+                                        MirBodyAddress address) {
+  Entry &cached = entry(address);
+  if (!cached.sparseConstants) {
+    if (findMirBody(program, address) == nullptr) {
+      return nullptr;
+    }
+    cached.sparseConstants = analyzeMirSccp(program, address);
+  }
+  return &*cached.sparseConstants;
+}
+
 std::vector<std::string>
 MirBodyAnalysisManager::invalidate(MirBodyAddress address,
                                    const MirPreservedAnalyses &preserved) {
@@ -452,6 +512,10 @@ MirBodyAnalysisManager::invalidate(MirBodyAddress address,
   drop(MirAnalysisKind::ValueUses, cached.valueUses);
   drop(MirAnalysisKind::Effects, cached.effects);
   drop(MirAnalysisKind::ScalarPromotionInputs, cached.scalarPromotionInputs);
+  drop(MirAnalysisKind::SafetyChecks, cached.safetyChecks);
+  drop(MirAnalysisKind::PlaceAliasEscape, cached.placeAliasEscape);
+  drop(MirAnalysisKind::Loops, cached.loops);
+  drop(MirAnalysisKind::SparseConstants, cached.sparseConstants);
   return invalidated;
 }
 

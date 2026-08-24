@@ -153,6 +153,22 @@ facts reject the complete program before output; there is no AST/HIR body
 fallback.
 
 Optimizer tombstones are verified inert proof slots and emit no operation.
+An instruction safety discharge is likewise consumed only as sealed optimized
+MIR, never as a backend analysis result. When all local overflow outcomes for a
+checked add, subtract, multiply, or negate are discharged, the C++ backend may
+emit the direct arithmetic representation. When all local outcomes for an
+admitted fixed-array read are discharged, it may emit a direct indexed read.
+For a private sparse-storage read or mutable read, it may select the
+backend-private unchecked helper only when both the exact bounds and
+initialized-slot outcomes are discharged. A fully discharged `Invoke` follows
+its verified success edge; any retained local or callee failure keeps the
+checked representation and failure transfer.
+
+These choices inspect only MIR operation identities and exact discharge
+metadata. They do not recognize `std` wrappers, source declaration names, or
+generated C++ shape. Prefix storage and every unsupported operation remain on
+their checked backend route.
+
 For a scalar block parameter, the C++ MIR body emitter owns one backend-private
 edge slot. Every `Goto`, `Branch`, `Invoke`, or `Switch` predecessor
 publishes its verified arguments to those slots before transferring control;
@@ -215,6 +231,14 @@ surfaces may be represented as C++ templates and concrete specializations;
 specialization eligibility comes from concrete-instance items, and executable
 specialization text still comes from MIR.
 
+Lowered declarations retain an explicit default-constructor or destructor
+specifier for source/coherence and tooling inventory. Because that policy has
+no source body, the emitter does not publish a separate member definition; it
+uses the class lifecycle row's `Generated` status to spell the structural
+operation. A policy declaration never becomes an empty C++ body: semantic
+analysis has already decided structural availability, and the lifecycle status
+remains the backend authority for that result.
+
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
 contained-constructor row from the lowered initializer schedule and constructor
@@ -236,6 +260,30 @@ state; unrelated in-class initializers retain their source-defined value.
 Nested receiver-field access is emitted only when every projection resolves
 through an exact class field and representation row. Missing or additional
 lifecycle uses reject the body rather than changing source evaluation order.
+
+An all-owned-parameter initializer list may stay in native member-initializer
+form only when every declared initializer has one exact source-parameter move
+and the complete field order is proven. Cleanup-free fields require no
+invented drop record. An active-cleanup field additionally requires its value
+drop, construction rollback reparent, field drop, and one unconditional
+transfer-out in the verified constructor prologue. Mixed passive and active
+fields are admitted only when each field independently satisfies its matching
+schedule and no other lifecycle event mentions those obligations.
+
+Move-only class replacement of one direct mutable receiver field has three
+additional exact representations. A transformed source call may initialize one
+value-rooted obligation, publish it through an unconditional `Replace` into
+the field, and then drop only the moved-from slot shell. A move from one field
+through a unique mutable `CallResult` loan may initialize the same kind of
+slot only when the move and receiver-field assignment are adjacent, the
+success path ends that loan before the slot drop, and no alias or extra
+lifecycle event exists. A targetless concrete default construction may use the
+same replace/drop schedule when its own unconditional `Initialize` is the
+single activation. Each route requires an exact noncopyable, move-assignable
+class representation and one resolved active-cleanup field row. The emitter
+does not recognize the owning wrapper or container name; projected
+destinations, conditional lifecycle events, incomplete borrow endings, or
+additional consumers fail closed.
 
 ### Declarations And ABI
 

@@ -634,3 +634,307 @@ def generated_case(index: int, seed: int) -> GeneratedCase:
     )
     case.expected
     return case
+
+
+@dataclass(frozen=True)
+class CompositionParameters:
+    base: int
+    delta: int
+    replacement: int
+
+
+COMPOSITION_SCENARIOS = (
+    "local-class-method",
+    "global-class-free-function",
+    "generic-class-function",
+    "class-return-readonly-borrow",
+)
+
+
+COMPOSITION_FEATURES: dict[str, tuple[str, ...]] = {
+    "local-class-method": (
+        "storage:local",
+        "type:class",
+        "access:member-read",
+        "access:member-write",
+        "call:method",
+    ),
+    "global-class-free-function": (
+        "storage:global",
+        "type:class",
+        "access:member-read",
+        "access:member-write",
+        "call:free",
+        "call:method",
+    ),
+    "generic-class-function": (
+        "storage:local",
+        "type:generic-class",
+        "access:member-read",
+        "access:member-write",
+        "call:generic-free",
+        "call:method",
+    ),
+    "class-return-readonly-borrow": (
+        "storage:local",
+        "type:class",
+        "flow:class-return",
+        "flow:readonly-borrow-argument",
+        "call:free",
+        "call:method",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CompositionProgram:
+    scenario: str
+    parameters: CompositionParameters
+    transformed: bool
+
+    def evaluate(self) -> int:
+        state = {"value": checked_int32(self.parameters.base)}
+        if self.scenario in {
+            "local-class-method",
+            "generic-class-function",
+        }:
+            state["value"] = checked_int32(
+                state["value"] + self.parameters.delta
+            )
+        elif self.scenario == "global-class-free-function":
+            state["value"] = checked_int32(self.parameters.replacement)
+        elif self.scenario != "class-return-readonly-borrow":
+            raise ModelError(f"unknown composition scenario {self.scenario!r}")
+        result = state["value"]
+        if result < 0 or result > 125:
+            raise ModelError(
+                f"composition exit result is outside the portable range: {result}"
+            )
+        return result
+
+    def emit(self, dialect: Dialect) -> str:
+        if self.scenario not in COMPOSITION_FEATURES:
+            raise ModelError(f"unknown composition scenario {self.scenario!r}")
+        integer = "int32_t" if dialect == "gti" else "std::int32_t"
+        prefix = "#include <cstdint>\n\n" if dialect == "cpp" else ""
+        mutable = "mut " if dialect == "gti" else ""
+        receiver_mut = " mut" if dialect == "gti" else ""
+        receiver_const = "" if dialect == "gti" else " const"
+        member = "this.value" if dialect == "gti" else "this->value"
+
+        if self.scenario == "local-class-method":
+            operation = (
+                f"  counter.value = counter.value + {self.parameters.delta};\n"
+                "  return counter.value;"
+                if self.transformed
+                else f"  counter.add({self.parameters.delta});\n"
+                "  return counter.read();"
+            )
+            source = f"""class Counter {{
+public:
+  {mutable}{integer} value;
+
+  Counter({integer} initial) : value(initial) {{}}
+
+  {integer} read(){receiver_const} {{ return {member}; }}
+
+  void add({integer} amount){receiver_mut} {{
+    {member} = {member} + amount;
+  }}
+}};
+
+int main() {{
+  {mutable}Counter counter = Counter({self.parameters.base});
+{operation}
+}}
+"""
+        elif self.scenario == "global-class-free-function":
+            write = (
+                "  shared.value = next;"
+                if self.transformed
+                else "  shared.set(next);"
+            )
+            read = (
+                "  return shared.value;"
+                if self.transformed
+                else "  return shared.read();"
+            )
+            source = f"""class Cell {{
+public:
+  {mutable}{integer} value;
+
+  Cell({integer} initial) : value(initial) {{}}
+
+  {integer} read(){receiver_const} {{ return {member}; }}
+
+  void set({integer} next){receiver_mut} {{ {member} = next; }}
+}};
+
+{mutable}Cell shared = Cell({self.parameters.base});
+
+void update({integer} next) {{
+{write}
+}}
+
+{integer} observe() {{
+{read}
+}}
+
+int main() {{
+  update({self.parameters.replacement});
+  return observe();
+}}
+"""
+        elif self.scenario == "generic-class-function":
+            class_head = (
+                "class Box<T>"
+                if dialect == "gti"
+                else "template <typename T>\nclass Box"
+            )
+            identity_head = (
+                "T identity<T>(T value)"
+                if dialect == "gti"
+                else "template <typename T>\nT identity(T value)"
+            )
+            operation = (
+                f"  box.value = box.value + {self.parameters.delta};\n"
+                "  return box.value;"
+                if self.transformed
+                else f"  box.set(identity({self.parameters.base} + "
+                f"{self.parameters.delta}));\n  return identity(box.read());"
+            )
+            source = f"""{class_head} {{
+public:
+  {mutable}T value;
+
+  Box(T initial) : value(initial) {{}}
+
+  T read(){receiver_const} {{ return {member}; }}
+
+  void set(T next){receiver_mut} {{ {member} = next; }}
+}};
+
+{identity_head} {{ return value; }}
+
+int main() {{
+  {mutable}Box<{integer}> box = Box<{integer}>({self.parameters.base});
+{operation}
+}}
+"""
+        else:
+            reference = "Reading&" if dialect == "gti" else "const Reading&"
+            result = (
+                "  return reading.read();"
+                if self.transformed
+                else "  return inspect(reading);"
+            )
+            source = f"""class Reading {{
+public:
+  {integer} value;
+
+  Reading({integer} initial) : value(initial) {{}}
+
+  {integer} read(){receiver_const} {{ return {member}; }}
+}};
+
+Reading make_reading({integer} value) {{
+  return Reading(value);
+}}
+
+{integer} inspect({reference} reading) {{
+  return reading.read();
+}}
+
+int main() {{
+  Reading reading = make_reading({self.parameters.base});
+{result}
+}}
+"""
+        return prefix + source
+
+    def node_kinds(self) -> set[str]:
+        return {f"composition:{self.scenario}"} | {
+            f"composition:{feature}"
+            for feature in COMPOSITION_FEATURES[self.scenario]
+        }
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "scenario": self.scenario,
+            "features": list(COMPOSITION_FEATURES[self.scenario]),
+            "parameters": asdict(self.parameters),
+            "transformed": self.transformed,
+        }
+
+
+@dataclass(frozen=True)
+class CompositionCase:
+    index: int
+    seed: int
+    parameters: CompositionParameters
+    transformation: str
+    original: CompositionProgram
+    transformed: CompositionProgram
+
+    @property
+    def expected(self) -> int:
+        original = self.original.evaluate()
+        transformed = self.transformed.evaluate()
+        if original != transformed:
+            raise ModelError(
+                f"composition transform {self.transformation} changed "
+                f"{original} to {transformed}"
+            )
+        return original
+
+    def semantic_record(self) -> dict[str, Any]:
+        sources = {
+            "original_gti": self.original.emit("gti"),
+            "transformed_gti": self.transformed.emit("gti"),
+            "original_cpp": self.original.emit("cpp"),
+            "transformed_cpp": self.transformed.emit("cpp"),
+        }
+        return {
+            "schema": "gti-typed-composition-case-v1",
+            "index": self.index,
+            "seed": self.seed,
+            "parameters": asdict(self.parameters),
+            "transformation": self.transformation,
+            "features": list(COMPOSITION_FEATURES[self.transformation]),
+            "expected": self.expected,
+            "node_kinds": sorted(self.original.node_kinds()),
+            "source_sha256": {
+                name: hashlib.sha256(source.encode("utf-8")).hexdigest()
+                for name, source in sources.items()
+            },
+            "original": self.original.record(),
+            "transformed": self.transformed.record(),
+        }
+
+    def semantic_json(self) -> str:
+        return json.dumps(self.semantic_record(), indent=2, sort_keys=True) + "\n"
+
+
+TypedAuditCase = GeneratedCase | CompositionCase
+
+
+def composition_case(index: int, seed: int) -> CompositionCase:
+    generator = random.Random(seed ^ (index * 104729) ^ 0x434F4D50)
+    base = generator.randint(1, 20)
+    delta = generator.randint(1, 5)
+    parameters = CompositionParameters(
+        base=base,
+        delta=delta,
+        replacement=generator.randint(1, 25),
+    )
+    scenario = COMPOSITION_SCENARIOS[index % len(COMPOSITION_SCENARIOS)]
+    case = CompositionCase(
+        index=index,
+        seed=seed,
+        parameters=parameters,
+        transformation=scenario,
+        original=CompositionProgram(scenario, parameters, False),
+        transformed=CompositionProgram(scenario, parameters, True),
+    )
+    case.expected
+    return case

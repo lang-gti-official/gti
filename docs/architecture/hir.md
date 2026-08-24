@@ -275,6 +275,12 @@ linearized into MIR. HIR does not select source endpoints, repeat borrow
 validity, or infer that vector position alone is sufficient for every
 expression kind.
 
+An explicitly defaulted default constructor retains its written declaration in
+semantic selection, but HIR represents the construction with the same absent
+source-body target and generated lifecycle status as an implicit structural
+default. A defaulted destructor creates no `HirDestructorInstance`; only a
+destructor with a source cleanup body has executable HIR and active-drop state.
+
 `HirValueKind::LayoutQuery` preserves layout-query provenance while carrying
 the semantic model's exact `uint64_t` constant and numeric literal value.
 Lowering neither recomputes the target layout nor turns the operation into a

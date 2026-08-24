@@ -978,10 +978,33 @@ private:
                   "Destructors have an implicitly mutable receiver and do not "
                   "take a 'mut' qualifier.");
     }
+    if (match({TokenKind::EQUAL})) {
+      Token equal = previous();
+      Token keyword;
+      SpecialMemberSpecifierKind kind;
+      if (match({TokenKind::DEFAULT})) {
+        keyword = previous();
+        kind = SpecialMemberSpecifierKind::Defaulted;
+      } else if (match({TokenKind::DELETE})) {
+        keyword = previous();
+        kind = SpecialMemberSpecifierKind::Deleted;
+      } else {
+        throw error(peek(), "Expect 'default' or 'delete' after '=' in a "
+                            "destructor declaration.");
+      }
+      consume(TokenKind::SEMICOLON,
+              "Expect ';' after special destructor declaration.");
+      return std::make_shared<DestructorDecl>(
+          std::move(tilde), std::move(name),
+          SpecialMemberSpecifier{.equal = std::move(equal),
+                                 .keyword = std::move(keyword),
+                                 .kind = kind},
+          nullptr);
+    }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before destructor body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
     return std::make_shared<DestructorDecl>(std::move(tilde), std::move(name),
-                                            std::move(body));
+                                            std::nullopt, std::move(body));
   }
 
   std::vector<Parameter> parameterList() {

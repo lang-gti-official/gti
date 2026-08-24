@@ -100,6 +100,12 @@ protocol adapter only serializes these notes. Hovering the parameter binding
 itself remains ordinary binding hover until semantic occurrences retain its
 owning function and parameter contract directly.
 
+Defaulted default constructors and destructors use those same compiler-owned
+declaration identities. Declaration hover and document-symbol detail include
+`= default`, selected construction hover presents the callable `Type()`
+signature, and definition from the call reaches the written constructor. The
+protocol layer does not infer lifecycle policy from punctuation.
+
 Lambda capture targets and sources remain separate semantic symbols. Hover on
 an environment binding appends the compiler-owned `immutable copy-snapshot
 capture` or `owned move capture` note; definition from the initializer source
@@ -293,6 +299,10 @@ configured cache limits and observed estimated occupancy.
 Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
 requests without adopting clangd's per-translation-unit scheduler complexity.
+Both queues use one long-lived LLVM thread with an explicit 8 MiB stack. That
+avoids Darwin's 512 KiB secondary-thread default and ensures the compiler's
+bounded-depth recovery runs before native stack exhaustion in debug builds,
+without creating a new thread for every edit or completion request.
 
 Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
 compiler-owned discovery point for concrete generic instances, so stopping at

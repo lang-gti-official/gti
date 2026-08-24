@@ -637,7 +637,13 @@ private:
 
   void printValue(const LoweredDestructorDeclaration &value) {
     output << "destructor(owner=" << value.owner
-           << ";access=" << number(value.access) << ')';
+           << ";access=" << number(value.access) << ";specifier=";
+    if (value.specifier) {
+      output << number(*value.specifier);
+    } else {
+      output << '-';
+    }
+    output << ')';
   }
 
   void printValue(const LoweredStorageDeclaration &value) {

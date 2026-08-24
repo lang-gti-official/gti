@@ -377,6 +377,17 @@ public:
     return *std::launder(slot(offset));
   }
 
+  // Used only after verified GTI MIR discharges both the bounds and
+  // initialized-slot outcomes. These methods are backend representation
+  // details and are not part of the source-visible intrinsic vocabulary.
+  [[nodiscard]] const T &unchecked_read(std::uint64_t index) const {
+    return *std::launder(slot(static_cast<std::size_t>(index)));
+  }
+
+  [[nodiscard]] T &unchecked_read_mut(std::uint64_t index) {
+    return *std::launder(slot(static_cast<std::size_t>(index)));
+  }
+
   void destroy(std::uint64_t index) {
     const std::size_t offset = checked_initialized_index(index);
     std::destroy_at(std::launder(slot(offset)));
@@ -581,6 +592,18 @@ inline const T &storage_read(const storage<T> &value, std::uint64_t index) {
 template <typename T>
 inline T &storage_read_mut(storage<T> &value, std::uint64_t index) {
   return value.read_mut(index);
+}
+
+template <typename T>
+inline const T &storage_read_unchecked(const storage<T> &value,
+                                       std::uint64_t index) {
+  return value.unchecked_read(index);
+}
+
+template <typename T>
+inline T &storage_read_mut_unchecked(storage<T> &value,
+                                     std::uint64_t index) {
+  return value.unchecked_read_mut(index);
 }
 
 template <typename T>
@@ -3240,7 +3263,9 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const LoweredDestructorDeclaration &destructor,
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &classDeclaration) {
-    static_cast<void>(destructor);
+    if (destructor.specifier) {
+      return;
+    }
     writeIndent();
     if (classDeclaration.polymorphic) {
       output << "virtual ";
@@ -5297,6 +5322,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "storage_error",
         "storage_read",
         "storage_read_mut",
+        "storage_read_mut_unchecked",
+        "storage_read_unchecked",
         "storage_relocate",
         "storage_shift_left",
         "storage_shift_right",
@@ -5313,6 +5340,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         "unique_owner_upcast",
         "unsigned_count",
         "upper",
+        "unchecked_read",
+        "unchecked_read_mut",
         "value",
         "wrapping_add",
         "wrapping_mul",

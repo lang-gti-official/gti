@@ -253,7 +253,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v43 valid=" << program.valid() << '\n';
+    output << "mir-v44 valid=" << program.valid() << '\n';
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -581,7 +581,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v41\n";
+    output << "mir-body-v42\n";
     body(value, 0);
     return output.str();
   }
@@ -1127,6 +1127,16 @@ private:
       }
       break;
     }
+    case MirLiteralProvenanceKind::SparseConstant: {
+      output << "sparse-constant:"
+             << name(value.literalProvenance.sourceOperation);
+      for (std::size_t index = 0;
+           index < value.literalProvenance.sourceValues.size(); ++index) {
+        output << (index == 0 ? ':' : ',') << 'v'
+               << value.literalProvenance.sourceValues[index];
+      }
+      break;
+    }
     case MirLiteralProvenanceKind::Count:
       output << "invalid:v" << value.literalProvenance.sourceValue;
       break;
@@ -1181,6 +1191,17 @@ private:
     output << ']';
     output << " failure-sites=[";
     list(value.localFailureSites);
+    output << ']';
+    output << " safety-discharges=[";
+    for (std::size_t index = 0; index < value.safetyDischarges.size();
+         ++index) {
+      separator(index);
+      const MirSafetyDischarge &discharge = value.safetyDischarges[index];
+      output << mirSafetyCheckFamilyName(discharge.family) << ":origin"
+             << discharge.origin << ':'
+             << definedFailureCodeName(discharge.outcome.code) << ':'
+             << definedFailureDetailName(discharge.outcome.detail);
+    }
     output << ']';
     output << " failure-propagation="
            << failurePropagationName(value.definedFailure.propagation);
