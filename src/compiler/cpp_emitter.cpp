@@ -2564,6 +2564,43 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
            moduleRuntimeInitializedSymbols.contains(storage.symbol);
   }
 
+  [[nodiscard]] const CppMirSymbolRepresentation *
+  loweredStorageRepresentation(const LoweredStorageDeclaration &storage) const {
+    if (!generalEmissionMap || storage.symbol == 0) {
+      return nullptr;
+    }
+    const MirProgramInitializationStep *step =
+        mir.programInitializationPlan().findStepForSymbol(storage.symbol);
+    const std::size_t owner = step == nullptr ? 0 : step->ownerClass;
+    const auto found = std::find_if(
+        generalEmissionMap->symbols().begin(),
+        generalEmissionMap->symbols().end(),
+        [&](const CppMirSymbolRepresentation &row) {
+          return row.kind == CppMirSymbolRepresentationKind::Storage &&
+                 row.owner == owner && row.symbol == storage.symbol &&
+                 row.ordinal == 0 && row.type == storage.type;
+        });
+    return found == generalEmissionMap->symbols().end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] bool loweredRuntimeClassLifetimeSlot(
+      const LoweredStorageDeclaration &storage) const {
+    const CppMirSymbolRepresentation *row =
+        loweredStorageRepresentation(storage);
+    return row != nullptr && row->runtimeLifetimeSlot;
+  }
+
+  void emitLoweredStorageRepresentationType(
+      const LoweredStorageDeclaration &storage) {
+    if (loweredRuntimeClassLifetimeSlot(storage)) {
+      output << "::gti_internal::backend::mir_lifetime_slot<";
+      emitSemanticType(storage.type);
+      output << ", true>";
+      return;
+    }
+    emitSemanticType(storage.type);
+  }
+
   void emitLoweredStorageType(const LoweredStorageDeclaration &storage,
                               bool declarationOnly) {
     const bool runtime = loweredRuntimeProgramStorage(storage);
@@ -2581,7 +2618,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                              !moveOnly && !rawPointer))) {
       output << "const ";
     }
-    emitSemanticType(storage.type);
+    emitLoweredStorageRepresentationType(storage);
   }
 
   void
@@ -2776,7 +2813,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
         storage.type.kind == SemanticType::Array) {
       emitLoweredCAbiFieldType(storage.type, name);
     } else {
-      emitSemanticType(storage.type);
+      emitLoweredStorageRepresentationType(storage);
       output << ' ' << name;
     }
     if (insideClass && storage.staticStorage && !storage.constexprStorage) {

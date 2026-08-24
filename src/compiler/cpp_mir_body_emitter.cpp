@@ -8708,6 +8708,22 @@ public:
         add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
             "dependent declaration type is not attached to a field row");
       }
+      if (row.runtimeLifetimeSlot) {
+        const MirProgramInitializationStep *step =
+            program.programInitializationPlan().findStepForSymbol(row.symbol);
+        const MirPlace *storage =
+            step == nullptr ? nullptr
+                            : program.module().findPlace(step->storagePlace);
+        if (row.kind != CppMirSymbolRepresentationKind::Storage ||
+            row.type.kind != SemanticType::Class || step == nullptr ||
+            step->role != ProgramInitializationStepRole::Initializer ||
+            step->ownerClass != row.owner || step->requiresActiveCleanup ||
+            storage == nullptr || storage->type != row.type) {
+          add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
+              "runtime lifetime slot is not attached to an exact passive "
+              "class program-initialization step");
+        }
+      }
       if (std::find_if(representations.symbols().begin(),
                        representations.symbols().begin() + index,
                        [&](const CppMirSymbolRepresentation &prior) {
@@ -9480,6 +9496,12 @@ private:
       } else {
         requireSymbol(CppMirSymbolRepresentationKind::Storage, step->ownerClass,
                       place.symbol, currentType ? &*currentType : nullptr, 0);
+        if (const CppMirSymbolRepresentation *storage =
+                storageRepresentationForBody(program, representations,
+                                             step->ownerClass, place.symbol);
+            storage != nullptr && storage->runtimeLifetimeSlot) {
+          requireCapability(CppMirEmissionCapabilityKind::LifetimeStorage);
+        }
       }
     } else if (place.root == MirPlaceRootKind::Symbol) {
       if (place.capture != 0 && result.body.kind == MirBodyKind::Lambda) {
@@ -9497,6 +9519,9 @@ private:
         } else {
           requireSymbol(storage->kind, storage->owner, place.symbol,
                         currentType ? &*currentType : nullptr, 0);
+          if (storage->runtimeLifetimeSlot) {
+            requireCapability(CppMirEmissionCapabilityKind::LifetimeStorage);
+          }
         }
       }
     } else if (place.root == MirPlaceRootKind::This) {
@@ -12037,6 +12062,14 @@ public:
       if (facts.kind == MirBodyKind::Module &&
           place.root == MirPlaceRootKind::Binding &&
           place.projections.empty() && place.symbol != 0) {
+        const CppMirSymbolRepresentation *storage =
+            storageRepresentationForBody(program, representations, std::nullopt,
+                                         place.symbol);
+        if (storage != nullptr && storage->runtimeLifetimeSlot) {
+          writeIndent();
+          output << "auto &__gti_mir_p_" << place.id << " = "
+                 << storage->spelling << ";\n";
+        }
         continue;
       }
       // An owning class local lives in a sealed lifetime slot so failure
@@ -13902,7 +13935,13 @@ private:
     if (place != nullptr && facts.kind == MirBodyKind::Module &&
         place->root == MirPlaceRootKind::Binding &&
         place->projections.empty() && place->symbol != 0) {
-      return storageSpelling(facts, place->symbol);
+      const CppMirSymbolRepresentation *storage = storageRepresentationForBody(
+          program, representations, facts.owner, place->symbol);
+      if (storage == nullptr || storage->spelling.empty()) {
+        throw std::logic_error(
+            "verified module store lost its exact storage row");
+      }
+      return storage->spelling + (storage->runtimeLifetimeSlot ? ".get()" : "");
     }
     if (place != nullptr) {
       if (const std::optional<RawMemoryPlaceAccess> access =
@@ -13925,7 +13964,23 @@ private:
              fieldProjectionChainSpelling(*referent, place->projections, 0);
     }
     if (place != nullptr && place->root == MirPlaceRootKind::Symbol) {
-      return storageSpelling(facts, place->symbol);
+      const CppMirSymbolRepresentation *storage = storageRepresentationForBody(
+          program, representations, facts.owner, place->symbol);
+      if (storage == nullptr || storage->spelling.empty()) {
+        throw std::logic_error(
+            "verified symbol store lost its exact storage row");
+      }
+      if (place->projections.size() == 1 &&
+          place->projections.front().kind == MirProjectionKind::Dereference) {
+        return "(*" + storage->spelling + ")";
+      }
+      std::string spelling = storage->spelling;
+      if (storage->runtimeLifetimeSlot) {
+        spelling += ".get()";
+      }
+      spelling +=
+          fieldProjectionChainSpelling(storage->type, place->projections, 0);
+      return spelling;
     }
     // A dereference-projected reference place stores through its sibling
     // pointer carrier (ADR 018 §4), exactly as the read path spells it. Field
@@ -18211,11 +18266,22 @@ private:
           facts.instanceLabel == std::string_view("lambda-instance")) {
         output << captureSpelling(facts.id, place.symbol, place.capture);
       } else {
+        const CppMirSymbolRepresentation *storage =
+            storageRepresentationForBody(program, representations, facts.owner,
+                                         place.symbol);
+        if (storage == nullptr || storage->spelling.empty()) {
+          throw std::logic_error(
+              "general MIR body emission lost an exact storage symbol row");
+        }
         if (place.projections.size() == 1 &&
             place.projections.front().kind == MirProjectionKind::Dereference) {
-          output << "(*" << storageSpelling(facts, place.symbol) << ')';
+          output << "(*" << storage->spelling << ')';
         } else {
-          output << storageSpelling(facts, place.symbol);
+          output << storage->spelling;
+          if (storage->runtimeLifetimeSlot) {
+            output << ".get()";
+          }
+          emitFieldProjectionChain(storage->type, place.projections, 0);
         }
       }
       return;
@@ -20492,6 +20558,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           place.type.kind == SemanticType::Reference) {
         return false;
       }
+      if (place.type.kind == SemanticType::Class && slotPlace(place) &&
+          (!storage->runtimeLifetimeSlot || !lifetimeSlotRow())) {
+        return false;
+      }
       continue;
     }
     if (place.root == MirPlaceRootKind::This) {
@@ -20595,8 +20665,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           storage->type.kind == SemanticType::RawPointer &&
           storage->type.arguments.size() == 1 &&
           storage->type.arguments.front() == place.type;
-      if ((!directStorage && !dereferencedPointer) || storage == nullptr ||
-          storage->spelling.empty()) {
+      const bool fieldStorage =
+          storage != nullptr && !place.projections.empty() &&
+          std::all_of(place.projections.begin(), place.projections.end(),
+                      [](const MirPlaceProjection &projection) {
+                        return projection.kind == MirProjectionKind::Field;
+                      }) &&
+          exactFieldProjectionRows(program_, representations_, storage->type,
+                                   place.projections, 0, place.type);
+      if ((!directStorage && !dereferencedPointer && !fieldStorage) ||
+          storage == nullptr || storage->spelling.empty() ||
+          (storage->runtimeLifetimeSlot && !lifetimeSlotRow())) {
         {
           return false;
         }

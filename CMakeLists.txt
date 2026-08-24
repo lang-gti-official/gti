@@ -968,6 +968,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mir_backend_first_family.gti"
     )
     add_test(
+      NAME global_class_storage_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_class_storage_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/global_class_storage.gti"
+    )
+    add_test(
       NAME failure_descriptor_backend_compile
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/failure_descriptor_backend_compile_test.py"
@@ -1159,7 +1166,8 @@ if(BUILD_TESTING)
         evaluation_order_runtime optimizer_runtime
         native_record_c_oracle native_header_c_cpp_oracle glfw_3_4_c_oracle
         cli_workflow project_cli_workflow
-        mir_backend_first_family_runtime failure_descriptor_backend_compile
+        mir_backend_first_family_runtime global_class_storage_runtime
+        failure_descriptor_backend_compile
         mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
         mir_backend_class_default_cleanup_runtime
         mir_backend_owned_lifecycle_runtime

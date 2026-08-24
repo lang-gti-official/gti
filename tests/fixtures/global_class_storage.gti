@@ -1,0 +1,23 @@
+class thing {
+public:
+  thing() {}
+  mut int32_t value = 0;
+};
+
+mut thing g = thing();
+
+int32_t read_global() {
+  return g.value;
+}
+
+void write_global(int32_t value) {
+  g.value = value;
+}
+
+int main() {
+  if (read_global() != 0) {
+    return 1;
+  }
+  write_global(int32_t(37));
+  return read_global() == 37 ? 0 : 2;
+}

@@ -112,6 +112,16 @@ static initialization guard. Data-only namespace storage needs neither route.
 The program-plan verifier checks the hosted call only when a hosted startup is
 present and never invents an entry to satisfy the C++ representation.
 
+When the selected executable `Module/0` route must construct cleanup-free
+class program storage at runtime, its copied C++ storage row records a lifetime
+slot representation. Global and static declarations, the module construction
+carrier, and later symbol-rooted reads or writes all consume that same row.
+Member access first exposes the engaged value and then follows the exact field
+projection rows; missing slot or field facts fail body admission. This is only
+a target representation of the existing MIR storage and initialization order.
+It does not admit cleanup-owning program storage or make C++ static lifetime
+rules an execution authority.
+
 Backends choose helper names, monomorphization mechanics, ABI spelling, and
 target syntax. They cannot rediscover whether an item exists from source
 declarations or HIR use sites.
