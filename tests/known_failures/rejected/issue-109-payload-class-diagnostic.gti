@@ -1,0 +1,9 @@
+class leaf {
+public:
+  leaf() {}
+  mut int32_t v = 7;
+};
+
+enum class holder { one(leaf l), none };
+
+int main() { return 0; }

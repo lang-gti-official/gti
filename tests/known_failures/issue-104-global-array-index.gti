@@ -1,0 +1,2 @@
+mut int32_t table[4] = {};
+int main() { return int(table[std::size_t(0)]); }

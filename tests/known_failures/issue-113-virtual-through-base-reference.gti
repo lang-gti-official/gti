@@ -1,0 +1,21 @@
+class Base {
+public:
+  Base() {}
+  virtual int32_t value() {
+    return 1;
+  }
+};
+
+class Derived : public Base {
+public:
+  Derived() {}
+  int32_t value() override {
+    return 3;
+  }
+};
+
+int main() {
+  mut Derived derived = Derived();
+  mut Base& bound = derived;
+  return int(bound.value());
+}

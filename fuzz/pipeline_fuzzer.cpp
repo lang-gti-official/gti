@@ -21,6 +21,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <exception>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -251,11 +253,22 @@ Observation observe(std::string_view source, lang::OptimizationLevel level,
     return result;
   }
 
+  // A backend reports an internal error by throwing, and the driver turns
+  // that into GTI-B0001. Letting it escape here would abort the process with
+  // no diagnostic, so every ICE would look like a memory-safety crash and
+  // the first one would end the run. Catch it, print what the user would
+  // have seen, and then fail deliberately — an ICE is still a bug.
   result.disposition = "emitted";
-  result.mirArtifact = lang::MirBackend().generate(*lowered.program).contents;
-  result.cppArtifact = lang::CppBackend(lang::CppStandard::Cpp23)
-                           .generate(*lowered.program)
-                           .contents;
+  try {
+    result.mirArtifact = lang::MirBackend().generate(*lowered.program).contents;
+    result.cppArtifact = lang::CppBackend(lang::CppStandard::Cpp23)
+                             .generate(*lowered.program)
+                             .contents;
+  } catch (const std::exception &exception) {
+    std::fprintf(stderr, "gti-fuzz(pipeline): backend internal error: %s\n",
+                 exception.what());
+    gti_fuzz::fail("pipeline", "backend raised an internal error");
+  }
   return result;
 }
 
