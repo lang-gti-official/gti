@@ -1,0 +1,20 @@
+// Reproducer for https://github.com/LukeHHA/gti/issues/92
+//
+// Two nested read-only range-for loops over the SAME container raise
+// GTI-B0001 (internal compiler error) from the MIR loan verifier, though a
+// single loop and nested loops over two different containers both compile.
+// Two read-only iterations are legitimate; this should be accepted.
+//
+// Expected once fixed: compiles and runs. Until then this file is a captured
+// reproducer and is intentionally NOT registered in CMake.
+
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  for (auto& a : values) {
+    for (auto& b : values) {
+    }
+  }
+  return 0;
+}

@@ -1,0 +1,11 @@
+// Reproducer for https://github.com/LukeHHA/gti/issues/101
+//
+// std::make_pair raises GTI-B0001 in the stdlib body itself, though pair and
+// make_pair carry real implementations (stdlib/std/utility.gti:6-15).
+
+#include <std/utility>
+
+int main() {
+  mut std::pair<int32_t, int32_t> p = std::make_pair(3, 4);
+  return 0;
+}
