@@ -256,6 +256,66 @@ public:
 """
 
 
+def static_shapes() -> list[Shape]:
+    """Static class fields — a storage root the matrix had no cells for.
+
+    A static field is symbol-rooted like a global, so the two should behave
+    alike; they do, including in failing. Keeping both means a fix that
+    handles one and forgets the other shows up immediately.
+    """
+    return [
+        Shape("static", "scalar", "", "", "raw",
+              body=("class counter {\n"
+                    "public:\n"
+                    "  counter() {}\n"
+                    "  static mut int32_t total = 0;\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  counter::total = 7;\n"
+                    "  return int(counter::total) - 7;\n"
+                    "}")),
+        Shape("static", "class field", "", "", "raw",
+              body=("class holder {\n"
+                    "public:\n"
+                    "  holder() {}\n"
+                    "  static mut leaf shared = leaf();\n"
+                    "};\n"
+                    "int main() { return int(holder::shared.v) - 7; }")),
+        # Same shape as #104, reached through a static rather than a global.
+        Shape("static", "indexed load", "", "", "raw",
+              body=("class holder {\n"
+                    "public:\n"
+                    "  holder() {}\n"
+                    "  static mut int32_t table[4] = {};\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  return int(holder::table[std::size_t(0)]);\n"
+                    "}")),
+        # #115: the write path fails at a different gate than the read.
+        Shape("static", "indexed store", "", "", "raw",
+              body=("class holder {\n"
+                    "public:\n"
+                    "  holder() {}\n"
+                    "  static mut int32_t table[4] = {};\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  holder::table[std::size_t(0)] = 7;\n"
+                    "  return 0;\n"
+                    "}")),
+        Shape("static", "destructor runs", "", "", "raw",
+              body=("mut int32_t witness = 0;\n"
+                    "class tracked {\n"
+                    "public:\n"
+                    "  tracked() {}\n"
+                    "  ~tracked() { witness = 7; }\n"
+                    "};\n"
+                    "int main() {\n"
+                    "  { mut tracked t = tracked(); }\n"
+                    "  return int(witness) - 7;\n"
+                    "}")),
+    ]
+
+
 def inheritance_shapes() -> list[Shape]:
     """Polymorphic receivers.
 
@@ -526,7 +586,7 @@ def main() -> int:
                          + capture_shapes() + field_shapes()
                          + pointer_shapes() + nested_capture_shapes()
                          + enum_shapes() + generic_shapes()
-                         + inheritance_shapes())
+                         + inheritance_shapes() + static_shapes())
     if arguments.only:
         shapes = [s for s in shapes if arguments.only in s.root]
         if not shapes:

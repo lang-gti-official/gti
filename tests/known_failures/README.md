@@ -17,6 +17,7 @@ passing regression, delete it here, and add a row to *Graduated* below.
 | `issue-104-global-array-index.gti` | [#104](https://github.com/LukeHHA/gti/issues/104) | indexing a global array → `GTI-B0001` (the #100 fix took `Field` chains, not `Index`) |
 | `issue-106-array-of-class.gti` | [#106](https://github.com/LukeHHA/gti/issues/106) | *declaring* a fixed array of any class type → `GTI-B0001`; no read needed |
 | `issue-113-virtual-through-base-reference.gti` | [#113](https://github.com/LukeHHA/gti/issues/113) | a virtual call through a reference to a plain base *class* → `GTI-B0001`; the same shape through an `interface` works |
+| `issue-115-global-array-write.gti` | [#115](https://github.com/LukeHHA/gti/issues/115) | *writing* a global or static array element → `GTI-B0001` at a different gate than #104's read |
 
 ## Memory-safety reproducers
 
@@ -99,7 +100,7 @@ The holes cluster, and fixing one pair routinely leaves its neighbours broken
 
 `scripts/debug/place_shape_matrix.py` enumerates that space directly, crossing
 each storage root (local, global, parameter, lambda capture, `this`, raw
-pointer) with each projection chain (none, `.field`, `.field.field`, `[i]`,
+pointer, static field) with each projection chain (none, `.field`, `.field.field`, `[i]`,
 `[i].field`, deref, arrow) in both read and write position, then compiling one
 minimal program per cell. Enum, payload-enum and `expected<T, E>` cells cover
 the aggregate-shaped neighbours of the fixed array that produced #106, and
