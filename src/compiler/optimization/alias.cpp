@@ -67,7 +67,30 @@ namespace {
   return false;
 }
 
-[[nodiscard]] MirAliasRelation projectionRelation(const MirPlace &left,
+[[nodiscard]] std::optional<bool>
+overlappingFields(const MirProgram &program, SymbolId left, SymbolId right) {
+  bool foundOwner = false;
+  for (const MirClassInstance &instance : program.classInstances()) {
+    const auto contains = [&](SymbolId field) {
+      return std::any_of(instance.declaredFields.begin(),
+                         instance.declaredFields.end(),
+                         [&](const MirClassFieldInfo &candidate) {
+                           return candidate.symbol == field;
+                         });
+    };
+    if (!contains(left) || !contains(right)) {
+      continue;
+    }
+    foundOwner = true;
+    if (instance.kind == ClassKind::Union) {
+      return true;
+    }
+  }
+  return foundOwner ? std::optional<bool>{false} : std::nullopt;
+}
+
+[[nodiscard]] MirAliasRelation projectionRelation(const MirProgram &program,
+                                                  const MirPlace &left,
                                                   const MirPlace &right) {
   const std::size_t common =
       std::min(left.projections.size(), right.projections.size());
@@ -80,7 +103,10 @@ namespace {
     if (lhs.kind == MirProjectionKind::Field &&
         rhs.kind == MirProjectionKind::Field && lhs.field != 0 &&
         rhs.field != 0 && lhs.field != rhs.field) {
-      return MirAliasRelation::NoAlias;
+      const std::optional<bool> overlap =
+          overlappingFields(program, lhs.field, rhs.field);
+      return overlap && !*overlap ? MirAliasRelation::NoAlias
+                                  : MirAliasRelation::MayAlias;
     }
     if ((lhs.kind == MirProjectionKind::Index ||
          lhs.kind == MirProjectionKind::PackElement) &&
@@ -159,7 +185,8 @@ MirPlaceAliasEscapeAnalysis::escape(MirPlaceId place) const {
   return place == 0 || place > escapes.size() ? nullptr : &escapes[place - 1];
 }
 
-MirAliasRelation mirPlaceRelation(const MirPlace &left, const MirPlace &right) {
+MirAliasRelation mirPlaceRelation(const MirProgram &program,
+                                  const MirPlace &left, const MirPlace &right) {
   if (left.id != 0 && left.id == right.id) {
     return MirAliasRelation::MustAlias;
   }
@@ -173,7 +200,7 @@ MirAliasRelation mirPlaceRelation(const MirPlace &left, const MirPlace &right) {
   // semantic keys intentionally identify only the owner root, so an equal key
   // must not collapse two explicit sibling fields into one place.
   if (sameRoot(left, right)) {
-    return projectionRelation(left, right);
+    return projectionRelation(program, left, right);
   }
   if (left.key && right.key) {
     const PlaceRelationResult relation = placeRelation(*left.key, *right.key);
@@ -211,7 +238,7 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
     result.escapes[index].place = index + 1;
     for (std::size_t other = 0; other < result.placeCount; ++other) {
       result.relations[index * result.placeCount + other] =
-          mirPlaceRelation(body->places[index], body->places[other]);
+          mirPlaceRelation(program, body->places[index], body->places[other]);
     }
     if (rawProjection(body->places[index])) {
       addReason(result.escapes, index + 1, MirPlaceEscapeReason::RawMemory);
