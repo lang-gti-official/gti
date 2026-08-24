@@ -3,6 +3,7 @@
 #include "gti/configuration_flags.h"
 #include "gti/diagnostic.h"
 #include "gti/failure_metadata.h"
+#include "gti/frontend_work.h"
 #include "gti/hir.h"
 #include "gti/mir.h"
 #include "gti/parser.h"
@@ -32,6 +33,9 @@ struct FrontendOptions {
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;
   bool toolingOccurrences = true;
+  // Optional synchronous work accounting. The caller owns this object for the
+  // complete Frontend invocation.
+  FrontendWorkMetrics *workMetrics = nullptr;
 };
 
 struct FrontendResult {

@@ -8,6 +8,7 @@
 #include "gti/support.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <iterator>
 #include <optional>
@@ -28,13 +29,23 @@ FrontendResult Frontend::analyze(
     const std::vector<std::filesystem::path> &standardLibraryRoots,
     const std::vector<PackageSourceRoot> &packageSourceRoots) const {
   FrontendResult result;
-  SourceLoader sourceLoader;
+  if (options.workMetrics != nullptr) {
+    options.workMetrics->clear();
+  }
+  SourceLoader sourceLoader(options.workMetrics);
+  const auto sourceLoadStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-source-load");
     result.sourceGraph = sourceLoader.load(
         entryPath, std::move(entrySource), preludePaths, sourceOverrides,
         standardLibraryRoots, options.completionOffset, packageSourceRoots,
         options.target, options.configurationFlags);
+  }
+  if (options.workMetrics != nullptr) {
+    options.workMetrics->sourceLoadMicroseconds = static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - sourceLoadStart)
+            .count());
   }
   result.sources = sourceLoader.sources();
   append(result.diagnostics, sourceLoader.errors());
@@ -84,12 +95,16 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
   StmtList declarations;
   bool syntaxValid = true;
+  const auto parseStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-parse");
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       SourceUnit *unit = result.sourceGraph.findUnit(unitId);
       if (unit == nullptr) {
         continue;
+      }
+      if (options.workMetrics != nullptr) {
+        options.workMetrics->parsedUnits.push_back(unit->path.string());
       }
       Parser parser(std::move(unit->tokens));
       Program parsed = parser.parse();
@@ -105,6 +120,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                           std::make_move_iterator(unitDeclarations.end()));
     }
   }
+  if (options.workMetrics != nullptr) {
+    options.workMetrics->parseMicroseconds = static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - parseStart)
+            .count());
+  }
   result.program = Program(std::move(declarations));
   result.syntaxValid = syntaxValid;
   if (!result.syntaxValid && !options.analyzeRecoveredProgram) {
@@ -112,10 +133,25 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   }
 
   SemanticVisitor semantic(options.target, &result.sourceGraph,
-                           options.toolingOccurrences);
+                           options.toolingOccurrences, options.workMetrics);
+  if (options.workMetrics != nullptr) {
+    for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
+      if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
+        options.workMetrics->semanticallyAnalyzedUnits.push_back(
+            unit->path.string());
+      }
+    }
+  }
+  const auto semanticStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-semantics");
     result.semanticValid = semantic.check(result.program);
+  }
+  if (options.workMetrics != nullptr) {
+    options.workMetrics->semanticMicroseconds = static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - semanticStart)
+            .count());
   }
   append(result.diagnostics, semantic.errors());
   if (!result.semanticValid || options.completionOffset ||
@@ -124,10 +160,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     return result;
   }
 
+  const auto hirStart = std::chrono::steady_clock::now();
   HirLoweringResult hir = [&] {
     const PhaseTimeScope timeScope("gti-hir-lowering");
     return HirLowerer(options.target).lower(result.program, semantic);
   }();
+  if (options.workMetrics != nullptr) {
+    options.workMetrics->hirMicroseconds = static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - hirStart)
+            .count());
+  }
   result.hirValid = hir.valid();
   result.hir = std::move(hir.program);
   append(result.diagnostics, hir.diagnostics);

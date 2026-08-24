@@ -188,6 +188,7 @@ struct CompletionInput {
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::vector<std::filesystem::path> standardLibraryRoots;
   std::vector<PackageSourceRoot> packageSourceRoots;
+  FrontendWorkMetrics *workMetrics = nullptr;
 };
 
 class LanguageQueries {

@@ -23,6 +23,8 @@
 
 namespace lang {
 
+struct FrontendWorkMetrics;
+
 using ClassId = std::size_t;
 using ConceptId = std::size_t;
 using ConstructorId = std::size_t;
@@ -2253,7 +2255,8 @@ class SemanticVisitor {
 public:
   explicit SemanticVisitor(TargetInfo target = TargetInfo::host(),
                            const SourceGraph *sourceGraph = nullptr,
-                           bool toolingOccurrences = true);
+                           bool toolingOccurrences = true,
+                           FrontendWorkMetrics *workMetrics = nullptr);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;
