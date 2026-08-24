@@ -207,6 +207,12 @@ and some fixtures are negative tests — **except** when the failure is a
 repository fixtures raise an internal error that the suite expects, and a bare
 "5 skipped" said nothing about it.
 
+Those two would then be reported on every run, so the tool reads
+`tests/stdlib_surface_manifest.json` and classifies a case whose expected
+stderr already contains `GTI-B0001` as `expected-ICE`. The manifest stays the
+single source of truth rather than a list hardcoded here, and when #112 is
+fixed those entries stop matching on their own.
+
 ## Probing the language server
 
 `scripts/debug/lsp_probe.py` checks two properties of `gti_lsp` that an
