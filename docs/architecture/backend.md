@@ -102,6 +102,15 @@ Ordinary C/runtime declarations and boundary shells are resolved linkage and
 ABI declaration/body rows, not a second generated-wrapper family. Native
 callbacks are the generated native interoperability case.
 
+An executable `Module/0` initializer does not imply that a hosted entry exists.
+When one is present, its verified startup body calls `Module/0` exactly once
+and the hosted-entry item depends on the program-initialization item. A
+translation unit without `main` instead has no hosted-startup body call; the
+C++ representation invokes the same verified module body through one private
+static initialization guard. Data-only namespace storage needs neither route.
+The program-plan verifier checks the hosted call only when a hosted startup is
+present and never invents an entry to satisfy the C++ representation.
+
 Backends choose helper names, monomorphization mechanics, ABI spelling, and
 target syntax. They cannot rediscover whether an item exists from source
 declarations or HIR use sites.

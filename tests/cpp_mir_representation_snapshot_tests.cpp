@@ -779,6 +779,75 @@ int main() { return seed - 7 + zeroed; }
          "fallback route");
 }
 
+void testNoEntryProgramInitializationPlan() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cpp-mir-representation-no-entry-initialization.gti",
+      "mut int32_t total = 0;\n");
+  expect(frontend.canGenerateCode() &&
+             frontend.mir.hostedStartup() == nullptr &&
+             !frontend.mir.programInitializationPlan().steps.empty(),
+         "a program-storage initializer should remain valid without a "
+         "hosted entry");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  lang::CppMirRepresentationSnapshotBuild build = buildSnapshot(frontend);
+  expect(build.valid(),
+         "a no-entry program initializer should build a sealed C++ "
+         "representation snapshot");
+  if (!build.valid()) {
+    return;
+  }
+  const lang::CppMirProgramPlan plan =
+      lang::planCppMirProgram(frontend.mir, std::move(*build.snapshot));
+  expect(plan.complete() && plan.issues.empty(),
+         "a no-entry initializer should use its generated initialization "
+         "thunk without requiring a hosted-startup body call");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find("std::int32_t total =") != std::string::npos &&
+             artifact.contents.find("\nint main(") == std::string::npos,
+         "the C++ backend should emit the exact no-entry global without "
+         "inventing a hosted entry");
+
+  const lang::FrontendResult dynamic = lang::Frontend().analyze(
+      "cpp-mir-representation-no-entry-dynamic-initialization.gti", R"(
+int32_t initial_total() { return 0; }
+mut int32_t total = initial_total();
+)");
+  expect(dynamic.canGenerateCode() && dynamic.mir.hostedStartup() == nullptr,
+         "a dynamic no-entry initializer should pass the frontend without a "
+         "hosted startup");
+  if (!dynamic.canGenerateCode()) {
+    return;
+  }
+  lang::CppMirRepresentationSnapshotBuild dynamicBuild = buildSnapshot(dynamic);
+  expect(dynamicBuild.valid(),
+         "a dynamic no-entry initializer should build a sealed C++ "
+         "representation snapshot");
+  if (!dynamicBuild.valid()) {
+    return;
+  }
+  const lang::CppMirProgramPlan dynamicPlan =
+      lang::planCppMirProgram(dynamic.mir, std::move(*dynamicBuild.snapshot));
+  const lang::OptimizationResult dynamicOptimizations =
+      lang::OptimizationPipeline().run(dynamic.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact dynamicArtifact = gti_test::emitCpp(
+      dynamic, dynamic.mir, dynamic.mir, dynamicOptimizations);
+  expect(dynamicPlan.complete() && dynamicPlan.issues.empty() &&
+             dynamicArtifact.contents.find("__gti_program_initialize_once") !=
+                 std::string::npos &&
+             dynamicArtifact.contents.find("\nint main(") == std::string::npos,
+         "a dynamic no-entry unit should execute Module/0 through its private "
+         "static guard without requiring a hosted body call");
+}
+
 void testNamespacedProgramStorageRows() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "cpp-mir-representation-namespaced-storage.gti", R"(
@@ -1662,6 +1731,7 @@ int main() {
   testLoweredProgramConstructionSeal();
   testPrivateInventorySealAndContractedThunkClosure();
   testPureDataOnlyProgramInitializationPlan();
+  testNoEntryProgramInitializationPlan();
   testNamespacedProgramStorageRows();
   testStaticOnlyProgramInitializationFact();
   testCheckedDynamicInitializationIsComplete();

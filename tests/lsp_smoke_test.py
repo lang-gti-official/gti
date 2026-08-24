@@ -302,6 +302,139 @@ def test_inheritance_tooling(executable, root):
         session.close()
 
 
+def test_parser_depth_and_formatter_token_boundaries(executable, root):
+    deep_source = (
+        "int32_t nested() { return "
+        + "(" * 600
+        + "0"
+        + ")" * 600
+        + "; }\n"
+    )
+    path = root / "parser-depth-and-formatting.gti"
+    path.write_text(deep_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": deep_source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and any(
+                diagnostic.get("code") == "GTI-P0005"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item for item in publication["diagnostics"] if item["code"] == "GTI-P0005"
+        )
+        assert diagnostic["data"] == {
+            "phase": "parsing",
+            "hints": [
+                "Split the expression, type, or statement into shallower parts."
+            ],
+        }, diagnostic
+        assert "fixes" not in diagnostic["data"], diagnostic
+
+        boundary_source = "& &m"
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": boundary_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        formatted = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ][0]["newText"]
+        assert formatted == "& &m\n", formatted
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": formatted}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        reformatted = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        assert reformatted == [], reformatted
+    finally:
+        session.close()
+
+
 def test_unsaved_dependency_reanalysis(executable, root):
     library_path = root / "overlay-library.gti"
     root_path = root / "overlay-root.gti"
@@ -7424,6 +7557,7 @@ def main():
     test_direct_dependency_visibility(sys.argv[1], root)
     test_missing_include_and_format_config(sys.argv[1], root)
     test_inheritance_tooling(sys.argv[1], root)
+    test_parser_depth_and_formatter_token_boundaries(sys.argv[1], root)
 
 
 def test_mutable_temporary_receiver_tooling(executable, root):

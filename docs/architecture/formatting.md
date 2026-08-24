@@ -112,6 +112,14 @@ indentation beneath the containing structure, and remains idempotent.
 Formatting does not consult emitted C++ or delegate GTI syntax decisions to a
 native C++ tool.
 
+Whitespace normalization is also constrained by the scanner's maximal-munch
+boundaries. Before appending a token, the formatter rescans the adjacent
+two- and three-token window and retains a separator when concatenation would
+form a different token, comment opener, decimal literal, or ellipsis. A later
+style rule may trim ordinary padding but cannot remove that pending lexical
+separator. This keeps incomplete editor text such as `& &m` token-equivalent
+and idempotent instead of changing it to `&&m` on the first pass.
+
 A mutable field group is preserved as a braced class member. Its opening `mut`
 uses the ordinary member indentation, enclosed fields use one additional level,
 and the closing brace has no semicolon. Comments and conditional directives are
