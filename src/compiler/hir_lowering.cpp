@@ -1575,12 +1575,54 @@ private:
     return result;
   }
 
-  [[nodiscard]] bool materializesDropValue(const HirValue &value) const {
+  [[nodiscard]] static bool fixedClassArrayType(const SemanticType &type) {
+    return type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+           type.arguments.front().kind == SemanticType::Class &&
+           type.arrayLengthParameterId == 0 && type.arrayLength != 0;
+  }
+
+  [[nodiscard]] bool
+  materializesFixedArrayOwnership(const HirValue &value,
+                                  const HirBody &body) const {
+    if (value.info.category != ValueCategory::Value ||
+        value.info.traits.drop != DropKind::Lexical) {
+      return false;
+    }
+    if (value.kind == HirValueKind::ArrayInitializer &&
+        fixedClassArrayType(value.info.type) &&
+        value.operands.size() == value.info.type.arrayLength) {
+      return true;
+    }
+    if (value.info.type.kind != SemanticType::Class) {
+      return false;
+    }
+    std::size_t consumers = 0;
+    const HirValue *consumer = nullptr;
+    for (const HirValue &candidate : body.values) {
+      for (const HirValueId operand : candidate.operands) {
+        if (operand == value.id) {
+          ++consumers;
+          consumer = &candidate;
+        }
+      }
+    }
+    return consumers == 1 && consumer != nullptr &&
+           consumer->kind == HirValueKind::ArrayInitializer &&
+           fixedClassArrayType(consumer->info.type) &&
+           consumer->info.type.arguments.front() == value.info.type &&
+           consumer->operands.size() == consumer->info.type.arrayLength;
+  }
+
+  [[nodiscard]] bool materializesDropValue(const HirValue &value,
+                                           const HirBody &body) const {
     if (value.info.category != ValueCategory::Value ||
         value.info.type == SemanticType::Unknown ||
         value.info.type.kind == SemanticType::Reference ||
-        value.info.traits.drop != DropKind::Lexical ||
-        !analyzer->requiresActiveCleanupFor(value.info.type)) {
+        value.info.traits.drop != DropKind::Lexical) {
+      return false;
+    }
+    if (!analyzer->requiresActiveCleanupFor(value.info.type) &&
+        !materializesFixedArrayOwnership(value, body)) {
       return false;
     }
     switch (value.kind) {
@@ -1783,7 +1825,7 @@ private:
     }
     for (HirValue &value : body.values) {
       if (value.fullExpression == 0 ||
-          (!materializesDropValue(value) &&
+          (!materializesDropValue(value, body) &&
            !temporaryBorrowValues.contains(value.id) &&
            !borrowedMoveValues.contains(value.id))) {
         continue;
@@ -2733,6 +2775,93 @@ private:
     return result;
   }
 
+  [[nodiscard]] std::optional<HirValueId> lowerDefaultArrayElement(
+      const ArrayInitializer &initializer,
+      const ResolvedConstructionInfo &construction, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    HirValue value{
+        .id = nextValueId++,
+        .kind = HirValueKind::DirectInitializer,
+        // Empty-brace array elements have no source expression of their own.
+        // The parent ArrayInitializer remains the source-authored root.
+        .source = nullptr,
+        .info = {.type = construction.constructedType,
+                 .category = ValueCategory::Value,
+                 .access = AccessMode::ReadOnly,
+                 .traits = analyzer->traitsFor(construction.constructedType)},
+        .parameterTypes = construction.parameterTypes,
+        .definedFailure = {.propagation =
+                               construction.constructor != 0 &&
+                                       !construction.generatedDefault
+                                   ? FailurePropagationKind::Constructor
+                                   : FailurePropagationKind::None},
+        .borrowOrigin = construction.borrowOrigin,
+        .borrowArgument = construction.borrowArgument,
+        .borrowAccess = construction.borrowAccess,
+        .constructorKind = construction.kind,
+    };
+
+    const HirConstructorInstanceId target =
+        enqueueConstructor(construction, tokenSpan(initializer.brace()));
+    if (target != 0) {
+      value.constructorTarget = target;
+    } else if (construction.constructor != 0 &&
+               !construction.generatedDefault) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+
+    const SemanticModel *defaultModel = &model;
+    std::vector<SemanticType> targetClassArguments = classArguments;
+    std::vector<CompileTimeValue> targetClassValueArguments =
+        classValueArguments;
+    if (target != 0 && target <= output.program.constructors.size()) {
+      const HirConstructorInstance &targetInstance =
+          output.program.constructors[target - 1];
+      if (targetInstance.owner != 0 &&
+          targetInstance.owner <= output.program.classes.size()) {
+        const HirClassInstance &owner =
+            output.program.classes[targetInstance.owner - 1];
+        targetClassArguments = owner.typeArguments;
+        targetClassValueArguments = owner.valueArguments;
+      }
+      if (const SemanticInstanceAnalysis *analysis =
+              ensureConstructorAnalysis(target)) {
+        defaultModel = &analysis->model;
+      }
+    }
+    for (const Expr *defaultArgument : construction.defaultArguments) {
+      if (const std::optional<HirValueId> lowered = lowerDefaultArgument(
+              defaultArgument, *defaultModel, targetClassArguments,
+              targetClassValueArguments, body)) {
+        value.operands.push_back(*lowered);
+      } else {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+    }
+    if (value.operands.size() != value.parameterTypes.size()) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    if (!value.parameterTypes.empty()) {
+      if (std::optional<std::vector<HirCallArgument>> arguments =
+              orderedConstructorArguments(value, value.operands,
+                                          value.parameterTypes, body, 0)) {
+        value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                     .arguments = std::move(*arguments)};
+      } else {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+    }
+
+    const HirValueId id = value.id;
+    body.values.push_back(std::move(value));
+    return id;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const ExprPtr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
@@ -2808,8 +2937,31 @@ private:
       lowerOperand(assign->value());
     } else if (const auto *initializer = exprAs<ArrayInitializer>(raw)) {
       kind = HirValueKind::ArrayInitializer;
-      for (const ExprPtr &element : initializer->elements()) {
-        lowerOperand(element);
+      if (initializer->elements().empty()) {
+        const ResolvedConstructionInfo *construction =
+            model.findArrayElementConstruction(*initializer);
+        const ExpressionInfo *arrayInfo = model.findExpression(*initializer);
+        if (construction != nullptr && arrayInfo != nullptr &&
+            fixedClassArrayType(arrayInfo->type)) {
+          operands.reserve(
+              static_cast<std::size_t>(arrayInfo->type.arrayLength));
+          for (std::uint64_t index = 0; index < arrayInfo->type.arrayLength;
+               ++index) {
+            if (const std::optional<HirValueId> element =
+                    lowerDefaultArrayElement(*initializer, *construction, model,
+                                             classArguments,
+                                             classValueArguments, body)) {
+              operands.push_back(*element);
+            } else {
+              lifecycleValid = false;
+              break;
+            }
+          }
+        }
+      } else {
+        for (const ExprPtr &element : initializer->elements()) {
+          lowerOperand(element);
+        }
       }
     } else if (const auto *binary = exprAs<Binary>(raw)) {
       kind = HirValueKind::Binary;

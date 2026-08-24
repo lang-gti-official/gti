@@ -1094,6 +1094,15 @@ if(BUILD_TESTING)
     )
     set_tests_properties(mir_class_value_lifecycle_runtime PROPERTIES TIMEOUT 180)
     add_test(
+      NAME fixed_array_class_lifecycle_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixed_array_class_lifecycle_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/fixed_array_class_lifecycle.gti"
+    )
+    set_tests_properties(fixed_array_class_lifecycle_runtime
+                         PROPERTIES TIMEOUT 180)
+    add_test(
       NAME mutable_temporary_receiver_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
@@ -1242,7 +1251,8 @@ if(BUILD_TESTING)
         mir_backend_scalar_cfg_runtime mir_backend_scalar_direct_call_runtime
         mir_backend_class_default_cleanup_runtime
         mir_backend_owned_lifecycle_runtime
-        mir_class_value_lifecycle_runtime mutable_temporary_receiver_runtime
+        mir_class_value_lifecycle_runtime fixed_array_class_lifecycle_runtime
+        mutable_temporary_receiver_runtime
         temporary_argument_borrow_runtime
         mir_backend_scalar_failure_callgraph_runtime_1of3
         mir_backend_scalar_failure_callgraph_runtime_2of3

@@ -1601,11 +1601,13 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
   }
 
   // A failure-capable Module/0 body (or a failure-free shape outside the
-  // passive initializer schedule) must construct class program storage at
+  // passive initializer schedule) must construct owning program storage at
   // the verified MIR step. Copy that concrete representation choice into the
   // storage row so declarations, Module/0, and later symbol-rooted accesses
   // cannot independently disagree about whether the spelling names a value
-  // or an uninitialized lifetime slot.
+  // or an uninitialized lifetime slot. The array form is deliberately bounded
+  // to a concrete fixed array of class elements; its exact element and
+  // aggregate lifetime schedule is proved by the body emitter.
   const bool executableProgramInitialization = std::any_of(
       mir.programInitializationPlan().steps.begin(),
       mir.programInitializationPlan().steps.end(), [](const auto &step) {
@@ -1626,9 +1628,15 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     for (const MirProgramInitializationStep &step :
          mir.programInitializationPlan().steps) {
       const MirPlace *storage = mir.module().findPlace(step.storagePlace);
+      const bool fixedClassArray =
+          storage != nullptr && storage->type.kind == SemanticType::Array &&
+          storage->type.arguments.size() == 1 &&
+          storage->type.arguments.front().kind == SemanticType::Class &&
+          storage->type.arrayLengthParameterId == 0 &&
+          storage->type.arrayLength != 0;
       if (step.role != ProgramInitializationStepRole::Initializer ||
           step.requiresActiveCleanup || storage == nullptr ||
-          storage->type.kind != SemanticType::Class) {
+          (storage->type.kind != SemanticType::Class && !fixedClassArray)) {
         continue;
       }
       const auto row = std::find_if(

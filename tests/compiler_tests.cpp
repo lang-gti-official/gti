@@ -14484,6 +14484,22 @@ int main() {
   expect(validSemantic.check(validProgram),
          "mixed logical operator spellings should share boolean semantics");
 
+  const lang::FrontendResult assignmentOperand =
+      lang::Frontend().analyze("logical-assignment-operand.gti", R"(
+int main() {
+  mut int value = 0;
+  if (value = 3 and value == 3) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  expect(!assignmentOperand.canGenerateCode() &&
+             hasDiagnostic(assignmentOperand.diagnostics,
+                           "Logical operands must be bool"),
+         "recursive analysis of an assignment operand should preserve its "
+         "resolved symbol and produce the owning type diagnostic");
+
   const std::string generated = emitAnalyzedSource(validSource);
   expect(generated.find("&&") != std::string::npos &&
              generated.find("||") != std::string::npos,
@@ -25049,6 +25065,22 @@ int main() {
              lang::verifyMirProgram(nestedGeneric.mir).valid(),
          "nested generic closure producers should retain and verify the "
          "capture signature of each concrete lambda instance");
+
+  const lang::FrontendResult nestedValueCapture =
+      lang::Frontend().analyze("nested-value-capture.gti", R"(
+int main() {
+  mut int32_t source = 7;
+  auto outer = [source]() -> int32_t {
+    return [source]() -> int32_t { return source; }();
+  };
+  return int(outer()) - 7;
+}
+)");
+  expect(nestedValueCapture.canGenerateCode() &&
+             nestedValueCapture.hir.lambdaInstances().size() == 2 &&
+             lang::verifyMirProgram(nestedValueCapture.mir).valid(),
+         "a nested lambda should be able to copy an immutable value capture "
+         "from its enclosing lambda environment");
 
   const lang::FrontendResult expectedLambda =
       lang::Frontend().analyze("expected-lambda.gti", R"(
