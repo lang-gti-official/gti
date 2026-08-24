@@ -22145,7 +22145,7 @@ int main() {
               "friend const std::int32_t & __gti_operator_dereference("
               "const IteratorContract &__gti_receiver)") != std::string::npos &&
           exactBridgeCpp.find(
-              "__gti_fn_166_dynamic_step__gti_mir_failure("
+              "_dynamic_step__gti_mir_failure("
               "::__gti_program::IteratorContract & __gti_mir_arg_0, "
               "const ::__gti_program::DerivedEnd & __gti_mir_arg_1") !=
               std::string::npos &&
