@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -107,6 +108,37 @@ def check_program(gti: Path, cxx: str, directory: Path, name: str,
     return "ok", ""
 
 
+INVARIANTS = Path(__file__).resolve().parent / "optimizer_invariants"
+STATUS_HEADER = re.compile(r"//\s*expected exit status:\s*(\d+)")
+
+
+def run_invariants(gti: Path, cxx: str, directory: Path,
+                   levels: list[str]) -> list[tuple[str, str, str]]:
+    """Check the hand-written optimizer invariants at every level.
+
+    The generated corpus is int32/bool arithmetic, so it cannot express the
+    properties an optimizer is most likely to break: that a defined runtime
+    failure survives, and that a write through an aliasing reference is
+    observed. These are written by hand and declare their expected exit
+    status in a first-line comment.
+    """
+    failures: list[tuple[str, str, str]] = []
+    for source in sorted(INVARIANTS.glob("*.gti")):
+        with source.open(encoding="utf-8") as handle:
+            match = STATUS_HEADER.match(handle.readline().strip())
+        if match is None:
+            failures.append((source.name, "no-header",
+                             "first line must declare the expected status"))
+            continue
+        expected = int(match.group(1))
+        verdict, detail = check_program(
+            gti, cxx, directory, source.stem,
+            source.read_text(encoding="utf-8"), expected, levels)
+        if verdict != "ok":
+            failures.append((source.name, verdict, detail))
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Check that GTI's optimizer preserves program behaviour.")
@@ -117,6 +149,8 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--levels", nargs="+", default=LEVELS)
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--skip-invariants", action="store_true",
+                        help="only run the generated corpus")
     arguments = parser.parse_args()
 
     gti = (REPOSITORY_ROOT / arguments.gti).resolve()
@@ -129,6 +163,13 @@ def main() -> int:
     directory = Path(tempfile.mkdtemp(prefix="gti-optimizer-diff-"))
     failures: list[tuple[str, str, str]] = []
     checked = 0
+
+    if not arguments.skip_invariants:
+        for name, verdict, detail in run_invariants(
+                gti, cxx, directory, arguments.levels):
+            failures.append((name, verdict, detail))
+            print(f"  {name:<34} {verdict.upper():<13} {detail}")
+        checked += len(list(INVARIANTS.glob("*.gti")))
 
     for index in range(arguments.count):
         case = model.generated_case(index, arguments.seed)
