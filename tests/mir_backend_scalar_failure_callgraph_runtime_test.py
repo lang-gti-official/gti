@@ -179,8 +179,22 @@ def emit_program(
     )
 
 
+def parse_shard(arguments: list[str]) -> tuple[int, int, list[str]]:
+    """Strip a trailing `--shard K/N` from argv; default is everything.
+
+    Sharding selects whole (optimization, standard) configurations so every
+    case still runs in every selected configuration; the shard union is the
+    full matrix by construction.
+    """
+    if len(arguments) >= 2 and arguments[-2] == "--shard":
+        shard, _, count = arguments[-1].partition("/")
+        return int(shard), int(count), arguments[:-2]
+    return 1, 1, arguments
+
+
 def main() -> int:
-    if len(sys.argv) != 21:
+    shard, shard_count, argv = parse_shard(sys.argv)
+    if len(argv) != 21:
         raise SystemExit(
             "usage: mir_backend_scalar_failure_callgraph_runtime_test.py "
             "<gti> <lifecycle-success-source> <all-operations-success-source> "
@@ -195,16 +209,16 @@ def main() -> int:
             "<unsigned-multiplication-source> <owning-array-parameter-source>"
         )
 
-    compiler = pathlib.Path(sys.argv[1]).resolve()
+    compiler = pathlib.Path(argv[1]).resolve()
     success_cases = (
-        ("lifecycle-success", pathlib.Path(sys.argv[2]).resolve(), 3),
-        ("all-operations-success", pathlib.Path(sys.argv[3]).resolve(), 2),
-        ("owning-array-parameter", pathlib.Path(sys.argv[20]).resolve(), 3),
+        ("lifecycle-success", pathlib.Path(argv[2]).resolve(), 3),
+        ("all-operations-success", pathlib.Path(argv[3]).resolve(), 2),
+        ("owning-array-parameter", pathlib.Path(argv[20]).resolve(), 3),
     )
     failure_cases = (
         (
             "addition-overflow",
-            pathlib.Path(sys.argv[4]).resolve(),
+            pathlib.Path(argv[4]).resolve(),
             "GTI-R0001",
             "integer_overflow",
             20,
@@ -215,7 +229,7 @@ def main() -> int:
         ),
         (
             "division-zero",
-            pathlib.Path(sys.argv[5]).resolve(),
+            pathlib.Path(argv[5]).resolve(),
             "GTI-R0002",
             "division_by_zero",
             2,
@@ -226,7 +240,7 @@ def main() -> int:
         ),
         (
             "division-overflow",
-            pathlib.Path(sys.argv[6]).resolve(),
+            pathlib.Path(argv[6]).resolve(),
             "GTI-R0001",
             "integer_overflow",
             2,
@@ -237,7 +251,7 @@ def main() -> int:
         ),
         (
             "negative-shift",
-            pathlib.Path(sys.argv[7]).resolve(),
+            pathlib.Path(argv[7]).resolve(),
             "GTI-R0004",
             "negative_shift_count",
             2,
@@ -248,7 +262,7 @@ def main() -> int:
         ),
         (
             "wide-shift",
-            pathlib.Path(sys.argv[8]).resolve(),
+            pathlib.Path(argv[8]).resolve(),
             "GTI-R0005",
             "shift_count_out_of_range",
             2,
@@ -259,7 +273,7 @@ def main() -> int:
         ),
         (
             "subtraction-overflow",
-            pathlib.Path(sys.argv[9]).resolve(),
+            pathlib.Path(argv[9]).resolve(),
             "GTI-R0001",
             "integer_overflow",
             2,
@@ -270,7 +284,7 @@ def main() -> int:
         ),
         (
             "multiplication-overflow",
-            pathlib.Path(sys.argv[10]).resolve(),
+            pathlib.Path(argv[10]).resolve(),
             "GTI-R0001",
             "integer_overflow",
             2,
@@ -281,7 +295,7 @@ def main() -> int:
         ),
         (
             "remainder-zero",
-            pathlib.Path(sys.argv[11]).resolve(),
+            pathlib.Path(argv[11]).resolve(),
             "GTI-R0003",
             "modulo_by_zero",
             2,
@@ -292,7 +306,7 @@ def main() -> int:
         ),
         (
             "negative-right-shift",
-            pathlib.Path(sys.argv[12]).resolve(),
+            pathlib.Path(argv[12]).resolve(),
             "GTI-R0004",
             "negative_shift_count",
             2,
@@ -303,7 +317,7 @@ def main() -> int:
         ),
         (
             "wide-right-shift",
-            pathlib.Path(sys.argv[13]).resolve(),
+            pathlib.Path(argv[13]).resolve(),
             "GTI-R0005",
             "shift_count_out_of_range",
             2,
@@ -314,7 +328,7 @@ def main() -> int:
         ),
         (
             "negation-overflow",
-            pathlib.Path(sys.argv[14]).resolve(),
+            pathlib.Path(argv[14]).resolve(),
             "GTI-R0001",
             "integer_overflow",
             2,
@@ -325,7 +339,7 @@ def main() -> int:
         ),
         (
             "wide-conversion",
-            pathlib.Path(sys.argv[15]).resolve(),
+            pathlib.Path(argv[15]).resolve(),
             "GTI-R0006",
             "numeric_conversion_out_of_range",
             5,
@@ -336,7 +350,7 @@ def main() -> int:
         ),
         (
             "negative-conversion",
-            pathlib.Path(sys.argv[16]).resolve(),
+            pathlib.Path(argv[16]).resolve(),
             "GTI-R0006",
             "numeric_conversion_out_of_range",
             3,
@@ -347,7 +361,7 @@ def main() -> int:
         ),
         (
             "unsigned-addition-overflow",
-            pathlib.Path(sys.argv[17]).resolve(),
+            pathlib.Path(argv[17]).resolve(),
             "GTI-R0001",
             "integer_overflow",
             4,
@@ -358,7 +372,7 @@ def main() -> int:
         ),
         (
             "unsigned-subtraction-overflow",
-            pathlib.Path(sys.argv[18]).resolve(),
+            pathlib.Path(argv[18]).resolve(),
             "GTI-R0001",
             "integer_overflow",
             4,
@@ -369,7 +383,7 @@ def main() -> int:
         ),
         (
             "unsigned-multiplication-overflow",
-            pathlib.Path(sys.argv[19]).resolve(),
+            pathlib.Path(argv[19]).resolve(),
             "GTI-R0001",
             "integer_overflow",
             4,
@@ -387,8 +401,13 @@ def main() -> int:
         (standard_library / "prelude.gti").write_text("", encoding="utf8")
         os.environ["GTI_STDLIB_PATH"] = str(standard_library)
         observed_identities: dict[str, bytes] = {}
-        for optimization in ("O0", "O1", "O3"):
-            for standard in ("c++20", "c++23"):
+        configurations = [
+            (optimization, standard)
+            for optimization in ("O0", "O1", "O3")
+            for standard in ("c++20", "c++23")
+        ]
+        for index, (optimization, standard) in enumerate(configurations):
+            if index % shard_count == shard - 1:
                 for label, source, _ in success_cases:
                     success_executable = root / (
                         f"{label}-{optimization}-{standard}"
