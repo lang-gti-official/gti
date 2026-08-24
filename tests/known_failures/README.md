@@ -106,6 +106,9 @@ minimal program per cell. Enum, payload-enum and `expected<T, E>` cells cover
 the aggregate-shaped neighbours of the fixed array that produced #106, and
 generic cells cover instantiation identity, which is not a place problem but
 fails the same way — a program the frontend should accept and does not.
+`constexpr` cells sit at the bounded evaluator's documented limits, where
+the useful property is that exceeding one stays a clean `GTI-S2057` rather
+than becoming an ICE or a hang.
 
 ```sh
 python3 scripts/debug/place_shape_matrix.py
