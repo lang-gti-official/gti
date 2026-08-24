@@ -62,28 +62,41 @@ predecessors(const MirBody &body) {
 [[nodiscard]] const std::vector<MirOperand> *
 edgeArguments(const MirBlock &source, MirBlockId target) {
   const MirTerminator &terminator = source.terminator;
-  if ((terminator.kind == MirTerminatorKind::Goto ||
-       terminator.kind == MirTerminatorKind::Branch ||
-       terminator.kind == MirTerminatorKind::Invoke) &&
-      terminator.target == target) {
-    return &terminator.targetArguments;
-  }
-  if ((terminator.kind == MirTerminatorKind::Branch ||
-       terminator.kind == MirTerminatorKind::Invoke) &&
-      terminator.elseTarget == target) {
-    return &terminator.elseArguments;
-  }
-  if (terminator.kind == MirTerminatorKind::Switch) {
-    if (terminator.target == target) {
-      return &terminator.targetArguments;
+  const std::vector<MirOperand> *result = nullptr;
+  const auto select = [&](MirBlockId candidate,
+                          const std::vector<MirOperand> &arguments) {
+    if (candidate != target) {
+      return true;
+    }
+    if (result != nullptr) {
+      return false;
+    }
+    result = &arguments;
+    return true;
+  };
+  switch (terminator.kind) {
+  case MirTerminatorKind::Goto:
+    return select(terminator.target, terminator.targetArguments) ? result
+                                                                 : nullptr;
+  case MirTerminatorKind::Branch:
+  case MirTerminatorKind::Invoke:
+    return select(terminator.target, terminator.targetArguments) &&
+                   select(terminator.elseTarget, terminator.elseArguments)
+               ? result
+               : nullptr;
+  case MirTerminatorKind::Switch:
+    if (!select(terminator.target, terminator.targetArguments)) {
+      return nullptr;
     }
     for (const MirSwitchTarget &candidate : terminator.switchTargets) {
-      if (candidate.target == target) {
-        return &candidate.arguments;
+      if (!select(candidate.target, candidate.arguments)) {
+        return nullptr;
       }
     }
+    return result;
+  default:
+    return nullptr;
   }
-  return nullptr;
 }
 
 [[nodiscard]] const MirInstruction *definition(const MirBody &body,

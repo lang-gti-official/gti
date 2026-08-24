@@ -1078,7 +1078,7 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
 
 struct Edge {
   MirBlockId target = 0;
-  std::vector<MirOperand> arguments;
+  std::size_t ordinal = 0;
   AbstractState state;
 };
 
@@ -1089,7 +1089,8 @@ struct Edge {
   std::vector<Edge> result;
   const auto append = [&](MirBlockId target,
                           const std::vector<MirOperand> &arguments,
-                          AbstractState state, bool refine, bool branchTaken) {
+                          std::size_t ordinal, AbstractState state, bool refine,
+                          bool branchTaken) {
     if (target == 0 || !state.reachable) {
       return;
     }
@@ -1101,29 +1102,34 @@ struct Edge {
     }
     bindEdgeArguments(body, target, arguments, state);
     result.push_back(
-        {.target = target, .arguments = arguments, .state = std::move(state)});
+        {.target = target, .ordinal = ordinal, .state = std::move(state)});
   };
   switch (terminator.kind) {
   case MirTerminatorKind::Goto:
-    append(terminator.target, terminator.targetArguments, transfer.output,
+    append(terminator.target, terminator.targetArguments, 0, transfer.output,
            false, false);
     break;
   case MirTerminatorKind::Branch:
-    append(terminator.target, terminator.targetArguments, transfer.output, true,
-           true);
-    append(terminator.elseTarget, terminator.elseArguments, transfer.output,
+    append(terminator.target, terminator.targetArguments, 0, transfer.output,
+           true, true);
+    append(terminator.elseTarget, terminator.elseArguments, 1, transfer.output,
            true, false);
     break;
   case MirTerminatorKind::Switch:
-    for (const MirSwitchTarget &target : terminator.switchTargets) {
-      append(target.target, target.arguments, transfer.output, false, false);
+    append(terminator.target, terminator.targetArguments, 0, transfer.output,
+           false, false);
+    for (std::size_t index = 0; index < terminator.switchTargets.size();
+         ++index) {
+      const MirSwitchTarget &target = terminator.switchTargets[index];
+      append(target.target, target.arguments, index + 1, transfer.output, false,
+             false);
     }
     break;
   case MirTerminatorKind::Invoke: {
-    append(terminator.target, terminator.targetArguments, transfer.output,
+    append(terminator.target, terminator.targetArguments, 0, transfer.output,
            false, false);
     const auto before = transfer.before.find(terminator.invokeInstruction);
-    append(terminator.elseTarget, terminator.elseArguments,
+    append(terminator.elseTarget, terminator.elseArguments, 1,
            before == transfer.before.end() ? transfer.output : before->second,
            false, false);
     break;
@@ -1144,10 +1150,9 @@ solveStates(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases) {
         const BlockTransfer transfer =
             transferBlock(body, aliases, block, incoming);
         std::vector<MirForwardDataflowEdge<AbstractState>> result;
-        std::size_t ordinal = 0;
         for (Edge &edge : outgoingEdges(body, block, transfer)) {
           result.push_back({.target = edge.target,
-                            .ordinal = ordinal++,
+                            .ordinal = edge.ordinal,
                             .state = std::move(edge.state)});
         }
         return result;

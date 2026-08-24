@@ -7141,6 +7141,9 @@ int main() {
   expect(analyses.cfg(first.mir, promotedAddress) == cfg &&
              analyses.valueUses(first.mir, promotedAddress) == uses,
          "exact preservation claims should retain cached CFG and value uses");
+  expect(analyses.cfg(second.mir, promotedAddress) == nullptr,
+         "an analysis manager bound to one MIR snapshot should reject a "
+         "cross-snapshot query instead of returning stale cached facts");
 
   (void)analyses.dominance(first.mir, promotedAddress);
   (void)analyses.effects(first.mir, promotedAddress);

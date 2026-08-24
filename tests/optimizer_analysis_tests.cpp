@@ -198,10 +198,79 @@ void testForwardDataflowScheduling() {
         return true;
       },
       {.iterationLimit = 4, .widenAfterUpdates = 0});
+  const auto elseOnly = lang::runMirForwardDataflow(
+      body, DataflowTestState{},
+      [](const lang::MirBlock &block, const DataflowTestState &state) {
+        if (block.id == 1) {
+          return std::vector<lang::MirForwardDataflowEdge<DataflowTestState>>{
+              {.target = 2, .ordinal = 0, .state = state}};
+        }
+        if (block.id == 2) {
+          return std::vector<lang::MirForwardDataflowEdge<DataflowTestState>>{
+              {.target = 3, .ordinal = 1, .state = state}};
+        }
+        return std::vector<lang::MirForwardDataflowEdge<DataflowTestState>>{};
+      },
+      [](DataflowTestState &, const DataflowTestState &,
+         lang::MirDataflowMergeContext) { return false; });
+  const auto invalidSlot = lang::runMirForwardDataflow(
+      body, DataflowTestState{},
+      [](const lang::MirBlock &block, const DataflowTestState &state) {
+        if (block.id == 1) {
+          return std::vector<lang::MirForwardDataflowEdge<DataflowTestState>>{
+              {.target = 3, .ordinal = 0, .state = state}};
+        }
+        return std::vector<lang::MirForwardDataflowEdge<DataflowTestState>>{};
+      },
+      [](DataflowTestState &, const DataflowTestState &,
+         lang::MirDataflowMergeContext) { return false; });
+  lang::MirBody malformedArguments = body;
+  malformedArguments.blocks[1].parameters.push_back(
+      {.value = 1, .type = lang::SemanticType::Int32});
+  const auto malformed = lang::runMirForwardDataflow(
+      malformedArguments, DataflowTestState{},
+      [](const lang::MirBlock &, const DataflowTestState &) {
+        return std::vector<lang::MirForwardDataflowEdge<DataflowTestState>>{};
+      },
+      [](DataflowTestState &, const DataflowTestState &,
+         lang::MirDataflowMergeContext) { return false; });
+  const auto nonMonotone = lang::runMirForwardDataflow(
+      body, DataflowTestState{},
+      [](const lang::MirBlock &block, const DataflowTestState &state) {
+        std::vector<lang::MirForwardDataflowEdge<DataflowTestState>> edges;
+        if (block.id == 1) {
+          edges.push_back({.target = 2, .ordinal = 0, .state = state});
+        } else if (block.id == 2) {
+          edges.push_back(
+              {.target = 2, .ordinal = 0, .state = {.upper = state.upper + 1}});
+          if (state.upper == 0) {
+            edges.push_back({.target = 3, .ordinal = 1, .state = state});
+          }
+        }
+        return edges;
+      },
+      [](DataflowTestState &target, const DataflowTestState &incoming,
+         lang::MirDataflowMergeContext) {
+        if (incoming.upper <= target.upper) {
+          return false;
+        }
+        target = incoming;
+        return true;
+      });
   expect(duplicate.status == lang::MirDataflowStatus::InvalidControlFlow &&
              bounded.status == lang::MirDataflowStatus::IterationLimit,
          "forward dataflow should reject duplicate edge identities and stop "
          "a non-converging client at its explicit iteration bound");
+  expect(elseOnly.converged() &&
+             elseOnly.executable({.source = 2, .target = 3, .ordinal = 1}) &&
+             !elseOnly.executable({.source = 2, .target = 2, .ordinal = 0}) &&
+             invalidSlot.status ==
+                 lang::MirDataflowStatus::InvalidControlFlow &&
+             malformed.status == lang::MirDataflowStatus::InvalidControlFlow &&
+             nonMonotone.status == lang::MirDataflowStatus::NonMonotoneTransfer,
+         "forward dataflow should retain canonical terminator ordinals, "
+         "reject malformed edge slots and block arguments, and fail closed "
+         "when a client retracts an executable edge");
 }
 
 lang::MirOperand valueOperand(lang::MirValueId value, lang::SemanticType type) {
@@ -325,6 +394,35 @@ void testNaturalLoopAndInduction() {
            "loop analysis should recognize a bounded affine block-parameter "
            "induction and its relational continuation fact");
   }
+
+  lang::MirBody ambiguous = affineLoopBody();
+  ambiguous.values.push_back({.id = 8,
+                              .info = {.type = lang::SemanticType::Bool},
+                              .definitionBlock = 1,
+                              .definition = 7});
+  ambiguous.blocks[0].instructions.push_back(
+      {.id = 7,
+       .kind = lang::MirInstructionKind::Compute,
+       .result = 8,
+       .operation = lang::MirOperation::Literal,
+       .literal = lang::Literal{true},
+       .literalProvenance = {.kind = lang::MirLiteralProvenanceKind::Source},
+       .info = {.type = lang::SemanticType::Bool}});
+  ambiguous.blocks[0].terminator.kind = lang::MirTerminatorKind::Branch;
+  ambiguous.blocks[0].terminator.value =
+      valueOperand(8, lang::SemanticType::Bool);
+  ambiguous.blocks[0].terminator.elseTarget = 2;
+  ambiguous.blocks[0].terminator.elseArguments = {
+      valueOperand(3, lang::SemanticType::UInt64)};
+  const std::optional<lang::MirDominanceInfo> ambiguousDominance =
+      lang::computeMirDominance(ambiguous);
+  const lang::MirLoopAnalysis ambiguousLoops =
+      ambiguousDominance ? lang::analyzeMirLoops(ambiguous, *ambiguousDominance)
+                         : lang::MirLoopAnalysis{};
+  const lang::MirNaturalLoop *ambiguousLoop = ambiguousLoops.loopForHeader(2);
+  expect(ambiguousLoop != nullptr && ambiguousLoop->inductions.empty(),
+         "loop analysis should reject an induction when repeated incoming "
+         "CFG edges carry ambiguous block arguments");
 }
 
 lang::MirBody nestedLoopBody() {
@@ -406,15 +504,70 @@ lang::MirPlace bindingPlace(lang::MirPlaceId id, lang::HirBindingId binding) {
 }
 
 void testPlaceRelations() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-alias-fields.gti", R"(
+struct Pair {
+  int32_t left = 0;
+  int32_t right = 0;
+
+  Pair(int32_t first, int32_t second) : left(first), right(second) {}
+};
+
+union Overlay {
+  mut uint64_t first;
+  mut uint64_t second;
+};
+
+int main() {
+  Pair pair{1, 2};
+  mut Overlay overlay{uint64_t(0)};
+  unsafe {
+    overlay.second = uint64_t(1);
+  }
+  return pair.left;
+}
+)");
+  const lang::MirClassInstance *record = nullptr;
+  const lang::MirClassInstance *overlay = nullptr;
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    if (instance.kind == lang::ClassKind::Struct) {
+      record = &instance;
+    } else if (instance.kind == lang::ClassKind::Union) {
+      overlay = &instance;
+    }
+  }
+  expect(frontend.canGenerateCode() && record != nullptr &&
+             record->declaredFields.size() == 2 && overlay != nullptr &&
+             overlay->declaredFields.size() == 2,
+         "the alias fixture should provide verified record and union field "
+         "metadata");
+  if (!frontend.canGenerateCode() || record == nullptr ||
+      record->declaredFields.size() != 2 || overlay == nullptr ||
+      overlay->declaredFields.size() != 2) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    std::cerr << "MIR class instances: " << frontend.mir.classInstances().size()
+              << '\n';
+    return;
+  }
+
   lang::MirPlace root = bindingPlace(1, 1);
   lang::MirPlace same = bindingPlace(2, 1);
   lang::MirPlace other = bindingPlace(3, 2);
   lang::MirPlace leftField = bindingPlace(4, 1);
-  leftField.projections.push_back(
-      {.kind = lang::MirProjectionKind::Field, .field = 10});
+  leftField.projections.push_back({.kind = lang::MirProjectionKind::Field,
+                                   .field = record->declaredFields[0].symbol});
   lang::MirPlace rightField = bindingPlace(5, 1);
-  rightField.projections.push_back(
-      {.kind = lang::MirProjectionKind::Field, .field = 11});
+  rightField.projections.push_back({.kind = lang::MirProjectionKind::Field,
+                                    .field = record->declaredFields[1].symbol});
+  lang::MirPlace unionLeft = bindingPlace(15, 1);
+  unionLeft.projections.push_back({.kind = lang::MirProjectionKind::Field,
+                                   .field = overlay->declaredFields[0].symbol});
+  lang::MirPlace unionRight = bindingPlace(16, 1);
+  unionRight.projections.push_back(
+      {.kind = lang::MirProjectionKind::Field,
+       .field = overlay->declaredFields[1].symbol});
   lang::MirPlace dynamicLeft = bindingPlace(6, 1);
   dynamicLeft.projections.push_back(
       {.kind = lang::MirProjectionKind::Index, .index = 1});
@@ -438,36 +591,37 @@ void testPlaceRelations() {
   constantRight.projections.push_back(
       {.kind = lang::MirProjectionKind::Index, .constantIndex = 1});
 
-  expect(lang::mirPlaceRelation(root, same) ==
-                 lang::MirAliasRelation::MustAlias &&
-             lang::mirPlaceRelation(root, other) ==
-                 lang::MirAliasRelation::NoAlias &&
-             lang::mirPlaceRelation(leftField, rightField) ==
-                 lang::MirAliasRelation::NoAlias &&
-             lang::mirPlaceRelation(dynamicLeft, dynamicRight) ==
-                 lang::MirAliasRelation::MayAlias &&
-             lang::mirPlaceRelation(other, raw) ==
-                 lang::MirAliasRelation::MayAlias &&
-             lang::mirPlaceRelation(root, loan) ==
-                 lang::MirAliasRelation::MayAlias &&
-             lang::mirPlaceRelation(root, value) ==
-                 lang::MirAliasRelation::MayAlias &&
-             lang::mirPlaceRelation(temporary, otherTemporary) ==
-                 lang::MirAliasRelation::NoAlias &&
-             lang::mirPlaceRelation(constantLeft, constantRight) ==
-                 lang::MirAliasRelation::NoAlias,
-         "place analysis should distinguish exact roots and disjoint fields "
-         "while keeping borrowed, value-rooted, dynamic, and raw memory "
-         "conservative");
+  const auto relation = [&](const lang::MirPlace &left,
+                            const lang::MirPlace &right) {
+    return lang::mirPlaceRelation(frontend.mir, left, right);
+  };
+  expect(
+      relation(root, same) == lang::MirAliasRelation::MustAlias &&
+          relation(root, other) == lang::MirAliasRelation::NoAlias &&
+          relation(leftField, rightField) == lang::MirAliasRelation::NoAlias &&
+          relation(unionLeft, unionRight) == lang::MirAliasRelation::MayAlias &&
+          relation(dynamicLeft, dynamicRight) ==
+              lang::MirAliasRelation::MayAlias &&
+          relation(other, raw) == lang::MirAliasRelation::MayAlias &&
+          relation(root, loan) == lang::MirAliasRelation::MayAlias &&
+          relation(root, value) == lang::MirAliasRelation::MayAlias &&
+          relation(temporary, otherTemporary) ==
+              lang::MirAliasRelation::NoAlias &&
+          relation(constantLeft, constantRight) ==
+              lang::MirAliasRelation::NoAlias,
+      "place analysis should distinguish exact roots and disjoint record "
+      "fields while keeping union fields, borrowed, value-rooted, "
+      "dynamic, and raw memory conservative");
   const std::vector<const lang::MirPlace *> places = {
-      &root,        &same,           &other,        &leftField,    &rightField,
-      &dynamicLeft, &dynamicRight,   &raw,          &loan,         &value,
-      &temporary,   &otherTemporary, &constantLeft, &constantRight};
+      &root,         &same,       &other,       &leftField,      &rightField,
+      &unionLeft,    &unionRight, &dynamicLeft, &dynamicRight,   &raw,
+      &loan,         &value,      &temporary,   &otherTemporary, &constantLeft,
+      &constantRight};
   bool symmetric = true;
   for (const lang::MirPlace *left : places) {
     for (const lang::MirPlace *right : places) {
-      symmetric = symmetric && lang::mirPlaceRelation(*left, *right) ==
-                                   lang::mirPlaceRelation(*right, *left);
+      symmetric =
+          symmetric && relation(*left, *right) == relation(*right, *left);
     }
   }
   expect(symmetric, "place alias relations should be symmetric");
@@ -611,6 +765,66 @@ int disjoint_field_read() {
          "index range used by a later fixed-array bounds proof");
 }
 
+void testConservativeSafetyEdgesAndUnionOverlap() {
+  const std::string source = R"(
+union Overlay {
+  mut uint64_t index;
+  mut uint64_t replacement;
+};
+
+int32_t default_checked(int32_t selector) {
+  switch (selector) {
+  case 1:
+    return 0;
+  default:
+    int32_t values[1] = {7};
+    return values[uint64_t(0)];
+  }
+}
+
+int32_t union_overlap_read() {
+  mut Overlay overlay{uint64_t(0)};
+  int32_t values[1] = {7};
+  unsafe {
+    overlay.index = uint64_t(0);
+    overlay.replacement = uint64_t(2);
+    return values[overlay.index];
+  }
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-safety-edges.gti", source);
+  const lang::MirFunctionInstance *defaultChecked =
+      findMirFunction(frontend, "default_checked");
+  const lang::MirFunctionInstance *unionRead =
+      findMirFunction(frontend, "union_overlap_read");
+  expect(frontend.canGenerateCode() && defaultChecked != nullptr &&
+             unionRead != nullptr,
+         "switch-default and union-overlap safety fixtures should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode() || defaultChecked == nullptr ||
+      unionRead == nullptr) {
+    return;
+  }
+  const auto safetyFor = [&](const lang::MirFunctionInstance &function) {
+    return lang::analyzeMirSafetyChecks(
+        frontend.mir,
+        {.kind = lang::MirBodyKind::Function, .owner = function.id});
+  };
+  const auto hasBoundsProof = [](const lang::MirSafetyAnalysis &analysis) {
+    return std::any_of(analysis.proofs.begin(), analysis.proofs.end(),
+                       [](const lang::MirSafetyProof &proof) {
+                         return proof.discharge.family ==
+                                lang::MirSafetyCheckFamily::Bounds;
+                       });
+  };
+  expect(hasBoundsProof(safetyFor(*defaultChecked)),
+         "safety analysis should propagate state along a switch default edge");
+  expect(!hasBoundsProof(safetyFor(*unionRead)),
+         "a write through an overlapping union field should invalidate a "
+         "previous fact instead of discharging a later bounds check");
+}
+
 void testSparseConditionalConstants() {
   const std::string source = R"(
 int32_t selected(bool choose) {
@@ -686,6 +900,7 @@ int main() {
   testExactCallEscapeAnalysis();
   testUnknownCallEscapeAnalysis();
   testAliasAwareSafetyInvalidation();
+  testConservativeSafetyEdgesAndUnionOverlap();
   testSparseConditionalConstants();
   if (failures != 0) {
     std::cerr << failures << " optimizer analysis test(s) failed\n";

@@ -357,6 +357,13 @@ MirBodyAnalysisManager::findEntry(MirBodyAddress address) const {
   return found == entries.end() ? nullptr : &*found;
 }
 
+bool MirBodyAnalysisManager::accepts(const MirProgram &program) {
+  if (programIdentity == nullptr) {
+    programIdentity = &program;
+  }
+  return programIdentity == &program;
+}
+
 std::size_t MirBodyAnalysisManager::revision(MirBodyAddress address) const {
   const Entry *cached = findEntry(address);
   return cached == nullptr ? 0 : cached->revision;
@@ -364,6 +371,9 @@ std::size_t MirBodyAnalysisManager::revision(MirBodyAddress address) const {
 
 const MirCfgAnalysis *MirBodyAnalysisManager::cfg(const MirProgram &program,
                                                   MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.cfg) {
     const MirBody *body = findMirBody(program, address);
@@ -378,6 +388,9 @@ const MirCfgAnalysis *MirBodyAnalysisManager::cfg(const MirProgram &program,
 const MirDominanceInfo *
 MirBodyAnalysisManager::dominance(const MirProgram &program,
                                   MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.dominance) {
     const MirBody *body = findMirBody(program, address);
@@ -392,6 +405,9 @@ MirBodyAnalysisManager::dominance(const MirProgram &program,
 const std::vector<std::vector<MirValueUse>> *
 MirBodyAnalysisManager::valueUses(const MirProgram &program,
                                   MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.valueUses) {
     const MirBody *body = findMirBody(program, address);
@@ -406,6 +422,9 @@ MirBodyAnalysisManager::valueUses(const MirProgram &program,
 const std::vector<MirInstructionEffectFact> *
 MirBodyAnalysisManager::effects(const MirProgram &program,
                                 MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.effects) {
     const MirBody *body = findMirBody(program, address);
@@ -427,6 +446,9 @@ MirBodyAnalysisManager::effects(const MirProgram &program,
 const MirScalarPromotionInputs *
 MirBodyAnalysisManager::scalarPromotionInputs(const MirProgram &program,
                                               MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.scalarPromotionInputs) {
     const MirBody *body = findMirBody(program, address);
@@ -443,6 +465,9 @@ MirBodyAnalysisManager::scalarPromotionInputs(const MirProgram &program,
 const MirSafetyAnalysis *
 MirBodyAnalysisManager::safetyChecks(const MirProgram &program,
                                      MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.safetyChecks) {
     const MirPlaceAliasEscapeAnalysis *aliases =
@@ -458,6 +483,9 @@ MirBodyAnalysisManager::safetyChecks(const MirProgram &program,
 const MirPlaceAliasEscapeAnalysis *
 MirBodyAnalysisManager::placeAliasEscape(const MirProgram &program,
                                          MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.placeAliasEscape) {
     if (findMirBody(program, address) == nullptr) {
@@ -470,6 +498,9 @@ MirBodyAnalysisManager::placeAliasEscape(const MirProgram &program,
 
 const MirLoopAnalysis *MirBodyAnalysisManager::loops(const MirProgram &program,
                                                      MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.loops) {
     const MirBody *body = findMirBody(program, address);
@@ -485,6 +516,9 @@ const MirLoopAnalysis *MirBodyAnalysisManager::loops(const MirProgram &program,
 const MirSccpAnalysis *
 MirBodyAnalysisManager::sparseConstants(const MirProgram &program,
                                         MirBodyAddress address) {
+  if (!accepts(program)) {
+    return nullptr;
+  }
   Entry &cached = entry(address);
   if (!cached.sparseConstants) {
     if (findMirBody(program, address) == nullptr) {
