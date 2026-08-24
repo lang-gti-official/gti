@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -6379,70 +6380,163 @@ callback make_callback() {
          "the callback factory should return its exact adapter thunk");
 }
 
-int main() {
-  testExhaustiveEnumClassification();
-  testReadyBodyAndRepresentationFailures();
-  testHostedStartupOwnsRemainingAuthorityGap();
-  testVerifiedProgramInitializationPlanClassification();
-  testSafeIndexUsesBoundsNotRawMemory();
-  testUnsafeRawPointerVocabulary();
-  testConcreteGenericFieldOwner();
-  testAmbiguousStaticStorageFailsClosed();
-  testConcreteClassStaticStorage();
-  testOwningCheckedBodyEmitsWholeCleanupProof();
-  testRichFieldInitializerSchedule();
-  testDependentFieldInitializerSchedule();
-  testContainedOwningFieldConstructor();
-  testContainedOwningStringFieldConstructor();
-  testBodyOrderedOwnedParameterConstructor();
-  testNestedReceiverFieldProjection();
-  testContainedAbstractBaseConstructor();
-  testExampleCorpusEmissionReadiness();
-  testGeneralTextStepMatchesProductionEmission();
-  testCleanupFixtureFunctionBodiesAreReady();
-  testOwnedLifecycleConstructionBodiesReady();
-  testDischargedStorageReadAnalysis();
-  testInlineClosureChainEmission();
-  testClosureCaptureFreezeMaterializes();
-  testLexicalCopyCaptureThroughCallableTemplate();
-  testDefaultConstructionPreparedParameterStaging();
-  testGenericMemberFailureOverloadOnOrdinaryOwner();
-  testCallableTemplateBodyVocabulary();
-  testMovedCallableReceiverMutableFallback();
-  testStoredReferenceConstructorSchedule();
-  testGenericOwnerConstructorSpecialization();
-  testConcreteGenericConstructorAndMemberPackPublication();
-  testPassiveConstructorFailureSummary();
-  testPassiveFixedArrayFailureClosure();
-  testOwningFixedArrayAggregateAndCheckedMove();
-  testPassiveClassArrayMoveAssignmentSchedule();
-  testGeneratedSpecialMemberConstructionSchedule();
-  testForwardedConcretePackLayout();
-  testConditionalClassReturnAndPreparedResultStage();
-  testConditionalFailureDestructorDrop();
-  testRetainedReferenceAddressAndConcreteDefaultReturn();
-  testStoredBorrowReferenceAliasAddresses();
-  testVirtualFailureInterfaceFamily();
-  testConcreteOnlyGenericVirtualContractRoots();
-  testAbstractBaseFailureFamilyAndInheritedMembers();
-  testUniqueOwnerUpcastFailureBody();
-  testExpectedLifetimeSlotObserverFusion();
-  testExpectedValueOrBorrowedReceiver();
-  testDeclarationOnlyCallBoundary();
-  testExpectedOwningPayloadPublicationAndForwarding();
-  testPassiveReturnSignedMinimumAndRepresentationSlot();
-  testContextualSignedMinimumInFailureCaller();
-  testSingleUseClassSsaRepresentationSlot();
-  testFailureCapableClassReturnTemporaryReceiver();
-  testFailureCapableClassReturnFieldRead();
-  testReferenceParameterBorrowUsesReferentCarrier();
-  testCopyParameterFieldPublicationAdmission();
-  testAdjacentClassCopyAssignmentFusion();
-  testFailureFormSubscriptCompatibilityBoundary();
-  testNativeCallbackFactoryBody();
-  testDeducedCallableTemplateEmission();
-  testReferenceReturnFailureAbi();
-  testGenericOwnerReferenceReturnFailureAbi();
+// The tests are independent, so CI shards them across parallel ctest
+// entries: `--shard K/N` runs every Nth test starting at K-1 (interleaved,
+// which balances the skewed per-test durations better than contiguous
+// blocks). Without arguments every test runs, so local invocation is
+// unchanged. The shard union is the full table by construction.
+struct NamedTest {
+  const char *name;
+  void (*run)();
+};
+
+constexpr NamedTest kTests[] = {
+    {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},
+    {"testReadyBodyAndRepresentationFailures",
+     testReadyBodyAndRepresentationFailures},
+    {"testHostedStartupOwnsRemainingAuthorityGap",
+     testHostedStartupOwnsRemainingAuthorityGap},
+    {"testVerifiedProgramInitializationPlanClassification",
+     testVerifiedProgramInitializationPlanClassification},
+    {"testSafeIndexUsesBoundsNotRawMemory",
+     testSafeIndexUsesBoundsNotRawMemory},
+    {"testUnsafeRawPointerVocabulary", testUnsafeRawPointerVocabulary},
+    {"testConcreteGenericFieldOwner", testConcreteGenericFieldOwner},
+    {"testAmbiguousStaticStorageFailsClosed",
+     testAmbiguousStaticStorageFailsClosed},
+    {"testConcreteClassStaticStorage", testConcreteClassStaticStorage},
+    {"testOwningCheckedBodyEmitsWholeCleanupProof",
+     testOwningCheckedBodyEmitsWholeCleanupProof},
+    {"testRichFieldInitializerSchedule", testRichFieldInitializerSchedule},
+    {"testDependentFieldInitializerSchedule",
+     testDependentFieldInitializerSchedule},
+    {"testContainedOwningFieldConstructor",
+     testContainedOwningFieldConstructor},
+    {"testContainedOwningStringFieldConstructor",
+     testContainedOwningStringFieldConstructor},
+    {"testBodyOrderedOwnedParameterConstructor",
+     testBodyOrderedOwnedParameterConstructor},
+    {"testNestedReceiverFieldProjection", testNestedReceiverFieldProjection},
+    {"testContainedAbstractBaseConstructor",
+     testContainedAbstractBaseConstructor},
+    {"testExampleCorpusEmissionReadiness", testExampleCorpusEmissionReadiness},
+    {"testGeneralTextStepMatchesProductionEmission",
+     testGeneralTextStepMatchesProductionEmission},
+    {"testCleanupFixtureFunctionBodiesAreReady",
+     testCleanupFixtureFunctionBodiesAreReady},
+    {"testOwnedLifecycleConstructionBodiesReady",
+     testOwnedLifecycleConstructionBodiesReady},
+    {"testDischargedStorageReadAnalysis", testDischargedStorageReadAnalysis},
+    {"testInlineClosureChainEmission", testInlineClosureChainEmission},
+    {"testClosureCaptureFreezeMaterializes",
+     testClosureCaptureFreezeMaterializes},
+    {"testLexicalCopyCaptureThroughCallableTemplate",
+     testLexicalCopyCaptureThroughCallableTemplate},
+    {"testDefaultConstructionPreparedParameterStaging",
+     testDefaultConstructionPreparedParameterStaging},
+    {"testGenericMemberFailureOverloadOnOrdinaryOwner",
+     testGenericMemberFailureOverloadOnOrdinaryOwner},
+    {"testCallableTemplateBodyVocabulary", testCallableTemplateBodyVocabulary},
+    {"testMovedCallableReceiverMutableFallback",
+     testMovedCallableReceiverMutableFallback},
+    {"testStoredReferenceConstructorSchedule",
+     testStoredReferenceConstructorSchedule},
+    {"testGenericOwnerConstructorSpecialization",
+     testGenericOwnerConstructorSpecialization},
+    {"testConcreteGenericConstructorAndMemberPackPublication",
+     testConcreteGenericConstructorAndMemberPackPublication},
+    {"testPassiveConstructorFailureSummary",
+     testPassiveConstructorFailureSummary},
+    {"testPassiveFixedArrayFailureClosure",
+     testPassiveFixedArrayFailureClosure},
+    {"testOwningFixedArrayAggregateAndCheckedMove",
+     testOwningFixedArrayAggregateAndCheckedMove},
+    {"testPassiveClassArrayMoveAssignmentSchedule",
+     testPassiveClassArrayMoveAssignmentSchedule},
+    {"testGeneratedSpecialMemberConstructionSchedule",
+     testGeneratedSpecialMemberConstructionSchedule},
+    {"testForwardedConcretePackLayout", testForwardedConcretePackLayout},
+    {"testConditionalClassReturnAndPreparedResultStage",
+     testConditionalClassReturnAndPreparedResultStage},
+    {"testConditionalFailureDestructorDrop",
+     testConditionalFailureDestructorDrop},
+    {"testRetainedReferenceAddressAndConcreteDefaultReturn",
+     testRetainedReferenceAddressAndConcreteDefaultReturn},
+    {"testStoredBorrowReferenceAliasAddresses",
+     testStoredBorrowReferenceAliasAddresses},
+    {"testVirtualFailureInterfaceFamily", testVirtualFailureInterfaceFamily},
+    {"testConcreteOnlyGenericVirtualContractRoots",
+     testConcreteOnlyGenericVirtualContractRoots},
+    {"testAbstractBaseFailureFamilyAndInheritedMembers",
+     testAbstractBaseFailureFamilyAndInheritedMembers},
+    {"testUniqueOwnerUpcastFailureBody", testUniqueOwnerUpcastFailureBody},
+    {"testExpectedLifetimeSlotObserverFusion",
+     testExpectedLifetimeSlotObserverFusion},
+    {"testExpectedValueOrBorrowedReceiver",
+     testExpectedValueOrBorrowedReceiver},
+    {"testDeclarationOnlyCallBoundary", testDeclarationOnlyCallBoundary},
+    {"testExpectedOwningPayloadPublicationAndForwarding",
+     testExpectedOwningPayloadPublicationAndForwarding},
+    {"testPassiveReturnSignedMinimumAndRepresentationSlot",
+     testPassiveReturnSignedMinimumAndRepresentationSlot},
+    {"testContextualSignedMinimumInFailureCaller",
+     testContextualSignedMinimumInFailureCaller},
+    {"testSingleUseClassSsaRepresentationSlot",
+     testSingleUseClassSsaRepresentationSlot},
+    {"testFailureCapableClassReturnTemporaryReceiver",
+     testFailureCapableClassReturnTemporaryReceiver},
+    {"testFailureCapableClassReturnFieldRead",
+     testFailureCapableClassReturnFieldRead},
+    {"testReferenceParameterBorrowUsesReferentCarrier",
+     testReferenceParameterBorrowUsesReferentCarrier},
+    {"testCopyParameterFieldPublicationAdmission",
+     testCopyParameterFieldPublicationAdmission},
+    {"testAdjacentClassCopyAssignmentFusion",
+     testAdjacentClassCopyAssignmentFusion},
+    {"testFailureFormSubscriptCompatibilityBoundary",
+     testFailureFormSubscriptCompatibilityBoundary},
+    {"testNativeCallbackFactoryBody", testNativeCallbackFactoryBody},
+    {"testDeducedCallableTemplateEmission",
+     testDeducedCallableTemplateEmission},
+    {"testReferenceReturnFailureAbi", testReferenceReturnFailureAbi},
+    {"testGenericOwnerReferenceReturnFailureAbi",
+     testGenericOwnerReferenceReturnFailureAbi},
+};
+
+int main(int argc, char **argv) {
+  std::size_t shard = 1;
+  std::size_t shardCount = 1;
+  for (int index = 1; index < argc; ++index) {
+    const std::string_view argument = argv[index];
+    if (argument == "--shard" && index + 1 < argc) {
+      const std::string specification = argv[++index];
+      const std::size_t separator = specification.find('/');
+      if (separator == std::string::npos) {
+        std::cerr << "--shard expects K/N\n";
+        return 2;
+      }
+      shard = std::stoul(specification.substr(0, separator));
+      shardCount = std::stoul(specification.substr(separator + 1));
+      if (shard < 1 || shardCount < 1 || shard > shardCount) {
+        std::cerr << "--shard expects 1 <= K <= N\n";
+        return 2;
+      }
+    } else {
+      std::cerr << "unknown argument: " << argument << "\n";
+      return 2;
+    }
+  }
+
+  std::size_t ran = 0;
+  for (std::size_t index = 0; index < std::size(kTests); ++index) {
+    if (index % shardCount != shard - 1) {
+      continue;
+    }
+    kTests[index].run();
+    ++ran;
+  }
+  std::cout << "cpp MIR body-emitter shard " << shard << "/" << shardCount
+            << ": ran " << ran << " of " << std::size(kTests) << " tests\n";
 
   if (failures != 0) {
     std::cerr << failures << " cpp MIR body-emitter test(s) failed\n";

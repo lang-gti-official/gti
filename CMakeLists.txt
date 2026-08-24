@@ -665,7 +665,15 @@ if(BUILD_TESTING)
                  "tests/cpp_mir_body_emitter_tests.cpp")
   target_link_libraries("gti_cpp_mir_body_emitter_tests"
                         PRIVATE gti_cpp_backend)
-  add_test(NAME cpp_mir_body_emitter COMMAND gti_cpp_mir_body_emitter_tests)
+  # Sharded: the binary runs 63 independent tests whose serial time under
+  # sanitizers (~14 minutes) was the CI wall-time long pole. Four interleaved
+  # shards keep every test running exactly once while ctest --parallel packs
+  # them onto idle cores. `gti_cpp_mir_body_emitter_tests` with no arguments
+  # still runs everything for local use.
+  foreach(shard RANGE 1 4)
+    add_test(NAME cpp_mir_body_emitter_${shard}of4
+             COMMAND gti_cpp_mir_body_emitter_tests --shard ${shard}/4)
+  endforeach()
 
   add_executable(
     "gti_cpp_mir_representation_snapshot_tests"
