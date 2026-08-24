@@ -122,6 +122,44 @@ that a backend change broke a shape nobody thought to test. `error` cells are
 kept for the same reason — #109 was found by reading one, where the rejection
 was right but its message could not name the type it rejected.
 
+## Wrong-code reproducers
+
+`wrong-code/` holds programs that compile cleanly and then compute the wrong
+answer. These are the most serious entries here and the least visible: there
+is no crash, no ICE, and no diagnostic, so `check.py` sees an ordinary
+successful compile. Build one and compare its exit status against the comment
+at the top of the file.
+
+| File | Issue | Symptom |
+| --- | --- | --- |
+| `wrong-code/issue-111-parenthesised-return.gti` | [#111](https://github.com/LukeHHA/gti/issues/111) | `return (local);` returns 0 — the parenthesised form allocates a second MIR place and reads it unwritten |
+
+## Differential-testing the optimizer
+
+`scripts/debug/optimizer_differential.py` builds each generated program at
+every optimization level and requires the exit statuses to agree with each
+other *and* with the value the model computes in Python.
+
+```sh
+python3 scripts/debug/optimizer_differential.py --count 24
+python3 scripts/debug/optimizer_differential.py --levels O0 O2
+```
+
+Two reasons it earns its place next to `local_language_audit.py`, which
+already builds at `O0` and `O3`:
+
+- `-O1` and `-O2` had no behavioural differential at all. The pipeline fuzz
+  harness exercises `O2`, but for crashes, not for answers.
+- An independent oracle beats a pairwise one. Comparing levels against each
+  other finds divergence but not a fault they all share; comparing against
+  `Program.evaluate()` — pure Python, never touching the compiler — finds
+  that too. Failures are reported as `divergent` or `wrong` accordingly, and
+  the two point at very different bugs.
+
+#111 came from the second kind, via the model's metamorphic pair: the same
+program with and without redundant parentheses must return the same value, and
+did not.
+
 ## Probing the language server
 
 `scripts/debug/lsp_probe.py` checks two properties of `gti_lsp` that an
