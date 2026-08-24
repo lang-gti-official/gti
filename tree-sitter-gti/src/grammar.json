@@ -2560,12 +2560,25 @@
           "value": ")"
         },
         {
-          "type": "FIELD",
-          "name": "body",
-          "content": {
-            "type": "SYMBOL",
-            "name": "block"
-          }
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "body",
+              "content": {
+                "type": "SYMBOL",
+                "name": "block"
+              }
+            },
+            {
+              "type": "FIELD",
+              "name": "specifier",
+              "content": {
+                "type": "SYMBOL",
+                "name": "special_member_specifier"
+              }
+            }
+          ]
         }
       ]
     },

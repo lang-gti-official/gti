@@ -300,6 +300,7 @@ struct LoweredConstructorDeclaration {
 struct LoweredDestructorDeclaration {
   ClassId owner = 0;
   AccessModifier access = AccessModifier::Public;
+  std::optional<SpecialMemberSpecifierKind> specifier;
 
   friend bool operator==(const LoweredDestructorDeclaration &,
                          const LoweredDestructorDeclaration &) = default;

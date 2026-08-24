@@ -2573,17 +2573,16 @@ complete.
 
 ### O-MIR-03: Local CFG/Value Optimization
 
-- **State/role:** first production slice complete; sparse propagation and
-  predicate/range clients remain future work.
+- **State/role:** bounded production slice complete; SCCP continuation is
+  complete in `O-MIR-05`.
 - **Implemented:** scalar non-owning block parameters and edge arguments,
   conservative acyclic scalar-place promotion, bounded literal/compute/branch
   folding, unreachable-block cleanup, and dead unused computation removal.
-  The small pass/analysis manager caches only CFG/reachability, dominance,
-  value uses, effects, and promotion inputs with revisioned conservative
-  invalidation. Current transformations are deterministic, typed,
-  independently replayed, and consumed by both current backend paths.
-- **Scope:** add sparse propagation and further CFG/value work one client at a
-  time, extending proof records and verifier coverage with each transform.
+  The pass/analysis manager revisions and conservatively invalidates all
+  current analysis families. Current transformations are deterministic, typed,
+  independently replayed, and consumed through the one lowered backend input.
+- **Scope:** this row is closed; further CFG/value work requires its own
+  numbered row, proof records, verifier coverage, and measured client.
 - **Non-goals:** inlining, devirtualization, bounds-check removal, or loop
   analysis without a concrete proof/client.
 - **Exit gate:** satisfied for the implemented local pipeline by verifier,
@@ -2594,38 +2593,134 @@ complete.
 
 Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 
-- **State/role:** blocked; performance-driven proof work whose prerequisites
-  are a checked benchmark fixture for
-  the selected family delivered through `P-MEASURE-01`, explicit checked
-  operations and failure identities from `M-FAIL-01`, `O-MIR-02`, and
-  MIR-backed emission for the selected operation family's closed call-graph
-  slice. The first family also brings only the CFG, dominance, predicate, and
-  loop facts its proof actually needs.
-- **Scope:** Measure and implement bounds, initialized-storage state, and
-  arithmetic-overflow checks as separate families. Remove one selected check
-  only with a recorded GTI-level proof and differential
-  runtime/failure-category tests. CFG simplification and predicate propagation
-  may precede a range proof when they establish its inputs; do not mechanically
-  move range elimination ahead of those dependencies. A backend assumption is
-  valid only when derived from a verified MIR fact.
+- **State/role:** first production slice complete. O2/O3 run separate bounds,
+  initialized-storage-state, and arithmetic-overflow discharge passes over one
+  canonical body-local safety analysis; O0/O1 remain unchanged.
+- **Implemented scope:** interval and branch-predicate proofs discharge
+  in-range fixed-array scalar reads and non-overflowing checked integer
+  add/subtract/multiply/negate. Exact sparse-storage state discharges read and
+  mutable-read bounds plus initialized-slot outcomes only after a successful
+  exact-slot construct not invalidated by destroy or an opaque mutation.
+  Discharges retain the checked MIR instruction and failure CFG, name the exact
+  local outcome, and carry stable related block/instruction/value/place
+  identities. Controlled editing reruns the canonical analysis, coherence
+  independently replays every proof from source MIR, and all backends consume
+  only the sealed optimized instruction metadata.
+- **Remaining scope:** widen one measured operation family at a time. Array
+  writes/borrows, prefix storage, division/remainder/shifts/conversions,
+  interprocedural range facts, and loop-derived safety proofs remain checked
+  and must bring their own exact proof and evidence. Place-alias facts already
+  refine mutation invalidation but never discharge a check by themselves.
 - **Non-goals:** deleting checks by optimization level, recognizing public
   wrapper names, treating emitted C++ shape as proof, or replacing GTI's
   left-to-right intermediate overflow behavior with a widened final check.
-- **Exit gate:** the first removed check carries a reproducible proof tied to
-  GTI places/ranges/effects and emits a deterministic applied optimization
-  remark identifying the operation family, body, source site, and proof.
-  Forged or stale proofs fail verification, and near-miss cases retain the
-  check. O0/O2/O3 tests preserve successful results, failure category and
-  origin, cleanup, alias/mutation barriers, and boundary values. Native
+- **Exit gate:** satisfied for the implemented families. Every removed check
+  carries a reproducible proof tied to GTI places/ranges/effects and emits a
+  deterministic applied optimization remark identifying the operation family,
+  body, source site, and proof. Forged or stale proofs fail verification, and
+  near-miss cases retain the check. O0/O2/O3 native-`-O0` differential tests
+  preserve successful results, failure category and origin, cleanup,
+  alias/mutation barriers, and boundary values. Native
   vectorization remarks and assembly may support a performance conclusion but
   never establish semantic validity. A loop-versioned fast path is permitted
   only when its side-effect-free preflight and checked scalar fallback preserve
   failure order, cleanup, and partial effects exactly.
 
-`LoopInfo`, incremental dominance, LLVM bit vectors, and interprocedural
-optimization remain measured/client-gated. A future LLVM backend remains
-blocked on complete MIR layout, ABI, temporary, drop, and executable authority;
-it is not implied by support-library adoption.
+### O-MIR-05: Deterministic Local Dataflow And SCCP
+
+- **State/role:** complete bounded production slice. O2/O3 run SCCP; the
+  existing safety analysis uses the shared solver at every optimization level
+  where safety facts are requested.
+- **Implemented:** one typed monotone forward solver owns deterministic FIFO
+  scheduling, stable executable-edge identity, update counts, bounded widening,
+  malformed-CFG rejection, and a hard convergence limit. Safety retains its
+  prior interval/storage lattice and exact proof results; an independent FIFO
+  oracle and the full safety suite cover migration equivalence. SCCP is the
+  first new client and uses `unknown -> exact typed constant -> overdefined`
+  facts over scalar non-owning SSA. Exact literal/branch edits carry stable
+  evidence and independent source-MIR replay.
+- **Non-goals:** place or memory propagation, ownership/loan facts, speculative
+  trapping operations, unbounded fixpoint iteration, or using native optimizer
+  results as evidence. Switch and invoke edge selection remain conservative.
+- **Exit gate:** deterministic repeated results, safety-equivalent proofs,
+  positive branch-merge propagation, conservative unknown/effect near misses,
+  malformed-proof rejection, report schema/provenance coverage, and O0/O1
+  identity all pass.
+
+### O-MIR-06: Natural Loops And Bounded Relational Ranges
+
+- **State/role:** complete analysis foundation; no loop transformation is
+  enabled by this row.
+- **Implemented:** dominance backedges derive natural loops; same-header
+  latches merge; strict containment produces a deterministic loop forest; and
+  multi-entry SCCs are marked irreducible. Reducible loops record
+  side-effect-free scalar invariants and a bounded single-latch affine
+  induction through MIR block parameters with one literal initial value, one
+  positive literal add/subtract step, and an optional invariant relational
+  continuation bound.
+- **Non-goals:** polyhedral models, unrestricted symbolic algebra, recurrence
+  solving across calls or memory, irreducible-loop transforms, LICM,
+  vectorization, loop versioning, or mutation of MIR.
+- **Exit gate:** nested/merged-loop identity is deterministic; malformed or
+  unsupported recurrences produce no fact; irreducible CFGs are marked; and a
+  hand-built block-parameter loop proves the exact induction/range record.
+
+### O-MIR-07: Place Alias And Escape Facts
+
+- **State/role:** complete body-local analysis foundation with alias-aware
+  safety-state invalidation as its first client.
+- **Implemented:** stable MIR places derive `must-alias`, `no-alias`, and
+  `may-alias` for precise roots, fields, and constant projections. Address
+  taking, returns, retained borrows, non-local stores, raw memory, and calls
+  produce explicit escape reasons. Closed exact static summaries project
+  receiver/argument escape; native, virtual, recursive, and unresolved calls
+  remain conservative. Loan, value-rooted, dynamic, and raw relationships do
+  not become `no-alias` without a stronger MIR identity. Duplicate
+  `must-alias` IDs share one safety fact key; writes preserve safety facts only
+  for proved `no-alias` places.
+- **Non-goals:** interprocedural pointer identity, optimistic raw-pointer
+  provenance, public-library-name recognition, MemorySSA, load commoning, or
+  store elimination.
+- **Exit gate:** relation symmetry and projection cases, raw/dynamic
+  conservatism, exact-call escape, unknown-call escape, cache invalidation, and
+  disjoint-place safety preservation have focused evidence.
+
+### O-MIR-08: Loop-Derived Safety Proof Client
+
+- **State/role:** client-gated next optimization; not implemented.
+- **Bounded scope:** consume only `O-MIR-06` single-latch affine facts to prove
+  one existing fixed-array bounds family over a reducible loop. Reuse the
+  existing safety-discharge transform and replay path; add no loop rewrite.
+- **Entry/exit gate:** a representative checked loop shows removed operations;
+  every induction, bound, overflow, early-exit, mutation, and irreducible
+  near-miss retains checks; O0/O2/O3 runtime and failure-origin parity passes.
+
+### O-MIR-09: Alias-Safe Local Memory Client
+
+- **State/role:** measured defer; not implemented.
+- **Bounded scope:** choose exactly one redundant-load or store-to-load family
+  only after a benchmark demonstrates value. Add the smallest explicit local
+  memory-version fact needed to prove no intervening write using `O-MIR-07`
+  and exact call effects.
+- **Entry/exit gate:** projected aliases, calls, raw memory, borrows, moves,
+  drops, synchronization, and lifetime boundaries retain the operation unless
+  proved safe. Introduce MemorySSA only if this measured family cannot remain
+  sound and maintainable with bounded local versions.
+
+### O-MIR-10: First Interprocedural Transform
+
+- **State/role:** blocked; not implemented.
+- **Bounded scope:** select either one closed exact devirtualization family or
+  one bounded inlining family, not both, after closed-world identity, cleanup,
+  provenance, layout, recursion, and cost policy are explicit.
+- **Entry/exit gate:** measured workload value, deterministic budget, exact
+  source-MIR replay, no open/native/recursive target admission, and identical
+  behavior through every backend.
+
+Incremental dominance and LLVM bit-vector adoption remain measured/client-
+gated. A future LLVM backend remains blocked on complete MIR layout, ABI,
+temporary, drop, and executable authority; support-library adoption does not
+imply it.
 
 ## Parallel Engineering Tracks
 
@@ -2724,7 +2819,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | `Q-DIAG-01` | ready | Add one generated diagnostic table with enum identity, default severity, group, and format contract; migrate one subsystem per bounded sub-slice while preserving current spans/messages unless intentionally changed. |
 | `Q-FAIL-01` | bounded hosted consumer and same-thread native-callback firewall complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, and callback termination adapter are implemented and focused tests pass. `scalar-failure-callgraph-v1` is the first generated hosted M-BACK-02 consumer. Double-failure cleanup, general initialization, embedding/task/foreign-thread-callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
 | `Q-DEPRECATION-01` | blocked | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
-| `Q-FUZZ-01` | in progress — `Q-FUZZ-01A` capture/replay, `Q-FUZZ-01B` opt-in libFuzzer harnesses, and `Q-FUZZ-01C` resumable bundle reduction landed (`scripts/debug/`, `fuzz/`, `compiler_debug_tooling`, `compiler_failure_reducer`, and `fuzzer_smoke`), plus local-audit failure retention and the initial `Q-FUZZ-01D` typed model; prerequisite `C-MIG-02` is done | Real-compiler validation of typed differential generation and later source-loader/protocol fuzzing remain scoped by [the tooling plan](compiler-bug-finding-and-triage.md). |
+| `Q-FUZZ-01` | bounded compiler campaign complete — `Q-FUZZ-01A` capture/replay, `Q-FUZZ-01B` parser/formatter/pipeline/source-loader libFuzzer harnesses, `Q-FUZZ-01C` resumable bundle reduction, and `Q-FUZZ-01D` real-compiler typed differential/composition validation are implemented; prerequisite `C-MIG-02` is done | Wider seeded exploration remains opt-in. Arbitrary JSON-RPC/LSP fuzzing, a complete generator, and a semantics-aware reducer are explicitly deferred by [the tooling plan](compiler-bug-finding-and-triage.md). |
 
 Examples, sanitizers, installed-library consumers, release packaging,
 deterministic output, and the local language audit are standing release
@@ -2766,10 +2861,11 @@ owned by the rows and domain plans above.
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
 | Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
-| MIR transformations | first client required | bounded editor in `O-MIR-01`, not framework-first |
+| MIR transformations | **bounded local production pipeline** | `O-MIR-01` through `O-MIR-05`; later families require numbered measured clients |
 | MIR-backed C++ emission | **ADR 016 complete** | 2,962/2,962 reviewed corpus bodies use the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
-| `LoopInfo`/incremental dominance | **measured defer** | stable editor, invalidation, concrete loop client |
+| Natural-loop/range facts | **complete bounded analysis** | `O-MIR-06`; first transform client is gated by `O-MIR-08` |
+| Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |
 | Deterministic names/concrete instance emission | backend/package preparation | MIR body authority and stable GTI-owned identity |
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |

@@ -368,7 +368,8 @@ private:
     const std::optional<HirClassInstanceId> owner =
         enqueueClass(construction.constructedType, site);
     if (!owner || construction.kind != ConstructorKind::Ordinary ||
-        construction.declaration == nullptr || construction.constructor == 0) {
+        construction.generatedDefault || construction.declaration == nullptr ||
+        construction.constructor == 0) {
       return 0;
     }
     if (const std::optional<std::size_t> existing =
@@ -417,7 +418,9 @@ private:
             ? nullptr
             : baseModel->findClassLifecycle(*classType->declaration);
     if (lifecycle == nullptr || !lifecycle->declaredDestructor ||
-        lifecycle->declaredDestructor->declaration == nullptr) {
+        lifecycle->declaredDestructor->declaration == nullptr ||
+        lifecycle->destructor != SpecialMemberStatus::Declared ||
+        lifecycle->declaredDestructor->declaration->body() == nullptr) {
       return std::nullopt;
     }
     if (const std::optional<std::size_t> existing =
@@ -595,13 +598,18 @@ private:
     if (constructor == nullptr) {
       return 0;
     }
-    return enqueueConstructor({.constructor = constructor->id,
-                               .declaration = constructor->declaration,
-                               .constructedType = type,
-                               .typeArguments = type.arguments,
-                               .valueArguments = type.valueArguments,
-                               .parameterTypes = constructor->parameterTypes},
-                              site);
+    return enqueueConstructor(
+        {.constructor = constructor->id,
+         .declaration = constructor->declaration,
+         .constructedType = type,
+         .typeArguments = type.arguments,
+         .valueArguments = type.valueArguments,
+         .parameterTypes = constructor->parameterTypes,
+         .generatedDefault = constructor->declaration->specifier() &&
+                             constructor->declaration->specifier()->kind ==
+                                 SpecialMemberSpecifierKind::Defaulted &&
+                             constructor->parameterTypes.empty()},
+        site);
   }
 
   void lowerHostedProgramEntryPlan() {
@@ -1329,7 +1337,8 @@ private:
               [](const ConstructorInfo &candidate) {
                 return candidate.requiredParameterCount == 0;
               });
-          const bool generated = declared == lifecycle->constructors.end();
+          const bool generated =
+              lifecycle->defaultConstructor == SpecialMemberStatus::Generated;
           lowered.generatedDefault = generated;
           std::vector<SemanticType> parameterTypes;
           std::vector<const Expr *> defaultArguments;

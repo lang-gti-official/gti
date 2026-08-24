@@ -461,7 +461,9 @@ semantic inputs or cache identities.
 and actionable missed remarks, analysis invalidation, stable MIR/HIR
 identities, proof kinds, typed transformation records, and input/output
 verification. `optimizationReportSchemaVersion` is independent from MIR
-serialization and currently version 1.
+serialization and currently version 3. Version 3 adds the
+`sparse-constant` proof and literal-provenance vocabulary; transient SCCP,
+loop, and alias snapshots are not serialized.
 
 The implementation retains these rules:
 
@@ -489,9 +491,11 @@ reports; timing is deliberately absent.
 
 ### Safety-operation reporting
 
-The current report counts exact MIR safety operations before optimization,
+The current report counts exact MIR local failure outcomes before optimization,
 after optimization, and statically discharged by the verified GTI transform.
-More specific future categories include:
+Schema version 3 retains the version-2 reconciliation of exact bounds,
+storage-state, and arithmetic-overflow families independently and adds sparse
+constant proof records. More specific future categories include:
 
 ```text
 fixed-array bounds checks emitted
@@ -506,9 +510,9 @@ checks statically discharged by GTI
 
 These are static IR/emission counts, not runtime execution counts and not proof
 of final machine-code cost. The native compiler may inline or eliminate them
-later. The current generic source/emitted/discharged counts are labelled
-accordingly and are extended into named families only when MIR identities make
-that count exact.
+later. The aggregate and current per-family source/emitted/discharged counts
+are labelled accordingly. Further named families are added only when MIR
+identities make that count exact.
 
 Range analysis should report a discharged check only when GTI proves the
 required predicate at the language level. Do not remove checks merely because
@@ -749,8 +753,17 @@ Acceptance criteria:
 
 ### Milestone 5: measurement-driven optimization
 
-- Use benchmark and report evidence to prioritize MIR propagation,
-  reachability, dead-value elimination, and range analysis.
+The local production slice includes proof-carrying scalar SCCP, exact
+fixed-array reads, exact-slot sparse-storage reads, and proved non-overflowing
+checked add/subtract/multiply/negate. Natural-loop/range and place
+alias/escape facts are implemented analysis prerequisites but do not yet claim
+a runtime improvement. Structural reports and O0/O2/O3 native-`-O0`
+differential tests establish semantic preservation; representative benchmark
+remeasurement remains required before making performance claims or widening a
+family.
+
+- Use benchmark and report evidence to prioritize the bounded `O-MIR-08`
+  loop-range client and `O-MIR-09` local-memory client.
 - Add benchmark coverage for each optimization before implementing it.
 - Report when a check is discharged and the proof that allowed it.
 - Compare GTI against semantic C++ before and after each pass.

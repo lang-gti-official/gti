@@ -23,6 +23,7 @@ struct MirAnalysisInvalidation {
   bool controlFlow = false;
   bool reachability = false;
   bool dominance = false;
+  bool safetyChecks = false;
 };
 
 struct MirEditResult {
@@ -65,6 +66,15 @@ public:
                                    MirOperation expectedOperation,
                                    Literal literal);
 
+  // Queues an SCCP-proven literal. Unlike a local compute fold, operands need
+  // not be literal definitions in the same block; apply() reruns canonical
+  // SCCP and requires exact evidence before mutating MIR.
+  void queueSparseConstantReplacement(
+      MirInstructionKey target, MirOperation expectedOperation, Literal literal,
+      std::vector<MirBlockId> relatedBlocks,
+      std::vector<MirInstructionId> relatedInstructions,
+      std::vector<MirValueId> relatedValues);
+
   // Queues the rewrite of one Branch terminator whose condition value's
   // definition is a dominating literal bool into a Goto to the taken
   // target, retaining the condition as BranchFold provenance. Block
@@ -83,6 +93,12 @@ public:
   void queueDeadInstructionRemoval(MirInstructionKey target);
   void queueUnreachableBlockRemoval(MirBodyAddress body, MirBlockId block);
 
+  // Queues an exact local failure outcome for discharge. The supplied proof
+  // is an untrusted claim: apply() reruns the canonical safety analysis before
+  // attaching metadata to candidate MIR.
+  void queueSafetyDischarge(MirInstructionKey target,
+                            MirSafetyDischarge discharge);
+
   [[nodiscard]] std::size_t pendingPatchCount() const { return patches.size(); }
   [[nodiscard]] std::size_t pendingBranchFoldCount() const {
     return branchFolds.size();
@@ -96,6 +112,9 @@ public:
   [[nodiscard]] std::size_t pendingUnreachableBlockCount() const {
     return unreachableBlocks.size();
   }
+  [[nodiscard]] std::size_t pendingSafetyDischargeCount() const {
+    return safetyDischarges.size();
+  }
 
   [[nodiscard]] MirEditResult apply();
 
@@ -105,6 +124,10 @@ private:
     MirOperation expectedOperation = MirOperation::None;
     Literal literal;
     bool computeFold = false;
+    bool sparseConstant = false;
+    std::vector<MirBlockId> relatedBlocks;
+    std::vector<MirInstructionId> relatedInstructions;
+    std::vector<MirValueId> relatedValues;
   };
 
   struct BranchFold {
@@ -124,6 +147,11 @@ private:
     MirBlockId block = 0;
   };
 
+  struct SafetyDischarge {
+    MirInstructionKey target;
+    MirSafetyDischarge discharge;
+  };
+
   MirProgram &program;
   std::string pass;
   std::vector<LiteralReplacement> patches;
@@ -131,6 +159,7 @@ private:
   std::vector<ScalarPromotion> scalarPromotions;
   std::vector<MirInstructionKey> deadInstructions;
   std::vector<UnreachableBlock> unreachableBlocks;
+  std::vector<SafetyDischarge> safetyDischarges;
 };
 
 } // namespace lang

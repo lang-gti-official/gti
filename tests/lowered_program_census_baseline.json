@@ -351,8 +351,8 @@
       }
     },
     "27-copy-move-policies.gti": {
-      "declarations": 137,
-      "bodies": 38,
+      "declarations": 143,
+      "bodies": 41,
       "generated_items": 2,
       "generated_kinds": {
         "program_initialization": 0,
@@ -898,8 +898,8 @@
     }
   },
   "totals": {
-    "declarations": 10165,
-    "bodies": 3430,
+    "declarations": 10171,
+    "bodies": 3433,
     "generated_items": 468
   }
 }

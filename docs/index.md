@@ -17,7 +17,8 @@ for the current implementation when a document is stale or ambiguous.
 - [MIR](architecture/mir.md) — control-flow graphs, values, places, ownership
   effects, cleanup, and verification.
 - [Optimization](architecture/optimization.md) — verified local MIR passes,
-  stable proof replay, per-instance effects, and optimizer observability.
+  reusable dataflow/SCCP, bounded loop and alias facts, stable proof replay,
+  per-instance effects, and optimizer observability.
 - [Backend](architecture/backend.md) — the verified-MIR body contract, sealed
   C++ representation planning, and native compilation handoff.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
@@ -139,7 +140,9 @@ description of the implementation.
 - [Compiler bug-finding and triage tooling](plans/compiler-bug-finding-and-triage.md)
   — failure bundles/replay and opt-in compiler fuzzers are implemented as
   `Q-FUZZ-01A/B`, resumable bundle reduction is implemented as
-  `Q-FUZZ-01C`, and typed differential validation remains in progress
+  `Q-FUZZ-01C`, and the bounded real-compiler typed differential gate,
+  strengthened invariants, and source-loader harness implement
+  `Q-FUZZ-01D` plus the scoped `Q-FUZZ-01B` follow-up
 - [Conditional compilation and configuration flags](plans/conditional-compilation.md)
   — implemented `#define`/`#ifdef` flag axis over target conditionals, its
   design rationale, and LSP inactive-region rendering

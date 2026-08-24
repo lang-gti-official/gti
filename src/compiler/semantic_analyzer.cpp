@@ -1212,6 +1212,13 @@ public:
          .type = SemanticType::classType(*currentClass),
          .destructor = &stmt});
 
+    // A defaulted destructor selects the compiler-generated structural
+    // operation. It has no source body, cleanup effect owner, or active-drop
+    // state of its own.
+    if (stmt.specifier() || !stmt.body()) {
+      return;
+    }
+
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
@@ -8865,7 +8872,7 @@ private:
     }
     case SemanticType::Class: {
       const ClassInfo &owner = classInfo(type.classId);
-      result = owner.destructor.has_value();
+      result = hasSourceDestructorBody(owner);
       const GenericSubstitution substitution = classSubstitution(type);
       if (!result) {
         if (const ClassBaseTypeInfo *base = concreteBase(owner);
@@ -8905,7 +8912,7 @@ private:
       return std::nullopt;
     }
     const ClassInfo &owner = classInfo(type.classId);
-    if (owner.destructor && owner.destructor->declaration != nullptr) {
+    if (hasSourceDestructorBody(owner)) {
       return ActiveCleanupCause{
           .source = &owner.destructor->declaration->tilde(),
           .message = "Declared cleanup makes this type require active "
@@ -9097,7 +9104,7 @@ private:
         merge(substituteType(member->second.symbol.type, substitution));
       }
     }
-    if (owner.destructor || owner.storedReference) {
+    if (hasSourceDestructorBody(owner) || owner.storedReference) {
       result = {};
     }
     if (owner.transferPolicy == ConcurrencyCapabilityPolicy::Denied) {
@@ -9248,7 +9255,7 @@ private:
           substituteType(member->second.symbol.type, substitution);
       mergeTraits(typeTraits(fieldType, visiting));
     }
-    if (owner.destructor) {
+    if (hasSourceDestructorBody(owner)) {
       traits.copyable = false;
       traits.copyAssignable = false;
     }
@@ -9293,7 +9300,7 @@ private:
           .source = &*owner.sharePolicySource,
           .message = "This type explicitly opts out of sharing here."};
     }
-    if (owner.destructor && owner.destructor->declaration != nullptr) {
+    if (hasSourceDestructorBody(owner)) {
       return ShareCapabilityDenial{
           .source = &owner.destructor->declaration->tilde(),
           .message = "Declared cleanup prevents automatic sharing here."};
@@ -17516,7 +17523,8 @@ private:
         }
         viable.push_back({&constructor, std::move(parameterTypes),
                           std::move(constructorTypeArguments),
-                          std::move(constructorValueArguments), false,
+                          std::move(constructorValueArguments),
+                          requestsStructuralDefaultConstruction(constructor),
                           ConstructorKind::Ordinary, std::move(requirements)});
       } else if (rejectedArgument &&
                  (isCompilerTrustedRequester(paren) ||
@@ -18139,8 +18147,11 @@ private:
         return false;
       }
       if (const ConstructorInfo *constructor = defaultConstructor(*owner)) {
-        return constructor->access == AccessModifier::Public ||
-               (!requirePublic && currentClass == owner->id);
+        const bool accessible = constructor->access == AccessModifier::Public ||
+                                (!requirePublic && currentClass == owner->id);
+        return accessible &&
+               (!requestsStructuralDefaultConstruction(*constructor) ||
+                classCanUseStructuralDefaultConstruction(*owner));
       }
       return classCanGenerateDefaultConstructor(*owner);
     }
@@ -23535,13 +23546,30 @@ private:
                       }));
   }
 
-  [[nodiscard]] bool classCanGenerateDefaultConstructor(
+  [[nodiscard]] static bool
+  requestsStructuralDefaultConstruction(const ConstructorInfo &constructor) {
+    if (constructor.kind != ConstructorKind::Ordinary ||
+        constructor.declaration == nullptr ||
+        !constructor.declaration->specifier() ||
+        constructor.declaration->specifier()->kind !=
+            SpecialMemberSpecifierKind::Defaulted) {
+      return false;
+    }
+    const ConstructorDecl &declaration = *constructor.declaration;
+    return declaration.genericParameters().empty() &&
+           declaration.parameters().empty() && !declaration.requiresClause() &&
+           declaration.initializers().empty();
+  }
+
+  [[nodiscard]] static bool hasSourceDestructorBody(const ClassInfo &owner) {
+    return owner.destructor && owner.destructor->declaration != nullptr &&
+           owner.destructor->declaration->body() != nullptr;
+  }
+
+  [[nodiscard]] bool classCanUseStructuralDefaultConstruction(
       const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const {
     if (owner.kind == ClassKind::Union) {
       return owner.unionLayout.has_value();
-    }
-    if (defaultConstructorCandidateCount(owner) != 0) {
-      return false;
     }
     if (!fieldsHaveDeclarationInitializers(owner)) {
       return false;
@@ -23559,10 +23587,27 @@ private:
     const ConstructorInfo *declared = defaultConstructor(baseOwner);
     const bool available =
         declared != nullptr
-            ? declared->access == AccessModifier::Public
+            ? declared->access == AccessModifier::Public &&
+                  (!requestsStructuralDefaultConstruction(*declared) ||
+                   classCanUseStructuralDefaultConstruction(baseOwner,
+                                                            visiting))
             : classCanGenerateDefaultConstructor(baseOwner, visiting);
     visiting.erase(owner.id);
     return available;
+  }
+
+  [[nodiscard]] bool
+  classCanUseStructuralDefaultConstruction(const ClassInfo &owner) const {
+    std::unordered_set<ClassId> visiting;
+    return classCanUseStructuralDefaultConstruction(owner, visiting);
+  }
+
+  [[nodiscard]] bool classCanGenerateDefaultConstructor(
+      const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const {
+    if (defaultConstructorCandidateCount(owner) != 0) {
+      return false;
+    }
+    return classCanUseStructuralDefaultConstruction(owner, visiting);
   }
 
   [[nodiscard]] bool
@@ -23579,7 +23624,11 @@ private:
     }
     const ClassInfo &owner = classInfo(base.type.classId);
     if (const ConstructorInfo *declared = defaultConstructor(owner)) {
-      return declared->access == AccessModifier::Public || owner.id == derived;
+      if (declared->access != AccessModifier::Public && owner.id != derived) {
+        return false;
+      }
+      return !requestsStructuralDefaultConstruction(*declared) ||
+             classCanUseStructuralDefaultConstruction(owner);
     }
     return classCanGenerateDefaultConstructor(owner);
   }
@@ -23637,7 +23686,8 @@ private:
         }
       }
       if (exact) {
-        viable.push_back({&constructor, std::move(parameterTypes), false});
+        viable.push_back({&constructor, std::move(parameterTypes),
+                          requestsStructuralDefaultConstruction(constructor)});
       }
     }
     if (initializer.arguments.empty() &&
@@ -24712,7 +24762,7 @@ private:
         continue;
       }
       const StoredReferenceInfo &stored = *owner.storedReference;
-      if (owner.destructor) {
+      if (hasSourceDestructorBody(owner)) {
         report(owner.destructor->declaration->tilde(),
                "A class carrying a stored reference cannot declare a "
                "destructor in the current lifetime model.",
@@ -25001,12 +25051,42 @@ private:
         continue;
       }
       const SemanticTypeTraits traits = typeTraits(openClassType(owner.id));
-      const SpecialMemberStatus defaultStatus =
-          defaultConstructor(owner) != nullptr
-              ? SpecialMemberStatus::Declared
-              : (classCanGenerateDefaultConstructor(owner)
-                     ? SpecialMemberStatus::Generated
-                     : SpecialMemberStatus::Deleted);
+      const ConstructorInfo *declaredDefault = defaultConstructor(owner);
+      SpecialMemberStatus defaultStatus = SpecialMemberStatus::Deleted;
+      if (declaredDefault != nullptr &&
+          requestsStructuralDefaultConstruction(*declaredDefault)) {
+        if (classCanUseStructuralDefaultConstruction(owner)) {
+          defaultStatus = SpecialMemberStatus::Generated;
+        } else {
+          const SpecialMemberSpecifier &specifier =
+              *declaredDefault->declaration->specifier();
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2020", DiagnosticPhase::Semantics, specifier.keyword,
+              "The defaulted default constructor of '" + owner.name.lexeme +
+                  "' is unavailable because its fields or state-bearing base "
+                  "cannot be structurally default-constructed.");
+          const auto missing =
+              std::find_if(owner.fields.begin(), owner.fields.end(),
+                           [](const FieldInfo &field) {
+                             return field.declaration != nullptr &&
+                                    field.declaration->initializer() == nullptr;
+                           });
+          if (missing != owner.fields.end()) {
+            diagnostic.related.push_back(
+                {tokenSpan(missing->declaration->name()),
+                 "This field has no declaration initializer."});
+          }
+          diagnostic.hints.emplace_back(
+              "Give every field a declaration initializer and ensure the "
+              "state-bearing base has an accessible zero-argument "
+              "constructor, or write an ordinary constructor body.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+      } else if (declaredDefault != nullptr) {
+        defaultStatus = SpecialMemberStatus::Declared;
+      } else if (classCanGenerateDefaultConstructor(owner)) {
+        defaultStatus = SpecialMemberStatus::Generated;
+      }
       const auto specialStatus =
           [&](const std::optional<ConstructorInfo> &constructor, bool available,
               std::string_view operation) {
@@ -25042,6 +25122,12 @@ private:
           owner.copyConstructor, traits.copyable, "copy constructor");
       const SpecialMemberStatus moveStatus = specialStatus(
           owner.moveConstructor, traits.movable, "move constructor");
+      const bool sourceDestructor = hasSourceDestructorBody(owner);
+      const bool deletedDestructor =
+          owner.destructor && owner.destructor->declaration != nullptr &&
+          owner.destructor->declaration->specifier() &&
+          owner.destructor->declaration->specifier()->kind ==
+              SpecialMemberSpecifierKind::Deleted;
       semanticModel.record(
           *owner.declaration,
           ClassLifecycleInfo{
@@ -25060,9 +25146,12 @@ private:
               .moveAssignment = traits.moveAssignable
                                     ? SpecialMemberStatus::Generated
                                     : SpecialMemberStatus::Deleted,
-              .destructor = owner.destructor ? SpecialMemberStatus::Declared
-                                             : SpecialMemberStatus::Generated,
-              .requiresActiveDropState = owner.destructor.has_value(),
+              .destructor =
+                  deletedDestructor
+                      ? SpecialMemberStatus::Deleted
+                      : (sourceDestructor ? SpecialMemberStatus::Declared
+                                          : SpecialMemberStatus::Generated),
+              .requiresActiveDropState = sourceDestructor,
               .traits = traits,
               .polymorphic = owner.polymorphic});
     }
@@ -25269,10 +25358,34 @@ private:
         }
 
         if (constructor->specifier()) {
-          report(constructor->specifier()->equal,
-                 "'= default' and '= delete' are currently available only "
-                 "for exact copy and move constructor policies.",
-                 "GTI-S2020");
+          const SpecialMemberSpecifier &specifier = *constructor->specifier();
+          if (specifier.kind == SpecialMemberSpecifierKind::Deleted) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2020", DiagnosticPhase::Semantics, specifier.keyword,
+                "'= delete' is not supported for ordinary constructors; "
+                "only the exact default-constructor form '" +
+                    owner.name.lexeme + "() = default;' is available.");
+            diagnostic.hints.emplace_back(
+                "Use constructor access and explicit overloads to control "
+                "ordinary construction.");
+            diagnostics.emplace_back(std::move(diagnostic));
+          } else if (!constructor->genericParameters().empty() ||
+                     !constructor->parameters().empty() ||
+                     constructor->requiresClause() ||
+                     !constructor->initializers().empty()) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2020", DiagnosticPhase::Semantics, specifier.keyword,
+                "A defaulted ordinary constructor must use the exact form '" +
+                    owner.name.lexeme + "() = default;'.");
+            diagnostic.related.push_back(
+                {tokenSpan(constructor->name()),
+                 "This constructor has generic parameters, parameters, "
+                 "requirements, or an initializer list."});
+            diagnostic.hints.emplace_back(
+                "Remove the extra constructor surface or write an ordinary "
+                "constructor body.");
+            diagnostics.emplace_back(std::move(diagnostic));
+          }
         }
 
         const auto duplicate =
@@ -25330,6 +25443,20 @@ private:
           report(destructor->tilde(),
                  "Destructors must be public in the current ownership layer.",
                  "GTI-S2021");
+        }
+        if (destructor->specifier() &&
+            destructor->specifier()->kind ==
+                SpecialMemberSpecifierKind::Deleted) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2021", DiagnosticPhase::Semantics,
+              destructor->specifier()->keyword,
+              "'= delete' is not supported for destructors; use '~" +
+                  owner.name.lexeme +
+                  "() = default;' to select structural destruction.");
+          diagnostic.hints.emplace_back(
+              "GTI values must remain destructible in the current ownership "
+              "model.");
+          diagnostics.emplace_back(std::move(diagnostic));
         }
         owner.destructor = DestructorInfo{
             .owner = owner.id, .declaration = destructor, .access = access};
@@ -26051,8 +26178,7 @@ private:
       return;
     }
     const ClassInfo &owner = classInfo(type.classId);
-    if (includeDirectDestructor && owner.destructor &&
-        owner.destructor->declaration != nullptr) {
+    if (includeDirectDestructor && hasSourceDestructorBody(owner)) {
       addProgramEffectEdge(
           {.kind = ProgramEffectOwnerKind::Destructor, .id = owner.id}, span);
     }
@@ -27264,7 +27390,7 @@ private:
         construction != nullptr &&
         construction->kind == ConstructorKind::Ordinary &&
         construction->constructedType.kind == SemanticType::Class &&
-        construction->constructor != 0 &&
+        construction->constructor != 0 && !construction->generatedDefault &&
         (callResolution == nullptr ||
          callResolution->intrinsic == IntrinsicKind::None)) {
       operation.propagation = FailurePropagationKind::Constructor;

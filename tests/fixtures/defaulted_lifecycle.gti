@@ -1,0 +1,46 @@
+class StructuralValue {
+public:
+  uint32_t value = 7;
+  StructuralValue() = default;
+  ~StructuralValue() = default;
+};
+
+class StructuralPair {
+public:
+  StructuralValue first = StructuralValue();
+  StructuralValue second = StructuralValue();
+  StructuralPair() = default;
+  ~StructuralPair() = default;
+};
+
+class StructuralBase {
+public:
+  uint32_t base_value = 3;
+  StructuralBase() = default;
+  ~StructuralBase() = default;
+};
+
+class StructuralDerived : public StructuralBase {
+public:
+  uint32_t derived_value = 4;
+  StructuralDerived() = default;
+  ~StructuralDerived() = default;
+};
+
+int main() {
+  StructuralValue value{};
+  if (value.value != 7) {
+    return 1;
+  }
+
+  StructuralPair pair{};
+  if (pair.first.value != 7 or pair.second.value != 7) {
+    return 2;
+  }
+
+  StructuralDerived derived{};
+  if (derived.base_value != 3 or derived.derived_value != 4) {
+    return 3;
+  }
+  return 0;
+}

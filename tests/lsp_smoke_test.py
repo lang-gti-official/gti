@@ -367,6 +367,25 @@ def test_parser_depth_and_formatter_token_boundaries(executable, root):
         }, diagnostic
         assert "fixes" not in diagnostic["data"], diagnostic
 
+        # Completion performs its own frontend analysis on a separate worker.
+        # It must receive the same bounded source without exhausting the
+        # platform's secondary-thread stack or terminating the server.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 20,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(deep_source, deep_source.index("0")),
+                },
+            }
+        )
+        deep_completion = session.receive_until(
+            lambda message: message.get("id") == 20
+        )["result"]
+        assert isinstance(deep_completion["items"], list), deep_completion
+
         boundary_source = "& &m"
         session.send(
             {
@@ -1842,6 +1861,169 @@ def test_constructor_local_generic_tooling(executable, root):
         )
         recovered_hover = request(10, "textDocument/hover", construction + 1)
         assert selected_signature in recovered_hover["contents"]["value"]
+    finally:
+        session.close()
+
+
+def test_defaulted_lifecycle_tooling(executable, root):
+    source = (
+        "class Defaulted {\n"
+        "  int value = 7;\n"
+        "public:\n"
+        "  Defaulted() = default;\n"
+        "  ~Defaulted() = default;\n"
+        "  int read() { return this.value; }\n"
+        "};\n"
+        "int main() {\n"
+        "  Defaulted value = Defaulted();\n"
+        "  return value.read() - 7;\n"
+        "}\n"
+    )
+    path = root / "defaulted-lifecycle-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "documentSymbol": {
+                                "hierarchicalDocumentSymbolSupport": True
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"][
+            "semanticTokensProvider"
+        ]["legend"]["tokenTypes"]
+        method_token = token_types.index("method")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+
+        constructor = source.index("Defaulted() = default")
+        destructor = source.index("Defaulted", source.index("~Defaulted"))
+        construction = source.rindex("Defaulted()")
+
+        def request(request_id, method, offset=None):
+            params = {"textDocument": {"uri": uri}}
+            if offset is not None:
+                params["position"] = lsp_position(source, offset)
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        constructor_hover = request(2, "textDocument/hover", constructor + 1)
+        assert constructor_hover["contents"]["value"].startswith(
+            "```gti\nDefaulted() = default\n```"
+        ), constructor_hover
+        destructor_hover = request(3, "textDocument/hover", destructor + 1)
+        assert destructor_hover["contents"]["value"].startswith(
+            "```gti\nDefaulted::~Defaulted() = default\n```"
+        ), destructor_hover
+        selected_hover = request(4, "textDocument/hover", construction + 1)
+        assert selected_hover["contents"]["value"].startswith(
+            "```gti\nDefaulted()\n```"
+        ), selected_hover
+
+        definition = request(5, "textDocument/definition", construction + 1)
+        assert definition == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, constructor),
+                "end": lsp_position(source, constructor + len("Defaulted")),
+            },
+        }, definition
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 6)[
+                "result"
+            ]["data"]
+        )
+        for offset in (constructor, destructor, construction):
+            position = lsp_position(source, offset)
+            assert tokens[(position["line"], position["character"])][
+                "type"
+            ] == method_token
+
+        outline = request(7, "textDocument/documentSymbol")
+        defaulted = outline[0]
+        assert (defaulted["name"], defaulted["kind"]) == ("Defaulted", 5)
+        assert [
+            (child["name"], child["kind"], child.get("detail"))
+            for child in defaulted["children"]
+        ] == [
+            ("value", 8, "int32_t value"),
+            ("Defaulted", 9, "Defaulted() = default"),
+            ("~Defaulted", 6, "Defaulted::~Defaulted() = default"),
+            ("read", 6, "int32_t Defaulted::read()"),
+        ], defaulted
+
+        incomplete = source.replace(
+            "~Defaulted() = default;", "~Defaulted() = default"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": incomplete}],
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        assert publication["diagnostics"], publication
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+            and not message["params"]["diagnostics"]
+        )
     finally:
         session.close()
 
@@ -6845,6 +7027,7 @@ def main():
     test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
     test_constructor_local_generic_tooling(sys.argv[1], root)
+    test_defaulted_lifecycle_tooling(sys.argv[1], root)
     test_contextual_array_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_exact_qualified_specialization_tooling(sys.argv[1], root)

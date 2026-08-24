@@ -468,6 +468,14 @@ Default, copy, and move construction; copy and move assignment; and destruction
 are generated from structural field traits. Declaring an ordinary constructor
 does not suppress otherwise valid generated lifecycle operations.
 
+The exact declaration `Type() = default;` explicitly selects the generated
+zero-argument construction operation. It is valid only when every field has a
+declaration initializer and the state-bearing base has an accessible
+zero-argument constructor, which are the same conditions used when the
+declaration is omitted. It introduces no executable body, initializer list,
+generic parameters, or requirements. Its source access is the written member
+access. Ordinary-constructor `= delete` is not implemented.
+
 A class or struct may declare at most one public exact copy policy
 `Type(Type&) = default|delete;` and one public exact move policy
 `Type(Type&&) = default|delete;`. These declarations govern construction only;
@@ -480,6 +488,13 @@ corresponding operation unavailable.
 permitted only in the exact move constructor policy. A custom copy or move
 constructor body is ill-formed until field places, partial movement, and
 partial initialization have complete language semantics.
+
+A class or struct may declare one public destructor as either `~Type() { ... }`
+or `~Type() = default;`. The defaulted form selects structural destruction and
+does not create a source cleanup effect, active-drop state, or the conservative
+copy/transfer restrictions caused by a cleanup body. Destructor `= delete` is
+not implemented because every initialized GTI value must remain destructible
+under the current ownership model.
 
 `[[c_opaque]] struct Name;` is the only incomplete nominal type declaration.
 It is nongeneric, baseless, has no body, layout, members, lifecycle, or

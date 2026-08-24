@@ -25,7 +25,7 @@
     "24-static.gti": 35,
     "25-polymorphic-ranges.gti": 48,
     "26-stored-references.gti": 43,
-    "27-copy-move-policies.gti": 38,
+    "27-copy-move-policies.gti": 41,
     "28-callable-parameters.gti": 37,
     "29-callable-predicates.gti": 37,
     "30-callable-forwarding.gti": 34,
@@ -65,5 +65,5 @@
     "64-restricted-arithmetic-operators.gti": 39,
     "65-mutable-ranges.gti": 49
   },
-  "total": 3430
+  "total": 3433
 }

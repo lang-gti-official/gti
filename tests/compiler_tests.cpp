@@ -1173,7 +1173,7 @@ int main() {
          "values outside the bounded schedule");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v41\n") &&
+  expect(dump.starts_with("mir-body-v42\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -5897,7 +5897,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v41\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v42\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7912,7 +7912,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v43 ") &&
+  expect(mirDump.starts_with("mir-v44 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -17022,8 +17022,10 @@ int main() {
   expect(hasDiagnostic(invalidSemantic, "type 'DeletedMove' is not movable"),
          "an explicitly deleted move constructor should reject std::move");
   expect(hasDiagnostic(invalidSemantic,
-                       "currently available only for exact copy and move"),
-         "ordinary constructors should reject special-member specifiers");
+                       "must use the exact form 'InvalidDefaultTarget() = "
+                       "default;'"),
+         "ordinary constructor defaulting should require the exact "
+         "zero-argument form");
   expect(
       hasDiagnostic(invalidSemantic, "constructor policies must be public") &&
           hasDiagnostic(invalidSemantic,
@@ -17072,6 +17074,200 @@ int main() {
              globalQualifierParser.errors().front().message.find(
                  "Only class and struct methods") != std::string::npos,
          "free functions should reject receiver mutability qualifiers");
+}
+
+void testDefaultedDefaultLifecycle() {
+  const std::string source = R"(
+class ImplicitStructural {
+  int value = 7;
+};
+
+class ExplicitStructural {
+  int value = 7;
+
+public:
+  ExplicitStructural() = default;
+  ~ExplicitStructural() = default;
+  int read() { return this.value; }
+};
+
+class NestedStructural {
+  ExplicitStructural value = ExplicitStructural();
+
+public:
+  NestedStructural() = default;
+  ~NestedStructural() = default;
+  int read() { return this.value.read(); }
+};
+
+int main() {
+  ExplicitStructural direct = ExplicitStructural();
+  NestedStructural nested = NestedStructural();
+  return direct.read() + nested.read() - 14;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("defaulted-default-lifecycle.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected defaulted-lifecycle diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "explicitly defaulted default construction and destruction should "
+         "complete the compiler pipeline");
+
+  const lang::ClassDecl *explicitClass =
+      findTopLevelClass(frontend.program, "ExplicitStructural");
+  const lang::ConstructorDecl *constructor = nullptr;
+  const lang::DestructorDecl *destructor = nullptr;
+  if (explicitClass != nullptr) {
+    for (const lang::StmtPtr &member : explicitClass->members()) {
+      if (const auto *candidate =
+              dynamic_cast<const lang::ConstructorDecl *>(member.get())) {
+        constructor = candidate;
+      } else if (const auto *candidate =
+                     dynamic_cast<const lang::DestructorDecl *>(member.get())) {
+        destructor = candidate;
+      }
+    }
+  }
+  const lang::ClassLifecycleInfo *lifecycle =
+      explicitClass == nullptr
+          ? nullptr
+          : frontend.semantics.findClassLifecycle(*explicitClass);
+  expect(constructor != nullptr && constructor->specifier() &&
+             constructor->specifier()->kind ==
+                 lang::SpecialMemberSpecifierKind::Defaulted &&
+             constructor->body() == nullptr && destructor != nullptr &&
+             destructor->specifier() &&
+             destructor->specifier()->kind ==
+                 lang::SpecialMemberSpecifierKind::Defaulted &&
+             destructor->body() == nullptr,
+         "the AST should distinguish defaulted lifecycle policy from a source "
+         "body");
+  expect(lifecycle != nullptr &&
+             lifecycle->defaultConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             lifecycle->destructor == lang::SpecialMemberStatus::Generated &&
+             lifecycle->declaredDestructor &&
+             lifecycle->declaredDestructor->declaration == destructor &&
+             !lifecycle->requiresActiveDropState &&
+             lifecycle->traits.copyable && lifecycle->traits.movable,
+         "defaulted lifecycle declarations should retain structural traits "
+         "without creating declared cleanup state");
+
+  bool selectedDefaultedDeclaration = false;
+  bool hirUsesGeneratedConstruction = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      if (lifecycle != nullptr &&
+          value.info.type.kind == lang::SemanticType::Class &&
+          value.info.type.classId == lifecycle->id &&
+          value.constructorKind == lang::ConstructorKind::Ordinary) {
+        hirUsesGeneratedConstruction =
+            hirUsesGeneratedConstruction || !value.constructorTarget;
+      }
+      if (value.source != nullptr) {
+        const lang::ResolvedConstructionInfo *construction =
+            frontend.semantics.findConstruction(*value.source);
+        selectedDefaultedDeclaration =
+            selectedDefaultedDeclaration ||
+            (construction != nullptr &&
+             construction->declaration == constructor &&
+             construction->generatedDefault);
+      }
+    }
+  }
+  expect(selectedDefaultedDeclaration && hirUsesGeneratedConstruction &&
+             frontend.hir.destructorInstances().empty(),
+         "semantic selection should retain the written declaration while HIR "
+         "uses bodyless structural lifecycle operations");
+
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
+                        lang::OptimizationPipeline().run(
+                            frontend.hir, lang::OptimizationLevel::O0));
+  expect(
+      artifact.contents.find("ExplicitStructural() = default;") !=
+              std::string::npos &&
+          artifact.contents.find("~ExplicitStructural() noexcept = default;") !=
+              std::string::npos &&
+          artifact.contents.find("ExplicitStructural::ExplicitStructural(") ==
+              std::string::npos &&
+          artifact.contents.find("__gti_lifecycle_active_") ==
+              std::string::npos,
+      "the backend should represent defaulted lifecycle structurally "
+      "without a source body or active-drop adapter");
+
+  const std::string invalidSource = R"(
+class MissingInitializer {
+  int value;
+public:
+  MissingInitializer() = default;
+};
+
+class ParameterizedDefault {
+  int value = 0;
+public:
+  ParameterizedDefault(int initial) = default;
+};
+
+class DeletedDefault {
+public:
+  DeletedDefault() = delete;
+};
+
+class DeletedCleanup {
+public:
+  ~DeletedCleanup() = delete;
+};
+)";
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-defaulted-default-lifecycle.gti", invalidSource);
+  const auto diagnosticContaining =
+      [&](std::string_view text) -> const lang::Diagnostic * {
+    const auto found = std::find_if(
+        invalid.diagnostics.begin(), invalid.diagnostics.end(),
+        [&](const lang::Diagnostic &diagnostic) {
+          return diagnostic.message.find(text) != std::string::npos;
+        });
+    return found == invalid.diagnostics.end() ? nullptr : &*found;
+  };
+  const lang::Diagnostic *unavailable =
+      diagnosticContaining("defaulted default constructor");
+  const lang::Diagnostic *shape =
+      diagnosticContaining("must use the exact form");
+  const lang::Diagnostic *deletedConstructor =
+      diagnosticContaining("not supported for ordinary constructors");
+  const lang::Diagnostic *deletedDestructor =
+      diagnosticContaining("not supported for destructors");
+  const std::size_t unavailableDefault = invalidSource.find("default;");
+  const std::size_t missingField = invalidSource.find("value;");
+  expect(!invalid.canGenerateCode() && unavailable != nullptr &&
+             unavailable->code == "GTI-S2020" &&
+             unavailable->primary.start == unavailableDefault &&
+             unavailable->primary.end == unavailableDefault + 7 &&
+             !unavailable->related.empty() &&
+             unavailable->related.front().span.start == missingField &&
+             !unavailable->hints.empty() && unavailable->fixes.empty() &&
+             shape != nullptr && shape->code == "GTI-S2020" &&
+             deletedConstructor != nullptr &&
+             deletedConstructor->code == "GTI-S2020" &&
+             deletedDestructor != nullptr &&
+             deletedDestructor->code == "GTI-S2021",
+         "defaulted lifecycle diagnostics should own exact shape, structural "
+         "availability, and unsupported deletion with actionable spans");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Value{int value=0;public:Value()=default;~Value()=default;};");
+  expect(formatted.find("Value() = default;") != std::string::npos &&
+             formatted.find("~Value() = default;") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "defaulted constructor and destructor syntax should format "
+         "idempotently");
 }
 
 void testInheritanceAndInterfaces() {
@@ -26666,7 +26862,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v43 ") &&
+             mirDump.starts_with("mir-v44 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -30738,6 +30934,10 @@ int main(int argc, char **argv) {
     testDestructorsAndActiveDropState();
     return failures == 0 ? 0 : 1;
   }
+  if (argc == 2 && std::string(argv[1]) == "defaulted-lifecycle") {
+    testDefaultedDefaultLifecycle();
+    return failures == 0 ? 0 : 1;
+  }
   if (argc == 2 && std::string(argv[1]) == "inheritance") {
     testInheritanceAndInterfaces();
     return failures == 0 ? 0 : 1;
@@ -30848,6 +31048,7 @@ int main(int argc, char **argv) {
   testTemporaryArgumentBorrows();
   testReadOnlyReceiverDiagnostics();
   testConstructorsAndReceiverMutability();
+  testDefaultedDefaultLifecycle();
   testInheritanceAndInterfaces();
   testInheritedGenericTargetInstances();
   testDirectBraceConstruction();

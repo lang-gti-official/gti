@@ -1,0 +1,41 @@
+#include <std/cstdio>
+
+int main() {
+  mut auto opened = std::fopen("bytes.bin", "rb");
+  if (!opened || !opened.value()->is_open()) {
+    return 1;
+  }
+  auto first = opened.value()->get();
+  auto second = std::fgetc(*opened.value());
+  auto third = opened.value()->get();
+  auto exhausted = opened.value()->get();
+  if (!first || first.value() != 65 || !second || second.value() != 0 ||
+      !third || third.value() != 90 || exhausted ||
+      exhausted.error() != std::io_errc::end_of_file) {
+    return 2;
+  }
+  auto closed = std::fclose(*opened.value());
+  if (!closed || opened.value()->is_open()) {
+    return 3;
+  }
+  auto closed_again = opened.value()->close();
+  if (closed_again ||
+      closed_again.error() != std::io_errc::invalid_stream) {
+    return 4;
+  }
+  auto missing = std::fopen("missing.bin", "r");
+  if (missing || missing.error() != std::io_errc::open_failed) {
+    return 5;
+  }
+  auto unsupported = std::fopen("bytes.bin", "w");
+  if (unsupported || unsupported.error() != std::io_errc::unsupported_mode) {
+    return 6;
+  }
+  auto input = std::getchar();
+  auto input_eof = std::getchar();
+  if (!input || input.value() != 81 || input_eof ||
+      input_eof.error() != std::io_errc::end_of_file) {
+    return 7;
+  }
+  return 0;
+}

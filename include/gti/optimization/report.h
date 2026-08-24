@@ -2,6 +2,7 @@
 
 #include "gti/optimization/rewrite.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -45,6 +46,12 @@ struct OptimizationSafetyCounts {
   std::size_t sourceOperations = 0;
   std::size_t emittedOperations = 0;
   std::size_t staticallyDischarged = 0;
+  std::array<std::size_t, static_cast<std::size_t>(MirSafetyCheckFamily::Count)>
+      sourceByFamily{};
+  std::array<std::size_t, static_cast<std::size_t>(MirSafetyCheckFamily::Count)>
+      emittedByFamily{};
+  std::array<std::size_t, static_cast<std::size_t>(MirSafetyCheckFamily::Count)>
+      dischargedByFamily{};
 };
 
 struct OptimizationReport {
@@ -62,7 +69,7 @@ struct OptimizationReport {
   }
 };
 
-inline constexpr std::uint32_t optimizationReportSchemaVersion = 1;
+inline constexpr std::uint32_t optimizationReportSchemaVersion = 3;
 
 // Presentation is kept outside the optimizer and uses only verified report
 // data. The JSON schema is versioned independently from MIR serialization.

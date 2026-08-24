@@ -1,0 +1,80 @@
+#include <std/numeric>
+
+class audit_iterator {
+  mut std::size_t index;
+  mut int32_t values[4] = {1, 2, 3, 4};
+
+public:
+  audit_iterator(std::size_t initial) : index(initial) {}
+
+  int32_t& operator*() {
+    return this.values[this.index];
+  }
+
+  void operator++() mut {
+    this.index++;
+  }
+
+  bool operator!=(audit_iterator& other) {
+    return this.index != other.index;
+  }
+};
+
+class add {
+public:
+  int32_t operator()(int32_t left, int32_t& right) {
+    return left + right;
+  }
+};
+
+class multiply {
+public:
+  int32_t operator()(int32_t& left, int32_t& right) {
+    return left * right;
+  }
+};
+
+class square {
+public:
+  int32_t operator()(int32_t& value) {
+    return value * value;
+  }
+};
+
+int main() {
+  int32_t default_sum = std::accumulate(
+      audit_iterator(std::size_t(0)), audit_iterator(std::size_t(4)),
+      int32_t(0));
+  int32_t custom_sum = std::accumulate(
+      audit_iterator(std::size_t(0)), audit_iterator(std::size_t(4)),
+      int32_t(0), add());
+  int32_t default_product = std::inner_product(
+      audit_iterator(std::size_t(0)), audit_iterator(std::size_t(4)),
+      audit_iterator(std::size_t(0)), int32_t(0));
+  int32_t custom_product = std::inner_product(
+      audit_iterator(std::size_t(0)), audit_iterator(std::size_t(4)),
+      audit_iterator(std::size_t(0)), int32_t(0), add(), multiply());
+  int32_t reduced = std::transform_reduce(
+      audit_iterator(std::size_t(0)), audit_iterator(std::size_t(4)),
+      int32_t(0), add(), square());
+  if (default_sum != 10 || custom_sum != 10 || default_product != 30 ||
+      custom_product != 30 || reduced != 30 ||
+      std::gcd(int32_t(54), int32_t(24)) != 6 ||
+      std::lcm(int32_t(6), int32_t(8)) != 24 ||
+      std::midpoint(int32_t(2), int32_t(8)) != 5) {
+    return 1;
+  }
+
+  if (std::wrapping_add(int8_t(127), int8_t(1)) != int8_t(-128) ||
+      std::wrapping_sub(uint8_t(0), uint8_t(1)) != uint8_t(255) ||
+      std::wrapping_mul(uint8_t(200), uint8_t(2)) != uint8_t(144) ||
+      std::saturating_add(int8_t(127), int8_t(1)) != int8_t(127) ||
+      std::saturating_sub(uint8_t(0), uint8_t(1)) != uint8_t(0) ||
+      std::saturating_mul(uint8_t(200), uint8_t(2)) != uint8_t(255) ||
+      !std::checked_add(int32_t(20), int32_t(22)).has_value() ||
+      std::checked_sub(int8_t(-128), int8_t(1)).has_value() ||
+      std::checked_mul(uint8_t(200), uint8_t(2)).has_value()) {
+    return 2;
+  }
+  return 0;
+}

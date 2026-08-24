@@ -1090,7 +1090,7 @@ int main() {
   const lang::OptimizationPassReport *ownedFold =
       findPass(optimized.report, "fold-literal-identities");
   expect(optimized.valid() && optimized.report.verificationEnabled &&
-             optimized.report.passes.size() == 4 && ownedFold != nullptr &&
+             optimized.report.passes.size() == 8 && ownedFold != nullptr &&
              ownedFold->shadowMismatches == 0,
          "the owned MIR pipeline should verify and report its bounded shadow "
          "transform");
@@ -2372,10 +2372,25 @@ int main() {
                                   .mir = frontend.mir,
                                   .level = level,
                                   .compatibility = &compatibility});
-    expect(optimized.valid() && lang::MirPrinter().print(optimized.mir) ==
-                                    lang::MirPrinter().print(o1.mir),
-           "O1, O2, and O3 should schedule the same first bounded shadow "
-           "transform");
+    bool sharedPassesMatch = optimized.report.passes.size() == 8;
+    for (const lang::OptimizationPassReport &expected : o1.report.passes) {
+      if (expected.name != "scalar-promotion" &&
+          expected.name != "fold-literal-identities") {
+        continue;
+      }
+      const lang::OptimizationPassReport *actual =
+          findPass(optimized.report, expected.name);
+      sharedPassesMatch = sharedPassesMatch && actual != nullptr &&
+                          actual->changed == expected.changed &&
+                          actual->candidates == expected.candidates &&
+                          actual->appliedEdits == expected.appliedEdits &&
+                          actual->shadowMismatches == expected.shadowMismatches;
+    }
+    expect(optimized.valid() && sharedPassesMatch &&
+               findPass(optimized.report, "sparse-conditional-constants") !=
+                   nullptr,
+           "O2 and O3 should retain shared scalar/fold behavior before "
+           "adding independently replayable sparse and safety proofs");
   }
 
   const lang::OptimizedProgram unchecked =
@@ -3638,12 +3653,12 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v41\n") &&
+  expect(dump.starts_with("mir-body-v42\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
              dump.find("failure-propagation=direct-call") != std::string::npos,
-         "MIR v24 should serialize exact failure identities deterministically");
+         "MIR should serialize exact failure identities deterministically");
 
   const auto firstOriginInstruction = [](lang::MirBody &body) {
     for (lang::MirBlock &block : body.blocks) {
@@ -7093,6 +7108,14 @@ int main() {
   const auto *effectFacts = analyses.effects(first.mir, promotedAddress);
   const lang::MirScalarPromotionInputs *promotionInputs =
       analyses.scalarPromotionInputs(first.mir, promotedAddress);
+  const lang::MirSafetyAnalysis *safetyChecks =
+      analyses.safetyChecks(first.mir, promotedAddress);
+  const lang::MirPlaceAliasEscapeAnalysis *aliasEscape =
+      analyses.placeAliasEscape(first.mir, promotedAddress);
+  const lang::MirLoopAnalysis *loops =
+      analyses.loops(first.mir, promotedAddress);
+  const lang::MirSccpAnalysis *sparseConstants =
+      analyses.sparseConstants(first.mir, promotedAddress);
   const bool hasPromotionCandidate =
       promotionInputs != nullptr && !promotionInputs->candidates.empty();
   const std::vector<std::string> selectivelyInvalidated = analyses.invalidate(
@@ -7100,7 +7123,9 @@ int main() {
       lang::MirPreservedAnalyses::only({lang::MirAnalysisKind::CfgReachability,
                                         lang::MirAnalysisKind::ValueUses}));
   expect(cfg != nullptr && dominance != nullptr && uses != nullptr &&
-             effectFacts != nullptr && promotionInputs != nullptr,
+             effectFacts != nullptr && promotionInputs != nullptr &&
+             safetyChecks != nullptr && aliasEscape != nullptr &&
+             loops != nullptr && sparseConstants != nullptr,
          "the body analysis manager should derive every client-backed "
          "analysis");
   expect(hasPromotionCandidate,
@@ -7108,7 +7133,9 @@ int main() {
   expect(analyses.revision(promotedAddress) == 1 &&
              selectivelyInvalidated ==
                  std::vector<std::string>{"dominance", "effects",
-                                          "scalar-promotion-inputs"},
+                                          "scalar-promotion-inputs",
+                                          "safety-checks", "place-alias-escape",
+                                          "loops", "sparse-constants"},
          "selective invalidation should advance the body revision and report "
          "only discarded analyses");
   expect(analyses.cfg(first.mir, promotedAddress) == cfg &&
@@ -7118,13 +7145,18 @@ int main() {
   (void)analyses.dominance(first.mir, promotedAddress);
   (void)analyses.effects(first.mir, promotedAddress);
   (void)analyses.scalarPromotionInputs(first.mir, promotedAddress);
+  (void)analyses.safetyChecks(first.mir, promotedAddress);
+  (void)analyses.placeAliasEscape(first.mir, promotedAddress);
+  (void)analyses.loops(first.mir, promotedAddress);
+  (void)analyses.sparseConstants(first.mir, promotedAddress);
   const std::vector<std::string> fullyInvalidated =
       analyses.invalidate(promotedAddress, lang::MirPreservedAnalyses::none());
   expect(analyses.revision(promotedAddress) == 2 &&
              fullyInvalidated ==
-                 std::vector<std::string>{"cfg-reachability", "dominance",
-                                          "value-uses", "effects",
-                                          "scalar-promotion-inputs"},
+                 std::vector<std::string>{
+                     "cfg-reachability", "dominance", "value-uses", "effects",
+                     "scalar-promotion-inputs", "safety-checks",
+                     "place-alias-escape", "loops", "sparse-constants"},
          "an unknown preservation claim should conservatively invalidate every "
          "cached body analysis in deterministic order");
 
@@ -7242,8 +7274,9 @@ int main() {
   expect(json == repeatedJson &&
              json.find("\"schema\":\"gti-optimization-report\"") !=
                  std::string::npos &&
-             json.find("\"version\":1") != std::string::npos &&
+             json.find("\"version\":3") != std::string::npos &&
              json.find("\"proof\":\"scalar-promotion\"") != std::string::npos &&
+             json.find("\"sparseConstants\":false") != std::string::npos &&
              remarks.starts_with("gti-opt: GTI MIR optimization remarks") &&
              remarks.find("safety operations source=") != std::string::npos,
          "optimizer presentation should be deterministic, versioned, and "

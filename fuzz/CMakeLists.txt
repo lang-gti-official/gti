@@ -11,7 +11,7 @@
 # These targets have no install() rule on purpose: they must remain absent
 # from normal installation, packages, and release artifacts.
 
-foreach(harness "parser" "formatter" "pipeline")
+foreach(harness "parser" "formatter" "pipeline" "source_loader")
   add_executable("gti_${harness}_fuzzer" "${harness}_fuzzer.cpp")
   target_link_options("gti_${harness}_fuzzer" PRIVATE "-fsanitize=fuzzer")
   set_target_properties("gti_${harness}_fuzzer"
@@ -22,6 +22,7 @@ target_link_libraries("gti_parser_fuzzer" PRIVATE gti_compiler)
 target_link_libraries("gti_formatter_fuzzer" PRIVATE gti_compiler)
 # gti_cpp_backend links gti_compiler publicly; the pipeline harness needs both.
 target_link_libraries("gti_pipeline_fuzzer" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_source_loader_fuzzer" PRIVATE gti_compiler)
 
 # Fixed-corpus smoke: every harness executes its seed corpus under ASan/UBSan
 # (-runs=0), and an injected failure must produce a replayable crash
@@ -35,6 +36,7 @@ if(BUILD_TESTING)
             "$<TARGET_FILE:gti_parser_fuzzer>"
             "$<TARGET_FILE:gti_formatter_fuzzer>"
             "$<TARGET_FILE:gti_pipeline_fuzzer>"
+            "$<TARGET_FILE:gti_source_loader_fuzzer>"
             "${CMAKE_CURRENT_SOURCE_DIR}/corpus"
   )
   set_tests_properties(fuzzer_smoke PROPERTIES TIMEOUT 600)

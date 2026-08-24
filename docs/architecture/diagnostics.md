@@ -115,6 +115,14 @@ diagnostics or letting a backend message choose either identity.
   or move construction is unavailable, and suggest explicit ownership transfer
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
+- `GTI-S2020` owns malformed or structurally unavailable default-constructor
+  policy as well as copy/move construction policy. A valid ordinary form is
+  exactly `Type() = default;`; point at `default`, relate the first field
+  without a declaration initializer when available, and explain the base/field
+  requirement in a hint. `GTI-S2021` owns destructor policy and rejects
+  `= delete` while accepting public `~Type() = default;` as structural
+  destruction. Neither diagnostic offers a fix-it because choosing a source
+  body, initializer, member access, or lifecycle policy requires intent.
 - `GTI-S2023` owns a syntactically complete but semantically invalid bounded
   comma pack fold. Point at the ellipsis for an invalid target or constraint,
   at a repeated call argument that is not a named value, or at the final

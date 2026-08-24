@@ -4,19 +4,18 @@
 > is documented in
 > [`docs/architecture/verification.md`](../architecture/verification.md).
 
-Status: `Q-FUZZ-01A` capture/replay implemented (bundle schema, direct and
-project stage ladders, normalized signatures, replay with
-reproduced/disappeared/replaced discrimination, `compiler_debug_tooling`
-ctest). `Q-FUZZ-01B` implemented: opt-in parser/formatter/pipeline libFuzzer
-harnesses under `GTI_BUILD_FUZZERS=ON` with tree-wide ASan/UBSan+coverage
-instrumentation, seed corpora, a token dictionary, span/idempotence/
-artifact-or-rejection assertions, and the `fuzzer_smoke` fixed-corpus ctest.
-`Q-FUZZ-01C` is implemented by the bundle-derived, resumable, atomically
-publishing reducer and its `compiler_failure_reducer` ctest. Capture output
-advertises the reducer, and the local audit can retain failures through
-`--keep-failures` / `--artifacts-dir`. `Q-FUZZ-01D` has an initial typed
-program model and focused model tests; validation through the real compiler
-execution path remains in progress.
+Status: the bounded `Q-FUZZ-01A` through `Q-FUZZ-01D` campaign is implemented.
+Capture/replay and resumable reduction have deterministic CTests. Opt-in
+parser, formatter, pipeline, and two/three-unit source-loader libFuzzer
+harnesses run under tree-wide ASan/UBSan and coverage instrumentation, with a
+fixed-corpus smoke and property-specific injected negatives. The local audit's
+typed model now has a fixed real-compiler CTest comparing original/transformed
+GTI, an independent evaluator, and portable independent C++ at O0/O3. Four
+bounded pairwise composition scenarios cover local/field/global storage,
+scalar/class/generic values, member access, free/member calls, argument/return
+flow, and safe read-only borrowing. Broad seeded exploration remains optional;
+arbitrary JSON-RPC/LSP fuzzing, a complete grammar-aware generator, and a
+semantics-aware reducer remain deliberately deferred.
 
 This proposal selects a small set of high-yield tools for finding, preserving,
 and reducing GTI compiler failures. It deliberately builds on the compiler
@@ -47,140 +46,36 @@ Operational ordering remains tracked in
 that broad row to the tools with the best expected return for modest
 implementation effort.
 
-## Active Continuation Handoff (2026-08-24)
+## Implemented Continuation (2026-08-24)
 
-The active objective is to continue this suite until it exposes the first
-deterministic compiler bug. Do not fix a compiler bug found by this campaign.
-Minimize it, identify the first broken phase, and open a concrete fix proposal
-with the reproducer and evidence. If at least three bounded deterministic
-discovery rounds remain clean after the typed audit is operational, return
-with the suite improvements and the exact coverage run rather than expanding
-the model speculatively.
+The continuation made the typed audit operational and strengthened the
+existing fuzz seams without growing a second frontend:
 
-### Current follow-up implementation
+- `scripts/debug/typed_program_model.py` retains the bounded int32/bool model,
+  independent evaluator, GTI/C++ emitters, and five model-derived transforms,
+  and adds four fixed pairwise composition scenarios for class/global/generic/
+  read-only-borrow interactions;
+- `typed_differential_smoke` runs one scalar case and all four compositions
+  through the real compiler at O0/O3 and independently compiled C++, and
+  proves evaluator, reference, and GTI perturbations are distinguished with
+  complete retained evidence;
+- the formatter fuzzer compares significant production-lexer token kind/text
+  for lexer-clean inputs as well as idempotence;
+- the pipeline fuzzer compares two fresh snapshots across acceptance,
+  diagnostics, ranges, phase/source-graph facts, optimizer output, lowering
+  disposition, and MIR/C++ artifacts;
+- `gti_source_loader_fuzzer` reuses the production source-override seam for a
+  bounded two/three-unit quoted-include chain and compares complete fresh
+  snapshots; and
+- `fuzzer_smoke` injects a property-specific near miss for every strengthened
+  invariant in addition to proving crash artifact capture and replay.
 
-The current Q-FUZZ follow-up adds:
-
-- `scripts/debug/reduce_compiler_failure.py` implements Q-FUZZ-01C with the
-  existing capture probe ladder as its predicate authority, exact and
-  explicitly selected predicates, compiler-result caching, bounded probes,
-  resumable atomic progress, hierarchical source reduction, and atomic
-  publication of a replayable reduced bundle;
-- `tests/compiler_failure_reducer_test.py` and the
-  `compiler_failure_reducer` CTest cover a real semantic diagnostic and
-  injected signal, internal-diagnostic, and runtime-mismatch bundles;
-- capture output now prints the corresponding reducer command;
-- `scripts/debug/typed_program_model.py` defines the first Q-FUZZ-01D typed
-  int32/bool model, evaluator, GTI emitter, independent C++ emitter, and five
-  model-derived transformations: alpha renaming, redundant parentheses, an
-  unused immutable binding, pure-expression extraction, and a bounded
-  algebraic identity;
-- `tests/typed_program_model_test.py` proves deterministic records and source,
-  equivalent transformed evaluation, portable exit values, all five
-  transformations, and all 18 initial node kinds; and
-- `scripts/local_language_audit.py` has been changed to compile and execute
-  original/transformed GTI at its optimization matrix, independent C++ at O0
-  and O3, and compare all results with the evaluator. `--keep-failures` and
-  `--artifacts-dir` preserve a semantic case record and attempt a normal GTI
-  debug bundle on a mismatch.
-
-Evidence already obtained:
-
-```text
-python3 -m py_compile <new and changed Python tools>        PASS
-python3 tests/typed_program_model_test.py .                 PASS
-ctest --test-dir build -R '^compiler_failure_reducer$'     PASS (5.71 s)
-ctest --test-dir build -R '^compiler_debug_tooling$'       PASS (5.52 s)
-git diff --check                                            PASS
-```
-
-The real compiler execution path for the new typed model has **not** yet been
-validated. That is the first continuation step; the model/unit checks alone
-do not prove Q-FUZZ-01D operational.
-
-### Preserve unrelated work
-
-The handoff worktree also contains pre-existing edits that do not belong to
-this campaign:
-
-```text
-stdlib/std/numeric.gti
-stdlib/std/string.gti
-stdlib/std/utility.gti
-tests/compiler_debug_tooling_test.py
-```
-
-Do not restore, reformat, stage, or overwrite them. In particular,
-`compiler_debug_tooling_test.py` already changes its injected termination from
-SIGSEGV to SIGTERM; the reducer work was deliberately added in a separate test
-file so that edit remains intact.
-
-The in-progress standard-library files currently make the ordinary local
-audit fail with exact-argument diagnostics in `std/numeric.gti`. That is not a
-compiler finding. Discovery must use a clean `HEAD` resource snapshot while
-leaving those files untouched:
-
-```sh
-audit_root=$(mktemp -d /tmp/gti-debug-audit.XXXXXX)
-git archive -o "$audit_root/head-resources.tar" HEAD stdlib runtime vendor
-mkdir -p "$audit_root/resources"
-tar -xf "$audit_root/head-resources.tar" -C "$audit_root/resources"
-
-env \
-  GTI_STDLIB_PATH="$audit_root/resources/stdlib" \
-  GTI_RUNTIME_INCLUDE="$audit_root/resources/runtime/include" \
-  GTI_RUNTIME_LIBRARY="$PWD/build/libgti_runtime.a" \
-  GTI_VENDOR_INCLUDE="$audit_root/resources/vendor/expected_lite/include" \
-  python3 scripts/local_language_audit.py --gti build/gti \
-    --generated 1 --skip-mutations --skip-comparisons
-```
-
-Resolve the actual runtime-library filename from the current build rather
-than assuming the example path when it differs. A temporary snapshot was
-created at `/tmp/gti-debug-audit.qBh04F/resources` during this handoff, but a
-continuing agent should treat it as disposable and recreate it when absent.
-
-### Next bounded steps
-
-1. Run the one-case command above. If it fails, first determine whether the
-   typed model emitted syntax outside the implemented language or whether the
-   reference/evaluator is wrong. Fix only the audit implementation for those
-   cases; do not relax a compiler diagnostic or change compiler semantics.
-2. Add focused CTest coverage for the real typed differential path after one
-   case passes. Keep it bounded and deterministic; the optional broad audit
-   must remain absent from CI and release workflows.
-3. Run at least three deterministic discovery rounds against the clean
-   resources. A suitable initial matrix is 10 cases for each of seeds
-   `20260824`, `20260825`, and `20260826`, with mutations and the comparison
-   showcase skipped so a failure belongs to the new model. Use
-   `--keep-failures --artifacts-dir <temporary-directory>` on every round.
-4. If those rounds are clean, run one wider 30-case seed and the existing
-   malformed-source mutations. Do not keep enlarging the semantic subset
-   after these bounded rounds merely to force a finding.
-5. At the first mismatch, internal compiler diagnostic, backend rejection,
-   optimizer drift, or non-deterministic result, stop generation. Re-run the
-   exact seed/case, verify it against a clean resource snapshot, and rule out
-   an evaluator or independent-C++ emitter defect.
-6. Capture the failing GTI source with
-   `capture_compiler_failure.py`, reduce it with
-   `reduce_compiler_failure.py`, and replay the reduced bundle twice. For an
-   optimizer-only mismatch, preserve both O0 and O3 commands and select the
-   exact runtime tuple rather than reducing to a different frontend error.
-7. Do not modify compiler implementation files. Open a GitHub fix proposal
-   containing the minimized GTI source, expected/evaluator/reference result,
-   observed GTI result, affected optimization/standard, first failing phase,
-   replay commands, diagnostic signature, and a scoped regression-test plan.
-   Link or attach only artifacts confirmed not to contain private source.
-8. If no bug surfaces after the bounded rounds, finish Q-FUZZ-01D validation,
-   update this status from working-tree to landed state, run the focused
-   tooling tests plus `git diff --check`, and deliver the suite changes without
-   claiming exhaustive compiler correctness.
-
-Avoid further work on injected process-termination fixtures during this
-continuation. They already have focused coverage and triggered an unrelated
-security heuristic in the development environment. Accepted typed programs,
-ordinary compiler subprocesses, and deterministic result comparison are the
-remaining discovery path.
+The deterministic scalar/composition corpus is a merge gate; wider seeded
+generation remains an explicit local audit. A real finding is rerun with its
+exact seed and model record, checked against the evaluator and independent C++,
+captured, reduced, replayed twice, and promoted into the suite that owns the
+first broken compiler phase. The campaign does not expand the model merely to
+force a finding and does not claim exhaustive compiler correctness.
 
 ## Decision Summary
 
@@ -396,7 +291,11 @@ is the best first target for raw bytes.
 
 Run the production `Formatter` over arbitrary input. Formatting must not crash
 or hang. For inputs on which formatting succeeds normally, formatting the
-result again must be byte-identical.
+result again must be byte-identical. When the production lexer accepts the
+original input, the formatted result must retain the significant token-kind
+and normalized-token-text sequence. Comments are lexer trivia and remain under
+the byte-idempotence property; lexically recovered input keeps crash, range,
+and idempotence checks but makes no token-equivalence claim.
 
 The harness must not grow a second parser to compare syntax trees. It consumes
 the formatter already owned by the compiler library. A separate bounded audit
@@ -406,8 +305,11 @@ in-process fuzz iteration.
 
 #### `gti_pipeline_fuzzer`
 
-Run `Frontend::analyze` with one in-memory entry source and bounded options. If
-the program is invalid, require structured diagnostics and return. If
+Run `Frontend::analyze` twice with fresh snapshots over one in-memory entry
+source and bounded options. Acceptance, complete diagnostics and their ranges,
+source/phase facts, optimization results, lowering disposition, and emitted
+artifacts must match. If the program is invalid, require structured diagnostics
+and return. If
 `FrontendResult::canGenerateCode()` is true:
 
 1. verify source MIR;
@@ -422,6 +324,15 @@ later phase cannot represent. Native C++ compilation and program execution do
 not run inside every fuzz iteration; they are too slow and are delegated to
 the differential runner and replay tool after a corpus input reaches a valid
 backend artifact.
+
+#### `gti_source_loader_fuzzer`
+
+Use `Frontend`'s production source-override seam to construct either a two- or
+three-unit quoted-include chain. Arbitrary bytes appear only in the leaf unit;
+the harness neither writes files nor parses include syntax itself. Two fresh
+analyses must retain the expected unit count and agree on the complete source
+graph, compilation order, phase flags, diagnostics, related information, and
+fix-its. Every range must resolve inside loaded source text.
 
 ### Corpus and dictionaries
 
@@ -530,6 +441,15 @@ For every generated program, compare the model result with GTI at `-O0` and
 stderr. A mismatch automatically produces a failure bundle containing both
 source forms and the seed.
 
+Four deterministic composition scenarios extend that scalar tree only where
+the evaluator can remain independent and trivial: local class storage plus a
+method call, global class storage plus free/member calls, a bounded generic
+class plus generic free/member calls, and a class-return value passed through
+one safe read-only borrow. Together they cover local/field/global storage,
+scalar/class/generic values, member reads and writes, argument/return flow, and
+both free and member calls. They do not model ownership transfer, cleanup,
+concurrency, native interoperation, or general borrowing.
+
 ### Metamorphic extensions
 
 Once the typed model is stable, add transformations whose equivalence follows
@@ -580,6 +500,7 @@ fuzz/
   parser_fuzzer.cpp
   formatter_fuzzer.cpp
   pipeline_fuzzer.cpp
+  source_loader_fuzzer.cpp
   corpus/
   dictionary/
 scripts/
@@ -589,6 +510,9 @@ scripts/
     reduce_compiler_failure.py
 tests/
   compiler_debug_tooling_test.py
+  fuzzer_smoke_test.py
+  typed_program_model_test.py
+  typed_differential_smoke_test.py
 ```
 
 The exact directory names may follow existing CMake conventions when
@@ -597,14 +521,15 @@ must not include backend-private frontend types or allow snapshot pointers to
 escape an iteration. Scripts invoke public command-line behavior and do not
 become compiler authorities.
 
-The LSP is not part of the first pipeline fuzzer. It consumes compiler-owned
-results but adds JSON-RPC state, UTF-16 mapping, and incomplete-document
-recovery concerns. A protocol fuzzer remains a later `Q-FUZZ-01` slice after
-the compiler harnesses and capture format are proven.
+The LSP is not part of the pipeline or source-loader fuzzers. It consumes
+compiler-owned results but adds JSON-RPC state, UTF-16 mapping, and
+incomplete-document recovery concerns. Arbitrary protocol fuzzing remains
+deferred until a bounded production-backed edit-sequence property has a clear
+owner; it is not required to complete this compiler campaign.
 
 ## Implementation Sequence
 
-### `Q-FUZZ-01A`: Capture and replay
+### `Q-FUZZ-01A`: Capture and replay — implemented
 
 - add the bundle schema, direct/project stage probes, stable failure
   signatures, and replay;
@@ -617,19 +542,21 @@ Exit gate: a deliberately failing fixture is captured, moved to a different
 temporary root, and reproduced with the same signature; a changed earlier
 failure is rejected.
 
-### `Q-FUZZ-01B`: In-process fuzzers and local sanitizers
+### `Q-FUZZ-01B`: In-process fuzzers and local sanitizers — implemented
 
-- add opt-in parser, formatter, and pipeline libFuzzer targets;
+- add opt-in parser, formatter, pipeline, and bounded source-loader libFuzzer
+  targets;
 - seed them from minimized first-party sources and add a token dictionary;
-- add compiler-library lifetime, span, verifier, and formatter-idempotence
-  assertions; and
+- add compiler-library lifetime, span, verifier, formatter token/idempotence,
+  fresh-snapshot determinism, and artifact-or-rejection assertions; and
 - add fixed bounded sanitizer/fuzzer smoke coverage.
 
 Exit gate: every harness runs a fixed corpus under ASan/UBSan, writes a
-replayable artifact for an injected failure, and remains absent from normal
-installation and release contents.
+replayable artifact for an injected failure, rejects a property-specific
+injected near miss, and remains absent from normal installation and release
+contents.
 
-### `Q-FUZZ-01C`: Reduction
+### `Q-FUZZ-01C`: Reduction — implemented
 
 - add bundle-derived predicates, hierarchical delta reduction, caching,
   timeout handling, resume, and an atomic final result;
@@ -641,18 +568,21 @@ installation and release contents.
 Exit gate: repository fixtures for a crash-shaped signal, an internal
 diagnostic, and a runtime mismatch each reduce and replay deterministically.
 
-### `Q-FUZZ-01D`: Typed differential and metamorphic audit
+### `Q-FUZZ-01D`: Typed differential and metamorphic audit — implemented
 
 - replace the single generated-program template with a typed bounded model;
 - add independent GTI, C++, and evaluator outputs;
 - compare O0/O3 results and preserve every mismatch as a bundle; and
-- add the safe model-level transformations listed above.
+- add the safe model-level transformations listed above plus the four bounded
+  pairwise composition scenarios.
 
 Exit gate: fixed seeds cover every node kind, boundary generation never
 creates C++ undefined behavior, intentionally perturbed GTI/C++/evaluator
 outputs are distinguished, and repeated runs produce byte-identical sources
-and semantic case records. Capture timestamps, durations, and other bundle run
-metadata are expected to differ and are excluded from that comparison.
+and semantic case records. The fixed real-compiler smoke must execute both GTI
+forms and independent C++ at O0/O3 and retain complete mismatch evidence.
+Capture timestamps, durations, and other bundle run metadata are expected to
+differ and are excluded from that comparison.
 
 ## Validation And Failure Budgets
 
@@ -671,8 +601,8 @@ Standing resource policy:
 - no tool uploads artifacts or files issues automatically.
 
 CI proves harness construction, seed-corpus stability, sanitizer cleanliness,
-and deterministic replay. It does not claim that a five-second fuzz smoke has
-exhaustively tested the language.
+and deterministic replay. It does not claim that one fixed-corpus fuzz smoke
+has exhaustively tested the language.
 
 ## Alternatives And Deferred Work
 

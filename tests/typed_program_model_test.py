@@ -29,6 +29,20 @@ REQUIRED_NODE_KINDS = {
     "expr:not",
 }
 
+REQUIRED_COMPOSITION_FEATURES = {
+    "storage:local",
+    "storage:global",
+    "type:class",
+    "type:generic-class",
+    "access:member-read",
+    "access:member-write",
+    "call:free",
+    "call:generic-free",
+    "call:method",
+    "flow:class-return",
+    "flow:readonly-borrow-argument",
+}
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -36,7 +50,12 @@ def main() -> int:
         return 2
     repository = Path(sys.argv[1]).resolve()
     sys.path.insert(0, str(repository / "scripts"))
-    from debug.typed_program_model import TRANSFORMATIONS, generated_case
+    from debug.typed_program_model import (
+        COMPOSITION_SCENARIOS,
+        TRANSFORMATIONS,
+        composition_case,
+        generated_case,
+    )
 
     seed = 20260824
     seen_transformations: set[str] = set()
@@ -76,9 +95,52 @@ def main() -> int:
     if not REQUIRED_NODE_KINDS.issubset(seen_nodes):
         print(f"missing node kinds: {REQUIRED_NODE_KINDS - seen_nodes}", file=sys.stderr)
         return 1
+
+    composition_features: set[str] = set()
+    for index, scenario in enumerate(COMPOSITION_SCENARIOS):
+        first = composition_case(index, seed)
+        second = composition_case(index, seed)
+        if first.transformation != scenario:
+            print(f"composition case {index} selected {first.transformation}", file=sys.stderr)
+            return 1
+        if first.semantic_json() != second.semantic_json():
+            print(f"composition case {index} is nondeterministic", file=sys.stderr)
+            return 1
+        if first.original.evaluate() != first.transformed.evaluate():
+            print(f"composition case {index} transformation changed the result", file=sys.stderr)
+            return 1
+        if not 0 <= first.expected <= 125:
+            print(f"composition case {index} escaped the portable exit range", file=sys.stderr)
+            return 1
+        record = first.semantic_record()
+        if record.get("schema") != "gti-typed-composition-case-v1":
+            print(f"composition case {index} has the wrong schema", file=sys.stderr)
+            return 1
+        composition_features.update(record["features"])
+        for dialect in ("gti", "cpp"):
+            program_pairs = (
+                (first.original, second.original),
+                (first.transformed, second.transformed),
+            )
+            for first_program, second_program in program_pairs:
+                if first_program.emit(dialect) != second_program.emit(dialect):
+                    print(
+                        f"composition case {index} {dialect} source is nondeterministic",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+    if not REQUIRED_COMPOSITION_FEATURES.issubset(composition_features):
+        print(
+            "missing composition features: "
+            f"{REQUIRED_COMPOSITION_FEATURES - composition_features}",
+            file=sys.stderr,
+        )
+        return 1
     print(
         f"typed model deterministic; covered {len(seen_nodes)} node kinds and "
-        f"{len(seen_transformations)} transformations"
+        f"{len(seen_transformations)} scalar transformations plus "
+        f"{len(COMPOSITION_SCENARIOS)} composition scenarios"
     )
     return 0
 

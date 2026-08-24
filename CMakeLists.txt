@@ -267,10 +267,14 @@ add_library(
   "src/compiler/mir_printer.cpp"
   "src/compiler/mir_backend.cpp"
   "src/compiler/native_header.cpp"
+  "src/compiler/optimization/alias.cpp"
   "src/compiler/optimization/effects.cpp"
+  "src/compiler/optimization/loops.cpp"
   "src/compiler/optimization/pass.cpp"
   "src/compiler/optimization/report.cpp"
   "src/compiler/optimization/rewrite.cpp"
+  "src/compiler/optimization/safety.cpp"
+  "src/compiler/optimization/sccp.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
   "src/compiler/semantic_analyzer.cpp"
@@ -602,6 +606,16 @@ if(BUILD_TESTING)
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
 
+  add_executable("gti_optimizer_safety_tests"
+                 "tests/optimizer_safety_tests.cpp")
+  target_link_libraries("gti_optimizer_safety_tests" PRIVATE gti_compiler)
+  add_test(NAME optimizer_safety COMMAND gti_optimizer_safety_tests)
+
+  add_executable("gti_optimizer_analysis_tests"
+                 "tests/optimizer_analysis_tests.cpp")
+  target_link_libraries("gti_optimizer_analysis_tests" PRIVATE gti_compiler)
+  add_test(NAME optimizer_analyses COMMAND gti_optimizer_analysis_tests)
+
   add_executable("gti_failure_metadata_tests"
                  "tests/failure_metadata_tests.cpp")
   target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
@@ -798,6 +812,20 @@ if(BUILD_TESTING)
                  "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
   )
 
+  add_executable("gti_optimizer_safety_native_evidence"
+                 "tests/optimizer_safety_native_evidence.cpp")
+  target_link_libraries("gti_optimizer_safety_native_evidence"
+                        PRIVATE gti_cpp_backend)
+  add_test(NAME optimizer_safety_native_evidence
+           COMMAND gti_optimizer_safety_native_evidence
+                   "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(
+    optimizer_safety_native_evidence
+    PROPERTIES TIMEOUT 600
+               ENVIRONMENT
+                 "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+  )
+
   if(Python3_Interpreter_FOUND)
     add_test(
       NAME backend_lowered_program_boundary
@@ -887,6 +915,36 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/typed_program_model_test.py"
               "${CMAKE_CURRENT_SOURCE_DIR}"
     )
+    add_test(
+      NAME typed_differential_smoke
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/typed_differential_smoke_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CXX_COMPILER}"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    set_tests_properties(
+      typed_differential_smoke
+      PROPERTIES TIMEOUT 600
+                 ENVIRONMENT
+                   "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+    )
+    add_test(
+      NAME stdlib_surface_manifest
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/stdlib_surface_manifest_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(
+      NAME stdlib_surface
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/stdlib_surface_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CXX_COMPILER}"
+              "$<TARGET_FILE:gti_runtime>"
+              "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    set_tests_properties(stdlib_surface PROPERTIES TIMEOUT 1200 PROCESSORS 2)
     # Sharded by (optimization, standard) configuration; the shard union is
     # the full 2x2 matrix, and the script with no --shard still runs it all.
     foreach(shard RANGE 1 4)
@@ -1006,6 +1064,19 @@ if(BUILD_TESTING)
     )
     set_tests_properties(mir_backend_class_default_cleanup_runtime
                          PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME defaulted_lifecycle_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/defaulted_lifecycle_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/defaulted_lifecycle.gti"
+    )
+    set_tests_properties(
+      defaulted_lifecycle_runtime
+      PROPERTIES TIMEOUT 180
+                 ENVIRONMENT
+                   "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+    )
     add_test(
       NAME mir_backend_owned_lifecycle_runtime
       COMMAND "${Python3_EXECUTABLE}"

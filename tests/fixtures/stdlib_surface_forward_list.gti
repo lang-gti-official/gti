@@ -1,0 +1,30 @@
+#include <std/forward_list>
+
+int read_list(std::forward_list<int32_t>& values) {
+  return values.front();
+}
+
+int main() {
+  mut std::forward_list<int32_t> values = std::forward_list<int32_t>();
+  if (!values.empty()) {
+    return 1;
+  }
+  values.push_front(2);
+  values.push_front(1);
+  if (values.empty() || read_list(values) != 1) {
+    return 2;
+  }
+  {
+    mut int32_t& first = values.front();
+    first = 3;
+  }
+  values.pop_front();
+  if (values.front() != 2) {
+    return 3;
+  }
+  values.clear();
+  if (!values.empty()) {
+    return 4;
+  }
+  return 0;
+}

@@ -514,6 +514,25 @@ for (const spelling of ["+", "~", "+=", "--"]) {
   requireCapture(row, spelling, "operator");
 }
 
+const defaultedConstructorRow = fixtureLines.findIndex((line) =>
+  line.includes("DefaultedLifecycleHighlight() = default"),
+);
+const defaultedDestructorRow = fixtureLines.findIndex((line) =>
+  line.includes("~DefaultedLifecycleHighlight() = default"),
+);
+requireCapture(
+  defaultedConstructorRow,
+  "DefaultedLifecycleHighlight",
+  "constructor",
+);
+requireCapture(defaultedConstructorRow, "default", "keyword.modifier");
+requireCapture(
+  defaultedDestructorRow,
+  "DefaultedLifecycleHighlight",
+  "constructor",
+);
+requireCapture(defaultedDestructorRow, "default", "keyword.modifier");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );
