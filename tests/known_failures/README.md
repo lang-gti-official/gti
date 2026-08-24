@@ -177,6 +177,29 @@ already builds at `O0` and `O3`:
 program with and without redundant parentheses must return the same value, and
 did not.
 
+## Differential-testing over the repository's own programs
+
+`scripts/debug/corpus_differential.py` trades the model oracle for a much
+richer corpus: it builds every program in `examples/` — and with `--fixtures`
+every one in `tests/fixtures/` — at each optimization level and requires
+identical behaviour.
+
+```sh
+python3 scripts/debug/corpus_differential.py
+python3 scripts/debug/corpus_differential.py --fixtures --jobs 4
+```
+
+No expected output is needed, which is the point: optimization must not change
+observable behaviour, so a disagreement between levels is a bug regardless of
+which level is right. That also states its blind spot exactly — a fault every
+level shares is invisible here, which is what `optimizer_differential.py`'s
+model oracle is for. The two are complementary: one has the oracle and a
+narrow corpus, the other has the corpus and no oracle.
+
+A program that disagrees with *itself* across two runs at the baseline level
+is reported as `nondet` and excluded, so nondeterminism is not blamed on the
+optimizer.
+
 ## Probing the language server
 
 `scripts/debug/lsp_probe.py` checks two properties of `gti_lsp` that an
