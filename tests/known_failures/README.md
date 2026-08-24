@@ -274,6 +274,28 @@ disappear.
 Both currently pass. The target is optional — configure with
 `-DGTI_BUILD_LSP=ON` if `build/gti_lsp` is missing.
 
+## Checking the QA tools themselves
+
+`scripts/debug/selftest.py` drives each tool's classifier with synthetic
+inputs and asserts it still separates pass from fail.
+
+```sh
+python3 scripts/debug/selftest.py
+```
+
+A QA tool that stops checking anything reports success, which turns an
+unexamined surface into a green tick. That happened three times while these
+tools were being written: `lsp_probe` looked for `selectionRange` while the
+server answers with `location.range`, so it skipped every symbol and passed
+having compared nothing; `corpus_differential` folded build failures into one
+`skipped` count, hiding two `GTI-B0001` fixtures behind a number; and a
+mutation test on the matrix changed the expectation *and* the generated
+source, so it could not fail.
+
+Each was caught by hand. This runs those checks every time instead, and it is
+fast — no build required, since it exercises the decision logic rather than
+compiling anything.
+
 ## Checking status
 
 `check.py` compiles each compiler reproducer with a given `gti` and reports
